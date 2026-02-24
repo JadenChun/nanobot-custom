@@ -238,7 +238,7 @@ class WebFetchTool(Tool):
         max_chars = maxChars or self.max_chars
         is_valid, error_msg = _validate_url_safe(url)
         if not is_valid:
-            return json.dumps({"error": f"URL validation failed: {error_msg}", "url": url}, ensure_ascii=False)
+            return json.dumps({"error": f"URL validation failed: {error_msg}", "url": url})
 
         # Detect and fetch images directly to avoid Jina's textual image captioning
         try:
