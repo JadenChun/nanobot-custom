@@ -121,6 +121,7 @@ class ExecTool(Tool):
                             logger.debug("Process already reaped or not found: {}", e)
                 return f"Error: Command timed out after {effective_timeout} seconds"
 
+
             output_parts = []
 
             if stdout:
