@@ -60,6 +60,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        max_input_tokens: int = 120000,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -70,6 +71,7 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.max_input_tokens = max_input_tokens
         self.memory_window = memory_window
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
@@ -313,6 +315,41 @@ class AgentLoop:
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
             )
+            
+            # Check and reduce context size if over limit
+            if self.max_input_tokens > 0:
+                try:
+                    import litellm
+                    tokens = litellm.token_counter(model=self.model, messages=messages)
+                    if tokens > self.max_input_tokens:
+                        logger.warning(f"System msg context size ({tokens} tokens) exceeds limit {self.max_input_tokens}. Condensing history...")
+                        while tokens > self.max_input_tokens and len(history) > 0:
+                            history.pop(0)
+                            messages = self.context.build_messages(
+                                history=history,
+                                current_message=msg.content, channel=channel, chat_id=chat_id,
+                            )
+                            tokens = litellm.token_counter(model=self.model, messages=messages)
+                        
+                        if session.key not in self._consolidating:
+                            self._consolidating.add(session.key)
+                            lock = self._get_consolidation_lock(session.key)
+
+                            async def _sys_condense_and_unlock():
+                                try:
+                                    async with lock:
+                                        await self._consolidate_memory(session, archive_all=True)
+                                finally:
+                                    self._consolidating.discard(session.key)
+                                    self._prune_consolidation_lock(session.key, lock)
+                                    _task = asyncio.current_task()
+                                    if _task is not None:
+                                        self._consolidation_tasks.discard(_task)
+
+                            _task = asyncio.create_task(_sys_condense_and_unlock())
+                            self._consolidation_tasks.add(_task)
+                except Exception as e:
+                    logger.error(f"Failed to check token count on system msg: {e}")
             final_content, _, all_msgs = await self._run_agent_loop(messages)
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
@@ -391,6 +428,47 @@ class AgentLoop:
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
         )
+
+        # Check and reduce context size if over limit
+        if self.max_input_tokens > 0:
+            try:
+                import litellm
+                # Check current token usage
+                tokens = litellm.token_counter(model=self.model, messages=initial_messages)
+                if tokens > self.max_input_tokens:
+                    logger.warning(f"Context size ({tokens} tokens) exceeds limit {self.max_input_tokens}. Condensing history...")
+                    
+                    # Pop oldest messages until we fit
+                    while tokens > self.max_input_tokens and len(history) > 0:
+                        history.pop(0)
+                        initial_messages = self.context.build_messages(
+                            history=history,
+                            current_message=msg.content,
+                            media=msg.media if msg.media else None,
+                            channel=msg.channel, chat_id=msg.chat_id,
+                        )
+                        tokens = litellm.token_counter(model=self.model, messages=initial_messages)
+                    
+                    # Trigger background consolidation to save the lost context
+                    if session.key not in self._consolidating:
+                        self._consolidating.add(session.key)
+                        lock = self._get_consolidation_lock(session.key)
+
+                        async def _condense_and_unlock():
+                            try:
+                                async with lock:
+                                    await self._consolidate_memory(session, archive_all=True)
+                            finally:
+                                self._consolidating.discard(session.key)
+                                self._prune_consolidation_lock(session.key, lock)
+                                _task = asyncio.current_task()
+                                if _task is not None:
+                                    self._consolidation_tasks.discard(_task)
+
+                        _task = asyncio.create_task(_condense_and_unlock())
+                        self._consolidation_tasks.add(_task)
+            except Exception as e:
+                logger.error(f"Failed to check token count: {e}")
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})
