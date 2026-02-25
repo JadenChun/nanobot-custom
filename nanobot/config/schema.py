@@ -191,6 +191,7 @@ class AgentDefaults(Base):
     temperature: float = 0.1
     max_tool_iterations: int = 40
     memory_window: int = 100
+    skill_paths: list[str] = Field(default_factory=list)  # Additional skill directories (e.g. private git repos)
 
 
 class AgentsConfig(Base):

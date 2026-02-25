@@ -20,10 +20,10 @@ class ContextBuilder:
     
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
     
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, skill_paths: list[Path] | None = None):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
-        self.skills = SkillsLoader(workspace)
+        self.skills = SkillsLoader(workspace, extra_paths=skill_paths)
     
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
