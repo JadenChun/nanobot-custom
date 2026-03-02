@@ -184,6 +184,9 @@ class AgentLoop:
         iteration = 0
         final_content = None
         tools_used: list[str] = []
+        _last_tool_sig: str | None = None
+        _repeat_count: int = 0
+        _MAX_TOOL_REPEATS: int = 3
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -197,6 +200,29 @@ class AgentLoop:
             )
 
             if response.has_tool_calls:
+                # Stuck detection: break if the LLM repeats the exact same
+                # tool call(s) more than _MAX_TOOL_REPEATS times in a row.
+                sig = json.dumps(
+                    [(tc.name, tc.arguments) for tc in response.tool_calls],
+                    sort_keys=True,
+                )
+                if sig == _last_tool_sig:
+                    _repeat_count += 1
+                else:
+                    _last_tool_sig = sig
+                    _repeat_count = 1
+
+                if _repeat_count > _MAX_TOOL_REPEATS:
+                    logger.warning(
+                        "Agent stuck: identical tool call repeated {} times: {}",
+                        _repeat_count, sig[:200],
+                    )
+                    final_content = (
+                        "I appear to be stuck in a loop, repeating the same action. "
+                        "Please try rephrasing your request or breaking it into smaller steps."
+                    )
+                    break
+
                 if on_progress:
                     clean = self._strip_think(response.content)
                     if clean:

@@ -826,3 +826,89 @@ class TestConsolidationDeduplicationGuard:
         assert response is not None
         assert "new session started" in response.content.lower()
         assert session.key not in loop._consolidation_locks
+
+
+class TestAgentLoopStuckDetection:
+    """Test that the agent loop detects and breaks out of repeated identical tool calls."""
+
+    @pytest.mark.asyncio
+    async def test_loop_breaks_on_repeated_identical_tool_calls(
+        self, tmp_path: Path
+    ) -> None:
+        """Loop should break early when the LLM repeats the exact same tool call."""
+        from nanobot.agent.loop import AgentLoop
+        from nanobot.bus.queue import MessageBus
+        from nanobot.providers.base import LLMResponse, ToolCallRequest
+
+        bus = MessageBus()
+        provider = MagicMock()
+        provider.get_default_model.return_value = "test-model"
+        loop = AgentLoop(
+            bus=bus, provider=provider, workspace=tmp_path,
+            model="test-model", max_iterations=40,
+        )
+
+        # LLM always returns the same tool call
+        repeated_tool_call = ToolCallRequest(
+            id="call_1", name="list_dir", arguments={"path": "/some/path"}
+        )
+        provider.chat = AsyncMock(return_value=LLMResponse(
+            content=None,
+            tool_calls=[repeated_tool_call],
+        ))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+        loop.tools.execute = AsyncMock(return_value="file1\nfile2\n")
+
+        messages: list[dict] = [{"role": "user", "content": "list files"}]
+
+        final_content, tools_used, _ = await loop._run_agent_loop(messages)
+
+        assert final_content is not None
+        assert "stuck in a loop" in final_content
+        # Should break well before max_iterations (40).
+        # 1 initial + 3 repeats = 4 iterations total.
+        assert len(tools_used) <= 4
+
+    @pytest.mark.asyncio
+    async def test_loop_does_not_break_on_different_tool_calls(
+        self, tmp_path: Path
+    ) -> None:
+        """Loop should NOT break when distinct tool calls are made each iteration."""
+        from nanobot.agent.loop import AgentLoop
+        from nanobot.bus.queue import MessageBus
+        from nanobot.providers.base import LLMResponse, ToolCallRequest
+
+        bus = MessageBus()
+        provider = MagicMock()
+        provider.get_default_model.return_value = "test-model"
+        loop = AgentLoop(
+            bus=bus, provider=provider, workspace=tmp_path,
+            model="test-model", max_iterations=10,
+        )
+
+        call_counter = 0
+
+        async def _varying_chat(**kwargs):
+            nonlocal call_counter
+            call_counter += 1
+            if call_counter <= 5:
+                return LLMResponse(
+                    content=None,
+                    tool_calls=[ToolCallRequest(
+                        id=f"call_{call_counter}",
+                        name="list_dir",
+                        arguments={"path": f"/path/{call_counter}"},
+                    )],
+                )
+            return LLMResponse(content="Done!", tool_calls=[])
+
+        provider.chat = AsyncMock(side_effect=_varying_chat)
+        loop.tools.get_definitions = MagicMock(return_value=[])
+        loop.tools.execute = AsyncMock(return_value="ok")
+
+        messages: list[dict] = [{"role": "user", "content": "explore"}]
+
+        final_content, tools_used, _ = await loop._run_agent_loop(messages)
+
+        assert final_content == "Done!"
+        assert len(tools_used) == 5
