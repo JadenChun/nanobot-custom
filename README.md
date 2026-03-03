@@ -113,6 +113,7 @@ pip install nanobot-ai
 > [!TIP]
 > Set your API key in `~/.nanobot/config.json`.
 > Get API keys: [OpenRouter](https://openrouter.ai/keys) (Global) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
+> Optional browser automation tool: install Node.js/npm to enable `agent_browser` (`@agentic/agent-browser`).
 
 **1. Initialize**
 
@@ -804,6 +805,7 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 | Option | Default | Description |
 |--------|---------|-------------|
 | `tools.restrictToWorkspace` | `false` | When `true`, restricts **all** agent tools (shell, file read/write/edit, list) to the workspace directory. Prevents path traversal and out-of-scope access. |
+| `tools.agentBrowser.enabled` | `true` | Enable the built-in `agent_browser` tool (wrapper around `@agentic/agent-browser` via `npx`). Requires Node.js/npm. |
 | `channels.*.allowFrom` | `[]` (allow all) | Whitelist of user IDs. Empty = allow everyone; non-empty = only listed users can interact. |
 
 

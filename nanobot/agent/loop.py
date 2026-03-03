@@ -14,6 +14,7 @@ from loguru import logger
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
@@ -27,7 +28,7 @@ from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ChannelsConfig, ExecToolConfig
+    from nanobot.config.schema import AgentBrowserConfig, ChannelsConfig, ExecToolConfig
     from nanobot.cron.service import CronService
 
 
@@ -54,6 +55,7 @@ class AgentLoop:
         max_tokens: int = 4096,
         memory_window: int = 100,
         brave_api_key: str | None = None,
+        agent_browser_config: AgentBrowserConfig | None = None,
         exec_config: ExecToolConfig | None = None,
         cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
@@ -63,7 +65,7 @@ class AgentLoop:
         max_input_tokens: int = 120000,
         skill_paths: list[Path] | None = None,
     ):
-        from nanobot.config.schema import ExecToolConfig
+        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig
         self.bus = bus
         self.channels_config = channels_config
         self.provider = provider
@@ -75,6 +77,7 @@ class AgentLoop:
         self.max_input_tokens = max_input_tokens
         self.memory_window = memory_window
         self.brave_api_key = brave_api_key
+        self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
@@ -90,6 +93,7 @@ class AgentLoop:
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             brave_api_key=brave_api_key,
+            agent_browser_config=self.agent_browser_config,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
         )
@@ -116,6 +120,13 @@ class AgentLoop:
         ))
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
         self.tools.register(WebFetchTool())
+        if self.agent_browser_config.enabled:
+            self.tools.register(AgentBrowserTool(
+                package=self.agent_browser_config.package,
+                timeout=self.agent_browser_config.timeout,
+                max_output_chars=self.agent_browser_config.max_output_chars,
+                working_dir=str(self.workspace),
+            ))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:

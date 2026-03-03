@@ -1,5 +1,7 @@
 """Subagent manager for background task execution."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import uuid
@@ -12,6 +14,7 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
@@ -35,10 +38,11 @@ class SubagentManager:
         temperature: float = 0.7,
         max_tokens: int = 4096,
         brave_api_key: str | None = None,
-        exec_config: "ExecToolConfig | None" = None,
+        agent_browser_config: AgentBrowserConfig | None = None,
+        exec_config: ExecToolConfig | None = None,
         restrict_to_workspace: bool = False,
     ):
-        from nanobot.config.schema import ExecToolConfig
+        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig
         self.provider = provider
         self.workspace = workspace
         self.bus = bus
@@ -46,6 +50,7 @@ class SubagentManager:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.brave_api_key = brave_api_key
+        self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
@@ -114,6 +119,13 @@ class SubagentManager:
             ))
             tools.register(WebSearchTool(api_key=self.brave_api_key))
             tools.register(WebFetchTool())
+            if self.agent_browser_config.enabled:
+                tools.register(AgentBrowserTool(
+                    package=self.agent_browser_config.package,
+                    timeout=self.agent_browser_config.timeout,
+                    max_output_chars=self.agent_browser_config.max_output_chars,
+                    working_dir=str(self.workspace),
+                ))
             
             # Build messages with subagent-specific prompt
             system_prompt = self._build_subagent_prompt(task)
@@ -239,6 +251,7 @@ You are a subagent spawned by the main agent to complete a specific task.
 - Read and write files in the workspace
 - Execute shell commands
 - Search the web and fetch web pages
+- Use agent_browser for advanced browser/electron automation
 - Complete the task thoroughly
 
 ## What You Cannot Do
