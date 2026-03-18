@@ -47,19 +47,19 @@ class SubagentManager:
         bus: MessageBus,
         model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_tokens: "MaxTokensConfig | None" = None,
         brave_api_key: str | None = None,
         agent_browser_config: AgentBrowserConfig | None = None,
         exec_config: ExecToolConfig | None = None,
         restrict_to_workspace: bool = False,
     ):
-        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig
+        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, MaxTokensConfig
         self.provider = provider
         self.workspace = workspace
         self.bus = bus
         self.model = model or provider.get_default_model()
         self.temperature = temperature
-        self.max_tokens = max_tokens
+        self.max_tokens = max_tokens or MaxTokensConfig()
         self.brave_api_key = brave_api_key
         self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
         self.exec_config = exec_config or ExecToolConfig()
@@ -260,7 +260,7 @@ class SubagentManager:
                 tools=tools.get_definitions(),
                 model=self.model,
                 temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                max_tokens=self.max_tokens.output,
             )
 
             if response.has_tool_calls:

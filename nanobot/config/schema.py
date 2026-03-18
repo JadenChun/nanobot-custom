@@ -181,13 +181,19 @@ class ChannelsConfig(Base):
     qq: QQConfig = Field(default_factory=QQConfig)
 
 
+class MaxTokensConfig(Base):
+    """Token limits configuration."""
+
+    input: int = 120000
+    output: int = 4096
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
     workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
-    max_tokens: int = 8192
-    max_input_tokens: int = 120000
+    max_tokens: MaxTokensConfig = Field(default_factory=MaxTokensConfig)
     temperature: float = 0.1
     max_tool_iterations: int = 40
     memory_window: int = 100
@@ -294,6 +300,26 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+
+    @staticmethod
+    def _migrate_config(data: dict) -> dict:
+        """Migrate old config formats to current."""
+        # Migrate maxTokens (int) -> maxTokens { input, output }
+        agents = data.get("agents", {})
+        defaults = agents.get("defaults", {})
+        if "maxTokens" in defaults and isinstance(defaults["maxTokens"], int):
+            defaults["maxTokens"] = {
+                "input": defaults.get("maxInputTokens", 120000),
+                "output": defaults.pop("maxTokens")
+            }
+            defaults.pop("maxInputTokens", None)
+
+        # Move tools.exec.restrictToWorkspace → tools.restrictToWorkspace
+        tools = data.get("tools", {})
+        exec_cfg = tools.get("exec", {})
+        if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
+            tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
+        return data
 
     @property
     def workspace_path(self) -> Path:

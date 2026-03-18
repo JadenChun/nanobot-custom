@@ -61,6 +61,17 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
 
 def _migrate_config(data: dict) -> dict:
     """Migrate old config formats to current."""
+    # Migrate maxTokens (int) -> maxTokens { input, output }
+    agents = data.get("agents", {})
+    defaults = agents.get("defaults", {})
+    if "maxTokens" in defaults and isinstance(defaults["maxTokens"], int):
+        old_output = defaults.pop("maxTokens")
+        old_input = defaults.pop("maxInputTokens", 120000)
+        defaults["maxTokens"] = {
+            "input": old_input,
+            "output": old_output
+        }
+
     # Move tools.exec.restrictToWorkspace → tools.restrictToWorkspace
     tools = data.get("tools", {})
     exec_cfg = tools.get("exec", {})

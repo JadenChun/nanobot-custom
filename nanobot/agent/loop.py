@@ -29,7 +29,7 @@ from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import AgentBrowserConfig, ChannelsConfig, ExecToolConfig
+    from nanobot.config.schema import AgentBrowserConfig, ChannelsConfig, ExecToolConfig, MaxTokensConfig
     from nanobot.cron.service import CronService
 
 
@@ -53,7 +53,7 @@ class AgentLoop:
         model: str | None = None,
         max_iterations: int = 40,
         temperature: float = 0.1,
-        max_tokens: int = 4096,
+        max_tokens: "MaxTokensConfig | None" = None,
         memory_window: int = 100,
         brave_api_key: str | None = None,
         agent_browser_config: AgentBrowserConfig | None = None,
@@ -63,10 +63,9 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
-        max_input_tokens: int = 120000,
         skill_paths: list[Path] | None = None,
     ):
-        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig
+        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, MaxTokensConfig
         self.bus = bus
         self.channels_config = channels_config
         self.provider = provider
@@ -74,8 +73,7 @@ class AgentLoop:
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
         self.temperature = temperature
-        self.max_tokens = max_tokens
-        self.max_input_tokens = max_input_tokens
+        self.max_tokens = max_tokens or MaxTokensConfig()
         self.memory_window = memory_window
         self.brave_api_key = brave_api_key
         self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
@@ -213,7 +211,7 @@ class AgentLoop:
                 tools=self.tools.get_definitions(),
                 model=self.model,
                 temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                max_tokens=self.max_tokens.output,
             )
 
             if response.has_tool_calls:
@@ -361,13 +359,13 @@ class AgentLoop:
             )
             
             # Check and reduce context size if over limit
-            if self.max_input_tokens > 0:
+            if self.max_tokens.input > 0:
                 try:
                     import litellm
                     tokens = litellm.token_counter(model=self.model, messages=messages)
-                    if tokens > self.max_input_tokens:
-                        logger.warning(f"System msg context size ({tokens} tokens) exceeds limit {self.max_input_tokens}. Condensing history...")
-                        while tokens > self.max_input_tokens and len(history) > 0:
+                    if tokens > self.max_tokens.input:
+                        logger.warning(f"System msg context size ({tokens} tokens) exceeds limit {self.max_tokens.input}. Condensing history...")
+                        while tokens > self.max_tokens.input and len(history) > 0:
                             history.pop(0)
                             messages = self.context.build_messages(
                                 history=history,
@@ -474,16 +472,16 @@ class AgentLoop:
         )
 
         # Check and reduce context size if over limit
-        if self.max_input_tokens > 0:
+        if self.max_tokens.input > 0:
             try:
                 import litellm
                 # Check current token usage
                 tokens = litellm.token_counter(model=self.model, messages=initial_messages)
-                if tokens > self.max_input_tokens:
-                    logger.warning(f"Context size ({tokens} tokens) exceeds limit {self.max_input_tokens}. Condensing history...")
+                if tokens > self.max_tokens.input:
+                    logger.warning(f"Context size ({tokens} tokens) exceeds limit {self.max_tokens.input}. Condensing history...")
                     
                     # Pop oldest messages until we fit
-                    while tokens > self.max_input_tokens and len(history) > 0:
+                    while tokens > self.max_tokens.input and len(history) > 0:
                         history.pop(0)
                         initial_messages = self.context.build_messages(
                             history=history,
