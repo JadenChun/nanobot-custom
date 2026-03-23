@@ -162,39 +162,45 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
         return messages
 
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
-        """Build user message content with optional base64-encoded images."""
+        """Build user message content with optional base64-encoded media (images, video, audio)."""
         if not media:
             return text
-        
-        images = []
+
+        media_parts: list[dict[str, Any]] = []
         for path in media:
             p = Path(path)
             mime, _ = mimetypes.guess_type(path)
-            if not p.is_file() or not mime or not mime.startswith("image/"):
+            if not p.is_file() or not mime:
                 continue
             b64 = base64.b64encode(p.read_bytes()).decode()
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-        
-        if not images:
+            if mime.startswith("image/"):
+                media_parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+            elif mime.startswith("video/"):
+                media_parts.append({"type": "video_url", "video_url": {"url": f"data:{mime};base64,{b64}"}})
+            elif mime.startswith("audio/"):
+                ext = p.suffix.lstrip(".") or mime.split("/")[-1]
+                media_parts.append({"type": "input_audio", "input_audio": {"data": b64, "format": ext}})
+
+        if not media_parts:
             return text
-        return images + [{"type": "text", "text": text}]
+        return media_parts + [{"type": "text", "text": text}]
     
     def add_tool_result(
         self,
         messages: list[dict[str, Any]],
         tool_call_id: str,
         tool_name: str,
-        result: str
+        result: str,
     ) -> list[dict[str, Any]]:
         """
         Add a tool result to the message list.
-        
+
         Args:
             messages: Current message list.
             tool_call_id: ID of the tool call.
             tool_name: Name of the tool.
-            result: Tool execution result.
-        
+            result: Tool execution result — plain string or multimodal content blocks.
+
         Returns:
             Updated message list.
         """

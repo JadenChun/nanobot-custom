@@ -1,6 +1,8 @@
 """File system tools: read, write, edit."""
 
+import base64
 import difflib
+import mimetypes
 from pathlib import Path
 from typing import Any
 
@@ -34,8 +36,8 @@ class ReadFileTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Read the contents of a file at the given path."
-    
+        return "Read the contents of a file at the given path. Supports text files, images, video, and audio — media files are sent directly to the model for visual/audio analysis."
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
@@ -48,8 +50,8 @@ class ReadFileTool(Tool):
             },
             "required": ["path"]
         }
-    
-    async def execute(self, path: str, **kwargs: Any) -> str:
+
+    async def execute(self, path: str, **kwargs: Any) -> str | list[dict[str, Any]]:
         try:
             file_path = _resolve_path(path, self._workspace, self._allowed_dir)
             if not file_path.exists():
@@ -57,12 +59,35 @@ class ReadFileTool(Tool):
             if not file_path.is_file():
                 return f"Error: Not a file: {path}"
 
+            mime, _ = mimetypes.guess_type(str(file_path))
+
+            # Media files → return multimodal content blocks
+            if mime and (mime.startswith("image/") or mime.startswith("video/") or mime.startswith("audio/")):
+                return self._read_media(file_path, mime)
+
             content = file_path.read_text(encoding="utf-8")
             return content
         except PermissionError as e:
             return f"Error: {e}"
+        except UnicodeDecodeError:
+            return f"Error: {path} is a binary file and cannot be read as text."
         except Exception as e:
             return f"Error reading file: {str(e)}"
+
+    @staticmethod
+    def _read_media(file_path: Path, mime: str) -> list[dict[str, Any]]:
+        """Return multimodal content blocks for a media file."""
+        b64 = base64.b64encode(file_path.read_bytes()).decode()
+        blocks: list[dict[str, Any]] = []
+        if mime.startswith("image/"):
+            blocks.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+        elif mime.startswith("video/"):
+            blocks.append({"type": "video_url", "video_url": {"url": f"data:{mime};base64,{b64}"}})
+        elif mime.startswith("audio/"):
+            ext = file_path.suffix.lstrip(".") or mime.split("/")[-1]
+            blocks.append({"type": "input_audio", "input_audio": {"data": b64, "format": ext}})
+        blocks.append({"type": "text", "text": f"[Media file: {file_path.name} ({mime})]"})
+        return blocks
 
 
 class WriteFileTool(Tool):

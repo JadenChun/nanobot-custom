@@ -203,6 +203,14 @@ def _convert_user_message(content: Any) -> dict[str, Any]:
                 url = (item.get("image_url") or {}).get("url")
                 if url:
                     converted.append({"type": "input_image", "image_url": url, "detail": "auto"})
+            elif item.get("type") == "video_url":
+                url = (item.get("video_url") or {}).get("url")
+                if url:
+                    converted.append({"type": "input_video", "video_url": url})
+            elif item.get("type") == "input_audio":
+                audio = item.get("input_audio") or {}
+                if audio.get("data"):
+                    converted.append({"type": "input_audio", "input_audio": audio})
         if converted:
             return {"role": "user", "content": converted}
     return {"role": "user", "content": [{"type": "input_text", "text": ""}]}

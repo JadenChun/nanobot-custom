@@ -35,17 +35,17 @@ class ToolRegistry:
         """Get all tool definitions in OpenAI format."""
         return [tool.to_schema() for tool in self._tools.values()]
     
-    async def execute(self, name: str, params: dict[str, Any]) -> str:
+    async def execute(self, name: str, params: dict[str, Any]) -> str | list[dict[str, Any]]:
         """
         Execute a tool by name with given parameters.
-        
+
         Args:
             name: Tool name.
             params: Tool parameters.
-        
+
         Returns:
-            Tool execution result as string.
-        
+            Tool execution result as string or multimodal content blocks.
+
         Raises:
             KeyError: If tool not found.
         """

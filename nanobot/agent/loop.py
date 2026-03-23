@@ -260,16 +260,34 @@ class AgentLoop:
                     reasoning_content=response.reasoning_content,
                 )
 
+                media_blocks: list[dict[str, Any]] = []
                 for tool_call in response.tool_calls:
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    # Multimodal results: extract media blocks, keep text in tool result
+                    if isinstance(result, list):
+                        text_parts = []
+                        for block in result:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                text_parts.append(block.get("text", ""))
+                            else:
+                                media_blocks.append(block)
+                        result = "\n".join(text_parts) or "(media content)"
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                # Inject media as a user message so providers receive it correctly
+                if media_blocks:
+                    media_blocks.append({"type": "text", "text": "Above is the media content from the tool call. Please analyze it directly."})
+                    messages.append({"role": "user", "content": media_blocks})
             else:
                 final_content = self._strip_think(response.content)
+                messages = self.context.add_assistant_message(
+                    messages, response.content, None,
+                    reasoning_content=response.reasoning_content,
+                )
                 break
 
         if final_content is None and iteration >= self.max_iterations:
@@ -520,12 +538,18 @@ class AgentLoop:
                 channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
             ))
 
-        final_content, _, all_msgs = await self._run_agent_loop(
+        final_content, tools_used, all_msgs = await self._run_agent_loop(
             initial_messages, on_progress=on_progress or _bus_progress,
         )
 
         if final_content is None:
-            final_content = "I've completed processing but have no response to give."
+            # Check if the last assistant message has reasoning content
+            if all_msgs and all_msgs[-1].get("role") == "assistant" and all_msgs[-1].get("reasoning_content"):
+                final_content = all_msgs[-1]["reasoning_content"]
+            elif tools_used:
+                final_content = "I've completed the requested actions."
+            else:
+                final_content = "I've completed processing but have no response to give."
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
@@ -549,6 +573,13 @@ class AgentLoop:
         from datetime import datetime
         for m in messages[skip:]:
             entry = {k: v for k, v in m.items() if k != "reasoning_content"}
+            # Strip multimodal content from user messages injected for media
+            if entry.get("role") == "user" and isinstance(entry.get("content"), list):
+                text_parts = [
+                    b.get("text", "") for b in entry["content"]
+                    if isinstance(b, dict) and b.get("type") == "text"
+                ]
+                entry["content"] = "\n".join(text_parts) or "(media content)"
             if entry.get("role") == "tool" and isinstance(entry.get("content"), str):
                 content = entry["content"]
                 if len(content) > self._TOOL_RESULT_MAX_CHARS:

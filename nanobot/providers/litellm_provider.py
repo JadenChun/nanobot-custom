@@ -157,9 +157,12 @@ class LiteLLMProvider(LLMProvider):
         sanitized = []
         for msg in messages:
             clean = {k: v for k, v in msg.items() if k in _ALLOWED_MSG_KEYS}
-            # Strict providers require "content" even when assistant only has tool_calls
-            if clean.get("role") == "assistant" and "content" not in clean:
-                clean["content"] = ""
+            # Strict providers require "content" even when assistant only has tool_calls.
+            # Also fix None content — some providers reject assistant messages
+            # that have neither meaningful content nor tool_calls.
+            if clean.get("role") == "assistant":
+                if "content" not in clean or clean["content"] is None:
+                    clean["content"] = ""
             sanitized.append(clean)
         return sanitized
 
@@ -232,6 +235,8 @@ class LiteLLMProvider(LLMProvider):
     
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
+        if not hasattr(response, "choices") or not response.choices:
+            raise RuntimeError("LLM returned no choices in response.")
         choice = response.choices[0]
         message = choice.message
         
