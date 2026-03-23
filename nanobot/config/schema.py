@@ -210,8 +210,16 @@ class ProviderConfig(Base):
     """LLM provider configuration."""
 
     api_key: str = ""
+    api_keys: list[str] = Field(default_factory=list)  # Multiple keys for round-robin rotation
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
+
+    @property
+    def effective_keys(self) -> list[str]:
+        """Return all configured keys. api_keys takes precedence; falls back to [api_key] if set."""
+        if self.api_keys:
+            return [k for k in self.api_keys if k]
+        return [self.api_key] if self.api_key else []
 
 
 class ProvidersConfig(Base):
@@ -343,14 +351,14 @@ class Config(BaseSettings):
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
             if p and model_prefix and normalized_prefix == spec.name:
-                if spec.is_oauth or p.api_key:
+                if spec.is_oauth or p.api_key or p.api_keys:
                     return p, spec.name
 
         # Match by keyword (order follows PROVIDERS registry)
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
             if p and any(_kw_matches(kw) for kw in spec.keywords):
-                if spec.is_oauth or p.api_key:
+                if spec.is_oauth or p.api_key or p.api_keys:
                     return p, spec.name
 
         # Fallback: gateways first, then others (follows registry order)
@@ -359,7 +367,7 @@ class Config(BaseSettings):
             if spec.is_oauth:
                 continue
             p = getattr(self.providers, spec.name, None)
-            if p and p.api_key:
+            if p and (p.api_key or p.api_keys):
                 return p, spec.name
         return None, None
 
@@ -376,7 +384,10 @@ class Config(BaseSettings):
     def get_api_key(self, model: str | None = None) -> str | None:
         """Get API key for the given model. Falls back to first available key."""
         p = self.get_provider(model)
-        return p.api_key if p else None
+        if not p:
+            return None
+        keys = p.effective_keys
+        return keys[0] if keys else None
 
     def get_api_base(self, model: str | None = None) -> str | None:
         """Get API base URL for the given model. Applies default URLs for known gateways."""

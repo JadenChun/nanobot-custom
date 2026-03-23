@@ -26,8 +26,9 @@ class LiteLLMProvider(LLMProvider):
     """
     
     def __init__(
-        self, 
-        api_key: str | None = None, 
+        self,
+        api_key: str | None = None,
+        api_keys: list[str] | None = None,
         api_base: str | None = None,
         default_model: str = "anthropic/claude-opus-4-5",
         extra_headers: dict[str, str] | None = None,
@@ -36,15 +37,20 @@ class LiteLLMProvider(LLMProvider):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
-        
+
+        # Round-robin key rotation state
+        self._api_keys: list[str] = api_keys if api_keys else ([api_key] if api_key else [])
+        self._key_index: int = 0
+        self.api_key = self._api_keys[0] if self._api_keys else None
+
         # Detect gateway / local deployment.
         # provider_name (from config key) is the primary signal;
         # api_key / api_base are fallback for auto-detection.
-        self._gateway = find_gateway(provider_name, api_key, api_base)
-        
-        # Configure environment variables
-        if api_key:
-            self._setup_env(api_key, api_base, default_model)
+        self._gateway = find_gateway(provider_name, self.api_key, api_base)
+
+        # Configure environment variables (uses first key)
+        if self.api_key:
+            self._setup_env(self.api_key, api_base, default_model)
         
         if api_base:
             litellm.api_base = api_base
@@ -54,6 +60,25 @@ class LiteLLMProvider(LLMProvider):
         # Drop unsupported parameters for providers (e.g., gpt-5 rejects some params)
         litellm.drop_params = True
     
+    def _next_key(self) -> str | None:
+        """Advance to the next API key in round-robin order. Returns the new key, or None if only one key."""
+        if len(self._api_keys) <= 1:
+            return None
+        self._key_index = (self._key_index + 1) % len(self._api_keys)
+        self.api_key = self._api_keys[self._key_index]
+        return self.api_key
+
+    @staticmethod
+    def _is_rate_limit_error(exc: Exception) -> bool:
+        """Return True if the exception indicates a rate-limit or quota error."""
+        if isinstance(exc, litellm.RateLimitError):
+            return True
+        status = getattr(exc, "status_code", None)
+        if status == 429:
+            return True
+        msg = str(exc).lower()
+        return any(kw in msg for kw in ("rate limit", "rate_limit", "quota", "resource_exhausted", "429"))
+
     def _setup_env(self, api_key: str, api_base: str | None, model: str) -> None:
         """Set environment variables based on detected provider."""
         spec = self._gateway or find_by_model(model)
@@ -223,15 +248,30 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
         
-        try:
-            response = await acompletion(**kwargs)
-            return self._parse_response(response)
-        except Exception as e:
-            # Return error as content for graceful handling
-            return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
-                finish_reason="error",
-            )
+        # Retry loop: rotate API keys on rate-limit / quota errors
+        keys_tried = 0
+        total_keys = max(len(self._api_keys), 1)
+        last_error: Exception | None = None
+
+        while keys_tried < total_keys:
+            kwargs["api_key"] = self.api_key
+            try:
+                response = await acompletion(**kwargs)
+                return self._parse_response(response)
+            except Exception as e:
+                last_error = e
+                if self._is_rate_limit_error(e) and self._next_key() is not None:
+                    keys_tried += 1
+                    continue
+                return LLMResponse(
+                    content=f"Error calling LLM: {str(e)}",
+                    finish_reason="error",
+                )
+
+        return LLMResponse(
+            content=f"Error calling LLM: All {total_keys} API keys rate-limited. Last error: {last_error}",
+            finish_reason="error",
+        )
     
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
