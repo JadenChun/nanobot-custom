@@ -1,12 +1,19 @@
 """LiteLLM provider implementation for multi-provider support."""
 
+import asyncio
+import collections
 import json
 import json_repair
+import logging
 import os
+import re
+import time
 from typing import Any
 
 import litellm
 from litellm import acompletion
+
+logger = logging.getLogger(__name__)
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.providers.registry import find_by_model, find_gateway
@@ -33,6 +40,7 @@ class LiteLLMProvider(LLMProvider):
         default_model: str = "anthropic/claude-opus-4-5",
         extra_headers: dict[str, str] | None = None,
         provider_name: str | None = None,
+        rate_limit: int = 0,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
@@ -43,6 +51,10 @@ class LiteLLMProvider(LLMProvider):
         self._key_index: int = 0
         self.api_key = self._api_keys[0] if self._api_keys else None
 
+        # Proactive rate limiting (sliding window, requests per minute)
+        self._rate_limit = rate_limit  # 0 = unlimited
+        self._request_timestamps: collections.deque[float] = collections.deque()
+
         # Detect gateway / local deployment.
         # provider_name (from config key) is the primary signal;
         # api_key / api_base are fallback for auto-detection.
@@ -51,10 +63,10 @@ class LiteLLMProvider(LLMProvider):
         # Configure environment variables (uses first key)
         if self.api_key:
             self._setup_env(self.api_key, api_base, default_model)
-        
+
         if api_base:
             litellm.api_base = api_base
-        
+
         # Disable LiteLLM logging noise
         litellm.suppress_debug_info = True
         # Drop unsupported parameters for providers (e.g., gpt-5 rejects some params)
@@ -68,6 +80,11 @@ class LiteLLMProvider(LLMProvider):
         self.api_key = self._api_keys[self._key_index]
         return self.api_key
 
+    # Rate-limit retry configuration
+    RATE_LIMIT_MAX_RETRIES = 5
+    RATE_LIMIT_BASE_DELAY = 10.0   # seconds
+    RATE_LIMIT_MAX_DELAY = 120.0   # seconds
+
     @staticmethod
     def _is_rate_limit_error(exc: Exception) -> bool:
         """Return True if the exception indicates a rate-limit or quota error."""
@@ -78,6 +95,43 @@ class LiteLLMProvider(LLMProvider):
             return True
         msg = str(exc).lower()
         return any(kw in msg for kw in ("rate limit", "rate_limit", "quota", "resource_exhausted", "429"))
+
+    @staticmethod
+    def _parse_retry_delay(exc: Exception) -> float | None:
+        """Extract a suggested retry delay (in seconds) from the error message, if present."""
+        msg = str(exc)
+        # Match patterns like "retry in 53.676334989s" or "retryDelay": "53s"
+        match = re.search(r'retry\s*(?:in|Delay["\s:]*)\s*"?(\d+(?:\.\d+)?)\s*s', msg, re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+        return None
+
+    async def _wait_for_rate_limit(self) -> None:
+        """Sleep if necessary to stay within the configured rate limit (requests/minute)."""
+        if self._rate_limit <= 0:
+            return
+
+        now = time.monotonic()
+        window = 60.0  # 1 minute sliding window
+
+        # Evict timestamps older than the window
+        while self._request_timestamps and self._request_timestamps[0] <= now - window:
+            self._request_timestamps.popleft()
+
+        if len(self._request_timestamps) >= self._rate_limit:
+            # Must wait until the oldest request in the window expires
+            oldest = self._request_timestamps[0]
+            delay = oldest + window - now + 1.0  # +1s safety buffer
+            if delay > 0:
+                logger.info(
+                    "Rate limit: %d/%d requests in window. Waiting %.1fs before next request…",
+                    len(self._request_timestamps),
+                    self._rate_limit,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        self._request_timestamps.append(time.monotonic())
 
     def _setup_env(self, api_key: str, api_base: str | None, model: str) -> None:
         """Set environment variables based on detected provider."""
@@ -248,30 +302,63 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
         
-        # Retry loop: rotate API keys on rate-limit / quota errors
+        # Retry loop: rotate API keys on rate-limit / quota errors,
+        # then fall back to exponential backoff with retry.
         keys_tried = 0
         total_keys = max(len(self._api_keys), 1)
         last_error: Exception | None = None
+        rate_limit_retries = 0
 
-        while keys_tried < total_keys:
+        while True:
             kwargs["api_key"] = self.api_key
             try:
+                await self._wait_for_rate_limit()
                 response = await acompletion(**kwargs)
                 return self._parse_response(response)
             except Exception as e:
                 last_error = e
-                if self._is_rate_limit_error(e) and self._next_key() is not None:
+                if not self._is_rate_limit_error(e):
+                    return LLMResponse(
+                        content=f"Error calling LLM: {str(e)}",
+                        finish_reason="error",
+                    )
+
+                # Try rotating to next API key first
+                if keys_tried < total_keys - 1 and self._next_key() is not None:
                     keys_tried += 1
                     continue
-                return LLMResponse(
-                    content=f"Error calling LLM: {str(e)}",
-                    finish_reason="error",
-                )
 
-        return LLMResponse(
-            content=f"Error calling LLM: All {total_keys} API keys rate-limited. Last error: {last_error}",
-            finish_reason="error",
-        )
+                # All keys exhausted (or single key) — use backoff retry
+                rate_limit_retries += 1
+                if rate_limit_retries > self.RATE_LIMIT_MAX_RETRIES:
+                    return LLMResponse(
+                        content=(
+                            f"Error calling LLM: Rate limit exceeded after "
+                            f"{self.RATE_LIMIT_MAX_RETRIES} retries. Last error: {last_error}"
+                        ),
+                        finish_reason="error",
+                    )
+
+                # Use server-suggested delay if available, otherwise exponential backoff
+                suggested = self._parse_retry_delay(e)
+                if suggested is not None:
+                    delay = min(suggested + 2.0, self.RATE_LIMIT_MAX_DELAY)
+                else:
+                    delay = min(
+                        self.RATE_LIMIT_BASE_DELAY * (2 ** (rate_limit_retries - 1)),
+                        self.RATE_LIMIT_MAX_DELAY,
+                    )
+
+                logger.warning(
+                    "Rate limited (attempt %d/%d). Retrying in %.1fs…",
+                    rate_limit_retries,
+                    self.RATE_LIMIT_MAX_RETRIES,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+                # Reset key rotation for the next round
+                keys_tried = 0
     
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
