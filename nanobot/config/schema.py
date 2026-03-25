@@ -214,6 +214,7 @@ class ProviderConfig(Base):
     api_keys: list[str] = Field(default_factory=list)  # Multiple keys for round-robin rotation
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
+    rate_limit: int = 0  # Max requests per minute (0 = unlimited). E.g. Gemini free tier: 5
 
     @property
     def effective_keys(self) -> list[str]:

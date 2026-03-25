@@ -1,11 +1,13 @@
 """LiteLLM provider implementation for multi-provider support."""
 
 import asyncio
+import collections
 import json
 import json_repair
 import logging
 import os
 import re
+import time
 from typing import Any
 
 import litellm
@@ -38,6 +40,7 @@ class LiteLLMProvider(LLMProvider):
         default_model: str = "anthropic/claude-opus-4-5",
         extra_headers: dict[str, str] | None = None,
         provider_name: str | None = None,
+        rate_limit: int = 0,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
@@ -48,6 +51,10 @@ class LiteLLMProvider(LLMProvider):
         self._key_index: int = 0
         self.api_key = self._api_keys[0] if self._api_keys else None
 
+        # Proactive rate limiting (sliding window, requests per minute)
+        self._rate_limit = rate_limit  # 0 = unlimited
+        self._request_timestamps: collections.deque[float] = collections.deque()
+
         # Detect gateway / local deployment.
         # provider_name (from config key) is the primary signal;
         # api_key / api_base are fallback for auto-detection.
@@ -56,10 +63,10 @@ class LiteLLMProvider(LLMProvider):
         # Configure environment variables (uses first key)
         if self.api_key:
             self._setup_env(self.api_key, api_base, default_model)
-        
+
         if api_base:
             litellm.api_base = api_base
-        
+
         # Disable LiteLLM logging noise
         litellm.suppress_debug_info = True
         # Drop unsupported parameters for providers (e.g., gpt-5 rejects some params)
@@ -98,6 +105,33 @@ class LiteLLMProvider(LLMProvider):
         if match:
             return float(match.group(1))
         return None
+
+    async def _wait_for_rate_limit(self) -> None:
+        """Sleep if necessary to stay within the configured rate limit (requests/minute)."""
+        if self._rate_limit <= 0:
+            return
+
+        now = time.monotonic()
+        window = 60.0  # 1 minute sliding window
+
+        # Evict timestamps older than the window
+        while self._request_timestamps and self._request_timestamps[0] <= now - window:
+            self._request_timestamps.popleft()
+
+        if len(self._request_timestamps) >= self._rate_limit:
+            # Must wait until the oldest request in the window expires
+            oldest = self._request_timestamps[0]
+            delay = oldest + window - now + 1.0  # +1s safety buffer
+            if delay > 0:
+                logger.info(
+                    "Rate limit: %d/%d requests in window. Waiting %.1fs before next request…",
+                    len(self._request_timestamps),
+                    self._rate_limit,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        self._request_timestamps.append(time.monotonic())
 
     def _setup_env(self, api_key: str, api_base: str | None, model: str) -> None:
         """Set environment variables based on detected provider."""
@@ -278,6 +312,7 @@ class LiteLLMProvider(LLMProvider):
         while True:
             kwargs["api_key"] = self.api_key
             try:
+                await self._wait_for_rate_limit()
                 response = await acompletion(**kwargs)
                 return self._parse_response(response)
             except Exception as e:
