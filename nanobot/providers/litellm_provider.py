@@ -87,14 +87,14 @@ class LiteLLMProvider(LLMProvider):
 
     @staticmethod
     def _is_rate_limit_error(exc: Exception) -> bool:
-        """Return True if the exception indicates a rate-limit or quota error."""
-        if isinstance(exc, litellm.RateLimitError):
+        """Return True if the exception indicates a rate-limit, quota, or service-unavailable error."""
+        if isinstance(exc, (litellm.RateLimitError, litellm.ServiceUnavailableError)):
             return True
         status = getattr(exc, "status_code", None)
-        if status == 429:
+        if status in (429, 503):
             return True
         msg = str(exc).lower()
-        return any(kw in msg for kw in ("rate limit", "rate_limit", "quota", "resource_exhausted", "429"))
+        return any(kw in msg for kw in ("rate limit", "rate_limit", "quota", "resource_exhausted", "429", "unavailable", "high demand", "503"))
 
     @staticmethod
     def _parse_retry_delay(exc: Exception) -> float | None:
@@ -333,7 +333,7 @@ class LiteLLMProvider(LLMProvider):
                 if rate_limit_retries > self.RATE_LIMIT_MAX_RETRIES:
                     return LLMResponse(
                         content=(
-                            f"Error calling LLM: Rate limit exceeded after "
+                            f"Error calling LLM: Retryable error persisted after "
                             f"{self.RATE_LIMIT_MAX_RETRIES} retries. Last error: {last_error}"
                         ),
                         finish_reason="error",
@@ -350,7 +350,7 @@ class LiteLLMProvider(LLMProvider):
                     )
 
                 logger.warning(
-                    "Rate limited (attempt %d/%d). Retrying in %.1fs…",
+                    "Retryable LLM error (attempt %d/%d). Retrying in %.1fs…",
                     rate_limit_retries,
                     self.RATE_LIMIT_MAX_RETRIES,
                     delay,
