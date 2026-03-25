@@ -20,10 +20,17 @@ class ContextBuilder:
     
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
     
-    def __init__(self, workspace: Path, skill_paths: list[Path] | None = None):
+    def __init__(self, workspace: Path, skill_paths: list[Path] | None = None, context_path: Path | None = None):
         self.workspace = workspace
+        self.context_path = context_path
         self.memory = MemoryStore(workspace)
-        self.skills = SkillsLoader(workspace, extra_paths=skill_paths)
+
+        # If a context repo is configured, include its skills dir in extra paths
+        all_skill_paths = list(skill_paths or [])
+        if context_path and (context_path / "skills").is_dir():
+            all_skill_paths.append(context_path / "skills")
+
+        self.skills = SkillsLoader(workspace, extra_paths=all_skill_paths or None)
     
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
@@ -49,6 +56,14 @@ class ContextBuilder:
         memory = self.memory.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
+
+        # Context repo memory (read-only, supplemental)
+        if self.context_path:
+            ctx_memory_file = self.context_path / "memory" / "MEMORY.md"
+            if ctx_memory_file.exists():
+                ctx_memory = ctx_memory_file.read_text(encoding="utf-8")
+                if ctx_memory.strip():
+                    parts.append(f"# Context Memory\n\n{ctx_memory}")
         
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content
@@ -80,9 +95,19 @@ Skills with available="false" need dependencies installed first - you can try in
         system = platform.system()
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}, Python {platform.python_version()}"
         
+        context_section = ""
+        if self.context_path:
+            ctx_path = str(self.context_path.expanduser().resolve())
+            context_section = (
+                f"\n## Context Repository\n"
+                f"A shared context repository is loaded from: {ctx_path}\n"
+                f"- Context memory, skills, and bootstrap files from this repo supplement your workspace.\n"
+                f"- Context repo files are read-only - write your own data to the workspace.\n"
+            )
+
         return f"""# nanobot 🐈
 
-You are nanobot, a helpful AI assistant. 
+You are nanobot, a helpful AI assistant.
 
 ## Current Time
 {now} ({tz})
@@ -95,7 +120,7 @@ Your workspace is at: {workspace_path}
 - Long-term memory: {workspace_path}/memory/MEMORY.md
 - History log: {workspace_path}/memory/HISTORY.md (grep-searchable)
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
-
+{context_section}
 Reply directly with text for conversations. Only use the 'message' tool to send to a specific chat channel.
 
 ## Tool Call Guidelines
@@ -110,15 +135,32 @@ Reply directly with text for conversations. Only use the 'message' tool to send 
 - Recall past events: grep {workspace_path}/memory/HISTORY.md"""
     
     def _load_bootstrap_files(self) -> str:
-        """Load all bootstrap files from workspace."""
+        """Load all bootstrap files from workspace and context repo."""
         parts = []
-        
+
         for filename in self.BOOTSTRAP_FILES:
             file_path = self.workspace / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
-        
+
+        # Load additional bootstrap files from context repo (won't override workspace files)
+        if self.context_path:
+            loaded_names = {f for f in self.BOOTSTRAP_FILES if (self.workspace / f).exists()}
+            for filename in self.BOOTSTRAP_FILES:
+                if filename not in loaded_names:
+                    ctx_file = self.context_path / filename
+                    if ctx_file.exists():
+                        content = ctx_file.read_text(encoding="utf-8")
+                        parts.append(f"## {filename} (context)\n\n{content}")
+
+            # Load any extra .md files from context repo root (not in BOOTSTRAP_FILES)
+            if self.context_path.is_dir():
+                for md_file in sorted(self.context_path.glob("*.md")):
+                    if md_file.name not in self.BOOTSTRAP_FILES and md_file.name != "README.md":
+                        content = md_file.read_text(encoding="utf-8")
+                        parts.append(f"## {md_file.name} (context)\n\n{content}")
+
         return "\n\n".join(parts) if parts else ""
     
     def build_messages(

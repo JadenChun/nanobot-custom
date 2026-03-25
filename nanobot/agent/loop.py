@@ -64,6 +64,7 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         skill_paths: list[Path] | None = None,
+        context_path: Path | None = None,
     ):
         from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, MaxTokensConfig
         self.bus = bus
@@ -81,7 +82,7 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        self.context = ContextBuilder(workspace, skill_paths=skill_paths)
+        self.context = ContextBuilder(workspace, skill_paths=skill_paths, context_path=context_path)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
