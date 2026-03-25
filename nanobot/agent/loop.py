@@ -83,6 +83,7 @@ class AgentLoop:
         self.restrict_to_workspace = restrict_to_workspace
 
         self.context = ContextBuilder(workspace, skill_paths=skill_paths, context_path=context_path)
+        self.context_path = context_path
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -414,6 +415,7 @@ class AgentLoop:
             final_content, _, all_msgs = await self._run_agent_loop(messages)
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
+            self._maybe_sync_context_repo()
             return OutboundMessage(channel=channel, chat_id=chat_id,
                                   content=final_content or "Background task completed.")
 
@@ -557,6 +559,7 @@ class AgentLoop:
 
         self._save_turn(session, all_msgs, 1 + len(history))
         self.sessions.save(session)
+        self._maybe_sync_context_repo()
 
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
@@ -595,6 +598,23 @@ class AgentLoop:
             session, self.provider, self.model,
             archive_all=archive_all, memory_window=self.memory_window,
         )
+
+    def _maybe_sync_context_repo(self) -> None:
+        """If a context repo is configured, schedule a background git sync."""
+        if not self.context_path:
+            return
+        from nanobot.utils.git_sync import async_sync_context_repo
+
+        async def _sync():
+            try:
+                await async_sync_context_repo(self.context_path)
+            except Exception:
+                logger.exception("Context repo sync failed")
+
+        task = asyncio.create_task(_sync())
+        # prevent task from being garbage collected
+        self._consolidation_tasks.add(task)
+        task.add_done_callback(self._consolidation_tasks.discard)
 
     async def process_direct(
         self,
