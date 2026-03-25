@@ -197,6 +197,7 @@ class AgentDefaults(Base):
     temperature: float = 0.1
     max_tool_iterations: int = 40
     memory_window: int = 100
+    context_path: str = ""  # Path to a local context repo (e.g. a git repo with memory, skills, bootstrap files)
     skill_paths: list[str] = Field(default_factory=list)  # Additional skill directories (e.g. private git repos)
 
 

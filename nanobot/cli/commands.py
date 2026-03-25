@@ -277,6 +277,14 @@ def _resolve_skill_paths(config: Config) -> list[Path] | None:
     return [Path(p).expanduser().resolve() for p in raw]
 
 
+def _resolve_context_path(config: Config) -> Path | None:
+    """Resolve context_path from config string to an expanded Path object."""
+    raw = config.agents.defaults.context_path
+    if not raw:
+        return None
+    return Path(raw).expanduser().resolve()
+
+
 # ============================================================================
 # Gateway / Server
 # ============================================================================
@@ -331,6 +339,7 @@ def gateway(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         skill_paths=_resolve_skill_paths(config),
+        context_path=_resolve_context_path(config),
     )
     
     # Set cron callback (needs agent)
@@ -494,6 +503,7 @@ def agent(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         skill_paths=_resolve_skill_paths(config),
+        context_path=_resolve_context_path(config),
     )
     
     # Show spinner when logs are off (no output to miss); skip when logs are on
@@ -986,6 +996,7 @@ def cron_run(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         skill_paths=_resolve_skill_paths(config),
+        context_path=_resolve_context_path(config),
     )
 
     store_path = get_data_dir() / "cron" / "jobs.json"
