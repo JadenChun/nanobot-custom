@@ -182,7 +182,7 @@ class SubagentManager:
     # ------------------------------------------------------------------
 
     def _build_review_tools(self) -> ToolRegistry:
-        """Build a read-only tool set for the review agent."""
+        """Build reviewer tools (no direct write tools; exec is policy-constrained)."""
         tools = ToolRegistry()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
@@ -216,13 +216,13 @@ You are a review agent. Your job is to critically evaluate whether a generation 
 
 ## Your Role
 - Be skeptical. Assume the output may be incomplete, incorrect, or low quality until proven otherwise.
-- Verify claims by reading output files, running tests, or checking structure.
-- Use web search to research evaluation criteria if you are unsure how to assess quality for this type of task.
-- Run linters, tests, or validation commands via exec when applicable.
+- Verify claims by inspecting concrete outputs, artifacts, files, command results, or structure.
+- Use web search to research evaluation criteria only when needed for this task type.
+- Run verification commands via exec when applicable (tests, linters, log checks, artifact checks).
 - Be specific in your feedback — cite file paths, exact issues, and concrete suggestions.
 
 ## Rules
-1. You CANNOT modify any files. You have read-only access plus exec for running tests/linters.
+1. Policy: you MUST NOT modify files, repositories, or external systems.
 2. You MUST read the actual output files or artifacts to evaluate them — do not trust summaries alone.
 3. Check for: completeness against the goal, correctness, quality, missing requirements, and potential issues.
 4. If the output is genuinely good and meets the goal, approve it. Do not reject good work unnecessarily.
@@ -369,8 +369,8 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
                 max_iterations=15,
             )
 
-            if final_result is None:
-                final_result = "Task completed but no final response was generated."
+            if not isinstance(final_result, str) or not final_result.strip():
+                raise RuntimeError("Subagent produced no final response.")
 
             # Run review loop if requested
             review_meta: dict[str, Any] | None = None
