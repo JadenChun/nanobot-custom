@@ -49,6 +49,7 @@ class AgentDefaults(Base):
     max_tool_iterations: int = 40
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
+    context_path: str = ""  # Path to a local context repo (e.g. a git repo with memory, skills, bootstrap files)
     # Deprecated compatibility field: accepted from old configs but ignored at runtime.
     memory_window: int | None = Field(default=None, exclude=True)
     skill_paths: list[str] = Field(default_factory=list)  # Additional skill directories (e.g. private git repos)
