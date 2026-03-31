@@ -179,6 +179,7 @@ class AgentLoop:
         timezone: str | None = None,
         hooks: list[AgentHook] | None = None,
         skill_paths: list[Path] | None = None,
+        context_path: Path | None = None,
     ):
         from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, WebSearchConfig
 
@@ -204,6 +205,7 @@ class AgentLoop:
             workspace,
             timezone=timezone,
             skill_paths=skill_paths,
+            context_path=context_path,
         )
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
