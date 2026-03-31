@@ -547,6 +547,7 @@ def serve(
         mcp_servers=runtime_config.tools.mcp_servers,
         channels_config=runtime_config.channels,
         timezone=runtime_config.agents.defaults.timezone,
+        skill_paths=_resolve_skill_paths(runtime_config),
     )
 
     model_name = runtime_config.agents.defaults.model
@@ -574,6 +575,14 @@ def serve(
     api_app.on_cleanup.append(on_cleanup)
 
     web.run_app(api_app, host=host, port=port, print=lambda msg: logger.info(msg))
+
+
+def _resolve_skill_paths(config: Config) -> list[Path] | None:
+    """Resolve skill_paths from config strings to expanded Path objects."""
+    raw = config.agents.defaults.skill_paths
+    if not raw:
+        return None
+    return [Path(p).expanduser().resolve() for p in raw]
 
 
 # ============================================================================
@@ -636,6 +645,7 @@ def gateway(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
+        skill_paths=_resolve_skill_paths(config),
     )
 
     # Set cron callback (needs agent)
@@ -850,6 +860,7 @@ def agent(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
+        skill_paths=_resolve_skill_paths(config),
     )
 
     # Shared reference for progress callbacks

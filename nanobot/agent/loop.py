@@ -175,6 +175,7 @@ class AgentLoop:
         max_input_tokens: int = 120000,
         timezone: str | None = None,
         hooks: list[AgentHook] | None = None,
+        skill_paths: list[Path] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -195,7 +196,11 @@ class AgentLoop:
         self._last_usage: dict[str, int] = {}
         self._extra_hooks: list[AgentHook] = hooks or []
 
-        self.context = ContextBuilder(workspace, timezone=timezone)
+        self.context = ContextBuilder(
+            workspace,
+            timezone=timezone,
+            skill_paths=skill_paths,
+        )
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider)
