@@ -207,6 +207,7 @@ class AgentLoop:
             skill_paths=skill_paths,
             context_path=context_path,
         )
+        self.context_path = context_path
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider)
@@ -532,9 +533,10 @@ class AgentLoop:
             )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
-            self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
-            return OutboundMessage(channel=channel, chat_id=chat_id,
-                                  content=final_content or "Background task completed.")
+        self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+        self._maybe_sync_context_repo()
+        return OutboundMessage(channel=channel, chat_id=chat_id,
+                              content=final_content or "Background task completed.")
 
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
@@ -627,6 +629,7 @@ class AgentLoop:
         self._save_turn(session, all_msgs, 1 + len(history))
         self.sessions.save(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+        self._maybe_sync_context_repo()
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
             return None
@@ -721,6 +724,29 @@ class AgentLoop:
             session.messages.append(entry)
         session.updated_at = datetime.now()
 
+    async def _consolidate_memory(self, session: Session, archive_all: bool = False) -> bool:
+        """Compatibility shim for background consolidation paths."""
+        if archive_all:
+            return await self.memory_consolidator.archive_unconsolidated(session)
+        await self.memory_consolidator.maybe_consolidate_by_tokens(session)
+        return True
+
+    def _maybe_sync_context_repo(self) -> None:
+        """If a context repo is configured, schedule a background git sync."""
+        if not self.context_path:
+            return
+        from nanobot.utils.git_sync import async_sync_context_repo
+
+        async def _sync() -> None:
+            try:
+                await async_sync_context_repo(self.context_path)
+            except Exception:
+                logger.exception("Context repo sync failed")
+
+        task = asyncio.create_task(_sync())
+        if isinstance(getattr(self, "_consolidation_tasks", None), set):
+            self._consolidation_tasks.add(task)
+            task.add_done_callback(self._consolidation_tasks.discard)
     async def process_direct(
         self,
         content: str,
