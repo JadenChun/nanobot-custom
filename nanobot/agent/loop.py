@@ -18,6 +18,7 @@ from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from nanobot.agent.memory import MemoryConsolidator
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
@@ -33,7 +34,7 @@ from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ChannelsConfig, ExecToolConfig, WebSearchConfig
+    from nanobot.config.schema import AgentBrowserConfig, ChannelsConfig, ExecToolConfig, WebSearchConfig
     from nanobot.cron.service import CronService
 
 
@@ -166,6 +167,7 @@ class AgentLoop:
         context_window_tokens: int = 65_536,
         web_search_config: WebSearchConfig | None = None,
         web_proxy: str | None = None,
+        agent_browser_config: AgentBrowserConfig | None = None,
         exec_config: ExecToolConfig | None = None,
         cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
@@ -177,7 +179,7 @@ class AgentLoop:
         hooks: list[AgentHook] | None = None,
         skill_paths: list[Path] | None = None,
     ):
-        from nanobot.config.schema import ExecToolConfig, WebSearchConfig
+        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, WebSearchConfig
 
         self.bus = bus
         self.channels_config = channels_config
@@ -189,6 +191,7 @@ class AgentLoop:
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
         self.max_input_tokens = max_input_tokens
+        self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
@@ -211,6 +214,7 @@ class AgentLoop:
             model=self.model,
             web_search_config=self.web_search_config,
             web_proxy=web_proxy,
+            agent_browser_config=self.agent_browser_config,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
         )
@@ -258,6 +262,13 @@ class AgentLoop:
             ))
         self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
+        if self.agent_browser_config.enabled:
+            self.tools.register(AgentBrowserTool(
+                package=self.agent_browser_config.package,
+                timeout=self.agent_browser_config.timeout,
+                max_output_chars=self.agent_browser_config.max_output_chars,
+                working_dir=str(self.workspace),
+            ))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:

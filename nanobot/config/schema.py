@@ -139,6 +139,15 @@ class WebToolsConfig(Base):
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
 
 
+class AgentBrowserConfig(Base):
+    """Agent Browser tool configuration."""
+
+    enabled: bool = True
+    package: str = "@agentic/agent-browser@latest"
+    timeout: int = 180
+    max_output_chars: int = 12000
+
+
 class ExecToolConfig(Base):
     """Shell exec tool configuration."""
 
@@ -162,6 +171,7 @@ class ToolsConfig(Base):
     """Tools configuration."""
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
+    agent_browser: AgentBrowserConfig = Field(default_factory=AgentBrowserConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
