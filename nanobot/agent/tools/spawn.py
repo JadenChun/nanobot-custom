@@ -33,9 +33,11 @@ class SpawnTool(Tool):
             "Spawn a subagent to handle a task in the background. "
             "Use this for complex or time-consuming tasks that can run independently. "
             "For important tasks (research, writing, coding), set review=true with a goal "
-            "to enable quality validation — a separate review agent will evaluate the output "
+            "to enable quality validation - a separate review agent will evaluate the output "
             "and request revisions if needed. "
-            "The subagent will complete the task and report back when done."
+            "The subagent will complete the task and report back when done. "
+            "For deliverables or existing projects, inspect the workspace first "
+            "and use a dedicated subdirectory when helpful."
         )
 
     @property
