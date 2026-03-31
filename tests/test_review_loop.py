@@ -344,6 +344,26 @@ class TestSpawnWithReview:
         # Wait for background task to start
         await asyncio.sleep(0.1)
 
+    @pytest.mark.asyncio
+    async def test_spawn_no_final_response_reports_error(self):
+        mgr = _make_manager()
+        mgr.provider.chat_with_retry.return_value = _make_response(content=None, tool_calls=None)
+
+        with patch.object(mgr, "_build_subagent_prompt", return_value="subagent prompt"), \
+             patch.object(mgr, "_build_generation_tools") as mock_tools:
+            mock_tools.return_value = MagicMock()
+            mock_tools.return_value.get_definitions.return_value = []
+            mock_tools.return_value.execute = AsyncMock(return_value="ok")
+
+            result = await mgr.spawn(task="silent task", origin_channel="cli", origin_chat_id="direct")
+
+        assert "started" in result
+        await asyncio.sleep(0.1)
+        mgr.bus.publish_inbound.assert_called()
+        msg = mgr.bus.publish_inbound.call_args.args[0]
+        assert "failed" in msg.content
+        assert "no final response" in msg.content.lower()
+
 
 class TestBuildReviewPrompt:
     """Tests for the review agent system prompt."""
@@ -359,7 +379,7 @@ class TestBuildReviewPrompt:
         with patch("nanobot.agent.context.ContextBuilder._build_runtime_context", return_value="Time: now"):
             prompt = mgr._build_review_prompt("Test goal")
         assert "skeptical" in prompt.lower()
-        assert "CANNOT modify" in prompt
+        assert "MUST NOT modify" in prompt
         assert "---REVIEW---" in prompt
 
     def test_contains_workspace(self):
