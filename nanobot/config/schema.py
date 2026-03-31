@@ -28,6 +28,13 @@ class ChannelsConfig(Base):
     send_max_retries: int = Field(default=3, ge=0, le=10)  # Max delivery attempts (initial send included)
 
 
+class MaxTokensConfig(Base):
+    """Token limits configuration."""
+
+    input: int = 120000
+    output: int = 4096
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -36,9 +43,8 @@ class AgentDefaults(Base):
     provider: str = (
         "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
     )
-    max_tokens: int = 8192
+    max_tokens: MaxTokensConfig = Field(default_factory=MaxTokensConfig)
     context_window_tokens: int = 65_536
-    max_input_tokens: int = 120000
     temperature: float = 0.1
     max_tool_iterations: int = 40
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
@@ -186,6 +192,26 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+
+    @staticmethod
+    def _migrate_config(data: dict) -> dict:
+        """Migrate old config formats to current."""
+        # Migrate maxTokens (int) -> maxTokens { input, output }
+        agents = data.get("agents", {})
+        defaults = agents.get("defaults", {})
+        if "maxTokens" in defaults and isinstance(defaults["maxTokens"], int):
+            defaults["maxTokens"] = {
+                "input": defaults.get("maxInputTokens", 120000),
+                "output": defaults.pop("maxTokens")
+            }
+            defaults.pop("maxInputTokens", None)
+
+        # Move tools.exec.restrictToWorkspace → tools.restrictToWorkspace
+        tools = data.get("tools", {})
+        exec_cfg = tools.get("exec", {})
+        if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
+            tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
+        return data
 
     @property
     def workspace_path(self) -> Path:
