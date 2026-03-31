@@ -392,7 +392,8 @@ class AgentLoop:
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
         self._running = True
-        await self._connect_mcp()
+        # Connect MCP servers in background so agent accepts messages immediately
+        asyncio.create_task(self._connect_mcp())
         logger.info("Agent loop started")
 
         while self._running:

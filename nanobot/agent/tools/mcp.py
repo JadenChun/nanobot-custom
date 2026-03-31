@@ -248,5 +248,11 @@ async def connect_mcp_servers(
                     )
 
             logger.info("MCP server '{}': connected, {} tools registered", name, registered_count)
+        except asyncio.TimeoutError:
+            logger.error(
+                "MCP server '{}': connection timed out after {}s, skipping",
+                name,
+                cfg.tool_timeout,
+            )
         except Exception as e:
             logger.error("MCP server '{}': failed to connect: {}", name, e)
