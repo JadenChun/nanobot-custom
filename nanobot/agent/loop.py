@@ -35,7 +35,13 @@ from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import AgentBrowserConfig, ChannelsConfig, ExecToolConfig, WebSearchConfig
+    from nanobot.config.schema import (
+        AgentBrowserConfig,
+        ChannelsConfig,
+        ExecToolConfig,
+        MaxTokensConfig,
+        WebSearchConfig,
+    )
     from nanobot.cron.service import CronService
 
 
@@ -164,8 +170,9 @@ class AgentLoop:
         provider: LLMProvider,
         workspace: Path,
         model: str | None = None,
+        max_tokens: "MaxTokensConfig | None" = None,
         max_iterations: int = 40,
-        context_window_tokens: int = 65_536,
+        context_window_tokens: int | None = None,
         web_search_config: WebSearchConfig | None = None,
         web_proxy: str | None = None,
         agent_browser_config: AgentBrowserConfig | None = None,
@@ -175,13 +182,12 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
-        max_input_tokens: int = 120000,
         timezone: str | None = None,
         hooks: list[AgentHook] | None = None,
         skill_paths: list[Path] | None = None,
         context_path: Path | None = None,
     ):
-        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, WebSearchConfig
+        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, MaxTokensConfig, WebSearchConfig
 
         self.bus = bus
         self.channels_config = channels_config
@@ -189,10 +195,12 @@ class AgentLoop:
         self.workspace = workspace
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
-        self.context_window_tokens = context_window_tokens
+        self.max_tokens = max_tokens or MaxTokensConfig()
+        if context_window_tokens is not None and context_window_tokens > 0:
+            self.max_tokens.input = context_window_tokens
+        self.context_window_tokens = self.max_tokens.input
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
-        self.max_input_tokens = max_input_tokens
         self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
@@ -241,10 +249,10 @@ class AgentLoop:
             provider=provider,
             model=self.model,
             sessions=self.sessions,
-            context_window_tokens=context_window_tokens,
+            context_window_tokens=self.max_tokens.input,
             build_messages=self.context.build_messages,
             get_tool_definitions=self.tools.get_definitions,
-            max_completion_tokens=provider.generation.max_tokens,
+            max_completion_tokens=self.max_tokens.output,
         )
         self._register_default_tools()
         self.commands = CommandRouter()
@@ -528,16 +536,44 @@ class AgentLoop:
                 current_message=msg.content, channel=channel, chat_id=chat_id,
                 current_role=current_role,
             )
+
+            if self.max_tokens.input > 0:
+                try:
+                    import litellm
+
+                    tokens = litellm.token_counter(model=self.model, messages=messages)
+                    if tokens > self.max_tokens.input:
+                        logger.warning(
+                            "System context size ({}) exceeds maxTokens.input ({}). Trimming oldest turns.",
+                            tokens,
+                            self.max_tokens.input,
+                        )
+                        while tokens > self.max_tokens.input and history:
+                            history.pop(0)
+                            messages = self.context.build_messages(
+                                history=history,
+                                current_message=msg.content,
+                                channel=channel,
+                                chat_id=chat_id,
+                                current_role=current_role,
+                            )
+                            tokens = litellm.token_counter(model=self.model, messages=messages)
+                except Exception as e:
+                    logger.error("Failed to check system token count: {}", e)
+
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages, channel=channel, chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
             )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
-        self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
-        self._maybe_sync_context_repo()
-        return OutboundMessage(channel=channel, chat_id=chat_id,
-                              content=final_content or "Background task completed.")
+            self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+            self._maybe_sync_context_repo()
+            return OutboundMessage(
+                channel=channel,
+                chat_id=chat_id,
+                content=final_content or "Background task completed.",
+            )
 
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
         logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
@@ -566,46 +602,30 @@ class AgentLoop:
             channel=msg.channel, chat_id=msg.chat_id,
         )
 
-        # Check and reduce context size if over limit
-        if self.max_input_tokens > 0:
+        # Safety check: trim oldest turns if this specific request still exceeds maxTokens.input.
+        if self.max_tokens.input > 0:
             try:
                 import litellm
-                # Check current token usage
+
                 tokens = litellm.token_counter(model=self.model, messages=initial_messages)
-                if tokens > self.max_input_tokens:
-                    logger.warning(f"Context size ({tokens} tokens) exceeds limit {self.max_input_tokens}. Condensing history...")
-                    
-                    # Pop oldest messages until we fit
-                    while tokens > self.max_input_tokens and len(history) > 0:
+                if tokens > self.max_tokens.input:
+                    logger.warning(
+                        "Context size ({}) exceeds maxTokens.input ({}). Trimming oldest turns.",
+                        tokens,
+                        self.max_tokens.input,
+                    )
+                    while tokens > self.max_tokens.input and history:
                         history.pop(0)
                         initial_messages = self.context.build_messages(
                             history=history,
                             current_message=msg.content,
                             media=msg.media if msg.media else None,
-                            channel=msg.channel, chat_id=msg.chat_id,
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
                         )
                         tokens = litellm.token_counter(model=self.model, messages=initial_messages)
-                    
-                    # Trigger background consolidation to save the lost context
-                    if session.key not in self._consolidating:
-                        self._consolidating.add(session.key)
-                        lock = self._get_consolidation_lock(session.key)
-
-                        async def _condense_and_unlock():
-                            try:
-                                async with lock:
-                                    await self._consolidate_memory(session, archive_all=True)
-                            finally:
-                                self._consolidating.discard(session.key)
-                                self._prune_consolidation_lock(session.key, lock)
-                                _task = asyncio.current_task()
-                                if _task is not None:
-                                    self._consolidation_tasks.discard(_task)
-
-                        _task = asyncio.create_task(_condense_and_unlock())
-                        self._consolidation_tasks.add(_task)
             except Exception as e:
-                logger.error(f"Failed to check token count: {e}")
+                logger.error("Failed to check token count: {}", e)
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})
@@ -728,7 +748,14 @@ class AgentLoop:
     async def _consolidate_memory(self, session: Session, archive_all: bool = False) -> bool:
         """Compatibility shim for background consolidation paths."""
         if archive_all:
-            return await self.memory_consolidator.archive_unconsolidated(session)
+            chunk = session.messages[session.last_consolidated:]
+            if not chunk:
+                return True
+            archived = await self.memory_consolidator.archive_messages(chunk)
+            if archived:
+                session.last_consolidated = len(session.messages)
+                self.sessions.save(session)
+            return archived
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
         return True
 
@@ -744,10 +771,8 @@ class AgentLoop:
             except Exception:
                 logger.exception("Context repo sync failed")
 
-        task = asyncio.create_task(_sync())
-        if isinstance(getattr(self, "_consolidation_tasks", None), set):
-            self._consolidation_tasks.add(task)
-            task.add_done_callback(self._consolidation_tasks.discard)
+        self._schedule_background(_sync())
+
     async def process_direct(
         self,
         content: str,

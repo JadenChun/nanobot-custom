@@ -71,14 +71,16 @@ class Nanobot:
             provider=provider,
             workspace=config.workspace_path,
             model=defaults.model,
+            max_tokens=defaults.max_tokens,
             max_iterations=defaults.max_tool_iterations,
-            context_window_tokens=defaults.context_window_tokens,
             web_search_config=config.tools.web.search,
             web_proxy=config.tools.web.proxy or None,
             exec_config=config.tools.exec,
             restrict_to_workspace=config.tools.restrict_to_workspace,
             mcp_servers=config.tools.mcp_servers,
             timezone=defaults.timezone,
+            skill_paths=[Path(p).expanduser().resolve() for p in defaults.skill_paths] or None,
+            context_path=Path(defaults.context_path).expanduser().resolve() if defaults.context_path else None,
         )
         return cls(loop)
 
@@ -119,14 +121,16 @@ def _make_provider(config: Any) -> Any:
     model = config.agents.defaults.model
     provider_name = config.get_provider_name(model)
     p = config.get_provider(model)
+    keys = p.effective_keys if p else []
+    primary_key = keys[0] if keys else None
     spec = find_by_name(provider_name) if provider_name else None
     backend = spec.backend if spec else "openai_compat"
 
     if backend == "azure_openai":
-        if not p or not p.api_key or not p.api_base:
+        if not p or not primary_key or not p.api_base:
             raise ValueError("Azure OpenAI requires api_key and api_base in config.")
     elif backend == "openai_compat" and not model.startswith("bedrock/"):
-        needs_key = not (p and p.api_key)
+        needs_key = not bool(primary_key)
         exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
         if needs_key and not exempt:
             raise ValueError(f"No API key configured for provider '{provider_name}'.")
@@ -139,13 +143,13 @@ def _make_provider(config: Any) -> Any:
         from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
 
         provider = AzureOpenAIProvider(
-            api_key=p.api_key, api_base=p.api_base, default_model=model
+            api_key=primary_key, api_base=p.api_base, default_model=model
         )
     elif backend == "anthropic":
         from nanobot.providers.anthropic_provider import AnthropicProvider
 
         provider = AnthropicProvider(
-            api_key=p.api_key if p else None,
+            api_key=primary_key,
             api_base=config.get_api_base(model),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
@@ -154,17 +158,19 @@ def _make_provider(config: Any) -> Any:
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 
         provider = OpenAICompatProvider(
-            api_key=p.api_key if p else None,
+            api_key=primary_key,
+            api_keys=keys if len(keys) > 1 else None,
             api_base=config.get_api_base(model),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
+            rate_limit=p.rate_limit if p else 0,
             spec=spec,
         )
 
     defaults = config.agents.defaults
     provider.generation = GenerationSettings(
         temperature=defaults.temperature,
-        max_tokens=defaults.max_tokens,
+        max_tokens=defaults.max_tokens.output,
         reasoning_effort=defaults.reasoning_effort,
     )
     return provider

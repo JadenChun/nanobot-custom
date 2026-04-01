@@ -69,16 +69,29 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
 
 def _migrate_config(data: dict) -> dict:
     """Migrate old config formats to current."""
-    # Migrate maxTokens (int) -> maxTokens { input, output }
+    # Migrate legacy token fields into maxTokens { input, output }.
     agents = data.get("agents", {})
     defaults = agents.get("defaults", {})
-    if "maxTokens" in defaults and isinstance(defaults["maxTokens"], int):
-        old_output = defaults.pop("maxTokens")
-        old_input = defaults.pop("maxInputTokens", 120000)
+    mt = defaults.get("maxTokens")
+    legacy_input = defaults.get("maxInputTokens")
+    if legacy_input is None:
+        legacy_input = defaults.get("contextWindowTokens")
+
+    if isinstance(mt, int):
         defaults["maxTokens"] = {
-            "input": old_input,
-            "output": old_output
+            "input": legacy_input if isinstance(legacy_input, int) else 120000,
+            "output": mt,
         }
+    elif isinstance(mt, dict):
+        if "input" not in mt and isinstance(legacy_input, int):
+            mt["input"] = legacy_input
+        mt.setdefault("input", 120000)
+        mt.setdefault("output", 4096)
+    elif isinstance(legacy_input, int):
+        defaults["maxTokens"] = {"input": legacy_input, "output": 4096}
+
+    defaults.pop("maxInputTokens", None)
+    defaults.pop("contextWindowTokens", None)
 
     # Move tools.exec.restrictToWorkspace → tools.restrictToWorkspace
     tools = data.get("tools", {})

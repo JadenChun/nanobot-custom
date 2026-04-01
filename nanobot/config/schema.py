@@ -44,20 +44,22 @@ class AgentDefaults(Base):
         "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
     )
     max_tokens: MaxTokensConfig = Field(default_factory=MaxTokensConfig)
-    context_window_tokens: int = 65_536
     temperature: float = 0.1
     max_tool_iterations: int = 40
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
     context_path: str = ""  # Path to a local context repo (e.g. a git repo with memory, skills, bootstrap files)
-    # Deprecated compatibility field: accepted from old configs but ignored at runtime.
-    memory_window: int | None = Field(default=None, exclude=True)
     skill_paths: list[str] = Field(default_factory=list)  # Additional skill directories (e.g. private git repos)
 
     @property
-    def should_warn_deprecated_memory_window(self) -> bool:
-        """Return True when old memoryWindow is present without contextWindowTokens."""
-        return self.memory_window is not None and "context_window_tokens" not in self.model_fields_set
+    def context_window_tokens(self) -> int:
+        """Compatibility alias for legacy callers that still read context_window_tokens."""
+        return self.max_tokens.input
+
+    @context_window_tokens.setter
+    def context_window_tokens(self, value: int) -> None:
+        """Compatibility alias for legacy callers that still set context_window_tokens."""
+        self.max_tokens.input = value
 
 
 class AgentsConfig(Base):
@@ -70,8 +72,17 @@ class ProviderConfig(Base):
     """LLM provider configuration."""
 
     api_key: str = ""
+    api_keys: list[str] = Field(default_factory=list)  # Multiple keys for failover/rotation
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
+    rate_limit: int = 0  # Max requests/minute (0 = unlimited), useful for strict free tiers.
+
+    @property
+    def effective_keys(self) -> list[str]:
+        """Return configured keys with api_keys taking precedence over api_key."""
+        if self.api_keys:
+            return [k for k in self.api_keys if k]
+        return [self.api_key] if self.api_key else []
 
 
 class ProvidersConfig(Base):
@@ -197,15 +208,29 @@ class Config(BaseSettings):
     @staticmethod
     def _migrate_config(data: dict) -> dict:
         """Migrate old config formats to current."""
-        # Migrate maxTokens (int) -> maxTokens { input, output }
+        # Migrate legacy token fields into maxTokens { input, output }.
         agents = data.get("agents", {})
         defaults = agents.get("defaults", {})
-        if "maxTokens" in defaults and isinstance(defaults["maxTokens"], int):
+        mt = defaults.get("maxTokens")
+        legacy_input = defaults.get("maxInputTokens")
+        if legacy_input is None:
+            legacy_input = defaults.get("contextWindowTokens")
+
+        if isinstance(mt, int):
             defaults["maxTokens"] = {
-                "input": defaults.get("maxInputTokens", 120000),
-                "output": defaults.pop("maxTokens")
+                "input": legacy_input if isinstance(legacy_input, int) else 120000,
+                "output": mt,
             }
-            defaults.pop("maxInputTokens", None)
+        elif isinstance(mt, dict):
+            if "input" not in mt and isinstance(legacy_input, int):
+                mt["input"] = legacy_input
+            mt.setdefault("input", 120000)
+            mt.setdefault("output", 4096)
+        elif isinstance(legacy_input, int):
+            defaults["maxTokens"] = {"input": legacy_input, "output": 4096}
+
+        defaults.pop("maxInputTokens", None)
+        defaults.pop("contextWindowTokens", None)
 
         # Move tools.exec.restrictToWorkspace → tools.restrictToWorkspace
         tools = data.get("tools", {})
@@ -246,14 +271,14 @@ class Config(BaseSettings):
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
             if p and model_prefix and normalized_prefix == spec.name:
-                if spec.is_oauth or spec.is_local or p.api_key:
+                if spec.is_oauth or spec.is_local or bool(p.effective_keys):
                     return p, spec.name
 
         # Match by keyword (order follows PROVIDERS registry)
         for spec in PROVIDERS:
             p = getattr(self.providers, spec.name, None)
             if p and any(_kw_matches(kw) for kw in spec.keywords):
-                if spec.is_oauth or spec.is_local or p.api_key:
+                if spec.is_oauth or spec.is_local or bool(p.effective_keys):
                     return p, spec.name
 
         # Fallback: configured local providers can route models without
@@ -280,7 +305,7 @@ class Config(BaseSettings):
             if spec.is_oauth:
                 continue
             p = getattr(self.providers, spec.name, None)
-            if p and p.api_key:
+            if p and bool(p.effective_keys):
                 return p, spec.name
         return None, None
 
@@ -297,7 +322,10 @@ class Config(BaseSettings):
     def get_api_key(self, model: str | None = None) -> str | None:
         """Get API key for the given model. Falls back to first available key."""
         p = self.get_provider(model)
-        return p.api_key if p else None
+        if not p:
+            return None
+        keys = p.effective_keys
+        return keys[0] if keys else None
 
     def get_api_base(self, model: str | None = None) -> str | None:
         """Get API base URL for the given model. Applies default URLs for gateway/local providers."""

@@ -214,3 +214,92 @@ def test_openai_model_passthrough() -> None:
             spec=spec,
         )
     assert provider.get_default_model() == "gpt-4o"
+
+
+@pytest.mark.asyncio
+async def test_gemini_rotates_to_next_key_on_rate_limit() -> None:
+    class _RateLimitError(Exception):
+        status_code = 429
+
+    spec = find_by_name("gemini")
+    first = SimpleNamespace()
+    first.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(side_effect=_RateLimitError("quota exceeded")),
+    ))
+    second = SimpleNamespace()
+    second.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(return_value=_fake_chat_response("ok from backup key")),
+    ))
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]) as MockClient:
+        provider = OpenAICompatProvider(
+            api_keys=["gem-key-1", "gem-key-2"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            spec=spec,
+        )
+        result = await provider.chat(
+            messages=[{"role": "user", "content": "hello"}],
+            model="google/gemini-2.5-pro",
+        )
+
+    assert result.content == "ok from backup key"
+    assert MockClient.call_args_list[0].kwargs["api_key"] == "gem-key-1"
+    assert MockClient.call_args_list[1].kwargs["api_key"] == "gem-key-2"
+
+
+@pytest.mark.asyncio
+async def test_gemini_does_not_rotate_on_non_rate_limit_error() -> None:
+    class _AuthError(Exception):
+        status_code = 401
+
+    spec = find_by_name("gemini")
+    client = SimpleNamespace()
+    client.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(side_effect=_AuthError("unauthorized")),
+    ))
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", return_value=client) as MockClient:
+        provider = OpenAICompatProvider(
+            api_keys=["gem-key-1", "gem-key-2"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            spec=spec,
+        )
+        result = await provider.chat(
+            messages=[{"role": "user", "content": "hello"}],
+            model="google/gemini-2.5-pro",
+        )
+
+    assert result.finish_reason == "error"
+    assert MockClient.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_gemini_rotates_on_service_unavailable_503() -> None:
+    class _ServiceUnavailableError(Exception):
+        status_code = 503
+
+    spec = find_by_name("gemini")
+    first = SimpleNamespace()
+    first.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(side_effect=_ServiceUnavailableError("high demand")),
+    ))
+    second = SimpleNamespace()
+    second.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(return_value=_fake_chat_response("ok after 503 rotate")),
+    ))
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
+        provider = OpenAICompatProvider(
+            api_keys=["gem-key-1", "gem-key-2"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            spec=spec,
+        )
+        result = await provider.chat(
+            messages=[{"role": "user", "content": "hello"}],
+            model="google/gemini-2.5-pro",
+        )
+
+    assert result.content == "ok after 503 rotate"

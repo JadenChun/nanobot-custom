@@ -279,6 +279,23 @@ def test_config_auto_detects_ollama_from_local_api_base():
     assert config.get_api_base() == "http://localhost:11434/v1"
 
 
+def test_config_prefers_api_keys_list_for_provider_key_resolution():
+    config = Config.model_validate(
+        {
+            "agents": {"defaults": {"provider": "auto", "model": "google/gemini-2.5-pro"}},
+            "providers": {
+                "gemini": {
+                    "apiKey": "legacy-single",
+                    "apiKeys": ["multi-1", "multi-2"],
+                }
+            },
+        }
+    )
+
+    assert config.get_provider_name() == "gemini"
+    assert config.get_api_key() == "multi-1"
+
+
 def test_config_prefers_ollama_over_vllm_when_both_local_providers_configured():
     config = Config.model_validate(
         {
@@ -347,6 +364,47 @@ def test_make_provider_passes_extra_headers_to_custom_provider():
     assert kwargs["base_url"] == "https://example.com/v1"
     assert kwargs["default_headers"]["APP-Code"] == "demo-app"
     assert kwargs["default_headers"]["x-session-affinity"] == "sticky-session"
+
+
+def test_make_provider_passes_api_keys_pool_to_openai_compat():
+    config = Config.model_validate(
+        {
+            "agents": {"defaults": {"provider": "gemini", "model": "google/gemini-2.5-pro"}},
+            "providers": {
+                "gemini": {
+                    "apiKeys": ["gem-key-1", "gem-key-2"],
+                    "apiBase": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                }
+            },
+        }
+    )
+
+    with patch("nanobot.providers.openai_compat_provider.OpenAICompatProvider") as mock_provider:
+        _make_provider(config)
+
+    kwargs = mock_provider.call_args.kwargs
+    assert kwargs["api_key"] == "gem-key-1"
+    assert kwargs["api_keys"] == ["gem-key-1", "gem-key-2"]
+
+
+def test_make_provider_passes_rate_limit_to_openai_compat():
+    config = Config.model_validate(
+        {
+            "agents": {"defaults": {"provider": "gemini", "model": "google/gemini-2.5-pro"}},
+            "providers": {
+                "gemini": {
+                    "apiKey": "gem-key-1",
+                    "rateLimit": 5,
+                }
+            },
+        }
+    )
+
+    with patch("nanobot.providers.openai_compat_provider.OpenAICompatProvider") as mock_provider:
+        _make_provider(config)
+
+    kwargs = mock_provider.call_args.kwargs
+    assert kwargs["rate_limit"] == 5
 
 
 @pytest.fixture

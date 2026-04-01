@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import collections
 import hashlib
 import os
 import secrets
 import string
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -111,18 +114,24 @@ class OpenAICompatProvider(LLMProvider):
     def __init__(
         self,
         api_key: str | None = None,
+        api_keys: list[str] | None = None,
         api_base: str | None = None,
         default_model: str = "gpt-4o",
         extra_headers: dict[str, str] | None = None,
+        rate_limit: int = 0,
         spec: ProviderSpec | None = None,
     ):
-        super().__init__(api_key, api_base)
+        key_pool = [k for k in (api_keys or []) if k]
+        if not key_pool and api_key:
+            key_pool = [api_key]
+        super().__init__(key_pool[0] if key_pool else api_key, api_base)
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
         self._spec = spec
-
-        if api_key and spec and spec.env_key:
-            self._setup_env(api_key, api_base)
+        self._api_keys = key_pool
+        self._key_index = 0
+        self._rate_limit = max(0, int(rate_limit))
+        self._request_timestamps: collections.deque[float] = collections.deque()
 
         effective_base = api_base or (spec.default_api_base if spec else None) or None
         default_headers = {"x-session-affinity": uuid.uuid4().hex}
@@ -130,12 +139,70 @@ class OpenAICompatProvider(LLMProvider):
             default_headers.update(_DEFAULT_OPENROUTER_HEADERS)
         if extra_headers:
             default_headers.update(extra_headers)
+        self._effective_base = effective_base
+        self._default_headers = default_headers
 
+        self._activate_key(0)
+
+    def _activate_key(self, index: int) -> None:
+        """Activate key at index and rebuild API client."""
+        if self._api_keys:
+            self._key_index = index % len(self._api_keys)
+            self.api_key = self._api_keys[self._key_index]
+        if self.api_key and self._spec and self._spec.env_key:
+            self._setup_env(self.api_key, self.api_base)
         self._client = AsyncOpenAI(
-            api_key=api_key or "no-key",
-            base_url=effective_base,
-            default_headers=default_headers,
+            api_key=self.api_key or "no-key",
+            base_url=self._effective_base,
+            default_headers=self._default_headers,
         )
+
+    def _rotate_key(self) -> bool:
+        """Rotate to next API key if multiple keys are configured."""
+        if len(self._api_keys) <= 1:
+            return False
+        self._activate_key(self._key_index + 1)
+        return True
+
+    @staticmethod
+    def _is_rate_limit_error(exc: Exception) -> bool:
+        """Return True when exception indicates quota/rate limiting or temporary overload."""
+        status = getattr(exc, "status_code", None)
+        if status is None:
+            resp = getattr(exc, "response", None)
+            status = getattr(resp, "status_code", None) if resp is not None else None
+        if status in (429, 503):
+            return True
+        msg = str(exc).lower()
+        return any(m in msg for m in (
+            "rate limit",
+            "rate_limit",
+            "quota",
+            "resource_exhausted",
+            "429",
+            "unavailable",
+            "service unavailable",
+            "high demand",
+            "503",
+        ))
+
+    async def _wait_for_rate_limit(self) -> None:
+        """Sleep as needed to honor per-provider requests/minute rate_limit."""
+        if self._rate_limit <= 0:
+            return
+
+        now = time.monotonic()
+        window_s = 60.0
+        while self._request_timestamps and self._request_timestamps[0] <= now - window_s:
+            self._request_timestamps.popleft()
+
+        if len(self._request_timestamps) >= self._rate_limit:
+            oldest = self._request_timestamps[0]
+            delay = oldest + window_s - now + 1.0
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+        self._request_timestamps.append(time.monotonic())
 
     def _setup_env(self, api_key: str, api_base: str | None) -> None:
         """Set environment variables based on provider spec."""
@@ -550,10 +617,18 @@ class OpenAICompatProvider(LLMProvider):
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
         )
-        try:
-            return self._parse(await self._client.chat.completions.create(**kwargs))
-        except Exception as e:
-            return self._handle_error(e)
+        max_attempts = max(1, len(self._api_keys))
+        last_error: Exception | None = None
+        for _ in range(max_attempts):
+            try:
+                await self._wait_for_rate_limit()
+                return self._parse(await self._client.chat.completions.create(**kwargs))
+            except Exception as e:
+                last_error = e
+                if self._is_rate_limit_error(e) and self._rotate_key():
+                    continue
+                return self._handle_error(e)
+        return self._handle_error(last_error or RuntimeError("All API keys exhausted"))
 
     async def chat_stream(
         self,
@@ -572,18 +647,26 @@ class OpenAICompatProvider(LLMProvider):
         )
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
-        try:
-            stream = await self._client.chat.completions.create(**kwargs)
-            chunks: list[Any] = []
-            async for chunk in stream:
-                chunks.append(chunk)
-                if on_content_delta and chunk.choices:
-                    text = getattr(chunk.choices[0].delta, "content", None)
-                    if text:
-                        await on_content_delta(text)
-            return self._parse_chunks(chunks)
-        except Exception as e:
-            return self._handle_error(e)
+        max_attempts = max(1, len(self._api_keys))
+        last_error: Exception | None = None
+        for _ in range(max_attempts):
+            try:
+                await self._wait_for_rate_limit()
+                stream = await self._client.chat.completions.create(**kwargs)
+                chunks: list[Any] = []
+                async for chunk in stream:
+                    chunks.append(chunk)
+                    if on_content_delta and chunk.choices:
+                        text = getattr(chunk.choices[0].delta, "content", None)
+                        if text:
+                            await on_content_delta(text)
+                return self._parse_chunks(chunks)
+            except Exception as e:
+                last_error = e
+                if self._is_rate_limit_error(e) and self._rotate_key():
+                    continue
+                return self._handle_error(e)
+        return self._handle_error(last_error or RuntimeError("All API keys exhausted"))
 
     def get_default_model(self) -> str:
         return self.default_model
