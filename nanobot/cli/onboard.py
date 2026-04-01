@@ -501,20 +501,8 @@ def _handle_model_field(
         _try_auto_fill_context_window(working_model, new_value)
 
 
-def _handle_context_window_field(
-    working_model: BaseModel, field_name: str, field_display: str, current_value: Any
-) -> None:
-    """Handle context_window_tokens with recommendation lookup."""
-    new_value = _input_context_window_with_recommendation(
-        field_display, current_value, working_model
-    )
-    if new_value is not None:
-        setattr(working_model, field_name, new_value)
-
-
 _FIELD_HANDLERS: dict[str, Any] = {
     "model": _handle_model_field,
-    "context_window_tokens": _handle_context_window_field,
 }
 
 
@@ -616,24 +604,25 @@ def _configure_pydantic_model(
 
 
 def _try_auto_fill_context_window(model: BaseModel, new_model_name: str) -> None:
-    """Try to auto-fill context_window_tokens if it's at default value.
+    """Try to auto-fill maxTokens.input if it's still at default value.
 
     Note:
-        This function imports AgentDefaults from nanobot.config.schema to get
-        the default context_window_tokens value. If the schema changes, this
+        This function imports MaxTokensConfig from nanobot.config.schema to get
+        the default input token value. If the schema changes, this
         coupling needs to be updated accordingly.
     """
-    # Check if context_window_tokens field exists
-    if not hasattr(model, "context_window_tokens"):
+    # Check if max_tokens.input exists
+    max_tokens_cfg = getattr(model, "max_tokens", None)
+    if not max_tokens_cfg or not hasattr(max_tokens_cfg, "input"):
         return
 
-    current_context = getattr(model, "context_window_tokens", None)
+    current_context = getattr(max_tokens_cfg, "input", None)
 
-    # Check if current value is the default (65536)
+    # Check if current value is still the default.
     # We only auto-fill if the user hasn't changed it from default
-    from nanobot.config.schema import AgentDefaults
+    from nanobot.config.schema import MaxTokensConfig
 
-    default_context = AgentDefaults.model_fields["context_window_tokens"].default
+    default_context = MaxTokensConfig.model_fields["input"].default
 
     if current_context != default_context:
         return  # User has customized it, don't override
@@ -642,8 +631,10 @@ def _try_auto_fill_context_window(model: BaseModel, new_model_name: str) -> None
     context_limit = get_model_context_limit(new_model_name, provider)
 
     if context_limit:
-        setattr(model, "context_window_tokens", context_limit)
-        console.print(f"[green]+ Auto-filled context window: {format_token_count(context_limit)} tokens[/green]")
+        max_tokens_cfg.input = context_limit
+        console.print(
+            f"[green]+ Auto-filled maxTokens.input: {format_token_count(context_limit)} tokens[/green]"
+        )
     else:
         console.print("[dim](i) Could not auto-fill context window (model not in database)[/dim]")
 
@@ -704,7 +695,7 @@ def _configure_providers(config: Config) -> None:
         choices = []
         for name, display in _get_provider_names().items():
             provider = getattr(config.providers, name, None)
-            if provider and provider.api_key:
+            if provider and provider.effective_keys:
                 choices.append(f"{display} *")
             else:
                 choices.append(display)
@@ -892,7 +883,11 @@ def _show_summary(config: Config) -> None:
     provider_rows = []
     for name, display in _get_provider_names().items():
         provider = getattr(config.providers, name, None)
-        status = "[green]configured[/green]" if (provider and provider.api_key) else "[dim]not configured[/dim]"
+        status = (
+            "[green]configured[/green]"
+            if (provider and provider.effective_keys)
+            else "[dim]not configured[/dim]"
+        )
         provider_rows.append((display, status))
     _print_summary_panel(provider_rows, "LLM Providers")
 

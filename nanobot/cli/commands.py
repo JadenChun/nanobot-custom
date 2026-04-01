@@ -386,18 +386,20 @@ def _make_provider(config: Config):
     model = config.agents.defaults.model
     provider_name = config.get_provider_name(model)
     p = config.get_provider(model)
+    keys = p.effective_keys if p else []
+    primary_key = keys[0] if keys else None
     spec = find_by_name(provider_name) if provider_name else None
     backend = spec.backend if spec else "openai_compat"
 
     # --- validation ---
     if backend == "azure_openai":
-        if not p or not p.api_key or not p.api_base:
+        if not p or not primary_key or not p.api_base:
             console.print("[red]Error: Azure OpenAI requires api_key and api_base.[/red]")
             console.print("Set them in ~/.nanobot/config.json under providers.azure_openai section")
             console.print("Use the model field to specify the deployment name.")
             raise typer.Exit(1)
     elif backend == "openai_compat" and not model.startswith("bedrock/"):
-        needs_key = not (p and p.api_key)
+        needs_key = not bool(primary_key)
         exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
         if needs_key and not exempt:
             console.print("[red]Error: No API key configured.[/red]")
@@ -411,14 +413,14 @@ def _make_provider(config: Config):
     elif backend == "azure_openai":
         from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
         provider = AzureOpenAIProvider(
-            api_key=p.api_key,
+            api_key=primary_key,
             api_base=p.api_base,
             default_model=model,
         )
     elif backend == "anthropic":
         from nanobot.providers.anthropic_provider import AnthropicProvider
         provider = AnthropicProvider(
-            api_key=p.api_key if p else None,
+            api_key=primary_key,
             api_base=config.get_api_base(model),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
@@ -426,17 +428,19 @@ def _make_provider(config: Config):
     else:
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
         provider = OpenAICompatProvider(
-            api_key=p.api_key if p else None,
+            api_key=primary_key,
+            api_keys=keys if len(keys) > 1 else None,
             api_base=config.get_api_base(model),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
+            rate_limit=p.rate_limit if p else 0,
             spec=spec,
         )
 
     defaults = config.agents.defaults
     provider.generation = GenerationSettings(
         temperature=defaults.temperature,
-        max_tokens=defaults.max_tokens,
+        max_tokens=defaults.max_tokens.output,
         reasoning_effort=defaults.reasoning_effort,
     )
     return provider
@@ -476,6 +480,14 @@ def _warn_deprecated_config_keys(config_path: Path | None) -> None:
         console.print(
             "[dim]Hint: `memoryWindow` in your config is no longer used "
             "and can be safely removed.[/dim]"
+        )
+    if "contextWindowTokens" in raw.get("agents", {}).get("defaults", {}):
+        console.print(
+            "[dim]Hint: `contextWindowTokens` has moved to `maxTokens.input`.[/dim]"
+        )
+    if "maxInputTokens" in raw.get("agents", {}).get("defaults", {}):
+        console.print(
+            "[dim]Hint: `maxInputTokens` has moved to `maxTokens.input`.[/dim]"
         )
 
 
@@ -537,8 +549,8 @@ def serve(
         provider=provider,
         workspace=runtime_config.workspace_path,
         model=runtime_config.agents.defaults.model,
+        max_tokens=runtime_config.agents.defaults.max_tokens,
         max_iterations=runtime_config.agents.defaults.max_tool_iterations,
-        context_window_tokens=runtime_config.agents.defaults.context_window_tokens,
         web_search_config=runtime_config.tools.web.search,
         web_proxy=runtime_config.tools.web.proxy or None,
         exec_config=runtime_config.tools.exec,
@@ -548,6 +560,7 @@ def serve(
         channels_config=runtime_config.channels,
         timezone=runtime_config.agents.defaults.timezone,
         skill_paths=_resolve_skill_paths(runtime_config),
+        context_path=_resolve_context_path(runtime_config),
     )
 
     model_name = runtime_config.agents.defaults.model
@@ -643,7 +656,6 @@ def gateway(
         model=config.agents.defaults.model,
         max_tokens=config.agents.defaults.max_tokens,
         max_iterations=config.agents.defaults.max_tool_iterations,
-        context_window_tokens=config.agents.defaults.context_window_tokens,
         web_search_config=config.tools.web.search,
         web_proxy=config.tools.web.proxy or None,
         agent_browser_config=config.tools.agent_browser,
@@ -861,7 +873,6 @@ def agent(
         model=config.agents.defaults.model,
         max_tokens=config.agents.defaults.max_tokens,
         max_iterations=config.agents.defaults.max_tool_iterations,
-        context_window_tokens=config.agents.defaults.context_window_tokens,
         web_search_config=config.tools.web.search,
         web_proxy=config.tools.web.proxy or None,
         agent_browser_config=config.tools.agent_browser,
@@ -1251,7 +1262,7 @@ def status():
                 else:
                     console.print(f"{spec.label}: [dim]not set[/dim]")
             else:
-                has_key = bool(p.api_key)
+                has_key = bool(p.effective_keys)
                 console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
 
 
