@@ -1,4 +1,5 @@
 from typing import Any
+from unittest.mock import patch
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
@@ -406,6 +407,72 @@ async def test_exec_timeout_capped_at_max() -> None:
     # Should not raise — just clamp to 600
     result = await tool.execute(command="echo ok", timeout=9999)
     assert "Exit code: 0" in result
+
+
+async def test_exec_git_push_sets_noninteractive_env(monkeypatch) -> None:
+    """Git network commands should fail fast in non-interactive bot runs."""
+    captured_env: dict[str, str] = {}
+
+    class _FakeProcess:
+        returncode = 0
+        pid = 12345
+
+        async def communicate(self):
+            return b"ok", b""
+
+        def kill(self) -> None:
+            return None
+
+        async def wait(self) -> int:
+            return 0
+
+    async def _fake_create_subprocess_shell(*args, **kwargs):
+        captured_env.update(kwargs.get("env") or {})
+        return _FakeProcess()
+
+    monkeypatch.delenv("GIT_TERMINAL_PROMPT", raising=False)
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+
+    with patch("nanobot.agent.tools.shell.asyncio.create_subprocess_shell", _fake_create_subprocess_shell):
+        tool = ExecTool()
+        result = await tool.execute(command="git push")
+
+    assert "Exit code: 0" in result
+    assert captured_env["GIT_TERMINAL_PROMPT"] == "0"
+    assert "BatchMode=yes" in captured_env["GIT_SSH_COMMAND"]
+    assert "ConnectTimeout=10" in captured_env["GIT_SSH_COMMAND"]
+
+
+async def test_exec_git_push_keeps_existing_ssh_command(monkeypatch) -> None:
+    """Do not overwrite caller-provided SSH command."""
+    captured_env: dict[str, str] = {}
+
+    class _FakeProcess:
+        returncode = 0
+        pid = 12345
+
+        async def communicate(self):
+            return b"", b""
+
+        def kill(self) -> None:
+            return None
+
+        async def wait(self) -> int:
+            return 0
+
+    async def _fake_create_subprocess_shell(*args, **kwargs):
+        captured_env.update(kwargs.get("env") or {})
+        return _FakeProcess()
+
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /tmp/bot-key")
+    monkeypatch.delenv("GIT_TERMINAL_PROMPT", raising=False)
+
+    with patch("nanobot.agent.tools.shell.asyncio.create_subprocess_shell", _fake_create_subprocess_shell):
+        tool = ExecTool()
+        await tool.execute(command="cd /repo && git push")
+
+    assert captured_env["GIT_SSH_COMMAND"] == "ssh -i /tmp/bot-key"
+    assert captured_env["GIT_TERMINAL_PROMPT"] == "0"
 
 
 # --- _resolve_type and nullable param tests ---

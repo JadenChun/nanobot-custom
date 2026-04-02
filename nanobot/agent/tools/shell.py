@@ -47,6 +47,7 @@ class ExecTool(Tool):
 
     _MAX_TIMEOUT = 600
     _MAX_OUTPUT = 10_000
+    _GIT_NETWORK_OPS = ("push", "pull", "fetch", "clone", "ls-remote")
 
     @property
     def description(self) -> str:
@@ -92,6 +93,7 @@ class ExecTool(Tool):
         env = os.environ.copy()
         if self.path_append:
             env["PATH"] = env.get("PATH", "") + os.pathsep + self.path_append
+        self._apply_git_noninteractive_env(command, env)
 
         try:
             process = await asyncio.create_subprocess_shell(
@@ -150,6 +152,24 @@ class ExecTool(Tool):
 
         except Exception as e:
             return f"Error executing command: {str(e)}"
+
+    @classmethod
+    def _apply_git_noninteractive_env(cls, command: str, env: dict[str, str]) -> None:
+        """Prevent git network commands from hanging on interactive prompts."""
+        if not cls._is_git_network_command(command):
+            return
+        env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        if "GIT_SSH_COMMAND" not in env:
+            env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes -o ConnectTimeout=10"
+
+    @classmethod
+    def _is_git_network_command(cls, command: str) -> bool:
+        lower = command.lower()
+        for op in cls._GIT_NETWORK_OPS:
+            # Only match within one shell segment to reduce false positives.
+            if re.search(rf"\bgit\b[^|;&\n]*\b{re.escape(op)}\b", lower):
+                return True
+        return False
 
     def _guard_command(self, command: str, cwd: str) -> str | None:
         """Best-effort safety guard for potentially destructive commands."""
