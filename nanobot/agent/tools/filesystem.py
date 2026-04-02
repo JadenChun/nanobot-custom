@@ -8,6 +8,22 @@ from typing import Any
 from nanobot.agent.tools.base import Tool
 from nanobot.utils.helpers import build_image_content_blocks, detect_image_mime
 
+# Files the LLM is never permitted to read, write, edit, or list.
+# Glob-style name matching (filename only, not full path).
+_BLOCKED_FILENAMES: frozenset[str] = frozenset({
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.production",
+    ".env.staging",
+    ".env.test",
+})
+
+
+def _is_blocked(path: Path) -> bool:
+    """Return True if *path* matches a blocked filename."""
+    return path.name in _BLOCKED_FILENAMES
+
 
 def _resolve_path(
     path: str,
@@ -98,6 +114,8 @@ class ReadFileTool(_FsTool):
             if not path:
                 return "Error reading file: Unknown path"
             fp = self._resolve(path)
+            if _is_blocked(fp):
+                return f"Error: Reading '{fp.name}' is not permitted."
             if not fp.exists():
                 return f"Error: File not found: {path}"
             if not fp.is_file():
@@ -183,6 +201,8 @@ class WriteFileTool(_FsTool):
             if content is None:
                 raise ValueError("Unknown content")
             fp = self._resolve(path)
+            if _is_blocked(fp):
+                return f"Error: Writing '{fp.name}' is not permitted."
             fp.parent.mkdir(parents=True, exist_ok=True)
             fp.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} bytes to {fp}"
@@ -267,6 +287,8 @@ class EditFileTool(_FsTool):
                 raise ValueError("Unknown new_text")
 
             fp = self._resolve(path)
+            if _is_blocked(fp):
+                return f"Error: Editing '{fp.name}' is not permitted."
             if not fp.exists():
                 return f"Error: File not found: {path}"
 
@@ -384,6 +406,8 @@ class ListDirTool(_FsTool):
                 for item in sorted(dp.rglob("*")):
                     if any(p in self._IGNORE_DIRS for p in item.parts):
                         continue
+                    if _is_blocked(item):
+                        continue
                     total += 1
                     if len(items) < cap:
                         rel = item.relative_to(dp)
@@ -391,6 +415,8 @@ class ListDirTool(_FsTool):
             else:
                 for item in sorted(dp.iterdir()):
                     if item.name in self._IGNORE_DIRS:
+                        continue
+                    if _is_blocked(item):
                         continue
                     total += 1
                     if len(items) < cap:
