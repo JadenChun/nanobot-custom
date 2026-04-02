@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -55,6 +56,54 @@ class AgentRunner:
     def __init__(self, provider: LLMProvider):
         self.provider = provider
 
+    @staticmethod
+    def _truncate_detail(detail: str, max_chars: int = 120) -> str:
+        compact = detail.replace("\n", " ").strip()
+        if not compact:
+            return "(empty)"
+        if len(compact) > max_chars:
+            return compact[:max_chars] + "..."
+        return compact
+
+    @classmethod
+    def _summarize_tool_result(cls, result: Any) -> tuple[str, str]:
+        """Return (status, detail) for a tool result.
+
+        Status is "error" for explicit error strings and for structured JSON outputs
+        that report process failures (for example {"exitCode": 1, ...}).
+        """
+        if result is None:
+            return "ok", "(empty)"
+
+        if isinstance(result, str):
+            text = result.strip()
+            if text.startswith("Error"):
+                return "error", cls._truncate_detail(text)
+
+            parsed: dict[str, Any] | None = None
+            if text.startswith("{") and text.endswith("}"):
+                try:
+                    raw = json.loads(text)
+                    if isinstance(raw, dict):
+                        parsed = raw
+                except Exception:
+                    parsed = None
+
+            if parsed is not None:
+                err = parsed.get("error")
+                if err:
+                    return "error", cls._truncate_detail(str(err))
+
+                exit_code = parsed.get("exitCode")
+                if isinstance(exit_code, int) and exit_code != 0:
+                    stderr = parsed.get("stderr")
+                    if isinstance(stderr, str) and stderr.strip():
+                        first = stderr.strip().splitlines()[0]
+                        return "error", cls._truncate_detail(f"exitCode {exit_code}: {first}")
+                    return "error", f"exitCode {exit_code}"
+
+        return "ok", cls._truncate_detail(str(result))
+
     async def run(self, spec: AgentRunSpec) -> AgentRunResult:
         hook = spec.hook or AgentHook()
         messages = list(spec.initial_messages)
@@ -64,6 +113,7 @@ class AgentRunner:
         error: str | None = None
         stop_reason = "completed"
         tool_events: list[dict[str, str]] = []
+        stream_waiting_final_end = False
 
         for iteration in range(spec.max_iterations):
             context = AgentHookContext(iteration=iteration, messages=messages)
@@ -103,6 +153,7 @@ class AgentRunner:
             if response.has_tool_calls:
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=True)
+                    stream_waiting_final_end = True
 
                 messages.append(build_assistant_message(
                     response.content or "",
@@ -123,6 +174,9 @@ class AgentRunner:
                     stop_reason = "tool_error"
                     context.error = error
                     context.stop_reason = stop_reason
+                    if hook.wants_streaming() and stream_waiting_final_end:
+                        await hook.on_stream_end(context, resuming=False)
+                        stream_waiting_final_end = False
                     await hook.after_iteration(context)
                     break
                 for tool_call, result in zip(response.tool_calls, results):
@@ -137,6 +191,7 @@ class AgentRunner:
 
             if hook.wants_streaming():
                 await hook.on_stream_end(context, resuming=False)
+                stream_waiting_final_end = False
 
             clean = hook.finalize_content(context, response.content)
             if response.finish_reason == "error":
@@ -163,6 +218,9 @@ class AgentRunner:
             stop_reason = "max_iterations"
             template = spec.max_iterations_message or _DEFAULT_MAX_ITERATIONS_MESSAGE
             final_content = template.format(max_iterations=spec.max_iterations)
+            if hook.wants_streaming() and stream_waiting_final_end:
+                end_context = AgentHookContext(iteration=spec.max_iterations, messages=messages)
+                await hook.on_stream_end(end_context, resuming=False)
 
         return AgentRunResult(
             final_content=final_content,
@@ -219,14 +277,9 @@ class AgentRunner:
                 return f"Error: {type(exc).__name__}: {exc}", event, exc
             return f"Error: {type(exc).__name__}: {exc}", event, None
 
-        detail = "" if result is None else str(result)
-        detail = detail.replace("\n", " ").strip()
-        if not detail:
-            detail = "(empty)"
-        elif len(detail) > 120:
-            detail = detail[:120] + "..."
+        status, detail = self._summarize_tool_result(result)
         return result, {
             "name": tool_call.name,
-            "status": "error" if isinstance(result, str) and result.startswith("Error") else "ok",
+            "status": status,
             "detail": detail,
         }, None

@@ -161,7 +161,7 @@ class AgentBrowserConfig(Base):
     """Agent Browser tool configuration."""
 
     enabled: bool = True
-    package: str = "@agentic/agent-browser@latest"
+    package: str = "agent-browser"
     timeout: int = 180
     max_output_chars: int = 12000
 

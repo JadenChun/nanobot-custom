@@ -16,6 +16,6 @@ This file documents non-obvious constraints and usage patterns.
 
 ## agent_browser — Browser/Electron Automation
 
-- Wraps `@agentic/agent-browser` via `npx`
+- Wraps `agent-browser` via `npx`
 - Pass CLI args as a string array; use `["--help"]` first when unsure
 - Timeout and output size are configurable via `tools.agentBrowser.*`

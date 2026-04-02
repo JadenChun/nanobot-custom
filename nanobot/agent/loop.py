@@ -105,6 +105,15 @@ class _LoopHook(AgentHook):
             logger.info("Tool call: {}({})", tc.name, args_str[:200])
         self._loop._set_tool_context(self._channel, self._chat_id, self._message_id)
 
+    async def after_iteration(self, context: AgentHookContext) -> None:
+        for event in context.tool_events:
+            if event.get("status") == "error":
+                logger.error(
+                    "Tool error: {} -> {}",
+                    event.get("name", "unknown"),
+                    event.get("detail", "(no detail)"),
+                )
+
     def finalize_content(self, context: AgentHookContext, content: str | None) -> str | None:
         return self._loop._strip_think(content)
 
