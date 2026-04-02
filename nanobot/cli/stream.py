@@ -66,14 +66,21 @@ class StreamRenderer:
       on_end -> Live stops (content stays on screen)
     """
 
-    def __init__(self, render_markdown: bool = True, show_spinner: bool = True):
+    def __init__(
+        self,
+        render_markdown: bool = True,
+        show_spinner: bool = True,
+        use_live: bool = True,
+    ):
         self._md = render_markdown
         self._show_spinner = show_spinner
+        self._use_live = use_live
         self._buf = ""
         self._live: Live | None = None
         self._t = 0.0
         self.streamed = False
         self._spinner: ThinkingSpinner | None = None
+        self._header_printed = False
         self._start_spinner()
 
     def _render(self):
@@ -92,13 +99,22 @@ class StreamRenderer:
     async def on_delta(self, delta: str) -> None:
         self.streamed = True
         self._buf += delta
-        if self._live is None:
-            if not self._buf.strip():
-                return
+        if not self._buf.strip():
+            return
+
+        if not self._header_printed:
             self._stop_spinner()
             c = _make_console()
             c.print()
             c.print(f"[cyan]{__logo__} nanobot[/cyan]")
+            self._header_printed = True
+
+        if not self._use_live:
+            _make_console().print(delta, end="")
+            return
+
+        if self._live is None:
+            c = _make_console()
             self._live = Live(self._render(), console=c, auto_refresh=False)
             self._live.start()
         now = time.monotonic()
@@ -114,10 +130,16 @@ class StreamRenderer:
             self._live.stop()
             self._live = None
         self._stop_spinner()
+        printed_newline = False
+        if self.streamed and (not self._use_live or self._header_printed):
+            _make_console().print()
+            printed_newline = True
         if resuming:
+            _make_console().print("[dim](Continuing with tools...)[/dim]")
             self._buf = ""
+            self._header_printed = False
             self._start_spinner()
-        else:
+        elif not printed_newline:
             _make_console().print()
 
     async def close(self) -> None:

@@ -12,13 +12,14 @@ from loguru import logger
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
+from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import ExecToolConfig
+from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig
 from nanobot.providers.base import LLMProvider
 from nanobot.utils.helpers import build_assistant_message
 
@@ -49,10 +50,11 @@ class SubagentManager:
         model: str | None = None,
         web_search_config: "WebSearchConfig | None" = None,
         web_proxy: str | None = None,
+        agent_browser_config: "AgentBrowserConfig | None" = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
     ):
-        from nanobot.config.schema import ExecToolConfig, WebSearchConfig
+        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, WebSearchConfig
 
         self.provider = provider
         self.workspace = workspace
@@ -60,11 +62,35 @@ class SubagentManager:
         self.model = model or provider.get_default_model()
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
+        self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self.runner = AgentRunner(provider)
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+
+    @staticmethod
+    def _tool_error_detail(result: Any) -> str | None:
+        """Best-effort extraction of tool failure detail from tool return values."""
+        if isinstance(result, str):
+            text = result.strip()
+            if text.startswith("Error"):
+                return text.splitlines()[0][:200]
+            if text.startswith("{") and text.endswith("}"):
+                try:
+                    payload = json.loads(text)
+                except Exception:
+                    return None
+                if isinstance(payload, dict):
+                    if payload.get("error"):
+                        return str(payload["error"]).splitlines()[0][:200]
+                    exit_code = payload.get("exitCode")
+                    if isinstance(exit_code, int) and exit_code != 0:
+                        stderr = payload.get("stderr")
+                        if isinstance(stderr, str) and stderr.strip():
+                            return f"exitCode {exit_code}: {stderr.strip().splitlines()[0][:160]}"
+                        return f"exitCode {exit_code}"
+        return None
 
     async def spawn(
         self,
@@ -141,6 +167,8 @@ class SubagentManager:
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     logger.info("Subagent [{}] executing: {}({})", task_id, tool_call.name, args_str[:200])
                     result = await tools.execute(tool_call.name, tool_call.arguments)
+                    if err := self._tool_error_detail(result):
+                        logger.error("Subagent [{}] tool error: {} -> {}", task_id, tool_call.name, err)
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -173,6 +201,12 @@ class SubagentManager:
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
             ))
+        if self.agent_browser_config.enabled:
+            tools.register(AgentBrowserTool(
+                package=self.agent_browser_config.package,
+                timeout=self.agent_browser_config.timeout,
+                max_output_chars=self.agent_browser_config.max_output_chars,
+            ))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         tools.register(WebFetchTool(proxy=self.web_proxy))
         return tools
@@ -194,6 +228,12 @@ class SubagentManager:
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
+            ))
+        if self.agent_browser_config.enabled:
+            tools.register(AgentBrowserTool(
+                package=self.agent_browser_config.package,
+                timeout=self.agent_browser_config.timeout,
+                max_output_chars=self.agent_browser_config.max_output_chars,
             ))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         tools.register(WebFetchTool(proxy=self.web_proxy))

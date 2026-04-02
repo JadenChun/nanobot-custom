@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -201,6 +202,42 @@ async def test_runner_streaming_hook_receives_deltas_and_end_signal():
 
 
 @pytest.mark.asyncio
+async def test_runner_streaming_max_iterations_emits_final_end_signal():
+    from nanobot.agent.hook import AgentHook, AgentHookContext
+    from nanobot.agent.runner import AgentRunSpec, AgentRunner
+
+    provider = MagicMock()
+    provider.chat_stream_with_retry = AsyncMock(return_value=LLMResponse(
+        content="working",
+        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
+    ))
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value="tool result")
+
+    endings: list[bool] = []
+
+    class StreamingHook(AgentHook):
+        def wants_streaming(self) -> bool:
+            return True
+
+        async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
+            endings.append(resuming)
+
+    runner = AgentRunner(provider)
+    result = await runner.run(AgentRunSpec(
+        initial_messages=[],
+        tools=tools,
+        model="test-model",
+        max_iterations=1,
+        hook=StreamingHook(),
+    ))
+
+    assert result.stop_reason == "max_iterations"
+    assert endings == [True, False]
+
+
+@pytest.mark.asyncio
 async def test_runner_returns_max_iterations_fallback():
     from nanobot.agent.runner import AgentRunSpec, AgentRunner
 
@@ -255,6 +292,49 @@ async def test_runner_returns_structured_tool_error():
     assert result.error == "Error: RuntimeError: boom"
     assert result.tool_events == [
         {"name": "list_dir", "status": "error", "detail": "boom"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runner_marks_nonzero_exitcode_json_result_as_tool_error():
+    from nanobot.agent.runner import AgentRunSpec, AgentRunner
+
+    provider = MagicMock()
+    call_count = {"n": 0}
+
+    async def chat_with_retry(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return LLMResponse(
+                content="working",
+                tool_calls=[ToolCallRequest(id="call_1", name="agent_browser", arguments={})],
+            )
+        return LLMResponse(content="done", tool_calls=[], usage={})
+
+    provider.chat_with_retry = chat_with_retry
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value=json.dumps({
+        "command": ["npx", "--yes", "agent-browser", "--help"],
+        "exitCode": 1,
+        "stderr": "npm error code E404\nnpm error 404 Not Found",
+    }))
+
+    runner = AgentRunner(provider)
+    result = await runner.run(AgentRunSpec(
+        initial_messages=[],
+        tools=tools,
+        model="test-model",
+        max_iterations=2,
+    ))
+
+    assert result.final_content == "done"
+    assert result.tool_events == [
+        {
+            "name": "agent_browser",
+            "status": "error",
+            "detail": "exitCode 1: npm error code E404",
+        }
     ]
 
 

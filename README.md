@@ -200,7 +200,7 @@ nanobot channels login whatsapp
 > For other LLM providers, please see the [Providers](#providers) section.
 >
 > For web search capability setup, please see [Web Search](#web-search).
-> Optional browser automation tool: install Node.js/npm to enable `agent_browser` (`@agentic/agent-browser`).
+> Optional browser automation tool: install Node.js/npm to enable `agent_browser` (`agent-browser`).
 
 **1. Initialize**
 
@@ -1388,7 +1388,7 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 | `tools.restrictToWorkspace` | `false` | When `true`, restricts **all** agent tools (shell, file read/write/edit, list) to the workspace directory. Prevents path traversal and out-of-scope access. |
 | `tools.exec.enable` | `true` | When `false`, the shell `exec` tool is not registered at all. Use this to completely disable shell command execution. |
 | `tools.exec.pathAppend` | `""` | Extra directories to append to `PATH` when running shell commands (e.g. `/usr/sbin` for `ufw`). |
-| `tools.agentBrowser.enabled` | `true` | Enable the built-in `agent_browser` tool (wrapper around `@agentic/agent-browser` via `npx`). Requires Node.js/npm. |
+| `tools.agentBrowser.enabled` | `true` | Enable the built-in `agent_browser` tool (wrapper around `agent-browser` via `npx`). Requires Node.js/npm. |
 | `channels.*.allowFrom` | `[]` (deny all) | Whitelist of user IDs. Empty denies all; use `["*"]` to allow everyone. |
 
 

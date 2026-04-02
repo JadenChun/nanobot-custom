@@ -1,4 +1,4 @@
-"""Tool wrapper for the @agentic/agent-browser CLI."""
+"""Tool wrapper for the agent-browser CLI."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from nanobot.agent.tools.base import Tool
 
 
 class AgentBrowserTool(Tool):
-    """Execute browser automation tasks via @agentic/agent-browser."""
+    """Execute browser automation tasks via agent-browser."""
 
     def __init__(
         self,
-        package: str = "@agentic/agent-browser@latest",
+        package: str = "agent-browser",
         timeout: int = 180,
         max_output_chars: int = 12000,
         working_dir: str | None = None,
@@ -32,8 +32,8 @@ class AgentBrowserTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Run @agentic/agent-browser CLI for browser/electron automation. "
-            "Pass CLI args as a string array (for example ['--help'] or ['run', 'Find X', '--json'])."
+            "Run agent-browser CLI for browser/electron automation. "
+            "Pass CLI args as a string array (for example ['--help'], ['open', 'https://example.com'], or ['snapshot'])."
         )
 
     @property
@@ -43,7 +43,7 @@ class AgentBrowserTool(Tool):
             "properties": {
                 "args": {
                     "type": "array",
-                    "description": "CLI arguments passed to @agentic/agent-browser.",
+                    "description": "CLI arguments passed to agent-browser.",
                     "items": {"type": "string"},
                 },
                 "timeout": {
@@ -91,7 +91,7 @@ class AgentBrowserTool(Tool):
                 "Install Node.js/npm first, then retry."
             )
         except Exception as e:
-            return f"Error: failed to start @agentic/agent-browser: {e}"
+            return f"Error: failed to start agent-browser: {e}"
 
         try:
             stdout, stderr = await asyncio.wait_for(
