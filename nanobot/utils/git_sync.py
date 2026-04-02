@@ -63,8 +63,13 @@ def sync_context_repo(repo: Path) -> bool:
             logger.error("Context repo git add failed: {}", add.stderr.strip())
             return False
 
-        # Commit
-        commit = _run_git(repo, "commit", "-m", "nanobot: auto-sync context updates")
+        # Commit (pass identity inline so it works even if git user.name/email is not globally configured)
+        commit = _run_git(
+            repo,
+            "-c", "user.name=nanobot",
+            "-c", "user.email=nanobot@localhost",
+            "commit", "-m", "nanobot: auto-sync context updates",
+        )
         if commit.returncode != 0:
             stderr = commit.stderr.strip()
             if "nothing to commit" in (commit.stdout + stderr):
