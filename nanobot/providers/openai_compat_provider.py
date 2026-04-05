@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 import json_repair
+from loguru import logger
 from openai import AsyncOpenAI
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
@@ -144,6 +145,14 @@ class OpenAICompatProvider(LLMProvider):
 
         self._activate_key(0)
 
+    def _key_label(self, index: int | None = None) -> str:
+        """Return a safe label for the active or requested key slot."""
+        if not self._api_keys:
+            return "key#1/1"
+        idx = self._key_index if index is None else (index % len(self._api_keys))
+        digest = hashlib.sha1(self._api_keys[idx].encode()).hexdigest()[:8]
+        return f"key#{idx + 1}/{len(self._api_keys)}[{digest}]"
+
     def _activate_key(self, index: int) -> None:
         """Activate key at index and rebuild API client."""
         if self._api_keys:
@@ -161,7 +170,13 @@ class OpenAICompatProvider(LLMProvider):
         """Rotate to next API key if multiple keys are configured."""
         if len(self._api_keys) <= 1:
             return False
+        previous = self._key_label()
         self._activate_key(self._key_index + 1)
+        logger.warning(
+            "Rotating provider API key from {} to {} after quota/rate-limit response",
+            previous,
+            self._key_label(),
+        )
         return True
 
     @staticmethod
@@ -209,14 +224,20 @@ class OpenAICompatProvider(LLMProvider):
         spec = self._spec
         if not spec or not spec.env_key:
             return
-        if spec.is_gateway:
-            os.environ[spec.env_key] = api_key
-        else:
-            os.environ.setdefault(spec.env_key, api_key)
+        # Keep env vars aligned with the currently active key so follow-up
+        # requests and auxiliary SDK behavior do not get stuck on the first key.
+        os.environ[spec.env_key] = api_key
         effective_base = api_base or spec.default_api_base
         for env_name, env_val in spec.env_extras:
             resolved = env_val.replace("{api_key}", api_key).replace("{api_base}", effective_base)
-            os.environ.setdefault(env_name, resolved)
+            os.environ[env_name] = resolved
+
+    @staticmethod
+    def _error_summary(error: Exception) -> str:
+        """Return a short provider error summary suitable for logs/messages."""
+        body = getattr(error, "doc", None) or getattr(getattr(error, "response", None), "text", None)
+        text = body.strip() if isinstance(body, str) and body.strip() else str(error).strip()
+        return text[:240]
 
     @staticmethod
     def _apply_cache_control(
@@ -619,15 +640,31 @@ class OpenAICompatProvider(LLMProvider):
         )
         max_attempts = max(1, len(self._api_keys))
         last_error: Exception | None = None
-        for _ in range(max_attempts):
+        for attempt in range(max_attempts):
             try:
                 await self._wait_for_rate_limit()
                 return self._parse(await self._client.chat.completions.create(**kwargs))
             except Exception as e:
                 last_error = e
-                if self._is_rate_limit_error(e) and self._rotate_key():
+                has_remaining_keys = attempt + 1 < max_attempts
+                if has_remaining_keys and self._is_rate_limit_error(e) and self._rotate_key():
                     continue
+                if self._is_rate_limit_error(e) and len(self._api_keys) > 1:
+                    break
                 return self._handle_error(e)
+        if last_error and self._is_rate_limit_error(last_error) and len(self._api_keys) > 1:
+            logger.error(
+                "All configured API keys were rate-limited or out of quota after trying {} keys; last error: {}",
+                len(self._api_keys),
+                self._error_summary(last_error),
+            )
+            return LLMResponse(
+                content=(
+                    "Error: All configured API keys were rate-limited or out of quota "
+                    f"after trying {len(self._api_keys)} keys. Last error: {self._error_summary(last_error)}"
+                ),
+                finish_reason="error",
+            )
         return self._handle_error(last_error or RuntimeError("All API keys exhausted"))
 
     async def chat_stream(
@@ -649,7 +686,7 @@ class OpenAICompatProvider(LLMProvider):
         kwargs["stream_options"] = {"include_usage": True}
         max_attempts = max(1, len(self._api_keys))
         last_error: Exception | None = None
-        for _ in range(max_attempts):
+        for attempt in range(max_attempts):
             try:
                 await self._wait_for_rate_limit()
                 stream = await self._client.chat.completions.create(**kwargs)
@@ -663,9 +700,25 @@ class OpenAICompatProvider(LLMProvider):
                 return self._parse_chunks(chunks)
             except Exception as e:
                 last_error = e
-                if self._is_rate_limit_error(e) and self._rotate_key():
+                has_remaining_keys = attempt + 1 < max_attempts
+                if has_remaining_keys and self._is_rate_limit_error(e) and self._rotate_key():
                     continue
+                if self._is_rate_limit_error(e) and len(self._api_keys) > 1:
+                    break
                 return self._handle_error(e)
+        if last_error and self._is_rate_limit_error(last_error) and len(self._api_keys) > 1:
+            logger.error(
+                "All configured API keys were rate-limited or out of quota after trying {} keys; last error: {}",
+                len(self._api_keys),
+                self._error_summary(last_error),
+            )
+            return LLMResponse(
+                content=(
+                    "Error: All configured API keys were rate-limited or out of quota "
+                    f"after trying {len(self._api_keys)} keys. Last error: {self._error_summary(last_error)}"
+                ),
+                finish_reason="error",
+            )
         return self._handle_error(last_error or RuntimeError("All API keys exhausted"))
 
     def get_default_model(self) -> str:

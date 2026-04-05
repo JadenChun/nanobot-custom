@@ -467,6 +467,18 @@ def test_agent_uses_default_config_when_no_workspace_or_config_flags(mock_agent_
     )
 
 
+def test_agent_logs_flag_prints_explicit_runtime_logs_banner(mock_agent_runtime):
+    with patch("loguru.logger.remove"), \
+         patch("loguru.logger.add"), \
+         patch("loguru.logger.enable"):
+        result = runner.invoke(app, ["agent", "-m", "hello", "--logs"])
+
+    assert result.exit_code == 0
+    stripped_output = _strip_ansi(result.stdout)
+    assert "Runtime logs enabled (--logs)." in stripped_output
+    assert "Use --no-logs to hide internal logs." in stripped_output
+
+
 def test_agent_uses_explicit_config_path(mock_agent_runtime, tmp_path: Path):
     config_path = tmp_path / "agent-config.json"
     config_path.write_text("{}")
