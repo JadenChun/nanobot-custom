@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from prompt_toolkit.formatted_text import HTML
+from rich.text import Text
 
 from nanobot.cli import commands
 from nanobot.cli import stream as stream_mod
@@ -145,3 +146,57 @@ def test_response_renderable_without_metadata_keeps_markdown_path():
     renderable = commands._response_renderable(help_text, render_markdown=True)
 
     assert renderable.__class__.__name__ == "Markdown"
+
+
+@pytest.mark.asyncio
+async def test_stream_renderer_reprints_full_buffer_after_live_stream():
+    """Live previews should be replaced with the full buffered response on stream end."""
+    mock_console = MagicMock()
+    live_instances: list[object] = []
+
+    class FakeLive:
+        def __init__(self, renderable, *, console, auto_refresh, transient):
+            self.renderable = renderable
+            self.console = console
+            self.auto_refresh = auto_refresh
+            self.transient = transient
+            self.started = False
+            self.stopped = False
+            self.updated: list[object] = []
+            self.refreshed = 0
+            live_instances.append(self)
+
+        def start(self):
+            self.started = True
+
+        def update(self, renderable):
+            self.updated.append(renderable)
+
+        def refresh(self):
+            self.refreshed += 1
+
+        def stop(self):
+            self.stopped = True
+
+    with patch("nanobot.cli.stream._make_console", return_value=mock_console), \
+         patch("nanobot.cli.stream.Live", FakeLive):
+        renderer = stream_mod.StreamRenderer(
+            render_markdown=False,
+            show_spinner=False,
+            use_live=True,
+        )
+        await renderer.on_delta("hello\nworld")
+        await renderer.on_end()
+
+    assert len(live_instances) == 1
+    live = live_instances[0]
+    assert live.started is True
+    assert live.stopped is True
+    assert live.transient is True
+
+    rendered_texts = [
+        args[0]
+        for args, _ in mock_console.print.call_args_list
+        if args and isinstance(args[0], Text)
+    ]
+    assert any(text.plain == "hello\nworld" for text in rendered_texts)

@@ -863,6 +863,7 @@ def agent(
             format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
         )
         logger.enable("nanobot")
+        console.print("[dim]Runtime logs enabled (--logs). Use --no-logs to hide internal logs.[/dim]")
     else:
         logger.disable("nanobot")
 

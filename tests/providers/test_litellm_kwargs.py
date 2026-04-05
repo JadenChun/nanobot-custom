@@ -8,6 +8,7 @@ Validates that:
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -249,6 +250,39 @@ async def test_gemini_rotates_to_next_key_on_rate_limit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_gemini_rotation_updates_active_env_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _RateLimitError(Exception):
+        status_code = 429
+
+    spec = find_by_name("gemini")
+    first = SimpleNamespace()
+    first.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(side_effect=_RateLimitError("quota exceeded")),
+    ))
+    second = SimpleNamespace()
+    second.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(return_value=_fake_chat_response("ok from backup key")),
+    ))
+
+    monkeypatch.setenv("GEMINI_API_KEY", "stale-key")
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
+        provider = OpenAICompatProvider(
+            api_keys=["gem-key-1", "gem-key-2"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            spec=spec,
+        )
+        result = await provider.chat(
+            messages=[{"role": "user", "content": "hello"}],
+            model="google/gemini-2.5-pro",
+        )
+
+    assert result.content == "ok from backup key"
+    assert os.environ["GEMINI_API_KEY"] == "gem-key-2"
+
+
+@pytest.mark.asyncio
 async def test_gemini_does_not_rotate_on_non_rate_limit_error() -> None:
     class _AuthError(Exception):
         status_code = 401
@@ -273,6 +307,37 @@ async def test_gemini_does_not_rotate_on_non_rate_limit_error() -> None:
 
     assert result.finish_reason == "error"
     assert MockClient.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_gemini_reports_when_all_keys_are_exhausted() -> None:
+    class _RateLimitError(Exception):
+        status_code = 429
+
+    spec = find_by_name("gemini")
+    first = SimpleNamespace()
+    first.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(side_effect=_RateLimitError("quota exceeded on key 1")),
+    ))
+    second = SimpleNamespace()
+    second.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(side_effect=_RateLimitError("quota exceeded on key 2")),
+    ))
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
+        provider = OpenAICompatProvider(
+            api_keys=["gem-key-1", "gem-key-2"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            spec=spec,
+        )
+        result = await provider.chat(
+            messages=[{"role": "user", "content": "hello"}],
+            model="google/gemini-2.5-pro",
+        )
+
+    assert result.finish_reason == "error"
+    assert "after trying 2 keys" in (result.content or "")
 
 
 @pytest.mark.asyncio

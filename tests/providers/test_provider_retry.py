@@ -87,6 +87,50 @@ async def test_chat_with_retry_returns_final_error_after_retries(monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_chat_with_retry_does_not_restart_after_key_pool_exhausted(monkeypatch) -> None:
+    provider = ScriptedProvider([
+        LLMResponse(
+            content="Error: All configured API keys were rate-limited or out of quota after trying 5 keys. Last error: 429 quota exceeded",
+            finish_reason="error",
+        ),
+    ])
+    delays: list[int] = []
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hello"}])
+
+    assert response.finish_reason == "error"
+    assert provider.calls == 1
+    assert delays == []
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_with_retry_does_not_restart_after_key_pool_exhausted(monkeypatch) -> None:
+    provider = ScriptedProvider([
+        LLMResponse(
+            content="Error: All configured API keys were rate-limited or out of quota after trying 5 keys. Last error: 429 quota exceeded",
+            finish_reason="error",
+        ),
+    ])
+    delays: list[int] = []
+
+    async def _fake_sleep(delay: int) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
+
+    response = await provider.chat_stream_with_retry(messages=[{"role": "user", "content": "hello"}])
+
+    assert response.finish_reason == "error"
+    assert provider.calls == 1
+    assert delays == []
+
+
+@pytest.mark.asyncio
 async def test_chat_with_retry_preserves_cancelled_error() -> None:
     provider = ScriptedProvider([asyncio.CancelledError()])
 

@@ -93,6 +93,10 @@ class LLMProvider(ABC):
         "server error",
         "temporarily unavailable",
     )
+    _NON_RETRYABLE_ERROR_MARKERS = (
+        "all configured api keys were rate-limited or out of quota after trying",
+        "all api keys exhausted",
+    )
 
     _SENTINEL = object()
 
@@ -194,6 +198,8 @@ class LLMProvider(ABC):
     @classmethod
     def _is_transient_error(cls, content: str | None) -> bool:
         err = (content or "").lower()
+        if any(marker in err for marker in cls._NON_RETRYABLE_ERROR_MARKERS):
+            return False
         return any(marker in err for marker in cls._TRANSIENT_ERROR_MARKERS)
 
     @staticmethod

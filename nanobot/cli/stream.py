@@ -115,7 +115,14 @@ class StreamRenderer:
 
         if self._live is None:
             c = _make_console()
-            self._live = Live(self._render(), console=c, auto_refresh=False)
+            # Clear the temporary live region on stop so we can print the full
+            # buffered response without duplicating a height-clipped preview.
+            self._live = Live(
+                self._render(),
+                console=c,
+                auto_refresh=False,
+                transient=True,
+            )
             self._live.start()
         now = time.monotonic()
         if "\n" in delta or (now - self._t) > 0.05:
@@ -129,6 +136,8 @@ class StreamRenderer:
             self._live.refresh()
             self._live.stop()
             self._live = None
+            if self._header_printed and self._buf:
+                _make_console().print(self._render())
         self._stop_spinner()
         printed_newline = False
         if self.streamed and (not self._use_live or self._header_printed):
