@@ -27,6 +27,7 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.pipeline import SpawnPipelineTool
 from nanobot.agent.tools.spawn import SpawnTool
+from nanobot.agent.tools.image import ImageGenerationTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
         AgentBrowserConfig,
         ChannelsConfig,
         ExecToolConfig,
+        ImageConfig,
         MaxTokensConfig,
         WebSearchConfig,
     )
@@ -186,6 +188,7 @@ class AgentLoop:
         web_proxy: str | None = None,
         agent_browser_config: AgentBrowserConfig | None = None,
         exec_config: ExecToolConfig | None = None,
+        image_config: ImageConfig | None = None,
         cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
         session_manager: SessionManager | None = None,
@@ -196,7 +199,7 @@ class AgentLoop:
         skill_paths: list[Path] | None = None,
         context_path: Path | None = None,
     ):
-        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, MaxTokensConfig, WebSearchConfig
+        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, ImageConfig, MaxTokensConfig, WebSearchConfig
 
         self.bus = bus
         self.channels_config = channels_config
@@ -212,6 +215,7 @@ class AgentLoop:
         self.web_proxy = web_proxy
         self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
         self.exec_config = exec_config or ExecToolConfig()
+        self.image_config = image_config or ImageConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
         self._start_time = time.time()
@@ -283,6 +287,7 @@ class AgentLoop:
             ))
         self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
+        self.tools.register(ImageGenerationTool(config=self.image_config))
         if self.agent_browser_config.enabled:
             self.tools.register(AgentBrowserTool(
                 package=self.agent_browser_config.package,

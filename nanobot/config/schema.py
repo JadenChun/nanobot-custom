@@ -193,12 +193,21 @@ class MCPServerConfig(Base):
     tool_timeout: int = 30  # seconds before a tool call is cancelled
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names; ["*"] = all tools; [] = no tools
 
+class ImageConfig(Base):
+    """Image generation configuration."""
+    provider: str = "openrouter"
+    model: str = "bytedance-seed/seedream-4.5"
+    api_key: str = ""
+    api_base: str = "https://openrouter.ai/api/v1"
+
+
 class ToolsConfig(Base):
     """Tools configuration."""
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     agent_browser: AgentBrowserConfig = Field(default_factory=AgentBrowserConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
+    image: ImageConfig = Field(default_factory=ImageConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
