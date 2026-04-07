@@ -23,18 +23,18 @@ class ContextBuilder:
         self,
         workspace: Path,
         timezone: str | None = None,
-        skill_paths: list[Path] | None = None,
-        context_path: Path | None = None,
+        context_paths: list[Path] | None = None,
     ):
         self.workspace = workspace
         self.timezone = timezone
-        self.context_path = context_path
+        self.context_paths = context_paths or []
         self.memory = MemoryStore(workspace)
 
-        # If a context repo is configured, include its skills dir in extra paths
-        all_skill_paths = list(skill_paths or [])
-        if context_path and (context_path / "skills").is_dir():
-            all_skill_paths.append(context_path / "skills")
+        # If context repos are configured, include their skills dirs in extra paths
+        all_skill_paths = []
+        for cp in self.context_paths:
+            if (cp / "skills").is_dir():
+                all_skill_paths.append(cp / "skills")
 
         self.skills = SkillsLoader(workspace, extra_paths=all_skill_paths or None)
 
@@ -51,12 +51,13 @@ class ContextBuilder:
             parts.append(f"# Memory\n\n{memory}")
 
         # Context repo memory (read-only, supplemental)
-        if self.context_path:
-            ctx_memory_file = self.context_path / "memory" / "MEMORY.md"
+        for cp in self.context_paths:
+            ctx_memory_file = cp / "memory" / "MEMORY.md"
             if ctx_memory_file.exists():
                 ctx_memory = ctx_memory_file.read_text(encoding="utf-8")
                 if ctx_memory.strip():
-                    parts.append(f"# Context Memory\n\n{ctx_memory}")
+                    repo_name = f" ({cp.name})" if cp else ""
+                    parts.append(f"# Context Memory{repo_name}\n\n{ctx_memory}")
 
         always_skills = self.skills.get_always_skills()
         if always_skills:
@@ -95,13 +96,14 @@ Skills with available="false" need dependencies installed first - you can try in
 """
 
         context_section = ""
-        if self.context_path:
-            ctx_path = str(self.context_path.expanduser().resolve())
-            context_section = (
-                f"\n## Context Repository\n"
-                f"A shared context repository is loaded from: {ctx_path}\n"
-                f"- Context memory, skills, and bootstrap files from this repo supplement your workspace.\n"
-                f"- Context repo files are read-only - write your own data to the workspace.\n"
+        if self.context_paths:
+            context_section = "\n## Context Repositories\nShared context repositories are loaded from:\n"
+            for cp in self.context_paths:
+                ctx_path = str(cp.expanduser().resolve())
+                context_section += f"- {ctx_path}\n"
+            context_section += (
+                "- Context memory, skills, and bootstrap files from these repos supplement your workspace.\n"
+                "- Context repo files are read-only - write your own data to the workspace.\n"
             )
 
         return f"""# nanobot 🐈
@@ -150,22 +152,25 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
 
-        # Load additional bootstrap files from context repo (won't override workspace files)
-        if self.context_path:
-            loaded_names = {f for f in self.BOOTSTRAP_FILES if (self.workspace / f).exists()}
+        # Load additional bootstrap files from context repos (won't override workspace files)
+        loaded_names = {f for f in self.BOOTSTRAP_FILES if (self.workspace / f).exists()}
+        for cp in self.context_paths:
+            repo_suffix = f" ({cp.name})"
             for filename in self.BOOTSTRAP_FILES:
                 if filename not in loaded_names:
-                    ctx_file = self.context_path / filename
+                    ctx_file = cp / filename
                     if ctx_file.exists():
                         content = ctx_file.read_text(encoding="utf-8")
-                        parts.append(f"## {filename} (context)\n\n{content}")
+                        parts.append(f"## {filename}{repo_suffix}\n\n{content}")
+                        # Don't add to loaded_names if we want subsequent context repos to also inject their versions.
+                        # The implementation plan specifies concatenating them.
 
             # Load any extra .md files from context repo root (not in BOOTSTRAP_FILES)
-            if self.context_path.is_dir():
-                for md_file in sorted(self.context_path.glob("*.md")):
+            if cp.is_dir():
+                for md_file in sorted(cp.glob("*.md")):
                     if md_file.name not in self.BOOTSTRAP_FILES and md_file.name != "README.md":
                         content = md_file.read_text(encoding="utf-8")
-                        parts.append(f"## {md_file.name} (context)\n\n{content}")
+                        parts.append(f"## {md_file.name}{repo_suffix}\n\n{content}")
 
         return "\n\n".join(parts) if parts else ""
 

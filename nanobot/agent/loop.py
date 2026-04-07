@@ -196,8 +196,7 @@ class AgentLoop:
         channels_config: ChannelsConfig | None = None,
         timezone: str | None = None,
         hooks: list[AgentHook] | None = None,
-        skill_paths: list[Path] | None = None,
-        context_path: Path | None = None,
+        context_paths: list[Path] | None = None,
     ):
         from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, ImageConfig, MaxTokensConfig, WebSearchConfig
 
@@ -225,10 +224,9 @@ class AgentLoop:
         self.context = ContextBuilder(
             workspace,
             timezone=timezone,
-            skill_paths=skill_paths,
-            context_path=context_path,
+            context_paths=context_paths,
         )
-        self.context_path = context_path
+        self.context_paths = context_paths or []
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider)
@@ -774,14 +772,17 @@ class AgentLoop:
         return True
 
     def _maybe_sync_context_repo(self) -> None:
-        """If a context repo is configured, schedule a background git sync."""
-        if not self.context_path:
+        """If context repos are configured, schedule a background git sync for each."""
+        if not self.context_paths:
             return
         from nanobot.utils.git_sync import async_sync_context_repo
 
         async def _sync() -> None:
             try:
-                await async_sync_context_repo(self.context_path)
+                await asyncio.gather(
+                    *(async_sync_context_repo(path) for path in self.context_paths),
+                    return_exceptions=False
+                )
             except Exception:
                 logger.exception("Context repo sync failed")
 
