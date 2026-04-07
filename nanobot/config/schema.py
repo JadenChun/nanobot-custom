@@ -35,6 +35,13 @@ class MaxTokensConfig(Base):
     output: int = 4096
 
 
+class FallbackEntry(Base):
+    """One entry in the provider fallback chain."""
+
+    provider: str  # Provider name, e.g. "gemini"
+    model: str  # Model to use with this provider, e.g. "gemini-2.5-flash"
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -43,6 +50,7 @@ class AgentDefaults(Base):
     provider: str = (
         "auto"  # Provider name (e.g. "anthropic", "openrouter") or "auto" for auto-detection
     )
+    fallback: list[FallbackEntry] = Field(default_factory=list)  # Provider fallback chain for quota exhaustion
     max_tokens: MaxTokensConfig = Field(default_factory=MaxTokensConfig)
     temperature: float = 0.1
     max_tool_iterations: int = 40
@@ -341,5 +349,15 @@ class Config(BaseSettings):
             if spec and (spec.is_gateway or spec.is_local) and spec.default_api_base:
                 return spec.default_api_base
         return None
+
+    def get_provider_by_name(self, provider_name: str) -> tuple["ProviderConfig | None", str | None]:
+        """Look up a specific provider by registry name."""
+        from nanobot.providers.registry import find_by_name
+
+        spec = find_by_name(provider_name)
+        if spec:
+            p = getattr(self.providers, spec.name, None)
+            return (p, spec.name) if p else (None, None)
+        return None, None
 
     model_config = ConfigDict(env_prefix="NANOBOT_", env_nested_delimiter="__")
