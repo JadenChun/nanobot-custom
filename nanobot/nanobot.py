@@ -81,7 +81,7 @@ class Nanobot:
             mcp_servers=config.tools.mcp_servers,
             timezone=defaults.timezone,
             skill_paths=[Path(p).expanduser().resolve() for p in defaults.skill_paths] or None,
-            context_path=Path(defaults.context_path).expanduser().resolve() if defaults.context_path else None,
+            context_paths=[Path(p).expanduser().resolve() for p in defaults.context_paths] if defaults.context_paths else None,
         )
         return cls(loop)
 

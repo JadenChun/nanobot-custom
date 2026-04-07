@@ -560,8 +560,7 @@ def serve(
         mcp_servers=runtime_config.tools.mcp_servers,
         channels_config=runtime_config.channels,
         timezone=runtime_config.agents.defaults.timezone,
-        skill_paths=_resolve_skill_paths(runtime_config),
-        context_path=_resolve_context_path(runtime_config),
+        context_paths=_resolve_context_paths(runtime_config),
     )
 
     model_name = runtime_config.agents.defaults.model
@@ -591,20 +590,15 @@ def serve(
     web.run_app(api_app, host=host, port=port, print=lambda msg: logger.info(msg))
 
 
-def _resolve_skill_paths(config: Config) -> list[Path] | None:
-    """Resolve skill_paths from config strings to expanded Path objects."""
-    raw = config.agents.defaults.skill_paths
-    if not raw:
-        return None
-    return [Path(p).expanduser().resolve() for p in raw]
 
 
-def _resolve_context_path(config: Config) -> Path | None:
-    """Resolve context_path from config string to an expanded Path object."""
-    raw = config.agents.defaults.context_path
+
+def _resolve_context_paths(config: Config) -> list[Path] | None:
+    """Resolve context_paths from config to a list of expanded Path objects."""
+    raw = config.agents.defaults.context_paths
     if not raw:
         return None
-    return Path(raw).expanduser().resolve()
+    return [Path(p).expanduser().resolve() for p in raw if p]
 
 
 # ============================================================================
@@ -668,8 +662,7 @@ def gateway(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
-        skill_paths=_resolve_skill_paths(config),
-        context_path=_resolve_context_path(config),
+        context_paths=_resolve_context_paths(config),
     )
 
     # Set cron callback (needs agent)
@@ -886,8 +879,7 @@ def agent(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
-        skill_paths=_resolve_skill_paths(config),
-        context_path=_resolve_context_path(config),
+        context_paths=_resolve_context_paths(config),
     )
 
     # Shared reference for progress callbacks

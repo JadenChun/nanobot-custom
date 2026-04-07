@@ -56,8 +56,7 @@ class AgentDefaults(Base):
     max_tool_iterations: int = 40
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
-    context_path: str = ""  # Path to a local context repo (e.g. a git repo with memory, skills, bootstrap files)
-    skill_paths: list[str] = Field(default_factory=list)  # Additional skill directories (e.g. private git repos)
+    context_paths: list[str] = Field(default_factory=list)  # Paths to local context repos (e.g. git repos with memory, skills, bootstrap files)
 
     @property
     def context_window_tokens(self) -> int:
@@ -233,6 +232,12 @@ class Config(BaseSettings):
         if legacy_input is None:
             legacy_input = defaults.get("contextWindowTokens")
 
+        # Migrate legacy context_path into context_paths
+        if "context_path" in defaults:
+            context_path = defaults.pop("context_path")
+            if context_path and isinstance(context_path, str):
+                defaults.setdefault("context_paths", []).append(context_path)
+        
         if isinstance(mt, int):
             defaults["maxTokens"] = {
                 "input": legacy_input if isinstance(legacy_input, int) else 120000,
