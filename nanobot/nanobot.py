@@ -113,17 +113,14 @@ class Nanobot:
         return RunResult(content=content, tools_used=[], messages=[])
 
 
-def _make_provider(config: Any) -> Any:
-    """Create the LLM provider from config (extracted from CLI)."""
-    from nanobot.providers.base import GenerationSettings
+def _make_single_provider(config: Any, provider_name: str, model: str) -> Any:
+    """Create a single LLM provider instance for the given provider name and model."""
     from nanobot.providers.registry import find_by_name
 
-    model = config.agents.defaults.model
-    provider_name = config.get_provider_name(model)
-    p = config.get_provider(model)
+    p, _ = config.get_provider_by_name(provider_name)
     keys = p.effective_keys if p else []
     primary_key = keys[0] if keys else None
-    spec = find_by_name(provider_name) if provider_name else None
+    spec = find_by_name(provider_name)
     backend = spec.backend if spec else "openai_compat"
 
     if backend == "azure_openai":
@@ -138,39 +135,77 @@ def _make_provider(config: Any) -> Any:
     if backend == "openai_codex":
         from nanobot.providers.openai_codex_provider import OpenAICodexProvider
 
-        provider = OpenAICodexProvider(default_model=model)
+        return OpenAICodexProvider(default_model=model)
     elif backend == "azure_openai":
         from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
 
-        provider = AzureOpenAIProvider(
+        return AzureOpenAIProvider(
             api_key=primary_key, api_base=p.api_base, default_model=model
         )
     elif backend == "anthropic":
         from nanobot.providers.anthropic_provider import AnthropicProvider
 
-        provider = AnthropicProvider(
+        api_base = p.api_base if p else None
+        if not api_base and spec and spec.default_api_base:
+            api_base = spec.default_api_base
+
+        return AnthropicProvider(
             api_key=primary_key,
-            api_base=config.get_api_base(model),
+            api_base=api_base,
             default_model=model,
             extra_headers=p.extra_headers if p else None,
         )
     else:
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 
-        provider = OpenAICompatProvider(
+        api_base = p.api_base if p else None
+        if not api_base and spec:
+            if spec.is_gateway or spec.is_local:
+                api_base = spec.default_api_base or None
+            elif spec.default_api_base:
+                api_base = spec.default_api_base
+
+        return OpenAICompatProvider(
             api_key=primary_key,
             api_keys=keys if len(keys) > 1 else None,
-            api_base=config.get_api_base(model),
+            api_base=api_base,
             default_model=model,
             extra_headers=p.extra_headers if p else None,
             rate_limit=p.rate_limit if p else 0,
             spec=spec,
         )
 
+
+def _make_provider(config: Any) -> Any:
+    """Create the LLM provider from config (extracted from CLI)."""
+    from nanobot.providers.base import GenerationSettings
+
+    model = config.agents.defaults.model
+    provider_name = config.get_provider_name(model)
+    if not provider_name:
+        raise ValueError("No provider could be matched for the configured model.")
+
+    primary = _make_single_provider(config, provider_name, model)
+
     defaults = config.agents.defaults
-    provider.generation = GenerationSettings(
+    gen = GenerationSettings(
         temperature=defaults.temperature,
         max_tokens=defaults.max_tokens.output,
         reasoning_effort=defaults.reasoning_effort,
     )
-    return provider
+
+    fallback_entries = defaults.fallback
+    if not fallback_entries:
+        primary.generation = gen
+        return primary
+
+    from nanobot.providers.fallback_provider import FallbackProvider
+
+    providers: list[tuple[Any, str]] = [(primary, model)]
+    for entry in fallback_entries:
+        fb_provider = _make_single_provider(config, entry.provider, entry.model)
+        providers.append((fb_provider, entry.model))
+
+    fallback = FallbackProvider(providers)
+    fallback.generation = gen
+    return fallback

@@ -97,6 +97,16 @@ class LLMProvider(ABC):
         "all configured api keys were rate-limited or out of quota after trying",
         "all api keys exhausted",
     )
+    _QUOTA_EXHAUSTION_MARKERS = (
+        "402",
+        "payment required",
+        "out of quota",
+        "quota exceeded",
+        "insufficient_quota",
+        "billing",
+        "all configured api keys were rate-limited or out of quota",
+        "all api keys exhausted",
+    )
 
     _SENTINEL = object()
 
@@ -201,6 +211,12 @@ class LLMProvider(ABC):
         if any(marker in err for marker in cls._NON_RETRYABLE_ERROR_MARKERS):
             return False
         return any(marker in err for marker in cls._TRANSIENT_ERROR_MARKERS)
+
+    @classmethod
+    def _is_quota_exhaustion(cls, content: str | None) -> bool:
+        """True when error indicates permanent quota exhaustion (not transient rate limit)."""
+        err = (content or "").lower()
+        return any(marker in err for marker in cls._QUOTA_EXHAUSTION_MARKERS)
 
     @staticmethod
     def _strip_image_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
