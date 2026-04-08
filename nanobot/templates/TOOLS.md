@@ -19,3 +19,6 @@ This file documents non-obvious constraints and usage patterns.
 - Wraps `agent-browser` via `npx`
 - Pass CLI args as a string array; use `["--help"]` first when unsure
 - Timeout and output size are configurable via `tools.agentBrowser.*`
+- For visible web-app testing, prefer `["dashboard", "start"]` and headed commands like `["--headed", "open", "https://example.com"]`
+- Save screenshots to workspace files, then inspect them with `read_file` — image files are returned as native image blocks
+- Session recording is available on recent `agent-browser` versions via `["record", "start", "session.webm"]` and `["record", "stop"]`

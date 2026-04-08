@@ -4,6 +4,7 @@ import asyncio
 from contextlib import contextmanager, nullcontext
 
 import os
+import shutil
 import select
 import signal
 import sys
@@ -34,7 +35,11 @@ from rich.text import Text
 
 from nanobot import __logo__, __version__
 from nanobot.cli.stream import StreamRenderer, ThinkingSpinner
-from nanobot.config.paths import get_workspace_path, is_default_workspace
+from nanobot.config.paths import (
+    get_browser_test_artifacts_dir,
+    get_workspace_path,
+    is_default_workspace,
+)
 from nanobot.config.schema import Config
 from nanobot.utils.helpers import sync_workspace_templates
 
@@ -375,23 +380,16 @@ def _onboard_plugins(config_path: Path) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def _make_provider(config: Config):
-    """Create the appropriate LLM provider from config.
-
-    Routing is driven by ``ProviderSpec.backend`` in the registry.
-    """
-    from nanobot.providers.base import GenerationSettings
+def _make_single_provider(config: Config, provider_name: str, model: str):
+    """Create a single provider instance for a resolved provider/model pair."""
     from nanobot.providers.registry import find_by_name
 
-    model = config.agents.defaults.model
-    provider_name = config.get_provider_name(model)
-    p = config.get_provider(model)
+    p, _ = config.get_provider_by_name(provider_name)
     keys = p.effective_keys if p else []
     primary_key = keys[0] if keys else None
-    spec = find_by_name(provider_name) if provider_name else None
+    spec = find_by_name(provider_name)
     backend = spec.backend if spec else "openai_compat"
 
-    # --- validation ---
     if backend == "azure_openai":
         if not p or not primary_key or not p.api_base:
             console.print("[red]Error: Azure OpenAI requires api_key and api_base.[/red]")
@@ -406,44 +404,74 @@ def _make_provider(config: Config):
             console.print("Set one in ~/.nanobot/config.json under providers section")
             raise typer.Exit(1)
 
-    # --- instantiation by backend ---
     if backend == "openai_codex":
         from nanobot.providers.openai_codex_provider import OpenAICodexProvider
-        provider = OpenAICodexProvider(default_model=model)
-    elif backend == "azure_openai":
+
+        return OpenAICodexProvider(default_model=model)
+    if backend == "azure_openai":
         from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
-        provider = AzureOpenAIProvider(
+
+        return AzureOpenAIProvider(
             api_key=primary_key,
             api_base=p.api_base,
             default_model=model,
         )
-    elif backend == "anthropic":
+    if backend == "anthropic":
         from nanobot.providers.anthropic_provider import AnthropicProvider
-        provider = AnthropicProvider(
+
+        return AnthropicProvider(
             api_key=primary_key,
             api_base=config.get_api_base(model),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
-        )
-    else:
-        from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-        provider = OpenAICompatProvider(
-            api_key=primary_key,
-            api_keys=keys if len(keys) > 1 else None,
-            api_base=config.get_api_base(model),
-            default_model=model,
-            extra_headers=p.extra_headers if p else None,
-            rate_limit=p.rate_limit if p else 0,
-            spec=spec,
         )
 
+    from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+
+    return OpenAICompatProvider(
+        api_key=primary_key,
+        api_keys=keys if len(keys) > 1 else None,
+        api_base=config.get_api_base(model),
+        default_model=model,
+        extra_headers=p.extra_headers if p else None,
+        rate_limit=p.rate_limit if p else 0,
+        spec=spec,
+    )
+
+
+def _make_provider(config: Config):
+    """Create the configured provider chain, including quota fallback."""
+    from nanobot.providers.base import GenerationSettings
+
+    model = config.agents.defaults.model
+    provider_name = config.get_provider_name(model)
+    if not provider_name:
+        console.print("[red]Error: No provider could be matched for the configured model.[/red]")
+        raise typer.Exit(1)
+
+    primary = _make_single_provider(config, provider_name, model)
+
     defaults = config.agents.defaults
-    provider.generation = GenerationSettings(
+    gen = GenerationSettings(
         temperature=defaults.temperature,
         max_tokens=defaults.max_tokens.output,
         reasoning_effort=defaults.reasoning_effort,
     )
-    return provider
+
+    fallback_entries = defaults.fallback
+    if not fallback_entries:
+        primary.generation = gen
+        return primary
+
+    from nanobot.providers.fallback_provider import FallbackProvider
+
+    providers = [(primary, model)]
+    for entry in fallback_entries:
+        providers.append((_make_single_provider(config, entry.provider, entry.model), entry.model))
+
+    fallback = FallbackProvider(providers)
+    fallback.generation = gen
+    return fallback
 
 
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
@@ -1260,6 +1288,68 @@ def status():
             else:
                 has_key = bool(p.effective_keys)
                 console.print(f"{spec.label}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
+
+
+# ============================================================================
+# Artifact Commands
+# ============================================================================
+
+
+artifacts_app = typer.Typer(help="Manage browser test artifacts")
+app.add_typer(artifacts_app, name="artifacts")
+
+
+def _get_browser_artifacts_path(config: str | None = None, workspace: str | None = None) -> Path:
+    """Resolve the browser test artifacts directory for the active instance."""
+    runtime_config = _load_runtime_config(config, workspace)
+    return get_browser_test_artifacts_dir(runtime_config.workspace_path)
+
+
+@artifacts_app.command("path")
+def artifacts_path(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+):
+    """Show the workspace path used for browser test artifacts."""
+    artifacts_dir = _get_browser_artifacts_path(config, workspace)
+    entries = [p for p in artifacts_dir.iterdir() if p.name != ".gitkeep"]
+
+    console.print(f"Browser test artifacts: {artifacts_dir}")
+    console.print(f"Entries: {len(entries)}")
+
+
+@artifacts_app.command("clean")
+def artifacts_clean(
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+):
+    """Remove all saved browser test artifacts while preserving the root directory."""
+    artifacts_dir = _get_browser_artifacts_path(config, workspace)
+    targets = [p for p in artifacts_dir.iterdir() if p.name != ".gitkeep"]
+
+    if not targets:
+        console.print(f"[green]✓[/green] Browser test artifacts already empty: {artifacts_dir}")
+        return
+
+    if not yes:
+        confirmed = typer.confirm(
+            f"Delete {len(targets)} item(s) from {artifacts_dir}?",
+            default=False,
+        )
+        if not confirmed:
+            console.print("Cancelled.")
+            raise typer.Exit(1)
+
+    removed = 0
+    for target in targets:
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        removed += 1
+
+    console.print(f"[green]✓[/green] Removed {removed} item(s) from {artifacts_dir}")
 
 
 # ============================================================================

@@ -8,7 +8,8 @@ from typer.testing import CliRunner
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.cli.commands import _make_provider, app
-from nanobot.config.schema import Config
+from nanobot.config.schema import Config, FallbackEntry
+from nanobot.providers.fallback_provider import FallbackProvider
 from nanobot.providers.openai_codex_provider import _strip_model_prefix
 from nanobot.providers.registry import find_by_name
 
@@ -197,6 +198,61 @@ def test_onboard_wizard_preserves_explicit_config_in_next_steps(tmp_path, monkey
     resolved_config = str(config_path.resolve())
     assert f'nanobot agent -m "Hello!" --config {resolved_config}' in compact_output
     assert f"nanobot gateway --config {resolved_config}" in compact_output
+
+
+def test_artifacts_path_reports_workspace_scoped_browser_test_dir(tmp_path, monkeypatch):
+    runtime_config = Config()
+    runtime_config.agents.defaults.workspace = str(tmp_path / "workspace")
+
+    monkeypatch.setattr(
+        "nanobot.cli.commands._load_runtime_config",
+        lambda config=None, workspace=None: runtime_config,
+    )
+
+    result = runner.invoke(app, ["artifacts", "path"])
+
+    assert result.exit_code == 0
+    expected = tmp_path / "workspace" / "artifacts" / "browser-tests"
+    assert str(expected) in _strip_ansi(result.stdout).replace("\n", "")
+    assert expected.exists()
+
+
+def test_artifacts_clean_removes_saved_browser_test_artifacts(tmp_path, monkeypatch):
+    runtime_config = Config()
+    runtime_config.agents.defaults.workspace = str(tmp_path / "workspace")
+
+    monkeypatch.setattr(
+        "nanobot.cli.commands._load_runtime_config",
+        lambda config=None, workspace=None: runtime_config,
+    )
+
+    artifacts_root = Path(runtime_config.workspace_path) / "artifacts" / "browser-tests"
+    run_dir = artifacts_root / "20260408-login-flow"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "desktop-annotated.png").write_bytes(b"png")
+    (run_dir / "notes.md").write_text("notes", encoding="utf-8")
+
+    result = runner.invoke(app, ["artifacts", "clean", "--yes"])
+
+    assert result.exit_code == 0
+    assert artifacts_root.exists()
+    assert list(artifacts_root.iterdir()) == []
+
+
+def test_make_provider_wraps_cli_fallback_chain_for_same_provider_models():
+    config = Config()
+    config.agents.defaults.model = "gemini-3-flash-preview"
+    config.agents.defaults.fallback = [
+        FallbackEntry(provider="gemini", model="gemma-4-31b-it"),
+    ]
+    config.providers.gemini.api_key = "test-gemini-key"
+
+    provider = _make_provider(config)
+
+    assert isinstance(provider, FallbackProvider)
+    assert len(provider._providers) == 2
+    assert provider._providers[0][1] == "gemini-3-flash-preview"
+    assert provider._providers[1][1] == "gemma-4-31b-it"
 
 
 def test_config_matches_github_copilot_codex_with_hyphen_prefix():

@@ -21,5 +21,6 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `weather` | Get weather info using wttr.in and Open-Meteo |
 | `summarize` | Summarize URLs, files, and YouTube videos |
 | `tmux` | Remote-control tmux sessions |
+| `webapp-testing` | Test web apps in a visible browser, including desktop/mobile UI checks |
 | `clawhub` | Search and install skills from ClawHub registry |
 | `skill-creator` | Create new skills |
