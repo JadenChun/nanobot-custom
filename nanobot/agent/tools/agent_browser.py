@@ -32,8 +32,10 @@ class AgentBrowserTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Run agent-browser CLI for browser/electron automation. "
-            "Pass CLI args as a string array (for example ['--help'], ['open', 'https://example.com'], or ['snapshot'])."
+            "Run agent-browser CLI for browser/electron automation, web-app testing, visual QA, "
+            "screenshots, and session recording. Pass CLI args as a string array (for example "
+            "['--help'], ['--headed', 'open', 'https://example.com'], ['dashboard', 'start'], "
+            "['screenshot', 'page.png', '--annotate'], or ['record', 'start', 'session.webm'])."
         )
 
     @property

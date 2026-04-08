@@ -200,7 +200,7 @@ nanobot channels login whatsapp
 > For other LLM providers, please see the [Providers](#providers) section.
 >
 > For web search capability setup, please see [Web Search](#web-search).
-> Optional browser automation tool: install Node.js/npm to enable `agent_browser` (`agent-browser`).
+> Optional browser automation tool: `agent_browser` is not installed by Nanobot's Python install, including `pip install -e .` and `pip install nanobot-ai`. Install Node.js/npm first, then install or run `agent-browser` separately via `npx`.
 
 **1. Initialize**
 
@@ -209,6 +209,36 @@ nanobot onboard
 ```
 
 Use `nanobot onboard --wizard` if you want the interactive setup wizard.
+
+**Optional: Browser Automation Setup**
+
+Nanobot includes the `agent_browser` wrapper, but not the `agent-browser` package itself. The wrapper runs `agent-browser` through `npx`, so browser automation needs a separate Node/npm setup.
+
+Install prerequisites:
+
+```bash
+# 1. Install Node.js/npm first
+node --version
+npm --version
+
+# 2. Install agent-browser globally (recommended)
+npm install -g agent-browser
+
+# 3. Download the browser binary used by agent-browser
+agent-browser install
+```
+
+On Linux servers or VPS instances, you may also need system browser dependencies:
+
+```bash
+agent-browser install --with-deps
+```
+
+Notes:
+
+- Nanobot's Python install only installs the Python package. This includes both `pip install -e .` from the repo and `pip install nanobot-ai` from PyPI.
+- If Node.js/npm is installed, `npx --yes agent-browser ...` can fetch the package on demand, but global install is more predictable for servers.
+- Visible headed mode is best on a local machine. On Linux VPS instances, headless mode plus screenshots, recordings, traces, and the dashboard is usually the practical setup.
 
 **2. Configure** (`~/.nanobot/config.json`)
 
@@ -1388,7 +1418,7 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 | `tools.restrictToWorkspace` | `false` | When `true`, restricts **all** agent tools (shell, file read/write/edit, list) to the workspace directory. Prevents path traversal and out-of-scope access. |
 | `tools.exec.enable` | `true` | When `false`, the shell `exec` tool is not registered at all. Use this to completely disable shell command execution. |
 | `tools.exec.pathAppend` | `""` | Extra directories to append to `PATH` when running shell commands (e.g. `/usr/sbin` for `ufw`). |
-| `tools.agentBrowser.enabled` | `true` | Enable the built-in `agent_browser` tool (wrapper around `agent-browser` via `npx`). Requires Node.js/npm. |
+| `tools.agentBrowser.enabled` | `true` | Enable the built-in `agent_browser` tool (wrapper around `agent-browser` via `npx`). Requires a separate `agent-browser` setup with Node.js/npm, plus `agent-browser install` for browser binaries. |
 | `channels.*.allowFrom` | `[]` (deny all) | Whitelist of user IDs. Empty denies all; use `["*"]` to allow everyone. |
 
 
@@ -1548,6 +1578,8 @@ nanobot gateway --config ~/.nanobot-telegram/config.json --workspace /tmp/nanobo
 | `nanobot serve` | Start the OpenAI-compatible API |
 | `nanobot gateway` | Start the gateway |
 | `nanobot status` | Show status |
+| `nanobot artifacts path` | Show the workspace directory used for browser test artifacts |
+| `nanobot artifacts clean` | Remove saved browser test artifacts from the workspace |
 | `nanobot provider login openai-codex` | OAuth login for providers |
 | `nanobot channels login <channel>` | Authenticate a channel interactively |
 | `nanobot channels status` | Show channel status |
