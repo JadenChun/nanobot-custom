@@ -173,6 +173,15 @@ class AgentBrowserConfig(Base):
     max_output_chars: int = 12000
 
 
+class AgentDeviceConfig(Base):
+    """Agent Device tool configuration."""
+
+    enabled: bool = True
+    package: str = "agent-device"
+    timeout: int = 180
+    max_output_chars: int = 12000
+
+
 class ExecToolConfig(Base):
     """Shell exec tool configuration."""
 
@@ -205,6 +214,7 @@ class ToolsConfig(Base):
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     agent_browser: AgentBrowserConfig = Field(default_factory=AgentBrowserConfig)
+    agent_device: AgentDeviceConfig = Field(default_factory=AgentDeviceConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     image: ImageConfig = Field(default_factory=ImageConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory

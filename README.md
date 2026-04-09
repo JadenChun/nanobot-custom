@@ -201,6 +201,7 @@ nanobot channels login whatsapp
 >
 > For web search capability setup, please see [Web Search](#web-search).
 > Optional browser automation tool: `agent_browser` is not installed by Nanobot's Python install, including `pip install -e .` and `pip install nanobot-ai`. Install Node.js/npm first, then install or run `agent-browser` separately via `npx`.
+> Optional mobile device automation tool: `agent_device` is not installed by Nanobot's Python install, including `pip install -e .` and `pip install nanobot-ai`. Install Node.js/npm first, then install or run `agent-device` separately via `npx`.
 
 **1. Initialize**
 
@@ -239,6 +240,34 @@ Notes:
 - Nanobot's Python install only installs the Python package. This includes both `pip install -e .` from the repo and `pip install nanobot-ai` from PyPI.
 - If Node.js/npm is installed, `npx --yes agent-browser ...` can fetch the package on demand, but global install is more predictable for servers.
 - Visible headed mode is best on a local machine. On Linux VPS instances, headless mode plus screenshots, recordings, traces, and the dashboard is usually the practical setup.
+
+**Optional: Mobile Device Automation Setup**
+
+Nanobot includes the `agent_device` wrapper, but not the `agent-device` package itself. The wrapper runs `agent-device` through `npx`, so mobile automation needs a separate Node/npm setup.
+
+Current built-in Nanobot guidance is intentionally scoped to local iOS simulators on macOS and local Android emulators. The upstream `agent-device` project can also support physical devices, remote daemons, install flows, replay, and more, but those higher-capability paths are intentionally left for a later Nanobot upgrade.
+
+Install prerequisites:
+
+```bash
+# 1. Install Node.js/npm first
+node --version
+npm --version
+
+# 2. Install agent-device globally (recommended)
+npm install -g agent-device
+
+# 3. Verify local platform tooling
+xcrun simctl list devices
+adb devices
+```
+
+Notes:
+
+- Nanobot's built-in mobile skills currently assume the app is already installed on the selected simulator or emulator.
+- `agent-device` requires Node.js 22+, Xcode tooling for iOS simulator control, and Android SDK/ADB for Android emulator control.
+- If Node.js/npm is installed, `npx --yes agent-device ...` can fetch the package on demand, but global install is more predictable for local QA machines.
+- The built-in Nanobot integration is focused on opening apps, taking snapshots and screenshots, tapping, typing, and validating UI state on local emulators.
 
 **2. Configure** (`~/.nanobot/config.json`)
 
@@ -1419,6 +1448,7 @@ MCP tools are automatically discovered and registered on startup. The LLM can us
 | `tools.exec.enable` | `true` | When `false`, the shell `exec` tool is not registered at all. Use this to completely disable shell command execution. |
 | `tools.exec.pathAppend` | `""` | Extra directories to append to `PATH` when running shell commands (e.g. `/usr/sbin` for `ufw`). |
 | `tools.agentBrowser.enabled` | `true` | Enable the built-in `agent_browser` tool (wrapper around `agent-browser` via `npx`). Requires a separate `agent-browser` setup with Node.js/npm, plus `agent-browser install` for browser binaries. |
+| `tools.agentDevice.enabled` | `true` | Enable the built-in `agent_device` tool (wrapper around `agent-device` via `npx`). Current built-in Nanobot guidance targets local iOS simulators and Android emulators and assumes local platform tooling is already installed. |
 | `channels.*.allowFrom` | `[]` (deny all) | Whitelist of user IDs. Empty denies all; use `["*"]` to allow everyone. |
 
 
