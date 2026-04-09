@@ -13,6 +13,7 @@ from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
+from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
@@ -51,10 +52,11 @@ class SubagentManager:
         web_search_config: "WebSearchConfig | None" = None,
         web_proxy: str | None = None,
         agent_browser_config: "AgentBrowserConfig | None" = None,
+        agent_device_config: "AgentDeviceConfig | None" = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
     ):
-        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, WebSearchConfig
+        from nanobot.config.schema import AgentBrowserConfig, AgentDeviceConfig, ExecToolConfig, WebSearchConfig
 
         self.provider = provider
         self.workspace = workspace
@@ -63,6 +65,7 @@ class SubagentManager:
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
         self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
+        self.agent_device_config = agent_device_config or AgentDeviceConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self.runner = AgentRunner(provider)
@@ -207,6 +210,12 @@ class SubagentManager:
                 timeout=self.agent_browser_config.timeout,
                 max_output_chars=self.agent_browser_config.max_output_chars,
             ))
+        if self.agent_device_config.enabled:
+            tools.register(AgentDeviceTool(
+                package=self.agent_device_config.package,
+                timeout=self.agent_device_config.timeout,
+                max_output_chars=self.agent_device_config.max_output_chars,
+            ))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         tools.register(WebFetchTool(proxy=self.web_proxy))
         return tools
@@ -234,6 +243,12 @@ class SubagentManager:
                 package=self.agent_browser_config.package,
                 timeout=self.agent_browser_config.timeout,
                 max_output_chars=self.agent_browser_config.max_output_chars,
+            ))
+        if self.agent_device_config.enabled:
+            tools.register(AgentDeviceTool(
+                package=self.agent_device_config.package,
+                timeout=self.agent_device_config.timeout,
+                max_output_chars=self.agent_device_config.max_output_chars,
             ))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         tools.register(WebFetchTool(proxy=self.web_proxy))

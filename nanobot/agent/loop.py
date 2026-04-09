@@ -19,6 +19,7 @@ from nanobot.agent.memory import MemoryConsolidator
 from nanobot.agent.runner import AgentRunSpec, AgentRunner
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
+from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
@@ -34,10 +35,12 @@ from nanobot.command import CommandContext, CommandRouter, register_builtin_comm
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
+from nanobot.utils.helpers import estimate_prompt_tokens_chain
 
 if TYPE_CHECKING:
     from nanobot.config.schema import (
         AgentBrowserConfig,
+        AgentDeviceConfig,
         ChannelsConfig,
         ExecToolConfig,
         ImageConfig,
@@ -187,6 +190,7 @@ class AgentLoop:
         web_search_config: WebSearchConfig | None = None,
         web_proxy: str | None = None,
         agent_browser_config: AgentBrowserConfig | None = None,
+        agent_device_config: AgentDeviceConfig | None = None,
         exec_config: ExecToolConfig | None = None,
         image_config: ImageConfig | None = None,
         cron_service: CronService | None = None,
@@ -198,7 +202,7 @@ class AgentLoop:
         hooks: list[AgentHook] | None = None,
         context_paths: list[Path] | None = None,
     ):
-        from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig, ImageConfig, MaxTokensConfig, WebSearchConfig
+        from nanobot.config.schema import AgentBrowserConfig, AgentDeviceConfig, ExecToolConfig, ImageConfig, MaxTokensConfig, WebSearchConfig
 
         self.bus = bus
         self.channels_config = channels_config
@@ -213,6 +217,7 @@ class AgentLoop:
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
         self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
+        self.agent_device_config = agent_device_config or AgentDeviceConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self.image_config = image_config or ImageConfig()
         self.cron_service = cron_service
@@ -238,6 +243,7 @@ class AgentLoop:
             web_search_config=self.web_search_config,
             web_proxy=web_proxy,
             agent_browser_config=self.agent_browser_config,
+            agent_device_config=self.agent_device_config,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
         )
@@ -291,6 +297,13 @@ class AgentLoop:
                 package=self.agent_browser_config.package,
                 timeout=self.agent_browser_config.timeout,
                 max_output_chars=self.agent_browser_config.max_output_chars,
+                working_dir=str(self.workspace),
+            ))
+        if self.agent_device_config.enabled:
+            self.tools.register(AgentDeviceTool(
+                package=self.agent_device_config.package,
+                timeout=self.agent_device_config.timeout,
+                max_output_chars=self.agent_device_config.max_output_chars,
                 working_dir=str(self.workspace),
             ))
         self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
@@ -551,9 +564,8 @@ class AgentLoop:
 
             if self.max_tokens.input > 0:
                 try:
-                    import litellm
-
-                    tokens = litellm.token_counter(model=self.model, messages=messages)
+                    tools = self.tools.get_definitions()
+                    tokens, _ = estimate_prompt_tokens_chain(self.provider, self.model, messages, tools)
                     if tokens > self.max_tokens.input:
                         logger.warning(
                             "System context size ({}) exceeds maxTokens.input ({}). Trimming oldest turns.",
@@ -569,7 +581,12 @@ class AgentLoop:
                                 chat_id=chat_id,
                                 current_role=current_role,
                             )
-                            tokens = litellm.token_counter(model=self.model, messages=messages)
+                            tokens, _ = estimate_prompt_tokens_chain(
+                                self.provider,
+                                self.model,
+                                messages,
+                                tools,
+                            )
                 except Exception as e:
                     logger.error("Failed to check system token count: {}", e)
 
@@ -617,9 +634,13 @@ class AgentLoop:
         # Safety check: trim oldest turns if this specific request still exceeds maxTokens.input.
         if self.max_tokens.input > 0:
             try:
-                import litellm
-
-                tokens = litellm.token_counter(model=self.model, messages=initial_messages)
+                tools = self.tools.get_definitions()
+                tokens, _ = estimate_prompt_tokens_chain(
+                    self.provider,
+                    self.model,
+                    initial_messages,
+                    tools,
+                )
                 if tokens > self.max_tokens.input:
                     logger.warning(
                         "Context size ({}) exceeds maxTokens.input ({}). Trimming oldest turns.",
@@ -635,7 +656,12 @@ class AgentLoop:
                             channel=msg.channel,
                             chat_id=msg.chat_id,
                         )
-                        tokens = litellm.token_counter(model=self.model, messages=initial_messages)
+                        tokens, _ = estimate_prompt_tokens_chain(
+                            self.provider,
+                            self.model,
+                            initial_messages,
+                            tools,
+                        )
             except Exception as e:
                 logger.error("Failed to check token count: {}", e)
 

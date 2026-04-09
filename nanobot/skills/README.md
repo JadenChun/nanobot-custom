@@ -22,5 +22,7 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `summarize` | Summarize URLs, files, and YouTube videos |
 | `tmux` | Remote-control tmux sessions |
 | `webapp-testing` | Test web apps in a visible browser, including desktop/mobile UI checks |
+| `mobile-app-testing` | Drive local iOS simulators and Android emulators with agent_device |
+| `mobile-dogfood` | Explore a mobile app on local emulators/simulators and capture evidence |
 | `clawhub` | Search and install skills from ClawHub registry |
 | `skill-creator` | Create new skills |
