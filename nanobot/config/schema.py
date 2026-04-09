@@ -83,6 +83,7 @@ class ProviderConfig(Base):
     api_base: str | None = None
     extra_headers: dict[str, str] | None = None  # Custom headers (e.g. APP-Code for AiHubMix)
     rate_limit: int = 0  # Max requests/minute (0 = unlimited), useful for strict free tiers.
+    timeout: float = 60.0  # Per-attempt LLM request/stream idle timeout in seconds.
 
     @property
     def effective_keys(self) -> list[str]:

@@ -65,7 +65,7 @@ class FallbackProvider(LLMProvider):
         last_response: LLMResponse | None = None
 
         for idx, (provider, provider_model) in enumerate(self._providers):
-            effective_model = model if model is not None else provider_model
+            effective_model = model if idx == 0 and model is not None else provider_model
 
             response = await provider.chat_with_retry(
                 messages=messages,
@@ -116,7 +116,7 @@ class FallbackProvider(LLMProvider):
         last_response: LLMResponse | None = None
 
         for idx, (provider, provider_model) in enumerate(self._providers):
-            effective_model = model if model is not None else provider_model
+            effective_model = model if idx == 0 and model is not None else provider_model
 
             response = await provider.chat_stream_with_retry(
                 messages=messages,

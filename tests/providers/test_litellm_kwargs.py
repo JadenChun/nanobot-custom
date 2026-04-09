@@ -435,6 +435,56 @@ async def test_gemini_prefers_last_successful_key_on_follow_up_request() -> None
 
 
 @pytest.mark.asyncio
+async def test_gemini_stream_timeout_rotates_to_next_key() -> None:
+    class _TimedOutStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+
+    class _TextStream:
+        def __init__(self, parts: list[str]) -> None:
+            self._parts = iter(parts)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._parts)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    spec = find_by_name("gemini")
+
+    first = SimpleNamespace()
+    first.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(return_value=_TimedOutStream()),
+    ))
+    second = SimpleNamespace()
+    second.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(return_value=_TextStream(["ok after stream timeout"])),
+    ))
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
+        provider = OpenAICompatProvider(
+            api_keys=["gem-key-1", "gem-key-2"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            timeout=5.0,
+            spec=spec,
+        )
+        provider._request_timeout = 0.01
+        result = await provider.chat_stream(
+            messages=[{"role": "user", "content": "hello"}],
+            model="google/gemini-2.5-pro",
+        )
+
+    assert result.content == "ok after stream timeout"
+
+
+@pytest.mark.asyncio
 async def test_gemini_rotates_on_service_unavailable_503() -> None:
     class _ServiceUnavailableError(Exception):
         status_code = 503

@@ -124,6 +124,7 @@ class OpenAICompatProvider(LLMProvider):
         default_model: str = "gpt-4o",
         extra_headers: dict[str, str] | None = None,
         rate_limit: int = 0,
+        timeout: float = 60.0,
         spec: ProviderSpec | None = None,
     ):
         key_pool = [k for k in (api_keys or []) if k]
@@ -138,6 +139,7 @@ class OpenAICompatProvider(LLMProvider):
         self._preferred_key_index: int | None = 0 if key_pool else None
         self._key_retry_after: list[float] = [0.0] * len(key_pool)
         self._rate_limit = max(0, int(rate_limit))
+        self._request_timeout = max(5.0, float(timeout))
         self._request_timestamps: collections.deque[float] = collections.deque()
 
         effective_base = api_base or (spec.default_api_base if spec else None) or None
@@ -216,6 +218,8 @@ class OpenAICompatProvider(LLMProvider):
             "service unavailable",
             "temporarily unavailable",
             "unavailable",
+            "timeout",
+            "timed out",
         )):
             return self._OVERLOAD_KEY_COOLDOWN_S
         if self._is_quota_exhaustion(summary) or any(marker in summary for marker in (
@@ -258,7 +262,48 @@ class OpenAICompatProvider(LLMProvider):
             api_key=active_key or "no-key",
             base_url=self._effective_base,
             default_headers=self._default_headers,
+            timeout=self._request_timeout,
         )
+
+    async def _await_with_timeout(self, awaitable: Awaitable[Any], *, phase: str) -> Any:
+        """Bound a provider SDK awaitable so a bad upstream call cannot hang forever."""
+        try:
+            return await asyncio.wait_for(awaitable, timeout=self._request_timeout)
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(f"provider {phase} timed out after {self._request_timeout:.0f}s") from exc
+
+    async def _collect_stream_chunks(
+        self,
+        stream: Any,
+        on_content_delta: Callable[[str], Awaitable[None]] | None,
+    ) -> list[Any]:
+        """Consume a streaming response with an idle timeout between chunks."""
+        chunks: list[Any] = []
+        iterator = stream.__aiter__()
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(anext(iterator), timeout=self._request_timeout)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError as exc:
+                    raise TimeoutError(
+                        f"provider stream timed out after {self._request_timeout:.0f}s waiting for the next chunk"
+                    ) from exc
+
+                chunks.append(chunk)
+                if on_content_delta and getattr(chunk, "choices", None):
+                    text = getattr(chunk.choices[0].delta, "content", None)
+                    if text:
+                        await on_content_delta(text)
+        finally:
+            close = getattr(stream, "aclose", None)
+            if callable(close):
+                try:
+                    await close()
+                except Exception:
+                    logger.debug("Ignoring stream close failure")
+        return chunks
 
     def _log_rotation(self, previous_index: int, next_index: int, error: Exception, cooldown_s: float) -> None:
         """Log a request-local rotation between configured key slots."""
@@ -286,6 +331,8 @@ class OpenAICompatProvider(LLMProvider):
             "quota",
             "resource_exhausted",
             "429",
+            "timeout",
+            "timed out",
             "unavailable",
             "service unavailable",
             "high demand",
@@ -747,7 +794,11 @@ class OpenAICompatProvider(LLMProvider):
                         kwargs["model"],
                     )
                 client = self._build_client(key_index)
-                response = self._parse(await client.chat.completions.create(**kwargs))
+                raw = await self._await_with_timeout(
+                    client.chat.completions.create(**kwargs),
+                    phase="request",
+                )
+                response = self._parse(raw)
                 self._record_key_success(key_index)
                 if attempt > 0 and self._api_keys:
                     logger.info(
@@ -818,14 +869,11 @@ class OpenAICompatProvider(LLMProvider):
                         kwargs["model"],
                     )
                 client = self._build_client(key_index)
-                stream = await client.chat.completions.create(**kwargs)
-                chunks: list[Any] = []
-                async for chunk in stream:
-                    chunks.append(chunk)
-                    if on_content_delta and chunk.choices:
-                        text = getattr(chunk.choices[0].delta, "content", None)
-                        if text:
-                            await on_content_delta(text)
+                stream = await self._await_with_timeout(
+                    client.chat.completions.create(**kwargs),
+                    phase="stream request",
+                )
+                chunks = await self._collect_stream_chunks(stream, on_content_delta)
                 response = self._parse_chunks(chunks)
                 self._record_key_success(key_index)
                 if attempt > 0 and self._api_keys:
