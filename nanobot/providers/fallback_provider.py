@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -13,15 +14,22 @@ from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
 class FallbackProvider(LLMProvider):
     """Wraps multiple providers with automatic fallback on quota exhaustion.
 
-    Each call always starts with the primary provider (index 0). If the
-    primary returns a quota-exhaustion error, the next provider in the
-    chain is tried, and so on. This ensures automatic recovery once the
-    primary provider's quota resets.
+    Each call prefers the primary provider (index 0). When a provider returns
+    a quota-exhaustion error, it is marked cooling for
+    ``_PROVIDER_QUOTA_COOLDOWN_S`` and subsequent requests skip it until the
+    cooldown expires — at which point it is probed again and, if it succeeds,
+    restored as the preferred provider. Non-quota errors short-circuit the
+    chain (falling further would likely just reproduce the same failure).
 
     Rate-limit retries are handled internally by each wrapped provider's
     ``chat_with_retry()`` / ``chat_stream_with_retry()`` — the fallback
     layer only catches errors that survive those retries.
     """
+
+    # Free-tier quotas typically refresh on a daily-ish cadence, so a 12h
+    # cooldown keeps us from hammering an exhausted provider while still
+    # letting us re-probe it roughly twice per day.
+    _PROVIDER_QUOTA_COOLDOWN_S = 12 * 3600.0
 
     def __init__(self, providers: list[tuple[LLMProvider, str]]) -> None:
         """
@@ -32,7 +40,52 @@ class FallbackProvider(LLMProvider):
         if not providers:
             raise ValueError("FallbackProvider requires at least one provider")
         self._providers = providers
+        self._provider_retry_after: list[float] = [0.0] * len(providers)
         super().__init__()
+
+    # ------------------------------------------------------------------
+    # Provider cooldown helpers
+    # ------------------------------------------------------------------
+
+    def _provider_walk_order(self) -> list[int]:
+        """Return provider indices to try this request, ready ones first.
+
+        Ready providers keep their configured order. Cooling providers are
+        appended after them, sorted by earliest expiry so the one closest
+        to recovery is probed first if every ready provider errors out.
+        """
+        now = time.monotonic()
+        ready: list[int] = []
+        cooling: list[int] = []
+        for idx in range(len(self._providers)):
+            if self._provider_retry_after[idx] <= now:
+                ready.append(idx)
+            else:
+                cooling.append(idx)
+        cooling.sort(key=lambda i: self._provider_retry_after[i])
+        return ready + cooling
+
+    def _mark_provider_exhausted(self, idx: int, provider_model: str) -> None:
+        """Put a provider into its quota-exhausted cooldown window."""
+        self._provider_retry_after[idx] = time.monotonic() + self._PROVIDER_QUOTA_COOLDOWN_S
+        logger.warning(
+            "Provider #{} ({} model={}) marked exhausted; cooling down for {:.0f}h",
+            idx,
+            type(self._providers[idx][0]).__name__,
+            provider_model,
+            self._PROVIDER_QUOTA_COOLDOWN_S / 3600.0,
+        )
+
+    def _clear_provider_cooldown_if_recovered(self, idx: int, provider_model: str) -> None:
+        """Called after a successful call — lift the cooldown on a probe hit."""
+        if self._provider_retry_after[idx] > 0.0:
+            logger.info(
+                "Provider #{} ({} model={}) recovered from cooldown",
+                idx,
+                type(self._providers[idx][0]).__name__,
+                provider_model,
+            )
+            self._provider_retry_after[idx] = 0.0
 
     # ------------------------------------------------------------------
     # Generation settings — propagate to all wrapped providers
@@ -63,8 +116,14 @@ class FallbackProvider(LLMProvider):
         **kwargs: Any,
     ) -> LLMResponse:
         last_response: LLMResponse | None = None
+        order = self._provider_walk_order()
 
-        for idx, (provider, provider_model) in enumerate(self._providers):
+        for pos, idx in enumerate(order):
+            provider, provider_model = self._providers[idx]
+            # The caller-provided model override only applies to the primary
+            # (index 0). When we fall back to a different provider, we must
+            # use that provider's configured model — it likely can't serve
+            # the primary's model id.
             effective_model = model if idx == 0 and model is not None else provider_model
 
             response = await provider.chat_with_retry(
@@ -78,7 +137,8 @@ class FallbackProvider(LLMProvider):
             )
 
             if response.finish_reason != "error":
-                if idx > 0:
+                self._clear_provider_cooldown_if_recovered(idx, provider_model)
+                if idx != 0:
                     logger.info("Fallback provider #{} ({}) succeeded", idx, provider_model)
                 return response
 
@@ -87,8 +147,11 @@ class FallbackProvider(LLMProvider):
             if not self._is_quota_exhaustion(response.content):
                 return response
 
-            if idx + 1 < len(self._providers):
-                next_provider, next_model = self._providers[idx + 1]
+            self._mark_provider_exhausted(idx, provider_model)
+
+            if pos + 1 < len(order):
+                next_idx = order[pos + 1]
+                next_provider, next_model = self._providers[next_idx]
                 logger.warning(
                     "Provider {} (model={}) quota exhausted, falling back to {} (model={}): {}",
                     type(provider).__name__, provider_model,
@@ -127,7 +190,10 @@ class FallbackProvider(LLMProvider):
 
             effective_delta = _tracked_delta
 
-        for idx, (provider, provider_model) in enumerate(self._providers):
+        order = self._provider_walk_order()
+
+        for pos, idx in enumerate(order):
+            provider, provider_model = self._providers[idx]
             effective_model = model if idx == 0 and model is not None else provider_model
 
             response = await provider.chat_stream_with_retry(
@@ -142,7 +208,8 @@ class FallbackProvider(LLMProvider):
             )
 
             if response.finish_reason != "error":
-                if idx > 0:
+                self._clear_provider_cooldown_if_recovered(idx, provider_model)
+                if idx != 0:
                     logger.info("Fallback provider #{} ({}) succeeded (streaming)", idx, provider_model)
                 return response
 
@@ -156,8 +223,11 @@ class FallbackProvider(LLMProvider):
             if not self._is_quota_exhaustion(response.content):
                 return response
 
-            if idx + 1 < len(self._providers):
-                next_provider, next_model = self._providers[idx + 1]
+            self._mark_provider_exhausted(idx, provider_model)
+
+            if pos + 1 < len(order):
+                next_idx = order[pos + 1]
+                next_provider, next_model = self._providers[next_idx]
                 logger.warning(
                     "Provider {} (model={}) quota exhausted, falling back to {} (model={}) (streaming): {}",
                     type(provider).__name__, provider_model,

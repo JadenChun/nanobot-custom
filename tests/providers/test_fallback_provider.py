@@ -2,6 +2,7 @@
 
 import pytest
 
+from nanobot.providers import fallback_provider as fallback_module
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
 from nanobot.providers.fallback_provider import FallbackProvider
 
@@ -416,3 +417,105 @@ async def test_streaming_does_not_fall_back_after_partial_delivery() -> None:
     assert fallback.calls == 0
     assert response.finish_reason == "error"
     assert "fallback content" not in (response.content or "")
+
+
+# ---------------------------------------------------------------------------
+# Provider-level 12h quota cooldown
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_provider_level_cooldown_skips_exhausted_primary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Once primary returns quota-exhaustion, subsequent requests skip it
+    straight to the fallback until its cooldown expires."""
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(fallback_module.time, "monotonic", lambda: clock["now"])
+
+    primary = ScriptedProvider([
+        LLMResponse(content="Error: out of quota", finish_reason="error"),
+        # This second response would be used if primary were called again —
+        # we assert it is NOT, because primary should be in cooldown.
+        LLMResponse(content="primary should not be reached"),
+    ])
+    fallback = ScriptedProvider([
+        LLMResponse(content="fallback ok 1"),
+        LLMResponse(content="fallback ok 2"),
+    ])
+
+    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+
+    first = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+    assert first.content == "fallback ok 1"
+    assert primary.calls == 1
+    assert fallback.calls == 1
+
+    # Move clock forward but stay inside the 12h window.
+    clock["now"] += 60.0
+    second = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+    assert second.content == "fallback ok 2"
+    # Primary must NOT have been called again — still in cooldown.
+    assert primary.calls == 1
+    assert fallback.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_provider_cooldown_expires_and_probes_primary(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After the 12h cooldown window expires, primary is probed again, and
+    on success its cooldown is cleared."""
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(fallback_module.time, "monotonic", lambda: clock["now"])
+
+    primary = ScriptedProvider([
+        LLMResponse(content="Error: out of quota", finish_reason="error"),
+        LLMResponse(content="primary back online"),
+    ])
+    fallback = ScriptedProvider([
+        LLMResponse(content="fallback ok"),
+    ])
+
+    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+
+    first = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+    assert first.content == "fallback ok"
+    assert primary.calls == 1
+    assert provider._provider_retry_after[0] > 0.0
+
+    # Jump past the 12h cooldown window.
+    clock["now"] += FallbackProvider._PROVIDER_QUOTA_COOLDOWN_S + 1.0
+    second = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+    assert second.content == "primary back online"
+    assert primary.calls == 2
+    # Success on the probe must clear the cooldown.
+    assert provider._provider_retry_after[0] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_all_providers_cooling_still_attempts_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If every provider is in cooldown, we still probe them (starting with
+    the one closest to recovery) rather than deadlocking."""
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(fallback_module.time, "monotonic", lambda: clock["now"])
+
+    primary = ScriptedProvider([
+        LLMResponse(content="Error: out of quota on primary", finish_reason="error"),
+        LLMResponse(content="primary recovered on probe"),
+    ])
+    fallback = ScriptedProvider([
+        LLMResponse(content="Error: out of quota on fallback", finish_reason="error"),
+    ])
+
+    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+
+    # First call: both providers quota-exhaust — both get cooldown.
+    first = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+    assert first.finish_reason == "error"
+    assert provider._provider_retry_after[0] > 0.0
+    assert provider._provider_retry_after[1] > 0.0
+
+    # Advance past both cooldowns. The second call should probe primary first
+    # (it has earlier expiry — both set at the same clock value so ties go by
+    # list order) and succeed.
+    clock["now"] += FallbackProvider._PROVIDER_QUOTA_COOLDOWN_S + 1.0
+    second = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+    assert second.content == "primary recovered on probe"
+    assert primary.calls == 2

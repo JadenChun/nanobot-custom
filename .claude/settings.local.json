@@ -3,7 +3,11 @@
     "allow": [
       "Bash(python -m pytest tests/providers/test_litellm_kwargs.py tests/providers/test_fallback_provider.py -x --tb=short)",
       "Bash(.venv/Scripts/python -m pytest tests/providers/test_litellm_kwargs.py tests/providers/test_fallback_provider.py --tb=short)",
-      "Bash(.venv/Scripts/python -m pytest tests/providers/ --tb=short)"
+      "Bash(.venv/Scripts/python -m pytest tests/providers/ --tb=short)",
+      "Bash(grep -n \"_sanitize_empty_content\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
+      "Bash(grep -n \"_sanitize_request_messages\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
+      "Bash(grep -n \"400\\\\|INVALID_ARGUMENT\\\\|bad request\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
+      "Bash(grep -n \"_QUOTA_KEY_COOLDOWN\\\\|_provider_retry_after\\\\|provider.*.cooldown\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)"
     ]
   }
 }
