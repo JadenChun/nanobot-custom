@@ -512,3 +512,128 @@ async def test_gemini_rotates_on_service_unavailable_503() -> None:
         )
 
     assert result.content == "ok after 503 rotate"
+
+
+@pytest.mark.asyncio
+async def test_single_key_rate_limit_emits_canonical_exhaustion_message() -> None:
+    """A single-key pool hitting 429 must still emit the canonical exhaustion
+    message so FallbackProvider can detect quota exhaustion and fall back."""
+
+    class _RateLimitError(Exception):
+        status_code = 429
+
+    spec = find_by_name("gemini")
+    client = SimpleNamespace()
+    client.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(side_effect=_RateLimitError("429 Too Many Requests")),
+    ))
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", return_value=client):
+        provider = OpenAICompatProvider(
+            api_keys=["only-key"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            spec=spec,
+        )
+        result = await provider.chat(
+            messages=[{"role": "user", "content": "hello"}],
+            model="google/gemini-2.5-pro",
+        )
+
+    assert result.finish_reason == "error"
+    assert "All configured API keys were rate-limited" in (result.content or "")
+    # The canonical message is what FallbackProvider._is_quota_exhaustion matches on.
+    from nanobot.providers.base import LLMProvider
+    assert LLMProvider._is_quota_exhaustion(result.content) is True
+
+
+def test_local_timeout_classified_as_rate_limit_via_isinstance() -> None:
+    """A bare TimeoutError (no helpful string) must be classified as a rate-limit
+    error and get the overload cooldown — without relying on substring matching."""
+    spec = find_by_name("gemini")
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider(
+            api_keys=["k1", "k2"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            spec=spec,
+        )
+
+    err = TimeoutError("")  # no "timeout" substring to match on
+    assert OpenAICompatProvider._is_rate_limit_error(err) is True
+    assert provider._cooldown_seconds_for_error(err) == OpenAICompatProvider._OVERLOAD_KEY_COOLDOWN_S
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_does_not_rotate_after_delivering_content() -> None:
+    """Once content has been streamed to the user, a mid-stream failure must
+    not rotate to another key and concatenate a second response."""
+
+    class _RateLimitError(Exception):
+        status_code = 429
+
+    class _PartialThenFailStream:
+        """Yields one chunk with content then raises a rate-limit error."""
+
+        def __init__(self) -> None:
+            self._yielded = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._yielded:
+                self._yielded = True
+                delta = SimpleNamespace(content="partial-hello")
+                choice = SimpleNamespace(delta=delta, finish_reason=None, index=0)
+                return SimpleNamespace(choices=[choice], usage=None)
+            raise _RateLimitError("429 mid-stream")
+
+    class _BackupStream:
+        def __init__(self) -> None:
+            self._done = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self._done:
+                raise StopAsyncIteration
+            self._done = True
+            delta = SimpleNamespace(content="should-not-see-this")
+            choice = SimpleNamespace(delta=delta, finish_reason="stop", index=0)
+            usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+            return SimpleNamespace(choices=[choice], usage=usage)
+
+    spec = find_by_name("gemini")
+    first = SimpleNamespace()
+    first.chat = SimpleNamespace(completions=SimpleNamespace(
+        create=AsyncMock(return_value=_PartialThenFailStream()),
+    ))
+    second = SimpleNamespace()
+    second_create = AsyncMock(return_value=_BackupStream())
+    second.chat = SimpleNamespace(completions=SimpleNamespace(create=second_create))
+
+    deltas: list[str] = []
+
+    async def _on_delta(text: str) -> None:
+        deltas.append(text)
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
+        provider = OpenAICompatProvider(
+            api_keys=["gem-key-1", "gem-key-2"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            spec=spec,
+        )
+        result = await provider.chat_stream(
+            messages=[{"role": "user", "content": "hello"}],
+            model="google/gemini-2.5-pro",
+            on_content_delta=_on_delta,
+        )
+
+    # User received only the first key's partial content — no second key content.
+    assert deltas == ["partial-hello"]
+    assert second_create.await_count == 0
+    # The response should reflect the error; it must NOT contain the backup content.
+    assert "should-not-see-this" not in (result.content or "")

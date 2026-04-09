@@ -103,7 +103,9 @@ class LLMProvider(ABC):
         "out of quota",
         "quota exceeded",
         "insufficient_quota",
-        "billing",
+        "billing hard limit",
+        "billing limit",
+        "plan and billing",
         "all configured api keys were rate-limited or out of quota",
         "all api keys exhausted",
     )
@@ -304,17 +306,34 @@ class LLMProvider(ABC):
         if reasoning_effort is self._SENTINEL:
             reasoning_effort = self.generation.reasoning_effort
 
+        delivered_any = False
+        effective_delta = on_content_delta
+        if on_content_delta is not None:
+            user_delta = on_content_delta
+
+            async def _tracked_delta(text: str) -> None:
+                nonlocal delivered_any
+                delivered_any = True
+                await user_delta(text)
+
+            effective_delta = _tracked_delta
+
         kw: dict[str, Any] = dict(
             messages=messages, tools=tools, model=model,
             max_tokens=max_tokens, temperature=temperature,
             reasoning_effort=reasoning_effort, tool_choice=tool_choice,
-            on_content_delta=on_content_delta,
+            on_content_delta=effective_delta,
         )
 
         for attempt, delay in enumerate(self._CHAT_RETRY_DELAYS, start=1):
             response = await self._safe_chat_stream(**kw)
 
             if response.finish_reason != "error":
+                return response
+
+            if delivered_any:
+                # Already streamed content to the user — don't re-invoke chat_stream
+                # or we'll concatenate a second response on top of the first.
                 return response
 
             if not self._is_transient_error(response.content):

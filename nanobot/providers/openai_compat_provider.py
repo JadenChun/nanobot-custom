@@ -211,6 +211,8 @@ class OpenAICompatProvider(LLMProvider):
 
     def _cooldown_seconds_for_error(self, error: Exception) -> float:
         """Return a cooldown for keys that just failed with provider throttling/quota."""
+        if isinstance(error, TimeoutError):
+            return self._OVERLOAD_KEY_COOLDOWN_S
         status = self._error_status_code(error)
         summary = self._error_summary(error).lower()
         if status == 503 or any(marker in summary for marker in (
@@ -318,6 +320,8 @@ class OpenAICompatProvider(LLMProvider):
     @staticmethod
     def _is_rate_limit_error(exc: Exception) -> bool:
         """Return True when exception indicates quota/rate limiting or temporary overload."""
+        if isinstance(exc, TimeoutError):
+            return True
         status = getattr(exc, "status_code", None)
         if status is None:
             resp = getattr(exc, "response", None)
@@ -814,11 +818,11 @@ class OpenAICompatProvider(LLMProvider):
                     cooldown_s = self._record_key_failure(key_index, e)
                     self._log_rotation(key_index or 0, key_order[attempt + 1], e, cooldown_s)
                     continue
-                if self._is_rate_limit_error(e) and len(self._api_keys) > 1:
+                if self._is_rate_limit_error(e) and self._api_keys:
                     self._record_key_failure(key_index, e)
                     break
                 return self._handle_error(e)
-        if last_error and self._is_rate_limit_error(last_error) and len(self._api_keys) > 1:
+        if last_error and self._is_rate_limit_error(last_error) and self._api_keys:
             logger.error(
                 "All configured API keys were rate-limited or out of quota after trying {} keys ({}); last error: {}",
                 len(self._api_keys),
@@ -855,6 +859,19 @@ class OpenAICompatProvider(LLMProvider):
         key_order = self._next_request_order()
         attempted_labels: list[str] = []
         last_error: Exception | None = None
+
+        delivered_any = False
+        effective_delta = on_content_delta
+        if on_content_delta is not None:
+            user_delta = on_content_delta
+
+            async def _tracked_delta(text: str) -> None:
+                nonlocal delivered_any
+                delivered_any = True
+                await user_delta(text)
+
+            effective_delta = _tracked_delta
+
         for attempt in range(max_attempts):
             key_index = key_order[attempt] if self._api_keys else None
             attempted_labels.append(self._key_label(key_index))
@@ -873,7 +890,7 @@ class OpenAICompatProvider(LLMProvider):
                     client.chat.completions.create(**kwargs),
                     phase="stream request",
                 )
-                chunks = await self._collect_stream_chunks(stream, on_content_delta)
+                chunks = await self._collect_stream_chunks(stream, effective_delta)
                 response = self._parse_chunks(chunks)
                 self._record_key_success(key_index)
                 if attempt > 0 and self._api_keys:
@@ -885,16 +902,22 @@ class OpenAICompatProvider(LLMProvider):
                 return response
             except Exception as e:
                 last_error = e
+                if delivered_any:
+                    # Already streamed content to the user — rotating to another
+                    # key would concatenate a second response on top of the first.
+                    if self._is_rate_limit_error(e) and self._api_keys:
+                        self._record_key_failure(key_index, e)
+                    return self._handle_error(e)
                 has_remaining_keys = attempt + 1 < max_attempts
                 if has_remaining_keys and self._is_rate_limit_error(e) and self._api_keys:
                     cooldown_s = self._record_key_failure(key_index, e)
                     self._log_rotation(key_index or 0, key_order[attempt + 1], e, cooldown_s)
                     continue
-                if self._is_rate_limit_error(e) and len(self._api_keys) > 1:
+                if self._is_rate_limit_error(e) and self._api_keys:
                     self._record_key_failure(key_index, e)
                     break
                 return self._handle_error(e)
-        if last_error and self._is_rate_limit_error(last_error) and len(self._api_keys) > 1:
+        if last_error and self._is_rate_limit_error(last_error) and self._api_keys:
             logger.error(
                 "All configured API keys were rate-limited or out of quota after trying {} keys ({}); last error: {}",
                 len(self._api_keys),

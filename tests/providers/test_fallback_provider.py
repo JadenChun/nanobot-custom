@@ -332,3 +332,87 @@ async def test_get_default_model() -> None:
     provider = FallbackProvider([(primary, "primary-model"), (fallback, "fallback-model")])
 
     assert provider.get_default_model() == "primary-model"
+
+
+# ---------------------------------------------------------------------------
+# Quota-marker tightening & streaming garble guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_billing_address_message_does_not_trigger_fallback() -> None:
+    """Generic 'billing' wording unrelated to quota must not trigger fallback.
+
+    Regression test for the overly-broad 'billing' substring marker.
+    """
+    primary = ScriptedProvider([
+        LLMResponse(
+            content="Error: please update your billing address in the dashboard",
+            finish_reason="error",
+        ),
+    ])
+    fallback = ScriptedProvider([LLMResponse(content="fallback")])
+
+    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+
+    response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+
+    assert response.finish_reason == "error"
+    assert "billing address" in (response.content or "")
+    assert primary.calls == 1
+    assert fallback.calls == 0
+
+
+class StreamingScriptedProvider(LLMProvider):
+    """A provider whose chat_stream_with_retry delivers content then errors."""
+
+    def __init__(self, delta_text: str, error_response: LLMResponse) -> None:
+        super().__init__()
+        self._delta_text = delta_text
+        self._error_response = error_response
+        self.stream_calls = 0
+
+    async def chat(self, *args, **kwargs) -> LLMResponse:  # pragma: no cover - unused
+        raise NotImplementedError
+
+    async def chat_stream_with_retry(self, *args, on_content_delta=None, **kwargs) -> LLMResponse:
+        self.stream_calls += 1
+        if on_content_delta is not None:
+            await on_content_delta(self._delta_text)
+        return self._error_response
+
+    def get_default_model(self) -> str:
+        return "streaming-scripted"
+
+
+@pytest.mark.asyncio
+async def test_streaming_does_not_fall_back_after_partial_delivery() -> None:
+    """Once the primary has streamed content to the user, even a quota error
+    must not fall back — the fallback would concatenate a second response."""
+    primary = StreamingScriptedProvider(
+        delta_text="partial hello from primary",
+        error_response=LLMResponse(
+            content="Error: out of quota after streaming partial",
+            finish_reason="error",
+        ),
+    )
+    fallback = ScriptedProvider([LLMResponse(content="fallback content")])
+
+    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+
+    deltas: list[str] = []
+
+    async def _on_delta(text: str) -> None:
+        deltas.append(text)
+
+    response = await provider.chat_stream_with_retry(
+        messages=[{"role": "user", "content": "hi"}],
+        on_content_delta=_on_delta,
+    )
+
+    assert deltas == ["partial hello from primary"]
+    assert primary.stream_calls == 1
+    # Fallback must NOT have been invoked, because content was already delivered.
+    assert fallback.calls == 0
+    assert response.finish_reason == "error"
+    assert "fallback content" not in (response.content or "")

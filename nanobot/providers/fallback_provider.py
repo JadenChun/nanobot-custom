@@ -115,6 +115,18 @@ class FallbackProvider(LLMProvider):
     ) -> LLMResponse:
         last_response: LLMResponse | None = None
 
+        delivered_any = False
+        effective_delta = on_content_delta
+        if on_content_delta is not None:
+            user_delta = on_content_delta
+
+            async def _tracked_delta(text: str) -> None:
+                nonlocal delivered_any
+                delivered_any = True
+                await user_delta(text)
+
+            effective_delta = _tracked_delta
+
         for idx, (provider, provider_model) in enumerate(self._providers):
             effective_model = model if idx == 0 and model is not None else provider_model
 
@@ -126,7 +138,7 @@ class FallbackProvider(LLMProvider):
                 temperature=temperature,
                 reasoning_effort=reasoning_effort,
                 tool_choice=tool_choice,
-                on_content_delta=on_content_delta,
+                on_content_delta=effective_delta,
             )
 
             if response.finish_reason != "error":
@@ -135,6 +147,11 @@ class FallbackProvider(LLMProvider):
                 return response
 
             last_response = response
+
+            if delivered_any:
+                # Primary already streamed content to the user — falling back to
+                # a secondary provider would concatenate a second response on top.
+                return response
 
             if not self._is_quota_exhaustion(response.content):
                 return response

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/providers/test_litellm_kwargs.py tests/providers/test_fallback_provider.py -x --tb=short)",
+      "Bash(.venv/Scripts/python -m pytest tests/providers/test_litellm_kwargs.py tests/providers/test_fallback_provider.py --tb=short)",
+      "Bash(.venv/Scripts/python -m pytest tests/providers/ --tb=short)"
+    ]
+  }
+}
