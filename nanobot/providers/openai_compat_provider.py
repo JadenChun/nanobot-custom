@@ -112,6 +112,10 @@ class OpenAICompatProvider(LLMProvider):
     registry lookups needed.
     """
 
+    _QUOTA_KEY_COOLDOWN_S = 300.0
+    _RATE_LIMIT_KEY_COOLDOWN_S = 60.0
+    _OVERLOAD_KEY_COOLDOWN_S = 15.0
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -131,6 +135,8 @@ class OpenAICompatProvider(LLMProvider):
         self._spec = spec
         self._api_keys = key_pool
         self._request_start_index = 0
+        self._preferred_key_index: int | None = 0 if key_pool else None
+        self._key_retry_after: list[float] = [0.0] * len(key_pool)
         self._rate_limit = max(0, int(rate_limit))
         self._request_timestamps: collections.deque[float] = collections.deque()
 
@@ -162,6 +168,84 @@ class OpenAICompatProvider(LLMProvider):
         self._request_start_index = (idx + 1) % len(self._api_keys)
         return idx
 
+    def _rotate_candidate_indices(self, indices: list[int]) -> list[int]:
+        """Rotate a candidate key list for fair fallback ordering."""
+        if len(indices) <= 1:
+            return list(indices)
+        offset = self._next_request_start() % len(indices)
+        return indices[offset:] + indices[:offset]
+
+    def _next_request_order(self) -> list[int]:
+        """Choose key order for a request, preferring healthy recent winners."""
+        if not self._api_keys:
+            return []
+        if len(self._api_keys) == 1:
+            return [0]
+
+        now = time.monotonic()
+        ready = [idx for idx, retry_after in enumerate(self._key_retry_after) if retry_after <= now]
+        cooling = [idx for idx, retry_after in enumerate(self._key_retry_after) if retry_after > now]
+        preferred = self._preferred_key_index
+
+        order: list[int] = []
+        if preferred is not None and preferred in ready:
+            order.append(preferred)
+            ready.remove(preferred)
+
+        order.extend(self._rotate_candidate_indices(ready))
+        cooling.sort(key=lambda idx: (self._key_retry_after[idx], idx))
+        order.extend(cooling)
+
+        return order or list(range(len(self._api_keys)))
+
+    @staticmethod
+    def _error_status_code(error: Exception) -> int | None:
+        """Extract an HTTP-like status code from SDK exceptions when available."""
+        status = getattr(error, "status_code", None)
+        if status is None:
+            resp = getattr(error, "response", None)
+            status = getattr(resp, "status_code", None) if resp is not None else None
+        return status if isinstance(status, int) else None
+
+    def _cooldown_seconds_for_error(self, error: Exception) -> float:
+        """Return a cooldown for keys that just failed with provider throttling/quota."""
+        status = self._error_status_code(error)
+        summary = self._error_summary(error).lower()
+        if status == 503 or any(marker in summary for marker in (
+            "high demand",
+            "service unavailable",
+            "temporarily unavailable",
+            "unavailable",
+        )):
+            return self._OVERLOAD_KEY_COOLDOWN_S
+        if self._is_quota_exhaustion(summary) or any(marker in summary for marker in (
+            "current quota",
+            "plan and billing",
+            "resource_exhausted",
+        )):
+            return self._QUOTA_KEY_COOLDOWN_S
+        return self._RATE_LIMIT_KEY_COOLDOWN_S
+
+    def _record_key_success(self, key_index: int | None) -> None:
+        """Promote a successful key to the preferred starting slot."""
+        if key_index is None or not self._api_keys:
+            return
+        resolved_index = key_index % len(self._api_keys)
+        self._preferred_key_index = resolved_index
+        self._key_retry_after[resolved_index] = 0.0
+
+    def _record_key_failure(self, key_index: int | None, error: Exception) -> float:
+        """Temporarily deprioritize a key that just failed with throttling/quota."""
+        if key_index is None or not self._api_keys:
+            return 0.0
+        resolved_index = key_index % len(self._api_keys)
+        cooldown_s = self._cooldown_seconds_for_error(error)
+        self._key_retry_after[resolved_index] = max(
+            self._key_retry_after[resolved_index],
+            time.monotonic() + cooldown_s,
+        )
+        return cooldown_s
+
     def _build_client(self, key_index: int | None = None) -> AsyncOpenAI:
         """Build a client for the given key slot without mutating provider state."""
         active_key = self.api_key
@@ -176,12 +260,13 @@ class OpenAICompatProvider(LLMProvider):
             default_headers=self._default_headers,
         )
 
-    def _log_rotation(self, previous_index: int, next_index: int, error: Exception) -> None:
+    def _log_rotation(self, previous_index: int, next_index: int, error: Exception, cooldown_s: float) -> None:
         """Log a request-local rotation between configured key slots."""
         logger.warning(
-            "Rotating provider API key from {} to {} after quota/rate-limit response: {}",
+            "Rotating provider API key from {} to {} after quota/rate-limit response (cooldown {:.0f}s): {}",
             self._key_label(previous_index),
             self._key_label(next_index),
+            cooldown_s,
             self._error_summary(error),
         )
 
@@ -645,11 +730,11 @@ class OpenAICompatProvider(LLMProvider):
             reasoning_effort, tool_choice,
         )
         max_attempts = max(1, len(self._api_keys))
-        start_index = self._next_request_start()
+        key_order = self._next_request_order()
         attempted_labels: list[str] = []
         last_error: Exception | None = None
         for attempt in range(max_attempts):
-            key_index = (start_index + attempt) % max_attempts if self._api_keys else None
+            key_index = key_order[attempt] if self._api_keys else None
             attempted_labels.append(self._key_label(key_index))
             try:
                 await self._wait_for_rate_limit()
@@ -663,6 +748,7 @@ class OpenAICompatProvider(LLMProvider):
                     )
                 client = self._build_client(key_index)
                 response = self._parse(await client.chat.completions.create(**kwargs))
+                self._record_key_success(key_index)
                 if attempt > 0 and self._api_keys:
                     logger.info(
                         "Provider request recovered on {} after {} attempt(s)",
@@ -674,9 +760,11 @@ class OpenAICompatProvider(LLMProvider):
                 last_error = e
                 has_remaining_keys = attempt + 1 < max_attempts
                 if has_remaining_keys and self._is_rate_limit_error(e) and self._api_keys:
-                    self._log_rotation(key_index or 0, ((key_index or 0) + 1) % len(self._api_keys), e)
+                    cooldown_s = self._record_key_failure(key_index, e)
+                    self._log_rotation(key_index or 0, key_order[attempt + 1], e, cooldown_s)
                     continue
                 if self._is_rate_limit_error(e) and len(self._api_keys) > 1:
+                    self._record_key_failure(key_index, e)
                     break
                 return self._handle_error(e)
         if last_error and self._is_rate_limit_error(last_error) and len(self._api_keys) > 1:
@@ -713,11 +801,11 @@ class OpenAICompatProvider(LLMProvider):
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
         max_attempts = max(1, len(self._api_keys))
-        start_index = self._next_request_start()
+        key_order = self._next_request_order()
         attempted_labels: list[str] = []
         last_error: Exception | None = None
         for attempt in range(max_attempts):
-            key_index = (start_index + attempt) % max_attempts if self._api_keys else None
+            key_index = key_order[attempt] if self._api_keys else None
             attempted_labels.append(self._key_label(key_index))
             try:
                 await self._wait_for_rate_limit()
@@ -739,6 +827,7 @@ class OpenAICompatProvider(LLMProvider):
                         if text:
                             await on_content_delta(text)
                 response = self._parse_chunks(chunks)
+                self._record_key_success(key_index)
                 if attempt > 0 and self._api_keys:
                     logger.info(
                         "Provider stream recovered on {} after {} attempt(s)",
@@ -750,9 +839,11 @@ class OpenAICompatProvider(LLMProvider):
                 last_error = e
                 has_remaining_keys = attempt + 1 < max_attempts
                 if has_remaining_keys and self._is_rate_limit_error(e) and self._api_keys:
-                    self._log_rotation(key_index or 0, ((key_index or 0) + 1) % len(self._api_keys), e)
+                    cooldown_s = self._record_key_failure(key_index, e)
+                    self._log_rotation(key_index or 0, key_order[attempt + 1], e, cooldown_s)
                     continue
                 if self._is_rate_limit_error(e) and len(self._api_keys) > 1:
+                    self._record_key_failure(key_index, e)
                     break
                 return self._handle_error(e)
         if last_error and self._is_rate_limit_error(last_error) and len(self._api_keys) > 1:

@@ -395,6 +395,46 @@ async def test_gemini_concurrent_requests_keep_key_rotation_request_local() -> N
 
 
 @pytest.mark.asyncio
+async def test_gemini_prefers_last_successful_key_on_follow_up_request() -> None:
+    class _RateLimitError(Exception):
+        status_code = 429
+
+    spec = find_by_name("gemini")
+    call_keys: list[str] = []
+
+    def _client_factory(*, api_key, **kwargs):
+        async def _create(**req_kwargs):
+            call_keys.append(api_key)
+            if call_keys == ["gem-key-1"]:
+                raise _RateLimitError("quota exceeded on key 1")
+            return _fake_chat_response(f"ok from {api_key}")
+
+        client = SimpleNamespace()
+        client.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
+        return client
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=_client_factory):
+        provider = OpenAICompatProvider(
+            api_keys=["gem-key-1", "gem-key-2", "gem-key-3"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            spec=spec,
+        )
+        first = await provider.chat(
+            messages=[{"role": "user", "content": "hello first"}],
+            model="google/gemini-2.5-pro",
+        )
+        second = await provider.chat(
+            messages=[{"role": "user", "content": "hello second"}],
+            model="google/gemini-2.5-pro",
+        )
+
+    assert first.content == "ok from gem-key-2"
+    assert second.content == "ok from gem-key-2"
+    assert call_keys == ["gem-key-1", "gem-key-2", "gem-key-2"]
+
+
+@pytest.mark.asyncio
 async def test_gemini_rotates_on_service_unavailable_503() -> None:
     class _ServiceUnavailableError(Exception):
         status_code = 503
