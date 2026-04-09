@@ -174,6 +174,25 @@ async def test_explicit_model_overrides_provider_model() -> None:
     assert primary.last_model == "explicit-model"
 
 
+@pytest.mark.asyncio
+async def test_explicit_model_only_applies_to_primary_provider() -> None:
+    """Fallback entries keep their configured model even when the caller passes model=."""
+    primary = ScriptedProvider([
+        LLMResponse(content="Error: out of quota", finish_reason="error"),
+    ])
+    fallback = ScriptedProvider([LLMResponse(content="ok")])
+
+    provider = FallbackProvider([(primary, "primary-default"), (fallback, "fallback-model")])
+
+    await provider.chat_with_retry(
+        messages=[{"role": "user", "content": "hi"}],
+        model="explicit-primary-model",
+    )
+
+    assert primary.last_model == "explicit-primary-model"
+    assert fallback.last_model == "fallback-model"
+
+
 # ---------------------------------------------------------------------------
 # Streaming fallback
 # ---------------------------------------------------------------------------
@@ -214,6 +233,25 @@ async def test_streaming_no_fallback_on_non_quota_error() -> None:
 
     assert response.content == "401 unauthorized"
     assert fallback.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_streaming_explicit_model_only_applies_to_primary_provider() -> None:
+    """Streaming fallback entries keep their configured model even with model=."""
+    primary = ScriptedProvider([
+        LLMResponse(content="Error: out of quota", finish_reason="error"),
+    ])
+    fallback = ScriptedProvider([LLMResponse(content="streamed ok")])
+
+    provider = FallbackProvider([(primary, "primary-default"), (fallback, "fallback-model")])
+
+    await provider.chat_stream_with_retry(
+        messages=[{"role": "user", "content": "hi"}],
+        model="explicit-primary-model",
+    )
+
+    assert primary.last_model == "explicit-primary-model"
+    assert fallback.last_model == "fallback-model"
 
 
 # ---------------------------------------------------------------------------

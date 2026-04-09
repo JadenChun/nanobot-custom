@@ -173,6 +173,7 @@ def _make_single_provider(config: Any, provider_name: str, model: str) -> Any:
             default_model=model,
             extra_headers=p.extra_headers if p else None,
             rate_limit=p.rate_limit if p else 0,
+            timeout=p.timeout if p else 60.0,
             spec=spec,
         )
 
