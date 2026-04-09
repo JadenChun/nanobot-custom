@@ -130,7 +130,7 @@ class OpenAICompatProvider(LLMProvider):
         self.extra_headers = extra_headers or {}
         self._spec = spec
         self._api_keys = key_pool
-        self._key_index = 0
+        self._request_start_index = 0
         self._rate_limit = max(0, int(rate_limit))
         self._request_timestamps: collections.deque[float] = collections.deque()
 
@@ -143,41 +143,47 @@ class OpenAICompatProvider(LLMProvider):
         self._effective_base = effective_base
         self._default_headers = default_headers
 
-        self._activate_key(0)
+        if self.api_key and self._spec and self._spec.env_key:
+            self._setup_env(self.api_key, self.api_base)
 
     def _key_label(self, index: int | None = None) -> str:
         """Return a safe label for the active or requested key slot."""
         if not self._api_keys:
             return "key#1/1"
-        idx = self._key_index if index is None else (index % len(self._api_keys))
+        idx = 0 if index is None else (index % len(self._api_keys))
         digest = hashlib.sha1(self._api_keys[idx].encode()).hexdigest()[:8]
         return f"key#{idx + 1}/{len(self._api_keys)}[{digest}]"
 
-    def _activate_key(self, index: int) -> None:
-        """Activate key at index and rebuild API client."""
+    def _next_request_start(self) -> int:
+        """Round-robin the starting key so concurrent requests do not share mutable state."""
+        if len(self._api_keys) <= 1:
+            return 0
+        idx = self._request_start_index % len(self._api_keys)
+        self._request_start_index = (idx + 1) % len(self._api_keys)
+        return idx
+
+    def _build_client(self, key_index: int | None = None) -> AsyncOpenAI:
+        """Build a client for the given key slot without mutating provider state."""
+        active_key = self.api_key
         if self._api_keys:
-            self._key_index = index % len(self._api_keys)
-            self.api_key = self._api_keys[self._key_index]
-        if self.api_key and self._spec and self._spec.env_key:
-            self._setup_env(self.api_key, self.api_base)
-        self._client = AsyncOpenAI(
-            api_key=self.api_key or "no-key",
+            resolved_index = 0 if key_index is None else (key_index % len(self._api_keys))
+            active_key = self._api_keys[resolved_index]
+        if active_key and self._spec and self._spec.env_key:
+            self._setup_env(active_key, self.api_base)
+        return AsyncOpenAI(
+            api_key=active_key or "no-key",
             base_url=self._effective_base,
             default_headers=self._default_headers,
         )
 
-    def _rotate_key(self) -> bool:
-        """Rotate to next API key if multiple keys are configured."""
-        if len(self._api_keys) <= 1:
-            return False
-        previous = self._key_label()
-        self._activate_key(self._key_index + 1)
+    def _log_rotation(self, previous_index: int, next_index: int, error: Exception) -> None:
+        """Log a request-local rotation between configured key slots."""
         logger.warning(
-            "Rotating provider API key from {} to {} after quota/rate-limit response",
-            previous,
-            self._key_label(),
+            "Rotating provider API key from {} to {} after quota/rate-limit response: {}",
+            self._key_label(previous_index),
+            self._key_label(next_index),
+            self._error_summary(error),
         )
-        return True
 
     @staticmethod
     def _is_rate_limit_error(exc: Exception) -> bool:
@@ -639,23 +645,45 @@ class OpenAICompatProvider(LLMProvider):
             reasoning_effort, tool_choice,
         )
         max_attempts = max(1, len(self._api_keys))
+        start_index = self._next_request_start()
+        attempted_labels: list[str] = []
         last_error: Exception | None = None
         for attempt in range(max_attempts):
+            key_index = (start_index + attempt) % max_attempts if self._api_keys else None
+            attempted_labels.append(self._key_label(key_index))
             try:
                 await self._wait_for_rate_limit()
-                return self._parse(await self._client.chat.completions.create(**kwargs))
+                if len(self._api_keys) > 1:
+                    logger.info(
+                        "Provider request attempt {}/{} using {} model={}",
+                        attempt + 1,
+                        max_attempts,
+                        self._key_label(key_index),
+                        kwargs["model"],
+                    )
+                client = self._build_client(key_index)
+                response = self._parse(await client.chat.completions.create(**kwargs))
+                if attempt > 0 and self._api_keys:
+                    logger.info(
+                        "Provider request recovered on {} after {} attempt(s)",
+                        self._key_label(key_index),
+                        attempt + 1,
+                    )
+                return response
             except Exception as e:
                 last_error = e
                 has_remaining_keys = attempt + 1 < max_attempts
-                if has_remaining_keys and self._is_rate_limit_error(e) and self._rotate_key():
+                if has_remaining_keys and self._is_rate_limit_error(e) and self._api_keys:
+                    self._log_rotation(key_index or 0, ((key_index or 0) + 1) % len(self._api_keys), e)
                     continue
                 if self._is_rate_limit_error(e) and len(self._api_keys) > 1:
                     break
                 return self._handle_error(e)
         if last_error and self._is_rate_limit_error(last_error) and len(self._api_keys) > 1:
             logger.error(
-                "All configured API keys were rate-limited or out of quota after trying {} keys; last error: {}",
+                "All configured API keys were rate-limited or out of quota after trying {} keys ({}); last error: {}",
                 len(self._api_keys),
+                ", ".join(attempted_labels),
                 self._error_summary(last_error),
             )
             return LLMResponse(
@@ -685,11 +713,24 @@ class OpenAICompatProvider(LLMProvider):
         kwargs["stream"] = True
         kwargs["stream_options"] = {"include_usage": True}
         max_attempts = max(1, len(self._api_keys))
+        start_index = self._next_request_start()
+        attempted_labels: list[str] = []
         last_error: Exception | None = None
         for attempt in range(max_attempts):
+            key_index = (start_index + attempt) % max_attempts if self._api_keys else None
+            attempted_labels.append(self._key_label(key_index))
             try:
                 await self._wait_for_rate_limit()
-                stream = await self._client.chat.completions.create(**kwargs)
+                if len(self._api_keys) > 1:
+                    logger.info(
+                        "Provider stream attempt {}/{} using {} model={}",
+                        attempt + 1,
+                        max_attempts,
+                        self._key_label(key_index),
+                        kwargs["model"],
+                    )
+                client = self._build_client(key_index)
+                stream = await client.chat.completions.create(**kwargs)
                 chunks: list[Any] = []
                 async for chunk in stream:
                     chunks.append(chunk)
@@ -697,19 +738,28 @@ class OpenAICompatProvider(LLMProvider):
                         text = getattr(chunk.choices[0].delta, "content", None)
                         if text:
                             await on_content_delta(text)
-                return self._parse_chunks(chunks)
+                response = self._parse_chunks(chunks)
+                if attempt > 0 and self._api_keys:
+                    logger.info(
+                        "Provider stream recovered on {} after {} attempt(s)",
+                        self._key_label(key_index),
+                        attempt + 1,
+                    )
+                return response
             except Exception as e:
                 last_error = e
                 has_remaining_keys = attempt + 1 < max_attempts
-                if has_remaining_keys and self._is_rate_limit_error(e) and self._rotate_key():
+                if has_remaining_keys and self._is_rate_limit_error(e) and self._api_keys:
+                    self._log_rotation(key_index or 0, ((key_index or 0) + 1) % len(self._api_keys), e)
                     continue
                 if self._is_rate_limit_error(e) and len(self._api_keys) > 1:
                     break
                 return self._handle_error(e)
         if last_error and self._is_rate_limit_error(last_error) and len(self._api_keys) > 1:
             logger.error(
-                "All configured API keys were rate-limited or out of quota after trying {} keys; last error: {}",
+                "All configured API keys were rate-limited or out of quota after trying {} keys ({}); last error: {}",
                 len(self._api_keys),
+                ", ".join(attempted_labels),
                 self._error_summary(last_error),
             )
             return LLMResponse(

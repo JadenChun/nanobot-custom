@@ -8,6 +8,7 @@ Validates that:
 
 from __future__ import annotations
 
+import asyncio
 import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -64,12 +65,13 @@ def test_openrouter_spec_is_gateway() -> None:
 def test_openrouter_sets_default_attribution_headers() -> None:
     spec = find_by_name("openrouter")
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        OpenAICompatProvider(
+        provider = OpenAICompatProvider(
             api_key="sk-or-test-key",
             api_base="https://openrouter.ai/api/v1",
             default_model="anthropic/claude-sonnet-4-5",
             spec=spec,
         )
+        provider._build_client()
 
     headers = MockClient.call_args.kwargs["default_headers"]
     assert headers["HTTP-Referer"] == "https://github.com/HKUDS/nanobot"
@@ -81,7 +83,7 @@ def test_openrouter_sets_default_attribution_headers() -> None:
 def test_openrouter_user_headers_override_default_attribution() -> None:
     spec = find_by_name("openrouter")
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        OpenAICompatProvider(
+        provider = OpenAICompatProvider(
             api_key="sk-or-test-key",
             api_base="https://openrouter.ai/api/v1",
             default_model="anthropic/claude-sonnet-4-5",
@@ -92,6 +94,7 @@ def test_openrouter_user_headers_override_default_attribution() -> None:
             },
             spec=spec,
         )
+        provider._build_client()
 
     headers = MockClient.call_args.kwargs["default_headers"]
     assert headers["HTTP-Referer"] == "https://nanobot.ai"
@@ -338,6 +341,57 @@ async def test_gemini_reports_when_all_keys_are_exhausted() -> None:
 
     assert result.finish_reason == "error"
     assert "after trying 2 keys" in (result.content or "")
+
+
+@pytest.mark.asyncio
+async def test_gemini_concurrent_requests_keep_key_rotation_request_local() -> None:
+    class _RateLimitError(Exception):
+        status_code = 429
+
+    spec = find_by_name("gemini")
+    started_on_primary = 0
+    started_on_backup = False
+    release_primary = asyncio.Event()
+
+    def _client_factory(*, api_key, **kwargs):
+        async def _create(**req_kwargs):
+            nonlocal started_on_primary, started_on_backup
+            if api_key == "gem-key-1":
+                started_on_primary += 1
+                if started_on_primary >= 2 or started_on_backup:
+                    release_primary.set()
+                await release_primary.wait()
+                raise _RateLimitError("quota exceeded on key 1")
+            started_on_backup = True
+            release_primary.set()
+            return _fake_chat_response("ok from backup key")
+
+        client = SimpleNamespace()
+        client.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
+        return client
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=_client_factory):
+        provider = OpenAICompatProvider(
+            api_keys=["gem-key-1", "gem-key-2"],
+            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
+            default_model="google/gemini-2.5-pro",
+            spec=spec,
+        )
+        first, second = await asyncio.gather(
+            provider.chat(
+                messages=[{"role": "user", "content": "hello a"}],
+                model="google/gemini-2.5-pro",
+            ),
+            provider.chat(
+                messages=[{"role": "user", "content": "hello b"}],
+                model="google/gemini-2.5-pro",
+            ),
+        )
+
+    assert first.finish_reason == "stop"
+    assert second.finish_reason == "stop"
+    assert first.content == "ok from backup key"
+    assert second.content == "ok from backup key"
 
 
 @pytest.mark.asyncio
