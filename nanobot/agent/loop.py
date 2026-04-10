@@ -201,6 +201,7 @@ class AgentLoop:
         timezone: str | None = None,
         hooks: list[AgentHook] | None = None,
         context_paths: list[Path] | None = None,
+        planning_mode: str = "agent",
     ):
         from nanobot.config.schema import AgentBrowserConfig, AgentDeviceConfig, ExecToolConfig, ImageConfig, MaxTokensConfig, WebSearchConfig
 
@@ -230,6 +231,7 @@ class AgentLoop:
             workspace,
             timezone=timezone,
             context_paths=context_paths,
+            planning_mode=planning_mode,
         )
         self.context_paths = context_paths or []
         self.sessions = session_manager or SessionManager(workspace)

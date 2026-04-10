@@ -82,6 +82,7 @@ class Nanobot:
             timezone=defaults.timezone,
             skill_paths=[Path(p).expanduser().resolve() for p in defaults.skill_paths] or None,
             context_paths=[Path(p).expanduser().resolve() for p in defaults.context_paths] if defaults.context_paths else None,
+            planning_mode=defaults.planning_mode,
         )
         return cls(loop)
 

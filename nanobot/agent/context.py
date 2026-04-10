@@ -24,10 +24,12 @@ class ContextBuilder:
         workspace: Path,
         timezone: str | None = None,
         context_paths: list[Path] | None = None,
+        planning_mode: str = "agent",
     ):
         self.workspace = workspace
         self.timezone = timezone
         self.context_paths = context_paths or []
+        self.planning_mode = planning_mode
         self.memory = MemoryStore(workspace)
 
         # If context repos are configured, include their skills dirs in extra paths
@@ -74,7 +76,34 @@ Skills with available="false" need dependencies installed first - you can try in
 
 {skills_summary}""")
 
+        planning_section = self._build_planning_section()
+        if planning_section:
+            parts.append(planning_section)
+
         return "\n\n---\n\n".join(parts)
+
+    def _build_planning_section(self) -> str | None:
+        """Build the planning mode instruction section based on config."""
+        if self.planning_mode == "off":
+            return None
+
+        if self.planning_mode == "on":
+            return """# Task Execution Mode
+
+For ANY task that requires multiple tool uses or produces a deliverable for the user, you MUST use the `spawn` tool with `review=true` and a clear `goal` instead of handling it inline. Inline tool use is only for simple, single-step lookups (e.g. reading one file, running one command).
+
+Required pattern for complex tasks:
+1. Call `spawn(task="...", goal="...", review=true)` — this runs the task through a generate-review loop
+2. Provide a brief update to the user that the task is running
+
+After any inline tool use, always produce a visible text response. Never finish silently after a tool call."""
+
+        # planning_mode == "agent" (default): soft guidance
+        return """# Task Execution
+
+For complex or multi-step tasks (research, writing, coding, UI review, testing), prefer using `spawn(task="...", goal="...", review=true)` — this runs the work through a generate-review loop that catches errors and improves quality.
+
+After any inline tool use, always produce a visible text response summarizing what you found or accomplished. Never finish silently after a tool call."""
 
     def _get_identity(self) -> str:
         """Get the core identity section."""

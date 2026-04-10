@@ -204,6 +204,22 @@ class AgentRunner:
                 await hook.after_iteration(context)
                 break
 
+            # If the model returned no visible text (e.g. only <think> blocks stripped)
+            # but has already used tools, nudge it to produce a real response instead of
+            # silently finishing — common with local/reasoning models.
+            if (not clean or not clean.strip()) and tools_used and iteration < spec.max_iterations:
+                messages.append(build_assistant_message(
+                    "",
+                    reasoning_content=response.reasoning_content,
+                    thinking_blocks=response.thinking_blocks,
+                ))
+                messages.append({
+                    "role": "user",
+                    "content": "Please provide a text response summarizing what you found and accomplished.",
+                })
+                await hook.after_iteration(context)
+                continue
+
             messages.append(build_assistant_message(
                 clean,
                 reasoning_content=response.reasoning_content,
