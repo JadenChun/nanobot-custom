@@ -7,7 +7,14 @@
       "Bash(grep -n \"_sanitize_empty_content\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
       "Bash(grep -n \"_sanitize_request_messages\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
       "Bash(grep -n \"400\\\\|INVALID_ARGUMENT\\\\|bad request\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
-      "Bash(grep -n \"_QUOTA_KEY_COOLDOWN\\\\|_provider_retry_after\\\\|provider.*.cooldown\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)"
+      "Bash(grep -n \"_QUOTA_KEY_COOLDOWN\\\\|_provider_retry_after\\\\|provider.*.cooldown\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
+      "Bash(python -m pytest tests/ -x -q)",
+      "Bash(python -c \"import nanobot; print\\('import ok'\\)\")",
+      "Bash(python3 -c \"import nanobot; print\\('import ok'\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python3 -c \"from nanobot.agent.runner import clear_old_tool_results, AgentRunSpec; print\\('runner ok'\\)\")",
+      "Bash(python3 -c \"from nanobot.config.schema import AgentDefaults; d=AgentDefaults\\(\\); print\\(f'clearing_keep={d.tool_result_clearing_keep}, trigger={d.consolidation_trigger_ratio}, target={d.consolidation_target_ratio}'\\)\")",
+      "Bash(python3 -c ':*)"
     ]
   }
 }

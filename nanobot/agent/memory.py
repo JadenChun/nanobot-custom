@@ -122,7 +122,14 @@ class MemoryStore:
             return True
 
         current_memory = self.read_long_term()
-        prompt = f"""Process this conversation and call the save_memory tool with your consolidation.
+        prompt = f"""Summarize this conversation for continuity. Preserve:
+- Key facts, decisions, and user preferences
+- Files examined or modified (names and paths, not full contents)
+- Errors encountered and how they were resolved
+- Current task state and next steps
+- Any learnings useful for future conversations
+
+Call the save_memory tool with your consolidation.
 
 ## Current Long-term Memory
 {current_memory or "(empty)"}
@@ -131,7 +138,7 @@ class MemoryStore:
 {self._format_messages(messages)}"""
 
         chat_messages = [
-            {"role": "system", "content": "You are a memory consolidation agent. Call the save_memory tool with your consolidation of the conversation."},
+            {"role": "system", "content": "You are a memory consolidation agent. Summarize conversations into concise, actionable memory. Focus on preserving facts and decisions, not verbatim dialogue. Call the save_memory tool with your consolidation."},
             {"role": "user", "content": prompt},
         ]
 
@@ -236,6 +243,8 @@ class MemoryConsolidator:
         build_messages: Callable[..., list[dict[str, Any]]],
         get_tool_definitions: Callable[[], list[dict[str, Any]]],
         max_completion_tokens: int = 4096,
+        consolidation_trigger_ratio: float = 0.5,
+        consolidation_target_ratio: float = 0.3,
     ):
         self.store = MemoryStore(workspace)
         self.provider = provider
@@ -243,6 +252,8 @@ class MemoryConsolidator:
         self.sessions = sessions
         self.context_window_tokens = context_window_tokens
         self.max_completion_tokens = max_completion_tokens
+        self.consolidation_trigger_ratio = consolidation_trigger_ratio
+        self.consolidation_target_ratio = consolidation_target_ratio
         self._build_messages = build_messages
         self._get_tool_definitions = get_tool_definitions
         self._locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
@@ -315,16 +326,18 @@ class MemoryConsolidator:
         lock = self.get_lock(session.key)
         async with lock:
             budget = self.context_window_tokens - self.max_completion_tokens - self._SAFETY_BUFFER
-            target = budget // 2
+            trigger = int(budget * self.consolidation_trigger_ratio)
+            target = int(budget * self.consolidation_target_ratio)
             estimated, source = self.estimate_session_prompt_tokens(session)
             if estimated <= 0:
                 return
-            if estimated < budget:
+            if estimated < trigger:
                 logger.debug(
-                    "Token consolidation idle {}: {}/{} via {}",
+                    "Token consolidation idle {}: {}/{} (trigger={}) via {}",
                     session.key,
                     estimated,
                     self.context_window_tokens,
+                    trigger,
                     source,
                 )
                 return

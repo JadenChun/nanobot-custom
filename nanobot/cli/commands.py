@@ -590,6 +590,9 @@ def serve(
         channels_config=runtime_config.channels,
         timezone=runtime_config.agents.defaults.timezone,
         context_paths=_resolve_context_paths(runtime_config),
+        tool_result_clearing_keep=runtime_config.agents.defaults.tool_result_clearing_keep,
+        consolidation_trigger_ratio=runtime_config.agents.defaults.consolidation_trigger_ratio,
+        consolidation_target_ratio=runtime_config.agents.defaults.consolidation_target_ratio,
     )
 
     model_name = runtime_config.agents.defaults.model
@@ -693,6 +696,9 @@ def gateway(
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
         context_paths=_resolve_context_paths(config),
+        tool_result_clearing_keep=config.agents.defaults.tool_result_clearing_keep,
+        consolidation_trigger_ratio=config.agents.defaults.consolidation_trigger_ratio,
+        consolidation_target_ratio=config.agents.defaults.consolidation_target_ratio,
     )
 
     # Set cron callback (needs agent)
@@ -911,6 +917,9 @@ def agent(
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
         context_paths=_resolve_context_paths(config),
+        tool_result_clearing_keep=config.agents.defaults.tool_result_clearing_keep,
+        consolidation_trigger_ratio=config.agents.defaults.consolidation_trigger_ratio,
+        consolidation_target_ratio=config.agents.defaults.consolidation_target_ratio,
     )
 
     # Shared reference for progress callbacks
