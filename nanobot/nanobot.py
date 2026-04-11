@@ -83,6 +83,9 @@ class Nanobot:
             skill_paths=[Path(p).expanduser().resolve() for p in defaults.skill_paths] or None,
             context_paths=[Path(p).expanduser().resolve() for p in defaults.context_paths] if defaults.context_paths else None,
             planning_mode=defaults.planning_mode,
+            tool_result_clearing_keep=defaults.tool_result_clearing_keep,
+            consolidation_trigger_ratio=defaults.consolidation_trigger_ratio,
+            consolidation_target_ratio=defaults.consolidation_target_ratio,
         )
         return cls(loop)
 

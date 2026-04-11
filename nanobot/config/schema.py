@@ -58,6 +58,9 @@ class AgentDefaults(Base):
     planning_mode: Literal["on", "off", "agent"] = "agent"  # "on": always use spawn+review, "off": never, "agent": agent decides
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
     context_paths: list[str] = Field(default_factory=list)  # Paths to local context repos (e.g. git repos with memory, skills, bootstrap files)
+    tool_result_clearing_keep: int = 3  # Number of recent tool results to keep; older ones are cleared to save context
+    consolidation_trigger_ratio: float = 0.5  # Trigger memory consolidation when prompt exceeds this ratio of budget
+    consolidation_target_ratio: float = 0.3  # Target ratio of budget after consolidation
 
     @property
     def context_window_tokens(self) -> int:

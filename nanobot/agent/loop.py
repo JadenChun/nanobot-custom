@@ -16,7 +16,7 @@ from loguru import logger
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from nanobot.agent.memory import MemoryConsolidator
-from nanobot.agent.runner import AgentRunSpec, AgentRunner
+from nanobot.agent.runner import AgentRunSpec, AgentRunner, clear_old_tool_results
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
@@ -202,6 +202,9 @@ class AgentLoop:
         hooks: list[AgentHook] | None = None,
         context_paths: list[Path] | None = None,
         planning_mode: str = "agent",
+        tool_result_clearing_keep: int = 3,
+        consolidation_trigger_ratio: float = 0.5,
+        consolidation_target_ratio: float = 0.3,
     ):
         from nanobot.config.schema import AgentBrowserConfig, AgentDeviceConfig, ExecToolConfig, ImageConfig, MaxTokensConfig, WebSearchConfig
 
@@ -211,6 +214,9 @@ class AgentLoop:
         self.workspace = workspace
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
+        self.tool_result_clearing_keep = tool_result_clearing_keep
+        self.consolidation_trigger_ratio = consolidation_trigger_ratio
+        self.consolidation_target_ratio = consolidation_target_ratio
         self.max_tokens = max_tokens or MaxTokensConfig()
         if context_window_tokens is not None and context_window_tokens > 0:
             self.max_tokens.input = context_window_tokens
@@ -272,6 +278,8 @@ class AgentLoop:
             build_messages=self.context.build_messages,
             get_tool_definitions=self.tools.get_definitions,
             max_completion_tokens=self.max_tokens.output,
+            consolidation_trigger_ratio=self.consolidation_trigger_ratio,
+            consolidation_target_ratio=self.consolidation_target_ratio,
         )
         self._register_default_tools()
         self.commands = CommandRouter()
@@ -416,6 +424,7 @@ class AgentLoop:
             hook=hook,
             error_message="Sorry, I encountered an error calling the AI model.",
             concurrent_tools=True,
+            tool_result_clearing_keep=self.tool_result_clearing_keep,
         ))
         self._last_usage = result.usage
         if result.stop_reason == "max_iterations":
@@ -632,6 +641,9 @@ class AgentLoop:
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
         )
+
+        # Clear old tool results from history to reduce context size.
+        clear_old_tool_results(initial_messages, keep_last=self.tool_result_clearing_keep)
 
         # Safety check: trim oldest turns if this specific request still exceeds maxTokens.input.
         if self.max_tokens.input > 0:

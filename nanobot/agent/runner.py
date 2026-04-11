@@ -17,6 +17,32 @@ _DEFAULT_MAX_ITERATIONS_MESSAGE = (
     "without completing the task. You can try breaking the task into smaller steps."
 )
 _DEFAULT_ERROR_MESSAGE = "Sorry, I encountered an error calling the AI model."
+_CLEARED_PLACEHOLDER = "[cleared to save context]"
+
+
+def clear_old_tool_results(messages: list[dict[str, Any]], keep_last: int = 3) -> None:
+    """Replace old tool result content with a placeholder, keeping the last N intact.
+
+    Modelled on Anthropic's ``clear_tool_uses_20250919`` strategy: the assistant
+    ``tool_calls`` block is left intact so the model still knows *what* it called,
+    but the bulky ``tool`` result content is replaced to free context tokens.
+    """
+    if keep_last <= 0:
+        return
+
+    # Collect indices of all tool-result messages.
+    tool_indices: list[int] = [
+        i for i, m in enumerate(messages) if m.get("role") == "tool"
+    ]
+
+    # Nothing to clear if there aren't more results than we want to keep.
+    if len(tool_indices) <= keep_last:
+        return
+
+    # Clear everything except the last `keep_last` results.
+    to_clear = tool_indices[:-keep_last]
+    for idx in to_clear:
+        messages[idx] = {**messages[idx], "content": _CLEARED_PLACEHOLDER}
 
 
 @dataclass(slots=True)
@@ -35,6 +61,7 @@ class AgentRunSpec:
     max_iterations_message: str | None = None
     concurrent_tools: bool = False
     fail_on_tool_error: bool = False
+    tool_result_clearing_keep: int | None = None
 
 
 @dataclass(slots=True)
@@ -116,6 +143,11 @@ class AgentRunner:
         stream_waiting_final_end = False
 
         for iteration in range(spec.max_iterations):
+            # Clear old tool results each iteration to prevent context overflow
+            # during long-running tasks (matches Anthropic's per-call clearing).
+            if spec.tool_result_clearing_keep is not None:
+                clear_old_tool_results(messages, keep_last=spec.tool_result_clearing_keep)
+
             context = AgentHookContext(iteration=iteration, messages=messages)
             await hook.before_iteration(context)
             kwargs: dict[str, Any] = {
