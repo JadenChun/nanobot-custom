@@ -283,10 +283,10 @@ class TelegramChannel(BaseChannel):
         self._app.add_handler(CommandHandler("status", self._forward_command))
         self._app.add_handler(CommandHandler("help", self._on_help))
 
-        # Add message handler for text, photos, voice, documents
+        # Add message handler for text, photos, voice, video, documents
         self._app.add_handler(
             MessageHandler(
-                (filters.TEXT | filters.PHOTO | filters.VOICE | filters.AUDIO | filters.Document.ALL)
+                (filters.TEXT | filters.PHOTO | filters.VOICE | filters.AUDIO | filters.VIDEO | filters.VIDEO_NOTE | filters.Document.ALL)
                 & ~filters.COMMAND,
                 self._on_message
             )
@@ -774,7 +774,7 @@ class TelegramChannel(BaseChannel):
         )
 
     async def _on_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle incoming messages (text, photos, voice, documents)."""
+        """Handle incoming messages (text, photos, voice, video, documents)."""
         if not update.message or not update.effective_user:
             return
 
