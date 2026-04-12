@@ -1408,18 +1408,13 @@ def provider_login(
 @_register_login("openai_codex")
 def _login_openai_codex() -> None:
     try:
-        from oauth_cli_kit import get_token, login_oauth_interactive
-        token = None
-        try:
-            token = get_token()
-        except Exception:
-            pass
-        if not (token and token.access):
-            console.print("[cyan]Starting interactive OAuth login...[/cyan]\n")
-            token = login_oauth_interactive(
-                print_fn=lambda s: console.print(s),
-                prompt_fn=lambda s: typer.prompt(s),
-            )
+        from oauth_cli_kit import login_oauth_interactive
+        console.print("[cyan]Starting interactive OAuth login...[/cyan]\n")
+        token = login_oauth_interactive(
+            print_fn=lambda s: console.print(s),
+            prompt_fn=lambda s: typer.prompt(s),
+            originator="codex_cli_rs",
+        )
         if not (token and token.access):
             console.print("[red]✗ Authentication failed[/red]")
             raise typer.Exit(1)

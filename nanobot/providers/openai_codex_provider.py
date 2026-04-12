@@ -15,7 +15,7 @@ from oauth_cli_kit import get_token as get_codex_token
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
-DEFAULT_ORIGINATOR = "nanobot"
+DEFAULT_ORIGINATOR = "codex_cli_rs"
 
 
 class OpenAICodexProvider(LLMProvider):
@@ -73,8 +73,20 @@ class OpenAICodexProvider(LLMProvider):
                     on_content_delta=on_content_delta,
                 )
             return LLMResponse(content=content, tool_calls=tool_calls, finish_reason=finish_reason)
+        except _CodexHTTPError as e:
+            msg = f"Error calling Codex: {e}"
+            retry_after = e.retry_after or self._extract_retry_after(msg)
+            return LLMResponse(
+                content=msg, finish_reason="error",
+                retry_after=retry_after,
+                error_status_code=e.status_code,
+                error_type=e.error_type,
+                error_code=e.error_code,
+            )
         except Exception as e:
-            return LLMResponse(content=f"Error calling Codex: {e}", finish_reason="error")
+            msg = f"Error calling Codex: {e}"
+            retry_after = self._extract_retry_after(msg)
+            return LLMResponse(content=msg, finish_reason="error", retry_after=retry_after)
 
     async def chat(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
@@ -106,13 +118,31 @@ def _strip_model_prefix(model: str) -> str:
 def _build_headers(account_id: str, token: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
-        "chatgpt-account-id": account_id,
+        "ChatGPT-Account-ID": account_id,
         "OpenAI-Beta": "responses=experimental",
         "originator": DEFAULT_ORIGINATOR,
-        "User-Agent": "nanobot (python)",
+        "User-Agent": f"{DEFAULT_ORIGINATOR}/0.0.1 (python)",
         "accept": "text/event-stream",
         "content-type": "application/json",
     }
+
+
+class _CodexHTTPError(RuntimeError):
+    """Carries structured error metadata from a Codex HTTP error response."""
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        retry_after: float | None = None,
+        error_type: str | None = None,
+        error_code: str | None = None,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+        self.error_type = error_type
+        self.error_code = error_code
 
 
 async def _request_codex(
@@ -126,7 +156,16 @@ async def _request_codex(
         async with client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 text = await response.aread()
-                raise RuntimeError(_friendly_error(response.status_code, text.decode("utf-8", "ignore")))
+                raw = text.decode("utf-8", "ignore")
+                retry_after = LLMProvider._extract_retry_after_from_headers(response.headers)
+                error_type, error_code = _extract_error_tokens(raw)
+                raise _CodexHTTPError(
+                    _friendly_error(response.status_code, raw, error_type),
+                    status_code=response.status_code,
+                    retry_after=retry_after,
+                    error_type=error_type,
+                    error_code=error_code,
+                )
             return await _consume_sse(response, on_content_delta)
 
 
@@ -314,7 +353,31 @@ def _map_finish_reason(status: str | None) -> str:
     return _FINISH_REASON_MAP.get(status or "completed", "stop")
 
 
-def _friendly_error(status_code: int, raw: str) -> str:
+def _extract_error_tokens(raw: str) -> tuple[str | None, str | None]:
+    """Parse error type and code from a JSON error response body."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    error_obj = data.get("error")
+    error_type = data.get("type")
+    error_code = data.get("code")
+    if isinstance(error_obj, dict):
+        error_type = error_obj.get("type") or error_type
+        error_code = error_obj.get("code") or error_code
+    t = str(error_type).strip().lower() if error_type else None
+    c = str(error_code).strip().lower() if error_code else None
+    return t or None, c or None
+
+
+def _friendly_error(status_code: int, raw: str, error_type: str | None = None) -> str:
     if status_code == 429:
-        return "ChatGPT usage quota exceeded or rate limit triggered. Please try again later."
+        # Distinguish rate limit from quota exhaustion.
+        quota_tokens = {"insufficient_quota", "quota_exceeded", "quota_exhausted",
+                        "billing_hard_limit_reached", "insufficient_balance"}
+        if error_type and error_type in quota_tokens:
+            return "ChatGPT quota exhausted. Please check your plan and billing."
+        return "ChatGPT rate limit triggered. Please try again shortly."
     return f"HTTP {status_code}: {raw}"

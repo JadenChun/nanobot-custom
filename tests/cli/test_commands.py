@@ -10,6 +10,7 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.cli.commands import _make_provider, app
 from nanobot.config.schema import Config, FallbackEntry
 from nanobot.providers.fallback_provider import FallbackProvider
+from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.openai_codex_provider import _strip_model_prefix
 from nanobot.providers.registry import find_by_name
 
@@ -253,6 +254,12 @@ def test_make_provider_wraps_cli_fallback_chain_for_same_provider_models():
     assert len(provider._providers) == 2
     assert provider._providers[0][1] == "gemini-3-flash-preview"
     assert provider._providers[1][1] == "gemma-4-31b-it"
+
+    fallback_provider = provider._providers[1][0]
+    assert isinstance(fallback_provider, OpenAICompatProvider)
+    assert fallback_provider._spec is not None
+    assert fallback_provider._spec.name == "gemini"
+    assert fallback_provider._effective_base == "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 
 def test_config_matches_github_copilot_codex_with_hyphen_prefix():
