@@ -483,6 +483,97 @@ class TelegramChannel(BaseChannel):
     def _is_not_modified_error(exc: Exception) -> bool:
         return isinstance(exc, BadRequest) and "message is not modified" in str(exc).lower()
 
+    def _build_stream_reply_context(
+        self,
+        chat_id: str,
+        metadata: dict[str, Any] | None,
+    ) -> tuple[ReplyParameters | None, dict[str, Any]]:
+        meta = metadata or {}
+        reply_to_message_id = meta.get("message_id")
+        message_thread_id = meta.get("message_thread_id")
+        if message_thread_id is None and reply_to_message_id is not None:
+            message_thread_id = self._message_threads.get((chat_id, reply_to_message_id))
+
+        thread_kwargs: dict[str, Any] = {}
+        if message_thread_id is not None:
+            thread_kwargs["message_thread_id"] = message_thread_id
+
+        reply_params = None
+        if self.config.reply_to_message and reply_to_message_id:
+            reply_params = ReplyParameters(
+                message_id=reply_to_message_id,
+                allow_sending_without_reply=True,
+            )
+
+        return reply_params, thread_kwargs
+
+    async def _send_stream_text(
+        self,
+        chat_id: int,
+        text: str,
+        reply_params: ReplyParameters | None,
+        thread_kwargs: dict[str, Any] | None,
+    ) -> int:
+        sent = await self._call_with_retry(
+            self._app.bot.send_message,
+            chat_id=chat_id,
+            text=text,
+            reply_parameters=reply_params,
+            **(thread_kwargs or {}),
+        )
+        return sent.message_id
+
+    async def _edit_stream_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+    ) -> None:
+        try:
+            await self._call_with_retry(
+                self._app.bot.edit_message_text,
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+            )
+        except Exception as e:
+            if self._is_not_modified_error(e):
+                return
+            raise
+
+    async def _roll_stream_buffer(
+        self,
+        chat_id: int,
+        buf: _StreamBuf,
+        reply_params: ReplyParameters | None,
+        thread_kwargs: dict[str, Any] | None,
+    ) -> None:
+        chunks = split_message(buf.text, TELEGRAM_MAX_MESSAGE_LEN)
+        if not chunks:
+            return
+
+        active_message_id = buf.message_id
+        if active_message_id is None:
+            active_message_id = await self._send_stream_text(
+                chat_id,
+                chunks[0],
+                reply_params,
+                thread_kwargs,
+            )
+        else:
+            await self._edit_stream_text(chat_id, active_message_id, chunks[0])
+
+        for chunk in chunks[1:]:
+            active_message_id = await self._send_stream_text(
+                chat_id,
+                chunk,
+                reply_params,
+                thread_kwargs,
+            )
+
+        buf.message_id = active_message_id
+        buf.text = chunks[-1]
+
     async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None) -> None:
         """Progressive message editing: send on first delta, edit on subsequent ones."""
         if not self._app:
@@ -490,15 +581,25 @@ class TelegramChannel(BaseChannel):
         meta = metadata or {}
         int_chat_id = int(chat_id)
         stream_id = meta.get("_stream_id")
+        reply_params, thread_kwargs = self._build_stream_reply_context(chat_id, meta)
 
         if meta.get("_stream_end"):
             buf = self._stream_bufs.get(chat_id)
-            if not buf or not buf.message_id or not buf.text:
+            if not buf or not buf.text:
                 return
             if stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id:
                 return
+            if delta:
+                buf.text += delta
             self._stop_typing(chat_id)
             try:
+                if len(buf.text) > TELEGRAM_MAX_MESSAGE_LEN or buf.message_id is None:
+                    await self._roll_stream_buffer(
+                        int_chat_id,
+                        buf,
+                        reply_params,
+                        thread_kwargs,
+                    )
                 html = _markdown_to_telegram_html(buf.text)
                 await self._call_with_retry(
                     self._app.bot.edit_message_text,
@@ -539,29 +640,35 @@ class TelegramChannel(BaseChannel):
             return
 
         now = time.monotonic()
-        if buf.message_id is None:
+        if len(buf.text) > TELEGRAM_MAX_MESSAGE_LEN:
             try:
-                sent = await self._call_with_retry(
-                    self._app.bot.send_message,
-                    chat_id=int_chat_id, text=buf.text,
+                await self._roll_stream_buffer(
+                    int_chat_id,
+                    buf,
+                    reply_params,
+                    thread_kwargs,
                 )
-                buf.message_id = sent.message_id
+                buf.last_edit = now
+            except Exception as e:
+                logger.warning("Stream rollover failed: {}", e)
+                raise  # Let ChannelManager handle retry
+        elif buf.message_id is None:
+            try:
+                buf.message_id = await self._send_stream_text(
+                    int_chat_id,
+                    buf.text,
+                    reply_params,
+                    thread_kwargs,
+                )
                 buf.last_edit = now
             except Exception as e:
                 logger.warning("Stream initial send failed: {}", e)
                 raise  # Let ChannelManager handle retry
         elif (now - buf.last_edit) >= self._STREAM_EDIT_INTERVAL:
             try:
-                await self._call_with_retry(
-                    self._app.bot.edit_message_text,
-                    chat_id=int_chat_id, message_id=buf.message_id,
-                    text=buf.text,
-                )
+                await self._edit_stream_text(int_chat_id, buf.message_id, buf.text)
                 buf.last_edit = now
             except Exception as e:
-                if self._is_not_modified_error(e):
-                    buf.last_edit = now
-                    return
                 logger.warning("Stream edit failed: {}", e)
                 raise  # Let ChannelManager handle retry
 

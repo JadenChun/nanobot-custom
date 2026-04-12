@@ -40,6 +40,7 @@ class _FakeUpdater:
 class _FakeBot:
     def __init__(self) -> None:
         self.sent_messages: list[dict] = []
+        self.edited_messages: list[dict] = []
         self.sent_media: list[dict] = []
         self.get_me_calls = 0
 
@@ -53,6 +54,10 @@ class _FakeBot:
     async def send_message(self, **kwargs):
         self.sent_messages.append(kwargs)
         return SimpleNamespace(message_id=len(self.sent_messages))
+
+    async def edit_message_text(self, **kwargs):
+        self.edited_messages.append(kwargs)
+        return SimpleNamespace(message_id=kwargs["message_id"])
 
     async def send_photo(self, **kwargs) -> None:
         self.sent_media.append({"kind": "photo", **kwargs})
@@ -396,6 +401,63 @@ async def test_send_delta_incremental_edit_treats_not_modified_as_success() -> N
     await channel.send_delta("123", "", {"_stream_delta": True, "_stream_id": "s:0"})
 
     assert channel._stream_bufs["123"].last_edit > 0.0
+
+
+@pytest.mark.asyncio
+async def test_send_delta_rolls_over_into_new_message_when_stream_exceeds_limit(monkeypatch) -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    monkeypatch.setattr("nanobot.channels.telegram.TELEGRAM_MAX_MESSAGE_LEN", 10)
+
+    await channel.send_delta("123", "abcdefgh", {"_stream_delta": True, "_stream_id": "s:0"})
+    await channel.send_delta("123", "ijklmnop", {"_stream_delta": True, "_stream_id": "s:0"})
+
+    assert [msg["text"] for msg in channel._app.bot.sent_messages] == ["abcdefgh", "klmnop"]
+    assert channel._app.bot.edited_messages == [
+        {"chat_id": 123, "message_id": 1, "text": "abcdefghij"}
+    ]
+    assert channel._stream_bufs["123"].message_id == 2
+    assert channel._stream_bufs["123"].text == "klmnop"
+
+
+@pytest.mark.asyncio
+async def test_send_delta_large_initial_chunk_splits_into_multiple_messages(monkeypatch) -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    monkeypatch.setattr("nanobot.channels.telegram.TELEGRAM_MAX_MESSAGE_LEN", 10)
+
+    await channel.send_delta("123", "abcdefghijklmnop", {"_stream_delta": True, "_stream_id": "s:0"})
+
+    assert [msg["text"] for msg in channel._app.bot.sent_messages] == ["abcdefghij", "klmnop"]
+    assert channel._app.bot.edited_messages == []
+    assert channel._stream_bufs["123"].message_id == 2
+    assert channel._stream_bufs["123"].text == "klmnop"
+
+
+@pytest.mark.asyncio
+async def test_send_delta_stream_end_finalizes_only_active_tail_after_rollover(monkeypatch) -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    monkeypatch.setattr("nanobot.channels.telegram.TELEGRAM_MAX_MESSAGE_LEN", 10)
+
+    await channel.send_delta("123", "abcdefgh", {"_stream_delta": True, "_stream_id": "s:0"})
+    await channel.send_delta("123", "ijklmnop", {"_stream_delta": True, "_stream_id": "s:0"})
+    await channel.send_delta("123", "", {"_stream_end": True, "_stream_id": "s:0"})
+
+    assert channel._app.bot.edited_messages == [
+        {"chat_id": 123, "message_id": 1, "text": "abcdefghij"},
+        {"chat_id": 123, "message_id": 2, "parse_mode": "HTML", "text": "klmnop"},
+    ]
+    assert "123" not in channel._stream_bufs
 
 
 def test_derive_topic_session_key_uses_thread_id() -> None:
