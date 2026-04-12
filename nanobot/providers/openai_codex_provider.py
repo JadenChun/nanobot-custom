@@ -10,9 +10,9 @@ from typing import Any, AsyncGenerator
 
 import httpx
 from loguru import logger
-from oauth_cli_kit import get_token as get_codex_token
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.codex_auth import get_token as get_codex_token
 
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "codex_cli_rs"

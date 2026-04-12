@@ -1407,6 +1407,8 @@ def provider_login(
 
 @_register_login("openai_codex")
 def _login_openai_codex() -> None:
+    from nanobot.providers.codex_auth import get_token as get_codex_token
+
     try:
         from oauth_cli_kit import login_oauth_interactive
         console.print("[cyan]Starting interactive OAuth login...[/cyan]\n")
@@ -1422,6 +1424,20 @@ def _login_openai_codex() -> None:
     except ImportError:
         console.print("[red]oauth_cli_kit not installed. Run: pip install oauth-cli-kit[/red]")
         raise typer.Exit(1)
+    except Exception as exc:
+        try:
+            token = get_codex_token()
+        except Exception:
+            console.print(f"[red]Authentication error: {exc}[/red]")
+            console.print(
+                "[yellow]Headless workaround:[/yellow] run `codex login` on your laptop, then copy "
+                "`~/.codex/auth.json` (or `$CODEX_HOME/auth.json`) to this machine and retry."
+            )
+            raise typer.Exit(1)
+        console.print(
+            "[yellow]Interactive exchange failed, but imported existing Codex credentials successfully.[/yellow]"
+        )
+        console.print(f"[green]✓ Authenticated with OpenAI Codex[/green]  [dim]{token.account_id}[/dim]")
 
 
 @_register_login("github_copilot")
