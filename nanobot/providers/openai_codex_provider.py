@@ -16,6 +16,7 @@ from nanobot.providers.codex_auth import get_token as get_codex_token
 
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "codex_cli_rs"
+_MAX_CODEX_ID_LEN = 64
 
 
 class OpenAICodexProvider(LLMProvider):
@@ -115,6 +116,33 @@ def _strip_model_prefix(model: str) -> str:
     return model
 
 
+def _normalize_codex_id(value: Any, prefix: str) -> str:
+    """Return a Codex-safe opaque identifier."""
+    if isinstance(value, str):
+        text = value.strip()
+        if text and len(text) <= _MAX_CODEX_ID_LEN and all(ch.isalnum() or ch in "_-" for ch in text):
+            return text
+        if text:
+            digest_len = max(8, _MAX_CODEX_ID_LEN - len(prefix))
+            return f"{prefix}{hashlib.sha1(text.encode('utf-8')).hexdigest()[:digest_len]}"
+    return f"{prefix}0"
+
+
+def _normalize_tool_call_ref(
+    tool_call_id: Any,
+    *,
+    fallback_item_id: str | None = None,
+) -> tuple[str, str | None]:
+    """Normalize a stored tool-call reference into Codex-safe call/item IDs."""
+    call_id, item_id = _split_tool_call_id(tool_call_id)
+    safe_call_id = _normalize_codex_id(call_id, "call_")
+    if item_id:
+        return safe_call_id, _normalize_codex_id(item_id, "fc_")
+    if fallback_item_id:
+        return safe_call_id, _normalize_codex_id(fallback_item_id, "fc_")
+    return safe_call_id, None
+
+
 def _build_headers(account_id: str, token: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
@@ -212,18 +240,21 @@ def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[st
                 })
             for tool_call in msg.get("tool_calls", []) or []:
                 fn = tool_call.get("function") or {}
-                call_id, item_id = _split_tool_call_id(tool_call.get("id"))
+                call_id, item_id = _normalize_tool_call_ref(
+                    tool_call.get("id"),
+                    fallback_item_id=f"fc_{idx}",
+                )
                 input_items.append({
                     "type": "function_call",
-                    "id": item_id or f"fc_{idx}",
-                    "call_id": call_id or f"call_{idx}",
+                    "id": item_id or _normalize_codex_id(f"fc_{idx}", "fc_"),
+                    "call_id": call_id or _normalize_codex_id(f"call_{idx}", "call_"),
                     "name": fn.get("name"),
                     "arguments": fn.get("arguments") or "{}",
                 })
             continue
 
         if role == "tool":
-            call_id, _ = _split_tool_call_id(msg.get("tool_call_id"))
+            call_id, _ = _normalize_tool_call_ref(msg.get("tool_call_id"))
             output_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
             input_items.append({"type": "function_call_output", "call_id": call_id, "output": output_text})
 
@@ -330,9 +361,11 @@ async def _consume_sse(
                     args = json.loads(args_raw)
                 except Exception:
                     args = {"raw": args_raw}
+                safe_call_id = _normalize_codex_id(call_id, "call_")
+                safe_item_id = _normalize_codex_id(buf.get("id") or item.get("id") or "fc_0", "fc_")
                 tool_calls.append(
                     ToolCallRequest(
-                        id=f"{call_id}|{buf.get('id') or item.get('id') or 'fc_0'}",
+                        id=f"{safe_call_id}|{safe_item_id}",
                         name=buf.get("name") or item.get("name"),
                         arguments=args,
                     )
