@@ -8,6 +8,7 @@ import re
 import os
 import time
 from contextlib import AsyncExitStack, nullcontext
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -16,7 +17,8 @@ from loguru import logger
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from nanobot.agent.memory import MemoryConsolidator
-from nanobot.agent.runner import AgentRunSpec, AgentRunner, clear_old_tool_results
+from nanobot.agent.policy import RiskyActionPolicy
+from nanobot.agent.runner import AgentRunResult, AgentRunSpec, AgentRunner, clear_old_tool_results
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
@@ -35,7 +37,7 @@ from nanobot.command import CommandContext, CommandRouter, register_builtin_comm
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
-from nanobot.utils.helpers import estimate_prompt_tokens_chain
+from nanobot.utils.helpers import build_assistant_message, estimate_prompt_tokens_chain
 
 if TYPE_CHECKING:
     from nanobot.config.schema import (
@@ -164,6 +166,33 @@ class _LoopHookChain(AgentHook):
         return self._extras.finalize_content(context, content)
 
 
+@dataclass(slots=True)
+class _PendingApproval:
+    """Pending risky action awaiting an explicit yes/no reply."""
+
+    summary: str
+    created_at: float
+
+
+@dataclass(slots=True)
+class _PlanDecision:
+    """Internal planner output."""
+
+    decision: str = "execute"
+    response: str | None = None
+    summary: str = ""
+    needs_verification: bool = False
+
+
+@dataclass(slots=True)
+class _VerificationResult:
+    """Structured verifier outcome."""
+
+    verdict: str = "PASS"
+    issues: list[str] = field(default_factory=list)
+    feedback: str = ""
+
+
 class AgentLoop:
     """
     The agent loop is the core processing engine.
@@ -232,6 +261,7 @@ class AgentLoop:
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
         self._extra_hooks: list[AgentHook] = hooks or []
+        self.planning_mode = planning_mode
 
         self.context = ContextBuilder(
             workspace,
@@ -264,6 +294,7 @@ class AgentLoop:
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         self._background_tasks: list[asyncio.Task] = []
         self._session_locks: dict[str, asyncio.Lock] = {}
+        self._pending_approvals: dict[str, _PendingApproval] = {}
         # NANOBOT_MAX_CONCURRENT_REQUESTS: <=0 means unlimited; default 3.
         _max = int(os.environ.get("NANOBOT_MAX_CONCURRENT_REQUESTS", "3"))
         self._concurrency_gate: asyncio.Semaphore | None = (
@@ -324,6 +355,24 @@ class AgentLoop:
                 CronTool(self.cron_service, default_timezone=self.context.timezone or "UTC")
             )
 
+    def _build_read_only_tools(self) -> ToolRegistry:
+        """Build a read-only tool registry for planning and verification."""
+        tools = ToolRegistry()
+        allowed_dir = self.workspace if self.restrict_to_workspace else None
+        extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
+        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
+        tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+        if self.exec_config.enable:
+            tools.register(ExecTool(
+                working_dir=str(self.workspace),
+                timeout=self.exec_config.timeout,
+                restrict_to_workspace=self.restrict_to_workspace,
+                path_append=self.exec_config.path_append,
+            ))
+        tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
+        tools.register(WebFetchTool(proxy=self.web_proxy))
+        return tools
+
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
@@ -383,18 +432,186 @@ class AgentLoop:
             return f'{tc.name}("{val[:40]}…")' if len(val) > 40 else f'{tc.name}("{val}")'
         return ", ".join(_fmt(tc) for tc in tool_calls)
 
-    async def _run_agent_loop(
+    @staticmethod
+    def _is_affirmative(text: str) -> bool:
+        return bool(re.fullmatch(r"\s*(yes|y|approve|approved|go ahead|continue|do it|run it)\s*[.!]?\s*", text, re.I))
+
+    @staticmethod
+    def _is_negative(text: str) -> bool:
+        return bool(re.fullmatch(r"\s*(no|n|cancel|stop|don't|do not)\s*[.!]?\s*", text, re.I))
+
+    @staticmethod
+    def _is_simple_conversation(text: str) -> bool:
+        cleaned = text.strip().lower()
+        if not cleaned:
+            return True
+        if len(cleaned) > 120:
+            return False
+        if re.search(r"\b(fix|update|implement|change|edit|write|create|add|remove|delete|refactor|debug|test|run|search|check|plan)\b", cleaned):
+            return False
+        return cleaned.endswith("?")
+
+    def _should_plan(self, text: str) -> bool:
+        if self.planning_mode == "off":
+            return False
+        if self._is_simple_conversation(text):
+            return False
+        if self.planning_mode == "on":
+            return True
+        return bool(re.search(
+            r"\b(fix|update|implement|change|edit|write|create|add|remove|delete|refactor|debug|test|run|search|check|review|plan)\b",
+            text,
+            re.I,
+        ) or len(text.strip()) > 160)
+
+    def _should_verify(self, text: str, tools_used: list[str], planned: _PlanDecision | None) -> bool:
+        if self.planning_mode == "on" and not self._is_simple_conversation(text):
+            return True
+        if planned and planned.needs_verification:
+            return True
+        return any(name in {"write_file", "edit_file", "exec", "spawn", "spawn_pipeline"} for name in tools_used)
+
+    def _planner_prompt(self) -> str:
+        return f"""# Internal Planner
+
+You are nanobot's internal planning pass. Inspect first, do not modify files or external systems.
+
+## Workspace
+{self.workspace}
+
+## Output
+End your response with exactly:
+
+---PLAN---
+{{"decision":"answer_or_clarify_or_execute","response":"user-facing text when decision is answer/clarify","summary":"short execution summary","needs_verification":true_or_false}}
+---END---
+
+Use `clarify` only when there are multiple plausible interpretations and making the wrong choice would waste work.
+Use `answer` when no mutating or multi-step work is needed.
+Use `execute` for clear actionable tasks. Keep `summary` concrete and brief."""
+
+    @staticmethod
+    def _parse_plan_decision(result: str | None) -> _PlanDecision:
+        if not result:
+            return _PlanDecision()
+        match = re.search(r"---PLAN---\s*\n(.*?)\n\s*---END---", result, re.DOTALL)
+        if not match:
+            return _PlanDecision()
+        try:
+            payload = json.loads(match.group(1).strip())
+        except Exception:
+            return _PlanDecision()
+        decision = str(payload.get("decision") or "execute").strip().lower()
+        if decision not in {"answer", "clarify", "execute"}:
+            decision = "execute"
+        return _PlanDecision(
+            decision=decision,
+            response=str(payload.get("response") or "").strip() or None,
+            summary=str(payload.get("summary") or "").strip(),
+            needs_verification=bool(payload.get("needs_verification", False)),
+        )
+
+    def _verifier_prompt(self, goal: str) -> str:
+        return f"""# Internal Verifier
+
+You are nanobot's internal verification pass.
+
+## Goal
+{goal}
+
+## Rules
+- You MUST NOT modify files, repositories, or external systems.
+- Verify claims with concrete files, commands, or artifacts when possible.
+- If work is incomplete or risky, say so directly.
+
+## Output
+End your response with exactly:
+
+---VERIFY---
+{{"verdict":"PASS_or_FAIL_or_PARTIAL","issues":["issue1"],"feedback":"brief actionable feedback"}}
+---END---"""
+
+    @staticmethod
+    def _parse_verification_result(result: str | None) -> _VerificationResult:
+        if not result:
+            return _VerificationResult(verdict="PARTIAL", issues=["Verifier produced no output"], feedback="Verifier produced no output.")
+        match = re.search(r"---VERIFY---\s*\n(.*?)\n\s*---END---", result, re.DOTALL)
+        if not match:
+            return _VerificationResult(verdict="PARTIAL", issues=["Verifier response was not structured"], feedback=result[-500:])
+        try:
+            payload = json.loads(match.group(1).strip())
+        except Exception:
+            return _VerificationResult(verdict="PARTIAL", issues=["Failed to parse verifier output"], feedback=result[-500:])
+        verdict = str(payload.get("verdict") or "PARTIAL").strip().upper()
+        if verdict not in {"PASS", "FAIL", "PARTIAL"}:
+            verdict = "PARTIAL"
+        issues = payload.get("issues") or []
+        if not isinstance(issues, list):
+            issues = [str(issues)]
+        return _VerificationResult(
+            verdict=verdict,
+            issues=[str(issue) for issue in issues],
+            feedback=str(payload.get("feedback") or "").strip(),
+        )
+
+    async def _run_internal_planner(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        channel: str,
+        chat_id: str,
+    ) -> _PlanDecision:
+        planner_messages = [{"role": "system", "content": self._planner_prompt()}, *messages]
+        result = await self._run_agent(
+            planner_messages,
+            tools=self._build_read_only_tools(),
+            max_iterations=8,
+            channel=channel,
+            chat_id=chat_id,
+        )
+        return self._parse_plan_decision(result.final_content)
+
+    async def _run_internal_verifier(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        goal: str,
+        channel: str,
+        chat_id: str,
+    ) -> _VerificationResult:
+        verify_messages = [
+            {"role": "system", "content": self._verifier_prompt(goal)},
+            {"role": "user", "content": (
+                "Review the completed work against the goal below.\n\n"
+                f"Goal:\n{goal}\n\n"
+                "Read any changed files or artifacts and verify the result."
+            )},
+            *messages[-12:],
+        ]
+        result = await self._run_agent(
+            verify_messages,
+            tools=self._build_read_only_tools(),
+            max_iterations=10,
+            channel=channel,
+            chat_id=chat_id,
+        )
+        return self._parse_verification_result(result.final_content)
+
+    async def _run_agent(
         self,
         initial_messages: list[dict],
         on_progress: Callable[..., Awaitable[None]] | None = None,
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
         *,
+        tools: ToolRegistry | None = None,
+        tool_policy: RiskyActionPolicy | None = None,
+        max_iterations: int | None = None,
         channel: str = "cli",
         chat_id: str = "direct",
         message_id: str | None = None,
-    ) -> tuple[str | None, list[str], list[dict]]:
-        """Run the agent iteration loop.
+    ) -> AgentRunResult:
+        """Run a shared agent iteration loop and return the full result.
 
         *on_stream*: called with each content delta during streaming.
         *on_stream_end(resuming)*: called when a streaming session finishes.
@@ -418,20 +635,142 @@ class AgentLoop:
 
         result = await self.runner.run(AgentRunSpec(
             initial_messages=initial_messages,
-            tools=self.tools,
+            tools=tools or self.tools,
             model=self.model,
-            max_iterations=self.max_iterations,
+            max_iterations=max_iterations or self.max_iterations,
             hook=hook,
             error_message="Sorry, I encountered an error calling the AI model.",
             concurrent_tools=True,
             tool_result_clearing_keep=self.tool_result_clearing_keep,
+            tool_policy=tool_policy,
         ))
         self._last_usage = result.usage
         if result.stop_reason == "max_iterations":
-            logger.warning("Max iterations ({}) reached", self.max_iterations)
+            logger.warning("Max iterations ({}) reached", max_iterations or self.max_iterations)
         elif result.stop_reason == "error":
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
+        return result
+
+    async def _run_agent_loop(
+        self,
+        initial_messages: list[dict],
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+        on_stream: Callable[[str], Awaitable[None]] | None = None,
+        on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        *,
+        tools: ToolRegistry | None = None,
+        tool_policy: RiskyActionPolicy | None = None,
+        max_iterations: int | None = None,
+        channel: str = "cli",
+        chat_id: str = "direct",
+        message_id: str | None = None,
+    ) -> tuple[str | None, list[str], list[dict]]:
+        result = await self._run_agent(
+            initial_messages,
+            on_progress=on_progress,
+            on_stream=on_stream,
+            on_stream_end=on_stream_end,
+            tools=tools,
+            tool_policy=tool_policy,
+            max_iterations=max_iterations,
+            channel=channel,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
         return result.final_content, result.tools_used, result.messages
+
+    async def _run_main_task(
+        self,
+        initial_messages: list[dict[str, Any]],
+        *,
+        task_text: str,
+        channel: str,
+        chat_id: str,
+        message_id: str | None,
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+        on_stream: Callable[[str], Awaitable[None]] | None = None,
+        on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        approval_granted: bool = False,
+        planned: _PlanDecision | None = None,
+    ) -> AgentRunResult:
+        policy = RiskyActionPolicy(workspace=self.workspace, approval_granted=approval_granted)
+        result = await self._run_agent(
+            initial_messages,
+            on_progress=on_progress,
+            on_stream=on_stream,
+            on_stream_end=on_stream_end,
+            tool_policy=policy,
+            channel=channel,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
+        if result.stop_reason == "approval_required":
+            return result
+
+        if not self._should_verify(task_text, result.tools_used, planned):
+            return result
+
+        verification = await self._run_internal_verifier(
+            result.messages,
+            goal=planned.summary or task_text,
+            channel=channel,
+            chat_id=chat_id,
+        )
+        if verification.verdict == "PASS":
+            return result
+
+        revision_messages = list(result.messages)
+        revision_messages.append({
+            "role": "user",
+            "content": (
+                "[Internal verification feedback]\n"
+                f"Verdict: {verification.verdict}\n"
+                f"Issues: {'; '.join(verification.issues) or 'None'}\n"
+                f"Feedback: {verification.feedback or 'Revise and verify your work carefully.'}\n\n"
+                "Please revise the work and produce the final response."
+            ),
+        })
+        revised = await self._run_agent(
+            revision_messages,
+            on_progress=on_progress,
+            on_stream=on_stream,
+            on_stream_end=on_stream_end,
+            tool_policy=RiskyActionPolicy(workspace=self.workspace, approval_granted=True),
+            channel=channel,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
+        if revised.stop_reason == "approval_required":
+            return revised
+
+        final_verification = await self._run_internal_verifier(
+            revised.messages,
+            goal=planned.summary or task_text,
+            channel=channel,
+            chat_id=chat_id,
+        )
+        if final_verification.verdict == "PASS":
+            return revised
+
+        note = (
+            "\n\nVerification status: "
+            f"{final_verification.verdict}. "
+            f"{final_verification.feedback or 'Some issues may remain.'}"
+        )
+        revised.final_content = (revised.final_content or "").rstrip() + note
+        if revised.messages and revised.messages[-1].get("role") == "assistant" and not revised.messages[-1].get("tool_calls"):
+            revised.messages[-1] = build_assistant_message(revised.final_content)
+        else:
+            revised.messages.append(build_assistant_message(revised.final_content))
+        revised.stop_reason = "verification_partial"
+        revised.policy_metadata = {
+            **revised.policy_metadata,
+            "verification": {
+                "verdict": final_verification.verdict,
+                "issues": final_verification.issues,
+            },
+        }
+        return revised
 
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
@@ -627,6 +966,27 @@ class AgentLoop:
         if result := await self.commands.dispatch(ctx):
             return result
 
+        pending = self._pending_approvals.get(key)
+        approval_note: str | None = None
+        if pending:
+            if self._is_affirmative(raw):
+                approval_note = (
+                    "The user approved the previously blocked risky action. "
+                    f"Resume the task that required approval: {pending.summary}."
+                )
+                self._pending_approvals.pop(key, None)
+            elif self._is_negative(raw):
+                self._pending_approvals.pop(key, None)
+                return OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content="Cancelled the pending risky action.",
+                    metadata=msg.metadata or {},
+                )
+            else:
+                # A new request supersedes the older pending approval.
+                self._pending_approvals.pop(key, None)
+
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
@@ -635,9 +995,12 @@ class AgentLoop:
                 message_tool.start_turn()
 
         history = session.get_history(max_messages=0)
+        current_message = msg.content
+        if approval_note:
+            current_message = f"{approval_note}\n\nOriginal approval reply: {msg.content}"
         initial_messages = self.context.build_messages(
             history=history,
-            current_message=msg.content,
+            current_message=current_message,
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
         )
@@ -665,7 +1028,7 @@ class AgentLoop:
                         history.pop(0)
                         initial_messages = self.context.build_messages(
                             history=history,
-                            current_message=msg.content,
+                            current_message=current_message,
                             media=msg.media if msg.media else None,
                             channel=msg.channel,
                             chat_id=msg.chat_id,
@@ -679,6 +1042,34 @@ class AgentLoop:
             except Exception as e:
                 logger.error("Failed to check token count: {}", e)
 
+        planned: _PlanDecision | None = None
+        if self._should_plan(current_message):
+            planned = await self._run_internal_planner(
+                initial_messages,
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+            )
+            if planned.decision in {"answer", "clarify"} and planned.response:
+                all_msgs = [*initial_messages, build_assistant_message(planned.response)]
+                self._save_turn(session, all_msgs, 1 + len(history))
+                self.sessions.save(session)
+                self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
+                self._maybe_sync_context_repo()
+                return OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=planned.response,
+                    metadata=msg.metadata or {},
+                )
+            if planned.summary:
+                initial_messages.insert(-1, {
+                    "role": "system",
+                    "content": (
+                        "Internal execution plan. Follow this approach unless direct evidence requires a correction:\n"
+                        f"- {planned.summary}"
+                    ),
+                })
+
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})
             meta["_progress"] = True
@@ -687,14 +1078,19 @@ class AgentLoop:
                 channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
             ))
 
-        final_content, _, all_msgs = await self._run_agent_loop(
+        result = await self._run_main_task(
             initial_messages,
+            task_text=current_message,
             on_progress=on_progress or _bus_progress,
             on_stream=on_stream,
             on_stream_end=on_stream_end,
             channel=msg.channel, chat_id=msg.chat_id,
             message_id=msg.metadata.get("message_id"),
+            approval_granted=approval_note is not None,
+            planned=planned,
         )
+        final_content = result.final_content
+        all_msgs = result.messages
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
@@ -703,6 +1099,10 @@ class AgentLoop:
         self.sessions.save(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
         self._maybe_sync_context_repo()
+
+        if result.stop_reason == "approval_required":
+            summary = str(result.policy_metadata.get("summary") or "risky action")
+            self._pending_approvals[key] = _PendingApproval(summary=summary, created_at=time.time())
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
             return None
@@ -770,6 +1170,8 @@ class AgentLoop:
         for m in messages[skip:]:
             entry = dict(m)
             role, content = entry.get("role"), entry.get("content")
+            if role == "system":
+                continue
             if role == "assistant" and not content and not entry.get("tool_calls"):
                 continue  # skip empty assistant messages — they poison session context
             if role == "tool":
@@ -788,6 +1190,14 @@ class AgentLoop:
                         entry["content"] = parts[1]
                     else:
                         continue
+                if isinstance(entry.get("content"), str) and entry["content"].startswith("[Internal verification feedback]"):
+                    continue
+                if (
+                    isinstance(entry.get("content"), str)
+                    and "Original approval reply:" in entry["content"]
+                    and entry["content"].startswith("The user approved the previously blocked risky action.")
+                ):
+                    entry["content"] = entry["content"].split("Original approval reply:", 1)[1].strip()
                 if isinstance(content, list):
                     filtered = self._sanitize_persisted_blocks(content, drop_runtime=True)
                     if not filtered:

@@ -10,7 +10,7 @@ from typing import Any
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.runner import AgentRunSpec, AgentRunner
+from nanobot.agent.runner import AgentRunResult, AgentRunSpec, AgentRunner
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
@@ -22,7 +22,6 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig
 from nanobot.providers.base import LLMProvider
-from nanobot.utils.helpers import build_assistant_message
 
 
 class _SubagentHook(AgentHook):
@@ -69,6 +68,7 @@ class SubagentManager:
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
         self.runner = AgentRunner(provider)
+        self._last_run_result: AgentRunResult | None = None
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
 
@@ -142,47 +142,30 @@ class SubagentManager:
         max_iterations: int = 15,
     ) -> tuple[str | None, list[dict[str, Any]]]:
         """Run an agent loop. Returns (final_result, messages)."""
-        iteration = 0
-        final_result: str | None = None
+        result = await self.runner.run(AgentRunSpec(
+            initial_messages=messages,
+            tools=tools,
+            model=self.model,
+            max_iterations=max_iterations,
+            hook=_SubagentHook(task_id),
+            fail_on_tool_error=True,
+        ))
+        self._last_run_result = result
+        final_result = None if result.stop_reason == "max_iterations" else result.final_content
+        return final_result, getattr(result, "messages", messages)
 
-        while iteration < max_iterations:
-            iteration += 1
-
-            response = await self.provider.chat_with_retry(
-                messages=messages,
-                tools=tools.get_definitions(),
-                model=self.model,
-            )
-
-            if response.has_tool_calls:
-                tool_call_dicts = [
-                    tc.to_openai_tool_call()
-                    for tc in response.tool_calls
-                ]
-                messages.append(build_assistant_message(
-                    response.content or "",
-                    tool_calls=tool_call_dicts,
-                    reasoning_content=response.reasoning_content,
-                    thinking_blocks=response.thinking_blocks,
-                ))
-
-                for tool_call in response.tool_calls:
-                    args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info("Subagent [{}] executing: {}({})", task_id, tool_call.name, args_str[:200])
-                    result = await tools.execute(tool_call.name, tool_call.arguments)
-                    if err := self._tool_error_detail(result):
-                        logger.error("Subagent [{}] tool error: {} -> {}", task_id, tool_call.name, err)
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "name": tool_call.name,
-                        "content": result,
-                    })
-            else:
-                final_result = response.content
-                break
-
-        return final_result, messages
+    @staticmethod
+    def _format_tool_failure(tool_events: list[dict[str, str]]) -> str:
+        completed = [e for e in tool_events if e.get("status") == "ok"]
+        failed = [e for e in tool_events if e.get("status") == "error"]
+        lines: list[str] = []
+        if completed:
+            lines.append("Completed steps:")
+            lines.extend(f"- {e.get('name')}: {e.get('detail')}" for e in completed)
+        if failed:
+            lines.append("Failure:")
+            lines.extend(f"- {e.get('name')}: {e.get('detail')}" for e in failed)
+        return "\n".join(lines) if lines else "Error: tool execution failed."
 
     # ------------------------------------------------------------------
     # Generation tools
@@ -423,9 +406,19 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
                 tools=tools,
                 max_iterations=15,
             )
+            run_result = self._last_run_result
+
+            if run_result is not None and run_result.stop_reason == "tool_error":
+                detail = self._format_tool_failure(run_result.tool_events)
+                logger.error("Subagent [{}] failed during tool execution", task_id)
+                await self._announce_result(task_id, label, task, detail, origin, "error")
+                return
 
             if not isinstance(final_result, str) or not final_result.strip():
-                raise RuntimeError("Subagent produced no final response.")
+                if any(m.get("role") == "tool" for m in messages):
+                    final_result = "Task completed but no final response was generated."
+                else:
+                    raise RuntimeError("Subagent produced no final response.")
 
             # Run review loop if requested
             review_meta: dict[str, Any] | None = None

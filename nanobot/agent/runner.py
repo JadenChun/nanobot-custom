@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
+from nanobot.agent.policy import ToolPolicy, ToolPolicyDecision
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider, ToolCallRequest
 from nanobot.utils.helpers import build_assistant_message
@@ -62,6 +63,7 @@ class AgentRunSpec:
     concurrent_tools: bool = False
     fail_on_tool_error: bool = False
     tool_result_clearing_keep: int | None = None
+    tool_policy: ToolPolicy | None = None
 
 
 @dataclass(slots=True)
@@ -75,6 +77,7 @@ class AgentRunResult:
     stop_reason: str = "completed"
     error: str | None = None
     tool_events: list[dict[str, str]] = field(default_factory=list)
+    policy_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class AgentRunner:
@@ -183,6 +186,32 @@ class AgentRunner:
             context.tool_calls = list(response.tool_calls)
 
             if response.has_tool_calls:
+                decision = await self._evaluate_tool_policy(spec, context, response.tool_calls)
+                if decision.action != "allow":
+                    final_content = decision.response
+                    stop_reason = decision.stop_reason or "policy_blocked"
+                    messages.append(build_assistant_message(
+                        final_content,
+                        reasoning_content=response.reasoning_content,
+                        thinking_blocks=response.thinking_blocks,
+                    ))
+                    context.final_content = final_content
+                    context.stop_reason = stop_reason
+                    if hook.wants_streaming() and stream_waiting_final_end:
+                        await hook.on_stream_end(context, resuming=False)
+                        stream_waiting_final_end = False
+                    await hook.after_iteration(context)
+                    return AgentRunResult(
+                        final_content=final_content,
+                        messages=messages,
+                        tools_used=tools_used,
+                        usage=usage,
+                        stop_reason=stop_reason,
+                        error=error,
+                        tool_events=tool_events,
+                        policy_metadata=decision.metadata,
+                    )
+
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=True)
                     stream_waiting_final_end = True
@@ -279,6 +308,17 @@ class AgentRunner:
             error=error,
             tool_events=tool_events,
         )
+
+    async def _evaluate_tool_policy(
+        self,
+        spec: AgentRunSpec,
+        context: AgentHookContext,
+        tool_calls: list[ToolCallRequest],
+    ) -> ToolPolicyDecision:
+        policy = spec.tool_policy
+        if policy is None:
+            return ToolPolicyDecision()
+        return await policy.evaluate(messages=context.messages, tool_calls=tool_calls)
 
     async def _execute_tools(
         self,
