@@ -112,7 +112,7 @@ class OpenAICompatProvider(LLMProvider):
     registry lookups needed.
     """
 
-    _QUOTA_KEY_COOLDOWN_S = 12 * 3600.0  # 12h — free-tier quota won't refresh any sooner
+    _QUOTA_KEY_COOLDOWN_S = 30 * 60.0  # 30m — re-probe exhausted keys within the same session
     _RATE_LIMIT_KEY_COOLDOWN_S = 60.0
     _OVERLOAD_KEY_COOLDOWN_S = 15.0
 

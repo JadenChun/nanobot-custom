@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -46,9 +47,14 @@ class LLMResponse:
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     finish_reason: str = "stop"
     usage: dict[str, int] = field(default_factory=dict)
+    retry_after: float | None = None  # Provider-supplied retry wait in seconds.
     reasoning_content: str | None = None  # Kimi, DeepSeek-R1 etc.
     thinking_blocks: list[dict] | None = None  # Anthropic extended thinking
-    
+    # Structured error metadata for retry classification.
+    error_status_code: int | None = None
+    error_type: str | None = None  # e.g. "insufficient_quota"
+    error_code: str | None = None  # e.g. "rate_limit_exceeded"
+
     @property
     def has_tool_calls(self) -> bool:
         """Check if response contains tool calls."""
@@ -93,21 +99,53 @@ class LLMProvider(ABC):
         "server error",
         "temporarily unavailable",
     )
-    _NON_RETRYABLE_ERROR_MARKERS = (
-        "all configured api keys were rate-limited or out of quota after trying",
-        "all api keys exhausted",
-    )
-    _QUOTA_EXHAUSTION_MARKERS = (
-        "402",
-        "payment required",
+    # Semantic tokens from provider error JSON that indicate permanent quota exhaustion.
+    _NON_RETRYABLE_429_TOKENS = frozenset({
+        "insufficient_quota",
+        "quota_exceeded",
+        "quota_exhausted",
+        "billing_hard_limit_reached",
+        "insufficient_balance",
+        "credit_balance_too_low",
+        "billing_not_active",
+        "payment_required",
+    })
+    # Semantic tokens that indicate a transient rate limit (should retry).
+    _RETRYABLE_429_TOKENS = frozenset({
+        "rate_limit_exceeded",
+        "rate_limit_error",
+        "too_many_requests",
+        "request_limit_exceeded",
+        "overloaded_error",
+    })
+    # Text markers for fallback classification when no structured tokens available.
+    _QUOTA_EXHAUSTION_TEXT_MARKERS = (
+        "insufficient_quota",
+        "insufficient quota",
         "out of quota",
         "quota exceeded",
-        "insufficient_quota",
+        "quota exhausted",
         "billing hard limit",
+        "billing_hard_limit_reached",
         "billing limit",
-        "plan and billing",
-        "all configured api keys were rate-limited or out of quota",
+        "billing not active",
+        "insufficient balance",
+        "credit balance too low",
+        "payment required",
+        "out of credits",
+        "exceeded your current quota",
         "all api keys exhausted",
+        "all configured api keys were rate-limited or out of quota",
+    )
+    _RATE_LIMIT_TEXT_MARKERS = (
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+        "retry after",
+        "try again in",
+        "temporarily unavailable",
+        "overloaded",
+        "concurrency limit",
     )
 
     _SENTINEL = object()
@@ -210,15 +248,113 @@ class LLMProvider(ABC):
     @classmethod
     def _is_transient_error(cls, content: str | None) -> bool:
         err = (content or "").lower()
-        if any(marker in err for marker in cls._NON_RETRYABLE_ERROR_MARKERS):
+        # If it looks like a permanent quota exhaustion, don't retry.
+        if any(marker in err for marker in cls._QUOTA_EXHAUSTION_TEXT_MARKERS):
             return False
         return any(marker in err for marker in cls._TRANSIENT_ERROR_MARKERS)
+
+    @classmethod
+    def _is_transient_response(cls, response: LLMResponse) -> bool:
+        """Use structured error metadata when available, fall back to text markers."""
+        # Check structured error tokens first (most reliable).
+        tokens = {t for t in (response.error_type, response.error_code) if t}
+        if tokens:
+            if any(t in cls._NON_RETRYABLE_429_TOKENS for t in tokens):
+                return False
+            if any(t in cls._RETRYABLE_429_TOKENS for t in tokens):
+                return True
+
+        # Check status code.
+        if response.error_status_code is not None:
+            status = response.error_status_code
+            if status == 429:
+                return cls._is_retryable_429_text(response.content)
+            if status >= 500:
+                return True
+
+        # Fall back to text-based classification.
+        return cls._is_transient_error(response.content)
+
+    @classmethod
+    def _is_retryable_429_text(cls, content: str | None) -> bool:
+        """Classify a 429 by error message text. Defaults to retryable (rate limit)."""
+        err = (content or "").lower()
+        if any(marker in err for marker in cls._QUOTA_EXHAUSTION_TEXT_MARKERS):
+            return False
+        # Unknown 429 defaults to retryable (rate limit).
+        return True
 
     @classmethod
     def _is_quota_exhaustion(cls, content: str | None) -> bool:
         """True when error indicates permanent quota exhaustion (not transient rate limit)."""
         err = (content or "").lower()
-        return any(marker in err for marker in cls._QUOTA_EXHAUSTION_MARKERS)
+        # Check for quota exhaustion markers first.
+        has_quota_marker = any(marker in err for marker in cls._QUOTA_EXHAUSTION_TEXT_MARKERS)
+        if not has_quota_marker:
+            return False
+        # "all configured api keys" is a definitive exhaustion signal even
+        # though the message text also contains "rate-limited".
+        if "all configured api keys" in err or "all api keys exhausted" in err:
+            return True
+        # For other messages, if rate limit markers are present, it's transient.
+        if any(marker in err for marker in cls._RATE_LIMIT_TEXT_MARKERS):
+            return False
+        return True
+
+    @classmethod
+    def _is_quota_exhaustion_response(cls, response: LLMResponse) -> bool:
+        """Structured check: is this response a permanent quota exhaustion?"""
+        tokens = {t for t in (response.error_type, response.error_code) if t}
+        if tokens:
+            return any(t in cls._NON_RETRYABLE_429_TOKENS for t in tokens)
+        return cls._is_quota_exhaustion(response.content)
+
+    @staticmethod
+    def _extract_retry_after(content: str | None) -> float | None:
+        """Parse retry-after timing from error message text."""
+        text = (content or "").lower()
+        patterns = (
+            r"retry after\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds|s|sec|secs|seconds|m|min|minutes)?",
+            r"try again in\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds|s|sec|secs|seconds|m|min|minutes)",
+            r"retry[_-]?after[\"'\s:=]+(\d+(?:\.\d+)?)",
+        )
+        for idx, pattern in enumerate(patterns):
+            match = re.search(pattern, text)
+            if not match:
+                continue
+            value = float(match.group(1))
+            unit = match.group(2) if match.lastindex >= 2 else "s"
+            if unit and unit in ("ms", "milliseconds"):
+                return max(0.1, value / 1000.0)
+            if unit and unit in ("m", "min", "minutes"):
+                return max(0.1, value * 60.0)
+            return max(0.1, value)
+        return None
+
+    @staticmethod
+    def _extract_retry_after_from_headers(headers: Any) -> float | None:
+        """Extract retry wait time from HTTP response headers."""
+        if not headers:
+            return None
+        def _get(name: str) -> Any:
+            if hasattr(headers, "get"):
+                return headers.get(name) or headers.get(name.title())
+            return None
+        try:
+            retry_ms = _get("retry-after-ms")
+            if retry_ms is not None:
+                value = float(retry_ms) / 1000.0
+                if value > 0:
+                    return value
+        except (TypeError, ValueError):
+            pass
+        try:
+            retry_s = _get("retry-after")
+            if retry_s is not None:
+                return max(0.1, float(retry_s))
+        except (TypeError, ValueError):
+            pass
+        return None
 
     @staticmethod
     def _strip_image_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
@@ -332,23 +468,23 @@ class LLMProvider(ABC):
                 return response
 
             if delivered_any:
-                # Already streamed content to the user — don't re-invoke chat_stream
-                # or we'll concatenate a second response on top of the first.
                 return response
 
-            if not self._is_transient_error(response.content):
+            if not self._is_transient_response(response):
                 stripped = self._strip_image_content(messages)
                 if stripped is not None:
                     logger.warning("Non-transient LLM error with image content, retrying without images")
                     return await self._safe_chat_stream(**{**kw, "messages": stripped})
                 return response
 
+            # Honor provider-supplied retry delay if available.
+            effective_delay = response.retry_after or delay
             logger.warning(
-                "LLM transient error (attempt {}/{}), retrying in {}s: {}",
-                attempt, len(self._CHAT_RETRY_DELAYS), delay,
+                "LLM transient error (attempt {}/{}), retrying in {:.1f}s: {}",
+                attempt, len(self._CHAT_RETRY_DELAYS), effective_delay,
                 (response.content or "")[:120].lower(),
             )
-            await asyncio.sleep(delay)
+            await asyncio.sleep(effective_delay)
 
         return await self._safe_chat_stream(**kw)
 
@@ -387,19 +523,20 @@ class LLMProvider(ABC):
             if response.finish_reason != "error":
                 return response
 
-            if not self._is_transient_error(response.content):
+            if not self._is_transient_response(response):
                 stripped = self._strip_image_content(messages)
                 if stripped is not None:
                     logger.warning("Non-transient LLM error with image content, retrying without images")
                     return await self._safe_chat(**{**kw, "messages": stripped})
                 return response
 
+            effective_delay = response.retry_after or delay
             logger.warning(
-                "LLM transient error (attempt {}/{}), retrying in {}s: {}",
-                attempt, len(self._CHAT_RETRY_DELAYS), delay,
+                "LLM transient error (attempt {}/{}), retrying in {:.1f}s: {}",
+                attempt, len(self._CHAT_RETRY_DELAYS), effective_delay,
                 (response.content or "")[:120].lower(),
             )
-            await asyncio.sleep(delay)
+            await asyncio.sleep(effective_delay)
 
         return await self._safe_chat(**kw)
 

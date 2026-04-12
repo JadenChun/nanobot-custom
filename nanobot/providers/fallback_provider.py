@@ -26,10 +26,9 @@ class FallbackProvider(LLMProvider):
     layer only catches errors that survive those retries.
     """
 
-    # Free-tier quotas typically refresh on a daily-ish cadence, so a 12h
-    # cooldown keeps us from hammering an exhausted provider while still
-    # letting us re-probe it roughly twice per day.
-    _PROVIDER_QUOTA_COOLDOWN_S = 12 * 3600.0
+    # Keep quota-exhausted providers out of rotation briefly, but probe them
+    # again within the same session in case the upstream quota resets sooner.
+    _PROVIDER_QUOTA_COOLDOWN_S = 5 * 60.0  # 5 minutes (reduced from 30)
 
     def __init__(self, providers: list[tuple[LLMProvider, str]]) -> None:
         """
@@ -144,7 +143,9 @@ class FallbackProvider(LLMProvider):
 
             last_response = response
 
-            if not self._is_quota_exhaustion(response.content):
+            if not self._is_quota_exhaustion_response(response):
+                # Not a quota issue — could be transient or another error.
+                # Don't mark as exhausted, just return the error.
                 return response
 
             self._mark_provider_exhausted(idx, provider_model)
@@ -220,7 +221,7 @@ class FallbackProvider(LLMProvider):
                 # a secondary provider would concatenate a second response on top.
                 return response
 
-            if not self._is_quota_exhaustion(response.content):
+            if not self._is_quota_exhaustion_response(response):
                 return response
 
             self._mark_provider_exhausted(idx, provider_model)
