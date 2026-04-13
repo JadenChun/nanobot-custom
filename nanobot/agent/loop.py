@@ -31,6 +31,7 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.pipeline import SpawnPipelineTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.image import ImageGenerationTool
+from nanobot.agent.tools.mcp import is_read_only_mcp_tool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
@@ -284,6 +285,7 @@ class AgentLoop:
             agent_device_config=self.agent_device_config,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            mcp_servers=mcp_servers or {},
         )
 
         self._running = False
@@ -371,6 +373,9 @@ class AgentLoop:
             ))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         tools.register(WebFetchTool(proxy=self.web_proxy))
+        for tool in self.tools.iter_tools():
+            if is_read_only_mcp_tool(tool):
+                tools.register(tool)
         return tools
 
     async def _connect_mcp(self) -> None:
@@ -522,6 +527,8 @@ You are nanobot's internal verification pass.
 ## Rules
 - You MUST NOT modify files, repositories, or external systems.
 - Verify claims with concrete files, commands, or artifacts when possible.
+- For video, timeline, or media-editing tasks, you MUST inspect the actual timeline/previews with read-only MCP tools when they are available.
+- If a media-editing claim would require timeline/preview inspection and you cannot inspect it, do not return PASS.
 - If work is incomplete or risky, say so directly.
 
 ## Output
@@ -694,6 +701,7 @@ End your response with exactly:
         planned: _PlanDecision | None = None,
     ) -> AgentRunResult:
         policy = RiskyActionPolicy(workspace=self.workspace, approval_granted=approval_granted)
+        verification_goal = planned.summary if planned and planned.summary else task_text
         result = await self._run_agent(
             initial_messages,
             on_progress=on_progress,
@@ -712,7 +720,7 @@ End your response with exactly:
 
         verification = await self._run_internal_verifier(
             result.messages,
-            goal=planned.summary or task_text,
+            goal=verification_goal,
             channel=channel,
             chat_id=chat_id,
         )
@@ -745,7 +753,7 @@ End your response with exactly:
 
         final_verification = await self._run_internal_verifier(
             revised.messages,
-            goal=planned.summary or task_text,
+            goal=verification_goal,
             channel=channel,
             chat_id=chat_id,
         )
@@ -1111,7 +1119,7 @@ End your response with exactly:
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
 
         meta = dict(msg.metadata or {})
-        if on_stream is not None:
+        if on_stream is not None and result.stop_reason != "approval_required":
             meta["_streamed"] = True
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=final_content,

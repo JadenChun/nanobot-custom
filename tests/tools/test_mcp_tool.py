@@ -7,7 +7,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from nanobot.agent.tools.mcp import MCPToolWrapper, connect_mcp_servers
+from nanobot.agent.tools.mcp import MCPToolWrapper, connect_mcp_servers, is_read_only_mcp_tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.schema import MCPServerConfig
 
@@ -80,8 +80,17 @@ def _make_wrapper(session: object, *, timeout: float = 0.1) -> MCPToolWrapper:
         name="demo",
         description="demo tool",
         inputSchema={"type": "object", "properties": {}},
+        annotations=None,
     )
-    return MCPToolWrapper(session, "test", tool_def, tool_timeout=timeout)
+    return MCPToolWrapper(
+        session,
+        "test",
+        tool_def,
+        transport_type="stdio",
+        server_url=None,
+        server_command="fake",
+        tool_timeout=timeout,
+    )
 
 
 def test_wrapper_preserves_non_nullable_unions() -> None:
@@ -221,17 +230,91 @@ def _make_tool_def(name: str) -> SimpleNamespace:
         name=name,
         description=f"{name} tool",
         inputSchema={"type": "object", "properties": {}},
+        annotations=None,
     )
 
 
-def _make_fake_session(tool_names: list[str]) -> SimpleNamespace:
+def _make_fake_session(tool_names: list[str] | list[SimpleNamespace]) -> SimpleNamespace:
     async def initialize() -> None:
         return None
 
     async def list_tools() -> SimpleNamespace:
-        return SimpleNamespace(tools=[_make_tool_def(name) for name in tool_names])
+        tools = [
+            tool if isinstance(tool, SimpleNamespace) else _make_tool_def(tool)
+            for tool in tool_names
+        ]
+        return SimpleNamespace(tools=tools)
 
     return SimpleNamespace(initialize=initialize, list_tools=list_tools)
+
+
+def test_wrapper_uses_annotation_for_read_only() -> None:
+    tool_def = SimpleNamespace(
+        name="save_project",
+        description="save tool",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=SimpleNamespace(
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+    )
+
+    wrapper = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "ltx",
+        tool_def,
+        transport_type="streamableHttp",
+        server_url="http://example.com/mcp",
+        server_command=None,
+    )
+
+    assert wrapper.is_read_only is True
+    assert wrapper.mcp_metadata.read_only_source == "annotation"
+    assert is_read_only_mcp_tool(wrapper) is True
+
+
+def test_wrapper_uses_localhost_heuristic_when_annotation_missing() -> None:
+    tool_def = SimpleNamespace(
+        name="inspect_timeline",
+        description="inspect tool",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=None,
+    )
+
+    wrapper = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "ltx",
+        tool_def,
+        transport_type="streamableHttp",
+        server_url="http://127.0.0.1:8765/mcp",
+        server_command=None,
+    )
+
+    assert wrapper.is_read_only is True
+    assert wrapper.mcp_metadata.read_only_source == "heuristic"
+
+
+def test_wrapper_fails_closed_for_remote_server_without_annotations() -> None:
+    tool_def = SimpleNamespace(
+        name="inspect_timeline",
+        description="inspect tool",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=None,
+    )
+
+    wrapper = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "ltx",
+        tool_def,
+        transport_type="streamableHttp",
+        server_url="https://remote.example.com/mcp",
+        server_command=None,
+    )
+
+    assert wrapper.is_read_only is False
+    assert wrapper.mcp_metadata.read_only_source == "default_mutating"
 
 
 @pytest.mark.asyncio
@@ -343,3 +426,37 @@ async def test_connect_mcp_servers_enabled_tools_warns_on_unknown_entries(
     assert "enabledTools entries not found: unknown" in warnings[-1]
     assert "Available raw names: demo" in warnings[-1]
     assert "Available wrapped names: mcp_test_demo" in warnings[-1]
+
+
+@pytest.mark.asyncio
+async def test_connect_mcp_servers_can_filter_to_read_only_tools(
+    fake_mcp_runtime: dict[str, object | None],
+) -> None:
+    fake_mcp_runtime["session"] = _make_fake_session([
+        SimpleNamespace(
+            name="inspect_timeline",
+            description="inspect tool",
+            inputSchema={"type": "object", "properties": {}},
+            annotations=None,
+        ),
+        SimpleNamespace(
+            name="save_project",
+            description="save tool",
+            inputSchema={"type": "object", "properties": {}},
+            annotations=None,
+        ),
+    ])
+    registry = ToolRegistry()
+    stack = AsyncExitStack()
+    await stack.__aenter__()
+    try:
+        await connect_mcp_servers(
+            {"test": MCPServerConfig(url="http://127.0.0.1:8765/mcp")},
+            registry,
+            stack,
+            tool_filter=lambda tool: tool.is_read_only,
+        )
+    finally:
+        await stack.aclose()
+
+    assert registry.tool_names == ["mcp_test_inspect_timeline"]

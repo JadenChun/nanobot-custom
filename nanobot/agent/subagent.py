@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import uuid
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.mcp import connect_mcp_servers, is_read_only_mcp_tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
@@ -54,6 +56,7 @@ class SubagentManager:
         agent_device_config: "AgentDeviceConfig | None" = None,
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
+        mcp_servers: dict | None = None,
     ):
         from nanobot.config.schema import AgentBrowserConfig, AgentDeviceConfig, ExecToolConfig, WebSearchConfig
 
@@ -67,10 +70,15 @@ class SubagentManager:
         self.agent_device_config = agent_device_config or AgentDeviceConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self.restrict_to_workspace = restrict_to_workspace
+        self._mcp_servers = mcp_servers or {}
         self.runner = AgentRunner(provider)
         self._last_run_result: AgentRunResult | None = None
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+        self._review_mcp_tools = ToolRegistry()
+        self._review_mcp_stack: AsyncExitStack | None = None
+        self._review_mcp_connected = False
+        self._review_mcp_connecting = False
 
     @staticmethod
     def _tool_error_detail(result: Any) -> str | None:
@@ -235,7 +243,37 @@ class SubagentManager:
             ))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         tools.register(WebFetchTool(proxy=self.web_proxy))
+        for tool in self._review_mcp_tools.iter_tools():
+            if is_read_only_mcp_tool(tool):
+                tools.register(tool)
         return tools
+
+    async def _connect_review_mcp(self) -> None:
+        """Connect read-only MCP tools for review agents."""
+        if self._review_mcp_connected or self._review_mcp_connecting or not self._mcp_servers:
+            return
+
+        self._review_mcp_connecting = True
+        try:
+            self._review_mcp_stack = AsyncExitStack()
+            await self._review_mcp_stack.__aenter__()
+            await connect_mcp_servers(
+                self._mcp_servers,
+                self._review_mcp_tools,
+                self._review_mcp_stack,
+                tool_filter=lambda wrapper: wrapper.is_read_only,
+            )
+            self._review_mcp_connected = True
+        except BaseException as exc:
+            logger.error("Subagent review MCP connection failed: {}", exc)
+            if self._review_mcp_stack:
+                try:
+                    await self._review_mcp_stack.aclose()
+                except Exception:
+                    pass
+                self._review_mcp_stack = None
+        finally:
+            self._review_mcp_connecting = False
 
     def _build_review_prompt(self, goal: str) -> str:
         """Build a skeptical system prompt for the review agent."""
@@ -263,7 +301,9 @@ You are a review agent. Your job is to critically evaluate whether a generation 
 1. Policy: you MUST NOT modify files, repositories, or external systems.
 2. You MUST read the actual output files or artifacts to evaluate them — do not trust summaries alone.
 3. Check for: completeness against the goal, correctness, quality, missing requirements, and potential issues.
-4. If the output is genuinely good and meets the goal, approve it. Do not reject good work unnecessarily.
+4. For video, timeline, or media-editing tasks, inspect the actual timeline/previews with read-only MCP tools when available.
+5. If a media-editing claim would require timeline/preview inspection and you cannot inspect it, do not approve the work.
+6. If the output is genuinely good and meets the goal, approve it. Do not reject good work unnecessarily.
 
 ## Workspace
 {self.workspace}
@@ -310,6 +350,7 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
         max_rounds: int = 3,
     ) -> tuple[str, dict[str, Any]]:
         """Run the generation-review loop. Returns (final_result, review_meta)."""
+        await self._connect_review_mcp()
         review_tools = self._build_review_tools()
         review_prompt = self._build_review_prompt(goal)
         best_result = generation_result
