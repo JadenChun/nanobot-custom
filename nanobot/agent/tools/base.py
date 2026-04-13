@@ -53,6 +53,11 @@ class Tool(ABC):
         """JSON Schema for tool parameters."""
         pass
 
+    @property
+    def supports_parallel_calls(self) -> bool:
+        """Whether the runner may execute multiple calls to this tool in parallel."""
+        return True
+
     @abstractmethod
     async def execute(self, **kwargs: Any) -> Any:
         """

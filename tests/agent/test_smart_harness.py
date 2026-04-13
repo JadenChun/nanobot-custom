@@ -27,6 +27,32 @@ def _make_loop(tmp_path, *, planning_mode: str = "agent"):
     return loop, provider
 
 
+def test_recent_legal_messages_strips_orphan_tool_prefix(tmp_path):
+    loop, _provider = _make_loop(tmp_path)
+    messages = [
+        {"role": "user", "content": "older"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_a", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                {"id": "call_b", "type": "function", "function": {"name": "y", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_a", "name": "x", "content": "ok"},
+        {"role": "tool", "tool_call_id": "call_b", "name": "y", "content": "ok"},
+        {"role": "user", "content": "latest"},
+        {"role": "assistant", "content": "done"},
+    ]
+
+    trimmed = loop._recent_legal_messages(messages, max_messages=4)
+
+    assert trimmed == [
+        {"role": "user", "content": "latest"},
+        {"role": "assistant", "content": "done"},
+    ]
+
+
 @pytest.mark.asyncio
 async def test_runner_tool_policy_can_stop_before_execution():
     class StopPolicy(ToolPolicy):

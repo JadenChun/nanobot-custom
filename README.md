@@ -1409,6 +1409,22 @@ Use `toolTimeout` to override the default 30s per-call timeout for slow servers:
 }
 ```
 
+For `ltx-desktop`, set `toolTimeout` to `120` so timeline preview tools like
+`preview_frame` and `preview_clip` have enough time to render:
+
+```json
+{
+  "tools": {
+    "mcpServers": {
+      "ltx-desktop": {
+        "url": "http://127.0.0.1:8765/mcp",
+        "toolTimeout": 120
+      }
+    }
+  }
+}
+```
+
 Use `enabledTools` to register only a subset of tools from an MCP server:
 
 ```json

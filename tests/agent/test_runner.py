@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -199,6 +200,71 @@ async def test_runner_streaming_hook_receives_deltas_and_end_signal():
     assert streamed == ["he", "llo"]
     assert endings == [False]
     provider.chat_with_retry.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_runner_disables_parallel_execution_for_serial_only_tools():
+    from nanobot.agent.runner import AgentRunSpec, AgentRunner
+    from nanobot.agent.tools.base import Tool
+    from nanobot.agent.tools.registry import ToolRegistry
+
+    state = {"active": 0, "max_active": 0}
+
+    class _BaseTestTool(Tool):
+        def __init__(self, name: str, *, supports_parallel_calls: bool) -> None:
+            self._name = name
+            self._supports_parallel_calls = supports_parallel_calls
+
+        @property
+        def name(self) -> str:
+            return self._name
+
+        @property
+        def description(self) -> str:
+            return self._name
+
+        @property
+        def parameters(self) -> dict:
+            return {"type": "object", "properties": {}}
+
+        @property
+        def supports_parallel_calls(self) -> bool:
+            return self._supports_parallel_calls
+
+        async def execute(self, **kwargs):
+            state["active"] += 1
+            state["max_active"] = max(state["max_active"], state["active"])
+            await asyncio.sleep(0.01)
+            state["active"] -= 1
+            return self._name
+
+    tools = ToolRegistry()
+    tools.register(_BaseTestTool("serial_preview", supports_parallel_calls=False))
+    tools.register(_BaseTestTool("regular_inspect", supports_parallel_calls=True))
+
+    runner = AgentRunner(MagicMock())
+
+    async def _fake_run_tool(_spec, _tool_call):
+        state["active"] += 1
+        state["max_active"] = max(state["max_active"], state["active"])
+        await asyncio.sleep(0.01)
+        state["active"] -= 1
+        return "ok", {"name": "noop", "status": "ok", "detail": "ok"}, None
+
+    runner._run_tool = _fake_run_tool  # type: ignore[method-assign]
+
+    await runner._execute_tools(AgentRunSpec(
+        initial_messages=[],
+        tools=tools,
+        model="test-model",
+        max_iterations=1,
+        concurrent_tools=True,
+    ), [
+        ToolCallRequest(id="call_1", name="serial_preview", arguments={}),
+        ToolCallRequest(id="call_2", name="regular_inspect", arguments={}),
+    ])
+
+    assert state["max_active"] == 1
 
 
 @pytest.mark.asyncio
