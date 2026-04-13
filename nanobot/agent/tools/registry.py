@@ -1,5 +1,6 @@
 """Tool registry for dynamic tool management."""
 
+from collections.abc import Iterator
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
@@ -34,6 +35,10 @@ class ToolRegistry:
     def get_definitions(self) -> list[dict[str, Any]]:
         """Get all tool definitions in OpenAI format."""
         return [tool.to_schema() for tool in self._tools.values()]
+
+    def iter_tools(self) -> Iterator[Tool]:
+        """Iterate over registered tool instances."""
+        return iter(self._tools.values())
 
     async def execute(self, name: str, params: dict[str, Any]) -> Any:
         """Execute a tool by name with given parameters."""

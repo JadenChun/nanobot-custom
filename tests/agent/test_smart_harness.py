@@ -59,7 +59,10 @@ async def test_runner_tool_policy_can_stop_before_execution():
     ))
 
     assert result.stop_reason == "approval_required"
-    assert result.final_content == "Need approval first."
+    assert result.final_content == (
+        "Need approval first.\n\n"
+        "Proposed approach before approval:\nworking"
+    )
     assert result.policy_metadata == {"summary": "dangerous action"}
     tools.execute.assert_not_awaited()
 
@@ -100,6 +103,39 @@ async def test_process_direct_requires_approval_then_resumes(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_process_direct_approval_prompt_stays_visible_when_streaming(tmp_path):
+    loop, provider = _make_loop(tmp_path, planning_mode="off")
+
+    provider.chat_stream_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content="I’ll update the file after approval.",
+            tool_calls=[ToolCallRequest(id="call_1", name="edit_file", arguments={
+                "path": "script.md",
+                "old_text": "old",
+                "new_text": "\n".join(f"new line {i}" for i in range(300)),
+                "replace_all": False,
+            })],
+            usage={},
+        ),
+    ])
+
+    progress_updates: list[str] = []
+    stream_updates: list[str] = []
+
+    response = await loop.process_direct(
+        "update the script",
+        on_progress=progress_updates.append,
+        on_stream=stream_updates.append,
+        on_stream_end=AsyncMock(),
+    )
+
+    assert response is not None
+    assert response.metadata.get("_streamed") is not True
+    assert "Reply `yes` to continue" in response.content
+    assert "Proposed approach before approval" in response.content
+
+
+@pytest.mark.asyncio
 async def test_run_main_task_retries_after_verifier_failure(tmp_path):
     loop, _provider = _make_loop(tmp_path, planning_mode="agent")
 
@@ -133,3 +169,37 @@ async def test_run_main_task_retries_after_verifier_failure(tmp_path):
     assert result.final_content == "Revised answer"
     assert loop._run_agent.await_count == 2  # type: ignore[attr-defined]
     assert loop._run_internal_verifier.await_count == 2  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+async def test_run_main_task_verifies_without_plan_object(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planning_mode="agent")
+
+    initial_result = AgentRunResult(
+        final_content="Done",
+        messages=[{"role": "assistant", "content": "Done"}],
+        tools_used=["edit_file"],
+    )
+
+    loop._run_agent = AsyncMock(return_value=initial_result)  # type: ignore[method-assign]
+    loop._run_internal_verifier = AsyncMock(return_value=  # type: ignore[method-assign]
+        _VerificationResult(verdict="PASS", issues=[], feedback="")
+    )
+
+    result = await loop._run_main_task(
+        [{"role": "user", "content": "ok"}],
+        task_text="ok",
+        channel="cli",
+        chat_id="direct",
+        message_id=None,
+        approval_granted=False,
+        planned=None,
+    )
+
+    assert result.final_content == "Done"
+    loop._run_internal_verifier.assert_awaited_once_with(  # type: ignore[attr-defined]
+        [{"role": "assistant", "content": "Done"}],
+        goal="ok",
+        channel="cli",
+        chat_id="direct",
+    )

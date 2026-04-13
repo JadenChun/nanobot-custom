@@ -189,6 +189,17 @@ class AgentRunner:
                 decision = await self._evaluate_tool_policy(spec, context, response.tool_calls)
                 if decision.action != "allow":
                     final_content = decision.response
+                    proposed_approach = hook.finalize_content(context, response.content)
+                    if (
+                        isinstance(final_content, str)
+                        and proposed_approach
+                        and proposed_approach.strip()
+                        and proposed_approach.strip() not in final_content
+                    ):
+                        final_content = (
+                            f"{final_content}\n\n"
+                            f"Proposed approach before approval:\n{proposed_approach.strip()}"
+                        )
                     stop_reason = decision.stop_reason or "policy_blocked"
                     messages.append(build_assistant_message(
                         final_content,
