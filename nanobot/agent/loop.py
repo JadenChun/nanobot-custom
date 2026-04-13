@@ -438,6 +438,41 @@ class AgentLoop:
         return ", ".join(_fmt(tc) for tc in tool_calls)
 
     @staticmethod
+    def _find_legal_message_start(messages: list[dict[str, Any]]) -> int:
+        """Find the first index where tool results have matching assistant tool_calls."""
+        declared: set[str] = set()
+        start = 0
+        for index, message in enumerate(messages):
+            role = message.get("role")
+            if role == "assistant":
+                for tool_call in message.get("tool_calls") or []:
+                    if isinstance(tool_call, dict) and tool_call.get("id"):
+                        declared.add(str(tool_call["id"]))
+            elif role == "tool":
+                tool_call_id = message.get("tool_call_id")
+                if tool_call_id and str(tool_call_id) not in declared:
+                    start = index + 1
+                    declared.clear()
+                    for previous in messages[start:index + 1]:
+                        if previous.get("role") == "assistant":
+                            for tool_call in previous.get("tool_calls") or []:
+                                if isinstance(tool_call, dict) and tool_call.get("id"):
+                                    declared.add(str(tool_call["id"]))
+        return start
+
+    @classmethod
+    def _recent_legal_messages(
+        cls,
+        messages: list[dict[str, Any]],
+        *,
+        max_messages: int,
+    ) -> list[dict[str, Any]]:
+        """Return a recent suffix that does not start with orphaned tool results."""
+        sliced = messages[-max_messages:] if max_messages > 0 else list(messages)
+        start = cls._find_legal_message_start(sliced)
+        return sliced[start:] if start else sliced
+
+    @staticmethod
     def _is_affirmative(text: str) -> bool:
         return bool(re.fullmatch(r"\s*(yes|y|approve|approved|go ahead|continue|do it|run it)\s*[.!]?\s*", text, re.I))
 
@@ -586,6 +621,7 @@ End your response with exactly:
         channel: str,
         chat_id: str,
     ) -> _VerificationResult:
+        recent_messages = self._recent_legal_messages(messages, max_messages=12)
         verify_messages = [
             {"role": "system", "content": self._verifier_prompt(goal)},
             {"role": "user", "content": (
@@ -593,7 +629,7 @@ End your response with exactly:
                 f"Goal:\n{goal}\n\n"
                 "Read any changed files or artifacts and verify the result."
             )},
-            *messages[-12:],
+            *recent_messages,
         ]
         result = await self._run_agent(
             verify_messages,

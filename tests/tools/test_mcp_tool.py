@@ -294,6 +294,28 @@ def test_wrapper_uses_localhost_heuristic_when_annotation_missing() -> None:
 
     assert wrapper.is_read_only is True
     assert wrapper.mcp_metadata.read_only_source == "heuristic"
+    assert wrapper.supports_parallel_calls is True
+
+
+def test_preview_tools_are_marked_serial_only() -> None:
+    tool_def = SimpleNamespace(
+        name="preview_frame",
+        description="preview tool",
+        inputSchema={"type": "object", "properties": {}},
+        annotations=None,
+    )
+
+    wrapper = MCPToolWrapper(
+        SimpleNamespace(call_tool=None),
+        "ltx",
+        tool_def,
+        transport_type="streamableHttp",
+        server_url="http://127.0.0.1:8765/mcp",
+        server_command=None,
+    )
+
+    assert wrapper.supports_parallel_calls is False
+    assert wrapper.mcp_metadata.supports_parallel_calls is False
 
 
 def test_wrapper_fails_closed_for_remote_server_without_annotations() -> None:

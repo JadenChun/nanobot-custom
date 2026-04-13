@@ -24,6 +24,10 @@ _READ_ONLY_PREFIXES = (
     "status_",
 )
 
+_SERIAL_ONLY_PREFIXES = (
+    "preview_",
+)
+
 _MUTATING_PREFIXES = (
     "create_",
     "open_",
@@ -62,6 +66,7 @@ class MCPToolMetadata:
     trusted_for_heuristics: bool
     read_only: bool
     read_only_source: str
+    supports_parallel_calls: bool
 
 
 def _extract_nullable_branch(options: Any) -> tuple[dict[str, Any], bool] | None:
@@ -206,6 +211,7 @@ class MCPToolWrapper(Tool):
             trusted_for_heuristics=trusted_for_heuristics,
             read_only=read_only,
             read_only_source=source,
+            supports_parallel_calls=not tool_def.name.lower().startswith(_SERIAL_ONLY_PREFIXES),
         )
 
     @property
@@ -227,6 +233,10 @@ class MCPToolWrapper(Tool):
     @property
     def is_read_only(self) -> bool:
         return self._mcp_metadata.read_only
+
+    @property
+    def supports_parallel_calls(self) -> bool:
+        return self._mcp_metadata.supports_parallel_calls
 
     async def execute(self, **kwargs: Any) -> str:
         from mcp import types

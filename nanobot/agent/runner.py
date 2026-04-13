@@ -336,7 +336,12 @@ class AgentRunner:
         spec: AgentRunSpec,
         tool_calls: list[ToolCallRequest],
     ) -> tuple[list[Any], list[dict[str, str]], BaseException | None]:
-        if spec.concurrent_tools:
+        should_run_concurrently = spec.concurrent_tools and all(
+            (tool is None or tool.supports_parallel_calls)
+            for tool in (spec.tools.get(tool_call.name) for tool_call in tool_calls)
+        )
+
+        if should_run_concurrently:
             tool_results = await asyncio.gather(*(
                 self._run_tool(spec, tool_call)
                 for tool_call in tool_calls

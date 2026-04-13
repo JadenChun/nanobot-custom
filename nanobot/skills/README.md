@@ -20,6 +20,7 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `github` | Interact with GitHub using the `gh` CLI |
 | `weather` | Get weather info using wttr.in and Open-Meteo |
 | `summarize` | Summarize URLs, files, and YouTube videos |
+| `video-understanding` | Extract timestamped key frames from local videos before analysis or editing |
 | `tmux` | Remote-control tmux sessions |
 | `webapp-testing` | Test web apps in a visible browser, including desktop/mobile UI checks |
 | `mobile-app-testing` | Drive local iOS simulators and Android emulators with agent_device |
