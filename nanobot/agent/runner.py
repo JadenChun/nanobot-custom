@@ -11,7 +11,7 @@ from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.policy import ToolPolicy, ToolPolicyDecision
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider, ToolCallRequest
-from nanobot.utils.helpers import build_assistant_message
+from nanobot.utils.helpers import build_assistant_message, estimate_prompt_tokens_chain
 
 _DEFAULT_MAX_ITERATIONS_MESSAGE = (
     "I reached the maximum number of tool call iterations ({max_iterations}) "
@@ -19,14 +19,76 @@ _DEFAULT_MAX_ITERATIONS_MESSAGE = (
 )
 _DEFAULT_ERROR_MESSAGE = "Sorry, I encountered an error calling the AI model."
 _CLEARED_PLACEHOLDER = "[cleared to save context]"
+_COMPACTED_PLACEHOLDER = "[compacted to save context]"
+_COMPACTED_HEAD_LINES = 6
+_COMPACTED_TAIL_LINES = 4
+_COMPACTED_MAX_CHARS = 700
 
 
-def clear_old_tool_results(messages: list[dict[str, Any]], keep_last: int = 3) -> None:
-    """Replace old tool result content with a placeholder, keeping the last N intact.
+def _extract_tool_result_text(content: Any) -> str:
+    """Best-effort text extraction for compacting tool results."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text)
+        if parts:
+            return "\n".join(parts)
+    if content is None:
+        return ""
+    return str(content)
+
+
+def _compact_tool_result_content(content: Any) -> str:
+    """Preserve a small but useful trace of an old tool result."""
+    text = _extract_tool_result_text(content).strip()
+    if not text:
+        return _CLEARED_PLACEHOLDER
+    if text.startswith(_COMPACTED_PLACEHOLDER) or text == _CLEARED_PLACEHOLDER:
+        return text
+
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        lines = [text]
+
+    if len(lines) <= (_COMPACTED_HEAD_LINES + _COMPACTED_TAIL_LINES):
+        snippet = "\n".join(lines)
+    else:
+        snippet = "\n".join([
+            *lines[:_COMPACTED_HEAD_LINES],
+            "...",
+            *lines[-_COMPACTED_TAIL_LINES:],
+        ])
+
+    if len(snippet) > _COMPACTED_MAX_CHARS:
+        head = snippet[: int(_COMPACTED_MAX_CHARS * 0.7)].rstrip()
+        tail = snippet[-int(_COMPACTED_MAX_CHARS * 0.2):].lstrip()
+        snippet = f"{head}\n...\n{tail}"
+
+    return f"{_COMPACTED_PLACEHOLDER}\n{snippet}"
+
+
+def clear_old_tool_results(
+    messages: list[dict[str, Any]],
+    keep_last: int = 3,
+    *,
+    provider: LLMProvider | None = None,
+    model: str | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    trigger_tokens: int | None = None,
+    target_tokens: int | None = None,
+) -> None:
+    """Shrink old tool result content, keeping the last N intact.
 
     Modelled on Anthropic's ``clear_tool_uses_20250919`` strategy: the assistant
     ``tool_calls`` block is left intact so the model still knows *what* it called,
-    but the bulky ``tool`` result content is replaced to free context tokens.
+    but older ``tool`` result content is compacted only when needed to free
+    context tokens. If compaction is insufficient, the oldest results are fully
+    cleared as a last resort.
     """
     if keep_last <= 0:
         return
@@ -40,8 +102,41 @@ def clear_old_tool_results(messages: list[dict[str, Any]], keep_last: int = 3) -
     if len(tool_indices) <= keep_last:
         return
 
-    # Clear everything except the last `keep_last` results.
     to_clear = tool_indices[:-keep_last]
+
+    # Preserve full results unless we are actually approaching the prompt budget.
+    if (
+        provider is not None
+        and tools is not None
+        and trigger_tokens is not None
+        and target_tokens is not None
+        and trigger_tokens > 0
+        and target_tokens > 0
+    ):
+        estimated, _ = estimate_prompt_tokens_chain(provider, model, messages, tools)
+        if estimated <= 0 or estimated < trigger_tokens:
+            return
+
+        for idx in to_clear:
+            compacted = _compact_tool_result_content(messages[idx].get("content"))
+            if compacted == messages[idx].get("content"):
+                continue
+            messages[idx] = {**messages[idx], "content": compacted}
+            estimated, _ = estimate_prompt_tokens_chain(provider, model, messages, tools)
+            if 0 < estimated <= target_tokens:
+                return
+
+        # If compacted snippets still leave us over budget, fall back to clearing.
+        for idx in to_clear:
+            if messages[idx].get("content") == _CLEARED_PLACEHOLDER:
+                continue
+            messages[idx] = {**messages[idx], "content": _CLEARED_PLACEHOLDER}
+            estimated, _ = estimate_prompt_tokens_chain(provider, model, messages, tools)
+            if 0 < estimated <= target_tokens:
+                return
+        return
+
+    # Legacy behavior for callers that do not provide prompt-budget context.
     for idx in to_clear:
         messages[idx] = {**messages[idx], "content": _CLEARED_PLACEHOLDER}
 
@@ -63,6 +158,8 @@ class AgentRunSpec:
     concurrent_tools: bool = False
     fail_on_tool_error: bool = False
     tool_result_clearing_keep: int | None = None
+    tool_result_clear_trigger_tokens: int | None = None
+    tool_result_clear_target_tokens: int | None = None
     tool_policy: ToolPolicy | None = None
 
 
@@ -147,9 +244,17 @@ class AgentRunner:
 
         for iteration in range(spec.max_iterations):
             # Clear old tool results each iteration to prevent context overflow
-            # during long-running tasks (matches Anthropic's per-call clearing).
+            # during long-running tasks, but only once prompt size actually needs it.
             if spec.tool_result_clearing_keep is not None:
-                clear_old_tool_results(messages, keep_last=spec.tool_result_clearing_keep)
+                clear_old_tool_results(
+                    messages,
+                    keep_last=spec.tool_result_clearing_keep,
+                    provider=self.provider,
+                    model=spec.model,
+                    tools=spec.tools.get_definitions(),
+                    trigger_tokens=spec.tool_result_clear_trigger_tokens,
+                    target_tokens=spec.tool_result_clear_target_tokens,
+                )
 
             context = AgentHookContext(iteration=iteration, messages=messages)
             await hook.before_iteration(context)

@@ -53,7 +53,10 @@ class AgentDefaults(Base):
     fallback: list[FallbackEntry] = Field(default_factory=list)  # Provider fallback chain for quota exhaustion
     max_tokens: MaxTokensConfig = Field(default_factory=MaxTokensConfig)
     temperature: float = 0.1
-    max_tool_iterations: int = 40
+    max_tool_iterations: int = 200
+    planner_max_iterations: int = 12
+    planner_explore_subagent_max_iterations: int = 100
+    planner_max_parallel_explore_agents: int = 2
     reasoning_effort: str | None = None  # low / medium / high - enables LLM thinking mode
     planning_mode: Literal["on", "off", "agent"] = "agent"  # "on": always use spawn+review, "off": never, "agent": agent decides
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"

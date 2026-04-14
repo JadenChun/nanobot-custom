@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -7,11 +9,12 @@ import pytest
 from nanobot.agent.loop import _PlanDecision, _VerificationResult
 from nanobot.agent.policy import RiskyActionPolicy, ToolPolicy, ToolPolicyDecision
 from nanobot.agent.runner import AgentRunResult, AgentRunSpec, AgentRunner
+from nanobot.agent.subagent import _ExploreLoopGuard
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 
 
-def _make_loop(tmp_path, *, planning_mode: str = "agent"):
+def _make_loop(tmp_path, *, planning_mode: str = "agent", planner_max_iterations: int = 20):
     from nanobot.agent.loop import AgentLoop
 
     bus = MessageBus()
@@ -23,8 +26,86 @@ def _make_loop(tmp_path, *, planning_mode: str = "agent"):
         provider=provider,
         workspace=tmp_path,
         planning_mode=planning_mode,
+        planner_max_iterations=planner_max_iterations,
     )
     return loop, provider
+
+
+def test_parse_plan_decision_accepts_richer_handoff(tmp_path):
+    loop, _provider = _make_loop(tmp_path)
+    payload = {
+        "decision": "execute",
+        "action_summary": "Trim the gap cleanly",
+        "review_goal": "Verify the gap is covered without extending past audio",
+        "references": [
+            {
+                "finding": "Video ends before audio tail, leaving a visual gap.",
+                "references": ["timeline: 15.8s", "asset: grocery_reminder_source.mp4"],
+            }
+        ],
+    }
+
+    parsed = loop._parse_plan_decision(
+        f"---PLAN---\n{json.dumps(payload)}\n---END---"
+    )
+
+    assert parsed.decision == "execute"
+    assert parsed.action_summary == "Trim the gap cleanly"
+    assert parsed.review_goal == "Verify the gap is covered without extending past audio"
+    assert parsed.references == [
+        {
+            "finding": "Video ends before audio tail, leaving a visual gap.",
+            "references": ["timeline: 15.8s", "asset: grocery_reminder_source.mp4"],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_run_internal_planner_uses_separate_cap_and_preserves_tool_results(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planner_max_iterations=23)
+    loop._run_agent = AsyncMock(return_value=AgentRunResult(  # type: ignore[method-assign]
+        final_content="""---PLAN---
+{"decision":"execute","action_summary":"Do the fix","review_goal":"Confirm the result","references":[{"finding":"Checked foo.py","references":["file: /tmp/foo.py"]}]}
+---END---""",
+        messages=[],
+    ))
+
+    await loop._run_internal_planner(
+        [{"role": "user", "content": "fix the gap"}],
+        channel="cli",
+        chat_id="direct",
+    )
+
+    loop._run_agent.assert_awaited_once()  # type: ignore[attr-defined]
+    kwargs = loop._run_agent.await_args.kwargs  # type: ignore[attr-defined]
+    assert kwargs["max_iterations"] == 23
+    assert kwargs["preserve_tool_results"] is True
+
+
+def test_build_planner_tools_includes_foreground_explore(tmp_path):
+    loop, _provider = _make_loop(tmp_path)
+
+    tools = loop._build_planner_tools()
+
+    assert tools.has("explore")
+
+
+def test_explore_loop_guard_stops_after_three_stale_turns():
+    guard = _ExploreLoopGuard()
+    repeated = [SimpleNamespace(name="web_search", arguments={"query": "same query"})]
+
+    guard.observe(repeated)
+    assert guard.stop_requested is False
+
+    guard.observe(repeated)
+    assert guard.stop_requested is False
+
+    guard.observe(repeated)
+    assert guard.stop_requested is False
+
+    guard.observe(repeated)
+    assert guard.stop_requested is True
+    assert guard.stop_reason == "no_new_references"
 
 
 def test_recent_legal_messages_strips_orphan_tool_prefix(tmp_path):
@@ -182,6 +263,18 @@ async def test_run_main_task_retries_after_verifier_failure(tmp_path):
         _VerificationResult(verdict="PASS", issues=[], feedback=""),
     ])  # type: ignore[method-assign]
 
+    planned = _PlanDecision(
+        decision="execute",
+        action_summary="Fix the bug safely",
+        review_goal="Verify the bug is fixed and tests cover it",
+        references=[
+            {
+                "finding": "The failing test points at the broken branch behavior.",
+                "references": ["file: /tmp/test_branch.py", "function: test_branch_breakage"],
+            }
+        ],
+    )
+
     result = await loop._run_main_task(
         [{"role": "user", "content": "fix the bug"}],
         task_text="fix the bug",
@@ -189,12 +282,24 @@ async def test_run_main_task_retries_after_verifier_failure(tmp_path):
         chat_id="direct",
         message_id=None,
         approval_granted=False,
-        planned=_PlanDecision(decision="execute", summary="Fix the bug safely", needs_verification=True),
+        planned=planned,
     )
 
     assert result.final_content == "Revised answer"
     assert loop._run_agent.await_count == 2  # type: ignore[attr-defined]
     assert loop._run_internal_verifier.await_count == 2  # type: ignore[attr-defined]
+    loop._run_internal_verifier.assert_any_await(  # type: ignore[attr-defined]
+        [{"role": "assistant", "content": "Initial answer"}],
+        goal=(
+            "Verify the bug is fixed and tests cover it\n\n"
+            "Planner References:\n"
+            "1. The failing test points at the broken branch behavior.\n"
+            "   - file: /tmp/test_branch.py\n"
+            "   - function: test_branch_breakage"
+        ),
+        channel="cli",
+        chat_id="direct",
+    )
 
 
 @pytest.mark.asyncio
@@ -229,3 +334,40 @@ async def test_run_main_task_verifies_without_plan_object(tmp_path):
         channel="cli",
         chat_id="direct",
     )
+
+
+@pytest.mark.asyncio
+async def test_process_direct_injects_richer_planner_handoff_into_action(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planning_mode="agent")
+
+    loop._run_internal_planner = AsyncMock(return_value=  # type: ignore[method-assign]
+        _PlanDecision(
+            decision="execute",
+            action_summary="Create a still frame hold to cover the gap",
+            review_goal="Check the hold fills the visual gap without overshooting audio",
+            references=[
+                {
+                    "finding": "Video ends before narration, leaving a gap.",
+                    "references": ["timeline: 15.8s", "asset: grocery_reminder_source.mp4"],
+                }
+            ],
+        )
+    )
+    loop._run_main_task = AsyncMock(return_value=AgentRunResult(  # type: ignore[method-assign]
+        final_content="Done",
+        messages=[{"role": "assistant", "content": "Done"}],
+    ))
+
+    response = await loop.process_direct("fix the end gap in the video")
+
+    assert response is not None
+    assert response.content == "Done"
+    initial_messages = loop._run_main_task.await_args.args[0]  # type: ignore[attr-defined]
+    handoff_messages = [
+        message for message in initial_messages
+        if message.get("role") == "system" and "Internal planner handoff." in message.get("content", "")
+    ]
+    assert len(handoff_messages) == 1
+    assert "Action Summary:" in handoff_messages[0]["content"]
+    assert "Review Goal:" in handoff_messages[0]["content"]
+    assert "References:" in handoff_messages[0]["content"]
