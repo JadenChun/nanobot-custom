@@ -709,6 +709,16 @@ Keep every finding concise, concrete, and tied to exact references."""
 
         return "\n\n".join(part for part in parts if part.strip())
 
+    @staticmethod
+    def _log_preview(text: str | None, limit: int = 120) -> str:
+        """Render a short single-line preview for lifecycle logs."""
+        if not text:
+            return ""
+        collapsed = re.sub(r"\s+", " ", text.strip())
+        if len(collapsed) <= limit:
+            return collapsed
+        return collapsed[:limit] + "..."
+
     @classmethod
     def _serialize_planner_handoff(cls, task_text: str, planned: _PlanDecision) -> dict[str, Any]:
         """Persist a planner handoff in session metadata while the task is active."""
@@ -781,6 +791,12 @@ End your response with exactly:
         channel: str,
         chat_id: str,
     ) -> _PlanDecision:
+        logger.info(
+            "Planner phase started for {}:{} (max_iterations={})",
+            channel,
+            chat_id,
+            self.planner_max_iterations,
+        )
         planner_messages = [{"role": "system", "content": self._planner_prompt()}, *messages]
         result = await self._run_agent(
             planner_messages,
@@ -790,7 +806,16 @@ End your response with exactly:
             channel=channel,
             chat_id=chat_id,
         )
-        return self._parse_plan_decision(result.final_content)
+        planned = self._parse_plan_decision(result.final_content)
+        logger.info(
+            "Planner phase completed for {}:{} with decision={} handoff={} stop_reason={}",
+            channel,
+            chat_id,
+            planned.decision or "unknown",
+            planned.has_handoff,
+            result.stop_reason or "completed",
+        )
+        return planned
 
     async def _run_internal_verifier(
         self,
@@ -800,6 +825,12 @@ End your response with exactly:
         channel: str,
         chat_id: str,
     ) -> _VerificationResult:
+        logger.info(
+            "Verification phase started for {}:{} goal={}",
+            channel,
+            chat_id,
+            self._log_preview(goal, limit=140),
+        )
         recent_messages = self._recent_legal_messages(messages, max_messages=12)
         verify_messages = [
             {"role": "system", "content": self._verifier_prompt(goal)},
@@ -817,7 +848,15 @@ End your response with exactly:
             channel=channel,
             chat_id=chat_id,
         )
-        return self._parse_verification_result(result.final_content)
+        verification = self._parse_verification_result(result.final_content)
+        logger.info(
+            "Verification phase completed for {}:{} verdict={} issues={}",
+            channel,
+            chat_id,
+            verification.verdict,
+            len(verification.issues),
+        )
+        return verification
 
     async def _run_agent(
         self,
@@ -926,6 +965,13 @@ End your response with exactly:
     ) -> AgentRunResult:
         policy = RiskyActionPolicy(workspace=self.workspace, approval_granted=approval_granted)
         verification_goal = self._planner_verification_goal(task_text, planned)
+        logger.info(
+            "Action phase started for {}:{} planned_handoff={} approval_granted={}",
+            channel,
+            chat_id,
+            bool(planned and planned.has_handoff),
+            approval_granted,
+        )
         result = await self._run_agent(
             initial_messages,
             on_progress=on_progress,
@@ -937,9 +983,17 @@ End your response with exactly:
             message_id=message_id,
         )
         if result.stop_reason == "approval_required":
+            logger.info("Action phase paused for approval on {}:{}", channel, chat_id)
             return result
 
         if not self._should_verify(task_text, result.tools_used, planned):
+            logger.info(
+                "Verification skipped for {}:{} tools_used={} planned_handoff={}",
+                channel,
+                chat_id,
+                len(result.tools_used),
+                bool(planned and planned.has_handoff),
+            )
             return result
 
         verification = await self._run_internal_verifier(
@@ -949,8 +1003,15 @@ End your response with exactly:
             chat_id=chat_id,
         )
         if verification.verdict == "PASS":
+            logger.info("Action phase accepted after initial verification on {}:{}", channel, chat_id)
             return result
 
+        logger.info(
+            "Revision phase started for {}:{} after verifier verdict={}",
+            channel,
+            chat_id,
+            verification.verdict,
+        )
         revision_messages = list(result.messages)
         revision_messages.append({
             "role": "user",
@@ -982,8 +1043,16 @@ End your response with exactly:
             chat_id=chat_id,
         )
         if final_verification.verdict == "PASS":
+            logger.info("Revision phase accepted after final verification on {}:{}", channel, chat_id)
             return revised
 
+        logger.warning(
+            "Revision phase ended with non-pass verification on {}:{} verdict={} issues={}",
+            channel,
+            chat_id,
+            final_verification.verdict,
+            len(final_verification.issues),
+        )
         note = (
             "\n\nVerification status: "
             f"{final_verification.verdict}. "
@@ -1192,6 +1261,7 @@ End your response with exactly:
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
         if msg.channel != "system" and self._PLANNER_HANDOFF_METADATA_KEY in session.metadata:
+            logger.info("Clearing stale planner handoff for session {}", key)
             self._clear_planner_handoff(session)
             self.sessions.save(session)
 
@@ -1307,12 +1377,18 @@ End your response with exactly:
                     metadata=msg.metadata or {},
                 )
             if planned.decision == "execute" and planned.has_handoff:
+                logger.info(
+                    "Planner handoff stored for session {} with {} reference items",
+                    key,
+                    len(planned.references),
+                )
                 self._store_planner_handoff(session, current_message, planned)
                 self.sessions.save(session)
                 initial_messages.insert(-1, {
                     "role": "system",
                     "content": self._planner_handoff_message(planned),
                 })
+                logger.info("Planner handoff injected into action context for session {}", key)
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})
@@ -1341,6 +1417,7 @@ End your response with exactly:
 
         self._save_turn(session, all_msgs, 1 + len(history))
         if planned and planned.decision == "execute":
+            logger.info("Clearing planner handoff after action/review cycle for session {}", key)
             self._clear_planner_handoff(session)
         self.sessions.save(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
