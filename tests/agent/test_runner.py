@@ -11,6 +11,18 @@ import pytest
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 
 
+class _TokenCountingProvider:
+    def estimate_prompt_tokens(self, messages, tools, model):
+        total = 0
+        for message in messages:
+            content = message.get("content", "")
+            if isinstance(content, str):
+                total += len(content)
+            else:
+                total += len(json.dumps(content, ensure_ascii=False))
+        return total, "test_counter"
+
+
 def _make_loop(tmp_path):
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus
@@ -81,6 +93,80 @@ async def test_runner_preserves_reasoning_fields_and_tool_results():
         msg.get("role") == "tool" and msg.get("content") == "tool result"
         for msg in captured_second_call
     )
+
+
+def test_clear_old_tool_results_preserves_history_when_below_budget():
+    from nanobot.agent.runner import clear_old_tool_results
+
+    messages = [
+        {"role": "user", "content": "inspect"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "inspect"}}]},
+        {"role": "tool", "content": "first result with useful detail"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "2", "function": {"name": "preview"}}]},
+        {"role": "tool", "content": "latest result"},
+    ]
+
+    clear_old_tool_results(
+        messages,
+        keep_last=1,
+        provider=_TokenCountingProvider(),
+        model="test-model",
+        tools=[],
+        trigger_tokens=10_000,
+        target_tokens=8_000,
+    )
+
+    assert messages[2]["content"] == "first result with useful detail"
+
+
+def test_clear_old_tool_results_compacts_before_full_clear():
+    from nanobot.agent.runner import clear_old_tool_results
+
+    messages = [
+        {"role": "user", "content": "inspect"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "inspect"}}]},
+        {"role": "tool", "content": "\n".join(f"line {i} " + ("x" * 40) for i in range(40))},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "2", "function": {"name": "preview"}}]},
+        {"role": "tool", "content": "latest result"},
+    ]
+
+    clear_old_tool_results(
+        messages,
+        keep_last=1,
+        provider=_TokenCountingProvider(),
+        model="test-model",
+        tools=[],
+        trigger_tokens=100,
+        target_tokens=900,
+    )
+
+    assert messages[2]["content"].startswith("[compacted to save context]")
+    assert messages[2]["content"] != "[cleared to save context]"
+    assert "line 0" in messages[2]["content"]
+
+
+def test_clear_old_tool_results_falls_back_to_full_clear_if_needed():
+    from nanobot.agent.runner import clear_old_tool_results
+
+    messages = [
+        {"role": "user", "content": "inspect"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "1", "function": {"name": "inspect"}}]},
+        {"role": "tool", "content": "\n".join(f"line {i} " + ("x" * 60) for i in range(80))},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "2", "function": {"name": "preview"}}]},
+        {"role": "tool", "content": "latest result"},
+    ]
+
+    clear_old_tool_results(
+        messages,
+        keep_last=1,
+        provider=_TokenCountingProvider(),
+        model="test-model",
+        tools=[],
+        trigger_tokens=100,
+        target_tokens=40,
+    )
+
+    assert messages[2]["content"] == "[cleared to save context]"
 
 
 @pytest.mark.asyncio

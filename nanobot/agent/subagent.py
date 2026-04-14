@@ -1,9 +1,10 @@
-"""Subagent manager for background task execution."""
+"""Subagent manager for background and foreground task execution."""
 
 import asyncio
 import json
 import re
 import uuid
+from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from typing import Any
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
+from nanobot.agent.policy import ToolPolicy, ToolPolicyDecision
 from nanobot.agent.runner import AgentRunResult, AgentRunSpec, AgentRunner
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
@@ -41,6 +43,172 @@ class _SubagentHook(AgentHook):
             )
 
 
+class _ExploreLoopGuard:
+    """Track explore progress and decide when to stop low-value loops early."""
+
+    def __init__(self, *, no_new_reference_limit: int = 3, repeated_signature_limit: int = 3) -> None:
+        self._no_new_reference_limit = no_new_reference_limit
+        self._repeated_signature_limit = repeated_signature_limit
+        self._seen_references: set[str] = set()
+        self._no_new_reference_turns = 0
+        self._same_signature_turns = 0
+        self._last_signature: str | None = None
+        self.stop_requested = False
+        self.stop_reason: str | None = None
+
+    @staticmethod
+    def _normalize_value(value: Any) -> str:
+        if isinstance(value, str):
+            cleaned = re.sub(r"\s+", " ", value.strip())
+            return cleaned[:160]
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+            return "[" + ", ".join(_ExploreLoopGuard._normalize_value(v) for v in value[:5]) + "]"
+        if isinstance(value, dict):
+            items = sorted((str(k), _ExploreLoopGuard._normalize_value(v)) for k, v in value.items())
+            return "{" + ", ".join(f"{k}={v}" for k, v in items[:6]) + "}"
+        return str(value)[:160]
+
+    @classmethod
+    def _signature_for_call(cls, name: str, arguments: dict[str, Any]) -> str:
+        parts = [name]
+        for key in sorted(arguments):
+            parts.append(f"{key}={cls._normalize_value(arguments[key])}")
+        return "|".join(parts)
+
+    @classmethod
+    def _extract_reference_strings(cls, name: str, arguments: dict[str, Any]) -> set[str]:
+        refs: set[str] = set()
+        for key, raw_value in arguments.items():
+            if raw_value is None:
+                continue
+            label = cls._reference_label(name, key)
+            if label is None:
+                continue
+            values = raw_value if isinstance(raw_value, list) else [raw_value]
+            normalized = [cls._normalize_value(value) for value in values if cls._normalize_value(value)]
+            if not normalized:
+                continue
+            refs.add(f"{label}: {', '.join(normalized)}")
+        if not refs:
+            refs.add(f"tool: {name}")
+        return refs
+
+    @staticmethod
+    def _reference_label(tool_name: str, key: str) -> str | None:
+        lowered = key.lower()
+        if lowered in {"path", "file", "filepath"}:
+            return "file"
+        if lowered in {"dir", "directory"}:
+            return "directory"
+        if lowered in {"url"}:
+            return "url"
+        if lowered in {"query", "pattern", "search"}:
+            return "query"
+        if lowered in {"command", "cmd"}:
+            return "command"
+        if lowered in {"function", "symbol"}:
+            return "function"
+        if lowered in {"time", "timestamp", "start", "end"}:
+            return "timeline"
+        if lowered in {"asset", "clip", "clip_name", "resource_path"}:
+            return "asset"
+        if tool_name.startswith("mcp_"):
+            return lowered
+        return None
+
+    def observe(self, tool_calls: Sequence[Any]) -> None:
+        if not tool_calls:
+            self._last_signature = None
+            self._same_signature_turns = 0
+            return
+
+        signatures: list[str] = []
+        references: set[str] = set()
+        for tool_call in tool_calls:
+            arguments = dict(getattr(tool_call, "arguments", {}) or {})
+            signatures.append(self._signature_for_call(tool_call.name, arguments))
+            references.update(self._extract_reference_strings(tool_call.name, arguments))
+
+        signature = " || ".join(signatures)
+        new_references = references - self._seen_references
+        if new_references:
+            self._seen_references.update(new_references)
+            self._no_new_reference_turns = 0
+        else:
+            self._no_new_reference_turns += 1
+
+        if signature == self._last_signature and not new_references:
+            self._same_signature_turns += 1
+        else:
+            self._same_signature_turns = 1 if not new_references else 0
+        self._last_signature = signature
+
+        if self._no_new_reference_turns >= self._no_new_reference_limit:
+            self.stop_requested = True
+            self.stop_reason = "no_new_references"
+        elif self._same_signature_turns >= self._repeated_signature_limit:
+            self.stop_requested = True
+            self.stop_reason = "repeated_search_pattern"
+
+    @property
+    def references(self) -> list[str]:
+        return sorted(self._seen_references)
+
+
+class _ForegroundExploreHook(AgentHook):
+    """Track explore progress and nudge the agent to stop once guards trip."""
+
+    def __init__(self, guard: _ExploreLoopGuard) -> None:
+        self._guard = guard
+        self._stop_note_injected = False
+
+    async def after_iteration(self, context: AgentHookContext) -> None:
+        if context.tool_calls:
+            self._guard.observe(context.tool_calls)
+        if self._guard.stop_requested and not self._stop_note_injected:
+            context.messages.append({
+                "role": "user",
+                "content": (
+                    "[Internal explore guard]\n"
+                    f"Stop exploring now because {self._guard.stop_reason or 'the loop stopped making progress'}.\n"
+                    "Do not call more tools. Return your best partial findings with concrete references."
+                ),
+            })
+            self._stop_note_injected = True
+
+
+class _ForegroundExplorePolicy(ToolPolicy):
+    """Block further tool use once the explore guard decides the loop is stale."""
+
+    def __init__(self, guard: _ExploreLoopGuard) -> None:
+        self._guard = guard
+
+    async def evaluate(self, *, messages: list[dict[str, Any]], tool_calls: list[Any]) -> ToolPolicyDecision:
+        if not self._guard.stop_requested:
+            return ToolPolicyDecision()
+
+        payload = {
+            "summary": "Exploration stopped early after repeated low-signal searches.",
+            "findings": [
+                "The explore loop stopped after repeated searches failed to add materially new references."
+            ],
+            "references": self._guard.references,
+            "open_questions": [
+                "The planner may need to proceed with partial evidence or narrow the research task."
+            ],
+            "searched_areas": [],
+            "partial": True,
+        }
+        return ToolPolicyDecision(
+            action="respond",
+            stop_reason="loop_guard",
+            response="---EXPLORE---\n" + json.dumps(payload, ensure_ascii=False) + "\n---END---",
+            metadata={"stop_reason": self._guard.stop_reason or "loop_guard"},
+        )
+
+
 class SubagentManager:
     """Manages background subagent execution."""
 
@@ -57,6 +225,7 @@ class SubagentManager:
         exec_config: "ExecToolConfig | None" = None,
         restrict_to_workspace: bool = False,
         mcp_servers: dict | None = None,
+        planner_max_parallel_explore_agents: int = 2,
     ):
         from nanobot.config.schema import AgentBrowserConfig, AgentDeviceConfig, ExecToolConfig, WebSearchConfig
 
@@ -79,6 +248,7 @@ class SubagentManager:
         self._review_mcp_stack: AsyncExitStack | None = None
         self._review_mcp_connected = False
         self._review_mcp_connecting = False
+        self._foreground_explore_gate = asyncio.Semaphore(max(1, planner_max_parallel_explore_agents))
 
     @staticmethod
     def _tool_error_detail(result: Any) -> str | None:
@@ -274,6 +444,145 @@ class SubagentManager:
                 self._review_mcp_stack = None
         finally:
             self._review_mcp_connecting = False
+
+    def _build_explore_tools(self) -> ToolRegistry:
+        """Build read-only tools for the foreground explore subagent."""
+        tools = ToolRegistry()
+        allowed_dir = self.workspace if self.restrict_to_workspace else None
+        extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
+        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
+        tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+        if self.exec_config.enable:
+            tools.register(ExecTool(
+                working_dir=str(self.workspace),
+                timeout=self.exec_config.timeout,
+                restrict_to_workspace=self.restrict_to_workspace,
+                path_append=self.exec_config.path_append,
+            ))
+        if self.agent_browser_config.enabled:
+            tools.register(AgentBrowserTool(
+                package=self.agent_browser_config.package,
+                timeout=self.agent_browser_config.timeout,
+                max_output_chars=self.agent_browser_config.max_output_chars,
+            ))
+        if self.agent_device_config.enabled:
+            tools.register(AgentDeviceTool(
+                package=self.agent_device_config.package,
+                timeout=self.agent_device_config.timeout,
+                max_output_chars=self.agent_device_config.max_output_chars,
+            ))
+        tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
+        tools.register(WebFetchTool(proxy=self.web_proxy))
+        for tool in self._review_mcp_tools.iter_tools():
+            if is_read_only_mcp_tool(tool):
+                tools.register(tool)
+        return tools
+
+    def _build_explore_prompt(self, thoroughness: str) -> str:
+        """Build the read-only explore subagent prompt."""
+        from nanobot.agent.context import ContextBuilder
+
+        time_ctx = ContextBuilder._build_runtime_context(None, None)
+        return f"""# Explore Agent
+
+{time_ctx}
+
+You are nanobot's internal explore subagent. Your only job is to gather high-signal evidence for the planner without modifying files or external systems.
+
+## Rules
+- You MUST remain read-only.
+- Prefer search/read/inspect actions over broad speculation.
+- Use direct file and search tools first; use exec only for read-only commands.
+- When multiple independent checks are safe, call them in parallel.
+- Track concrete references as you go: files, functions, commands, URLs, assets, or timeline timestamps.
+- Do not write a plan. Return findings that help the planner decide what to do next.
+
+## Thoroughness
+{thoroughness}
+
+## Output
+End your response with exactly:
+
+---EXPLORE---
+{{"summary":"brief overview","findings":["finding 1"],"references":["file: /path/example.py"],"open_questions":["remaining gap"],"searched_areas":["what you inspected"],"partial":true_or_false}}
+---END---"""
+
+    @staticmethod
+    def _parse_explore_result(result: str | None) -> dict[str, Any]:
+        """Extract the structured foreground explore result."""
+        empty = {
+            "summary": "",
+            "findings": [],
+            "references": [],
+            "open_questions": [],
+            "searched_areas": [],
+            "partial": False,
+        }
+        if not result:
+            return {**empty, "partial": True}
+
+        match = re.search(r"---EXPLORE---\s*\n(.*?)\n\s*---END---", result, re.DOTALL)
+        if not match:
+            return {
+                **empty,
+                "summary": result.strip()[:500],
+                "partial": True,
+            }
+
+        try:
+            payload = json.loads(match.group(1).strip())
+        except Exception:
+            return {
+                **empty,
+                "summary": result.strip()[:500],
+                "partial": True,
+            }
+
+        parsed = dict(empty)
+        parsed["summary"] = str(payload.get("summary") or "").strip()
+        for key in ("findings", "references", "open_questions", "searched_areas"):
+            value = payload.get(key) or []
+            if isinstance(value, list):
+                parsed[key] = [str(item).strip() for item in value if str(item).strip()]
+            elif str(value).strip():
+                parsed[key] = [str(value).strip()]
+        parsed["partial"] = bool(payload.get("partial", False))
+        return parsed
+
+    async def run_explore(
+        self,
+        *,
+        task: str,
+        thoroughness: str,
+        max_iterations: int,
+    ) -> dict[str, Any]:
+        """Run a synchronous read-only explore pass and return structured findings."""
+        await self._connect_review_mcp()
+        async with self._foreground_explore_gate:
+            tools = self._build_explore_tools()
+            guard = _ExploreLoopGuard()
+            policy = _ForegroundExplorePolicy(guard)
+            messages: list[dict[str, Any]] = [
+                {"role": "system", "content": self._build_explore_prompt(thoroughness)},
+                {"role": "user", "content": task},
+            ]
+            result = await self.runner.run(AgentRunSpec(
+                initial_messages=messages,
+                tools=tools,
+                model=self.model,
+                max_iterations=max_iterations,
+                hook=_ForegroundExploreHook(guard),
+                concurrent_tools=True,
+                tool_policy=policy,
+            ))
+            parsed = self._parse_explore_result(result.final_content)
+            parsed["references"] = sorted(set(parsed["references"]) | set(guard.references))
+            if result.stop_reason in {"max_iterations", "loop_guard"}:
+                parsed["partial"] = True
+                parsed["stop_reason"] = result.stop_reason
+            elif guard.stop_reason and parsed.get("partial"):
+                parsed["stop_reason"] = guard.stop_reason
+            return parsed
 
     def _build_review_prompt(self, goal: str) -> str:
         """Build a skeptical system prompt for the review agent."""

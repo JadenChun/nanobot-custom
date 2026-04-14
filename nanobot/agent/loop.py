@@ -23,6 +23,7 @@ from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.cron import CronTool
+from nanobot.agent.tools.explore import ExploreTool
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
@@ -181,8 +182,13 @@ class _PlanDecision:
 
     decision: str = "execute"
     response: str | None = None
-    summary: str = ""
-    needs_verification: bool = False
+    action_summary: str = ""
+    review_goal: str = ""
+    references: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def has_handoff(self) -> bool:
+        return bool(self.action_summary or self.review_goal or self.references)
 
 
 @dataclass(slots=True)
@@ -207,6 +213,13 @@ class AgentLoop:
     """
 
     _TOOL_RESULT_MAX_CHARS = 16_000
+    _TOOL_RESULT_CLEARING_SAFETY_BUFFER = 1024
+    _TOOL_RESULT_CLEAR_TRIGGER_RATIO = 0.8
+    _TOOL_RESULT_CLEAR_TARGET_RATIO = 0.6
+    _DEFAULT_PLANNER_MAX_ITERATIONS = 12
+    _DEFAULT_PLANNER_EXPLORE_MAX_ITERATIONS = 100
+    _DEFAULT_PLANNER_MAX_PARALLEL_EXPLORES = 2
+    _PLANNER_HANDOFF_METADATA_KEY = "planner_handoff"
 
     def __init__(
         self,
@@ -215,7 +228,7 @@ class AgentLoop:
         workspace: Path,
         model: str | None = None,
         max_tokens: "MaxTokensConfig | None" = None,
-        max_iterations: int = 40,
+        max_iterations: int = 200,
         context_window_tokens: int | None = None,
         web_search_config: WebSearchConfig | None = None,
         web_proxy: str | None = None,
@@ -232,6 +245,9 @@ class AgentLoop:
         hooks: list[AgentHook] | None = None,
         context_paths: list[Path] | None = None,
         planning_mode: str = "agent",
+        planner_max_iterations: int = _DEFAULT_PLANNER_MAX_ITERATIONS,
+        planner_explore_subagent_max_iterations: int = _DEFAULT_PLANNER_EXPLORE_MAX_ITERATIONS,
+        planner_max_parallel_explore_agents: int = _DEFAULT_PLANNER_MAX_PARALLEL_EXPLORES,
         tool_result_clearing_keep: int = 3,
         consolidation_trigger_ratio: float = 0.5,
         consolidation_target_ratio: float = 0.3,
@@ -263,6 +279,9 @@ class AgentLoop:
         self._last_usage: dict[str, int] = {}
         self._extra_hooks: list[AgentHook] = hooks or []
         self.planning_mode = planning_mode
+        self.planner_max_iterations = max(1, planner_max_iterations)
+        self.planner_explore_subagent_max_iterations = max(1, planner_explore_subagent_max_iterations)
+        self.planner_max_parallel_explore_agents = max(1, planner_max_parallel_explore_agents)
 
         self.context = ContextBuilder(
             workspace,
@@ -286,6 +305,7 @@ class AgentLoop:
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
             mcp_servers=mcp_servers or {},
+            planner_max_parallel_explore_agents=self.planner_max_parallel_explore_agents,
         )
 
         self._running = False
@@ -376,6 +396,15 @@ class AgentLoop:
         for tool in self.tools.iter_tools():
             if is_read_only_mcp_tool(tool):
                 tools.register(tool)
+        return tools
+
+    def _build_planner_tools(self) -> ToolRegistry:
+        """Build planner tools, including foreground explore delegation."""
+        tools = self._build_read_only_tools()
+        tools.register(ExploreTool(
+            self.subagents,
+            max_iterations=self.planner_explore_subagent_max_iterations,
+        ))
         return tools
 
     async def _connect_mcp(self) -> None:
@@ -507,28 +536,68 @@ class AgentLoop:
     def _should_verify(self, text: str, tools_used: list[str], planned: _PlanDecision | None) -> bool:
         if self.planning_mode == "on" and not self._is_simple_conversation(text):
             return True
-        if planned and planned.needs_verification:
-            return True
         return any(name in {"write_file", "edit_file", "exec", "spawn", "spawn_pipeline"} for name in tools_used)
+
+    def _tool_result_clear_thresholds(self) -> tuple[int | None, int | None]:
+        """Return prompt-token thresholds for compacting stale tool results."""
+        if self.max_tokens.input <= 0:
+            return None, None
+        budget = (
+            self.max_tokens.input
+            - self.max_tokens.output
+            - self._TOOL_RESULT_CLEARING_SAFETY_BUFFER
+        )
+        if budget <= 0:
+            budget = self.max_tokens.input
+        if budget <= 0:
+            return None, None
+        trigger = int(budget * self._TOOL_RESULT_CLEAR_TRIGGER_RATIO)
+        target = int(budget * self._TOOL_RESULT_CLEAR_TARGET_RATIO)
+        return trigger or None, target or None
 
     def _planner_prompt(self) -> str:
         return f"""# Internal Planner
 
-You are nanobot's internal planning pass. Inspect first, do not modify files or external systems.
+You are nanobot's internal planner. Stay focused on coordination: gather enough evidence, draft the execution handoff, and sanity-check it before action begins. Do not modify files or external systems.
 
 ## Workspace
 {self.workspace}
+
+## Workflow
+Follow this internal loop until the handoff is ready or you run out of planner iterations:
+
+1. Explore
+- Use direct read-only tools for narrow targeted checks.
+- Use the `explore` tool for broad or repeated investigation that would otherwise bloat your context.
+- At most {self.planner_max_parallel_explore_agents} `explore` calls may run in parallel in one response. Use fewer when one is enough.
+- Keep gathering evidence when key facts are still missing.
+
+2. Plan
+- Draft the concrete work the action phase should do.
+- Draft a specific review goal that the verification phase can check.
+- Build a references list with evidence-backed findings instead of a free-form summary.
+
+3. Review
+- Ask yourself whether the current handoff is ready for action and review without repeating the same research.
+- If evidence is missing, go back to Explore.
+- If evidence is enough but the plan is weak or vague, refine the handoff.
+- Stop once action and review can proceed directly from your handoff.
+
+## Decision Rules
+- Use `answer` when no mutating or multi-step work is needed.
+- Use `clarify` only when multiple plausible interpretations would change execution and inspection cannot resolve them.
+- Use `execute` only when your inspected evidence is sufficient for action and review to proceed.
+- Do not guess when the task depends on evidence you have not checked.
 
 ## Output
 End your response with exactly:
 
 ---PLAN---
-{{"decision":"answer_or_clarify_or_execute","response":"user-facing text when decision is answer/clarify","summary":"short execution summary","needs_verification":true_or_false}}
+{{"decision":"answer_or_clarify_or_execute","response":"user-facing text when decision is answer/clarify","action_summary":"short concrete execution summary","review_goal":"what the review phase should verify","references":[{{"finding":"concise evidence-backed finding","references":["file: /abs/path/example.py","function: helper_name"],"open_question":"optional unresolved gap"}}]}}
 ---END---
 
-Use `clarify` only when there are multiple plausible interpretations and making the wrong choice would waste work.
-Use `answer` when no mutating or multi-step work is needed.
-Use `execute` for clear actionable tasks. Keep `summary` concrete and brief."""
+For `execute`, `action_summary`, `review_goal`, and `references` are required.
+Keep every finding concise, concrete, and tied to exact references."""
 
     @staticmethod
     def _parse_plan_decision(result: str | None) -> _PlanDecision:
@@ -544,12 +613,121 @@ Use `execute` for clear actionable tasks. Keep `summary` concrete and brief."""
         decision = str(payload.get("decision") or "execute").strip().lower()
         if decision not in {"answer", "clarify", "execute"}:
             decision = "execute"
+        references = AgentLoop._normalize_plan_references(payload.get("references"))
         return _PlanDecision(
             decision=decision,
             response=str(payload.get("response") or "").strip() or None,
-            summary=str(payload.get("summary") or "").strip(),
-            needs_verification=bool(payload.get("needs_verification", False)),
+            action_summary=str(payload.get("action_summary") or payload.get("summary") or "").strip(),
+            review_goal=str(payload.get("review_goal") or "").strip(),
+            references=references,
         )
+
+    @staticmethod
+    def _normalize_plan_references(payload: Any) -> list[dict[str, Any]]:
+        """Normalize planner references into a stable list of finding entries."""
+        if not isinstance(payload, list):
+            return []
+
+        normalized: list[dict[str, Any]] = []
+        for item in payload:
+            if isinstance(item, str):
+                finding = item.strip()
+                if finding:
+                    normalized.append({"finding": finding, "references": []})
+                continue
+            if not isinstance(item, dict):
+                continue
+            finding = str(item.get("finding") or "").strip()
+            refs_raw = item.get("references") or []
+            references = (
+                [str(ref).strip() for ref in refs_raw if str(ref).strip()]
+                if isinstance(refs_raw, list)
+                else ([str(refs_raw).strip()] if str(refs_raw).strip() else [])
+            )
+            open_question = str(item.get("open_question") or "").strip() or None
+            if not finding and not references and not open_question:
+                continue
+            normalized.append({
+                "finding": finding,
+                "references": references,
+                **({"open_question": open_question} if open_question else {}),
+            })
+        return normalized
+
+    @staticmethod
+    def _planner_handoff_message(planned: _PlanDecision) -> str:
+        """Build the planner handoff injected into action/review phases."""
+        parts = [
+            "Internal planner handoff. This context was gathered with read-only investigation tools. "
+            "Use it to proceed without re-gathering the same context unless direct evidence requires it."
+        ]
+        if planned.action_summary:
+            parts.append(f"Action Summary:\n{planned.action_summary}")
+        if planned.review_goal:
+            parts.append(f"Review Goal:\n{planned.review_goal}")
+        if planned.references:
+            rendered: list[str] = []
+            for idx, item in enumerate(planned.references, start=1):
+                entry = [f"{idx}. Finding: {item.get('finding') or '(unspecified)'}"]
+                refs = item.get("references") or []
+                if refs:
+                    entry.append("   References:")
+                    entry.extend(f"   - {ref}" for ref in refs)
+                if item.get("open_question"):
+                    entry.append(f"   Open Question: {item['open_question']}")
+                rendered.append("\n".join(entry))
+            parts.append("References:\n" + "\n".join(rendered))
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _planner_verification_goal(task_text: str, planned: _PlanDecision | None) -> str:
+        """Build the concrete review goal from the planner handoff."""
+        if planned is None:
+            return task_text
+
+        parts: list[str] = []
+        if planned.review_goal:
+            parts.append(planned.review_goal)
+        elif planned.action_summary:
+            parts.append(planned.action_summary)
+        else:
+            parts.append(task_text)
+
+        if planned.references:
+            lines: list[str] = []
+            for idx, item in enumerate(planned.references, start=1):
+                finding = str(item.get("finding") or "").strip()
+                refs = item.get("references") or []
+                if finding:
+                    lines.append(f"{idx}. {finding}")
+                for ref in refs:
+                    lines.append(f"   - {ref}")
+                if item.get("open_question"):
+                    lines.append(f"   - Open question: {item['open_question']}")
+            if lines:
+                parts.append("Planner References:\n" + "\n".join(lines))
+
+        return "\n\n".join(part for part in parts if part.strip())
+
+    @classmethod
+    def _serialize_planner_handoff(cls, task_text: str, planned: _PlanDecision) -> dict[str, Any]:
+        """Persist a planner handoff in session metadata while the task is active."""
+        return {
+            "task_text": task_text,
+            "decision": planned.decision,
+            "response": planned.response,
+            "action_summary": planned.action_summary,
+            "review_goal": planned.review_goal,
+            "references": planned.references,
+        }
+
+    @classmethod
+    def _store_planner_handoff(cls, session: Session, task_text: str, planned: _PlanDecision) -> None:
+        session.metadata[cls._PLANNER_HANDOFF_METADATA_KEY] = cls._serialize_planner_handoff(task_text, planned)
+
+    @classmethod
+    def _clear_planner_handoff(cls, session: Session) -> None:
+        session.metadata.pop(cls._PLANNER_HANDOFF_METADATA_KEY, None)
 
     def _verifier_prompt(self, goal: str) -> str:
         return f"""# Internal Verifier
@@ -606,8 +784,9 @@ End your response with exactly:
         planner_messages = [{"role": "system", "content": self._planner_prompt()}, *messages]
         result = await self._run_agent(
             planner_messages,
-            tools=self._build_read_only_tools(),
-            max_iterations=8,
+            tools=self._build_planner_tools(),
+            max_iterations=self.planner_max_iterations,
+            preserve_tool_results=True,
             channel=channel,
             chat_id=chat_id,
         )
@@ -650,6 +829,7 @@ End your response with exactly:
         tools: ToolRegistry | None = None,
         tool_policy: RiskyActionPolicy | None = None,
         max_iterations: int | None = None,
+        preserve_tool_results: bool = False,
         channel: str = "cli",
         chat_id: str = "direct",
         message_id: str | None = None,
@@ -684,7 +864,15 @@ End your response with exactly:
             hook=hook,
             error_message="Sorry, I encountered an error calling the AI model.",
             concurrent_tools=True,
-            tool_result_clearing_keep=self.tool_result_clearing_keep,
+            tool_result_clearing_keep=(
+                None if preserve_tool_results else self.tool_result_clearing_keep
+            ),
+            tool_result_clear_trigger_tokens=(
+                None if preserve_tool_results else self._tool_result_clear_thresholds()[0]
+            ),
+            tool_result_clear_target_tokens=(
+                None if preserve_tool_results else self._tool_result_clear_thresholds()[1]
+            ),
             tool_policy=tool_policy,
         ))
         self._last_usage = result.usage
@@ -737,7 +925,7 @@ End your response with exactly:
         planned: _PlanDecision | None = None,
     ) -> AgentRunResult:
         policy = RiskyActionPolicy(workspace=self.workspace, approval_granted=approval_granted)
-        verification_goal = planned.summary if planned and planned.summary else task_text
+        verification_goal = self._planner_verification_goal(task_text, planned)
         result = await self._run_agent(
             initial_messages,
             on_progress=on_progress,
@@ -1003,6 +1191,9 @@ End your response with exactly:
 
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        if msg.channel != "system" and self._PLANNER_HANDOFF_METADATA_KEY in session.metadata:
+            self._clear_planner_handoff(session)
+            self.sessions.save(session)
 
         # Slash commands
         raw = msg.content.strip()
@@ -1049,13 +1240,23 @@ End your response with exactly:
             channel=msg.channel, chat_id=msg.chat_id,
         )
 
-        # Clear old tool results from history to reduce context size.
-        clear_old_tool_results(initial_messages, keep_last=self.tool_result_clearing_keep)
+        tools = self.tools.get_definitions()
+        clear_trigger_tokens, clear_target_tokens = self._tool_result_clear_thresholds()
+
+        # Compact old tool results only when prompt size is approaching the budget.
+        clear_old_tool_results(
+            initial_messages,
+            keep_last=self.tool_result_clearing_keep,
+            provider=self.provider,
+            model=self.model,
+            tools=tools,
+            trigger_tokens=clear_trigger_tokens,
+            target_tokens=clear_target_tokens,
+        )
 
         # Safety check: trim oldest turns if this specific request still exceeds maxTokens.input.
         if self.max_tokens.input > 0:
             try:
-                tools = self.tools.get_definitions()
                 tokens, _ = estimate_prompt_tokens_chain(
                     self.provider,
                     self.model,
@@ -1105,13 +1306,12 @@ End your response with exactly:
                     content=planned.response,
                     metadata=msg.metadata or {},
                 )
-            if planned.summary:
+            if planned.decision == "execute" and planned.has_handoff:
+                self._store_planner_handoff(session, current_message, planned)
+                self.sessions.save(session)
                 initial_messages.insert(-1, {
                     "role": "system",
-                    "content": (
-                        "Internal execution plan. Follow this approach unless direct evidence requires a correction:\n"
-                        f"- {planned.summary}"
-                    ),
+                    "content": self._planner_handoff_message(planned),
                 })
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
@@ -1140,6 +1340,8 @@ End your response with exactly:
             final_content = "I've completed processing but have no response to give."
 
         self._save_turn(session, all_msgs, 1 + len(history))
+        if planned and planned.decision == "execute":
+            self._clear_planner_handoff(session)
         self.sessions.save(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
         self._maybe_sync_context_repo()
