@@ -168,6 +168,10 @@ class _ForegroundExploreHook(AgentHook):
         if context.tool_calls:
             self._guard.observe(context.tool_calls)
         if self._guard.stop_requested and not self._stop_note_injected:
+            logger.info(
+                "Foreground explore guard triggered: {}",
+                self._guard.stop_reason or "loop_guard",
+            )
             context.messages.append({
                 "role": "user",
                 "content": (
@@ -558,6 +562,12 @@ End your response with exactly:
     ) -> dict[str, Any]:
         """Run a synchronous read-only explore pass and return structured findings."""
         await self._connect_review_mcp()
+        logger.info(
+            "Foreground explore started (thoroughness={}, max_iterations={}): {}",
+            thoroughness,
+            max_iterations,
+            re.sub(r"\s+", " ", task.strip())[:140],
+        )
         async with self._foreground_explore_gate:
             tools = self._build_explore_tools()
             guard = _ExploreLoopGuard()
@@ -582,6 +592,14 @@ End your response with exactly:
                 parsed["stop_reason"] = result.stop_reason
             elif guard.stop_reason and parsed.get("partial"):
                 parsed["stop_reason"] = guard.stop_reason
+            logger.info(
+                "Foreground explore completed stop_reason={} partial={} findings={} references={} open_questions={}",
+                result.stop_reason or "completed",
+                parsed.get("partial", False),
+                len(parsed.get("findings") or []),
+                len(parsed.get("references") or []),
+                len(parsed.get("open_questions") or []),
+            )
             return parsed
 
     def _build_review_prompt(self, goal: str) -> str:
