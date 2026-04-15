@@ -1,0 +1,937 @@
+"""OpenAI-compatible provider for all non-Anthropic LLM APIs."""
+
+from __future__ import annotations
+
+import asyncio
+import collections
+import hashlib
+import os
+import secrets
+import string
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
+
+import json_repair
+from loguru import logger
+from openai import AsyncOpenAI
+
+from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+
+if TYPE_CHECKING:
+    from nanobot.providers.registry import ProviderSpec
+
+_ALLOWED_MSG_KEYS = frozenset({
+    "role", "content", "tool_calls", "tool_call_id", "name",
+    "reasoning_content", "extra_content",
+})
+_ALNUM = string.ascii_letters + string.digits
+
+_STANDARD_TC_KEYS = frozenset({"id", "type", "index", "function"})
+_STANDARD_FN_KEYS = frozenset({"name", "arguments"})
+_DEFAULT_OPENROUTER_HEADERS = {
+    "HTTP-Referer": "https://github.com/HKUDS/nanobot",
+    "X-OpenRouter-Title": "nanobot",
+    "X-OpenRouter-Categories": "cli-agent,personal-agent",
+}
+
+
+def _short_tool_id() -> str:
+    """9-char alphanumeric ID compatible with all providers (incl. Mistral)."""
+    return "".join(secrets.choice(_ALNUM) for _ in range(9))
+
+
+def _get(obj: Any, key: str) -> Any:
+    """Get a value from dict or object attribute, returning None if absent."""
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _coerce_dict(value: Any) -> dict[str, Any] | None:
+    """Try to coerce *value* to a dict; return None if not possible or empty."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value if value else None
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump()
+        if isinstance(dumped, dict) and dumped:
+            return dumped
+    return None
+
+
+def _extract_tc_extras(tc: Any) -> tuple[
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+]:
+    """Extract (extra_content, provider_specific_fields, fn_provider_specific_fields).
+
+    Works for both SDK objects and dicts.  Captures Gemini ``extra_content``
+    verbatim and any non-standard keys on the tool-call / function.
+    """
+    extra_content = _coerce_dict(_get(tc, "extra_content"))
+
+    tc_dict = _coerce_dict(tc)
+    prov = None
+    fn_prov = None
+    if tc_dict is not None:
+        leftover = {k: v for k, v in tc_dict.items()
+                    if k not in _STANDARD_TC_KEYS and k != "extra_content" and v is not None}
+        if leftover:
+            prov = leftover
+        fn = _coerce_dict(tc_dict.get("function"))
+        if fn is not None:
+            fn_leftover = {k: v for k, v in fn.items()
+                          if k not in _STANDARD_FN_KEYS and v is not None}
+            if fn_leftover:
+                fn_prov = fn_leftover
+    else:
+        prov = _coerce_dict(_get(tc, "provider_specific_fields"))
+        fn_obj = _get(tc, "function")
+        if fn_obj is not None:
+            fn_prov = _coerce_dict(_get(fn_obj, "provider_specific_fields"))
+
+    return extra_content, prov, fn_prov
+
+
+def _uses_openrouter_attribution(spec: "ProviderSpec | None", api_base: str | None) -> bool:
+    """Apply Nanobot attribution headers to OpenRouter requests by default."""
+    if spec and spec.name == "openrouter":
+        return True
+    return bool(api_base and "openrouter" in api_base.lower())
+
+
+class OpenAICompatProvider(LLMProvider):
+    """Unified provider for all OpenAI-compatible APIs.
+
+    Receives a resolved ``ProviderSpec`` from the caller — no internal
+    registry lookups needed.
+    """
+
+    _QUOTA_KEY_COOLDOWN_S = 30 * 60.0  # 30m — re-probe exhausted keys within the same session
+    _RATE_LIMIT_KEY_COOLDOWN_S = 60.0
+    _OVERLOAD_KEY_COOLDOWN_S = 15.0
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        api_keys: list[str] | None = None,
+        api_base: str | None = None,
+        default_model: str = "gpt-4o",
+        extra_headers: dict[str, str] | None = None,
+        rate_limit: int = 0,
+        timeout: float = 60.0,
+        spec: ProviderSpec | None = None,
+    ):
+        key_pool = [k for k in (api_keys or []) if k]
+        if not key_pool and api_key:
+            key_pool = [api_key]
+        super().__init__(key_pool[0] if key_pool else api_key, api_base)
+        self.default_model = default_model
+        self.extra_headers = extra_headers or {}
+        self._spec = spec
+        self._api_keys = key_pool
+        self._request_start_index = 0
+        self._preferred_key_index: int | None = 0 if key_pool else None
+        self._key_retry_after: list[float] = [0.0] * len(key_pool)
+        self._rate_limit = max(0, int(rate_limit))
+        self._request_timeout = max(5.0, float(timeout))
+        self._request_timestamps: collections.deque[float] = collections.deque()
+
+        effective_base = api_base or (spec.default_api_base if spec else None) or None
+        default_headers = {"x-session-affinity": uuid.uuid4().hex}
+        if _uses_openrouter_attribution(spec, effective_base):
+            default_headers.update(_DEFAULT_OPENROUTER_HEADERS)
+        if extra_headers:
+            default_headers.update(extra_headers)
+        self._effective_base = effective_base
+        self._default_headers = default_headers
+
+        if self.api_key and self._spec and self._spec.env_key:
+            self._setup_env(self.api_key, self.api_base)
+
+    def _key_label(self, index: int | None = None) -> str:
+        """Return a safe label for the active or requested key slot."""
+        if not self._api_keys:
+            return "key#1/1"
+        idx = 0 if index is None else (index % len(self._api_keys))
+        digest = hashlib.sha1(self._api_keys[idx].encode()).hexdigest()[:8]
+        return f"key#{idx + 1}/{len(self._api_keys)}[{digest}]"
+
+    def _next_request_start(self) -> int:
+        """Round-robin the starting key so concurrent requests do not share mutable state."""
+        if len(self._api_keys) <= 1:
+            return 0
+        idx = self._request_start_index % len(self._api_keys)
+        self._request_start_index = (idx + 1) % len(self._api_keys)
+        return idx
+
+    def _rotate_candidate_indices(self, indices: list[int]) -> list[int]:
+        """Rotate a candidate key list for fair fallback ordering."""
+        if len(indices) <= 1:
+            return list(indices)
+        offset = self._next_request_start() % len(indices)
+        return indices[offset:] + indices[:offset]
+
+    def _next_request_order(self) -> list[int]:
+        """Choose key order for a request, preferring healthy recent winners."""
+        if not self._api_keys:
+            return []
+        if len(self._api_keys) == 1:
+            return [0]
+
+        now = time.monotonic()
+        ready = [idx for idx, retry_after in enumerate(self._key_retry_after) if retry_after <= now]
+        cooling = [idx for idx, retry_after in enumerate(self._key_retry_after) if retry_after > now]
+        preferred = self._preferred_key_index
+
+        order: list[int] = []
+        if preferred is not None and preferred in ready:
+            order.append(preferred)
+            ready.remove(preferred)
+
+        order.extend(self._rotate_candidate_indices(ready))
+        cooling.sort(key=lambda idx: (self._key_retry_after[idx], idx))
+        order.extend(cooling)
+
+        return order or list(range(len(self._api_keys)))
+
+    @staticmethod
+    def _error_status_code(error: Exception) -> int | None:
+        """Extract an HTTP-like status code from SDK exceptions when available."""
+        status = getattr(error, "status_code", None)
+        if status is None:
+            resp = getattr(error, "response", None)
+            status = getattr(resp, "status_code", None) if resp is not None else None
+        return status if isinstance(status, int) else None
+
+    def _cooldown_seconds_for_error(self, error: Exception) -> float:
+        """Return a cooldown for keys that just failed with provider throttling/quota."""
+        if isinstance(error, TimeoutError):
+            return self._OVERLOAD_KEY_COOLDOWN_S
+        status = self._error_status_code(error)
+        summary = self._error_summary(error).lower()
+        if status == 503 or any(marker in summary for marker in (
+            "high demand",
+            "service unavailable",
+            "temporarily unavailable",
+            "unavailable",
+            "timeout",
+            "timed out",
+        )):
+            return self._OVERLOAD_KEY_COOLDOWN_S
+        if self._is_quota_exhaustion(summary) or any(marker in summary for marker in (
+            "current quota",
+            "plan and billing",
+            "resource_exhausted",
+        )):
+            return self._QUOTA_KEY_COOLDOWN_S
+        return self._RATE_LIMIT_KEY_COOLDOWN_S
+
+    def _record_key_success(self, key_index: int | None) -> None:
+        """Promote a successful key to the preferred starting slot."""
+        if key_index is None or not self._api_keys:
+            return
+        resolved_index = key_index % len(self._api_keys)
+        self._preferred_key_index = resolved_index
+        self._key_retry_after[resolved_index] = 0.0
+
+    def _record_key_failure(self, key_index: int | None, error: Exception) -> float:
+        """Temporarily deprioritize a key that just failed with throttling/quota."""
+        if key_index is None or not self._api_keys:
+            return 0.0
+        resolved_index = key_index % len(self._api_keys)
+        cooldown_s = self._cooldown_seconds_for_error(error)
+        self._key_retry_after[resolved_index] = max(
+            self._key_retry_after[resolved_index],
+            time.monotonic() + cooldown_s,
+        )
+        return cooldown_s
+
+    def _build_client(self, key_index: int | None = None) -> AsyncOpenAI:
+        """Build a client for the given key slot without mutating provider state."""
+        active_key = self.api_key
+        if self._api_keys:
+            resolved_index = 0 if key_index is None else (key_index % len(self._api_keys))
+            active_key = self._api_keys[resolved_index]
+        if active_key and self._spec and self._spec.env_key:
+            self._setup_env(active_key, self.api_base)
+        return AsyncOpenAI(
+            api_key=active_key or "no-key",
+            base_url=self._effective_base,
+            default_headers=self._default_headers,
+            timeout=self._request_timeout,
+        )
+
+    async def _await_with_timeout(self, awaitable: Awaitable[Any], *, phase: str) -> Any:
+        """Bound a provider SDK awaitable so a bad upstream call cannot hang forever."""
+        try:
+            return await asyncio.wait_for(awaitable, timeout=self._request_timeout)
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(f"provider {phase} timed out after {self._request_timeout:.0f}s") from exc
+
+    async def _collect_stream_chunks(
+        self,
+        stream: Any,
+        on_content_delta: Callable[[str], Awaitable[None]] | None,
+    ) -> list[Any]:
+        """Consume a streaming response with an idle timeout between chunks."""
+        chunks: list[Any] = []
+        iterator = stream.__aiter__()
+        try:
+            while True:
+                try:
+                    chunk = await asyncio.wait_for(anext(iterator), timeout=self._request_timeout)
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError as exc:
+                    raise TimeoutError(
+                        f"provider stream timed out after {self._request_timeout:.0f}s waiting for the next chunk"
+                    ) from exc
+
+                chunks.append(chunk)
+                if on_content_delta and getattr(chunk, "choices", None):
+                    text = getattr(chunk.choices[0].delta, "content", None)
+                    if text:
+                        await on_content_delta(text)
+        finally:
+            close = getattr(stream, "aclose", None)
+            if callable(close):
+                try:
+                    await close()
+                except Exception:
+                    logger.debug("Ignoring stream close failure")
+        return chunks
+
+    def _log_rotation(self, previous_index: int, next_index: int, error: Exception, cooldown_s: float) -> None:
+        """Log a request-local rotation between configured key slots."""
+        logger.warning(
+            "Rotating provider API key from {} to {} after quota/rate-limit response (cooldown {:.0f}s): {}",
+            self._key_label(previous_index),
+            self._key_label(next_index),
+            cooldown_s,
+            self._error_summary(error),
+        )
+
+    @staticmethod
+    def _is_rate_limit_error(exc: Exception) -> bool:
+        """Return True when exception indicates quota/rate limiting or temporary overload."""
+        if isinstance(exc, TimeoutError):
+            return True
+        status = getattr(exc, "status_code", None)
+        if status is None:
+            resp = getattr(exc, "response", None)
+            status = getattr(resp, "status_code", None) if resp is not None else None
+        if status in (429, 503):
+            return True
+        msg = str(exc).lower()
+        return any(m in msg for m in (
+            "rate limit",
+            "rate_limit",
+            "quota",
+            "resource_exhausted",
+            "429",
+            "timeout",
+            "timed out",
+            "unavailable",
+            "service unavailable",
+            "high demand",
+            "503",
+        ))
+
+    async def _wait_for_rate_limit(self) -> None:
+        """Sleep as needed to honor per-provider requests/minute rate_limit."""
+        if self._rate_limit <= 0:
+            return
+
+        now = time.monotonic()
+        window_s = 60.0
+        while self._request_timestamps and self._request_timestamps[0] <= now - window_s:
+            self._request_timestamps.popleft()
+
+        if len(self._request_timestamps) >= self._rate_limit:
+            oldest = self._request_timestamps[0]
+            delay = oldest + window_s - now + 1.0
+            if delay > 0:
+                await asyncio.sleep(delay)
+
+        self._request_timestamps.append(time.monotonic())
+
+    def _setup_env(self, api_key: str, api_base: str | None) -> None:
+        """Set environment variables based on provider spec."""
+        spec = self._spec
+        if not spec or not spec.env_key:
+            return
+        # Keep env vars aligned with the currently active key so follow-up
+        # requests and auxiliary SDK behavior do not get stuck on the first key.
+        os.environ[spec.env_key] = api_key
+        effective_base = api_base or spec.default_api_base
+        for env_name, env_val in spec.env_extras:
+            resolved = env_val.replace("{api_key}", api_key).replace("{api_base}", effective_base)
+            os.environ[env_name] = resolved
+
+    @staticmethod
+    def _error_summary(error: Exception) -> str:
+        """Return a short provider error summary suitable for logs/messages."""
+        body = getattr(error, "doc", None) or getattr(getattr(error, "response", None), "text", None)
+        text = body.strip() if isinstance(body, str) and body.strip() else str(error).strip()
+        return text[:240]
+
+    @staticmethod
+    def _apply_cache_control(
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
+        """Inject cache_control markers for prompt caching."""
+        cache_marker = {"type": "ephemeral"}
+        new_messages = list(messages)
+
+        def _mark(msg: dict[str, Any]) -> dict[str, Any]:
+            content = msg.get("content")
+            if isinstance(content, str):
+                return {**msg, "content": [
+                    {"type": "text", "text": content, "cache_control": cache_marker},
+                ]}
+            if isinstance(content, list) and content:
+                nc = list(content)
+                nc[-1] = {**nc[-1], "cache_control": cache_marker}
+                return {**msg, "content": nc}
+            return msg
+
+        if new_messages and new_messages[0].get("role") == "system":
+            new_messages[0] = _mark(new_messages[0])
+        if len(new_messages) >= 3:
+            new_messages[-2] = _mark(new_messages[-2])
+
+        new_tools = tools
+        if tools:
+            new_tools = list(tools)
+            new_tools[-1] = {**new_tools[-1], "cache_control": cache_marker}
+        return new_messages, new_tools
+
+    @staticmethod
+    def _normalize_tool_call_id(tool_call_id: Any) -> Any:
+        """Normalize to a provider-safe 9-char alphanumeric form."""
+        if not isinstance(tool_call_id, str):
+            return tool_call_id
+        if len(tool_call_id) == 9 and tool_call_id.isalnum():
+            return tool_call_id
+        return hashlib.sha1(tool_call_id.encode()).hexdigest()[:9]
+
+    def _sanitize_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Strip non-standard keys, normalize tool_call IDs."""
+        sanitized = LLMProvider._sanitize_request_messages(messages, _ALLOWED_MSG_KEYS)
+        id_map: dict[str, str] = {}
+
+        def map_id(value: Any) -> Any:
+            if not isinstance(value, str):
+                return value
+            return id_map.setdefault(value, self._normalize_tool_call_id(value))
+
+        for clean in sanitized:
+            if isinstance(clean.get("tool_calls"), list):
+                normalized = []
+                for tc in clean["tool_calls"]:
+                    if not isinstance(tc, dict):
+                        normalized.append(tc)
+                        continue
+                    tc_clean = dict(tc)
+                    tc_clean["id"] = map_id(tc_clean.get("id"))
+                    normalized.append(tc_clean)
+                clean["tool_calls"] = normalized
+            if "tool_call_id" in clean and clean["tool_call_id"]:
+                clean["tool_call_id"] = map_id(clean["tool_call_id"])
+        return sanitized
+
+    # ------------------------------------------------------------------
+    # Build kwargs
+    # ------------------------------------------------------------------
+
+    def _build_kwargs(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str | None,
+        max_tokens: int,
+        temperature: float,
+        reasoning_effort: str | None,
+        tool_choice: str | dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        model_name = model or self.default_model
+        spec = self._spec
+
+        if spec and spec.supports_prompt_caching:
+            messages, tools = self._apply_cache_control(messages, tools)
+
+        if spec and spec.strip_model_prefix:
+            model_name = model_name.split("/")[-1]
+
+        kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": self._sanitize_messages(self._sanitize_empty_content(messages)),
+            "temperature": temperature,
+        }
+
+        if spec and getattr(spec, "supports_max_completion_tokens", False):
+            kwargs["max_completion_tokens"] = max(1, max_tokens)
+        else:
+            kwargs["max_tokens"] = max(1, max_tokens)
+
+        if spec:
+            model_lower = model_name.lower()
+            for pattern, overrides in spec.model_overrides:
+                if pattern in model_lower:
+                    kwargs.update(overrides)
+                    break
+
+        if reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
+
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = tool_choice or "auto"
+
+        return kwargs
+
+    # ------------------------------------------------------------------
+    # Response parsing
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _maybe_mapping(value: Any) -> dict[str, Any] | None:
+        if isinstance(value, dict):
+            return value
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                return dumped
+        return None
+
+    @classmethod
+    def _extract_text_content(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value:
+                item_map = cls._maybe_mapping(item)
+                if item_map:
+                    text = item_map.get("text")
+                    if isinstance(text, str):
+                        parts.append(text)
+                        continue
+                text = getattr(item, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+                    continue
+                if isinstance(item, str):
+                    parts.append(item)
+            return "".join(parts) or None
+        return str(value)
+
+    @classmethod
+    def _extract_usage(cls, response: Any) -> dict[str, int]:
+        usage_obj = None
+        response_map = cls._maybe_mapping(response)
+        if response_map is not None:
+            usage_obj = response_map.get("usage")
+        elif hasattr(response, "usage") and response.usage:
+            usage_obj = response.usage
+
+        usage_map = cls._maybe_mapping(usage_obj)
+        if usage_map is not None:
+            return {
+                "prompt_tokens": int(usage_map.get("prompt_tokens") or 0),
+                "completion_tokens": int(usage_map.get("completion_tokens") or 0),
+                "total_tokens": int(usage_map.get("total_tokens") or 0),
+            }
+
+        if usage_obj:
+            return {
+                "prompt_tokens": getattr(usage_obj, "prompt_tokens", 0) or 0,
+                "completion_tokens": getattr(usage_obj, "completion_tokens", 0) or 0,
+                "total_tokens": getattr(usage_obj, "total_tokens", 0) or 0,
+            }
+        return {}
+
+    def _parse(self, response: Any) -> LLMResponse:
+        if isinstance(response, str):
+            return LLMResponse(content=response, finish_reason="stop")
+
+        response_map = self._maybe_mapping(response)
+        if response_map is not None:
+            choices = response_map.get("choices") or []
+            if not choices:
+                content = self._extract_text_content(
+                    response_map.get("content") or response_map.get("output_text")
+                )
+                if content is not None:
+                    return LLMResponse(
+                        content=content,
+                        finish_reason=str(response_map.get("finish_reason") or "stop"),
+                        usage=self._extract_usage(response_map),
+                    )
+                return LLMResponse(content="Error: API returned empty choices.", finish_reason="error")
+
+            choice0 = self._maybe_mapping(choices[0]) or {}
+            msg0 = self._maybe_mapping(choice0.get("message")) or {}
+            content = self._extract_text_content(msg0.get("content"))
+            finish_reason = str(choice0.get("finish_reason") or "stop")
+
+            raw_tool_calls: list[Any] = []
+            reasoning_content = msg0.get("reasoning_content")
+            for ch in choices:
+                ch_map = self._maybe_mapping(ch) or {}
+                m = self._maybe_mapping(ch_map.get("message")) or {}
+                tool_calls = m.get("tool_calls")
+                if isinstance(tool_calls, list) and tool_calls:
+                    raw_tool_calls.extend(tool_calls)
+                    if ch_map.get("finish_reason") in ("tool_calls", "stop"):
+                        finish_reason = str(ch_map["finish_reason"])
+                if not content:
+                    content = self._extract_text_content(m.get("content"))
+                if not reasoning_content:
+                    reasoning_content = m.get("reasoning_content")
+
+            parsed_tool_calls = []
+            for tc in raw_tool_calls:
+                tc_map = self._maybe_mapping(tc) or {}
+                fn = self._maybe_mapping(tc_map.get("function")) or {}
+                args = fn.get("arguments", {})
+                if isinstance(args, str):
+                    args = json_repair.loads(args)
+                ec, prov, fn_prov = _extract_tc_extras(tc)
+                parsed_tool_calls.append(ToolCallRequest(
+                    id=_short_tool_id(),
+                    name=str(fn.get("name") or ""),
+                    arguments=args if isinstance(args, dict) else {},
+                    extra_content=ec,
+                    provider_specific_fields=prov,
+                    function_provider_specific_fields=fn_prov,
+                ))
+
+            return LLMResponse(
+                content=content,
+                tool_calls=parsed_tool_calls,
+                finish_reason=finish_reason,
+                usage=self._extract_usage(response_map),
+                reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
+            )
+
+        if not response.choices:
+            return LLMResponse(content="Error: API returned empty choices.", finish_reason="error")
+
+        choice = response.choices[0]
+        msg = choice.message
+        content = msg.content
+        finish_reason = choice.finish_reason
+
+        raw_tool_calls: list[Any] = []
+        for ch in response.choices:
+            m = ch.message
+            if hasattr(m, "tool_calls") and m.tool_calls:
+                raw_tool_calls.extend(m.tool_calls)
+                if ch.finish_reason in ("tool_calls", "stop"):
+                    finish_reason = ch.finish_reason
+            if not content and m.content:
+                content = m.content
+
+        tool_calls = []
+        for tc in raw_tool_calls:
+            args = tc.function.arguments
+            if isinstance(args, str):
+                args = json_repair.loads(args)
+            ec, prov, fn_prov = _extract_tc_extras(tc)
+            tool_calls.append(ToolCallRequest(
+                id=_short_tool_id(),
+                name=tc.function.name,
+                arguments=args,
+                extra_content=ec,
+                provider_specific_fields=prov,
+                function_provider_specific_fields=fn_prov,
+            ))
+
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason or "stop",
+            usage=self._extract_usage(response),
+            reasoning_content=getattr(msg, "reasoning_content", None) or None,
+        )
+
+    @classmethod
+    def _parse_chunks(cls, chunks: list[Any]) -> LLMResponse:
+        content_parts: list[str] = []
+        tc_bufs: dict[int, dict[str, Any]] = {}
+        finish_reason = "stop"
+        usage: dict[str, int] = {}
+
+        def _accum_tc(tc: Any, idx_hint: int) -> None:
+            """Accumulate one streaming tool-call delta into *tc_bufs*."""
+            tc_index: int = _get(tc, "index") if _get(tc, "index") is not None else idx_hint
+            buf = tc_bufs.setdefault(tc_index, {
+                "id": "", "name": "", "arguments": "",
+                "extra_content": None, "prov": None, "fn_prov": None,
+            })
+            tc_id = _get(tc, "id")
+            if tc_id:
+                buf["id"] = str(tc_id)
+            fn = _get(tc, "function")
+            if fn is not None:
+                fn_name = _get(fn, "name")
+                if fn_name:
+                    buf["name"] = str(fn_name)
+                fn_args = _get(fn, "arguments")
+                if fn_args:
+                    buf["arguments"] += str(fn_args)
+            ec, prov, fn_prov = _extract_tc_extras(tc)
+            if ec:
+                buf["extra_content"] = ec
+            if prov:
+                buf["prov"] = prov
+            if fn_prov:
+                buf["fn_prov"] = fn_prov
+
+        for chunk in chunks:
+            if isinstance(chunk, str):
+                content_parts.append(chunk)
+                continue
+
+            chunk_map = cls._maybe_mapping(chunk)
+            if chunk_map is not None:
+                choices = chunk_map.get("choices") or []
+                if not choices:
+                    usage = cls._extract_usage(chunk_map) or usage
+                    text = cls._extract_text_content(
+                        chunk_map.get("content") or chunk_map.get("output_text")
+                    )
+                    if text:
+                        content_parts.append(text)
+                    continue
+                choice = cls._maybe_mapping(choices[0]) or {}
+                if choice.get("finish_reason"):
+                    finish_reason = str(choice["finish_reason"])
+                delta = cls._maybe_mapping(choice.get("delta")) or {}
+                text = cls._extract_text_content(delta.get("content"))
+                if text:
+                    content_parts.append(text)
+                for idx, tc in enumerate(delta.get("tool_calls") or []):
+                    _accum_tc(tc, idx)
+                usage = cls._extract_usage(chunk_map) or usage
+                continue
+
+            if not chunk.choices:
+                usage = cls._extract_usage(chunk) or usage
+                continue
+            choice = chunk.choices[0]
+            if choice.finish_reason:
+                finish_reason = choice.finish_reason
+            delta = choice.delta
+            if delta and delta.content:
+                content_parts.append(delta.content)
+            for tc in (delta.tool_calls or []) if delta else []:
+                _accum_tc(tc, getattr(tc, "index", 0))
+
+        return LLMResponse(
+            content="".join(content_parts) or None,
+            tool_calls=[
+                ToolCallRequest(
+                    id=b["id"] or _short_tool_id(),
+                    name=b["name"],
+                    arguments=json_repair.loads(b["arguments"]) if b["arguments"] else {},
+                    extra_content=b.get("extra_content"),
+                    provider_specific_fields=b.get("prov"),
+                    function_provider_specific_fields=b.get("fn_prov"),
+                )
+                for b in tc_bufs.values()
+            ],
+            finish_reason=finish_reason,
+            usage=usage,
+        )
+
+    @staticmethod
+    def _handle_error(e: Exception) -> LLMResponse:
+        body = getattr(e, "doc", None) or getattr(getattr(e, "response", None), "text", None)
+        msg = f"Error: {body.strip()[:500]}" if body and body.strip() else f"Error calling LLM: {e}"
+        return LLMResponse(content=msg, finish_reason="error")
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+        reasoning_effort: str | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> LLMResponse:
+        kwargs = self._build_kwargs(
+            messages, tools, model, max_tokens, temperature,
+            reasoning_effort, tool_choice,
+        )
+        max_attempts = max(1, len(self._api_keys))
+        key_order = self._next_request_order()
+        attempted_labels: list[str] = []
+        last_error: Exception | None = None
+        for attempt in range(max_attempts):
+            key_index = key_order[attempt] if self._api_keys else None
+            attempted_labels.append(self._key_label(key_index))
+            try:
+                await self._wait_for_rate_limit()
+                if len(self._api_keys) > 1:
+                    logger.info(
+                        "Provider request attempt {}/{} using {} model={}",
+                        attempt + 1,
+                        max_attempts,
+                        self._key_label(key_index),
+                        kwargs["model"],
+                    )
+                client = self._build_client(key_index)
+                raw = await self._await_with_timeout(
+                    client.chat.completions.create(**kwargs),
+                    phase="request",
+                )
+                response = self._parse(raw)
+                self._record_key_success(key_index)
+                if attempt > 0 and self._api_keys:
+                    logger.info(
+                        "Provider request recovered on {} after {} attempt(s)",
+                        self._key_label(key_index),
+                        attempt + 1,
+                    )
+                return response
+            except Exception as e:
+                last_error = e
+                has_remaining_keys = attempt + 1 < max_attempts
+                if has_remaining_keys and self._is_rate_limit_error(e) and self._api_keys:
+                    cooldown_s = self._record_key_failure(key_index, e)
+                    self._log_rotation(key_index or 0, key_order[attempt + 1], e, cooldown_s)
+                    continue
+                if self._is_rate_limit_error(e) and self._api_keys:
+                    self._record_key_failure(key_index, e)
+                    break
+                return self._handle_error(e)
+        if last_error and self._is_rate_limit_error(last_error) and self._api_keys:
+            logger.error(
+                "All configured API keys were rate-limited or out of quota after trying {} keys ({}); last error: {}",
+                len(self._api_keys),
+                ", ".join(attempted_labels),
+                self._error_summary(last_error),
+            )
+            return LLMResponse(
+                content=(
+                    "Error: All configured API keys were rate-limited or out of quota "
+                    f"after trying {len(self._api_keys)} keys. Last error: {self._error_summary(last_error)}"
+                ),
+                finish_reason="error",
+            )
+        return self._handle_error(last_error or RuntimeError("All API keys exhausted"))
+
+    async def chat_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+        reasoning_effort: str | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        on_content_delta: Callable[[str], Awaitable[None]] | None = None,
+    ) -> LLMResponse:
+        kwargs = self._build_kwargs(
+            messages, tools, model, max_tokens, temperature,
+            reasoning_effort, tool_choice,
+        )
+        kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
+        max_attempts = max(1, len(self._api_keys))
+        key_order = self._next_request_order()
+        attempted_labels: list[str] = []
+        last_error: Exception | None = None
+
+        delivered_any = False
+        effective_delta = on_content_delta
+        if on_content_delta is not None:
+            user_delta = on_content_delta
+
+            async def _tracked_delta(text: str) -> None:
+                nonlocal delivered_any
+                delivered_any = True
+                await user_delta(text)
+
+            effective_delta = _tracked_delta
+
+        for attempt in range(max_attempts):
+            key_index = key_order[attempt] if self._api_keys else None
+            attempted_labels.append(self._key_label(key_index))
+            try:
+                await self._wait_for_rate_limit()
+                if len(self._api_keys) > 1:
+                    logger.info(
+                        "Provider stream attempt {}/{} using {} model={}",
+                        attempt + 1,
+                        max_attempts,
+                        self._key_label(key_index),
+                        kwargs["model"],
+                    )
+                client = self._build_client(key_index)
+                stream = await self._await_with_timeout(
+                    client.chat.completions.create(**kwargs),
+                    phase="stream request",
+                )
+                chunks = await self._collect_stream_chunks(stream, effective_delta)
+                response = self._parse_chunks(chunks)
+                self._record_key_success(key_index)
+                if attempt > 0 and self._api_keys:
+                    logger.info(
+                        "Provider stream recovered on {} after {} attempt(s)",
+                        self._key_label(key_index),
+                        attempt + 1,
+                    )
+                return response
+            except Exception as e:
+                last_error = e
+                if delivered_any:
+                    # Already streamed content to the user — rotating to another
+                    # key would concatenate a second response on top of the first.
+                    if self._is_rate_limit_error(e) and self._api_keys:
+                        self._record_key_failure(key_index, e)
+                    return self._handle_error(e)
+                has_remaining_keys = attempt + 1 < max_attempts
+                if has_remaining_keys and self._is_rate_limit_error(e) and self._api_keys:
+                    cooldown_s = self._record_key_failure(key_index, e)
+                    self._log_rotation(key_index or 0, key_order[attempt + 1], e, cooldown_s)
+                    continue
+                if self._is_rate_limit_error(e) and self._api_keys:
+                    self._record_key_failure(key_index, e)
+                    break
+                return self._handle_error(e)
+        if last_error and self._is_rate_limit_error(last_error) and self._api_keys:
+            logger.error(
+                "All configured API keys were rate-limited or out of quota after trying {} keys ({}); last error: {}",
+                len(self._api_keys),
+                ", ".join(attempted_labels),
+                self._error_summary(last_error),
+            )
+            return LLMResponse(
+                content=(
+                    "Error: All configured API keys were rate-limited or out of quota "
+                    f"after trying {len(self._api_keys)} keys. Last error: {self._error_summary(last_error)}"
+                ),
+                finish_reason="error",
+            )
+        return self._handle_error(last_error or RuntimeError("All API keys exhausted"))
+
+    def get_default_model(self) -> str:
+        return self.default_model

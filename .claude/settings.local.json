@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/providers/test_litellm_kwargs.py tests/providers/test_fallback_provider.py -x --tb=short)",
+      "Bash(.venv/Scripts/python -m pytest tests/providers/test_litellm_kwargs.py tests/providers/test_fallback_provider.py --tb=short)",
+      "Bash(.venv/Scripts/python -m pytest tests/providers/ --tb=short)",
+      "Bash(grep -n \"_sanitize_empty_content\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
+      "Bash(grep -n \"_sanitize_request_messages\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
+      "Bash(grep -n \"400\\\\|INVALID_ARGUMENT\\\\|bad request\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
+      "Bash(grep -n \"_QUOTA_KEY_COOLDOWN\\\\|_provider_retry_after\\\\|provider.*.cooldown\" /c/Users/chang/Documents/github/nanobot/nanobot/providers/*.py)",
+      "Bash(python -m pytest tests/ -x -q)",
+      "Bash(python -c \"import nanobot; print\\('import ok'\\)\")",
+      "Bash(python3 -c \"import nanobot; print\\('import ok'\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python3 -c \"from nanobot.agent.runner import clear_old_tool_results, AgentRunSpec; print\\('runner ok'\\)\")",
+      "Bash(python3 -c \"from nanobot.config.schema import AgentDefaults; d=AgentDefaults\\(\\); print\\(f'clearing_keep={d.tool_result_clearing_keep}, trigger={d.consolidation_trigger_ratio}, target={d.consolidation_target_ratio}'\\)\")",
+      "Bash(python3 -c ':*)",
+      "Bash(python3 -m pytest tests/ -x -q)",
+      "Read(//opt/homebrew/Cellar/python@3.11/3.11.15/Frameworks/Python.framework/Versions/3.11/bin/**)",
+      "Bash(pip3 list:*)",
+      "Bash(poetry env:*)",
+      "Bash(pdm info:*)",
+      "Bash(.venv/bin/python -m pytest tests/ -x -q)",
+      "Bash(.venv/bin/python -m pytest tests/ -x -q --ignore=tests/channels/test_matrix_channel.py)",
+      "Bash(.venv/bin/python -m pytest tests/ -x -q --ignore=tests/channels/test_matrix_channel.py --ignore=tests/agent/test_context_prompt_cache.py)",
+      "Bash(.venv/bin/python -m pytest tests/providers/ tests/cli/ -x -q)",
+      "Bash(.venv/bin/python -m pytest tests/providers/ tests/cli/ -x -q --ignore=tests/cli/test_commands.py)",
+      "Bash(.venv/bin/python -m pytest tests/providers/ -q)",
+      "Bash(python -m pytest tests/agent/test_smart_harness.py tests/agent/test_runner.py -x -q)",
+      "Bash(.venv/bin/pytest tests/agent/test_smart_harness.py tests/agent/test_runner.py -x -q)",
+      "Bash(.venv/bin/python -m nanobot gateway --help)"
+    ]
+  }
+}

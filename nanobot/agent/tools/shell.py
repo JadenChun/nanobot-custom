@@ -3,8 +3,11 @@
 import asyncio
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
+
+from loguru import logger
 
 from nanobot.agent.tools.base import Tool
 
@@ -44,6 +47,7 @@ class ExecTool(Tool):
 
     _MAX_TIMEOUT = 600
     _MAX_OUTPUT = 10_000
+    _GIT_NETWORK_OPS = ("push", "pull", "fetch", "clone", "ls-remote")
 
     @property
     def description(self) -> str:
@@ -89,6 +93,7 @@ class ExecTool(Tool):
         env = os.environ.copy()
         if self.path_append:
             env["PATH"] = env.get("PATH", "") + os.pathsep + self.path_append
+        self._apply_git_noninteractive_env(command, env)
 
         try:
             process = await asyncio.create_subprocess_shell(
@@ -110,7 +115,14 @@ class ExecTool(Tool):
                     await asyncio.wait_for(process.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
                     pass
+                finally:
+                    if sys.platform != "win32":
+                        try:
+                            os.waitpid(process.pid, os.WNOHANG)
+                        except (ProcessLookupError, ChildProcessError) as e:
+                            logger.debug("Process already reaped or not found: {}", e)
                 return f"Error: Command timed out after {effective_timeout} seconds"
+
 
             output_parts = []
 
@@ -141,6 +153,24 @@ class ExecTool(Tool):
         except Exception as e:
             return f"Error executing command: {str(e)}"
 
+    @classmethod
+    def _apply_git_noninteractive_env(cls, command: str, env: dict[str, str]) -> None:
+        """Prevent git network commands from hanging on interactive prompts."""
+        if not cls._is_git_network_command(command):
+            return
+        env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        if "GIT_SSH_COMMAND" not in env:
+            env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes -o ConnectTimeout=10"
+
+    @classmethod
+    def _is_git_network_command(cls, command: str) -> bool:
+        lower = command.lower()
+        for op in cls._GIT_NETWORK_OPS:
+            # Only match within one shell segment to reduce false positives.
+            if re.search(rf"\bgit\b[^|;&\n]*\b{re.escape(op)}\b", lower):
+                return True
+        return False
+
     def _guard_command(self, command: str, cwd: str) -> str | None:
         """Best-effort safety guard for potentially destructive commands."""
         cmd = command.strip()
@@ -153,6 +183,10 @@ class ExecTool(Tool):
         if self.allow_patterns:
             if not any(re.search(p, lower) for p in self.allow_patterns):
                 return "Error: Command blocked by safety guard (not in allowlist)"
+
+        from nanobot.security.network import contains_internal_url
+        if contains_internal_url(cmd):
+            return "Error: Command blocked by safety guard (internal/private URL detected)"
 
         if self.restrict_to_workspace:
             if "..\\" in cmd or "../" in cmd:
