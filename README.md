@@ -12,11 +12,45 @@
   </p>
 </div>
 
+> **This is a personal fork of [HKUDS/nanobot](https://github.com/HKUDS/nanobot)** with a redesigned agent harness. See [What's changed from upstream](#whats-changed-from-upstream) for details.
+
 🐈 **nanobot** is an **ultra-lightweight** personal AI assistant inspired by [OpenClaw](https://github.com/openclaw/openclaw).
 
 ⚡️ Delivers core agent functionality with **99% fewer lines of code** than OpenClaw.
 
 📏 Real-time line count: run `bash core_agent_lines.sh` to verify anytime.
+
+## What's changed from upstream
+
+This fork extends the original [HKUDS/nanobot](https://github.com/HKUDS/nanobot) with a redesigned agent execution harness, inspired by Anthropic's engineering article on [harness design for long-running agent applications](https://www.anthropic.com/engineering/harness-design-long-running-apps).
+
+### Plan → Act → Verify harness
+
+The original nanobot ran every request through a single flat agent loop — one pass, tools called inline, response returned. This fork replaces that with a three-phase harness:
+
+| Phase | What happens |
+|---|---|
+| **Plan** | A read-only internal planner inspects the task, gathers evidence using file reads, web search, or foreground explore subagents, then produces a structured handoff: `action_summary`, `review_goal`, and referenced findings. |
+| **Act** | The action agent runs with the full tool set, guided by the planner's handoff. It executes the task and produces a response. |
+| **Verify** | An internal verifier re-reads the output against the planner's `review_goal`. If it fails, a revision round runs automatically before the final response is returned. |
+
+The planner only activates when useful (`planning_mode = "agent"` by default — the LLM decides). Simple conversational turns skip straight to Act.
+
+### Foreground explore subagents
+
+The planner can delegate broad read-only investigation to foreground **explore subagents** via an `explore` tool. Each subagent runs its own isolated agent loop with read-only tools, reports structured findings (summary, file references, open questions), and exits — keeping the planner context clean. Up to 2 explore agents can run in parallel per planner turn (configurable).
+
+### Smart tool-result compaction
+
+Long-running tasks accumulate large tool outputs. The runner now tracks prompt token usage and only compacts older tool results when the context window is actually approaching its limit. Compaction preserves a head+tail snippet of each result rather than discarding it entirely, maintaining traceability while freeing tokens.
+
+### Gateway log file support
+
+Added `--log-file <path>` to `nanobot gateway` for persistent, rotation-managed log files — useful when running on a VPS or in a tmux session where terminal scrollback is limited. Logs rotate at 20 MB, keep 7 days of history, and write asynchronously so they don't affect gateway throughput.
+
+---
+
+Everything else — channels, providers, MCP, memory, sessions, skills — is inherited from upstream nanobot unchanged.
 
 ## 📢 News
 
