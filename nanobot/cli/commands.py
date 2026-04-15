@@ -647,6 +647,7 @@ def gateway(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    log_file: str | None = typer.Option(None, "--log-file", help="Write logs to this file (rotated at 20 MB, 7 days kept)"),
 ):
     """Start the nanobot gateway."""
     from nanobot.agent.loop import AgentLoop
@@ -660,6 +661,19 @@ def gateway(
     if verbose:
         import logging
         logging.basicConfig(level=logging.DEBUG)
+
+    if log_file:
+        from loguru import logger as _logger
+        _logger.add(
+            log_file,
+            rotation="20 MB",
+            retention="7 days",
+            compression="gz",
+            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
+            enqueue=True,
+        )
+        _logger.enable("nanobot")
+        console.print(f"[dim]Logging to {log_file}[/dim]")
 
     config = _load_runtime_config(config, workspace)
     port = port if port is not None else config.gateway.port

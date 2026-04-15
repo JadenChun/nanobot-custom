@@ -137,7 +137,8 @@ After any inline tool use, always produce a visible text response summarizing wh
                 context_section += f"- {ctx_path}\n"
             context_section += (
                 "- Context memory, skills, and bootstrap files from these repos supplement your workspace.\n"
-                "- Context repo files are read-only - write your own data to the workspace.\n"
+                "- You can read and write files in context repos to manage memory, skills, and bootstrap files.\n"
+                "- Changes to context repos are auto-synced via git commit and push.\n"
             )
 
         return f"""# nanobot 🐈

@@ -1623,6 +1623,7 @@ nanobot gateway --config ~/.nanobot-telegram/config.json --workspace /tmp/nanobo
 | `nanobot agent --logs` | Show runtime logs during chat |
 | `nanobot serve` | Start the OpenAI-compatible API |
 | `nanobot gateway` | Start the gateway |
+| `nanobot gateway --log-file ~/nanobot.log` | Start the gateway and write logs to a file (rotated at 20 MB, 7 days kept) |
 | `nanobot status` | Show status |
 | `nanobot artifacts path` | Show the workspace directory used for browser test artifacts |
 | `nanobot artifacts clean` | Remove saved browser test artifacts from the workspace |
@@ -1814,7 +1815,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/nanobot gateway
+ExecStart=%h/.local/bin/nanobot gateway --log-file %h/.nanobot/gateway.log
 Restart=always
 RestartSec=10
 NoNewPrivileges=yes
@@ -1837,8 +1838,11 @@ systemctl --user enable --now nanobot-gateway
 ```bash
 systemctl --user status nanobot-gateway        # check status
 systemctl --user restart nanobot-gateway       # restart after config changes
-journalctl --user -u nanobot-gateway -f        # follow logs
+journalctl --user -u nanobot-gateway -f        # follow logs via systemd
+tail -f ~/.nanobot/gateway.log                 # follow logs via log file
 ```
+
+> **Tip for tmux/VPS users:** Use `--log-file` so you can inspect logs from any pane or SSH session without relying on tmux scrollback. Logs are rotated automatically at 20 MB and kept for 7 days.
 
 If you edit the `.service` file itself, run `systemctl --user daemon-reload` before restarting.
 
