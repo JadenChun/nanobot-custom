@@ -5,16 +5,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any, AsyncGenerator
 
 import httpx
 from loguru import logger
-from oauth_cli_kit import get_token as get_codex_token
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.codex_auth import get_token as get_codex_token
 
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
-DEFAULT_ORIGINATOR = "nanobot"
+DEFAULT_ORIGINATOR = "codex_cli_rs"
+_MAX_CODEX_ID_LEN = 64
 
 
 class OpenAICodexProvider(LLMProvider):
@@ -24,16 +26,16 @@ class OpenAICodexProvider(LLMProvider):
         super().__init__(api_key=None, api_base=None)
         self.default_model = default_model
 
-    async def chat(
+    async def _call_codex(
         self,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
-        model: str | None = None,
-        max_tokens: int = 4096,
-        temperature: float = 0.7,
-        reasoning_effort: str | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
+        tools: list[dict[str, Any]] | None,
+        model: str | None,
+        reasoning_effort: str | None,
+        tool_choice: str | dict[str, Any] | None,
+        on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
+        """Shared request logic for both chat() and chat_stream()."""
         model = model or self.default_model
         system_prompt, input_items = _convert_messages(messages)
 
@@ -52,33 +54,57 @@ class OpenAICodexProvider(LLMProvider):
             "tool_choice": tool_choice or "auto",
             "parallel_tool_calls": True,
         }
-
         if reasoning_effort:
             body["reasoning"] = {"effort": reasoning_effort}
-
         if tools:
             body["tools"] = _convert_tools(tools)
 
-        url = DEFAULT_CODEX_URL
-
         try:
             try:
-                content, tool_calls, finish_reason = await _request_codex(url, headers, body, verify=True)
+                content, tool_calls, finish_reason = await _request_codex(
+                    DEFAULT_CODEX_URL, headers, body, verify=True,
+                    on_content_delta=on_content_delta,
+                )
             except Exception as e:
                 if "CERTIFICATE_VERIFY_FAILED" not in str(e):
                     raise
-                logger.warning("SSL certificate verification failed for Codex API; retrying with verify=False")
-                content, tool_calls, finish_reason = await _request_codex(url, headers, body, verify=False)
+                logger.warning("SSL verification failed for Codex API; retrying with verify=False")
+                content, tool_calls, finish_reason = await _request_codex(
+                    DEFAULT_CODEX_URL, headers, body, verify=False,
+                    on_content_delta=on_content_delta,
+                )
+            return LLMResponse(content=content, tool_calls=tool_calls, finish_reason=finish_reason)
+        except _CodexHTTPError as e:
+            msg = f"Error calling Codex: {e}"
+            retry_after = e.retry_after or self._extract_retry_after(msg)
             return LLMResponse(
-                content=content,
-                tool_calls=tool_calls,
-                finish_reason=finish_reason,
+                content=msg, finish_reason="error",
+                retry_after=retry_after,
+                error_status_code=e.status_code,
+                error_type=e.error_type,
+                error_code=e.error_code,
             )
         except Exception as e:
-            return LLMResponse(
-                content=f"Error calling Codex: {str(e)}",
-                finish_reason="error",
-            )
+            msg = f"Error calling Codex: {e}"
+            retry_after = self._extract_retry_after(msg)
+            return LLMResponse(content=msg, finish_reason="error", retry_after=retry_after)
+
+    async def chat(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
+        model: str | None = None, max_tokens: int = 4096, temperature: float = 0.7,
+        reasoning_effort: str | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> LLMResponse:
+        return await self._call_codex(messages, tools, model, reasoning_effort, tool_choice)
+
+    async def chat_stream(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None,
+        model: str | None = None, max_tokens: int = 4096, temperature: float = 0.7,
+        reasoning_effort: str | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
+        on_content_delta: Callable[[str], Awaitable[None]] | None = None,
+    ) -> LLMResponse:
+        return await self._call_codex(messages, tools, model, reasoning_effort, tool_choice, on_content_delta)
 
     def get_default_model(self) -> str:
         return self.default_model
@@ -90,16 +116,61 @@ def _strip_model_prefix(model: str) -> str:
     return model
 
 
+def _normalize_codex_id(value: Any, prefix: str) -> str:
+    """Return a Codex-safe opaque identifier."""
+    if isinstance(value, str):
+        text = value.strip()
+        if text and len(text) <= _MAX_CODEX_ID_LEN and all(ch.isalnum() or ch in "_-" for ch in text):
+            return text
+        if text:
+            digest_len = max(8, _MAX_CODEX_ID_LEN - len(prefix))
+            return f"{prefix}{hashlib.sha1(text.encode('utf-8')).hexdigest()[:digest_len]}"
+    return f"{prefix}0"
+
+
+def _normalize_tool_call_ref(
+    tool_call_id: Any,
+    *,
+    fallback_item_id: str | None = None,
+) -> tuple[str, str | None]:
+    """Normalize a stored tool-call reference into Codex-safe call/item IDs."""
+    call_id, item_id = _split_tool_call_id(tool_call_id)
+    safe_call_id = _normalize_codex_id(call_id, "call_")
+    if item_id:
+        return safe_call_id, _normalize_codex_id(item_id, "fc_")
+    if fallback_item_id:
+        return safe_call_id, _normalize_codex_id(fallback_item_id, "fc_")
+    return safe_call_id, None
+
+
 def _build_headers(account_id: str, token: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
-        "chatgpt-account-id": account_id,
+        "ChatGPT-Account-ID": account_id,
         "OpenAI-Beta": "responses=experimental",
         "originator": DEFAULT_ORIGINATOR,
-        "User-Agent": "nanobot (python)",
+        "User-Agent": f"{DEFAULT_ORIGINATOR}/0.0.1 (python)",
         "accept": "text/event-stream",
         "content-type": "application/json",
     }
+
+
+class _CodexHTTPError(RuntimeError):
+    """Carries structured error metadata from a Codex HTTP error response."""
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        retry_after: float | None = None,
+        error_type: str | None = None,
+        error_code: str | None = None,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+        self.error_type = error_type
+        self.error_code = error_code
 
 
 async def _request_codex(
@@ -107,13 +178,23 @@ async def _request_codex(
     headers: dict[str, str],
     body: dict[str, Any],
     verify: bool,
+    on_content_delta: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[str, list[ToolCallRequest], str]:
     async with httpx.AsyncClient(timeout=60.0, verify=verify) as client:
         async with client.stream("POST", url, headers=headers, json=body) as response:
             if response.status_code != 200:
                 text = await response.aread()
-                raise RuntimeError(_friendly_error(response.status_code, text.decode("utf-8", "ignore")))
-            return await _consume_sse(response)
+                raw = text.decode("utf-8", "ignore")
+                retry_after = LLMProvider._extract_retry_after_from_headers(response.headers)
+                error_type, error_code = _extract_error_tokens(raw)
+                raise _CodexHTTPError(
+                    _friendly_error(response.status_code, raw, error_type),
+                    status_code=response.status_code,
+                    retry_after=retry_after,
+                    error_type=error_type,
+                    error_code=error_code,
+                )
+            return await _consume_sse(response, on_content_delta)
 
 
 def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -135,7 +216,7 @@ def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
-    system_prompt = ""
+    system_parts: list[str] = []
     input_items: list[dict[str, Any]] = []
 
     for idx, msg in enumerate(messages):
@@ -143,7 +224,12 @@ def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[st
         content = msg.get("content")
 
         if role == "system":
-            system_prompt = content if isinstance(content, str) else ""
+            # Collect all system messages and merge them; do not overwrite so
+            # that a planner handoff injected after the main system prompt is
+            # preserved rather than replacing the agent's identity and tools.
+            part = content if isinstance(content, str) else ""
+            if part:
+                system_parts.append(part)
             continue
 
         if role == "user":
@@ -151,46 +237,33 @@ def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[st
             continue
 
         if role == "assistant":
-            # Handle text first.
             if isinstance(content, str) and content:
-                input_items.append(
-                    {
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": content}],
-                        "status": "completed",
-                        "id": f"msg_{idx}",
-                    }
-                )
-            # Then handle tool calls.
+                input_items.append({
+                    "type": "message", "role": "assistant",
+                    "content": [{"type": "output_text", "text": content}],
+                    "status": "completed", "id": f"msg_{idx}",
+                })
             for tool_call in msg.get("tool_calls", []) or []:
                 fn = tool_call.get("function") or {}
-                call_id, item_id = _split_tool_call_id(tool_call.get("id"))
-                call_id = call_id or f"call_{idx}"
-                item_id = item_id or f"fc_{idx}"
-                input_items.append(
-                    {
-                        "type": "function_call",
-                        "id": item_id,
-                        "call_id": call_id,
-                        "name": fn.get("name"),
-                        "arguments": fn.get("arguments") or "{}",
-                    }
+                call_id, item_id = _normalize_tool_call_ref(
+                    tool_call.get("id"),
+                    fallback_item_id=f"fc_{idx}",
                 )
+                input_items.append({
+                    "type": "function_call",
+                    "id": item_id or _normalize_codex_id(f"fc_{idx}", "fc_"),
+                    "call_id": call_id or _normalize_codex_id(f"call_{idx}", "call_"),
+                    "name": fn.get("name"),
+                    "arguments": fn.get("arguments") or "{}",
+                })
             continue
 
         if role == "tool":
-            call_id, _ = _split_tool_call_id(msg.get("tool_call_id"))
+            call_id, _ = _normalize_tool_call_ref(msg.get("tool_call_id"))
             output_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
-            input_items.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": output_text,
-                }
-            )
-            continue
+            input_items.append({"type": "function_call_output", "call_id": call_id, "output": output_text})
 
+    system_prompt = "\n\n".join(system_parts)
     return system_prompt, input_items
 
 
@@ -247,7 +320,10 @@ async def _iter_sse(response: httpx.Response) -> AsyncGenerator[dict[str, Any], 
         buffer.append(line)
 
 
-async def _consume_sse(response: httpx.Response) -> tuple[str, list[ToolCallRequest], str]:
+async def _consume_sse(
+    response: httpx.Response,
+    on_content_delta: Callable[[str], Awaitable[None]] | None = None,
+) -> tuple[str, list[ToolCallRequest], str]:
     content = ""
     tool_calls: list[ToolCallRequest] = []
     tool_call_buffers: dict[str, dict[str, Any]] = {}
@@ -267,7 +343,10 @@ async def _consume_sse(response: httpx.Response) -> tuple[str, list[ToolCallRequ
                     "arguments": item.get("arguments") or "",
                 }
         elif event_type == "response.output_text.delta":
-            content += event.get("delta") or ""
+            delta_text = event.get("delta") or ""
+            content += delta_text
+            if on_content_delta and delta_text:
+                await on_content_delta(delta_text)
         elif event_type == "response.function_call_arguments.delta":
             call_id = event.get("call_id")
             if call_id and call_id in tool_call_buffers:
@@ -288,9 +367,11 @@ async def _consume_sse(response: httpx.Response) -> tuple[str, list[ToolCallRequ
                     args = json.loads(args_raw)
                 except Exception:
                     args = {"raw": args_raw}
+                safe_call_id = _normalize_codex_id(call_id, "call_")
+                safe_item_id = _normalize_codex_id(buf.get("id") or item.get("id") or "fc_0", "fc_")
                 tool_calls.append(
                     ToolCallRequest(
-                        id=f"{call_id}|{buf.get('id') or item.get('id') or 'fc_0'}",
+                        id=f"{safe_call_id}|{safe_item_id}",
                         name=buf.get("name") or item.get("name"),
                         arguments=args,
                     )
@@ -311,7 +392,31 @@ def _map_finish_reason(status: str | None) -> str:
     return _FINISH_REASON_MAP.get(status or "completed", "stop")
 
 
-def _friendly_error(status_code: int, raw: str) -> str:
+def _extract_error_tokens(raw: str) -> tuple[str | None, str | None]:
+    """Parse error type and code from a JSON error response body."""
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    error_obj = data.get("error")
+    error_type = data.get("type")
+    error_code = data.get("code")
+    if isinstance(error_obj, dict):
+        error_type = error_obj.get("type") or error_type
+        error_code = error_obj.get("code") or error_code
+    t = str(error_type).strip().lower() if error_type else None
+    c = str(error_code).strip().lower() if error_code else None
+    return t or None, c or None
+
+
+def _friendly_error(status_code: int, raw: str, error_type: str | None = None) -> str:
     if status_code == 429:
-        return "ChatGPT usage quota exceeded or rate limit triggered. Please try again later."
+        # Distinguish rate limit from quota exhaustion.
+        quota_tokens = {"insufficient_quota", "quota_exceeded", "quota_exhausted",
+                        "billing_hard_limit_reached", "insufficient_balance"}
+        if error_type and error_type in quota_tokens:
+            return "ChatGPT quota exhausted. Please check your plan and billing."
+        return "ChatGPT rate limit triggered. Please try again shortly."
     return f"HTTP {status_code}: {raw}"

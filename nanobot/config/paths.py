@@ -40,6 +40,22 @@ def get_workspace_path(workspace: str | None = None) -> Path:
     return ensure_dir(path)
 
 
+def get_browser_test_artifacts_dir(workspace: str | Path | None = None) -> Path:
+    """Return the workspace-scoped browser test artifacts directory."""
+    if isinstance(workspace, Path):
+        workspace_arg: str | None = str(workspace)
+    else:
+        workspace_arg = workspace
+    return ensure_dir(get_workspace_path(workspace_arg) / "artifacts" / "browser-tests")
+
+
+def is_default_workspace(workspace: str | Path | None) -> bool:
+    """Return whether a workspace resolves to nanobot's default workspace path."""
+    current = Path(workspace).expanduser() if workspace is not None else Path.home() / ".nanobot" / "workspace"
+    default = Path.home() / ".nanobot" / "workspace"
+    return current.resolve(strict=False) == default.resolve(strict=False)
+
+
 def get_cli_history_path() -> Path:
     """Return the shared CLI history file path."""
     return Path.home() / ".nanobot" / "history" / "cli_history"
