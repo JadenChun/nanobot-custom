@@ -216,7 +216,7 @@ def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
-    system_prompt = ""
+    system_parts: list[str] = []
     input_items: list[dict[str, Any]] = []
 
     for idx, msg in enumerate(messages):
@@ -224,7 +224,12 @@ def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[st
         content = msg.get("content")
 
         if role == "system":
-            system_prompt = content if isinstance(content, str) else ""
+            # Collect all system messages and merge them; do not overwrite so
+            # that a planner handoff injected after the main system prompt is
+            # preserved rather than replacing the agent's identity and tools.
+            part = content if isinstance(content, str) else ""
+            if part:
+                system_parts.append(part)
             continue
 
         if role == "user":
@@ -258,6 +263,7 @@ def _convert_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[st
             output_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
             input_items.append({"type": "function_call_output", "call_id": call_id, "output": output_text})
 
+    system_prompt = "\n\n".join(system_parts)
     return system_prompt, input_items
 
 

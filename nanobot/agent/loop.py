@@ -1384,10 +1384,19 @@ End your response with exactly:
                 )
                 self._store_planner_handoff(session, current_message, planned)
                 self.sessions.save(session)
-                initial_messages.insert(-1, {
-                    "role": "system",
-                    "content": self._planner_handoff_message(planned),
-                })
+                handoff_text = self._planner_handoff_message(planned)
+                if initial_messages and initial_messages[0].get("role") == "system":
+                    # Append to the existing system message instead of inserting a new one.
+                    # Inserting a second system-role message causes the Anthropic provider to
+                    # overwrite the first (it takes the last system message seen), which strips
+                    # the agent's identity, workspace context, and tool knowledge.
+                    existing = initial_messages[0].get("content") or ""
+                    initial_messages[0] = {
+                        **initial_messages[0],
+                        "content": f"{existing}\n\n{handoff_text}",
+                    }
+                else:
+                    initial_messages.insert(0, {"role": "system", "content": handoff_text})
                 logger.info("Planner handoff injected into action context for session {}", key)
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:

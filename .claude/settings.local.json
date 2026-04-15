@@ -25,7 +25,10 @@
       "Bash(.venv/bin/python -m pytest tests/ -x -q --ignore=tests/channels/test_matrix_channel.py --ignore=tests/agent/test_context_prompt_cache.py)",
       "Bash(.venv/bin/python -m pytest tests/providers/ tests/cli/ -x -q)",
       "Bash(.venv/bin/python -m pytest tests/providers/ tests/cli/ -x -q --ignore=tests/cli/test_commands.py)",
-      "Bash(.venv/bin/python -m pytest tests/providers/ -q)"
+      "Bash(.venv/bin/python -m pytest tests/providers/ -q)",
+      "Bash(python -m pytest tests/agent/test_smart_harness.py tests/agent/test_runner.py -x -q)",
+      "Bash(.venv/bin/pytest tests/agent/test_smart_harness.py tests/agent/test_runner.py -x -q)",
+      "Bash(.venv/bin/python -m nanobot gateway --help)"
     ]
   }
 }

@@ -63,7 +63,7 @@ class AnthropicProvider(LLMProvider):
         self, messages: list[dict[str, Any]],
     ) -> tuple[str | list[dict[str, Any]], list[dict[str, Any]]]:
         """Return ``(system, anthropic_messages)``."""
-        system: str | list[dict[str, Any]] = ""
+        system_parts: list[str] = []
         raw: list[dict[str, Any]] = []
 
         for msg in messages:
@@ -71,7 +71,12 @@ class AnthropicProvider(LLMProvider):
             content = msg.get("content")
 
             if role == "system":
-                system = content if isinstance(content, (str, list)) else str(content or "")
+                # Collect all system messages and merge them; do not overwrite so
+                # that a planner handoff injected after the main system prompt is
+                # preserved rather than replacing the agent's identity and tools.
+                part = content if isinstance(content, str) else str(content or "")
+                if part:
+                    system_parts.append(part)
                 continue
 
             if role == "tool":
@@ -99,6 +104,7 @@ class AnthropicProvider(LLMProvider):
                 })
                 continue
 
+        system: str | list[dict[str, Any]] = "\n\n".join(system_parts)
         return system, self._merge_consecutive(raw)
 
     @staticmethod
