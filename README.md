@@ -28,6 +28,43 @@ This fork extends the original [HKUDS/nanobot](https://github.com/HKUDS/nanobot)
 
 The original nanobot ran every request through a single flat agent loop — one pass, tools called inline, response returned. This fork replaces that with a three-phase harness:
 
+```mermaid
+flowchart TD
+    IN([Inbound message]) --> SIMPLE{Simple\nconversation?}
+    SIMPLE -- yes --> ACT
+    SIMPLE -- no --> PLAN_GATE{planning_mode}
+
+    PLAN_GATE -- off --> ACT
+    PLAN_GATE -- agent/on --> PLAN
+
+    subgraph PLAN ["🔍 Plan phase (read-only)"]
+        P1[Planner LLM\nread-only tools] -->|needs broad\ninvestigation| EXP["Explore subagents\n(parallel, isolated)"]
+        EXP --> P1
+        P1 --> PD{Decision}
+        PD -- answer / clarify --> DIRECT([Return response\ndirectly])
+        PD -- execute --> HO["Structured handoff\naction_summary · review_goal · references"]
+    end
+
+    HO --> ACT
+
+    subgraph ACT ["⚡ Act phase (full tools)"]
+        A1[Action agent\nfull tool set] -->|tool calls| A1
+        A1 --> AR[Response]
+    end
+
+    AR --> VERIFY_GATE{Should\nverify?}
+    VERIFY_GATE -- no --> OUT([Return to user])
+
+    subgraph VERIFY ["✅ Verify phase (read-only)"]
+        V1[Verifier LLM\nread-only tools] --> VD{Verdict}
+        VD -- pass --> OUT
+        VD -- fail --> REV[Revision prompt\ninjected into Act]
+        REV --> ACT
+    end
+
+    VERIFY_GATE -- yes --> VERIFY
+```
+
 | Phase | What happens |
 |---|---|
 | **Plan** | A read-only internal planner inspects the task, gathers evidence using file reads, web search, or foreground explore subagents, then produces a structured handoff: `action_summary`, `review_goal`, and referenced findings. |
