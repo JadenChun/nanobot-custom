@@ -28,7 +28,14 @@
       "Bash(.venv/bin/python -m pytest tests/providers/ -q)",
       "Bash(python -m pytest tests/agent/test_smart_harness.py tests/agent/test_runner.py -x -q)",
       "Bash(.venv/bin/pytest tests/agent/test_smart_harness.py tests/agent/test_runner.py -x -q)",
-      "Bash(.venv/bin/python -m nanobot gateway --help)"
+      "Bash(.venv/bin/python -m nanobot gateway --help)",
+      "Bash(python -m pytest tests/cron/ -v)",
+      "Bash(python3 -m pytest tests/cron/ -v)",
+      "Bash(ls .venv/bin/python*)",
+      "Bash(ls venv/bin/python*)",
+      "Read(//Users/jaden/.local/bin/**)",
+      "Read(//usr/local/bin/**)",
+      "Bash(.venv/bin/python -m pytest tests/cron/ -v)"
     ]
   }
 }
