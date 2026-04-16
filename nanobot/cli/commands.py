@@ -731,8 +731,20 @@ def gateway(
         reminder_note = (
             "[Scheduled Task] Timer finished.\n\n"
             f"Task '{job.name}' has been triggered.\n"
-            f"Scheduled instruction: {job.payload.message}"
+            f"Scheduled instruction: {job.payload.message}\n\n"
+            "This is a fresh execution of this scheduled task. "
+            "Execute it now — do not simply echo a status update or say 'in progress'. "
+            "Either complete the task directly and deliver the result, "
+            "or use the spawn tool to start background work and confirm to the user that work has begun."
         )
+
+        # Clear stale history so previous "in progress" messages don't mislead this run.
+        # Only wipes messages — metadata is preserved and any stale planner handoff in
+        # metadata is auto-cleared by the loop when the new message arrives.
+        # Background subagents are asyncio tasks and are unaffected by this clearing.
+        cron_session = agent.sessions.get_or_create(f"cron:{job.id}")
+        cron_session.retain_recent_legal_suffix(0)
+        agent.sessions.save(cron_session)
 
         cron_tool = agent.tools.get("cron")
         cron_token = None
