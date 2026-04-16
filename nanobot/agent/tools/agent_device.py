@@ -5,9 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
+
+
+def _resolve_npx() -> str | None:
+    """Resolve the runnable npx command, including Windows .cmd launchers."""
+
+    return shutil.which("npx") or shutil.which("npx.cmd")
 
 
 class AgentDeviceTool(Tool):
@@ -79,18 +86,20 @@ class AgentDeviceTool(Tool):
         run_timeout = timeout if timeout is not None else self.timeout
         cwd = working_dir or self.working_dir or os.getcwd()
 
-        command = ["npx", "--yes", self.package, *args]
+        npx_command = _resolve_npx()
+        if not npx_command:
+            return (
+                "Error: 'npx' was not found in PATH. "
+                "Install Node.js/npm first, then retry."
+            )
+
+        command = [npx_command, "--yes", self.package, *args]
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
-            )
-        except FileNotFoundError:
-            return (
-                "Error: 'npx' was not found in PATH. "
-                "Install Node.js/npm first, then retry."
             )
         except Exception as e:
             return f"Error: failed to start agent-device: {e}"

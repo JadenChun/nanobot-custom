@@ -28,10 +28,7 @@ async def test_agent_device_requires_args() -> None:
 @pytest.mark.asyncio
 async def test_agent_device_reports_missing_npx() -> None:
     tool = AgentDeviceTool()
-    with patch(
-        "nanobot.agent.tools.agent_device.asyncio.create_subprocess_exec",
-        side_effect=FileNotFoundError,
-    ):
+    with patch("nanobot.agent.tools.agent_device._resolve_npx", return_value=None):
         result = await tool.execute(args=["devices", "--platform", "ios"])
 
     assert "npx" in result
@@ -42,15 +39,19 @@ async def test_agent_device_reports_missing_npx() -> None:
 async def test_agent_device_returns_json_payload_for_success() -> None:
     tool = AgentDeviceTool(working_dir="/tmp/work")
     fake_process = _FakeProcess(stdout=b"booted\n", stderr=b"", returncode=0)
+    npx_path = r"C:\Program Files\nodejs\npx.cmd"
 
     with patch(
+        "nanobot.agent.tools.agent_device._resolve_npx",
+        return_value=npx_path,
+    ), patch(
         "nanobot.agent.tools.agent_device.asyncio.create_subprocess_exec",
         return_value=fake_process,
     ) as mock_exec:
         result = await tool.execute(args=["devices", "--platform", "ios"])
 
     payload = json.loads(result)
-    assert payload["command"] == ["npx", "--yes", "agent-device", "devices", "--platform", "ios"]
+    assert payload["command"] == [npx_path, "--yes", "agent-device", "devices", "--platform", "ios"]
     assert payload["cwd"] == "/tmp/work"
     assert payload["exitCode"] == 0
     assert payload["stdout"] == "booted\n"
