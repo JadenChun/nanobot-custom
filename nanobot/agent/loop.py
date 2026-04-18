@@ -244,6 +244,7 @@ class AgentLoop:
         timezone: str | None = None,
         hooks: list[AgentHook] | None = None,
         context_paths: list[Path] | None = None,
+        skill_paths: list[Path] | None = None,
         planning_mode: str = "agent",
         planner_max_iterations: int = _DEFAULT_PLANNER_MAX_ITERATIONS,
         planner_explore_subagent_max_iterations: int = _DEFAULT_PLANNER_EXPLORE_MAX_ITERATIONS,
@@ -288,6 +289,7 @@ class AgentLoop:
             timezone=timezone,
             context_paths=context_paths,
             planning_mode=planning_mode,
+            skill_paths=skill_paths,
         )
         self.context_paths = context_paths or []
         self.sessions = session_manager or SessionManager(workspace)
