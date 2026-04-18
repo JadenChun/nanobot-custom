@@ -98,4 +98,11 @@ def _migrate_config(data: dict) -> dict:
     exec_cfg = tools.get("exec", {})
     if "restrictToWorkspace" in exec_cfg and "restrictToWorkspace" not in tools:
         tools["restrictToWorkspace"] = exec_cfg.pop("restrictToWorkspace")
+
+    # Backfill tool_timeout=120 for ltx-desktop MCP server (default 30s is too short).
+    mcp_servers = tools.get("mcpServers", {})
+    ltx = mcp_servers.get("ltx-desktop")
+    if isinstance(ltx, dict) and "toolTimeout" not in ltx:
+        ltx["toolTimeout"] = 120
+
     return data
