@@ -83,7 +83,6 @@ class Nanobot:
             restrict_to_workspace=config.tools.restrict_to_workspace,
             mcp_servers=config.tools.mcp_servers,
             timezone=defaults.timezone,
-            skill_paths=[Path(p).expanduser().resolve() for p in defaults.skill_paths] or None,
             context_paths=[Path(p).expanduser().resolve() for p in defaults.context_paths] if defaults.context_paths else None,
             planning_mode=defaults.planning_mode,
             tool_result_clearing_keep=defaults.tool_result_clearing_keep,

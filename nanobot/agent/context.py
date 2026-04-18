@@ -27,7 +27,6 @@ class ContextBuilder:
         timezone: str | None = None,
         context_paths: list[Path] | None = None,
         planning_mode: str = "agent",
-        skill_paths: list[Path] | None = None,
     ):
         self.workspace = workspace
         self.timezone = timezone
@@ -35,7 +34,8 @@ class ContextBuilder:
         self.planning_mode = planning_mode
         self.memory = MemoryStore(workspace)
 
-        all_skill_paths = list(skill_paths or [])
+        # If context repos are configured, include their skills dirs in extra paths
+        all_skill_paths = []
         for cp in self.context_paths:
             if (cp / "skills").is_dir():
                 all_skill_paths.append(cp / "skills")
