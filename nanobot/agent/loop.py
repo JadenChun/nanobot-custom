@@ -354,7 +354,11 @@ class AgentLoop:
             ))
         self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
-        self.tools.register(ImageGenerationTool(config=self.image_config))
+        # Only register the OpenRouter-backed generate_image tool when a key is
+        # configured. Codex OAuth users get server-side image generation via
+        # the hosted image_generation tool without this fallback.
+        if self.image_config.api_key or os.environ.get("OPENROUTER_API_KEY"):
+            self.tools.register(ImageGenerationTool(config=self.image_config))
         if self.agent_browser_config.enabled:
             self.tools.register(AgentBrowserTool(
                 package=self.agent_browser_config.package,

@@ -310,6 +310,7 @@ class AgentRunner:
                         final_content,
                         reasoning_content=response.reasoning_content,
                         thinking_blocks=response.thinking_blocks,
+                        image_calls=response.image_calls,
                     ))
                     context.final_content = final_content
                     context.stop_reason = stop_reason
@@ -337,6 +338,7 @@ class AgentRunner:
                     tool_calls=[tc.to_openai_tool_call() for tc in response.tool_calls],
                     reasoning_content=response.reasoning_content,
                     thinking_blocks=response.thinking_blocks,
+                    image_calls=response.image_calls,
                 ))
                 tools_used.extend(tc.name for tc in response.tool_calls)
 
@@ -389,6 +391,7 @@ class AgentRunner:
                     "",
                     reasoning_content=response.reasoning_content,
                     thinking_blocks=response.thinking_blocks,
+                    image_calls=response.image_calls,
                 ))
                 messages.append({
                     "role": "user",
@@ -401,6 +404,7 @@ class AgentRunner:
                 clean,
                 reasoning_content=response.reasoning_content,
                 thinking_blocks=response.thinking_blocks,
+                image_calls=response.image_calls,
             ))
             final_content = clean
             context.final_content = final_content
