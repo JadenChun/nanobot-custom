@@ -50,6 +50,8 @@ class LLMResponse:
     retry_after: float | None = None  # Provider-supplied retry wait in seconds.
     reasoning_content: str | None = None  # Kimi, DeepSeek-R1 etc.
     thinking_blocks: list[dict] | None = None  # Anthropic extended thinking
+    # Codex hosted image_generation tool output items (one per generated image).
+    image_calls: list[dict[str, Any]] = field(default_factory=list)
     # Structured error metadata for retry classification.
     error_status_code: int | None = None
     error_type: str | None = None  # e.g. "insufficient_quota"

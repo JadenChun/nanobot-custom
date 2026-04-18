@@ -143,7 +143,10 @@ def _make_single_provider(config: Any, provider_name: str, model: str) -> Any:
     if backend == "openai_codex":
         from nanobot.providers.openai_codex_provider import OpenAICodexProvider
 
-        return OpenAICodexProvider(default_model=model)
+        return OpenAICodexProvider(
+            default_model=model,
+            workspace=str(config.workspace_path),
+        )
     elif backend == "azure_openai":
         from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
 
