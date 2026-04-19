@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import os
+import re
+import shutil
 import time
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
@@ -18,25 +19,29 @@ from nanobot.agent.context import ContextBuilder
 from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
 from nanobot.agent.memory import MemoryConsolidator
 from nanobot.agent.policy import RiskyActionPolicy
-from nanobot.agent.runner import AgentRunResult, AgentRunSpec, AgentRunner, clear_old_tool_results
+from nanobot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec, clear_old_tool_results
+from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.explore import ExploreTool
-from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.image import (
+    ImageGenerationTool,
+    reset_current_user_image_request,
+    set_current_user_image_request,
+)
+from nanobot.agent.tools.mcp import is_read_only_mcp_tool
 from nanobot.agent.tools.message import MessageTool
+from nanobot.agent.tools.pipeline import SpawnPipelineTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.pipeline import SpawnPipelineTool
 from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.agent.tools.image import ImageGenerationTool
-from nanobot.agent.tools.mcp import is_read_only_mcp_tool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.bus.queue import MessageBus
+from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 from nanobot.utils.helpers import build_assistant_message, estimate_prompt_tokens_chain
@@ -252,7 +257,14 @@ class AgentLoop:
         consolidation_trigger_ratio: float = 0.5,
         consolidation_target_ratio: float = 0.3,
     ):
-        from nanobot.config.schema import AgentBrowserConfig, AgentDeviceConfig, ExecToolConfig, ImageConfig, MaxTokensConfig, WebSearchConfig
+        from nanobot.config.schema import (
+            AgentBrowserConfig,
+            AgentDeviceConfig,
+            ExecToolConfig,
+            ImageConfig,
+            MaxTokensConfig,
+            WebSearchConfig,
+        )
 
         self.bus = bus
         self.channels_config = channels_config
@@ -354,11 +366,22 @@ class AgentLoop:
             ))
         self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
-        # Only register the OpenRouter-backed generate_image tool when a key is
-        # configured. Codex OAuth users get server-side image generation via
-        # the hosted image_generation tool without this fallback.
-        if self.image_config.api_key or os.environ.get("OPENROUTER_API_KEY"):
-            self.tools.register(ImageGenerationTool(config=self.image_config))
+        image_provider = (self.image_config.provider or "auto").lower()
+        image_has_openrouter = bool(self.image_config.api_key or os.environ.get("OPENROUTER_API_KEY"))
+        image_codex_command = self.image_config.codex_command or "codex"
+        image_has_codex_cli = (
+            shutil.which(image_codex_command) is not None
+            or (
+                any(sep in image_codex_command for sep in ("/", "\\"))
+                and Path(image_codex_command).expanduser().exists()
+            )
+        )
+        if (
+            image_provider in {"codex", "codex_cli", "codex-cli"}
+            or image_has_openrouter
+            or (image_provider == "auto" and image_has_codex_cli)
+        ):
+            self.tools.register(ImageGenerationTool(config=self.image_config, workspace=self.workspace))
         if self.agent_browser_config.enabled:
             self.tools.register(AgentBrowserTool(
                 package=self.agent_browser_config.package,
@@ -976,16 +999,20 @@ End your response with exactly:
             bool(planned and planned.has_handoff),
             approval_granted,
         )
-        result = await self._run_agent(
-            initial_messages,
-            on_progress=on_progress,
-            on_stream=on_stream,
-            on_stream_end=on_stream_end,
-            tool_policy=policy,
-            channel=channel,
-            chat_id=chat_id,
-            message_id=message_id,
-        )
+        image_request_token = set_current_user_image_request(task_text)
+        try:
+            result = await self._run_agent(
+                initial_messages,
+                on_progress=on_progress,
+                on_stream=on_stream,
+                on_stream_end=on_stream_end,
+                tool_policy=policy,
+                channel=channel,
+                chat_id=chat_id,
+                message_id=message_id,
+            )
+        finally:
+            reset_current_user_image_request(image_request_token)
         if result.stop_reason == "approval_required":
             logger.info("Action phase paused for approval on {}:{}", channel, chat_id)
             return result
@@ -1027,16 +1054,20 @@ End your response with exactly:
                 "Please revise the work and produce the final response."
             ),
         })
-        revised = await self._run_agent(
-            revision_messages,
-            on_progress=on_progress,
-            on_stream=on_stream,
-            on_stream_end=on_stream_end,
-            tool_policy=RiskyActionPolicy(workspace=self.workspace, approval_granted=True),
-            channel=channel,
-            chat_id=chat_id,
-            message_id=message_id,
-        )
+        image_request_token = set_current_user_image_request(task_text)
+        try:
+            revised = await self._run_agent(
+                revision_messages,
+                on_progress=on_progress,
+                on_stream=on_stream,
+                on_stream_end=on_stream_end,
+                tool_policy=RiskyActionPolicy(workspace=self.workspace, approval_granted=True),
+                channel=channel,
+                chat_id=chat_id,
+                message_id=message_id,
+            )
+        finally:
+            reset_current_user_image_request(image_request_token)
         if revised.stop_reason == "approval_required":
             return revised
 
