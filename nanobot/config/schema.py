@@ -211,10 +211,14 @@ class MCPServerConfig(Base):
 
 class ImageConfig(Base):
     """Image generation configuration."""
-    provider: str = "openrouter"
+    provider: str = "codex_cli"
     model: str = "bytedance-seed/seedream-4.5"
     api_key: str = ""
     api_base: str = "https://openrouter.ai/api/v1"
+    codex_command: str = "codex"
+    codex_model: str = "gpt-5.4-mini"
+    codex_timeout: int = 300
+    codex_home: str = ""
 
 
 class ToolsConfig(Base):
@@ -255,7 +259,7 @@ class Config(BaseSettings):
             context_path = defaults.pop("context_path")
             if context_path and isinstance(context_path, str):
                 defaults.setdefault("context_paths", []).append(context_path)
-        
+
         if isinstance(mt, int):
             defaults["maxTokens"] = {
                 "input": legacy_input if isinstance(legacy_input, int) else 120000,
