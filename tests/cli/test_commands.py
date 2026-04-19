@@ -419,14 +419,12 @@ def test_make_provider_passes_extra_headers_to_custom_provider():
         }
     )
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_async_openai:
-        _make_provider(config)
+    provider = _make_provider(config)
 
-    kwargs = mock_async_openai.call_args.kwargs
-    assert kwargs["api_key"] == "test-key"
-    assert kwargs["base_url"] == "https://example.com/v1"
-    assert kwargs["default_headers"]["APP-Code"] == "demo-app"
-    assert kwargs["default_headers"]["x-session-affinity"] == "sticky-session"
+    assert provider.api_key == "test-key"
+    assert provider._effective_base == "https://example.com/v1"
+    assert provider._default_headers["APP-Code"] == "demo-app"
+    assert provider._default_headers["x-session-affinity"] == "sticky-session"
 
 
 def test_make_provider_passes_api_keys_pool_to_openai_compat():
