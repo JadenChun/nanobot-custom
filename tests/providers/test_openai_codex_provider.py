@@ -91,7 +91,7 @@ async def test_consume_sse_path_stores_safe_ids() -> None:
             for line in lines:
                 yield line
 
-    _, tool_calls, finish_reason = await _consume_sse(_Response())
+    _, tool_calls, finish_reason, _image_calls = await _consume_sse(_Response())
 
     assert finish_reason == "stop"
     assert len(tool_calls) == 1
