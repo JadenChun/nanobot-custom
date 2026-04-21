@@ -20,6 +20,11 @@ def _run_git(repo: Path, *args: str, timeout: int = 30) -> subprocess.CompletedP
     )
 
 
+def _git_output(result: subprocess.CompletedProcess[str]) -> str:
+    """Return compact stdout/stderr text for logs."""
+    return "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+
+
 def is_git_repo(path: Path) -> bool:
     """Check if path is inside a git repository."""
     try:
@@ -27,6 +32,15 @@ def is_git_repo(path: Path) -> bool:
         return result.returncode == 0 and result.stdout.strip() == "true"
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
+
+
+def has_unmerged_paths(repo: Path) -> bool:
+    """Check if the repo has unresolved merge/rebase conflicts."""
+    try:
+        result = _run_git(repo, "diff", "--name-only", "--diff-filter=U")
+        return result.returncode == 0 and bool(result.stdout.strip())
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return True
 
 
 def has_changes(repo: Path) -> bool:
@@ -38,6 +52,28 @@ def has_changes(repo: Path) -> bool:
         return False
 
 
+def sync_with_remote(repo: Path) -> bool:
+    """Fetch and rebase onto the configured upstream before local commits/pushes."""
+    if has_unmerged_paths(repo):
+        logger.error("Context repo has unresolved git conflicts; refusing to sync: {}", repo)
+        return False
+
+    fetch = _run_git(repo, "fetch", "--prune", timeout=60)
+    if fetch.returncode != 0:
+        logger.error("Context repo git fetch failed: {}", _git_output(fetch))
+        return False
+
+    pull = _run_git(repo, "pull", "--rebase", "--autostash", timeout=60)
+    if pull.returncode != 0:
+        logger.error("Context repo git pull --rebase failed: {}", _git_output(pull))
+        return False
+
+    if has_unmerged_paths(repo):
+        logger.error("Context repo has unresolved conflicts after pull; refusing to sync: {}", repo)
+        return False
+    return True
+
+
 def sync_context_repo(repo: Path) -> bool:
     """Commit and push any changes in the context repo.
 
@@ -47,38 +83,39 @@ def sync_context_repo(repo: Path) -> bool:
         logger.debug("Context path is not a git repo, skipping sync: {}", repo)
         return False
 
+    if not sync_with_remote(repo):
+        return False
+
     if not has_changes(repo):
         logger.debug("No changes in context repo: {}", repo)
         return True
 
     try:
-        # Pull latest first to avoid conflicts
-        pull = _run_git(repo, "pull", "--rebase", "--autostash", timeout=60)
-        if pull.returncode != 0:
-            logger.warning("Context repo git pull failed: {}", pull.stderr.strip())
-
         # Stage all changes
         add = _run_git(repo, "add", "-A")
         if add.returncode != 0:
-            logger.error("Context repo git add failed: {}", add.stderr.strip())
+            logger.error("Context repo git add failed: {}", _git_output(add))
             return False
 
         # Commit
         commit = _run_git(repo, "commit", "-m", "nanobot: auto-sync context updates")
         if commit.returncode != 0:
-            stderr = commit.stderr.strip()
-            if "nothing to commit" in (commit.stdout + stderr):
+            output = _git_output(commit)
+            if "nothing to commit" in output:
                 return True
-            logger.error("Context repo git commit failed: {}", stderr)
+            logger.error("Context repo git commit failed: {}", output)
             return False
 
-        # Push with retry
+        # Push with retry; re-sync before every push attempt so remote updates are
+        # rebased before pushing.
         for attempt in range(4):
+            if not sync_with_remote(repo):
+                return False
             push = _run_git(repo, "push", timeout=60)
             if push.returncode == 0:
                 logger.info("Context repo synced successfully: {}", repo)
                 return True
-            logger.warning("Context repo push attempt {} failed: {}", attempt + 1, push.stderr.strip())
+            logger.warning("Context repo push attempt {} failed: {}", attempt + 1, _git_output(push))
             if attempt < 3:
                 import time
                 time.sleep(2 ** (attempt + 1))

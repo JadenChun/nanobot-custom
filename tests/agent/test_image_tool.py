@@ -24,6 +24,18 @@ def test_image_generation_available_for_default_codex_cli() -> None:
     assert image_generation_available(ImageConfig(provider="codex_cli"))
 
 
+def test_image_tool_prompt_schema_asks_for_plain_scene_description() -> None:
+    tool_desc = ImageGenerationTool.description
+    prompt_desc = ImageGenerationTool.parameters["properties"]["prompt"]["description"]
+
+    assert "plain natural-language description" in tool_desc
+    assert "placement labels" in tool_desc
+    assert "Plain natural-language description" in prompt_desc
+    assert "visible scene only" in prompt_desc
+    assert "SEO" not in tool_desc
+    assert "SEO" not in prompt_desc
+
+
 def test_extract_image_paths_from_codex_output() -> None:
     paths = _extract_image_paths(
         "Generated image saved at C:\\Users\\chang\\.codex\\generated_images\\session\\ig_1.png"
