@@ -40,7 +40,18 @@
       "Bash(python -c \"import nanobot.providers.openai_codex_provider as m; print\\('import ok'\\)\")",
       "Bash(python -c ' *)",
       "WebFetch(domain:github.com)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git *)",
+      "Edit(plan.md)",
+      "Write(plan.md)",
+      "Edit(**/plan.md)",
+      "Write(**/plan.md)",
+      "Edit(memory/**)",
+      "Write(memory/**)",
+      "Edit(**/memory/**)",
+      "Write(**/memory/**)",
+      "Edit(*.md)",
+      "Write(*.md)"
     ]
   }
 }
