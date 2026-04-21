@@ -9,6 +9,7 @@ from nanobot.agent.tools import image as image_tool
 from nanobot.agent.tools.image import (
     ImageGenerationTool,
     _extract_image_paths,
+    image_generation_available,
     reset_current_user_image_request,
     set_current_user_image_request,
 )
@@ -17,6 +18,10 @@ from nanobot.config.schema import ImageConfig
 
 def test_image_config_defaults_to_codex_cli() -> None:
     assert ImageConfig().provider == "codex_cli"
+
+
+def test_image_generation_available_for_default_codex_cli() -> None:
+    assert image_generation_available(ImageConfig(provider="codex_cli"))
 
 
 def test_extract_image_paths_from_codex_output() -> None:
@@ -87,7 +92,7 @@ async def test_codex_cli_backend_copies_new_generated_image(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_codex_cli_backend_uses_raw_user_request_context(tmp_path, monkeypatch) -> None:
+async def test_codex_cli_backend_uses_tool_prompt_over_turn_context(tmp_path, monkeypatch) -> None:
     codex_home = tmp_path / "codex-home"
     generated = codex_home / "generated_images" / "session-1" / "ig_1.png"
     output = tmp_path / "workspace" / "generated_images" / "avatar.png"
@@ -119,8 +124,8 @@ async def test_codex_cli_backend_uses_raw_user_request_context(tmp_path, monkeyp
     finally:
         reset_current_user_image_request(token)
 
-    assert result["prompt"] == "help me generate a man eating salmon don image"
-    assert captured_prompt == "help me generate a man eating salmon don image"
+    assert result["prompt"] == "A tasteful, high-quality rewritten prompt"
+    assert captured_prompt == "A tasteful, high-quality rewritten prompt"
     assert output.read_bytes() == b"png-bytes"
 
 
