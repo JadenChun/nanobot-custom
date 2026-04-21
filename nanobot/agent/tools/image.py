@@ -41,11 +41,22 @@ class ImageGenerationTool(Tool):
     """Generate images using AI via OpenRouter API or Codex CLI."""
 
     name = "generate_image"
-    description = "Generate an image using AI. Returns the file path of the saved image."
+    description = (
+        "Generate an image from a plain natural-language description. "
+        "Describe only the visible image content; do not include workflow notes, "
+        "editorial context, prompt-engineering instructions, or placement labels like "
+        "'hero image' or 'section image'. Returns the file path of the saved image."
+    )
     parameters = {
         "type": "object",
         "properties": {
-            "prompt": {"type": "string", "description": "Image generation prompt"},
+            "prompt": {
+                "type": "string",
+                "description": (
+                    "Plain natural-language description of the image to create. "
+                    "Use normal sentences describing the visible scene only."
+                ),
+            },
             "output_path": {"type": "string", "description": "Where to save the image file"},
             "aspect_ratio": {
                 "type": "string",
