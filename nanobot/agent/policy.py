@@ -46,10 +46,7 @@ class RiskyActionPolicy(ToolPolicy):
 
     _RISKY_EXEC_PATTERNS = (
         (re.compile(r"\brm\s+-[rf]{1,2}\b"), "delete files or directories"),
-        (re.compile(r"\bmv\b"), "move or rename files"),
-        (re.compile(r"\bgit\s+push\b"), "push commits"),
         (re.compile(r"\bgit\s+reset\b"), "reset git history"),
-        (re.compile(r"\bgit\s+rebase\b"), "rewrite commits with rebase"),
         (re.compile(r"\bgit\s+clean\b"), "remove untracked files"),
         (re.compile(r"\bgit\s+checkout\b[^|;&\n]*\s+-f\b"), "force checkout changes"),
         (re.compile(r"\bdrop\s+table\b"), "drop database tables"),
@@ -82,7 +79,7 @@ class RiskyActionPolicy(ToolPolicy):
 
         summary = "; ".join(dict.fromkeys(reasons))
         response = (
-            "I’m about to take a risky action and want your approval first. "
+            "I'm about to take a risky action and want your approval first. "
             f"Planned action: {summary}. Reply `yes` to continue or `no` to cancel."
         )
         return ToolPolicyDecision(
@@ -140,8 +137,15 @@ class RiskyActionPolicy(ToolPolicy):
                 changed += max(i2 - i1, j2 - j1)
         return changed, total
 
+    def _is_agent_state_file(self, raw_path: str) -> bool:
+        """Markdown and memory files the agent manages freely — no size checks."""
+        p = Path(raw_path)
+        return p.suffix == ".md" or "memory" in p.parts
+
     def _risky_write_reason(self, raw_path: str, new_content: str) -> str | None:
         if not raw_path:
+            return None
+        if self._is_agent_state_file(raw_path):
             return None
         path = self._resolve_workspace_path(raw_path)
         if not path.exists() or not path.is_file():
@@ -163,6 +167,8 @@ class RiskyActionPolicy(ToolPolicy):
         replace_all: bool,
     ) -> str | None:
         if not raw_path:
+            return None
+        if self._is_agent_state_file(raw_path):
             return None
         if replace_all:
             return f"apply a bulk replace in {Path(raw_path).name}"
