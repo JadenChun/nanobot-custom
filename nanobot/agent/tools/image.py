@@ -174,8 +174,7 @@ class ImageGenerationTool(Tool):
         codex_home = _codex_home(self.config.codex_home)
         start_time = time.time()
         generated_before = _known_generated_images(codex_home)
-        user_request = (_CURRENT_USER_IMAGE_REQUEST.get() or "").strip()
-        cli_prompt = _build_codex_prompt(user_request or prompt, aspect_ratio)
+        cli_prompt = _build_codex_prompt(prompt, aspect_ratio)
         model = self.config.codex_model or "gpt-5.4-mini"
         timeout = max(1, int(self.config.codex_timeout or 300))
 
@@ -276,6 +275,18 @@ class ImageGenerationTool(Tool):
 
 def _codex_command_available(command: str) -> bool:
     return _resolve_codex_command(command) is not None
+
+
+def image_generation_available(config: "ImageConfig") -> bool:
+    """Return whether the image tool should be exposed to the agent."""
+    provider = (config.provider or "auto").lower()
+    if provider in {"codex", "codex_cli", "codex-cli"}:
+        return True
+    if config.api_key or os.environ.get("OPENROUTER_API_KEY"):
+        return True
+    if provider == "auto":
+        return _codex_command_available(config.codex_command or "codex")
+    return False
 
 
 def _resolve_codex_command(command: str) -> str | None:

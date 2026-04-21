@@ -13,18 +13,25 @@ from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.policy import ToolPolicy, ToolPolicyDecision
-from nanobot.agent.runner import AgentRunResult, AgentRunSpec, AgentRunner
-from nanobot.agent.skills import BUILTIN_SKILLS_DIR
+from nanobot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
+from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.image import ImageGenerationTool, image_generation_available
 from nanobot.agent.tools.mcp import connect_mcp_servers, is_read_only_mcp_tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import AgentBrowserConfig, ExecToolConfig
+from nanobot.config.schema import (
+    AgentBrowserConfig,
+    AgentDeviceConfig,
+    ExecToolConfig,
+    ImageConfig,
+    WebSearchConfig,
+)
 from nanobot.providers.base import LLMProvider
 
 
@@ -227,12 +234,12 @@ class SubagentManager:
         agent_browser_config: "AgentBrowserConfig | None" = None,
         agent_device_config: "AgentDeviceConfig | None" = None,
         exec_config: "ExecToolConfig | None" = None,
+        image_config: "ImageConfig | None" = None,
+        context_paths: list[Path] | None = None,
         restrict_to_workspace: bool = False,
         mcp_servers: dict | None = None,
         planner_max_parallel_explore_agents: int = 2,
     ):
-        from nanobot.config.schema import AgentBrowserConfig, AgentDeviceConfig, ExecToolConfig, WebSearchConfig
-
         self.provider = provider
         self.workspace = workspace
         self.bus = bus
@@ -242,6 +249,8 @@ class SubagentManager:
         self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
         self.agent_device_config = agent_device_config or AgentDeviceConfig()
         self.exec_config = exec_config or ExecToolConfig()
+        self.image_config = image_config or ImageConfig()
+        self.context_paths = [Path(p) for p in (context_paths or [])]
         self.restrict_to_workspace = restrict_to_workspace
         self._mcp_servers = mcp_servers or {}
         self.runner = AgentRunner(provider)
@@ -253,6 +262,16 @@ class SubagentManager:
         self._review_mcp_connected = False
         self._review_mcp_connecting = False
         self._foreground_explore_gate = asyncio.Semaphore(max(1, planner_max_parallel_explore_agents))
+
+    def _context_skill_paths(self) -> list[Path]:
+        """Return skill directories from configured context repositories."""
+        return [cp / "skills" for cp in self.context_paths if (cp / "skills").is_dir()]
+
+    def _extra_read_dirs(self, allowed_dir: Path | None) -> list[Path] | None:
+        """Extra read roots needed when tool access is workspace-restricted."""
+        if not allowed_dir:
+            return None
+        return [BUILTIN_SKILLS_DIR, *self._context_skill_paths()]
 
     @staticmethod
     def _tool_error_detail(result: Any) -> str | None:
@@ -357,7 +376,7 @@ class SubagentManager:
         """Build the full tool set for the generation agent."""
         tools = ToolRegistry()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
-        extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
+        extra_read = self._extra_read_dirs(allowed_dir)
         tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
         tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
         tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
@@ -381,6 +400,8 @@ class SubagentManager:
                 timeout=self.agent_device_config.timeout,
                 max_output_chars=self.agent_device_config.max_output_chars,
             ))
+        if image_generation_available(self.image_config):
+            tools.register(ImageGenerationTool(config=self.image_config, workspace=self.workspace))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         tools.register(WebFetchTool(proxy=self.web_proxy))
         return tools
@@ -393,7 +414,7 @@ class SubagentManager:
         """Build reviewer tools (no direct write tools; exec is policy-constrained)."""
         tools = ToolRegistry()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
-        extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
+        extra_read = self._extra_read_dirs(allowed_dir)
         tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
         tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
         if self.exec_config.enable:
@@ -453,7 +474,7 @@ class SubagentManager:
         """Build read-only tools for the foreground explore subagent."""
         tools = ToolRegistry()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
-        extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
+        extra_read = self._extra_read_dirs(allowed_dir)
         tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
         tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
         if self.exec_config.enable:
@@ -831,7 +852,7 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
                 review_note = f"\nReview: approved (confidence: {review_meta.get('confidence', '?')}%)"
             else:
                 review_note = (
-                    f"\nReview: best-effort (confidence: {review_meta.get('confidence', '?')}%)" 
+                    f"\nReview: best-effort (confidence: {review_meta.get('confidence', '?')}%)"
                     f"\nReview issues: {'; '.join(review_meta.get('issues', []))}"
                 )
 
@@ -858,7 +879,6 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
     def _build_subagent_prompt(self) -> str:
         """Build a focused system prompt for the subagent."""
         from nanobot.agent.context import ContextBuilder
-        from nanobot.agent.skills import SkillsLoader
 
         time_ctx = ContextBuilder._build_runtime_context(None, None)
         parts = [f"""# Subagent
@@ -873,7 +893,18 @@ Tools like 'read_file' and 'web_fetch' can return native image content. Read vis
 ## Workspace
 {self.workspace}"""]
 
-        skills_summary = SkillsLoader(self.workspace).build_skills_summary()
+        if self.context_paths:
+            context_lines = "\n".join(f"- {cp.resolve()}" for cp in self.context_paths)
+            parts.append(
+                "## Context Repositories\n\n"
+                f"{context_lines}\n\n"
+                "Context repository skills supplement the workspace skills for this subagent."
+            )
+
+        skills_summary = SkillsLoader(
+            self.workspace,
+            extra_paths=self._context_skill_paths() or None,
+        ).build_skills_summary()
         if skills_summary:
             parts.append(f"## Skills\n\nRead SKILL.md with read_file to use a skill.\n\n{skills_summary}")
 

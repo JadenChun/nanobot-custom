@@ -6,7 +6,6 @@ import asyncio
 import json
 import os
 import re
-import shutil
 import time
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
@@ -29,8 +28,7 @@ from nanobot.agent.tools.explore import ExploreTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.image import (
     ImageGenerationTool,
-    reset_current_user_image_request,
-    set_current_user_image_request,
+    image_generation_available,
 )
 from nanobot.agent.tools.mcp import is_read_only_mcp_tool
 from nanobot.agent.tools.message import MessageTool
@@ -315,6 +313,8 @@ class AgentLoop:
             agent_browser_config=self.agent_browser_config,
             agent_device_config=self.agent_device_config,
             exec_config=self.exec_config,
+            image_config=self.image_config,
+            context_paths=self.context_paths,
             restrict_to_workspace=restrict_to_workspace,
             mcp_servers=mcp_servers or {},
             planner_max_parallel_explore_agents=self.planner_max_parallel_explore_agents,
@@ -350,10 +350,20 @@ class AgentLoop:
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
 
+    def _context_skill_paths(self) -> list[Path]:
+        """Return skill directories from configured context repositories."""
+        return [cp / "skills" for cp in self.context_paths if (cp / "skills").is_dir()]
+
+    def _extra_read_dirs(self, allowed_dir: Path | None) -> list[Path] | None:
+        """Extra read roots needed when tool access is workspace-restricted."""
+        if not allowed_dir:
+            return None
+        return [BUILTIN_SKILLS_DIR, *self._context_skill_paths()]
+
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
         allowed_dir = self.workspace if self.restrict_to_workspace else None
-        extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
+        extra_read = self._extra_read_dirs(allowed_dir)
         self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
         for cls in (WriteFileTool, EditFileTool, ListDirTool):
             self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
@@ -366,21 +376,7 @@ class AgentLoop:
             ))
         self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
-        image_provider = (self.image_config.provider or "auto").lower()
-        image_has_openrouter = bool(self.image_config.api_key or os.environ.get("OPENROUTER_API_KEY"))
-        image_codex_command = self.image_config.codex_command or "codex"
-        image_has_codex_cli = (
-            shutil.which(image_codex_command) is not None
-            or (
-                any(sep in image_codex_command for sep in ("/", "\\"))
-                and Path(image_codex_command).expanduser().exists()
-            )
-        )
-        if (
-            image_provider in {"codex", "codex_cli", "codex-cli"}
-            or image_has_openrouter
-            or (image_provider == "auto" and image_has_codex_cli)
-        ):
+        if image_generation_available(self.image_config):
             self.tools.register(ImageGenerationTool(config=self.image_config, workspace=self.workspace))
         if self.agent_browser_config.enabled:
             self.tools.register(AgentBrowserTool(
@@ -408,7 +404,7 @@ class AgentLoop:
         """Build a read-only tool registry for planning and verification."""
         tools = ToolRegistry()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
-        extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
+        extra_read = self._extra_read_dirs(allowed_dir)
         tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
         tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
         if self.exec_config.enable:
@@ -999,20 +995,16 @@ End your response with exactly:
             bool(planned and planned.has_handoff),
             approval_granted,
         )
-        image_request_token = set_current_user_image_request(task_text)
-        try:
-            result = await self._run_agent(
-                initial_messages,
-                on_progress=on_progress,
-                on_stream=on_stream,
-                on_stream_end=on_stream_end,
-                tool_policy=policy,
-                channel=channel,
-                chat_id=chat_id,
-                message_id=message_id,
-            )
-        finally:
-            reset_current_user_image_request(image_request_token)
+        result = await self._run_agent(
+            initial_messages,
+            on_progress=on_progress,
+            on_stream=on_stream,
+            on_stream_end=on_stream_end,
+            tool_policy=policy,
+            channel=channel,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
         if result.stop_reason == "approval_required":
             logger.info("Action phase paused for approval on {}:{}", channel, chat_id)
             return result
@@ -1054,20 +1046,16 @@ End your response with exactly:
                 "Please revise the work and produce the final response."
             ),
         })
-        image_request_token = set_current_user_image_request(task_text)
-        try:
-            revised = await self._run_agent(
-                revision_messages,
-                on_progress=on_progress,
-                on_stream=on_stream,
-                on_stream_end=on_stream_end,
-                tool_policy=RiskyActionPolicy(workspace=self.workspace, approval_granted=True),
-                channel=channel,
-                chat_id=chat_id,
-                message_id=message_id,
-            )
-        finally:
-            reset_current_user_image_request(image_request_token)
+        revised = await self._run_agent(
+            revision_messages,
+            on_progress=on_progress,
+            on_stream=on_stream,
+            on_stream_end=on_stream_end,
+            tool_policy=RiskyActionPolicy(workspace=self.workspace, approval_granted=True),
+            channel=channel,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
         if revised.stop_reason == "approval_required":
             return revised
 
