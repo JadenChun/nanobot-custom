@@ -404,9 +404,73 @@ class TestMemoryConsolidationTypeHandling:
 
         assert result is True
         assert len(call_log) == 2
-        assert isinstance(call_log[0]["tool_choice"], dict)
+        assert call_log[0]["tool_choice"] == "required"
         assert call_log[1]["tool_choice"] == "auto"
         assert "Fallback worked." in store.history_file.read_text()
+
+    @pytest.mark.asyncio
+    async def test_tool_choice_fallback_cached_per_provider(self, tmp_path: Path) -> None:
+        """After one detected fallback, subsequent calls skip the forced attempt."""
+        store = MemoryStore(tmp_path)
+        error_resp = LLMResponse(
+            content="Error calling LLM: BadRequestError: "
+            "The tool_choice parameter does not support being set to required or object",
+            finish_reason="error",
+            tool_calls=[],
+        )
+
+        def _ok() -> LLMResponse:
+            return _make_tool_response(
+                history_entry="[2026-01-01] Cached fallback.",
+                memory_update="# Memory\nCached.",
+            )
+
+        call_log: list[dict] = []
+
+        async def _tracking_chat(**kwargs):
+            call_log.append(kwargs)
+            # First call: forced -> error; second call: auto -> ok (learn).
+            # All subsequent calls: auto -> ok (cache hit, no forced attempt).
+            if len(call_log) == 1:
+                return error_resp
+            return _ok()
+
+        provider = AsyncMock()
+        provider.chat_with_retry = AsyncMock(side_effect=_tracking_chat)
+        messages = _make_messages(message_count=60)
+
+        assert await store.consolidate(messages, provider, "test-model") is True
+        assert await store.consolidate(messages, provider, "test-model") is True
+        assert await store.consolidate(messages, provider, "test-model") is True
+
+        # First call: forced ("required"). After fallback learned, all remaining calls: "auto".
+        tool_choices = [c["tool_choice"] for c in call_log]
+        assert len(tool_choices) == 4, tool_choices  # 1 forced + 1 auto-retry + 2 cached-auto
+        assert tool_choices[0] == "required"
+        assert tool_choices[1] == "auto"
+        assert tool_choices[2] == "auto"
+        assert tool_choices[3] == "auto"
+        assert ("AsyncMock", "test-model") in store._forced_tool_choice_unsupported
+
+    @pytest.mark.asyncio
+    async def test_tool_choice_detection_ignores_unrelated_errors(self, tmp_path: Path) -> None:
+        """An unrelated 'does not support' error must not trigger tool_choice fallback."""
+        store = MemoryStore(tmp_path)
+        unrelated_err = LLMResponse(
+            content="Error: this model does not support reasoning_effort",
+            finish_reason="error",
+            tool_calls=[],
+        )
+        provider = AsyncMock()
+        provider.chat_with_retry = AsyncMock(return_value=unrelated_err)
+        messages = _make_messages(message_count=10)
+
+        result = await store.consolidate(messages, provider, "m")
+
+        # Exactly one call — no retry, because the error is unrelated to tool_choice.
+        assert provider.chat_with_retry.await_count == 1
+        assert result is False
+        assert not store._forced_tool_choice_unsupported
 
     @pytest.mark.asyncio
     async def test_tool_choice_fallback_auto_no_tool_call(self, tmp_path: Path) -> None:

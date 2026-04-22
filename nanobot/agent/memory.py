@@ -58,18 +58,33 @@ def _normalize_save_memory_args(args: Any) -> dict[str, Any] | None:
         return args[0] if args and isinstance(args[0], dict) else None
     return args if isinstance(args, dict) else None
 
-_TOOL_CHOICE_ERROR_MARKERS = (
-    "tool_choice",
-    "toolchoice",
-    "does not support",
+_TOOL_CHOICE_EXPLICIT_MARKERS = (
     'should be ["none", "auto"]',
+    "tool_choice parameter does not support",
+    "forced tool_choice",
+    "tool_choice not supported",
 )
+
+_TOOL_CHOICE_NAME_MARKERS = ("tool_choice", "toolchoice")
 
 
 def _is_tool_choice_unsupported(content: str | None) -> bool:
-    """Detect provider errors caused by forced tool_choice being unsupported."""
+    """Detect provider errors caused by forced tool_choice being unsupported.
+
+    Requires either an explicit known phrase, or a mention of `tool_choice`
+    combined with a rejection keyword — this avoids false positives from
+    unrelated errors like "model does not support reasoning_effort".
+    """
     text = (content or "").lower()
-    return any(m in text for m in _TOOL_CHOICE_ERROR_MARKERS)
+    if not text:
+        return False
+    if any(m in text for m in _TOOL_CHOICE_EXPLICIT_MARKERS):
+        return True
+    mentions_tool_choice = any(m in text for m in _TOOL_CHOICE_NAME_MARKERS)
+    rejection_hint = any(
+        m in text for m in ("does not support", "unsupported", "not allowed", "invalid")
+    )
+    return mentions_tool_choice and rejection_hint
 
 
 class MemoryStore:
@@ -82,6 +97,13 @@ class MemoryStore:
         self.memory_file = self.memory_dir / "MEMORY.md"
         self.history_file = self.memory_dir / "HISTORY.md"
         self._consecutive_failures = 0
+        # Cache of (provider class, model) pairs known to reject forced tool_choice,
+        # so we skip the forced attempt and go straight to "auto" on later calls.
+        self._forced_tool_choice_unsupported: set[tuple[str, str]] = set()
+
+    @staticmethod
+    def _provider_cache_key(provider: LLMProvider, model: str) -> tuple[str, str]:
+        return (type(provider).__name__, model)
 
     def read_long_term(self) -> str:
         if self.memory_file.exists():
@@ -143,18 +165,32 @@ Call the save_memory tool with your consolidation.
         ]
 
         try:
-            forced = {"type": "function", "function": {"name": "save_memory"}}
+            cache_key = self._provider_cache_key(provider, model)
+            forced_supported = cache_key not in self._forced_tool_choice_unsupported
+            # "required" tells the provider "must call any tool" — since we only
+            # register save_memory, this is equivalent to forcing that specific tool,
+            # but is far more portable than the OpenAI object form
+            # {"type": "function", "function": {"name": ...}}, which many providers
+            # and gateways reject.
+            tool_choice: str = "required" if forced_supported else "auto"
             response = await provider.chat_with_retry(
                 messages=chat_messages,
                 tools=_SAVE_MEMORY_TOOL,
                 model=model,
-                tool_choice=forced,
+                tool_choice=tool_choice,
             )
 
-            if response.finish_reason == "error" and _is_tool_choice_unsupported(
-                response.content
+            if (
+                forced_supported
+                and response.finish_reason == "error"
+                and _is_tool_choice_unsupported(response.content)
             ):
-                logger.warning("Forced tool_choice unsupported, retrying with auto")
+                logger.warning(
+                    "Forced tool_choice unsupported for {}; falling back to auto "
+                    "and remembering for future consolidations",
+                    cache_key,
+                )
+                self._forced_tool_choice_unsupported.add(cache_key)
                 response = await provider.chat_with_retry(
                     messages=chat_messages,
                     tools=_SAVE_MEMORY_TOOL,
