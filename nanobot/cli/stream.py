@@ -110,7 +110,10 @@ class StreamRenderer:
             self._header_printed = True
 
         if not self._use_live:
-            _make_console().print(delta, end="")
+            # Logs mode: write directly to stdout with an explicit flush so the
+            # next loguru stderr line can't visually attach to the streamed text.
+            sys.stdout.write(delta)
+            sys.stdout.flush()
             return
 
         if self._live is None:
@@ -141,7 +144,14 @@ class StreamRenderer:
         self._stop_spinner()
         printed_newline = False
         if self.streamed and (not self._use_live or self._header_printed):
-            _make_console().print()
+            if not self._use_live:
+                # Logs mode: flush a real newline to stdout immediately so any
+                # background loguru stderr line lands on its own line instead of
+                # sticking to the tail of the streamed response.
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+            else:
+                _make_console().print()
             printed_newline = True
         if resuming:
             _make_console().print("[dim](Continuing with tools...)[/dim]")
