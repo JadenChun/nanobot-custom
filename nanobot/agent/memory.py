@@ -138,6 +138,7 @@ class MemoryStore:
         messages: list[dict],
         provider: LLMProvider,
         model: str,
+        max_output_tokens: int | None = None,
     ) -> bool:
         """Consolidate the provided message chunk into MEMORY.md + HISTORY.md."""
         if not messages:
@@ -173,12 +174,15 @@ Call the save_memory tool with your consolidation.
             # {"type": "function", "function": {"name": ...}}, which many providers
             # and gateways reject.
             tool_choice: str = "required" if forced_supported else "auto"
-            response = await provider.chat_with_retry(
-                messages=chat_messages,
-                tools=_SAVE_MEMORY_TOOL,
-                model=model,
-                tool_choice=tool_choice,
-            )
+            chat_kwargs: dict[str, Any] = {
+                "messages": chat_messages,
+                "tools": _SAVE_MEMORY_TOOL,
+                "model": model,
+                "tool_choice": tool_choice,
+            }
+            if max_output_tokens is not None:
+                chat_kwargs["max_tokens"] = max_output_tokens
+            response = await provider.chat_with_retry(**chat_kwargs)
 
             if (
                 forced_supported
@@ -192,20 +196,33 @@ Call the save_memory tool with your consolidation.
                 )
                 self._forced_tool_choice_unsupported.add(cache_key)
                 response = await provider.chat_with_retry(
-                    messages=chat_messages,
-                    tools=_SAVE_MEMORY_TOOL,
-                    model=model,
-                    tool_choice="auto",
+                    **{**chat_kwargs, "tool_choice": "auto"}
                 )
 
             if not response.has_tool_calls:
-                logger.warning(
-                    "Memory consolidation: LLM did not call save_memory "
-                    "(finish_reason={}, content_len={}, content_preview={})",
-                    response.finish_reason,
-                    len(response.content or ""),
-                    (response.content or "")[:200],
-                )
+                if response.finish_reason == "length":
+                    logger.warning(
+                        "Memory consolidation: LLM hit the output cap before calling "
+                        "save_memory (finish_reason=length, max_output_tokens={}, "
+                        "content_len={}, content_preview={}). Consider raising "
+                        "max_tokens.output, lowering or disabling model reasoning if "
+                        "supported, or reducing the consolidation chunk size.",
+                        (
+                            max_output_tokens
+                            if max_output_tokens is not None
+                            else "provider default"
+                        ),
+                        len(response.content or ""),
+                        (response.content or "")[:200],
+                    )
+                else:
+                    logger.warning(
+                        "Memory consolidation: LLM did not call save_memory "
+                        "(finish_reason={}, content_len={}, content_preview={})",
+                        response.finish_reason,
+                        len(response.content or ""),
+                        (response.content or "")[:200],
+                    )
                 return self._fail_or_raw_archive(messages)
 
             args = _normalize_save_memory_args(response.tool_calls[0].arguments)
@@ -300,7 +317,12 @@ class MemoryConsolidator:
 
     async def consolidate_messages(self, messages: list[dict[str, object]]) -> bool:
         """Archive a selected message chunk into persistent memory."""
-        return await self.store.consolidate(messages, self.provider, self.model)
+        return await self.store.consolidate(
+            messages,
+            self.provider,
+            self.model,
+            max_output_tokens=self.max_completion_tokens,
+        )
 
     def pick_consolidation_boundary(
         self,

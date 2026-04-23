@@ -1156,15 +1156,30 @@ End your response with exactly:
 
                     async def on_stream_end(*, resuming: bool = False) -> None:
                         nonlocal stream_segment
+                        # Acknowledgement event lets in-process consumers (e.g., the
+                        # CLI renderer) signal that they've finished writing this
+                        # segment's terminating newline before we return and allow
+                        # subsequent logger.* calls to hit stderr. Without this sync,
+                        # log lines race ahead of the terminating newline and visually
+                        # stick to the tail of the streamed response.
+                        rendered_ack = asyncio.Event()
                         meta = dict(msg.metadata or {})
                         meta["_stream_end"] = True
                         meta["_resuming"] = resuming
                         meta["_stream_id"] = _current_stream_id()
+                        meta["_stream_render_ack"] = rendered_ack
                         await self.bus.publish_outbound(OutboundMessage(
                             channel=msg.channel, chat_id=msg.chat_id,
                             content="",
                             metadata=meta,
                         ))
+                        # Bounded wait: external channels (slack/matrix/etc.) don't
+                        # set the ack, so fall through on timeout rather than block
+                        # the agent loop.
+                        try:
+                            await asyncio.wait_for(rendered_ack.wait(), timeout=0.2)
+                        except asyncio.TimeoutError:
+                            pass
                         stream_segment += 1
 
                 response = await self._process_message(

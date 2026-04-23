@@ -1039,6 +1039,15 @@ def agent(
                                 await renderer.on_end(
                                     resuming=msg.metadata.get("_resuming", False),
                                 )
+                            # Signal the dispatcher that we've finished rendering
+                            # this stream segment so it can safely emit subsequent
+                            # log lines without racing our terminating newline.
+                            ack = msg.metadata.get("_stream_render_ack")
+                            if ack is not None:
+                                try:
+                                    ack.set()
+                                except AttributeError:
+                                    pass
                             continue
                         if msg.metadata.get("_streamed"):
                             turn_done.set()
