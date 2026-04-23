@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.agent.memory import MemoryStore
+from nanobot.agent.memory import MemoryConsolidator, MemoryStore
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 
 
@@ -376,6 +376,34 @@ class TestMemoryConsolidationTypeHandling:
         assert "reasoning_effort" not in kwargs
 
     @pytest.mark.asyncio
+    async def test_consolidator_forwards_configured_output_cap(self, tmp_path: Path) -> None:
+        """MemoryConsolidator uses max_tokens.output, not target ratio, as the response cap."""
+        provider = AsyncMock()
+        consolidator = MemoryConsolidator(
+            workspace=tmp_path,
+            provider=provider,
+            model="test-model",
+            sessions=AsyncMock(),
+            context_window_tokens=120000,
+            build_messages=lambda **_kwargs: [],
+            get_tool_definitions=lambda: [],
+            max_completion_tokens=8192,
+            consolidation_target_ratio=0.3,
+        )
+        consolidator.store.consolidate = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        messages = _make_messages(message_count=3)
+
+        result = await consolidator.consolidate_messages(messages)
+
+        assert result is True
+        consolidator.store.consolidate.assert_awaited_once_with(
+            messages,
+            provider,
+            "test-model",
+            max_output_tokens=8192,
+        )
+
+    @pytest.mark.asyncio
     async def test_tool_choice_fallback_on_unsupported_error(self, tmp_path: Path) -> None:
         """Forced tool_choice rejected by provider -> retry with auto and succeed."""
         store = MemoryStore(tmp_path)
@@ -400,12 +428,19 @@ class TestMemoryConsolidationTypeHandling:
         provider.chat_with_retry = AsyncMock(side_effect=_tracking_chat)
         messages = _make_messages(message_count=60)
 
-        result = await store.consolidate(messages, provider, "test-model")
+        result = await store.consolidate(
+            messages,
+            provider,
+            "test-model",
+            max_output_tokens=8192,
+        )
 
         assert result is True
         assert len(call_log) == 2
         assert call_log[0]["tool_choice"] == "required"
         assert call_log[1]["tool_choice"] == "auto"
+        assert call_log[0]["max_tokens"] == 8192
+        assert call_log[1]["max_tokens"] == 8192
         assert "Fallback worked." in store.history_file.read_text()
 
     @pytest.mark.asyncio
@@ -508,6 +543,30 @@ class TestMemoryConsolidationTypeHandling:
         assert await store.consolidate(messages, provider, "m") is False
         assert await store.consolidate(messages, provider, "m") is False
         assert await store.consolidate(messages, provider, "m") is True
+
+        assert store.history_file.exists()
+        content = store.history_file.read_text()
+        assert "[RAW]" in content
+        assert "10 messages" in content
+        assert "msg0" in content
+        assert not store.memory_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_length_finish_reason_counts_toward_raw_archive(self, tmp_path: Path) -> None:
+        """Length failures keep the existing fail-then-raw-archive behavior."""
+        store = MemoryStore(tmp_path)
+        length_resp = LLMResponse(content="", finish_reason="length", tool_calls=[])
+        provider = AsyncMock()
+        provider.chat_with_retry = AsyncMock(return_value=length_resp)
+        messages = _make_messages(message_count=10)
+
+        assert await store.consolidate(messages, provider, "m", max_output_tokens=256) is False
+        assert await store.consolidate(messages, provider, "m", max_output_tokens=256) is False
+        assert await store.consolidate(messages, provider, "m", max_output_tokens=256) is True
+
+        assert provider.chat_with_retry.await_count == 3
+        for call in provider.chat_with_retry.await_args_list:
+            assert call.kwargs["max_tokens"] == 256
 
         assert store.history_file.exists()
         content = store.history_file.read_text()

@@ -53,7 +53,8 @@
       "Bash(.venv/bin/python -m pytest tests/agent/ --ignore=tests/channels/test_matrix_channel.py --deselect tests/agent/test_smart_harness.py::test_process_direct_requires_approval_then_resumes --deselect tests/agent/test_smart_harness.py::test_process_direct_approval_prompt_stays_visible_when_streaming)",
       "Bash(.venv/bin/python -m pytest tests/agent/test_memory_consolidation_types.py tests/agent/test_loop_consolidation_tokens.py -v)",
       "Bash(.venv/bin/python -m pytest tests/agent/test_memory_consolidation_types.py tests/agent/test_loop_consolidation_tokens.py)",
-      "Bash(.venv/bin/python -m pytest tests/cli/)"
+      "Bash(.venv/bin/python -m pytest tests/cli/)",
+      "Bash(.venv/bin/python -m pytest tests/agent/ tests/cli/ --ignore=tests/channels/test_matrix_channel.py --deselect tests/agent/test_smart_harness.py::test_process_direct_requires_approval_then_resumes --deselect tests/agent/test_smart_harness.py::test_process_direct_approval_prompt_stays_visible_when_streaming)"
     ]
   }
 }
