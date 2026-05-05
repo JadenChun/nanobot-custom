@@ -276,6 +276,21 @@ def test_config_matches_openai_codex_with_hyphen_prefix():
     assert config.get_provider_name() == "openai_codex"
 
 
+def test_config_matches_opencode_go_with_hyphen_prefix():
+    config = Config.model_validate(
+        {
+            "agents": {"defaults": {"model": "opencode-go/kimi-k2.6"}},
+            "providers": {"opencodeGo": {"apiKey": "test-key"}},
+        }
+    )
+
+    assert config.get_provider_name() == "opencode_go"
+
+    provider = _make_provider(config)
+    assert isinstance(provider, OpenAICompatProvider)
+    assert provider._effective_base == "https://opencode.ai/zen/go/v1"
+
+
 def test_config_dump_excludes_oauth_provider_blocks():
     config = Config()
 
