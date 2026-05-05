@@ -82,6 +82,7 @@ class Nanobot:
             image_config=config.tools.image,
             restrict_to_workspace=config.tools.restrict_to_workspace,
             mcp_servers=config.tools.mcp_servers,
+            channels_config=config.channels,
             timezone=defaults.timezone,
             context_paths=[Path(p).expanduser().resolve() for p in defaults.context_paths] if defaults.context_paths else None,
             planning_mode=defaults.planning_mode,

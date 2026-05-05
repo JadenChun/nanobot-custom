@@ -1136,15 +1136,21 @@ End your response with exactly:
         async with lock, gate:
             try:
                 on_stream = on_stream_end = None
+                stream_content_published = False
                 if msg.metadata.get("_wants_stream"):
                     # Split one answer into distinct stream segments.
                     stream_base_id = f"{msg.session_key}:{time.time_ns()}"
                     stream_segment = 0
+                    buffered_stream = ""
+                    stream_progress_enabled = True
+                    if self.channels_config is not None:
+                        stream_progress_enabled = self.channels_config.send_progress
 
                     def _current_stream_id() -> str:
                         return f"{stream_base_id}:{stream_segment}"
 
-                    async def on_stream(delta: str) -> None:
+                    async def _publish_stream_delta(delta: str) -> None:
+                        nonlocal stream_content_published
                         meta = dict(msg.metadata or {})
                         meta["_stream_delta"] = True
                         meta["_stream_id"] = _current_stream_id()
@@ -1153,9 +1159,10 @@ End your response with exactly:
                             content=delta,
                             metadata=meta,
                         ))
+                        if delta:
+                            stream_content_published = True
 
-                    async def on_stream_end(*, resuming: bool = False) -> None:
-                        nonlocal stream_segment
+                    async def _publish_stream_end(*, resuming: bool) -> None:
                         # Acknowledgement event lets in-process consumers (e.g., the
                         # CLI renderer) signal that they've finished writing this
                         # segment's terminating newline before we return and allow
@@ -1180,12 +1187,39 @@ End your response with exactly:
                             await asyncio.wait_for(rendered_ack.wait(), timeout=0.2)
                         except asyncio.TimeoutError:
                             pass
+
+                    async def on_stream(delta: str) -> None:
+                        nonlocal buffered_stream
+                        if stream_progress_enabled:
+                            await _publish_stream_delta(delta)
+                        else:
+                            buffered_stream += delta
+
+                    async def on_stream_end(*, resuming: bool = False) -> None:
+                        nonlocal stream_segment, buffered_stream
+                        if stream_progress_enabled:
+                            await _publish_stream_end(resuming=resuming)
+                            stream_segment += 1
+                            return
+
+                        if resuming:
+                            buffered_stream = ""
+                            stream_segment += 1
+                            return
+
+                        if buffered_stream:
+                            await _publish_stream_delta(buffered_stream)
+                            buffered_stream = ""
+                            await _publish_stream_end(resuming=resuming)
                         stream_segment += 1
 
                 response = await self._process_message(
                     msg, on_stream=on_stream, on_stream_end=on_stream_end,
                 )
                 if response is not None:
+                    if response.metadata.get("_streamed") and not stream_content_published:
+                        response.metadata = dict(response.metadata)
+                        response.metadata.pop("_streamed", None)
                     await self.bus.publish_outbound(response)
                 elif msg.channel == "cli":
                     await self.bus.publish_outbound(OutboundMessage(

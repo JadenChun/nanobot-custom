@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def _make_loop(*, exec_config=None):
+def _make_loop(*, exec_config=None, channels_config=None):
     """Create a minimal AgentLoop with mocked dependencies."""
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus
@@ -24,7 +24,13 @@ def _make_loop(*, exec_config=None):
          patch("nanobot.agent.loop.SessionManager"), \
          patch("nanobot.agent.loop.SubagentManager") as MockSubMgr:
         MockSubMgr.return_value.cancel_by_session = AsyncMock(return_value=0)
-        loop = AgentLoop(bus=bus, provider=provider, workspace=workspace, exec_config=exec_config)
+        loop = AgentLoop(
+            bus=bus,
+            provider=provider,
+            workspace=workspace,
+            exec_config=exec_config,
+            channels_config=channels_config,
+        )
     return loop, bus
 
 
@@ -153,6 +159,131 @@ class TestDispatch:
         assert second.metadata["thread_root_event_id"] == "$root1"
         assert second.metadata["thread_reply_to_event_id"] == "$reply1"
         assert second.metadata["_stream_end"] is True
+
+    @pytest.mark.asyncio
+    async def test_dispatch_suppresses_resuming_stream_when_send_progress_false(self):
+        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from nanobot.config.schema import ChannelsConfig
+
+        loop, bus = _make_loop(channels_config=ChannelsConfig(send_progress=False))
+        msg = InboundMessage(
+            channel="telegram",
+            sender_id="u1",
+            chat_id="123",
+            content="hello",
+            metadata={"_wants_stream": True, "message_id": 10},
+        )
+
+        async def fake_process(_msg, *, on_stream=None, on_stream_end=None, **kwargs):
+            assert on_stream is not None
+            assert on_stream_end is not None
+            await on_stream("checking first")
+            await on_stream_end(resuming=True)
+            return OutboundMessage(
+                channel="telegram",
+                chat_id="123",
+                content="final answer",
+                metadata={"_streamed": True, "message_id": 10},
+            )
+
+        loop._process_message = fake_process
+
+        await loop._dispatch(msg)
+        out = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+
+        assert out.content == "final answer"
+        assert out.metadata["message_id"] == 10
+        assert "_stream_delta" not in out.metadata
+        assert "_streamed" not in out.metadata
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_streams_only_final_segment_when_send_progress_false(self):
+        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from nanobot.config.schema import ChannelsConfig
+
+        loop, bus = _make_loop(channels_config=ChannelsConfig(send_progress=False))
+        msg = InboundMessage(
+            channel="matrix",
+            sender_id="u1",
+            chat_id="!room:matrix.org",
+            content="hello",
+            metadata={
+                "_wants_stream": True,
+                "thread_root_event_id": "$root1",
+                "thread_reply_to_event_id": "$reply1",
+            },
+        )
+
+        async def fake_process(_msg, *, on_stream=None, on_stream_end=None, **kwargs):
+            assert on_stream is not None
+            assert on_stream_end is not None
+            await on_stream("checking first")
+            await on_stream_end(resuming=True)
+            await on_stream("final answer")
+            await on_stream_end(resuming=False)
+            return OutboundMessage(
+                channel="matrix",
+                chat_id="!room:matrix.org",
+                content="final answer",
+                metadata={"_streamed": True},
+            )
+
+        loop._process_message = fake_process
+
+        await loop._dispatch(msg)
+        first = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+        second = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+        third = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+
+        assert first.content == "final answer"
+        assert first.metadata["thread_root_event_id"] == "$root1"
+        assert first.metadata["thread_reply_to_event_id"] == "$reply1"
+        assert first.metadata["_stream_delta"] is True
+        assert first.metadata["_stream_id"].endswith(":1")
+        assert second.metadata["_stream_end"] is True
+        assert second.metadata["_stream_id"] == first.metadata["_stream_id"]
+        assert third.metadata["_streamed"] is True
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_approval_response_visible_when_send_progress_false(self):
+        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from nanobot.config.schema import ChannelsConfig
+
+        loop, bus = _make_loop(channels_config=ChannelsConfig(send_progress=False))
+        msg = InboundMessage(
+            channel="telegram",
+            sender_id="u1",
+            chat_id="123",
+            content="delete files",
+            metadata={"_wants_stream": True, "message_id": 10},
+        )
+
+        async def fake_process(_msg, *, on_stream=None, **kwargs):
+            assert on_stream is not None
+            await on_stream("this needs approval")
+            return OutboundMessage(
+                channel="telegram",
+                chat_id="123",
+                content="Reply `yes` to continue.",
+                metadata={"message_id": 10},
+            )
+
+        loop._process_message = fake_process
+
+        await loop._dispatch(msg)
+        out = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+
+        assert out.content == "Reply `yes` to continue."
+        assert out.metadata == {"message_id": 10}
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
 
     @pytest.mark.asyncio
     async def test_processing_lock_serializes(self):
