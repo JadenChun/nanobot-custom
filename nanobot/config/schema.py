@@ -42,6 +42,16 @@ class FallbackEntry(Base):
     model: str  # Model to use with this provider, e.g. "gemini-2.5-flash"
 
 
+class ContextRepoConfig(Base):
+    """Optional advanced overrides for an attached context repository."""
+
+    path: str
+    read_only: bool = False
+    auto_sync: bool = True
+    credential_profile: str | None = None
+    manifest: str = "nanobot.context.json"
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -61,6 +71,7 @@ class AgentDefaults(Base):
     planning_mode: Literal["on", "off", "agent"] = "agent"  # "on": always use spawn+review, "off": never, "agent": agent decides
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
     context_paths: list[str] = Field(default_factory=list)  # Paths to local context repos (e.g. git repos with memory, skills, bootstrap files)
+    context_repos: list[str | ContextRepoConfig] = Field(default_factory=list)  # Managed context repos; string paths auto-detect nanobot.context.json.
     tool_result_clearing_keep: int = 3  # Number of recent tool results to keep; older ones are cleared to save context
     consolidation_trigger_ratio: float = 0.5  # Trigger memory consolidation when prompt exceeds this ratio of budget
     consolidation_target_ratio: float = 0.3  # Target ratio of budget after consolidation

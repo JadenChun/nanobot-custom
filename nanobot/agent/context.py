@@ -8,6 +8,7 @@ from typing import Any
 
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
+from nanobot.context_repo import ContextRepoManager
 from nanobot.utils.helpers import (
     build_assistant_message,
     current_time_str,
@@ -26,19 +27,18 @@ class ContextBuilder:
         workspace: Path,
         timezone: str | None = None,
         context_paths: list[Path] | None = None,
+        context_manager: ContextRepoManager | None = None,
         planning_mode: str = "agent",
     ):
         self.workspace = workspace
         self.timezone = timezone
-        self.context_paths = context_paths or []
+        self.context_manager = context_manager or ContextRepoManager.from_config(context_paths=context_paths)
+        self.context_paths = self.context_manager.paths
         self.planning_mode = planning_mode
         self.memory = MemoryStore(workspace)
 
-        # If context repos are configured, include their skills dirs in extra paths
-        all_skill_paths = []
-        for cp in self.context_paths:
-            if (cp / "skills").is_dir():
-                all_skill_paths.append(cp / "skills")
+        # If context repos are configured, include their skill roots in extra paths.
+        all_skill_paths = self.context_manager.skill_roots()
 
         self.skills = SkillsLoader(workspace, extra_paths=all_skill_paths or None)
 
@@ -54,14 +54,19 @@ class ContextBuilder:
         if memory:
             parts.append(f"# Memory\n\n{memory}")
 
-        # Context repo memory (read-only, supplemental)
-        for cp in self.context_paths:
-            ctx_memory_file = cp / "memory" / "MEMORY.md"
-            if ctx_memory_file.exists():
-                ctx_memory = ctx_memory_file.read_text(encoding="utf-8")
-                if ctx_memory.strip():
-                    repo_name = f" ({cp.name})" if cp else ""
-                    parts.append(f"# Context Memory{repo_name}\n\n{ctx_memory}")
+        # Context repo memory and durable run summaries (read-only, supplemental).
+        for ctx_memory_file in self.context_manager.memory_files():
+            ctx_memory = ctx_memory_file.read_text(encoding="utf-8")
+            if ctx_memory.strip():
+                parts.append(f"# Context Memory ({ctx_memory_file.parent.parent.name})\n\n{ctx_memory}")
+
+        run_summaries = []
+        for run_file in self.context_manager.run_summary_files():
+            content = run_file.read_text(encoding="utf-8").strip()
+            if content:
+                run_summaries.append(f"## {run_file.parent.parent.name}/{run_file.relative_to(run_file.parent.parent)}\n\n{content}")
+        if run_summaries:
+            parts.append("# Context Repo Run State\n\n" + "\n\n".join(run_summaries))
 
         always_skills = self.skills.get_always_skills()
         if always_skills:
@@ -132,13 +137,13 @@ After any inline tool use, always produce a visible text response summarizing wh
         context_section = ""
         if self.context_paths:
             context_section = "\n## Context Repositories\nShared context repositories are loaded from:\n"
-            for cp in self.context_paths:
-                ctx_path = str(cp.expanduser().resolve())
-                context_section += f"- {ctx_path}\n"
+            summary = self.context_manager.prompt_summary()
+            context_section += f"{summary}\n" if summary else ""
             context_section += (
-                "- Context memory, skills, and bootstrap files from these repos supplement your workspace.\n"
-                "- You can read and write files in context repos to manage memory, skills, and bootstrap files.\n"
-                "- Changes to context repos are auto-synced via git commit and push.\n"
+                "- Context memory, skills, modules, store contracts, and entrypoint files from these repos supplement your workspace.\n"
+                "- Managed context repos may define writable, protected, store, tool, sync, and proposal policies. Follow those policies.\n"
+                "- Use registered store/tool commands for managed stores instead of directly editing their data files when directEdit=false.\n"
+                "- Changes to managed context repos are auto-synced using selected-path Git sync; protected paths and credentials are never committed.\n"
             )
 
         return f"""# nanobot 🐈
@@ -206,12 +211,11 @@ IMPORTANT: To send files (images, documents, audio, video) to the user, you MUST
                         # Don't add to loaded_names if we want subsequent context repos to also inject their versions.
                         # The implementation plan specifies concatenating them.
 
-            # Load any extra .md files from context repo root (not in BOOTSTRAP_FILES)
-            if cp.is_dir():
-                for md_file in sorted(cp.glob("*.md")):
-                    if md_file.name not in self.BOOTSTRAP_FILES and md_file.name != "README.md":
-                        content = md_file.read_text(encoding="utf-8")
-                        parts.append(f"## {md_file.name}{repo_suffix}\n\n{content}")
+        for md_file in self.context_manager.context_files():
+            repo = self.context_manager.find_repo_for_path(md_file)
+            repo_suffix = f" ({repo.name})" if repo else ""
+            content = md_file.read_text(encoding="utf-8")
+            parts.append(f"## {md_file.name}{repo_suffix}\n\n{content}")
 
         return "\n\n".join(parts) if parts else ""
 

@@ -85,6 +85,7 @@ class Nanobot:
             channels_config=config.channels,
             timezone=defaults.timezone,
             context_paths=[Path(p).expanduser().resolve() for p in defaults.context_paths] if defaults.context_paths else None,
+            context_repos=defaults.context_repos,
             planning_mode=defaults.planning_mode,
             tool_result_clearing_keep=defaults.tool_result_clearing_keep,
             consolidation_trigger_ratio=defaults.consolidation_trigger_ratio,

@@ -48,6 +48,7 @@ class RiskyActionPolicy(ToolPolicy):
         (re.compile(r"\brm\s+-[rf]{1,2}\b"), "delete files or directories"),
         (re.compile(r"\bgit\s+reset\b"), "reset git history"),
         (re.compile(r"\bgit\s+clean\b"), "remove untracked files"),
+        (re.compile(r"\bgit\s+push\b"), "push commits to a remote repository"),
         (re.compile(r"\bgit\s+checkout\b[^|;&\n]*\s+-f\b"), "force checkout changes"),
         (re.compile(r"\bdrop\s+table\b"), "drop database tables"),
         (re.compile(r"\bdelete\s+from\b"), "delete database rows"),
@@ -138,9 +139,9 @@ class RiskyActionPolicy(ToolPolicy):
         return changed, total
 
     def _is_agent_state_file(self, raw_path: str) -> bool:
-        """Markdown and memory files the agent manages freely — no size checks."""
+        """Memory files the agent manages freely — no size checks."""
         p = Path(raw_path)
-        return p.suffix == ".md" or "memory" in p.parts
+        return "memory" in p.parts
 
     def _risky_write_reason(self, raw_path: str, new_content: str) -> str | None:
         if not raw_path:

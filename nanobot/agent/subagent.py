@@ -32,6 +32,7 @@ from nanobot.config.schema import (
     ImageConfig,
     WebSearchConfig,
 )
+from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 from nanobot.providers.base import LLMProvider
 
 
@@ -236,6 +237,7 @@ class SubagentManager:
         exec_config: "ExecToolConfig | None" = None,
         image_config: "ImageConfig | None" = None,
         context_paths: list[Path] | None = None,
+        context_manager: ContextRepoManager | None = None,
         restrict_to_workspace: bool = False,
         mcp_servers: dict | None = None,
         planner_max_parallel_explore_agents: int = 2,
@@ -250,8 +252,14 @@ class SubagentManager:
         self.agent_device_config = agent_device_config or AgentDeviceConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self.image_config = image_config or ImageConfig()
-        self.context_paths = [Path(p) for p in (context_paths or [])]
+        self.context_manager = context_manager or ContextRepoManager.from_config(context_paths=context_paths)
+        self.context_paths = self.context_manager.paths
         self.restrict_to_workspace = restrict_to_workspace
+        self.resource_policy = ResourceAccessPolicy(
+            workspace=workspace,
+            context_manager=self.context_manager,
+            restrict_to_workspace=restrict_to_workspace,
+        )
         self._mcp_servers = mcp_servers or {}
         self.runner = AgentRunner(provider)
         self._last_run_result: AgentRunResult | None = None
@@ -265,13 +273,19 @@ class SubagentManager:
 
     def _context_skill_paths(self) -> list[Path]:
         """Return skill directories from configured context repositories."""
-        return [cp / "skills" for cp in self.context_paths if (cp / "skills").is_dir()]
+        return self.context_manager.skill_roots()
 
     def _extra_read_dirs(self, allowed_dir: Path | None) -> list[Path] | None:
         """Extra read roots needed when tool access is workspace-restricted."""
         if not allowed_dir:
             return None
-        return [BUILTIN_SKILLS_DIR, *self._context_skill_paths()]
+        return [BUILTIN_SKILLS_DIR, *self.resource_policy.extra_read_dirs()]
+
+    def _extra_write_dirs(self, allowed_dir: Path | None) -> list[Path] | None:
+        """Extra write roots needed when tool access is workspace-restricted."""
+        if not allowed_dir:
+            return None
+        return self.resource_policy.extra_write_dirs()
 
     @staticmethod
     def _tool_error_detail(result: Any) -> str | None:
@@ -377,16 +391,18 @@ class SubagentManager:
         tools = ToolRegistry()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = self._extra_read_dirs(allowed_dir)
-        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
-        tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-        tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
-        tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+        extra_write = self._extra_write_dirs(allowed_dir)
+        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
+        tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_write, resource_policy=self.resource_policy))
+        tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_write, resource_policy=self.resource_policy))
+        tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
         if self.exec_config.enable:
             tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
+                resource_policy=self.resource_policy,
             ))
         if self.agent_browser_config.enabled:
             tools.register(AgentBrowserTool(
@@ -415,14 +431,15 @@ class SubagentManager:
         tools = ToolRegistry()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = self._extra_read_dirs(allowed_dir)
-        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
-        tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
+        tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
         if self.exec_config.enable:
             tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
+                resource_policy=self.resource_policy,
             ))
         if self.agent_browser_config.enabled:
             tools.register(AgentBrowserTool(
@@ -475,14 +492,15 @@ class SubagentManager:
         tools = ToolRegistry()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = self._extra_read_dirs(allowed_dir)
-        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
-        tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
+        tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
         if self.exec_config.enable:
             tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
+                resource_policy=self.resource_policy,
             ))
         if self.agent_browser_config.enabled:
             tools.register(AgentBrowserTool(
@@ -894,11 +912,10 @@ Tools like 'read_file' and 'web_fetch' can return native image content. Read vis
 {self.workspace}"""]
 
         if self.context_paths:
-            context_lines = "\n".join(f"- {cp.resolve()}" for cp in self.context_paths)
             parts.append(
                 "## Context Repositories\n\n"
-                f"{context_lines}\n\n"
-                "Context repository skills supplement the workspace skills for this subagent."
+                f"{self.context_manager.prompt_summary()}\n\n"
+                "Context repository skills, modules, and store contracts supplement the workspace skills for this subagent."
             )
 
         skills_summary = SkillsLoader(
