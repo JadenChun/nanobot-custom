@@ -23,6 +23,7 @@ class ExecTool(Tool):
         allow_patterns: list[str] | None = None,
         restrict_to_workspace: bool = False,
         path_append: str = "",
+        resource_policy: Any | None = None,
     ):
         self.timeout = timeout
         self.working_dir = working_dir
@@ -40,6 +41,7 @@ class ExecTool(Tool):
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
         self.path_append = path_append
+        self.resource_policy = resource_policy
 
     @property
     def name(self) -> str:
@@ -187,6 +189,11 @@ class ExecTool(Tool):
         from nanobot.security.network import contains_internal_url
         if contains_internal_url(cmd):
             return "Error: Command blocked by safety guard (internal/private URL detected)"
+
+        if self.resource_policy:
+            if policy_error := self.resource_policy.validate_exec(command, cwd):
+                return policy_error
+            return None
 
         if self.restrict_to_workspace:
             if "..\\" in cmd or "../" in cmd:

@@ -59,13 +59,25 @@ class _FsTool(Tool):
         workspace: Path | None = None,
         allowed_dir: Path | None = None,
         extra_allowed_dirs: list[Path] | None = None,
+        resource_policy: Any | None = None,
     ):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
         self._extra_allowed_dirs = extra_allowed_dirs
+        self._resource_policy = resource_policy
 
-    def _resolve(self, path: str) -> Path:
-        return _resolve_path(path, self._workspace, self._allowed_dir, self._extra_allowed_dirs)
+    def _resolve(self, path: str, action: str = "read") -> Path:
+        resolved = _resolve_path(path, self._workspace, self._allowed_dir, self._extra_allowed_dirs)
+        if self._resource_policy:
+            self._resource_policy.validate_path(resolved, action)
+        return resolved
+
+    def _record_touch(self, path: Path) -> None:
+        if self._resource_policy:
+            self._resource_policy.record_touch(path)
+
+    def _is_hidden(self, path: Path) -> bool:
+        return bool(self._resource_policy and self._resource_policy.is_hidden(path))
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +125,7 @@ class ReadFileTool(_FsTool):
         try:
             if not path:
                 return "Error reading file: Unknown path"
-            fp = self._resolve(path)
+            fp = self._resolve(path, "read")
             if _is_blocked(fp):
                 return f"Error: Reading '{fp.name}' is not permitted."
             if not fp.exists():
@@ -200,11 +212,12 @@ class WriteFileTool(_FsTool):
                 raise ValueError("Unknown path")
             if content is None:
                 raise ValueError("Unknown content")
-            fp = self._resolve(path)
+            fp = self._resolve(path, "write")
             if _is_blocked(fp):
                 return f"Error: Writing '{fp.name}' is not permitted."
             fp.parent.mkdir(parents=True, exist_ok=True)
             fp.write_text(content, encoding="utf-8")
+            self._record_touch(fp)
             return f"Successfully wrote {len(content)} bytes to {fp}"
         except PermissionError as e:
             return f"Error: {e}"
@@ -286,7 +299,7 @@ class EditFileTool(_FsTool):
             if new_text is None:
                 raise ValueError("Unknown new_text")
 
-            fp = self._resolve(path)
+            fp = self._resolve(path, "edit")
             if _is_blocked(fp):
                 return f"Error: Editing '{fp.name}' is not permitted."
             if not fp.exists():
@@ -311,6 +324,7 @@ class EditFileTool(_FsTool):
                 new_content = new_content.replace("\n", "\r\n")
 
             fp.write_bytes(new_content.encode("utf-8"))
+            self._record_touch(fp)
             return f"Successfully edited {fp}"
         except PermissionError as e:
             return f"Error: {e}"
@@ -392,7 +406,7 @@ class ListDirTool(_FsTool):
         try:
             if path is None:
                 raise ValueError("Unknown path")
-            dp = self._resolve(path)
+            dp = self._resolve(path, "list")
             if not dp.exists():
                 return f"Error: Directory not found: {path}"
             if not dp.is_dir():
@@ -408,6 +422,8 @@ class ListDirTool(_FsTool):
                         continue
                     if _is_blocked(item):
                         continue
+                    if self._is_hidden(item):
+                        continue
                     total += 1
                     if len(items) < cap:
                         rel = item.relative_to(dp)
@@ -417,6 +433,8 @@ class ListDirTool(_FsTool):
                     if item.name in self._IGNORE_DIRS:
                         continue
                     if _is_blocked(item):
+                        continue
+                    if self._is_hidden(item):
                         continue
                     total += 1
                     if len(items) < cap:

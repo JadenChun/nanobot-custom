@@ -126,6 +126,39 @@ def test_save_config_preserves_provider_api_keys_list(tmp_path) -> None:
     assert saved["providers"]["gemini"]["apiKeys"] == ["gem-1", "gem-2"]
 
 
+    def test_load_config_accepts_context_repos_strings_and_objects(tmp_path) -> None:
+        config_path = tmp_path / "config.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "agents": {
+                        "defaults": {
+                            "contextRepos": [
+                                "~/context/plain",
+                                {
+                                    "path": "~/context/managed",
+                                    "readOnly": True,
+                                    "autoSync": False,
+                                    "credentialProfile": "pota",
+                                },
+                            ]
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        config = load_config(config_path)
+        context_repos = config.agents.defaults.context_repos
+
+        assert context_repos[0] == "~/context/plain"
+        assert context_repos[1].path == "~/context/managed"
+        assert context_repos[1].read_only is True
+        assert context_repos[1].auto_sync is False
+        assert context_repos[1].credential_profile == "pota"
+
+
 def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch) -> None:
     from types import SimpleNamespace
 

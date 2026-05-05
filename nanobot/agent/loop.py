@@ -40,6 +40,7 @@ from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
+from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 from nanobot.utils.helpers import build_assistant_message, estimate_prompt_tokens_chain
@@ -247,6 +248,7 @@ class AgentLoop:
         timezone: str | None = None,
         hooks: list[AgentHook] | None = None,
         context_paths: list[Path] | None = None,
+        context_repos: list[Any] | None = None,
         planning_mode: str = "agent",
         planner_max_iterations: int = _DEFAULT_PLANNER_MAX_ITERATIONS,
         planner_explore_subagent_max_iterations: int = _DEFAULT_PLANNER_EXPLORE_MAX_ITERATIONS,
@@ -293,13 +295,23 @@ class AgentLoop:
         self.planner_explore_subagent_max_iterations = max(1, planner_explore_subagent_max_iterations)
         self.planner_max_parallel_explore_agents = max(1, planner_max_parallel_explore_agents)
 
+        self.context_manager = ContextRepoManager.from_config(
+            context_paths=context_paths,
+            context_repos=context_repos,
+        )
+        self.resource_policy = ResourceAccessPolicy(
+            workspace=workspace,
+            context_manager=self.context_manager,
+            restrict_to_workspace=restrict_to_workspace,
+        )
+
         self.context = ContextBuilder(
             workspace,
             timezone=timezone,
-            context_paths=context_paths,
+            context_manager=self.context_manager,
             planning_mode=planning_mode,
         )
-        self.context_paths = context_paths or []
+        self.context_paths = self.context_manager.paths
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider)
@@ -315,6 +327,7 @@ class AgentLoop:
             exec_config=self.exec_config,
             image_config=self.image_config,
             context_paths=self.context_paths,
+            context_manager=self.context_manager,
             restrict_to_workspace=restrict_to_workspace,
             mcp_servers=mcp_servers or {},
             planner_max_parallel_explore_agents=self.planner_max_parallel_explore_agents,
@@ -352,27 +365,36 @@ class AgentLoop:
 
     def _context_skill_paths(self) -> list[Path]:
         """Return skill directories from configured context repositories."""
-        return [cp / "skills" for cp in self.context_paths if (cp / "skills").is_dir()]
+        return self.context_manager.skill_roots()
 
     def _extra_read_dirs(self, allowed_dir: Path | None) -> list[Path] | None:
         """Extra read roots needed when tool access is workspace-restricted."""
         if not allowed_dir:
             return None
-        return [BUILTIN_SKILLS_DIR, *self._context_skill_paths()]
+        return [BUILTIN_SKILLS_DIR, *self.resource_policy.extra_read_dirs()]
+
+    def _extra_write_dirs(self, allowed_dir: Path | None) -> list[Path] | None:
+        """Extra write roots needed when tool access is workspace-restricted."""
+        if not allowed_dir:
+            return None
+        return self.resource_policy.extra_write_dirs()
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = self._extra_read_dirs(allowed_dir)
-        self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
-        for cls in (WriteFileTool, EditFileTool, ListDirTool):
-            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
+        extra_write = self._extra_write_dirs(allowed_dir)
+        self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
+        self.tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
+        self.tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_write, resource_policy=self.resource_policy))
+        self.tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_write, resource_policy=self.resource_policy))
         if self.exec_config.enable:
             self.tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
+                resource_policy=self.resource_policy,
             ))
         self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
@@ -405,14 +427,15 @@ class AgentLoop:
         tools = ToolRegistry()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = self._extra_read_dirs(allowed_dir)
-        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
-        tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir))
+        tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
+        tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
         if self.exec_config.enable:
             tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
+                resource_policy=self.resource_policy,
             ))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         tools.register(WebFetchTool(proxy=self.web_proxy))
@@ -1624,14 +1647,23 @@ End your response with exactly:
 
     def _maybe_sync_context_repo(self) -> None:
         """If context repos are configured, schedule a background git sync for each."""
-        if not self.context_paths:
+        repos = [repo for repo in self.context_manager.repos if repo.auto_sync]
+        if not repos:
             return
         from nanobot.utils.git_sync import async_sync_context_repo
 
         async def _sync() -> None:
             try:
                 await asyncio.gather(
-                    *(async_sync_context_repo(path) for path in self.context_paths),
+                    *(
+                        async_sync_context_repo(
+                            repo.path,
+                            include_paths=repo.sync_include_patterns(),
+                            exclude_paths=repo.sync_exclude_patterns(),
+                            message=f"nanobot: sync {repo.name} context updates",
+                        )
+                        for repo in repos
+                    ),
                     return_exceptions=False
                 )
             except Exception:
