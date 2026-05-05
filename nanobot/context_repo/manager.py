@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
@@ -72,6 +73,132 @@ def _pattern_root(repo_root: Path, pattern: str) -> Path:
     return repo_root.joinpath(*pieces) if pieces else repo_root
 
 
+def _resolve_declared_path(base: Path, raw_path: str) -> Path:
+    path = Path(os.path.expandvars(raw_path)).expanduser()
+    if not path.is_absolute():
+        path = base / path
+    return path.resolve(strict=False)
+
+
+@dataclass
+class ManagedTargetRepo:
+    """Runtime metadata for a code/content repo managed by a context repo."""
+
+    name: str
+    context_repo_name: str
+    context_repo_path: Path
+    description: str = ""
+    type: str = "codebase"
+    path: Path | None = None
+    path_env: str | None = None
+    manifest: dict[str, Any] = field(default_factory=dict)
+    resolved_from: str | None = None
+
+    @classmethod
+    def from_manifest(
+        cls,
+        *,
+        name: str,
+        context_repo_name: str,
+        context_repo_path: Path,
+        raw: Any,
+    ) -> "ManagedTargetRepo | None":
+        if not isinstance(raw, dict):
+            return None
+
+        path_env = _get_any(raw, "pathEnv", "path_env")
+        path: Path | None = None
+        resolved_from: str | None = None
+        if declared_path := raw.get("path"):
+            path = _resolve_declared_path(context_repo_path, str(declared_path))
+            resolved_from = "path"
+        elif path_env and os.environ.get(str(path_env)):
+            path = _resolve_declared_path(context_repo_path, os.environ[str(path_env)])
+            resolved_from = f"env:{path_env}"
+        elif default_path := _get_any(raw, "pathDefault", "path_default"):
+            candidate = _resolve_declared_path(context_repo_path, str(default_path))
+            if candidate.exists():
+                path = candidate
+                resolved_from = "pathDefault"
+
+        return cls(
+            name=name,
+            context_repo_name=context_repo_name,
+            context_repo_path=context_repo_path,
+            description=str(raw.get("description") or ""),
+            type=str(raw.get("type") or "codebase"),
+            path=path,
+            path_env=str(path_env) if path_env else None,
+            manifest=raw,
+            resolved_from=resolved_from,
+        )
+
+    @property
+    def resolved(self) -> bool:
+        return self.path is not None
+
+    @property
+    def commands(self) -> dict[str, Any]:
+        value = self.manifest.get("commands") or {}
+        return value if isinstance(value, dict) else {}
+
+    @property
+    def publish_config(self) -> dict[str, Any]:
+        value = self.manifest.get("publish") or {}
+        return value if isinstance(value, dict) else {}
+
+    def rel_path(self, path: Path) -> str | None:
+        if self.path is None:
+            return None
+        return _rel(path, self.path)
+
+    def matches(self, rel_path: str, patterns: Iterable[str]) -> bool:
+        return _match_any(rel_path, patterns)
+
+    def read_patterns(self) -> list[str]:
+        return _as_str_list(_get_any(self.manifest, "read", "readable", default=["**"]))
+
+    def write_patterns(self) -> list[str]:
+        return _as_str_list(_get_any(self.manifest, "write", "writable", default=[]))
+
+    def protected_patterns(self) -> list[str]:
+        defaults = [
+            ".env",
+            ".env.*",
+            "**/*oauth*",
+            "**/*secret*",
+            "**/*token*",
+        ]
+        return [*defaults, *_as_str_list(self.manifest.get("protected"))]
+
+    def proposal_required_patterns(self) -> list[str]:
+        return _as_str_list(
+            _get_any(self.manifest, "proposalRequired", "proposal_required", default=[])
+        )
+
+    def is_readable(self, rel_path: str) -> bool:
+        return self.matches(rel_path, self.read_patterns())
+
+    def is_writable(self, rel_path: str) -> bool:
+        return self.matches(rel_path, self.write_patterns())
+
+    def is_protected(self, rel_path: str) -> bool:
+        return self.matches(rel_path, self.protected_patterns())
+
+    def requires_proposal(self, rel_path: str) -> bool:
+        return self.matches(rel_path, self.proposal_required_patterns())
+
+    def read_roots(self) -> list[Path]:
+        if self.path is None:
+            return []
+        return _unique_paths(_pattern_root(self.path, pattern) for pattern in self.read_patterns())
+
+    def write_roots(self) -> list[Path]:
+        if self.path is None:
+            return []
+        return _unique_paths(_pattern_root(self.path, pattern) for pattern in self.write_patterns())
+
+
 @dataclass(frozen=True)
 class ContextRepoRuntimeConfig:
     """A context repo entry from user config, normalized for runtime use."""
@@ -81,6 +208,7 @@ class ContextRepoRuntimeConfig:
     auto_sync: bool = True
     credential_profile: str | None = None
     manifest_name: str = _MANIFEST_NAME
+    target_repo_paths: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_raw(cls, raw: Any) -> "ContextRepoRuntimeConfig | None":
@@ -98,6 +226,10 @@ class ContextRepoRuntimeConfig:
                 auto_sync=bool(_get_any(raw, "autoSync", "auto_sync", default=True)),
                 credential_profile=_get_any(raw, "credentialProfile", "credential_profile"),
                 manifest_name=str(_get_any(raw, "manifest", "manifestName", "manifest_name", default=_MANIFEST_NAME)),
+                target_repo_paths={
+                    str(name): str(path)
+                    for name, path in (_get_any(raw, "targetRepoPaths", "target_repo_paths", default={}) or {}).items()
+                },
             )
         path = getattr(raw, "path", None)
         if not path:
@@ -108,6 +240,10 @@ class ContextRepoRuntimeConfig:
             auto_sync=bool(getattr(raw, "auto_sync", getattr(raw, "autoSync", True))),
             credential_profile=getattr(raw, "credential_profile", getattr(raw, "credentialProfile", None)),
             manifest_name=str(getattr(raw, "manifest", getattr(raw, "manifest_name", _MANIFEST_NAME))),
+            target_repo_paths={
+                str(name): str(path)
+                for name, path in (getattr(raw, "target_repo_paths", getattr(raw, "targetRepoPaths", {})) or {}).items()
+            },
         )
 
 
@@ -121,6 +257,7 @@ class ManagedContextRepo:
     read_only: bool = False
     auto_sync: bool = True
     credential_profile: str | None = None
+    target_repo_paths: dict[str, str] = field(default_factory=dict)
     manifest: dict[str, Any] = field(default_factory=dict)
     manifest_path: Path | None = None
 
@@ -146,6 +283,7 @@ class ManagedContextRepo:
             read_only=config.read_only,
             auto_sync=config.auto_sync,
             credential_profile=credential_profile,
+            target_repo_paths=config.target_repo_paths,
             manifest=manifest,
             manifest_path=manifest_path if managed else None,
         )
@@ -174,6 +312,26 @@ class ManagedContextRepo:
     def tools(self) -> dict[str, Any]:
         value = self.manifest.get("tools") or {}
         return value if isinstance(value, dict) else {}
+
+    @property
+    def target_repos_config(self) -> dict[str, Any]:
+        value = _get_any(self.manifest, "targetRepos", "target_repos", default={})
+        return value if isinstance(value, dict) else {}
+
+    def target_repos(self) -> list[ManagedTargetRepo]:
+        targets: list[ManagedTargetRepo] = []
+        for name, raw in self.target_repos_config.items():
+            if isinstance(raw, dict) and (override_path := self.target_repo_paths.get(str(name))):
+                raw = {**raw, "path": override_path}
+            target = ManagedTargetRepo.from_manifest(
+                name=str(name),
+                context_repo_name=self.name,
+                context_repo_path=self.path,
+                raw=raw,
+            )
+            if target:
+                targets.append(target)
+        return targets
 
     def rel_path(self, path: Path) -> str | None:
         return _rel(path, self.path)
@@ -259,12 +417,18 @@ class ManagedContextRepo:
         return _unique_paths(roots)
 
     def read_roots(self) -> list[Path]:
-        return [self.path]
+        roots = [self.path]
+        for target in self.target_repos():
+            roots.extend(target.read_roots())
+        return _unique_paths(roots)
 
     def write_roots(self) -> list[Path]:
         if self.read_only:
             return []
-        return _unique_paths(_pattern_root(self.path, pattern) for pattern in self.writable_patterns())
+        roots = [_pattern_root(self.path, pattern) for pattern in self.writable_patterns()]
+        for target in self.target_repos():
+            roots.extend(target.write_roots())
+        return _unique_paths(roots)
 
     def context_files(self) -> list[Path]:
         files: list[Path] = []
@@ -331,6 +495,20 @@ class ManagedContextRepo:
             lines.append(f"  Stores: {', '.join(store_lines)}")
         if self.tools:
             lines.append(f"  Tools: {', '.join(sorted(self.tools))}")
+        targets = self.target_repos()
+        if targets:
+            target_lines: list[str] = []
+            for target in targets:
+                if target.resolved:
+                    write = ", ".join(target.write_patterns()) or "none"
+                    commands = ", ".join(sorted(target.commands)) or "none"
+                    target_lines.append(
+                        f"{target.name} ({target.type}) at {target.path}; writes: {write}; commands: {commands}"
+                    )
+                else:
+                    hint = f"set {target.path_env}" if target.path_env else "path unresolved"
+                    target_lines.append(f"{target.name} ({target.type}) unresolved; {hint}")
+            lines.append(f"  Target repos: {'; '.join(target_lines)}")
         lines.append("  Normal writes to managed paths are autonomous; protected paths and strategic changes require approval/proposals.")
         return "\n".join(lines)
 
@@ -384,6 +562,12 @@ class ContextRepoManager:
             roots.extend(repo.write_roots())
         return _unique_paths(roots)
 
+    def target_repos(self) -> list[ManagedTargetRepo]:
+        targets: list[ManagedTargetRepo] = []
+        for repo in self.repos:
+            targets.extend(repo.target_repos())
+        return targets
+
     def context_files(self) -> list[Path]:
         files: list[Path] = []
         for repo in self.repos:
@@ -408,6 +592,13 @@ class ContextRepoManager:
         if not matches:
             return None
         return max(matches, key=lambda repo: len(str(repo.path)))
+
+    def find_target_repo_for_path(self, path: Path) -> ManagedTargetRepo | None:
+        resolved = path.resolve(strict=False)
+        matches = [target for target in self.target_repos() if target.rel_path(resolved) is not None]
+        if not matches:
+            return None
+        return max(matches, key=lambda target: len(str(target.path or "")))
 
     def prompt_summary(self) -> str:
         if not self.repos:

@@ -126,37 +126,66 @@ def test_save_config_preserves_provider_api_keys_list(tmp_path) -> None:
     assert saved["providers"]["gemini"]["apiKeys"] == ["gem-1", "gem-2"]
 
 
-    def test_load_config_accepts_context_repos_strings_and_objects(tmp_path) -> None:
-        config_path = tmp_path / "config.json"
-        config_path.write_text(
-            json.dumps(
-                {
-                    "agents": {
-                        "defaults": {
-                            "contextRepos": [
-                                "~/context/plain",
-                                {
-                                    "path": "~/context/managed",
-                                    "readOnly": True,
-                                    "autoSync": False,
-                                    "credentialProfile": "pota",
+def test_load_config_accepts_context_repos_strings_and_objects(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "defaults": {
+                        "contextRepos": [
+                            "~/context/plain",
+                            {
+                                "path": "~/context/managed",
+                                "readOnly": True,
+                                "autoSync": False,
+                                "credentialProfile": "pota",
+                                "targetRepoPaths": {
+                                    "pota_website": "~/context/website",
                                 },
-                            ]
-                        }
+                            },
+                        ]
                     }
                 }
-            ),
-            encoding="utf-8",
-        )
+            }
+        ),
+        encoding="utf-8",
+    )
 
-        config = load_config(config_path)
-        context_repos = config.agents.defaults.context_repos
+    config = load_config(config_path)
+    context_repos = config.agents.defaults.context_repos
 
-        assert context_repos[0] == "~/context/plain"
-        assert context_repos[1].path == "~/context/managed"
-        assert context_repos[1].read_only is True
-        assert context_repos[1].auto_sync is False
-        assert context_repos[1].credential_profile == "pota"
+    assert context_repos[0] == "~/context/plain"
+    assert context_repos[1].path == "~/context/managed"
+    assert context_repos[1].read_only is True
+    assert context_repos[1].auto_sync is False
+    assert context_repos[1].credential_profile == "pota"
+    assert context_repos[1].target_repo_paths == {"pota_website": "~/context/website"}
+
+
+def test_save_config_omits_empty_legacy_context_paths(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "defaults": {
+                        "contextPaths": [],
+                        "contextRepos": ["~/context/managed"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path)
+    save_config(config, config_path)
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+
+    defaults = saved["agents"]["defaults"]
+    assert "contextPaths" not in defaults
+    assert defaults["contextRepos"] == ["~/context/managed"]
 
 
 def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch) -> None:

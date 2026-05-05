@@ -46,6 +46,66 @@ def test_context_repo_manager_loads_manifest_and_contracts(tmp_path: Path) -> No
     assert "data/seo-pipeline.json" in (loaded.sync_include_patterns() or [])
 
 
+def test_context_repo_manager_resolves_target_repos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = tmp_path / "pota"
+    target = tmp_path / "website"
+    (repo / "outputs").mkdir(parents=True)
+    (target / "content" / "blog").mkdir(parents=True)
+    monkeypatch.setenv("POTA_WEBSITE_REPO", str(target))
+    _write_json(repo / "nanobot.context.json", {
+        "name": "pota",
+        "writable": ["outputs/**"],
+        "targetRepos": {
+            "pota_website": {
+                "type": "website",
+                "pathEnv": "POTA_WEBSITE_REPO",
+                "read": ["**"],
+                "write": ["content/blog/**"],
+                "proposalRequired": ["src/**"],
+                "commands": {"build": "npm run build"},
+            }
+        },
+    })
+
+    manager = ContextRepoManager.from_config(context_repos=[str(repo)])
+    targets = manager.target_repos()
+
+    assert len(targets) == 1
+    assert targets[0].name == "pota_website"
+    assert targets[0].path == target.resolve()
+    assert targets[0].resolved_from == "env:POTA_WEBSITE_REPO"
+    assert target.resolve() in manager.read_roots()
+    assert (target / "content" / "blog").resolve() in manager.write_roots()
+    assert "pota_website" in manager.prompt_summary()
+
+
+def test_context_repo_manager_resolves_target_repo_config_override(tmp_path: Path) -> None:
+    repo = tmp_path / "pota"
+    target = tmp_path / "website"
+    repo.mkdir()
+    target.mkdir()
+    _write_json(repo / "nanobot.context.json", {
+        "name": "pota",
+        "targetRepos": {
+            "pota_website": {
+                "type": "website",
+                "pathEnv": "POTA_WEBSITE_REPO",
+                "write": ["content/blog/**"],
+            }
+        },
+    })
+
+    manager = ContextRepoManager.from_config(context_repos=[{
+        "path": str(repo),
+        "targetRepoPaths": {"pota_website": str(target)},
+    }])
+
+    targets = manager.target_repos()
+    assert len(targets) == 1
+    assert targets[0].path == target.resolve()
+    assert targets[0].resolved_from == "path"
+
+
 def test_resource_policy_enforces_managed_boundaries(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -107,3 +167,50 @@ async def test_write_tool_can_write_managed_output_when_restricted(tmp_path: Pat
     assert "Successfully wrote" in result
     assert (repo / "outputs" / "draft.md").read_text(encoding="utf-8") == "hello"
     assert (repo / "outputs" / "draft.md").resolve() in policy.touched_paths
+
+
+@pytest.mark.asyncio
+async def test_write_tool_can_write_allowed_target_repo_path_when_restricted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repo = tmp_path / "pota"
+    target = tmp_path / "website"
+    (repo / "outputs").mkdir(parents=True)
+    (target / "content" / "blog").mkdir(parents=True)
+    (target / "src").mkdir(parents=True)
+    monkeypatch.setenv("POTA_WEBSITE_REPO", str(target))
+    _write_json(repo / "nanobot.context.json", {
+        "name": "pota",
+        "targetRepos": {
+            "pota_website": {
+                "type": "website",
+                "pathEnv": "POTA_WEBSITE_REPO",
+                "read": ["**"],
+                "write": ["content/blog/**", "public/images/blog/**"],
+                "protected": [".env", ".env.*"],
+                "proposalRequired": ["src/**", "package.json"],
+            }
+        },
+    })
+    manager = ContextRepoManager.from_config(context_repos=[str(repo)])
+    policy = ResourceAccessPolicy(workspace=workspace, context_manager=manager, restrict_to_workspace=True)
+    tool = WriteFileTool(
+        workspace=workspace,
+        allowed_dir=workspace,
+        extra_allowed_dirs=policy.extra_write_dirs(),
+        resource_policy=policy,
+    )
+
+    result = await tool.execute(path=str(target / "content" / "blog" / "draft.md"), content="hello")
+
+    assert "Successfully wrote" in result
+    assert (target / "content" / "blog" / "draft.md").read_text(encoding="utf-8") == "hello"
+    with pytest.raises(PermissionError, match="protected"):
+        policy.validate_path(target / ".env", "read")
+    with pytest.raises(PermissionError, match="requires a proposal"):
+        policy.validate_path(target / "src" / "layout.tsx", "write")
+    with pytest.raises(PermissionError, match="not in a writable target repo area"):
+        policy.validate_path(target / "README.md", "write")

@@ -62,6 +62,9 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     data = config.model_dump(mode="json", by_alias=True)
+    defaults = data.get("agents", {}).get("defaults", {})
+    if defaults.get("contextPaths") == []:
+        defaults.pop("contextPaths", None)
 
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)

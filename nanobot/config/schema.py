@@ -50,6 +50,7 @@ class ContextRepoConfig(Base):
     auto_sync: bool = True
     credential_profile: str | None = None
     manifest: str = "nanobot.context.json"
+    target_repo_paths: dict[str, str] = Field(default_factory=dict)
 
 
 class AgentDefaults(Base):
