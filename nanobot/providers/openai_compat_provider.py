@@ -470,6 +470,13 @@ class OpenAICompatProvider(LLMProvider):
         if spec and spec.strip_model_prefix:
             model_name = model_name.split("/")[-1]
 
+        if spec and spec.name == "opencode_go" and model_name.startswith("minimax-"):
+            raise ValueError(
+                "OpenCode Go MiniMax models use the Anthropic-style /messages endpoint and "
+                "are not yet supported by Nanobot's OpenAI-compatible provider. "
+                "Please use another OpenCode Go model for now."
+            )
+
         kwargs: dict[str, Any] = {
             "model": model_name,
             "messages": self._sanitize_messages(self._sanitize_empty_content(messages)),
@@ -776,10 +783,6 @@ class OpenAICompatProvider(LLMProvider):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> LLMResponse:
-        kwargs = self._build_kwargs(
-            messages, tools, model, max_tokens, temperature,
-            reasoning_effort, tool_choice,
-        )
         max_attempts = max(1, len(self._api_keys))
         key_order = self._next_request_order()
         attempted_labels: list[str] = []
@@ -788,6 +791,10 @@ class OpenAICompatProvider(LLMProvider):
             key_index = key_order[attempt] if self._api_keys else None
             attempted_labels.append(self._key_label(key_index))
             try:
+                kwargs = self._build_kwargs(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                )
                 await self._wait_for_rate_limit()
                 if len(self._api_keys) > 1:
                     logger.info(
@@ -849,12 +856,6 @@ class OpenAICompatProvider(LLMProvider):
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
-        kwargs = self._build_kwargs(
-            messages, tools, model, max_tokens, temperature,
-            reasoning_effort, tool_choice,
-        )
-        kwargs["stream"] = True
-        kwargs["stream_options"] = {"include_usage": True}
         max_attempts = max(1, len(self._api_keys))
         key_order = self._next_request_order()
         attempted_labels: list[str] = []
@@ -876,6 +877,12 @@ class OpenAICompatProvider(LLMProvider):
             key_index = key_order[attempt] if self._api_keys else None
             attempted_labels.append(self._key_label(key_index))
             try:
+                kwargs = self._build_kwargs(
+                    messages, tools, model, max_tokens, temperature,
+                    reasoning_effort, tool_choice,
+                )
+                kwargs["stream"] = True
+                kwargs["stream_options"] = {"include_usage": True}
                 await self._wait_for_rate_limit()
                 if len(self._api_keys) > 1:
                     logger.info(

@@ -154,6 +154,51 @@ async def test_aihubmix_strips_model_prefix() -> None:
 
 
 @pytest.mark.asyncio
+async def test_opencode_go_strips_model_prefix() -> None:
+    """OpenCode Go accepts opencode-go/<model-id> locally but wants the raw model ID upstream."""
+    mock_create = AsyncMock(return_value=_fake_chat_response())
+    spec = find_by_name("opencode-go")
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
+        client_instance = MockClient.return_value
+        client_instance.chat.completions.create = mock_create
+
+        provider = OpenAICompatProvider(
+            api_key="opencode-test-key",
+            api_base="https://opencode.ai/zen/go/v1",
+            default_model="opencode-go/kimi-k2.6",
+            spec=spec,
+        )
+        await provider.chat(
+            messages=[{"role": "user", "content": "hello"}],
+            model="opencode-go/kimi-k2.6",
+        )
+
+    call_kwargs = mock_create.call_args.kwargs
+    assert call_kwargs["model"] == "kimi-k2.6"
+
+
+@pytest.mark.asyncio
+async def test_opencode_go_minimax_returns_clear_error() -> None:
+    spec = find_by_name("opencode-go")
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = OpenAICompatProvider(
+            api_key="opencode-test-key",
+            api_base="https://opencode.ai/zen/go/v1",
+            default_model="opencode-go/minimax-m2.7",
+            spec=spec,
+        )
+        result = await provider.chat(
+            messages=[{"role": "user", "content": "hello"}],
+            model="opencode-go/minimax-m2.7",
+        )
+
+    assert result.finish_reason == "error"
+    assert "MiniMax models use the Anthropic-style /messages endpoint" in (result.content or "")
+
+
+@pytest.mark.asyncio
 async def test_standard_provider_passes_model_through() -> None:
     """Standard provider (e.g. deepseek) passes model name through as-is."""
     mock_create = AsyncMock(return_value=_fake_chat_response())

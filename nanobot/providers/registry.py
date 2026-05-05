@@ -201,6 +201,18 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         display_name="OpenAI",
         backend="openai_compat",
     ),
+    # OpenCode Go: subscription plan for curated coding models via API key.
+    # OpenCode config uses model IDs like "opencode-go/kimi-k2.6", but the
+    # upstream API expects the raw model ID on the wire.
+    ProviderSpec(
+        name="opencode_go",
+        keywords=("opencode-go",),
+        env_key="OPENCODE_API_KEY",
+        display_name="OpenCode Go",
+        backend="openai_compat",
+        default_api_base="https://opencode.ai/zen/go/v1",
+        strip_model_prefix=True,
+    ),
     # OpenAI Codex: OAuth-based, dedicated provider
     ProviderSpec(
         name="openai_codex",
