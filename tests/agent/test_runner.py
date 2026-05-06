@@ -540,6 +540,48 @@ async def test_loop_stream_filter_handles_think_only_prefix_without_crashing(tmp
 
 
 @pytest.mark.asyncio
+async def test_loop_streaming_suppresses_intermediate_tool_preamble(tmp_path):
+    loop = _make_loop(tmp_path)
+    deltas: list[str] = []
+    endings: list[bool] = []
+    call_count = {"n": 0}
+
+    async def chat_stream_with_retry(*, on_content_delta, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            await on_content_delta("Checking the repo now.")
+            return LLMResponse(
+                content="Checking the repo now.",
+                tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
+                usage={},
+            )
+
+        await on_content_delta("All set.")
+        return LLMResponse(content="All set.", tool_calls=[], usage={})
+
+    loop.provider.chat_stream_with_retry = chat_stream_with_retry
+    loop.tools.get_definitions = MagicMock(return_value=[])
+    loop.tools.execute = AsyncMock(return_value="ok")
+
+    async def on_stream(delta: str) -> None:
+        deltas.append(delta)
+
+    async def on_stream_end(*, resuming: bool = False) -> None:
+        endings.append(resuming)
+
+    final_content, tools_used, _ = await loop._run_agent_loop(
+        [],
+        on_stream=on_stream,
+        on_stream_end=on_stream_end,
+    )
+
+    assert final_content == "All set."
+    assert tools_used == ["list_dir"]
+    assert deltas == ["All set."]
+    assert endings == [True, False]
+
+
+@pytest.mark.asyncio
 async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, monkeypatch):
     from nanobot.agent.subagent import SubagentManager
     from nanobot.bus.queue import MessageBus

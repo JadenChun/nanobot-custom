@@ -161,11 +161,11 @@ class TestDispatch:
         assert second.metadata["_stream_end"] is True
 
     @pytest.mark.asyncio
-    async def test_dispatch_suppresses_resuming_stream_when_send_progress_false(self):
+    async def test_dispatch_suppresses_resuming_stream_when_result_mode(self):
         from nanobot.bus.events import InboundMessage, OutboundMessage
         from nanobot.config.schema import ChannelsConfig
 
-        loop, bus = _make_loop(channels_config=ChannelsConfig(send_progress=False))
+        loop, bus = _make_loop(channels_config=ChannelsConfig(task_update_mode="result"))
         msg = InboundMessage(
             channel="telegram",
             sender_id="u1",
@@ -200,11 +200,11 @@ class TestDispatch:
             await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
 
     @pytest.mark.asyncio
-    async def test_dispatch_streams_only_final_segment_when_send_progress_false(self):
+    async def test_dispatch_streams_only_final_segment_when_result_mode(self):
         from nanobot.bus.events import InboundMessage, OutboundMessage
         from nanobot.config.schema import ChannelsConfig
 
-        loop, bus = _make_loop(channels_config=ChannelsConfig(send_progress=False))
+        loop, bus = _make_loop(channels_config=ChannelsConfig(task_update_mode="result"))
         msg = InboundMessage(
             channel="matrix",
             sender_id="u1",
@@ -251,11 +251,11 @@ class TestDispatch:
             await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
 
     @pytest.mark.asyncio
-    async def test_dispatch_approval_response_visible_when_send_progress_false(self):
+    async def test_dispatch_approval_response_visible_when_result_mode(self):
         from nanobot.bus.events import InboundMessage, OutboundMessage
         from nanobot.config.schema import ChannelsConfig
 
-        loop, bus = _make_loop(channels_config=ChannelsConfig(send_progress=False))
+        loop, bus = _make_loop(channels_config=ChannelsConfig(task_update_mode="result"))
         msg = InboundMessage(
             channel="telegram",
             sender_id="u1",

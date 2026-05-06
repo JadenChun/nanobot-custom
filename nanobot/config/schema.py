@@ -23,7 +23,7 @@ class ChannelsConfig(Base):
 
     model_config = ConfigDict(extra="allow")
 
-    send_progress: bool = True  # stream agent's text progress to the channel
+    task_update_mode: Literal["result", "plan_result", "verbose"] = "verbose"
     send_tool_hints: bool = False  # stream tool-call hints (e.g. read_file("…"))
     send_max_retries: int = Field(default=3, ge=0, le=10)  # Max delivery attempts (initial send included)
 
@@ -259,6 +259,15 @@ class Config(BaseSettings):
     @staticmethod
     def _migrate_config(data: dict) -> dict:
         """Migrate old config formats to current."""
+        channels = data.get("channels", {})
+        if (
+            isinstance(channels, dict)
+            and "taskUpdateMode" not in channels
+            and "task_update_mode" not in channels
+            and "sendProgress" in channels
+        ):
+            channels["taskUpdateMode"] = "verbose" if channels.pop("sendProgress") else "result"
+
         # Migrate legacy token fields into maxTokens { input, output }.
         agents = data.get("agents", {})
         defaults = agents.get("defaults", {})
