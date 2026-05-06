@@ -1059,7 +1059,11 @@ End your response with exactly:
         approval_granted: bool = False,
         planned: _PlanDecision | None = None,
     ) -> AgentRunResult:
-        policy = RiskyActionPolicy(workspace=self.workspace, approval_granted=approval_granted)
+        policy = RiskyActionPolicy(
+            workspace=self.workspace,
+            approval_granted=approval_granted,
+            context_manager=self.context_manager,
+        )
         verification_goal = self._planner_verification_goal(task_text, planned)
         logger.info(
             "Action phase started for {}:{} planned_handoff={} approval_granted={}",

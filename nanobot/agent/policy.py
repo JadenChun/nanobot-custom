@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from nanobot.agent.tools.filesystem import _find_match
+from nanobot.context_repo import ContextRepoManager
 from nanobot.providers.base import ToolCallRequest
 
 
@@ -43,6 +44,7 @@ class RiskyActionPolicy(ToolPolicy):
 
     workspace: Path
     approval_granted: bool = False
+    context_manager: ContextRepoManager = field(default_factory=ContextRepoManager)
 
     _RISKY_EXEC_PATTERNS = (
         (re.compile(r"\brm\s+-[rf]{1,2}\b"), "delete files or directories"),
@@ -143,10 +145,40 @@ class RiskyActionPolicy(ToolPolicy):
         p = Path(raw_path)
         return "memory" in p.parts
 
+    def _is_autonomous_managed_path(self, raw_path: str) -> bool:
+        """Writable managed paths already have finer-grained repo policy checks."""
+        if not raw_path:
+            return False
+        path = self._resolve_workspace_path(raw_path)
+
+        target = self.context_manager.find_target_repo_for_path(path)
+        repo = self.context_manager.find_repo_for_path(path)
+        if target and (repo is None or len(str(target.path or "")) >= len(str(repo.path))):
+            rel = target.rel_path(path)
+            return bool(
+                rel
+                and not target.is_protected(rel)
+                and not target.requires_proposal(rel)
+                and target.is_writable(rel)
+            )
+
+        if repo:
+            rel = repo.rel_path(path)
+            return bool(
+                rel
+                and not repo.read_only
+                and not repo.is_protected(rel)
+                and not repo.requires_proposal(rel)
+                and not repo.blocks_direct_store_edit(rel)
+                and repo.is_writable(rel)
+            )
+
+        return False
+
     def _risky_write_reason(self, raw_path: str, new_content: str) -> str | None:
         if not raw_path:
             return None
-        if self._is_agent_state_file(raw_path):
+        if self._is_agent_state_file(raw_path) or self._is_autonomous_managed_path(raw_path):
             return None
         path = self._resolve_workspace_path(raw_path)
         if not path.exists() or not path.is_file():
@@ -169,7 +201,7 @@ class RiskyActionPolicy(ToolPolicy):
     ) -> str | None:
         if not raw_path:
             return None
-        if self._is_agent_state_file(raw_path):
+        if self._is_agent_state_file(raw_path) or self._is_autonomous_managed_path(raw_path):
             return None
         if replace_all:
             return f"apply a bulk replace in {Path(raw_path).name}"
