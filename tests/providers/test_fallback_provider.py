@@ -21,6 +21,16 @@ class ScriptedProvider(LLMProvider):
         self.last_model = kwargs.get("model")
         return self._responses.pop(0)
 
+    async def chat_with_retry(self, *args, **kwargs) -> LLMResponse:
+        self.calls += 1
+        self.last_model = kwargs.get("model")
+        return self._responses.pop(0)
+
+    async def chat_stream_with_retry(self, *args, **kwargs) -> LLMResponse:
+        self.calls += 1
+        self.last_model = kwargs.get("model")
+        return self._responses.pop(0)
+
     def get_default_model(self) -> str:
         return "scripted-model"
 
@@ -96,6 +106,27 @@ async def test_fallback_on_insufficient_quota() -> None:
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
 
     assert response.content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_fallback_on_rate_limit() -> None:
+    """Rate limit errors (429) trigger fallback after primary exhausts retries."""
+    primary = ScriptedProvider([
+        LLMResponse(
+            content="ChatGPT rate limit triggered. Please try again shortly.",
+            finish_reason="error",
+            error_status_code=429,
+        ),
+    ])
+    fallback = ScriptedProvider([LLMResponse(content="ok")])
+
+    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+
+    response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
+
+    assert response.content == "ok"
+    assert primary.calls == 1
+    assert fallback.calls == 1
 
 
 @pytest.mark.asyncio
@@ -204,6 +235,29 @@ async def test_streaming_fallback_on_quota_exhaustion() -> None:
     """Streaming calls also fall back on quota exhaustion."""
     primary = ScriptedProvider([
         LLMResponse(content="Error: out of quota", finish_reason="error"),
+    ])
+    fallback = ScriptedProvider([LLMResponse(content="streamed ok")])
+
+    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+
+    response = await provider.chat_stream_with_retry(
+        messages=[{"role": "user", "content": "hi"}],
+    )
+
+    assert response.content == "streamed ok"
+    assert primary.calls == 1
+    assert fallback.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_streaming_fallback_on_rate_limit() -> None:
+    """Streaming calls also fall back on rate limit errors."""
+    primary = ScriptedProvider([
+        LLMResponse(
+            content="ChatGPT rate limit triggered. Please try again shortly.",
+            finish_reason="error",
+            error_status_code=429,
+        ),
     ])
     fallback = ScriptedProvider([LLMResponse(content="streamed ok")])
 
