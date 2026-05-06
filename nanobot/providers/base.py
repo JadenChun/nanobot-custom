@@ -311,6 +311,16 @@ class LLMProvider(ABC):
             return any(t in cls._NON_RETRYABLE_429_TOKENS for t in tokens)
         return cls._is_quota_exhaustion(response.content)
 
+    @classmethod
+    def _is_rate_limit_response(cls, response: LLMResponse) -> bool:
+        """True when the response indicates a transient rate limit (not quota exhaustion)."""
+        if response.error_status_code == 429 and not cls._is_quota_exhaustion_response(response):
+            return True
+        content = (response.content or "").lower()
+        has_rate_limit = any(marker in content for marker in cls._RATE_LIMIT_TEXT_MARKERS)
+        has_quota = any(marker in content for marker in cls._QUOTA_EXHAUSTION_TEXT_MARKERS)
+        return has_rate_limit and not has_quota
+
     @staticmethod
     def _extract_retry_after(content: str | None) -> float | None:
         """Parse retry-after timing from error message text."""

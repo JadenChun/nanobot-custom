@@ -143,8 +143,8 @@ class FallbackProvider(LLMProvider):
 
             last_response = response
 
-            if not self._is_quota_exhaustion_response(response):
-                # Not a quota issue — could be transient or another error.
+            if not self._is_quota_exhaustion_response(response) and not self._is_rate_limit_response(response):
+                # Not a quota or rate-limit issue — could be another error.
                 # Don't mark as exhausted, just return the error.
                 return response
 
@@ -221,7 +221,7 @@ class FallbackProvider(LLMProvider):
                 # a secondary provider would concatenate a second response on top.
                 return response
 
-            if not self._is_quota_exhaustion_response(response):
+            if not self._is_quota_exhaustion_response(response) and not self._is_rate_limit_response(response):
                 return response
 
             self._mark_provider_exhausted(idx, provider_model)
