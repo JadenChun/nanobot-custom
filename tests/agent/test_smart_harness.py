@@ -418,6 +418,7 @@ async def test_plan_result_emits_one_user_facing_plan_message_and_does_not_persi
     assert [msg.content for msg in outbound] == [
         "Plan: Check the current draft count and verify the pipeline totals."
     ]
+    assert outbound[0].metadata.get("_intermediate") is True
 
     session = loop.sessions.get_or_create("telegram:123")
     assert all(

@@ -316,6 +316,7 @@ class SubagentManager:
         label: str | None = None,
         goal: str | None = None,
         review: bool = False,
+        notify: bool = False,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
@@ -326,7 +327,15 @@ class SubagentManager:
         origin = {"channel": origin_channel, "chat_id": origin_chat_id}
 
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, goal=goal, review=review)
+            self._run_subagent(
+                task_id,
+                task,
+                display_label,
+                origin,
+                goal=goal,
+                review=review,
+                notify=notify,
+            )
         )
         self._running_tasks[task_id] = bg_task
         if session_key:
@@ -343,7 +352,9 @@ class SubagentManager:
 
         mode = " with review" if review else ""
         logger.info("Spawned subagent [{}]{}: {}", task_id, mode, display_label)
-        return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
+        if notify:
+            return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
+        return f"Subagent [{display_label}] started (id: {task_id})."
 
     # ------------------------------------------------------------------
     # Shared agent loop
@@ -795,6 +806,7 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
         origin: dict[str, str],
         goal: str | None = None,
         review: bool = False,
+        notify: bool = False,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
@@ -818,7 +830,8 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
             if run_result is not None and run_result.stop_reason == "tool_error":
                 detail = self._format_tool_failure(run_result.tool_events)
                 logger.error("Subagent [{}] failed during tool execution", task_id)
-                await self._announce_result(task_id, label, task, detail, origin, "error")
+                if notify:
+                    await self._announce_result(task_id, label, task, detail, origin, "error")
                 return
 
             if not isinstance(final_result, str) or not final_result.strip():
@@ -844,12 +857,14 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
                     logger.error("Review loop failed for [{}], accepting generation result: {}", task_id, e)
 
             logger.info("Subagent [{}] completed successfully", task_id)
-            await self._announce_result(task_id, label, task, final_result, origin, "ok", review_meta)
+            if notify:
+                await self._announce_result(task_id, label, task, final_result, origin, "ok", review_meta)
 
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             logger.error("Subagent [{}] failed: {}", task_id, e)
-            await self._announce_result(task_id, label, task, error_msg, origin, "error")
+            if notify:
+                await self._announce_result(task_id, label, task, error_msg, origin, "error")
 
     async def _announce_result(
         self,

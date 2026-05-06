@@ -251,6 +251,71 @@ class TestDispatch:
             await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
 
     @pytest.mark.asyncio
+    async def test_dispatch_defers_terminal_stream_until_completion_in_plan_result_mode(self):
+        from nanobot.bus.events import InboundMessage, OutboundMessage
+        from nanobot.config.schema import ChannelsConfig
+
+        loop, bus = _make_loop(channels_config=ChannelsConfig(task_update_mode="plan_result"))
+        msg = InboundMessage(
+            channel="telegram",
+            sender_id="u1",
+            chat_id="123",
+            content="hello",
+            metadata={"_wants_stream": True, "message_id": 10},
+        )
+
+        async def fake_process(_msg, *, on_stream=None, on_stream_end=None, **kwargs):
+            assert on_stream is not None
+            assert on_stream_end is not None
+            await on_stream("final answer")
+            await on_stream_end(resuming=False)
+            return OutboundMessage(
+                channel="telegram",
+                chat_id="123",
+                content="final answer",
+                metadata={"_streamed": True, "message_id": 10},
+            )
+
+        loop._process_message = fake_process
+
+        await loop._dispatch(msg)
+        out = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+
+        assert out.content == "final answer"
+        assert out.metadata == {"message_id": 10}
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
+
+    @pytest.mark.asyncio
+    async def test_dispatch_drops_deferred_terminal_stream_when_turn_returns_none_in_plan_result_mode(self):
+        from nanobot.bus.events import InboundMessage
+        from nanobot.config.schema import ChannelsConfig
+
+        loop, bus = _make_loop(channels_config=ChannelsConfig(task_update_mode="plan_result"))
+        msg = InboundMessage(
+            channel="telegram",
+            sender_id="u1",
+            chat_id="123",
+            content="hello",
+            metadata={"_wants_stream": True, "message_id": 10},
+        )
+
+        async def fake_process(_msg, *, on_stream=None, on_stream_end=None, **kwargs):
+            assert on_stream is not None
+            assert on_stream_end is not None
+            await on_stream("tool-delivered summary")
+            await on_stream_end(resuming=False)
+            return None
+
+        loop._process_message = fake_process
+
+        await loop._dispatch(msg)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(bus.consume_outbound(), timeout=0.05)
+
+    @pytest.mark.asyncio
     async def test_dispatch_approval_response_visible_when_result_mode(self):
         from nanobot.bus.events import InboundMessage, OutboundMessage
         from nanobot.config.schema import ChannelsConfig
@@ -422,7 +487,7 @@ class TestSubagentCancellation:
         await mgr._run_subagent("sub-1", "do task", "label", {"channel": "test", "chat_id": "c1"})
 
         mgr.runner.run.assert_awaited_once()
-        mgr._announce_result.assert_awaited_once()
+        mgr._announce_result.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_subagent_announces_error_when_tool_execution_fails(self, monkeypatch, tmp_path):
@@ -450,7 +515,7 @@ class TestSubagentCancellation:
 
         monkeypatch.setattr("nanobot.agent.tools.registry.ToolRegistry.execute", fake_execute)
 
-        await mgr._run_subagent("sub-1", "do task", "label", {"channel": "test", "chat_id": "c1"})
+        await mgr._run_subagent("sub-1", "do task", "label", {"channel": "test", "chat_id": "c1"}, notify=True)
 
         mgr._announce_result.assert_awaited_once()
         args = mgr._announce_result.await_args.args

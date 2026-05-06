@@ -35,7 +35,7 @@ class SpawnTool(Tool):
             "For important tasks (research, writing, coding), set review=true with a goal "
             "to enable quality validation - a separate review agent will evaluate the output "
             "and request revisions if needed. "
-            "The subagent will complete the task and report back when done. "
+            "Set notify=true only when the user explicitly wants a later completion message. "
             "For deliverables or existing projects, inspect the workspace first "
             "and use a dedicated subdirectory when helpful."
         )
@@ -70,6 +70,14 @@ class SpawnTool(Tool):
                         "Simple lookups and quick tasks don't need this. Default: false."
                     ),
                 },
+                "notify": {
+                    "type": "boolean",
+                    "description": (
+                        "Whether to send a later completion message back to the user when the "
+                        "background subagent finishes. Default: false. Only set this when the "
+                        "user explicitly wants background completion updates."
+                    ),
+                },
             },
             "required": ["task"],
         }
@@ -77,6 +85,7 @@ class SpawnTool(Tool):
     async def execute(
         self, task: str, label: str | None = None,
         goal: str | None = None, review: bool = False,
+        notify: bool = False,
         **kwargs: Any,
     ) -> str:
         """Spawn a subagent to execute the given task."""
@@ -85,6 +94,7 @@ class SpawnTool(Tool):
             label=label,
             goal=goal,
             review=review,
+            notify=notify,
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
             session_key=self._session_key,
