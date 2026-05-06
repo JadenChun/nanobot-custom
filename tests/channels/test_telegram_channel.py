@@ -365,6 +365,23 @@ async def test_send_delta_stream_end_treats_not_modified_as_success() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_delta_stream_end_resuming_keeps_typing_active() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    stopped: list[str] = []
+    channel._stop_typing = lambda chat_id: stopped.append(chat_id)
+    channel._stream_bufs["123"] = _StreamBuf(text="hello", message_id=7, last_edit=0.0, stream_id="s:0")
+
+    await channel.send_delta("123", "", {"_stream_end": True, "_stream_id": "s:0", "_resuming": True})
+
+    assert stopped == []
+    assert "123" not in channel._stream_bufs
+
+
+@pytest.mark.asyncio
 async def test_send_delta_new_stream_id_replaces_stale_buffer() -> None:
     channel = TelegramChannel(
         TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
@@ -512,6 +529,29 @@ async def test_send_progress_keeps_message_in_topic() -> None:
     )
 
     assert channel._app.bot.sent_messages[0]["message_thread_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_send_intermediate_update_keeps_typing_active() -> None:
+    channel = TelegramChannel(
+        TelegramConfig(enabled=True, token="123:abc", allow_from=["*"]),
+        MessageBus(),
+    )
+    channel._app = _FakeApp(lambda: None)
+    stopped: list[str] = []
+    channel._stop_typing = lambda chat_id: stopped.append(chat_id)
+
+    await channel.send(
+        OutboundMessage(
+            channel="telegram",
+            chat_id="123",
+            content="Plan: Checking the current draft count.",
+            metadata={"_intermediate": True},
+        )
+    )
+
+    assert stopped == []
+    assert channel._app.bot.sent_messages[0]["text"] == "Plan: Checking the current draft count."
 
 
 @pytest.mark.asyncio

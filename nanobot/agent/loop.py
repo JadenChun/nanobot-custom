@@ -1183,10 +1183,11 @@ End your response with exactly:
                     stream_segment = 0
                     buffered_stream = ""
                     stream_progress_enabled = True
+                    defer_terminal_stream_until_completion = False
                     if msg.channel != "cli":
-                        stream_progress_enabled = (
-                            self._channel_task_update_mode(msg.channel) == "verbose"
-                        )
+                        task_update_mode = self._channel_task_update_mode(msg.channel)
+                        stream_progress_enabled = (task_update_mode == "verbose")
+                        defer_terminal_stream_until_completion = (task_update_mode == "plan_result")
 
                     def _current_stream_id() -> str:
                         return f"{stream_base_id}:{stream_segment}"
@@ -1246,6 +1247,10 @@ End your response with exactly:
 
                         if resuming:
                             buffered_stream = ""
+                            stream_segment += 1
+                            return
+
+                        if defer_terminal_stream_until_completion:
                             stream_segment += 1
                             return
 
@@ -1519,7 +1524,10 @@ End your response with exactly:
                             channel=msg.channel,
                             chat_id=msg.chat_id,
                             content=plan_message,
-                            metadata=dict(msg.metadata or {}),
+                            metadata={
+                                **dict(msg.metadata or {}),
+                                "_intermediate": True,
+                            },
                         ))
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:

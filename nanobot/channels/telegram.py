@@ -362,8 +362,9 @@ class TelegramChannel(BaseChannel):
             logger.warning("Telegram bot not running")
             return
 
-        # Only stop typing indicator for final responses
-        if not msg.metadata.get("_progress", False):
+        # Keep typing active for intermediate task updates; only stop when this
+        # outbound looks terminal from Telegram's point of view.
+        if not msg.metadata.get("_progress", False) and not msg.metadata.get("_intermediate", False):
             self._stop_typing(msg.chat_id)
 
         try:
@@ -591,7 +592,8 @@ class TelegramChannel(BaseChannel):
                 return
             if delta:
                 buf.text += delta
-            self._stop_typing(chat_id)
+            if not meta.get("_resuming"):
+                self._stop_typing(chat_id)
             try:
                 if len(buf.text) > TELEGRAM_MAX_MESSAGE_LEN or buf.message_id is None:
                     await self._roll_stream_buffer(
