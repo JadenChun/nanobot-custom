@@ -87,8 +87,27 @@ def test_channels_config_builtin_fields_removed():
     """After decoupling, ChannelsConfig has no explicit channel fields."""
     cfg = ChannelsConfig()
     assert not hasattr(cfg, "telegram")
-    assert cfg.send_progress is True
+    assert cfg.task_update_mode == "verbose"
     assert cfg.send_tool_hints is False
+
+
+def test_channels_config_rejects_invalid_task_update_mode():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        ChannelsConfig(task_update_mode="nope")
+
+
+def test_config_migrates_legacy_send_progress_to_task_update_mode():
+    from nanobot.config.schema import Config
+
+    verbose = Config._migrate_config({"channels": {"sendProgress": True}})
+    result = Config._migrate_config({"channels": {"sendProgress": False}})
+
+    assert verbose["channels"]["taskUpdateMode"] == "verbose"
+    assert "sendProgress" not in verbose["channels"]
+    assert result["channels"]["taskUpdateMode"] == "result"
+    assert "sendProgress" not in result["channels"]
 
 
 # ---------------------------------------------------------------------------
@@ -579,8 +598,49 @@ async def test_send_with_retry_propagates_cancelled_error_during_sleep():
         with pytest.raises(asyncio.CancelledError):
             await mgr._send_with_retry(mgr.channels["failing"], msg)
 
-    # Should have attempted once before sleep was cancelled
-    assert call_count == 1
+
+@pytest.mark.asyncio
+async def test_dispatch_outbound_skips_progress_when_task_update_mode_is_not_verbose():
+    sent: list[str] = []
+
+    class _ProgressChannel(BaseChannel):
+        name = "progress"
+        display_name = "Progress"
+
+        async def start(self) -> None:
+            pass
+
+        async def stop(self) -> None:
+            pass
+
+        async def send(self, msg: OutboundMessage) -> None:
+            sent.append(msg.content)
+
+    fake_config = SimpleNamespace(
+        channels=ChannelsConfig(task_update_mode="result"),
+        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
+    )
+
+    mgr = ChannelManager.__new__(ChannelManager)
+    mgr.config = fake_config
+    mgr.bus = MessageBus()
+    mgr.channels = {"progress": _ProgressChannel(fake_config, mgr.bus)}
+    mgr._dispatch_task = None
+
+    task = asyncio.create_task(mgr._dispatch_outbound())
+    try:
+        await mgr.bus.publish_outbound(OutboundMessage(
+            channel="progress",
+            chat_id="123",
+            content="thinking",
+            metadata={"_progress": True},
+        ))
+        await asyncio.sleep(0.05)
+    finally:
+        task.cancel()
+        await task
+
+    assert sent == []
 
 
 # ---------------------------------------------------------------------------

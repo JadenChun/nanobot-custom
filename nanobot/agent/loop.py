@@ -89,16 +89,15 @@ class _LoopHook(AgentHook):
         return self._on_stream is not None
 
     async def on_stream(self, context: AgentHookContext, delta: str) -> None:
-        from nanobot.utils.helpers import strip_think
-
-        prev_clean = strip_think(self._stream_buf)
         self._stream_buf += delta
-        new_clean = strip_think(self._stream_buf)
-        incremental = new_clean[len(prev_clean):]
-        if incremental and self._on_stream:
-            await self._on_stream(incremental)
 
     async def on_stream_end(self, context: AgentHookContext, *, resuming: bool) -> None:
+        if not resuming and self._on_stream:
+            from nanobot.utils.helpers import strip_think
+
+            final_clean = strip_think(self._stream_buf)
+            if final_clean:
+                await self._on_stream(final_clean)
         if self._on_stream_end:
             await self._on_stream_end(resuming=resuming)
         self._stream_buf = ""
@@ -600,6 +599,24 @@ class AgentLoop:
         trigger = int(budget * self._TOOL_RESULT_CLEAR_TRIGGER_RATIO)
         target = int(budget * self._TOOL_RESULT_CLEAR_TARGET_RATIO)
         return trigger or None, target or None
+
+    def _channel_task_update_mode(self, channel: str) -> str:
+        """Return the task update mode for chat channels.
+
+        CLI intentionally keeps its current progress behavior regardless of
+        channel reply mode settings.
+        """
+        if channel == "cli" or self.channels_config is None:
+            return "verbose"
+        return self.channels_config.task_update_mode
+
+    @staticmethod
+    def _planner_user_message(planned: _PlanDecision) -> str | None:
+        """Build the short user-facing plan summary for plan_result mode."""
+        summary = planned.action_summary.strip()
+        if not summary:
+            return None
+        return f"Plan: {summary}"
 
     def _planner_prompt(self) -> str:
         return f"""# Internal Planner
@@ -1166,8 +1183,10 @@ End your response with exactly:
                     stream_segment = 0
                     buffered_stream = ""
                     stream_progress_enabled = True
-                    if self.channels_config is not None:
-                        stream_progress_enabled = self.channels_config.send_progress
+                    if msg.channel != "cli":
+                        stream_progress_enabled = (
+                            self._channel_task_update_mode(msg.channel) == "verbose"
+                        )
 
                     def _current_stream_id() -> str:
                         return f"{stream_base_id}:{stream_segment}"
@@ -1490,6 +1509,18 @@ End your response with exactly:
                 else:
                     initial_messages.insert(0, {"role": "system", "content": handoff_text})
                 logger.info("Planner handoff injected into action context for session {}", key)
+                if (
+                    approval_note is None
+                    and self._channel_task_update_mode(msg.channel) == "plan_result"
+                ):
+                    plan_message = self._planner_user_message(planned)
+                    if plan_message:
+                        await self.bus.publish_outbound(OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content=plan_message,
+                            metadata=dict(msg.metadata or {}),
+                        ))
 
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
             meta = dict(msg.metadata or {})

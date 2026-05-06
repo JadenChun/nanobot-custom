@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import _PlanDecision, _VerificationResult
+from nanobot.agent.loop import _PendingApproval, _PlanDecision, _VerificationResult
 from nanobot.agent.policy import RiskyActionPolicy, ToolPolicy, ToolPolicyDecision
 from nanobot.agent.runner import AgentRunResult, AgentRunSpec, AgentRunner
 from nanobot.agent.subagent import _ExploreLoopGuard
 from nanobot.bus.queue import MessageBus
+from nanobot.config.schema import ChannelsConfig
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 
 
@@ -29,6 +31,15 @@ def _make_loop(tmp_path, *, planning_mode: str = "agent", planner_max_iterations
         planner_max_iterations=planner_max_iterations,
     )
     return loop, provider
+
+
+async def _drain_outbound(bus: MessageBus) -> list:
+    messages = []
+    while True:
+        try:
+            messages.append(await asyncio.wait_for(bus.consume_outbound(), timeout=0.05))
+        except asyncio.TimeoutError:
+            return messages
 
 
 def test_parse_plan_decision_accepts_richer_handoff(tmp_path):
@@ -238,6 +249,7 @@ async def test_process_direct_approval_prompt_stays_visible_when_streaming(tmp_p
 
     assert response is not None
     assert response.metadata.get("_streamed") is not True
+    assert stream_updates == []
     assert "Reply `yes` to continue" in response.content
     assert "Proposed approach before approval" in response.content
 
@@ -371,3 +383,104 @@ async def test_process_direct_injects_richer_planner_handoff_into_action(tmp_pat
     assert "Action Summary:" in handoff_messages[0]["content"]
     assert "Review Goal:" in handoff_messages[0]["content"]
     assert "References:" in handoff_messages[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_plan_result_emits_one_user_facing_plan_message_and_does_not_persist_it(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planning_mode="agent")
+    loop.channels_config = ChannelsConfig(task_update_mode="plan_result")
+    loop._should_plan = MagicMock(return_value=True)  # type: ignore[method-assign]
+
+    loop._run_internal_planner = AsyncMock(return_value=  # type: ignore[method-assign]
+        _PlanDecision(
+            decision="execute",
+            action_summary="Check the current draft count and verify the pipeline totals.",
+            review_goal="Confirm the final totals are correct.",
+            references=[],
+        )
+    )
+    loop._run_main_task = AsyncMock(return_value=AgentRunResult(  # type: ignore[method-assign]
+        final_content="There are 3 drafted articles now.",
+        messages=[{"role": "assistant", "content": "There are 3 drafted articles now."}],
+    ))
+
+    response = await loop.process_direct(
+        "how much draft article do we have now?",
+        session_key="telegram:123",
+        channel="telegram",
+        chat_id="123",
+    )
+
+    outbound = await _drain_outbound(loop.bus)
+
+    assert response is not None
+    assert response.content == "There are 3 drafted articles now."
+    assert [msg.content for msg in outbound] == [
+        "Plan: Check the current draft count and verify the pipeline totals."
+    ]
+
+    session = loop.sessions.get_or_create("telegram:123")
+    assert all(
+        message.get("content") != "Plan: Check the current draft count and verify the pipeline totals."
+        for message in session.messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_plan_result_skips_plan_message_when_planning_is_skipped(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planning_mode="off")
+    loop.channels_config = ChannelsConfig(task_update_mode="plan_result")
+    loop._run_main_task = AsyncMock(return_value=AgentRunResult(  # type: ignore[method-assign]
+        final_content="Done",
+        messages=[{"role": "assistant", "content": "Done"}],
+    ))
+
+    response = await loop.process_direct(
+        "hello",
+        session_key="telegram:123",
+        channel="telegram",
+        chat_id="123",
+    )
+
+    outbound = await _drain_outbound(loop.bus)
+
+    assert response is not None
+    assert response.content == "Done"
+    assert outbound == []
+
+
+@pytest.mark.asyncio
+async def test_plan_result_does_not_emit_second_plan_message_after_approval_resume(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planning_mode="agent")
+    loop.channels_config = ChannelsConfig(task_update_mode="plan_result")
+    loop._should_plan = MagicMock(return_value=True)  # type: ignore[method-assign]
+    loop._pending_approvals["telegram:123"] = _PendingApproval(
+        summary="push commits to a remote repository",
+        created_at=0.0,
+    )
+
+    loop._run_internal_planner = AsyncMock(return_value=  # type: ignore[method-assign]
+        _PlanDecision(
+            decision="execute",
+            action_summary="Push the cleanup commit and confirm the remote state.",
+            review_goal="Confirm the remote no longer contains the draft batch.",
+            references=[],
+        )
+    )
+    loop._run_main_task = AsyncMock(return_value=AgentRunResult(  # type: ignore[method-assign]
+        final_content="Push complete.",
+        messages=[{"role": "assistant", "content": "Push complete."}],
+    ))
+
+    response = await loop.process_direct(
+        "yes",
+        session_key="telegram:123",
+        channel="telegram",
+        chat_id="123",
+    )
+
+    outbound = await _drain_outbound(loop.bus)
+
+    assert response is not None
+    assert response.content == "Push complete."
+    assert outbound == []

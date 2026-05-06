@@ -1307,7 +1307,7 @@ Global settings that apply to all channels. Configure under the `channels` secti
 ```json
 {
   "channels": {
-    "sendProgress": true,
+    "taskUpdateMode": "verbose",
     "sendToolHints": false,
     "sendMaxRetries": 3,
     "telegram": { ... }
@@ -1317,7 +1317,7 @@ Global settings that apply to all channels. Configure under the `channels` secti
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `sendProgress` | `true` | Stream agent's text progress to the channel |
+| `taskUpdateMode` | `"verbose"` | Channel reply style: `result`, `plan_result`, or `verbose` |
 | `sendToolHints` | `false` | Stream tool-call hints (e.g. `read_file("…")`) |
 | `sendMaxRetries` | `3` | Max delivery attempts per outbound message, including the initial send (0-10 configured, minimum 1 actual attempt) |
 

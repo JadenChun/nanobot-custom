@@ -136,7 +136,10 @@ class ChannelManager:
                 if msg.metadata.get("_progress"):
                     if msg.metadata.get("_tool_hint") and not self.config.channels.send_tool_hints:
                         continue
-                    if not msg.metadata.get("_tool_hint") and not self.config.channels.send_progress:
+                    if (
+                        not msg.metadata.get("_tool_hint")
+                        and self.config.channels.task_update_mode != "verbose"
+                    ):
                         continue
 
                 # Coalesce consecutive _stream_delta messages for the same (channel, chat_id)
