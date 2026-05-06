@@ -13,6 +13,7 @@ from nanobot.agent.runner import AgentRunResult, AgentRunSpec, AgentRunner
 from nanobot.agent.subagent import _ExploreLoopGuard
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ChannelsConfig
+from nanobot.context_repo import ContextRepoManager
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 
 
@@ -196,6 +197,71 @@ def test_risky_action_policy_detects_large_overwrite(tmp_path):
     )
 
     assert "overwrite a large portion" in reason
+
+
+def test_risky_action_policy_skips_approval_for_writable_managed_target_repo_path(tmp_path, monkeypatch):
+    context_repo = tmp_path / "pota"
+    target_repo = tmp_path / "website"
+    target_file = target_repo / "content" / "blog" / "draft.md"
+    context_repo.mkdir()
+    target_file.parent.mkdir(parents=True)
+    target_file.write_text("\n".join(f"line {i}" for i in range(300)), encoding="utf-8")
+    monkeypatch.setenv("POTA_WEBSITE_REPO", str(target_repo))
+    (context_repo / "nanobot.context.json").write_text(json.dumps({
+        "name": "pota",
+        "targetRepos": {
+            "pota_website": {
+                "type": "website",
+                "pathEnv": "POTA_WEBSITE_REPO",
+                "read": ["**"],
+                "write": ["content/blog/**"],
+                "proposalRequired": ["src/**"],
+            }
+        },
+    }), encoding="utf-8")
+    manager = ContextRepoManager.from_config(context_repos=[str(context_repo)])
+
+    policy = RiskyActionPolicy(workspace=tmp_path, context_manager=manager)
+    reason = policy._risky_write_reason(
+        str(target_file),
+        "\n".join(f"new {i}" for i in range(320)),
+    )
+
+    assert reason is None
+
+
+def test_risky_action_policy_skips_large_edit_approval_for_writable_managed_target_repo_path(tmp_path, monkeypatch):
+    context_repo = tmp_path / "pota"
+    target_repo = tmp_path / "website"
+    target_file = target_repo / "content" / "blog" / "draft.md"
+    context_repo.mkdir()
+    target_file.parent.mkdir(parents=True)
+    original = "\n".join(f"line {i}" for i in range(300))
+    target_file.write_text(original, encoding="utf-8")
+    monkeypatch.setenv("POTA_WEBSITE_REPO", str(target_repo))
+    (context_repo / "nanobot.context.json").write_text(json.dumps({
+        "name": "pota",
+        "targetRepos": {
+            "pota_website": {
+                "type": "website",
+                "pathEnv": "POTA_WEBSITE_REPO",
+                "read": ["**"],
+                "write": ["content/blog/**"],
+                "proposalRequired": ["src/**"],
+            }
+        },
+    }), encoding="utf-8")
+    manager = ContextRepoManager.from_config(context_repos=[str(context_repo)])
+
+    policy = RiskyActionPolicy(workspace=tmp_path, context_manager=manager)
+    reason = policy._risky_edit_reason(
+        str(target_file),
+        original,
+        "\n".join(f"new line {i}" for i in range(320)),
+        False,
+    )
+
+    assert reason is None
 
 
 @pytest.mark.asyncio
