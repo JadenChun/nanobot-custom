@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.write_guard import WriteScope
 
 
 def _make_response(content: str | None = None, tool_calls: list | None = None):
@@ -326,8 +328,8 @@ class TestSpawnWithReview:
         assert "started" in result
         # Wait for background task
         await asyncio.sleep(0.1)
-        # Result should be announced without review
-        mgr.bus.publish_inbound.assert_called()
+        # Successful background tasks stay silent unless notify=true.
+        mgr.bus.publish_inbound.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_spawn_with_review_passes_params(self):
@@ -359,10 +361,72 @@ class TestSpawnWithReview:
 
         assert "started" in result
         await asyncio.sleep(0.1)
-        mgr.bus.publish_inbound.assert_called()
-        msg = mgr.bus.publish_inbound.call_args.args[0]
-        assert "failed" in msg.content
-        assert "no final response" in msg.content.lower()
+        # Generic failures remain silent unless notify=true or a forced-failure rule applies.
+        mgr.bus.publish_inbound.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_spawn_rejects_overlapping_write_scope(self):
+        mgr = _make_manager()
+        block = asyncio.Event()
+
+        async def fake_run(_spec):
+            await block.wait()
+            return SimpleNamespace(final_content="done", messages=[], stop_reason="stop")
+
+        mgr.runner.run = AsyncMock(side_effect=fake_run)
+
+        with patch.object(mgr, "_build_subagent_prompt", return_value="subagent prompt"), \
+             patch.object(mgr, "_build_generation_tools") as mock_tools:
+            mock_tools.return_value = MagicMock()
+            first = await mgr.spawn(
+                task="write draft",
+                write_scope=["outputs/seo/"],
+                origin_channel="cli",
+                origin_chat_id="direct",
+                session_key="cli:test",
+            )
+            second = await mgr.spawn(
+                task="write another draft",
+                write_scope=["outputs/seo/article.md"],
+                origin_channel="cli",
+                origin_chat_id="direct",
+                session_key="cli:test",
+            )
+
+            assert "started" in first
+            assert second.startswith("Error:")
+            assert "overlaps" in second
+
+            block.set()
+            await asyncio.sleep(0.05)
+
+    @pytest.mark.asyncio
+    async def test_write_conflict_forces_failure_notification_even_without_notify(self):
+        mgr = _make_manager()
+        mgr._last_run_result = SimpleNamespace(
+            stop_reason="tool_error",
+            tool_events=[{
+                "name": "edit_file",
+                "status": "error",
+                "detail": "Error: File is currently locked for editing by main:cli:test",
+            }],
+        )
+
+        with patch.object(mgr, "_build_subagent_prompt", return_value="subagent prompt"), \
+             patch.object(mgr, "_build_generation_tools") as mock_tools, \
+             patch.object(mgr, "_run_agent_loop", new=AsyncMock(return_value=(None, []))):
+            mock_tools.return_value = MagicMock()
+            await mgr._run_subagent(
+                "sub-1",
+                "edit the file",
+                "edit the file",
+                {"channel": "test", "chat_id": "c1"},
+                notify=False,
+                write_scope=(WriteScope.from_raw(Path("/tmp/test-workspace"), "drafts/"),),
+                session_key="test:c1",
+            )
+
+        mgr.bus.publish_inbound.assert_called_once()
 
 
 class TestBuildReviewPrompt:
@@ -381,6 +445,16 @@ class TestBuildReviewPrompt:
         assert "skeptical" in prompt.lower()
         assert "MUST NOT modify" in prompt
         assert "---REVIEW---" in prompt
+
+
+@pytest.mark.asyncio
+async def test_spawn_pipeline_is_explicitly_rejected():
+    mgr = _make_manager()
+
+    result = await mgr.spawn_pipeline(tasks=[{"task": "do work"}], session_key="cli:test")
+
+    assert result.startswith("Error:")
+    assert "write_scope safety model" in result
 
     def test_contains_workspace(self):
         mgr = _make_manager()

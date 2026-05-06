@@ -1,5 +1,6 @@
 """Pipeline tool for sequential subagent execution with fail-fast."""
 
+import contextvars
 from typing import Any, TYPE_CHECKING
 
 from nanobot.agent.tools.base import Tool
@@ -26,11 +27,28 @@ class SpawnPipelineTool(Tool):
         self._manager = manager
         self._origin_channel = "cli"
         self._origin_chat_id = "direct"
+        self._session_key = "cli:direct"
+        self._origin_channel_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+            "pipeline_tool_origin_channel",
+            default=self._origin_channel,
+        )
+        self._origin_chat_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+            "pipeline_tool_origin_chat_id",
+            default=self._origin_chat_id,
+        )
+        self._session_key_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+            "pipeline_tool_session_key",
+            default=self._session_key,
+        )
 
-    def set_context(self, channel: str, chat_id: str) -> None:
+    def set_context(self, channel: str, chat_id: str, session_key: str | None = None) -> None:
         """Set the origin context for pipeline announcements."""
         self._origin_channel = channel
         self._origin_chat_id = chat_id
+        self._session_key = session_key or f"{channel}:{chat_id}"
+        self._origin_channel_var.set(self._origin_channel)
+        self._origin_chat_id_var.set(self._origin_chat_id)
+        self._session_key_var.set(self._session_key)
 
     @property
     def name(self) -> str:
@@ -101,6 +119,7 @@ class SpawnPipelineTool(Tool):
         """Spawn the pipeline."""
         return await self._manager.spawn_pipeline(
             tasks=tasks,
-            origin_channel=self._origin_channel,
-            origin_chat_id=self._origin_chat_id,
+            origin_channel=self._origin_channel_var.get(),
+            origin_chat_id=self._origin_chat_id_var.get(),
+            session_key=self._session_key_var.get(),
         )

@@ -2,10 +2,12 @@
 
 import difflib
 import mimetypes
+import contextvars
 from pathlib import Path
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.write_guard import FileLockRegistry, WriteScope, _is_under
 from nanobot.utils.helpers import build_image_content_blocks, detect_image_mime
 
 # Files the LLM is never permitted to read, write, edit, or list.
@@ -42,15 +44,6 @@ def _resolve_path(
             raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
     return resolved
 
-
-def _is_under(path: Path, directory: Path) -> bool:
-    try:
-        path.relative_to(directory.resolve())
-        return True
-    except ValueError:
-        return False
-
-
 class _FsTool(Tool):
     """Shared base for filesystem tools — common init and path resolution."""
 
@@ -60,11 +53,21 @@ class _FsTool(Tool):
         allowed_dir: Path | None = None,
         extra_allowed_dirs: list[Path] | None = None,
         resource_policy: Any | None = None,
+        lock_registry: FileLockRegistry | None = None,
+        lock_owner: str | None = None,
+        allowed_write_scope: list[WriteScope] | None = None,
     ):
         self._workspace = workspace
         self._allowed_dir = allowed_dir
         self._extra_allowed_dirs = extra_allowed_dirs
         self._resource_policy = resource_policy
+        self._lock_registry = lock_registry
+        self._lock_owner = lock_owner or "agent:unknown"
+        self._lock_owner_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+            f"{self.__class__.__name__}_lock_owner",
+            default=self._lock_owner,
+        )
+        self._allowed_write_scope = tuple(allowed_write_scope or [])
 
     def _resolve(self, path: str, action: str = "read") -> Path:
         resolved = _resolve_path(path, self._workspace, self._allowed_dir, self._extra_allowed_dirs)
@@ -78,6 +81,32 @@ class _FsTool(Tool):
 
     def _is_hidden(self, path: Path) -> bool:
         return bool(self._resource_policy and self._resource_policy.is_hidden(path))
+
+    def set_lock_owner(self, owner: str) -> None:
+        self._lock_owner = owner
+        self._lock_owner_var.set(owner)
+
+    def _write_scope_error(self, path: Path) -> str | None:
+        if not self._allowed_write_scope:
+            return None
+        if any(scope.allows(path) for scope in self._allowed_write_scope):
+            return None
+        allowed = ", ".join(scope.describe() for scope in self._allowed_write_scope)
+        return f"Error: Path {path} is outside the declared write scope. Allowed targets: {allowed}"
+
+    async def _acquire_lock(self, path: Path) -> str | None:
+        if self._lock_registry is None:
+            return None
+        lock_owner = self._lock_owner_var.get()
+        owner = await self._lock_registry.acquire(path, lock_owner)
+        if owner is None:
+            return None
+        return f"Error: File is currently locked for editing by {owner}: {path}"
+
+    async def _release_lock(self, path: Path) -> None:
+        if self._lock_registry is None:
+            return
+        await self._lock_registry.release(path, self._lock_owner_var.get())
 
 
 # ---------------------------------------------------------------------------
@@ -215,10 +244,17 @@ class WriteFileTool(_FsTool):
             fp = self._resolve(path, "write")
             if _is_blocked(fp):
                 return f"Error: Writing '{fp.name}' is not permitted."
-            fp.parent.mkdir(parents=True, exist_ok=True)
-            fp.write_text(content, encoding="utf-8")
-            self._record_touch(fp)
-            return f"Successfully wrote {len(content)} bytes to {fp}"
+            if scope_error := self._write_scope_error(fp):
+                return scope_error
+            if lock_error := await self._acquire_lock(fp):
+                return lock_error
+            try:
+                fp.parent.mkdir(parents=True, exist_ok=True)
+                fp.write_text(content, encoding="utf-8")
+                self._record_touch(fp)
+                return f"Successfully wrote {len(content)} bytes to {fp}"
+            finally:
+                await self._release_lock(fp)
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
@@ -304,28 +340,34 @@ class EditFileTool(_FsTool):
                 return f"Error: Editing '{fp.name}' is not permitted."
             if not fp.exists():
                 return f"Error: File not found: {path}"
+            if scope_error := self._write_scope_error(fp):
+                return scope_error
+            if lock_error := await self._acquire_lock(fp):
+                return lock_error
+            try:
+                raw = fp.read_bytes()
+                uses_crlf = b"\r\n" in raw
+                content = raw.decode("utf-8").replace("\r\n", "\n")
+                match, count = _find_match(content, old_text.replace("\r\n", "\n"))
 
-            raw = fp.read_bytes()
-            uses_crlf = b"\r\n" in raw
-            content = raw.decode("utf-8").replace("\r\n", "\n")
-            match, count = _find_match(content, old_text.replace("\r\n", "\n"))
+                if match is None:
+                    return self._not_found_msg(old_text, content, path)
+                if count > 1 and not replace_all:
+                    return (
+                        f"Warning: old_text appears {count} times. "
+                        "Provide more context to make it unique, or set replace_all=true."
+                    )
 
-            if match is None:
-                return self._not_found_msg(old_text, content, path)
-            if count > 1 and not replace_all:
-                return (
-                    f"Warning: old_text appears {count} times. "
-                    "Provide more context to make it unique, or set replace_all=true."
-                )
+                norm_new = new_text.replace("\r\n", "\n")
+                new_content = content.replace(match, norm_new) if replace_all else content.replace(match, norm_new, 1)
+                if uses_crlf:
+                    new_content = new_content.replace("\n", "\r\n")
 
-            norm_new = new_text.replace("\r\n", "\n")
-            new_content = content.replace(match, norm_new) if replace_all else content.replace(match, norm_new, 1)
-            if uses_crlf:
-                new_content = new_content.replace("\n", "\r\n")
-
-            fp.write_bytes(new_content.encode("utf-8"))
-            self._record_touch(fp)
-            return f"Successfully edited {fp}"
+                fp.write_bytes(new_content.encode("utf-8"))
+                self._record_touch(fp)
+                return f"Successfully edited {fp}"
+            finally:
+                await self._release_lock(fp)
         except PermissionError as e:
             return f"Error: {e}"
         except Exception as e:
