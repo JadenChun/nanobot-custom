@@ -740,7 +740,9 @@ def gateway(
             "This is a fresh execution of this scheduled task. "
             "Execute it now — do not simply echo a status update or say 'in progress'. "
             "Either complete the task directly and deliver the result, "
-            "or use the spawn tool to start background work and confirm to the user that work has begun."
+            "or use the spawn tool to start background work and confirm to the user that work has begun. "
+            "If the background task needs to modify workspace files, include write_scope with the "
+            "workspace-relative files or directories it may change."
         )
 
         # Clear stale history so previous "in progress" messages don't mislead this run.

@@ -18,11 +18,11 @@ from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from nanobot.agent.tools.image import ImageGenerationTool, image_generation_available
 from nanobot.agent.tools.mcp import connect_mcp_servers, is_read_only_mcp_tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+from nanobot.agent.write_guard import FileLockRegistry, ScopeReservationRegistry, WriteScope
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import (
@@ -221,6 +221,16 @@ class _ForegroundExplorePolicy(ToolPolicy):
         )
 
 
+_READ_ONLY_EXEC_ALLOW_PATTERNS = [
+    r"^\s*(?:Get-ChildItem|ls|dir|pwd|Get-Location)(?:\s|$)",
+    r"^\s*(?:Get-Content|type|cat)(?:\s|$)",
+    r"^\s*(?:Select-String|findstr|grep|rg)(?:\s|$)",
+    r"^\s*(?:head|tail)(?:\s|$)",
+    r"^\s*sed\s+-n(?:\s|$)",
+    r"^\s*git\s+(?:status|diff|show|log|grep|branch)(?:\s|$)",
+]
+
+
 class SubagentManager:
     """Manages background subagent execution."""
 
@@ -241,6 +251,7 @@ class SubagentManager:
         restrict_to_workspace: bool = False,
         mcp_servers: dict | None = None,
         planner_max_parallel_explore_agents: int = 2,
+        file_lock_registry: FileLockRegistry | None = None,
     ):
         self.provider = provider
         self.workspace = workspace
@@ -265,6 +276,8 @@ class SubagentManager:
         self._last_run_result: AgentRunResult | None = None
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+        self._file_lock_registry = file_lock_registry or FileLockRegistry()
+        self._scope_reservations = ScopeReservationRegistry()
         self._review_mcp_tools = ToolRegistry()
         self._review_mcp_stack: AsyncExitStack | None = None
         self._review_mcp_connected = False
@@ -310,6 +323,41 @@ class SubagentManager:
                         return f"exitCode {exit_code}"
         return None
 
+    def _normalize_write_scope(self, write_scope: list[str] | None) -> tuple[WriteScope, ...] | None:
+        if write_scope is None:
+            return None
+        if not write_scope:
+            raise ValueError("write_scope must contain at least one workspace-relative path")
+        return tuple(WriteScope.from_raw(self.workspace, entry) for entry in write_scope)
+
+    @staticmethod
+    def _should_force_failure_notify(detail: str | None) -> bool:
+        if not detail:
+            return False
+        lowered = detail.lower()
+        return any(marker in lowered for marker in (
+            "currently locked for editing",
+            "declared write scope",
+            "tool 'write_file' not found",
+            "tool 'edit_file' not found",
+            "tool 'generate_image' not found",
+            "not in allowlist",
+        ))
+
+    @staticmethod
+    def _scope_note(write_scope: tuple[WriteScope, ...] | None) -> str:
+        if not write_scope:
+            return (
+                "## Write Access\n"
+                "This background subagent is read-only. Do not try to modify workspace files."
+            )
+        allowed = "\n".join(f"- {scope.describe()}" for scope in write_scope)
+        return (
+            "## Write Access\n"
+            "You may modify workspace files only within the declared write scope:\n"
+            f"{allowed}"
+        )
+
     async def spawn(
         self,
         task: str,
@@ -317,6 +365,7 @@ class SubagentManager:
         goal: str | None = None,
         review: bool = False,
         notify: bool = False,
+        write_scope: list[str] | None = None,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         session_key: str | None = None,
@@ -325,28 +374,51 @@ class SubagentManager:
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
         origin = {"channel": origin_channel, "chat_id": origin_chat_id}
+        effective_session_key = session_key or f"{origin_channel}:{origin_chat_id}"
+        try:
+            normalized_scope = self._normalize_write_scope(write_scope)
+        except ValueError as exc:
+            return f"Error: {exc}"
 
-        bg_task = asyncio.create_task(
-            self._run_subagent(
+        if normalized_scope:
+            reserved, conflict_task = await self._scope_reservations.reserve(
+                effective_session_key,
                 task_id,
-                task,
-                display_label,
-                origin,
-                goal=goal,
-                review=review,
-                notify=notify,
+                normalized_scope,
             )
-        )
+            if not reserved:
+                return (
+                    "Error: Background write scope overlaps with another active task "
+                    f"({conflict_task}). Keep this work in the current turn instead."
+                )
+
+        try:
+            bg_task = asyncio.create_task(
+                self._run_subagent(
+                    task_id,
+                    task,
+                    display_label,
+                    origin,
+                    goal=goal,
+                    review=review,
+                    notify=notify,
+                    write_scope=normalized_scope,
+                    session_key=effective_session_key,
+                )
+            )
+        except Exception:
+            if normalized_scope:
+                await self._scope_reservations.release(effective_session_key, task_id)
+            raise
         self._running_tasks[task_id] = bg_task
-        if session_key:
-            self._session_tasks.setdefault(session_key, set()).add(task_id)
+        self._session_tasks.setdefault(effective_session_key, set()).add(task_id)
 
         def _cleanup(_: asyncio.Task) -> None:
             self._running_tasks.pop(task_id, None)
-            if session_key and (ids := self._session_tasks.get(session_key)):
+            if ids := self._session_tasks.get(effective_session_key):
                 ids.discard(task_id)
                 if not ids:
-                    del self._session_tasks[session_key]
+                    del self._session_tasks[effective_session_key]
 
         bg_task.add_done_callback(_cleanup)
 
@@ -355,6 +427,21 @@ class SubagentManager:
         if notify:
             return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
         return f"Subagent [{display_label}] started (id: {task_id})."
+
+    async def spawn_pipeline(
+        self,
+        tasks: list[dict[str, Any]],
+        origin_channel: str = "cli",
+        origin_chat_id: str = "direct",
+        session_key: str | None = None,
+    ) -> str:
+        """Explicitly reject pipeline spawning until it adopts write-scope safety."""
+        _ = (tasks, origin_channel, origin_chat_id, session_key)
+        return (
+            "Error: spawn_pipeline is unavailable until it adopts the background "
+            "write_scope safety model. Use spawn with write_scope, or keep the work "
+            "in the current turn."
+        )
 
     # ------------------------------------------------------------------
     # Shared agent loop
@@ -397,20 +484,44 @@ class SubagentManager:
     # Generation tools
     # ------------------------------------------------------------------
 
-    def _build_generation_tools(self) -> ToolRegistry:
+    def _build_generation_tools(
+        self,
+        *,
+        task_id: str = "subagent",
+        write_scope: tuple[WriteScope, ...] | None = None,
+    ) -> ToolRegistry:
         """Build the full tool set for the generation agent."""
         tools = ToolRegistry()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = self._extra_read_dirs(allowed_dir)
         extra_write = self._extra_write_dirs(allowed_dir)
         tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
-        tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_write, resource_policy=self.resource_policy))
-        tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_write, resource_policy=self.resource_policy))
         tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
-        if self.exec_config.enable:
+        if write_scope:
+            lock_owner = f"subagent:{task_id}"
+            tools.register(WriteFileTool(
+                workspace=self.workspace,
+                allowed_dir=allowed_dir,
+                extra_allowed_dirs=extra_write,
+                resource_policy=self.resource_policy,
+                lock_registry=self._file_lock_registry,
+                lock_owner=lock_owner,
+                allowed_write_scope=list(write_scope),
+            ))
+            tools.register(EditFileTool(
+                workspace=self.workspace,
+                allowed_dir=allowed_dir,
+                extra_allowed_dirs=extra_write,
+                resource_policy=self.resource_policy,
+                lock_registry=self._file_lock_registry,
+                lock_owner=lock_owner,
+                allowed_write_scope=list(write_scope),
+            ))
+        elif self.exec_config.enable:
             tools.register(ExecTool(
                 working_dir=str(self.workspace),
                 timeout=self.exec_config.timeout,
+                allow_patterns=_READ_ONLY_EXEC_ALLOW_PATTERNS,
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
                 resource_policy=self.resource_policy,
@@ -427,8 +538,6 @@ class SubagentManager:
                 timeout=self.agent_device_config.timeout,
                 max_output_chars=self.agent_device_config.max_output_chars,
             ))
-        if image_generation_available(self.image_config):
-            tools.register(ImageGenerationTool(config=self.image_config, workspace=self.workspace))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         tools.register(WebFetchTool(proxy=self.web_proxy))
         return tools
@@ -807,15 +916,18 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
         goal: str | None = None,
         review: bool = False,
         notify: bool = False,
+        write_scope: tuple[WriteScope, ...] | None = None,
+        session_key: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info("Subagent [{}] starting task: {}", task_id, label)
 
         try:
-            tools = self._build_generation_tools()
+            tools = self._build_generation_tools(task_id=task_id, write_scope=write_scope)
             system_prompt = self._build_subagent_prompt()
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
+                {"role": "system", "content": self._scope_note(write_scope)},
                 {"role": "user", "content": task},
             ]
 
@@ -830,7 +942,7 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
             if run_result is not None and run_result.stop_reason == "tool_error":
                 detail = self._format_tool_failure(run_result.tool_events)
                 logger.error("Subagent [{}] failed during tool execution", task_id)
-                if notify:
+                if notify or self._should_force_failure_notify(detail):
                     await self._announce_result(task_id, label, task, detail, origin, "error")
                 return
 
@@ -863,8 +975,11 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             logger.error("Subagent [{}] failed: {}", task_id, e)
-            if notify:
+            if notify or self._should_force_failure_notify(error_msg):
                 await self._announce_result(task_id, label, task, error_msg, origin, "error")
+        finally:
+            if session_key and write_scope:
+                await self._scope_reservations.release(session_key, task_id)
 
     async def _announce_result(
         self,

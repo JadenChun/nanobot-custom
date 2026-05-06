@@ -37,6 +37,7 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+from nanobot.agent.write_guard import FileLockRegistry
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
@@ -75,6 +76,7 @@ class _LoopHook(AgentHook):
         channel: str = "cli",
         chat_id: str = "direct",
         message_id: str | None = None,
+        session_key: str | None = None,
     ) -> None:
         self._loop = agent_loop
         self._on_progress = on_progress
@@ -83,6 +85,7 @@ class _LoopHook(AgentHook):
         self._channel = channel
         self._chat_id = chat_id
         self._message_id = message_id
+        self._session_key = session_key
         self._stream_buf = ""
 
     def wants_streaming(self) -> bool:
@@ -115,7 +118,7 @@ class _LoopHook(AgentHook):
         for tc in context.tool_calls:
             args_str = json.dumps(tc.arguments, ensure_ascii=False)
             logger.info("Tool call: {}({})", tc.name, args_str[:200])
-        self._loop._set_tool_context(self._channel, self._chat_id, self._message_id)
+        self._loop._set_tool_context(self._channel, self._chat_id, self._message_id, self._session_key)
 
     async def after_iteration(self, context: AgentHookContext) -> None:
         for event in context.tool_events:
@@ -314,6 +317,7 @@ class AgentLoop:
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.runner = AgentRunner(provider)
+        self._file_lock_registry = FileLockRegistry()
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -330,6 +334,7 @@ class AgentLoop:
             restrict_to_workspace=restrict_to_workspace,
             mcp_servers=mcp_servers or {},
             planner_max_parallel_explore_agents=self.planner_max_parallel_explore_agents,
+            file_lock_registry=self._file_lock_registry,
         )
 
         self._running = False
@@ -385,8 +390,20 @@ class AgentLoop:
         extra_write = self._extra_write_dirs(allowed_dir)
         self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
         self.tools.register(ListDirTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read, resource_policy=self.resource_policy))
-        self.tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_write, resource_policy=self.resource_policy))
-        self.tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_write, resource_policy=self.resource_policy))
+        self.tools.register(WriteFileTool(
+            workspace=self.workspace,
+            allowed_dir=allowed_dir,
+            extra_allowed_dirs=extra_write,
+            resource_policy=self.resource_policy,
+            lock_registry=self._file_lock_registry,
+        ))
+        self.tools.register(EditFileTool(
+            workspace=self.workspace,
+            allowed_dir=allowed_dir,
+            extra_allowed_dirs=extra_write,
+            resource_policy=self.resource_policy,
+            lock_registry=self._file_lock_registry,
+        ))
         if self.exec_config.enable:
             self.tools.register(ExecTool(
                 working_dir=str(self.workspace),
@@ -474,23 +491,34 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
-    def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
+    def _set_tool_context(
+        self,
+        channel: str,
+        chat_id: str,
+        message_id: str | None = None,
+        session_key: str | None = None,
+    ) -> None:
         """Update context for all tools that need routing info."""
+        effective_session_key = session_key or f"{channel}:{chat_id}"
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.set_context(channel, chat_id, message_id)
 
         if spawn_tool := self.tools.get("spawn"):
             if isinstance(spawn_tool, SpawnTool):
-                spawn_tool.set_context(channel, chat_id)
+                spawn_tool.set_context(channel, chat_id, effective_session_key)
 
         if pipeline_tool := self.tools.get("spawn_pipeline"):
             if isinstance(pipeline_tool, SpawnPipelineTool):
-                pipeline_tool.set_context(channel, chat_id)
+                pipeline_tool.set_context(channel, chat_id, effective_session_key)
 
         if cron_tool := self.tools.get("cron"):
             if isinstance(cron_tool, CronTool):
                 cron_tool.set_context(channel, chat_id)
+
+        for tool in self.tools.iter_tools():
+            if hasattr(tool, "set_lock_owner"):
+                tool.set_lock_owner(f"main:{effective_session_key}")
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -935,6 +963,7 @@ End your response with exactly:
         channel: str = "cli",
         chat_id: str = "direct",
         message_id: str | None = None,
+        session_key: str | None = None,
     ) -> AgentRunResult:
         """Run a shared agent iteration loop and return the full result.
 
@@ -951,6 +980,7 @@ End your response with exactly:
             channel=channel,
             chat_id=chat_id,
             message_id=message_id,
+            session_key=session_key,
         )
         hook: AgentHook = (
             _LoopHookChain(loop_hook, self._extra_hooks)
@@ -997,6 +1027,7 @@ End your response with exactly:
         channel: str = "cli",
         chat_id: str = "direct",
         message_id: str | None = None,
+        session_key: str | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         result = await self._run_agent(
             initial_messages,
@@ -1009,6 +1040,7 @@ End your response with exactly:
             channel=channel,
             chat_id=chat_id,
             message_id=message_id,
+            session_key=session_key,
         )
         return result.final_content, result.tools_used, result.messages
 
@@ -1017,6 +1049,7 @@ End your response with exactly:
         initial_messages: list[dict[str, Any]],
         *,
         task_text: str,
+        session_key: str = "cli:direct",
         channel: str,
         chat_id: str,
         message_id: str | None,
@@ -1044,6 +1077,7 @@ End your response with exactly:
             channel=channel,
             chat_id=chat_id,
             message_id=message_id,
+            session_key=session_key,
         )
         if result.stop_reason == "approval_required":
             logger.info("Action phase paused for approval on {}:{}", channel, chat_id)
@@ -1095,6 +1129,7 @@ End your response with exactly:
             channel=channel,
             chat_id=chat_id,
             message_id=message_id,
+            session_key=session_key,
         )
         if revised.stop_reason == "approval_required":
             return revised
@@ -1322,7 +1357,7 @@ End your response with exactly:
             logger.info("Processing system message from {}", msg.sender_id)
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
+            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"), key)
             history = session.get_history(max_messages=0)
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
             messages = self.context.build_messages(
@@ -1362,6 +1397,7 @@ End your response with exactly:
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages, channel=channel, chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
+                session_key=key,
             )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
@@ -1410,7 +1446,7 @@ End your response with exactly:
                 # A new request supersedes the older pending approval.
                 self._pending_approvals.pop(key, None)
 
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"), key)
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
@@ -1541,6 +1577,7 @@ End your response with exactly:
         result = await self._run_main_task(
             initial_messages,
             task_text=current_message,
+            session_key=key,
             on_progress=on_progress or _bus_progress,
             on_stream=on_stream,
             on_stream_end=on_stream_end,

@@ -150,7 +150,7 @@ def test_subagent_generation_tools_register_agent_device_by_default(tmp_path) ->
     assert tools.get("agent_device") is not None
 
 
-def test_subagent_generation_tools_register_image_tool_by_default(tmp_path) -> None:
+def test_subagent_generation_tools_do_not_register_image_tool_by_default(tmp_path) -> None:
     from nanobot.agent.subagent import SubagentManager
     from nanobot.bus.queue import MessageBus
 
@@ -160,4 +160,41 @@ def test_subagent_generation_tools_register_image_tool_by_default(tmp_path) -> N
     mgr = SubagentManager(provider=provider, workspace=tmp_path, bus=bus)
 
     tools = mgr._build_generation_tools()
-    assert tools.get("generate_image") is not None
+    assert tools.get("generate_image") is None
+
+
+def test_subagent_read_only_generation_tools_skip_write_tools(tmp_path) -> None:
+    from nanobot.agent.subagent import SubagentManager
+    from nanobot.bus.queue import MessageBus
+
+    bus = MessageBus()
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    mgr = SubagentManager(provider=provider, workspace=tmp_path, bus=bus)
+
+    tools = mgr._build_generation_tools(task_id="sub-1", write_scope=None)
+
+    assert tools.get("write_file") is None
+    assert tools.get("edit_file") is None
+    assert tools.get("exec") is not None
+
+
+def test_subagent_writable_generation_tools_register_write_tools_and_skip_exec(tmp_path) -> None:
+    from nanobot.agent.subagent import SubagentManager
+    from nanobot.agent.write_guard import WriteScope
+    from nanobot.bus.queue import MessageBus
+
+    bus = MessageBus()
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    mgr = SubagentManager(provider=provider, workspace=tmp_path, bus=bus)
+
+    tools = mgr._build_generation_tools(
+        task_id="sub-1",
+        write_scope=(WriteScope.from_raw(tmp_path, "outputs/"),),
+    )
+
+    assert tools.get("write_file") is not None
+    assert tools.get("edit_file") is not None
+    assert tools.get("exec") is None
+    assert tools.get("generate_image") is None

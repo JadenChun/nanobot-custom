@@ -6,8 +6,10 @@ from nanobot.agent.tools.filesystem import (
     EditFileTool,
     ListDirTool,
     ReadFileTool,
+    WriteFileTool,
     _find_match,
 )
+from nanobot.agent.write_guard import FileLockRegistry, WriteScope
 
 
 # ---------------------------------------------------------------------------
@@ -392,3 +394,43 @@ class TestWorkspaceRestriction:
         assert "Error" in result
         assert "outside" in result.lower()
         assert skill_file.read_text() == "# Weather\nOriginal content."
+
+    @pytest.mark.asyncio
+    async def test_write_respects_declared_write_scope(self, tmp_path):
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        tool = WriteFileTool(
+            workspace=workspace,
+            allowed_dir=workspace,
+            lock_registry=FileLockRegistry(),
+            lock_owner="subagent:1",
+            allowed_write_scope=[WriteScope.from_raw(workspace, "allowed/")],
+        )
+
+        result = await tool.execute(path="blocked.txt", content="hello")
+
+        assert "declared write scope" in result
+        assert not (workspace / "blocked.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_edit_reports_lock_conflict(self, tmp_path):
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        target = workspace / "draft.md"
+        target.write_text("hello world", encoding="utf-8")
+        locks = FileLockRegistry()
+        await locks.acquire(target, "main:session-a")
+        tool = EditFileTool(
+            workspace=workspace,
+            allowed_dir=workspace,
+            lock_registry=locks,
+            lock_owner="subagent:2",
+        )
+
+        try:
+            result = await tool.execute(path="draft.md", old_text="world", new_text="earth")
+        finally:
+            await locks.release(target, "main:session-a")
+
+        assert "currently locked" in result
+        assert "main:session-a" in result
