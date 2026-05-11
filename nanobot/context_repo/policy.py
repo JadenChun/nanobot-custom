@@ -97,7 +97,7 @@ class ResourceAccessPolicy:
                 raise PermissionError(f"Context repo {repo.name} is read-only")
             if repo.requires_proposal(rel):
                 raise PermissionError(
-                    f"Path {path} requires a proposal; write the proposed change under proposals/ first"
+                    f"Path {path} requires a proposal; write the proposed change under the configured proposal area first"
                 )
             if repo.blocks_direct_store_edit(rel):
                 raise PermissionError(
@@ -117,7 +117,7 @@ class ResourceAccessPolicy:
         if action in {"write", "edit"}:
             if target.requires_proposal(rel):
                 raise PermissionError(
-                    f"Path {path} requires a proposal; write the proposed change under proposals/ first"
+                    f"Path {path} requires a proposal; write the proposed change under the configured proposal area first"
                 )
             if not target.is_writable(rel):
                 raise PermissionError(f"Path {path} is not in a writable target repo area")
