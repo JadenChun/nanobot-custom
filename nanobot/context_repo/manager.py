@@ -309,6 +309,11 @@ class ManagedContextRepo:
         return value if isinstance(value, dict) else {}
 
     @property
+    def user_experience(self) -> dict[str, Any]:
+        value = _get_any(self.manifest, "userExperience", "user_experience", default={})
+        return value if isinstance(value, dict) else {}
+
+    @property
     def tools(self) -> dict[str, Any]:
         value = self.manifest.get("tools") or {}
         return value if isinstance(value, dict) else {}
@@ -480,8 +485,33 @@ class ManagedContextRepo:
                 "Root markdown, memory, and skills are loaded when present."
             )
         lines = [f"- {self.name}: managed context repo at {self.path}"]
+        if self.user_experience:
+            mode = str(_get_any(self.user_experience, "audienceMode", "audience_mode", default="")).strip()
+            assistant_name = str(_get_any(self.user_experience, "assistantName", "assistant_name", default="assistant")).strip()
+            internals = str(_get_any(self.user_experience, "explainInternals", "explain_internals", default="")).strip()
+            approvals = str(_get_any(self.user_experience, "approvalStyle", "approval_style", default="")).strip()
+            experience_bits = []
+            if mode:
+                experience_bits.append(f"audience={mode}")
+            if assistant_name:
+                experience_bits.append(f"assistant term={assistant_name}")
+            if internals:
+                experience_bits.append(f"internals={internals}")
+            if approvals:
+                experience_bits.append(f"approvals={approvals}")
+            if experience_bits:
+                lines.append(f"  User experience: {', '.join(experience_bits)}. Use business-facing language unless the user asks for technical detail.")
         if self.modules:
-            lines.append(f"  Modules: {', '.join(sorted(self.modules))}")
+            module_lines: list[str] = []
+            for name, module in sorted(self.modules.items()):
+                description = ""
+                if isinstance(module, dict):
+                    description = str(module.get("description") or "").strip()
+                module_file = self.path / "modules" / str(name) / "MODULE.md"
+                location = f"; contract: {module_file}" if module_file.is_file() else ""
+                suffix = f" - {description}" if description else ""
+                module_lines.append(f"{name}{suffix}{location}")
+            lines.append(f"  Modules: {'; '.join(module_lines)}")
         if self.stores:
             store_lines = []
             for name, store in sorted(self.stores.items()):
