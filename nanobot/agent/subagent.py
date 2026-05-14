@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Sequence
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
@@ -252,6 +252,7 @@ class SubagentManager:
         mcp_servers: dict | None = None,
         planner_max_parallel_explore_agents: int = 2,
         file_lock_registry: FileLockRegistry | None = None,
+        on_completion: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ):
         self.provider = provider
         self.workspace = workspace
@@ -283,6 +284,7 @@ class SubagentManager:
         self._review_mcp_connected = False
         self._review_mcp_connecting = False
         self._foreground_explore_gate = asyncio.Semaphore(max(1, planner_max_parallel_explore_agents))
+        self._on_completion = on_completion
 
     def _context_skill_paths(self) -> list[Path]:
         """Return skill directories from configured context repositories."""
@@ -942,6 +944,16 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
             if run_result is not None and run_result.stop_reason == "tool_error":
                 detail = self._format_tool_failure(run_result.tool_events)
                 logger.error("Subagent [{}] failed during tool execution", task_id)
+                await self._record_completion(
+                    task_id=task_id,
+                    label=label,
+                    task=task,
+                    result=detail,
+                    origin=origin,
+                    status="error",
+                    notify=notify,
+                    session_key=session_key,
+                )
                 if notify or self._should_force_failure_notify(detail):
                     await self._announce_result(task_id, label, task, detail, origin, "error")
                 return
@@ -969,17 +981,69 @@ If approved, set feedback to a brief confirmation. If not approved, feedback MUS
                     logger.error("Review loop failed for [{}], accepting generation result: {}", task_id, e)
 
             logger.info("Subagent [{}] completed successfully", task_id)
+            await self._record_completion(
+                task_id=task_id,
+                label=label,
+                task=task,
+                result=final_result,
+                origin=origin,
+                status="ok",
+                notify=notify,
+                session_key=session_key,
+                review_meta=review_meta,
+            )
             if notify:
                 await self._announce_result(task_id, label, task, final_result, origin, "ok", review_meta)
 
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             logger.error("Subagent [{}] failed: {}", task_id, e)
+            await self._record_completion(
+                task_id=task_id,
+                label=label,
+                task=task,
+                result=error_msg,
+                origin=origin,
+                status="error",
+                notify=notify,
+                session_key=session_key,
+            )
             if notify or self._should_force_failure_notify(error_msg):
                 await self._announce_result(task_id, label, task, error_msg, origin, "error")
         finally:
             if session_key and write_scope:
                 await self._scope_reservations.release(session_key, task_id)
+
+    async def _record_completion(
+        self,
+        *,
+        task_id: str,
+        label: str,
+        task: str,
+        result: str | None,
+        origin: dict[str, str],
+        status: str,
+        notify: bool,
+        session_key: str | None,
+        review_meta: dict[str, Any] | None = None,
+    ) -> None:
+        """Record every subagent completion for orchestrator memory."""
+        if self._on_completion is None:
+            return
+        try:
+            await self._on_completion({
+                "task_id": task_id,
+                "label": label,
+                "task": task,
+                "result": result or "",
+                "origin": dict(origin),
+                "status": status,
+                "notify": notify,
+                "session_key": session_key,
+                "review_meta": review_meta,
+            })
+        except Exception:
+            logger.exception("Subagent [{}] completion recording failed", task_id)
 
     async def _announce_result(
         self,

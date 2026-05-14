@@ -490,6 +490,48 @@ class TestSubagentCancellation:
         mgr._announce_result.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_subagent_records_completion_even_when_notify_false(self, tmp_path):
+        from nanobot.agent.subagent import SubagentManager
+        from nanobot.bus.queue import MessageBus
+        from nanobot.providers.base import LLMResponse
+
+        bus = MessageBus()
+        provider = MagicMock()
+        provider.get_default_model.return_value = "test-model"
+        provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
+            content="background result",
+            tool_calls=[],
+        ))
+        on_completion = AsyncMock()
+        mgr = SubagentManager(
+            provider=provider,
+            workspace=tmp_path,
+            bus=bus,
+            on_completion=on_completion,
+        )
+        mgr._announce_result = AsyncMock()
+
+        await mgr._run_subagent(
+            "sub-1",
+            "do task",
+            "label",
+            {"channel": "test", "chat_id": "c1"},
+            notify=False,
+            session_key="test:c1",
+        )
+
+        mgr._announce_result.assert_not_awaited()
+        on_completion.assert_awaited_once()
+        event = on_completion.await_args.args[0]
+        assert event["task_id"] == "sub-1"
+        assert event["label"] == "label"
+        assert event["task"] == "do task"
+        assert event["result"] == "background result"
+        assert event["status"] == "ok"
+        assert event["notify"] is False
+        assert event["session_key"] == "test:c1"
+
+    @pytest.mark.asyncio
     async def test_subagent_announces_error_when_tool_execution_fails(self, monkeypatch, tmp_path):
         from nanobot.agent.subagent import SubagentManager
         from nanobot.bus.queue import MessageBus

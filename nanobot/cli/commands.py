@@ -758,12 +758,23 @@ def gateway(
         if isinstance(cron_tool, CronTool):
             cron_token = cron_tool.set_cron_context(True)
         try:
-            resp = await agent.process_direct(
-                reminder_note,
-                session_key=f"cron:{job.id}",
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to or "direct",
-            )
+            try:
+                resp = await agent.process_direct(
+                    reminder_note,
+                    session_key=f"cron:{job.id}",
+                    channel=job.payload.channel or "cli",
+                    chat_id=job.payload.to or "direct",
+                )
+            except Exception as exc:
+                agent.record_task_failure(
+                    session_key=f"cron:{job.id}",
+                    channel=job.payload.channel or "cli",
+                    chat_id=job.payload.to or "direct",
+                    label=f"Scheduled task '{job.name}'",
+                    task=job.payload.message,
+                    error=str(exc),
+                )
+                raise
         finally:
             if isinstance(cron_tool, CronTool) and cron_token is not None:
                 cron_tool.reset_cron_context(cron_token)
@@ -775,16 +786,27 @@ def gateway(
             return response
 
         if job.payload.deliver and job.payload.to and response:
-            should_notify = await evaluate_response(
-                response, job.payload.message, provider, agent.model,
-            )
-            if should_notify:
-                from nanobot.bus.events import OutboundMessage
-                await bus.publish_outbound(OutboundMessage(
+            try:
+                should_notify = await evaluate_response(
+                    response, job.payload.message, provider, agent.model,
+                )
+                if should_notify:
+                    from nanobot.bus.events import OutboundMessage
+                    await bus.publish_outbound(OutboundMessage(
+                        channel=job.payload.channel or "cli",
+                        chat_id=job.payload.to,
+                        content=response,
+                    ))
+            except Exception as exc:
+                agent.record_task_failure(
+                    session_key=f"cron:{job.id}",
                     channel=job.payload.channel or "cli",
-                    chat_id=job.payload.to,
-                    content=response,
-                ))
+                    chat_id=job.payload.to or "direct",
+                    label=f"Scheduled task delivery '{job.name}'",
+                    task=job.payload.message,
+                    error=str(exc),
+                )
+                raise
         return response
     cron.on_job = on_cron_job
 

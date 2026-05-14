@@ -180,6 +180,7 @@ class _PendingApproval:
 
     summary: str
     created_at: float
+    session_key: str
 
 
 @dataclass(slots=True)
@@ -335,6 +336,7 @@ class AgentLoop:
             mcp_servers=mcp_servers or {},
             planner_max_parallel_explore_agents=self.planner_max_parallel_explore_agents,
             file_lock_registry=self._file_lock_registry,
+            on_completion=self._record_subagent_completion,
         )
 
         self._running = False
@@ -581,6 +583,193 @@ class AgentLoop:
     @staticmethod
     def _is_negative(text: str) -> bool:
         return bool(re.fullmatch(r"\s*(no|n|cancel|stop|don't|do not)\s*[.!]?\s*", text, re.I))
+
+    def _clear_pending_approval(
+        self,
+        key: str,
+        pending: _PendingApproval | None = None,
+    ) -> None:
+        """Clear a pending approval and any chat alias pointing at it."""
+        pending = pending or self._pending_approvals.get(key)
+        if pending is None:
+            self._pending_approvals.pop(key, None)
+            return
+        for approval_key, approval in list(self._pending_approvals.items()):
+            if approval is pending or approval.session_key == pending.session_key:
+                self._pending_approvals.pop(approval_key, None)
+
+    def _store_pending_approval(
+        self,
+        *,
+        session_key: str,
+        channel: str,
+        chat_id: str,
+        summary: str,
+    ) -> None:
+        """Store approval by task session and by the user-visible chat."""
+        pending = _PendingApproval(
+            summary=summary,
+            created_at=time.time(),
+            session_key=session_key,
+        )
+        self._pending_approvals[session_key] = pending
+        visible_key = f"{channel}:{chat_id}"
+        if visible_key != session_key:
+            self._pending_approvals[visible_key] = pending
+
+    @staticmethod
+    def _should_mirror_task_session(session_key: str, visible_key: str) -> bool:
+        return (
+            session_key != visible_key
+            and session_key.startswith(("cron:", "heartbeat"))
+        )
+
+    def _mirror_task_session_to_visible_chat(
+        self,
+        *,
+        session_key: str,
+        channel: str,
+        chat_id: str,
+        task_text: str,
+        response_text: str,
+        approval_granted: bool,
+    ) -> None:
+        """Mirror scheduled-task context into the chat users continue from."""
+        visible_key = f"{channel}:{chat_id}"
+        if not self._should_mirror_task_session(session_key, visible_key):
+            return
+
+        visible_session = self.sessions.get_or_create(visible_key)
+        label = "Scheduled task approval" if approval_granted else "Scheduled task"
+        task_snippet = task_text.strip()
+        if len(task_snippet) > 4000:
+            task_snippet = task_snippet[:4000].rstrip() + "\n... (truncated)"
+
+        visible_session.add_message(
+            "user",
+            (
+                f"[{label} from {session_key}]\n"
+                f"{task_snippet}"
+            ),
+        )
+        visible_session.add_message("assistant", response_text)
+        self.sessions.save(visible_session)
+
+    @staticmethod
+    def _truncate_ledger_text(text: str, max_chars: int = 4000) -> str:
+        text = text.strip()
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars].rstrip() + "\n... (truncated)"
+
+    def _subagent_completion_record(self, event: dict[str, Any]) -> str:
+        status = "completed" if event.get("status") == "ok" else "failed"
+        notify = "yes" if event.get("notify") else "no"
+        lines = [
+            f"[Background subagent {status}]",
+            f"Label: {event.get('label') or 'subagent'}",
+            f"Task id: {event.get('task_id') or 'unknown'}",
+            f"Notify user: {notify}",
+            "",
+            "Task:",
+            self._truncate_ledger_text(str(event.get("task") or "")),
+            "",
+            "Result:",
+            self._truncate_ledger_text(str(event.get("result") or "")),
+        ]
+        review_meta = event.get("review_meta")
+        if isinstance(review_meta, dict):
+            approved = "yes" if review_meta.get("approved") else "no"
+            confidence = review_meta.get("confidence", "?")
+            lines.extend(["", f"Review approved: {approved}", f"Review confidence: {confidence}%"])
+            issues = review_meta.get("issues")
+            if isinstance(issues, list) and issues:
+                lines.append(f"Review issues: {'; '.join(str(issue) for issue in issues)}")
+        return "\n".join(lines)
+
+    async def _record_subagent_completion(self, event: dict[str, Any]) -> None:
+        """Persist subagent outcome for the main agent's orchestration context."""
+        origin = event.get("origin") if isinstance(event.get("origin"), dict) else {}
+        channel = str(origin.get("channel") or "cli")
+        chat_id = str(origin.get("chat_id") or "direct")
+        session_key = str(event.get("session_key") or f"{channel}:{chat_id}")
+        record = self._subagent_completion_record(event)
+
+        self._record_session_ledger(
+            session_key=session_key,
+            channel=channel,
+            chat_id=chat_id,
+            record=record,
+        )
+
+    def _record_session_ledger(
+        self,
+        *,
+        session_key: str,
+        channel: str,
+        chat_id: str,
+        record: str,
+    ) -> None:
+        """Persist an orchestration ledger entry and mirror task sessions to chat."""
+        visible_key = f"{channel}:{chat_id}"
+        session = self.sessions.get_or_create(session_key)
+        session.add_message("user", record)
+        self.sessions.save(session)
+
+        if self._should_mirror_task_session(session_key, visible_key):
+            visible_session = self.sessions.get_or_create(visible_key)
+            visible_session.add_message("user", record)
+            self.sessions.save(visible_session)
+
+    def record_task_cancellation(
+        self,
+        *,
+        session_key: str,
+        channel: str,
+        chat_id: str,
+        active_tasks: int,
+        subagent_tasks: int,
+    ) -> None:
+        total = active_tasks + subagent_tasks
+        record = "\n".join([
+            "[Background task cancelled]",
+            f"Stopped tasks: {total}",
+            f"Active main-agent tasks: {active_tasks}",
+            f"Background subagent tasks: {subagent_tasks}",
+        ])
+        self._record_session_ledger(
+            session_key=session_key,
+            channel=channel,
+            chat_id=chat_id,
+            record=record,
+        )
+
+    def record_task_failure(
+        self,
+        *,
+        session_key: str,
+        channel: str,
+        chat_id: str,
+        label: str,
+        task: str,
+        error: str,
+    ) -> None:
+        record = "\n".join([
+            "[Background task failed]",
+            f"Label: {label}",
+            "",
+            "Task:",
+            self._truncate_ledger_text(task),
+            "",
+            "Error:",
+            self._truncate_ledger_text(error),
+        ])
+        self._record_session_ledger(
+            session_key=session_key,
+            channel=channel,
+            chat_id=chat_id,
+            record=record,
+        )
 
     @staticmethod
     def _is_simple_conversation(text: str) -> bool:
@@ -1433,13 +1622,16 @@ End your response with exactly:
         approval_note: str | None = None
         if pending:
             if self._is_affirmative(raw):
+                if pending.session_key != key:
+                    key = pending.session_key
+                    session = self.sessions.get_or_create(key)
                 approval_note = (
                     "The user approved the previously blocked risky action. "
                     f"Resume the task that required approval: {pending.summary}."
                 )
-                self._pending_approvals.pop(key, None)
+                self._clear_pending_approval(key, pending)
             elif self._is_negative(raw):
-                self._pending_approvals.pop(key, None)
+                self._clear_pending_approval(key, pending)
                 return OutboundMessage(
                     channel=msg.channel,
                     chat_id=msg.chat_id,
@@ -1448,7 +1640,7 @@ End your response with exactly:
                 )
             else:
                 # A new request supersedes the older pending approval.
-                self._pending_approvals.pop(key, None)
+                self._clear_pending_approval(key, pending)
 
         self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"), key)
         if message_tool := self.tools.get("message"):
@@ -1606,7 +1798,21 @@ End your response with exactly:
 
         if result.stop_reason == "approval_required":
             summary = str(result.policy_metadata.get("summary") or "risky action")
-            self._pending_approvals[key] = _PendingApproval(summary=summary, created_at=time.time())
+            self._store_pending_approval(
+                session_key=key,
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                summary=summary,
+            )
+
+        self._mirror_task_session_to_visible_chat(
+            session_key=key,
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            task_text=current_message,
+            response_text=final_content,
+            approval_granted=approval_note is not None,
+        )
 
         if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
             return None

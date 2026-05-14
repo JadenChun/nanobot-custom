@@ -26,6 +26,14 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     sub_cancelled = await loop.subagents.cancel_by_session(msg.session_key)
     total = cancelled + sub_cancelled
     content = f"Stopped {total} task(s)." if total else "No active task to stop."
+    if total:
+        loop.record_task_cancellation(
+            session_key=ctx.key,
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            active_tasks=cancelled,
+            subagent_tasks=sub_cancelled,
+        )
     return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=content)
 
 

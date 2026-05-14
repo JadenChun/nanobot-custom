@@ -524,6 +524,7 @@ async def test_plan_result_does_not_emit_second_plan_message_after_approval_resu
     loop._pending_approvals["telegram:123"] = _PendingApproval(
         summary="push commits to a remote repository",
         created_at=0.0,
+        session_key="telegram:123",
     )
 
     loop._run_internal_planner = AsyncMock(return_value=  # type: ignore[method-assign]
@@ -551,3 +552,146 @@ async def test_plan_result_does_not_emit_second_plan_message_after_approval_resu
     assert response is not None
     assert response.content == "Push complete."
     assert outbound == []
+
+
+@pytest.mark.asyncio
+async def test_approval_reply_to_chat_resumes_cron_session(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planning_mode="off")
+
+    cron_session = loop.sessions.get_or_create("cron:job-1")
+    cron_session.messages.append({
+        "role": "user",
+        "content": "[Scheduled Task] Timer finished.\n\nScheduled instruction: publish the report",
+    })
+    loop.sessions.save(cron_session)
+
+    loop._store_pending_approval(
+        session_key="cron:job-1",
+        channel="telegram",
+        chat_id="123",
+        summary="publish the report",
+    )
+    loop._run_main_task = AsyncMock(return_value=AgentRunResult(  # type: ignore[method-assign]
+        final_content="Report published.",
+        messages=[
+            {"role": "user", "content": "yes"},
+            {"role": "assistant", "content": "Report published."},
+        ],
+    ))
+
+    response = await loop.process_direct(
+        "yes",
+        session_key="telegram:123",
+        channel="telegram",
+        chat_id="123",
+    )
+
+    assert response is not None
+    assert response.content == "Report published."
+    assert "cron:job-1" not in loop._pending_approvals
+    assert "telegram:123" not in loop._pending_approvals
+    call = loop._run_main_task.await_args  # type: ignore[attr-defined]
+    assert call.kwargs["session_key"] == "cron:job-1"
+    assert call.kwargs["approval_granted"] is True
+    initial_messages = call.args[0]
+    assert any(
+        "Scheduled instruction: publish the report" in str(message.get("content"))
+        for message in initial_messages
+    )
+    visible_session = loop.sessions.get_or_create("telegram:123")
+    assert any(
+        "[Scheduled task approval from cron:job-1]" in str(message.get("content"))
+        for message in visible_session.messages
+    )
+    assert visible_session.messages[-1]["content"] == "Report published."
+
+
+@pytest.mark.asyncio
+async def test_cron_response_is_mirrored_to_visible_chat_context(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planning_mode="off")
+
+    loop._run_main_task = AsyncMock(return_value=AgentRunResult(  # type: ignore[method-assign]
+        final_content="The report is ready.",
+        messages=[{"role": "assistant", "content": "The report is ready."}],
+    ))
+
+    response = await loop.process_direct(
+        "[Scheduled Task] Timer finished.\n\nScheduled instruction: prepare the report",
+        session_key="cron:job-2",
+        channel="telegram",
+        chat_id="123",
+    )
+
+    assert response is not None
+    assert response.content == "The report is ready."
+    visible_session = loop.sessions.get_or_create("telegram:123")
+    assert visible_session.messages[-2]["role"] == "user"
+    assert "[Scheduled task from cron:job-2]" in visible_session.messages[-2]["content"]
+    assert "Scheduled instruction: prepare the report" in visible_session.messages[-2]["content"]
+    assert visible_session.messages[-1] == {
+        "role": "assistant",
+        "content": "The report is ready.",
+        "timestamp": visible_session.messages[-1]["timestamp"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_subagent_completion_from_cron_is_mirrored_to_visible_chat(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planning_mode="off")
+
+    await loop._record_subagent_completion({
+        "task_id": "sub-1",
+        "label": "Prepare report",
+        "task": "prepare the report",
+        "result": "The report is ready.",
+        "origin": {"channel": "telegram", "chat_id": "123"},
+        "status": "ok",
+        "notify": False,
+        "session_key": "cron:job-2",
+        "review_meta": None,
+    })
+
+    cron_session = loop.sessions.get_or_create("cron:job-2")
+    visible_session = loop.sessions.get_or_create("telegram:123")
+
+    assert "[Background subagent completed]" in cron_session.messages[-1]["content"]
+    assert "Notify user: no" in cron_session.messages[-1]["content"]
+    assert "Result:\nThe report is ready." in cron_session.messages[-1]["content"]
+    assert visible_session.messages[-1]["content"] == cron_session.messages[-1]["content"]
+
+
+def test_cancellation_ledger_records_stopped_background_work(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planning_mode="off")
+
+    loop.record_task_cancellation(
+        session_key="telegram:123",
+        channel="telegram",
+        chat_id="123",
+        active_tasks=1,
+        subagent_tasks=2,
+    )
+
+    session = loop.sessions.get_or_create("telegram:123")
+    assert "[Background task cancelled]" in session.messages[-1]["content"]
+    assert "Stopped tasks: 3" in session.messages[-1]["content"]
+    assert "Background subagent tasks: 2" in session.messages[-1]["content"]
+
+
+def test_cron_failure_ledger_is_mirrored_to_visible_chat(tmp_path):
+    loop, _provider = _make_loop(tmp_path, planning_mode="off")
+
+    loop.record_task_failure(
+        session_key="cron:job-3",
+        channel="telegram",
+        chat_id="123",
+        label="Scheduled task 'Daily report'",
+        task="prepare the report",
+        error="network timeout",
+    )
+
+    cron_session = loop.sessions.get_or_create("cron:job-3")
+    visible_session = loop.sessions.get_or_create("telegram:123")
+    assert "[Background task failed]" in cron_session.messages[-1]["content"]
+    assert "Label: Scheduled task 'Daily report'" in cron_session.messages[-1]["content"]
+    assert "Error:\nnetwork timeout" in cron_session.messages[-1]["content"]
+    assert visible_session.messages[-1]["content"] == cron_session.messages[-1]["content"]
