@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,10 @@ class RiskyActionPolicy(ToolPolicy):
         (re.compile(r"\brm\s+-[rf]{1,2}\b"), "delete files or directories"),
         (re.compile(r"\bgit\s+reset\b"), "reset git history"),
         (re.compile(r"\bgit\s+clean\b"), "remove untracked files"),
+        (re.compile(r"\bgit\b[^|;&\n]*\bbranch\b[^|;&\n]*(?:\s-D\b|\s-d\b|--delete\b)"), "delete a git branch"),
+        (re.compile(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*\s--delete\b"), "delete a git branch"),
+        (re.compile(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*(?:^|\s)\+?:[^\s|;&]+"), "delete a git branch"),
+        (re.compile(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*\s--mirror\b"), "delete git branches through a mirror push"),
         (re.compile(r"\bgit\s+push\b"), "push commits to a remote repository"),
         (re.compile(r"\bgit\s+checkout\b[^|;&\n]*\s+-f\b"), "force checkout changes"),
         (re.compile(r"\bdrop\s+table\b"), "drop database tables"),
@@ -97,7 +102,10 @@ class RiskyActionPolicy(ToolPolicy):
 
     def _risky_reason(self, tool_call: ToolCallRequest) -> str | None:
         if tool_call.name == "exec":
-            return self._risky_exec_reason(str(tool_call.arguments.get("command") or ""))
+            return self._risky_exec_reason(
+                str(tool_call.arguments.get("command") or ""),
+                str(tool_call.arguments.get("working_dir") or ""),
+            )
         if tool_call.name == "write_file":
             return self._risky_write_reason(
                 str(tool_call.arguments.get("path") or ""),
@@ -114,14 +122,62 @@ class RiskyActionPolicy(ToolPolicy):
             return "schedule a recurring automation"
         return None
 
-    def _risky_exec_reason(self, command: str) -> str | None:
+    def _risky_exec_reason(self, command: str, working_dir: str | None = None) -> str | None:
         lower = command.strip().lower()
         if not lower:
+            return None
+        if self._is_autonomous_context_git_command(command, working_dir):
             return None
         for pattern, label in self._RISKY_EXEC_PATTERNS:
             if pattern.search(lower):
                 return label
         return None
+
+    def _command_working_dir(self, command: str, working_dir: str | None) -> Path:
+        base = self._resolve_workspace_path(working_dir or ".")
+        git_c_path = self._extract_git_c_path(command)
+        if git_c_path:
+            candidate = Path(git_c_path).expanduser()
+            if not candidate.is_absolute():
+                candidate = base / candidate
+            return candidate.resolve(strict=False)
+        return base
+
+    def _extract_git_c_path(self, command: str) -> str | None:
+        try:
+            tokens = shlex.split(command, posix=False)
+        except ValueError:
+            return None
+        cleaned = [token.strip("'\"") for token in tokens]
+        lowered = [token.lower() for token in cleaned]
+        for index, token in enumerate(lowered):
+            if token != "git":
+                continue
+            if index + 2 < len(tokens) and cleaned[index + 1] == "-C":
+                return cleaned[index + 2]
+        return None
+
+    def _is_autonomous_context_git_command(self, command: str, working_dir: str | None) -> bool:
+        lower = command.strip().lower()
+        if not re.search(r"\bgit\b", lower):
+            return False
+        if self._deletes_git_branch(lower):
+            return False
+
+        cwd = self._command_working_dir(command, working_dir)
+        target = self.context_manager.find_target_repo_for_path(cwd)
+        repo = self.context_manager.find_repo_for_path(cwd)
+        if target and (repo is None or len(str(target.path or "")) >= len(str(repo.path))):
+            return False
+        return bool(repo and repo.auto_push_enabled())
+
+    def _deletes_git_branch(self, lower_command: str) -> bool:
+        return bool(
+            re.search(r"\bgit\b[^|;&\n]*\bbranch\b[^|;&\n]*(?:\s-D\b|\s-d\b|--delete\b)", lower_command)
+            or re.search(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*\s--delete\b", lower_command)
+            or re.search(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*(?:^|\s)\+?:[^\s|;&]+", lower_command)
+            or re.search(r"\bgit\b[^|;&\n]*\bpush\b[^|;&\n]*\s--mirror\b", lower_command)
+        )
 
     def _resolve_workspace_path(self, raw_path: str) -> Path:
         candidate = Path(raw_path).expanduser()

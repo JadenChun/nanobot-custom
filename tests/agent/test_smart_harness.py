@@ -264,6 +264,88 @@ def test_risky_action_policy_skips_large_edit_approval_for_writable_managed_targ
     assert reason is None
 
 
+def test_risky_action_policy_skips_git_push_approval_for_autopush_context_repo(tmp_path):
+    context_repo = tmp_path / "pota"
+    context_repo.mkdir()
+    (context_repo / "nanobot.context.json").write_text(json.dumps({
+        "name": "pota",
+        "sync": {
+            "autoPush": True,
+        },
+    }), encoding="utf-8")
+    manager = ContextRepoManager.from_config(context_repos=[str(context_repo)])
+
+    policy = RiskyActionPolicy(workspace=tmp_path, context_manager=manager)
+    reason = policy._risky_exec_reason("git push", str(context_repo))
+
+    assert reason is None
+
+    reason_with_git_c = policy._risky_exec_reason(f'git -C "{context_repo}" push')
+
+    assert reason_with_git_c is None
+
+
+def test_risky_action_policy_keeps_git_push_approval_for_target_repo(tmp_path, monkeypatch):
+    context_repo = tmp_path / "pota"
+    target_repo = tmp_path / "website"
+    context_repo.mkdir()
+    target_repo.mkdir()
+    monkeypatch.setenv("POTA_WEBSITE_REPO", str(target_repo))
+    (context_repo / "nanobot.context.json").write_text(json.dumps({
+        "name": "pota",
+        "sync": {
+            "autoPush": True,
+        },
+        "targetRepos": {
+            "pota_website": {
+                "pathEnv": "POTA_WEBSITE_REPO",
+                "read": ["**"],
+                "write": ["content/blog/**"],
+            }
+        },
+    }), encoding="utf-8")
+    manager = ContextRepoManager.from_config(context_repos=[str(context_repo)])
+
+    policy = RiskyActionPolicy(workspace=tmp_path, context_manager=manager)
+    reason = policy._risky_exec_reason("git push", str(target_repo))
+
+    assert reason == "push commits to a remote repository"
+
+
+def test_risky_action_policy_skips_git_reset_approval_for_autopush_context_repo(tmp_path):
+    context_repo = tmp_path / "pota"
+    context_repo.mkdir()
+    (context_repo / "nanobot.context.json").write_text(json.dumps({
+        "name": "pota",
+        "sync": {
+            "autoPush": True,
+        },
+    }), encoding="utf-8")
+    manager = ContextRepoManager.from_config(context_repos=[str(context_repo)])
+
+    policy = RiskyActionPolicy(workspace=tmp_path, context_manager=manager)
+    reason = policy._risky_exec_reason("git reset --hard", str(context_repo))
+
+    assert reason is None
+
+
+def test_risky_action_policy_keeps_branch_delete_approval_in_context_repo(tmp_path):
+    context_repo = tmp_path / "pota"
+    context_repo.mkdir()
+    (context_repo / "nanobot.context.json").write_text(json.dumps({
+        "name": "pota",
+        "sync": {
+            "autoPush": True,
+        },
+    }), encoding="utf-8")
+    manager = ContextRepoManager.from_config(context_repos=[str(context_repo)])
+
+    policy = RiskyActionPolicy(workspace=tmp_path, context_manager=manager)
+
+    assert policy._risky_exec_reason("git branch -D old-branch", str(context_repo)) == "delete a git branch"
+    assert policy._risky_exec_reason("git push origin --delete old-branch", str(context_repo)) == "delete a git branch"
+
+
 @pytest.mark.asyncio
 async def test_process_direct_requires_approval_then_resumes(tmp_path):
     loop, provider = _make_loop(tmp_path, planning_mode="off")
