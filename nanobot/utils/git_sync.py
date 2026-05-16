@@ -3,21 +3,33 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from fnmatch import fnmatch
+import os
 import subprocess
 from pathlib import Path
 
 from loguru import logger
 
 
+@dataclass(frozen=True)
+class _PathSnapshot:
+    rel_path: str
+    content: bytes | None
+
+
 def _run_git(repo: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
     """Run a git command in the given repo directory."""
+    env = os.environ.copy()
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10")
     return subprocess.run(
         ["git", *args],
         cwd=str(repo),
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=env,
     )
 
 
@@ -112,6 +124,56 @@ def _select_changed_paths(
     return selected
 
 
+def _snapshot_paths(repo: Path, paths: list[str]) -> list[_PathSnapshot]:
+    snapshots: list[_PathSnapshot] = []
+    for rel_path in paths:
+        path = repo / rel_path
+        if path.exists() and path.is_file():
+            snapshots.append(_PathSnapshot(rel_path=rel_path, content=path.read_bytes()))
+        else:
+            snapshots.append(_PathSnapshot(rel_path=rel_path, content=None))
+    return snapshots
+
+
+def _restore_snapshots(repo: Path, snapshots: list[_PathSnapshot]) -> None:
+    for snapshot in snapshots:
+        path = repo / snapshot.rel_path
+        if snapshot.content is None:
+            if path.exists() and path.is_file():
+                path.unlink()
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(snapshot.content)
+
+
+def _upstream_ref(repo: Path) -> str | None:
+    result = _run_git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+    if result.returncode != 0:
+        logger.error("Context repo upstream lookup failed: {}", _git_output(result))
+        return None
+    ref = result.stdout.strip()
+    return ref or None
+
+
+def _commit_selected_paths(repo: Path, selected_paths: list[str], message: str) -> bool:
+    if not selected_paths:
+        return True
+
+    add = _run_git(repo, "add", "-A", "--", *selected_paths)
+    if add.returncode != 0:
+        logger.error("Context repo git add failed: {}", _git_output(add))
+        return False
+
+    commit = _run_git(repo, "commit", "-m", message)
+    if commit.returncode != 0:
+        output = _git_output(commit)
+        if "nothing to commit" in output:
+            return True
+        logger.error("Context repo git commit failed: {}", output)
+        return False
+    return True
+
+
 def sync_with_remote(repo: Path) -> bool:
     """Fetch and rebase onto the configured upstream before local commits/pushes."""
     if has_unmerged_paths(repo):
@@ -126,12 +188,75 @@ def sync_with_remote(repo: Path) -> bool:
     pull = _run_git(repo, "pull", "--rebase", "--autostash", timeout=60)
     if pull.returncode != 0:
         logger.error("Context repo git pull --rebase failed: {}", _git_output(pull))
+        _abort_interrupted_rebase(repo)
         return False
 
     if has_unmerged_paths(repo):
         logger.error("Context repo has unresolved conflicts after pull; refusing to sync: {}", repo)
+        _abort_interrupted_rebase(repo)
         return False
     return True
+
+
+def sync_with_remote_reapplying_changes(
+    repo: Path,
+    *,
+    selected_paths: list[str],
+    all_changed_paths: list[str],
+    snapshots: list[_PathSnapshot],
+) -> bool:
+    """Sync with remote and recover conflicts by replaying selected local edits."""
+    if sync_with_remote(repo):
+        return True
+
+    if not selected_paths:
+        return False
+
+    unselected = sorted(set(all_changed_paths) - set(selected_paths))
+    if unselected:
+        logger.error(
+            "Context repo sync conflict needs developer attention; unselected local changes would be at risk: {}",
+            ", ".join(unselected),
+        )
+        return False
+
+    _abort_interrupted_rebase(repo)
+
+    fetch = _run_git(repo, "fetch", "--prune", timeout=60)
+    if fetch.returncode != 0:
+        logger.error("Context repo git fetch failed during recovery: {}", _git_output(fetch))
+        return False
+
+    upstream = _upstream_ref(repo)
+    if not upstream:
+        return False
+
+    reset = _run_git(repo, "reset", "--hard", upstream, timeout=60)
+    if reset.returncode != 0:
+        logger.error("Context repo git reset recovery failed: {}", _git_output(reset))
+        return False
+
+    try:
+        _restore_snapshots(repo, snapshots)
+    except OSError as exc:
+        logger.error("Context repo snapshot restore failed during recovery: {}", exc)
+        return False
+
+    if has_unmerged_paths(repo):
+        logger.error("Context repo still has unresolved conflicts after recovery: {}", repo)
+        return False
+    logger.info("Context repo recovered from sync conflict by replaying selected changes: {}", repo)
+    return True
+
+
+def _abort_interrupted_rebase(repo: Path) -> None:
+    """Return the repo to its pre-rebase state when an autonomous pull conflicts."""
+    git_dir = repo / ".git"
+    if not ((git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()):
+        return
+    abort = _run_git(repo, "rebase", "--abort", timeout=30)
+    if abort.returncode != 0:
+        logger.error("Context repo git rebase --abort failed: {}", _git_output(abort))
 
 
 def sync_context_repo(
@@ -149,7 +274,16 @@ def sync_context_repo(
         logger.debug("Context path is not a git repo, skipping sync: {}", repo)
         return False
 
-    if not sync_with_remote(repo):
+    all_changed_paths = _changed_paths(repo)
+    selected_paths = _select_changed_paths(repo, include_paths, exclude_paths)
+    snapshots = _snapshot_paths(repo, selected_paths)
+
+    if not sync_with_remote_reapplying_changes(
+        repo,
+        selected_paths=selected_paths,
+        all_changed_paths=all_changed_paths,
+        snapshots=snapshots,
+    ):
         return False
 
     if not has_changes(repo):
@@ -162,26 +296,36 @@ def sync_context_repo(
         return True
 
     try:
-        # Stage only selected changes for managed context repos.
-        add = _run_git(repo, "add", "-A", "--", *selected_paths)
-        if add.returncode != 0:
-            logger.error("Context repo git add failed: {}", _git_output(add))
-            return False
+        committed_selected_paths = list(selected_paths)
+        committed_snapshots = _snapshot_paths(repo, committed_selected_paths)
 
-        # Commit
-        commit = _run_git(repo, "commit", "-m", message)
-        if commit.returncode != 0:
-            output = _git_output(commit)
-            if "nothing to commit" in output:
-                return True
-            logger.error("Context repo git commit failed: {}", output)
+        # Stage and commit only selected changes for managed context repos.
+        if not _commit_selected_paths(repo, selected_paths, message):
             return False
 
         # Push with retry; re-sync before every push attempt so remote updates are
         # rebased before pushing.
         for attempt in range(4):
-            if not sync_with_remote(repo):
+            selected_paths = _select_changed_paths(repo, include_paths, exclude_paths)
+            replay_paths = selected_paths or committed_selected_paths
+            if not sync_with_remote_reapplying_changes(
+                repo,
+                selected_paths=replay_paths,
+                all_changed_paths=_changed_paths(repo) or committed_selected_paths,
+                snapshots=(
+                    _snapshot_paths(repo, selected_paths)
+                    if selected_paths
+                    else committed_snapshots
+                ),
+            ):
                 return False
+            if has_changes(repo):
+                selected_paths = _select_changed_paths(repo, include_paths, exclude_paths)
+                if not selected_paths:
+                    logger.error("Context repo recovery left only unselected changes; refusing to push")
+                    return False
+                if not _commit_selected_paths(repo, selected_paths, message):
+                    return False
             push = _run_git(repo, "push", timeout=60)
             if push.returncode == 0:
                 logger.info("Context repo synced successfully: {}", repo)

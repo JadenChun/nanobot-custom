@@ -478,6 +478,11 @@ class ManagedContextRepo:
             *_as_str_list(_get_any(self.sync_config, "neverCommit", "never_commit", default=[])),
         ]))
 
+    def auto_push_enabled(self) -> bool:
+        if not self.auto_sync:
+            return False
+        return bool(_get_any(self.sync_config, "autoPush", "auto_push", default=True))
+
     def prompt_summary(self) -> str:
         if not self.managed:
             return (
