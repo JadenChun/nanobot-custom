@@ -276,6 +276,52 @@ type CustomMcpTransport = "stdio" | "streamableHttp" | "sse";
 
 const CONTEXT_WINDOW_TOKEN_OPTIONS = [65_536, 200_000, 262_144, 500_000, 1_048_576] as const;
 const OAUTH_PROXY_PROVIDERS = new Set(["openai_codex", "xai_grok"]);
+type ProviderRequestOption = {
+  kind: "priority" | "hosted_tool";
+  titleKey: string;
+  title: string;
+  helpKey: string;
+  help: string;
+  toolType?: "web_search" | "x_search";
+  defaultEnabled?: boolean;
+  forceResponses?: boolean;
+};
+const PROVIDER_REQUEST_OPTIONS: Partial<Record<string, ProviderRequestOption[]>> = {
+  openai_codex: [{
+    kind: "priority",
+    titleKey: "settings.providers.capabilityFastMode",
+    title: "Fast mode",
+    helpKey: "settings.providers.capabilityFastModeHelp",
+    help: "Use OpenAI's priority service tier for faster responses. This consumes credits faster.",
+  }],
+  openai: [{
+    kind: "hosted_tool",
+    titleKey: "settings.providers.capabilityOpenAISearch",
+    title: "OpenAI web search",
+    helpKey: "settings.providers.capabilityOpenAISearchHelp",
+    help: "Allow compatible Responses API models to search the web. Search activity appears in chat.",
+    toolType: "web_search",
+    forceResponses: true,
+  }],
+  deepseek: [{
+    kind: "hosted_tool",
+    titleKey: "settings.providers.capabilityDeepSeekSearch",
+    title: "DeepSeek web search",
+    helpKey: "settings.providers.capabilityDeepSeekSearchHelp",
+    help: "Let DeepSeek V4 Flash search the web through its Responses API. Search activity appears in chat.",
+    toolType: "web_search",
+    defaultEnabled: true,
+  }],
+  xai_grok: [{
+    kind: "hosted_tool",
+    titleKey: "settings.providers.capabilityXSearch",
+    title: "X Search",
+    helpKey: "settings.providers.capabilityXSearchHelp",
+    help: "Allow supported Grok models to use xAI-hosted X Search. Search activity appears in chat.",
+    toolType: "x_search",
+    defaultEnabled: true,
+  }],
+};
 const CUSTOM_PROVIDER_CREATION_KEY = "__custom_provider__";
 const CUSTOM_PROVIDER_ADVANCED_FIELDS: ProviderAdvancedField[] = [
   "extra_headers",
@@ -304,6 +350,70 @@ const DEFERRED_MODEL_LIST_PROVIDERS = new Set([
 
 function providerJsonValue(value: Record<string, unknown> | null | undefined): string {
   return value && Object.keys(value).length > 0 ? JSON.stringify(value, null, 2) : "";
+}
+
+function parseProviderExtraBody(value: string): Record<string, unknown> | null {
+  if (!value.trim()) return {};
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function isHostedSearchTool(tool: unknown, toolType: "web_search" | "x_search"): boolean {
+  if (!tool || typeof tool !== "object" || Array.isArray(tool)) return false;
+  const configuredType = (tool as Record<string, unknown>).type;
+  if (typeof configuredType !== "string") return false;
+  return configuredType === toolType
+    || (toolType === "web_search" && configuredType.startsWith("web_search_"));
+}
+
+function hasHostedSearchTool(value: unknown, toolType: "web_search" | "x_search"): boolean {
+  return Array.isArray(value) && value.some((tool) => isHostedSearchTool(tool, toolType));
+}
+
+function providerRequestOptionEnabled(
+  option: ProviderRequestOption,
+  extraBody: Record<string, unknown>,
+): boolean {
+  if (option.kind === "priority") return extraBody.service_tier === "priority";
+  if (Object.prototype.hasOwnProperty.call(extraBody, "tools")) {
+    return hasHostedSearchTool(extraBody.tools, option.toolType!);
+  }
+  return option.defaultEnabled === true;
+}
+
+function updateProviderRequestOption(
+  option: ProviderRequestOption,
+  enabled: boolean,
+  form: ProviderForm,
+): Partial<ProviderForm> {
+  const extraBody = { ...(parseProviderExtraBody(form.extraBody) ?? {}) };
+  if (option.kind === "priority") {
+    if (enabled) extraBody.service_tier = "priority";
+    else if (extraBody.service_tier === "priority") delete extraBody.service_tier;
+  } else {
+    const toolType = option.toolType!;
+    const tools = Array.isArray(extraBody.tools)
+      ? extraBody.tools.filter((tool) => !isHostedSearchTool(tool, toolType))
+      : [];
+    if (enabled) tools.push({ type: toolType });
+    if (tools.length || option.defaultEnabled) {
+      extraBody.tools = tools;
+    } else {
+      delete extraBody.tools;
+    }
+  }
+  return {
+    extraBody: providerJsonValue(extraBody),
+    ...(option.forceResponses && enabled
+      ? { apiType: "responses" as const }
+      : {}),
+  };
 }
 
 function providerFormFromRow(
@@ -3852,6 +3962,62 @@ function ModelAdvancedFields({
   );
 }
 
+function ProviderRequestOptions({
+  providerName,
+  form,
+  onChange,
+}: {
+  providerName: string;
+  form: ProviderForm;
+  onChange: (value: Partial<ProviderForm>) => void;
+}) {
+  const { t } = useTranslation();
+  const options = PROVIDER_REQUEST_OPTIONS[providerName] ?? [];
+  if (options.length === 0) return null;
+  const extraBody = parseProviderExtraBody(form.extraBody) ?? {};
+
+  const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
+
+  return (
+    <div className="overflow-hidden rounded-[18px] border border-border/45 bg-background/75">
+      {options.map((option, index) => {
+        const title = tx(option.titleKey, option.title);
+        const Icon = option.kind === "priority" ? Zap : Globe2;
+        const checked = providerRequestOptionEnabled(option, extraBody);
+        return (
+          <div
+            key={option.titleKey}
+            className={cn(
+              "flex items-center justify-between gap-4 px-4 py-3",
+              index > 0 && "border-t border-border/45",
+            )}
+          >
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted/70 text-muted-foreground">
+                <Icon className="h-4 w-4" aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[13px] font-semibold text-foreground">{title}</p>
+                <p className="mt-0.5 text-[12px] leading-5 text-muted-foreground">
+                  {tx(option.helpKey, option.help)}
+                </p>
+              </div>
+            </div>
+            <ToggleButton
+              checked={checked}
+              onChange={(enabled) => onChange(
+                updateProviderRequestOption(option, enabled, form),
+              )}
+              ariaLabel={title}
+              label={checked ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ProviderAdvancedOptions({
   fields,
   form,
@@ -4065,11 +4231,11 @@ function ProviderAdvancedOptions({
               </label>
             ) : null}
           </div>
-          {footer ? (
-            <div className="mt-3 flex items-center justify-end gap-2 border-t border-border/45 pt-3">
-              {footer}
-            </div>
-          ) : null}
+        </div>
+      ) : null}
+      {footer ? (
+        <div className="flex items-center justify-end gap-2 border-t border-border/45 py-3">
+          {footer}
         </div>
       ) : null}
     </div>
@@ -4320,6 +4486,11 @@ function ProvidersSettings({
                     </Button>
                   </div>
                 </div>
+                <ProviderRequestOptions
+                  providerName={provider.name}
+                  form={form}
+                  onChange={(value) => onChangeProviderForm(provider.name, value)}
+                />
                 {supportsOauthAdvancedSettings ? (
                   <ProviderAdvancedOptions
                     fields={advancedFields}
@@ -4445,6 +4616,11 @@ function ProvidersSettings({
                     className="h-9 rounded-full text-[13px]"
                   />
                 </label>
+                <ProviderRequestOptions
+                  providerName={provider.name}
+                  form={form}
+                  onChange={(value) => onChangeProviderForm(provider.name, value)}
+                />
                 <ProviderAdvancedOptions
                   fields={advancedFields}
                   form={form}
