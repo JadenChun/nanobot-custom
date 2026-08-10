@@ -347,6 +347,7 @@ function renderSettingsView(
       | "runtime";
     initialSettings?: SettingsPayload;
     showSidebar?: boolean;
+    onBackToChat?: () => void;
     onSettingsChange?: (payload: SettingsPayload) => void;
     onNativeEngineRestart?: () => Promise<string>;
   } = {},
@@ -359,7 +360,7 @@ function renderSettingsView(
         initialSettings={options.initialSettings}
         showSidebar={options.showSidebar}
         onToggleTheme={() => {}}
-        onBackToChat={() => {}}
+        onBackToChat={options.onBackToChat ?? (() => {})}
         onModelNameChange={() => {}}
         onSettingsChange={options.onSettingsChange}
         onNativeEngineRestart={options.onNativeEngineRestart}
@@ -385,6 +386,9 @@ async function chooseProviderToConfigure(label: string) {
 }
 
 describe("SettingsView Apps catalog", () => {
+  const thirdPartyBrandNotice =
+    "Product names, logos, and brands are property of their respective owners. Use is for identification only and does not imply endorsement.";
+
   beforeEach(() => {
     vi.stubGlobal(
       "matchMedia",
@@ -428,7 +432,34 @@ describe("SettingsView Apps catalog", () => {
     });
   });
 
+  it("shows the third-party brand notice only with the brand logo preference", () => {
+    renderSettingsView({
+      initialSection: "appearance",
+      initialSettings: settingsPayload(),
+      showSidebar: true,
+    });
+
+    const brandLogosTitle = screen.getByText("Brand logos");
+    const brandLogosRow = brandLogosTitle.parentElement?.parentElement;
+
+    expect(brandLogosRow).not.toBeNull();
+    expect(
+      within(brandLogosRow as HTMLElement).getByText(thirdPartyBrandNotice),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(thirdPartyBrandNotice)).toHaveLength(1);
+  });
+
+  it.each(["apps", "channels"] as const)(
+    "does not repeat the third-party brand notice in %s",
+    (initialSection) => {
+      renderSettingsView({ initialSection, initialSettings: settingsPayload() });
+
+      expect(screen.queryByText(thirdPartyBrandNotice)).not.toBeInTheDocument();
+    },
+  );
+
   it("does not show the Settings kicker on the standalone Automations surface", async () => {
+    const onBackToChat = vi.fn();
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
@@ -440,11 +471,49 @@ describe("SettingsView Apps catalog", () => {
       initialSection: "automations",
       initialSettings: settingsPayload(),
       showSidebar: false,
+      onBackToChat,
     });
 
     expect(screen.getByRole("heading", { name: "Automations" })).toBeInTheDocument();
     expect(await screen.findByText("No automations yet.")).toBeInTheDocument();
     expect(screen.queryByText("Settings")).not.toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText("Search task, message, linked chat, or schedule"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open a chat" }));
+    expect(onBackToChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers a way out of an empty automations filter", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/settings") return jsonResponse(settingsPayload());
+      if (url === "/api/webui/automations") {
+        return jsonResponse({
+          jobs: [{
+            id: "job-1",
+            name: "Daily summary",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 9 * * *" },
+            payload: { message: "Summarize the day" },
+            state: {},
+          }],
+        });
+      }
+      return jsonResponse({});
+    }));
+
+    renderSettingsView({
+      initialSection: "automations",
+      initialSettings: settingsPayload(),
+      showSidebar: false,
+    });
+
+    expect(await screen.findByRole("heading", { name: "Daily summary" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Paused 0" }));
+    expect(await screen.findByText("No automations match this view.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(await screen.findByRole("heading", { name: "Daily summary" })).toBeInTheDocument();
   });
 
   it("coalesces focus refreshes while automations are already loading", async () => {
@@ -1963,8 +2032,10 @@ describe("SettingsView Apps catalog", () => {
 
     renderSettingsView();
 
-    expect(await screen.findByText("No tools match this view.")).toBeInTheDocument();
+    expect(await screen.findByText("No apps available.")).toBeInTheDocument();
     expect(screen.queryByText("Loading Apps...")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Browse integrations" }));
+    expect(await screen.findByText("Add integration")).toBeInTheDocument();
   });
 
   it("shows token activity on the overview", async () => {
