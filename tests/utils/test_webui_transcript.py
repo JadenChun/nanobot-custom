@@ -409,6 +409,128 @@ def test_replay_canonical_completed_stream_records() -> None:
     assert msgs[1]["latencyMs"] == 42
 
 
+def test_replay_preserves_closed_reasoning_slices_before_later_tool_trace() -> None:
+    msgs = replay_transcript_to_ui_messages([
+        {
+            "event": "reasoning_delta",
+            "chat_id": "reasoning-boundary",
+            "text": "First reasoning.",
+            "turn_id": "turn-reasoning-boundary",
+            "turn_phase": "reasoning",
+            "turn_seq": 1,
+        },
+        {
+            "event": "reasoning_end",
+            "chat_id": "reasoning-boundary",
+            "turn_id": "turn-reasoning-boundary",
+            "turn_phase": "reasoning",
+            "turn_seq": 2,
+        },
+        {
+            "event": "reasoning_delta",
+            "chat_id": "reasoning-boundary",
+            "text": "Second reasoning.",
+            "turn_id": "turn-reasoning-boundary",
+            "turn_phase": "reasoning",
+            "turn_seq": 3,
+        },
+        {
+            "event": "reasoning_end",
+            "chat_id": "reasoning-boundary",
+            "turn_id": "turn-reasoning-boundary",
+            "turn_phase": "reasoning",
+            "turn_seq": 4,
+        },
+        {
+            "event": "message",
+            "chat_id": "reasoning-boundary",
+            "text": "exec()",
+            "kind": "tool_hint",
+            "turn_id": "turn-reasoning-boundary",
+            "turn_phase": "activity",
+            "turn_seq": 5,
+        },
+        {
+            "event": "message",
+            "chat_id": "reasoning-boundary",
+            "text": "Final answer.",
+            "turn_id": "turn-reasoning-boundary",
+            "turn_phase": "answer",
+            "turn_seq": 6,
+        },
+        {
+            "event": "turn_end",
+            "chat_id": "reasoning-boundary",
+            "turn_id": "turn-reasoning-boundary",
+            "turn_phase": "complete",
+            "turn_seq": 7,
+        },
+    ])
+
+    assert [
+        message.get("reasoning")
+        or (message.get("traces") or [None])[0]
+        or message.get("content")
+        for message in msgs
+    ] == [
+        "First reasoning.",
+        "Second reasoning.",
+        "exec()",
+        "Final answer.",
+    ]
+
+
+def test_replay_preserves_closed_reasoning_slices_without_tool_trace() -> None:
+    msgs = replay_transcript_to_ui_messages([
+        {"event": "reasoning_delta", "text": "First reasoning.", "turn_seq": 1},
+        {"event": "reasoning_end", "turn_seq": 2},
+        {"event": "reasoning_delta", "text": "Second reasoning.", "turn_seq": 3},
+        {"event": "reasoning_end", "turn_seq": 4},
+        {"event": "message", "text": "Final answer.", "turn_seq": 5},
+        {"event": "turn_end", "turn_seq": 6},
+    ])
+
+    assert [
+        (message.get("reasoning"), message.get("content"))
+        for message in msgs
+    ] == [
+        ("First reasoning.", ""),
+        ("Second reasoning.", "Final answer."),
+    ]
+
+
+def test_replay_keeps_answer_separate_from_reasoning_before_delayed_tool_trace() -> None:
+    msgs = replay_transcript_to_ui_messages([
+        {"event": "delta", "text": "Visible progress.", "turn_phase": "answer"},
+        {"event": "stream_end", "turn_phase": "answer"},
+        {"event": "reasoning_delta", "text": "Think again.", "turn_phase": "reasoning"},
+        {"event": "reasoning_end", "turn_phase": "reasoning"},
+        {
+            "event": "message",
+            "text": "exec()",
+            "kind": "tool_hint",
+            "turn_phase": "activity",
+        },
+        {"event": "message", "text": "Final answer.", "turn_phase": "answer"},
+        {"event": "turn_end", "turn_phase": "complete"},
+    ])
+
+    assert [
+        (
+            message.get("content"),
+            message.get("reasoning"),
+            message.get("kind"),
+            message.get("turnPhase"),
+        )
+        for message in msgs
+    ] == [
+        ("Visible progress.", None, None, "answer"),
+        ("", "Think again.", None, "reasoning"),
+        ("exec()", None, "trace", "activity"),
+        ("Final answer.", None, None, "answer"),
+    ]
+
+
 def test_replay_turn_end_preserves_usage_semantics(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
     key = "websocket:t-usage"
