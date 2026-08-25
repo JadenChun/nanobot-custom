@@ -260,8 +260,8 @@ async def test_codex_request_uses_configured_proxy(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_codex_prompt_cache_key_uses_stable_conversation_prefix(monkeypatch) -> None:
-    bodies: list[dict] = []
+async def test_codex_omits_prompt_cache_key_without_session_id(monkeypatch) -> None:
+    bodies: list[dict[str, Any]] = []
 
     _mock_codex_token(monkeypatch)
 
@@ -289,25 +289,40 @@ async def test_codex_prompt_cache_key_uses_stable_conversation_prefix(monkeypatc
             {"role": "assistant", "content": "first answer"},
         ],
     )
-    await provider.chat(
-        [
-            {"role": "system", "content": "You are nanobot."},
-            {"role": "user", "content": "first request"},
-            {"role": "assistant", "content": "first answer"},
-            {"role": "user", "content": "follow up"},
-        ],
-    )
-    await provider.chat(
-        [
-            {"role": "system", "content": "You are nanobot."},
-            {"role": "user", "content": "different request"},
-            {"role": "assistant", "content": "first answer"},
-        ],
-    )
+
+    assert "prompt_cache_key" not in bodies[0]
+    assert "service_tier" not in bodies[0]
+
+
+@pytest.mark.asyncio
+async def test_codex_prompt_cache_key_prefers_stable_session_id(monkeypatch) -> None:
+    bodies: list[dict[str, Any]] = []
+    _mock_codex_token(monkeypatch)
+
+    async def fake_request(_url, _headers, body, **_kwargs):
+        bodies.append(body)
+        return provider_base.LLMResponse(content="ok")
+
+    monkeypatch.setattr("nanobot.providers.openai_codex_provider._request_codex", fake_request)
+    provider = OpenAICodexProvider()
+
+    for session_id, first_request in (
+        ("session-a", "first request"),
+        ("session-a", "different visible prefix"),
+        ("session-b", "first request"),
+    ):
+        await provider.chat(
+            [
+                {"role": "system", "content": "You are nanobot."},
+                {"role": "user", "content": first_request},
+            ],
+            provider_context=provider_base.ProviderCallContext(
+                session_id=session_id,
+            ),
+        )
 
     assert bodies[0]["prompt_cache_key"] == bodies[1]["prompt_cache_key"]
     assert bodies[0]["prompt_cache_key"] != bodies[2]["prompt_cache_key"]
-    assert all("service_tier" not in body for body in bodies)
 
 
 @pytest.mark.asyncio
