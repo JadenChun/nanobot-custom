@@ -178,7 +178,8 @@ const LIGHT: Palette = {
 }
 
 const COMPOSER_PLACEHOLDER = "Ask nanobot anything"
-const ACTIVE_COMPOSER_PLACEHOLDER = "Steer this turn…"
+const ACTIVE_COMPOSER_PLACEHOLDER = "Enter send now · Tab send next"
+const COMPACT_ACTIVE_COMPOSER_PLACEHOLDER = "Enter now · Tab next"
 const SHIMMER_PAUSE = 16
 const SHIMMER_BAND = 4
 const SHIMMER_INTERVAL_MS = 80
@@ -959,7 +960,7 @@ export class NanobotTui {
     this.hostBlocked = false
     this.setCurrentTask(prompt.content)
     if (steering) {
-      this.status.content = `Steering current turn${this.promptQueue.length ? ` · ${this.promptQueue.length} queued` : ""}`
+      this.renderActiveStatus()
       this.updateMeta()
       return true
     }
@@ -1796,6 +1797,7 @@ export class NanobotTui {
 
   private handleResize = (): void => {
     this.resizeComposer()
+    this.syncComposerPlaceholder()
     this.contextPanel.resize(this.renderer.height)
     this.diffViewer.resize(this.renderer.width)
     if (!this.host.hosted) this.title.visible = this.renderer.height >= 14
@@ -1974,13 +1976,16 @@ export class NanobotTui {
     // OpenTUI normally suppresses placeholder glyphs while the editor is not
     // empty. Explicitly removing them also invalidates their old cells, which
     // prevents stale placeholder text in differential/embedded terminals.
+    const activePlaceholder = this.renderer.width >= 40
+      ? ACTIVE_COMPOSER_PLACEHOLDER
+      : COMPACT_ACTIVE_COMPOSER_PLACEHOLDER
     const placeholder = this.composer.plainText
       ? null
       : this.sessionMenu.visible
         ? "Search sessions"
         : this.branchMenu.visible
           ? "Search branch points"
-          : this.activeTurn ? ACTIVE_COMPOSER_PLACEHOLDER : COMPOSER_PLACEHOLDER
+          : this.activeTurn ? activePlaceholder : COMPOSER_PLACEHOLDER
     if (this.composer.placeholder !== placeholder) this.composer.placeholder = placeholder
   }
 

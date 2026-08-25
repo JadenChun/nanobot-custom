@@ -322,6 +322,7 @@ describe("NanobotTui layout", () => {
       composer: TextareaRenderable
       mentionCandidates: Array<Record<string, unknown>>
       queuePreview: { root: { visible: boolean } }
+      status: { plainText: string }
     }
     await waitUntil(() => ui.ready)
     ui.mentionCandidates = [{
@@ -334,10 +335,17 @@ describe("NanobotTui layout", () => {
     ui.composer.setText("first")
     ui.composer.submit()
     await waitUntil(() => sent.length === 1)
+    expect(ui.composer.placeholder).toBe("Enter send now · Tab send next")
+
+    ui.composer.setText("one more detail")
+    await setup.flush()
+    expect(ui.composer.placeholder).toBeNull()
 
     ui.composer.setText("ask @github next")
     ui.composer.submit()
     await waitUntil(() => sent.length === 2)
+    expect(ui.status.plainText).not.toContain("Steering")
+    expect(ui.composer.placeholder).toBe("Enter send now · Tab send next")
     expect(sentOptions[1]).toEqual({
       cliApps: [{ name: "github" }],
       mcpPresets: [],
@@ -1643,9 +1651,12 @@ describe("NanobotTui layout", () => {
       expect(setup.renderer.width).toBe(width)
       expect(setup.renderer.height).toBe(height)
       expect(frame).not.toContain("undefined")
-      expect(occurrences(frame, "Steer this turn…")).toBeLessThanOrEqual(1)
-      if (width >= 30 && height >= 9) {
-        expect(occurrences(frame, "Steer this turn…")).toBe(1)
+      expect(frame).not.toContain("Steer this turn…")
+      expect(frame).not.toContain("Ask a follow-up…")
+      if (width >= 40 && height >= 9) {
+        expect(occurrences(frame, "Enter send now · Tab send next")).toBe(1)
+      } else if (width >= 28 && height >= 9) {
+        expect(occurrences(frame, "Enter now · Tab next")).toBe(1)
       }
       expect(occurrences(frame, "nanobot  ·  test/model")).toBe(height >= 14 ? 1 : 0)
     }
@@ -2176,7 +2187,7 @@ describe("NanobotTui layout", () => {
     }
     const status = ui.status
     expect(status.plainText).toMatch(/^Thinking\s+0s/u)
-    expect(ui.composer.placeholder).toBe("Steer this turn…")
+    expect(ui.composer.placeholder).toBe("Enter send now · Tab send next")
     expect(ui.composerFrame.height).toBe(3)
     const shimmerColors = new Set(
       status.content.chunks
@@ -2703,7 +2714,7 @@ describe("NanobotTui in a Herdr pane", () => {
     const activeFrame = setup.captureCharFrame()
     expect(occurrences(activeFrame, "› Ship the Herdr integration")).toBe(1)
     expect(occurrences(activeFrame, "app.ts")).toBe(1)
-    expect(ui.composer.placeholder).toBe("Steer this turn…")
+    expect(ui.composer.placeholder).toBe("Enter send now · Tab send next")
     expect(ui.composerFrame.height).toBe(3)
     app.accept({
       event: "turn_end",
