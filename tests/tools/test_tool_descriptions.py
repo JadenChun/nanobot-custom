@@ -30,12 +30,24 @@ def test_coding_tool_descriptions_steer_discovery() -> None:
     find_files = FindFilesTool().description.lower()
     grep = GrepTool().description.lower()
 
-    assert "find_files/list_dir first" in read_file
-    assert "before editing" in read_file
-    assert "uploaded non-image attachments are referenced by path" in read_file
-    assert "only when their contents are needed" in read_file
-    assert "prefer it over shell find/ls" in find_files
-    assert "prefer this over shell grep" in grep
+    assert "text, images, pdfs, and office documents" in read_file
+    assert "line-numbered" in read_file
+    assert "targeted ranges" in read_file
+    assert len(read_file) < 160
+
+    assert "workspace paths" in find_files
+    assert "relative paths" in find_files
+    assert len(find_files) < 140
+
+    assert "pdf, docx, xlsx, and pptx" in grep
+    assert "five context lines" in grep
+    assert "source locators" in grep
+    assert len(grep) < 150
+
+    read_pages = ReadFileTool().parameters["properties"]["pages"]["description"].lower()
+    grep_pages = GrepTool().parameters["properties"]["pages"]["description"].lower()
+    assert "page number or range" in read_pages
+    assert "page number or range" in grep_pages
 
 
 def test_exec_tool_descriptions_are_concise() -> None:
