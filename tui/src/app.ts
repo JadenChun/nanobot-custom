@@ -20,7 +20,9 @@ import {
 
 import {
   NanobotClient,
+  connectionEndpoint,
   fetchAvailableSkills,
+  fetchGatewayHealth,
   fetchHistory,
   fetchGatewayConnection,
   fetchMentionCandidates,
@@ -29,6 +31,7 @@ import {
   fetchSlashCommands,
   type ApiReauthenticator,
   type ConnectionStatus,
+  type ConnectionStatusInfo,
   type FileEditEvent,
   type GatewayApiConnection,
   type HistoryMessage,
@@ -93,6 +96,7 @@ interface AppOptions {
   wsUrl?: string
   bootstrapUrl?: string
   bootstrapSecret?: string
+  healthUrl?: string
   apiUrl: string
   apiToken: string
   chatId?: string
@@ -374,6 +378,21 @@ function formatElapsed(milliseconds: number): string {
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`
 }
 
+function connectionStatusText(
+  status: ConnectionStatus,
+  info?: ConnectionStatusInfo,
+): string {
+  if (["starting", "connecting", "connected"].includes(status)) return "Getting ready…"
+  if (status === "reconnecting") return "Resuming…"
+  if (status === "unavailable") {
+    return info?.health === "degraded"
+      ? "Still getting ready…"
+      : "Nanobot is taking longer to respond…"
+  }
+  if (status === "error") return "Nanobot unavailable · restart nanobot"
+  return "Session ended"
+}
+
 function singleLine(value: string, limit = 120): string {
   return value.replace(/\s+/gu, " ").trim().slice(0, limit)
 }
@@ -449,6 +468,8 @@ export class NanobotTui {
   private shimmerTimer: ReturnType<typeof setInterval> | null = null
   private submitPending = false
   private submitGeneration = 0
+  private unsentSubmit = false
+  private connectionMessage = "Getting ready…"
   private readonly promptHistory: string[] = []
   private historyCursor = 0
   private historyDraft = ""
@@ -556,11 +577,14 @@ export class NanobotTui {
               options.apiUrl,
               `tui-${process.pid}`,
             ),
+            ...(options.healthUrl
+              ? { checkHealth: () => fetchGatewayHealth(options.healthUrl || "") }
+              : {}),
             onConnection: (connection) => this.useGatewayConnection(
               connection.apiUrl,
               connection.apiToken,
             ),
-            connectionRetryLabel: "Starting local gateway",
+            targetEndpoint: connectionEndpoint(options.bootstrapUrl),
             reconnectDelayMs: 100,
             startupRetryMaxDelayMs: 250,
           }
@@ -571,7 +595,7 @@ export class NanobotTui {
         access_mode: options.access.toLocaleLowerCase().includes("full") ? "full" : "restricted",
       },
       onEvent: (event) => this.accept(event),
-      onStatus: (status, detail) => this.handleStatus(status, detail),
+      onStatus: (status, detail, info) => this.handleStatus(status, detail, info),
     })
 
     // The terminal owns its canvas. Keeping the default-background intent is
@@ -723,6 +747,8 @@ export class NanobotTui {
       },
       onContentChange: () => {
         this.draft.prune(this.composer.plainText)
+        const clearedUnsent = this.unsentSubmit && !this.composer.plainText.trim()
+        if (clearedUnsent) this.unsentSubmit = false
         this.runtimeControls.hide()
         if (this.contextPanel.visible && this.composer.plainText) this.contextPanel.hide()
         this.syncComposerPlaceholder()
@@ -730,6 +756,9 @@ export class NanobotTui {
         else if (this.branchMenu.visible) this.syncBranchMenu()
         else this.syncComposerMenus()
         this.resizeComposer()
+        if (clearedUnsent && !this.activeTurn) {
+          this.status.content = this.ready ? this.readyStatus() : this.connectionMessage
+        }
       },
       // IMEs may commit their final composed glyph after Enter. Matching the
       // OpenCode/OpenTUI integration, defer twice before reading plainText.
@@ -738,7 +767,7 @@ export class NanobotTui {
     })
     this.status = new TextRenderable(renderer, {
       id: "nanobot-tui-status",
-      content: "Connecting…",
+      content: "Getting ready…",
       fg: this.palette.muted,
       height: 1,
       width: "auto",
@@ -824,7 +853,7 @@ export class NanobotTui {
     // Network setup and small menu payloads do not depend on terminal colors.
     // Start them while OSC theme detection is in flight instead of serializing
     // up to one second of otherwise independent startup work.
-    this.host.reportState("unknown", "Connecting")
+    this.host.reportState("unknown", "Getting ready")
     this.client.connect()
     void this.loadCommands()
     void this.loadMentions()
@@ -899,6 +928,10 @@ export class NanobotTui {
       return
     }
     if (["/continue", "/dismiss"].includes(visibleContent.toLowerCase())) {
+      if (!this.ready) {
+        this.markSubmitUnsent()
+        return
+      }
       this.clearComposer()
       this.commandMenu.hide()
       void this.updateRecovery(visibleContent.toLowerCase() === "/continue" ? "continue" : "dismiss")
@@ -932,7 +965,7 @@ export class NanobotTui {
       return
     }
     if (!this.ready) {
-      this.status.content = "Preparing chat…"
+      this.markSubmitUnsent()
       return
     }
     const prompt = { content, options: mentionOptions(content, this.availableMentions()) }
@@ -947,10 +980,11 @@ export class NanobotTui {
     let turnId: string
     try {
       turnId = this.client.send(prompt.content, prompt.options)
-    } catch (error) {
-      this.status.content = error instanceof Error ? error.message : String(error)
+    } catch {
+      this.markSubmitUnsent(true)
       return false
     }
+    this.unsentSubmit = false
     this.clearComposer()
     this.commandMenu.hide()
     this.mentionMenu.hide()
@@ -1392,34 +1426,56 @@ export class NanobotTui {
     }
   }
 
-  private handleStatus(status: ConnectionStatus, detail?: string): void {
+  private handleStatus(
+    status: ConnectionStatus,
+    _detail?: string,
+    info?: ConnectionStatusInfo,
+  ): void {
+    // Invalid frames do not mean the transport is unavailable. Keep the last
+    // accurate user-facing state unless the protocol supplied connection diagnostics.
+    if (status === "error" && !info) return
+    this.connectionMessage = connectionStatusText(status, info)
     if (status === "connected") {
       this.ready = false
-      this.host.reportState("unknown", "Connecting")
-      this.status.content = "Connected · preparing chat…"
+      this.host.reportState("unknown", "Getting ready")
+      this.renderConnectionMessage()
       return
     }
-    if (status === "connecting") {
+    if (["starting", "connecting", "reconnecting", "unavailable"].includes(status)) {
       this.ready = false
-      const label = detail === "Starting local gateway"
-        ? detail
-        : detail ? "Reconnecting" : "Connecting"
-      this.host.reportState("unknown", label)
-      if (detail) this.setActive(false)
-      this.status.content = `${label}…`
+      this.host.reportState("unknown", this.connectionMessage)
+      if (status === "reconnecting" || status === "unavailable") this.setActive(false)
+      this.renderConnectionMessage()
       return
     }
     if (status === "error") {
+      if (info) this.ready = false
       this.setActive(false)
-      this.host.reportState("unknown", detail || "Connection error")
-      this.status.content = detail || "Connection error"
+      this.host.reportState("unknown", this.connectionMessage)
+      this.renderConnectionMessage()
       return
     }
     if (!this.quitting) {
+      this.ready = false
       this.setActive(false)
       this.host.reportState("unknown", "Disconnected")
-      this.status.content = "Disconnected"
+      this.renderConnectionMessage()
     }
+  }
+
+  private renderConnectionMessage(): void {
+    this.status.content = this.unsentSubmit
+      ? `Not sent · press Enter to retry when ready · ${this.connectionMessage}`
+      : this.connectionMessage
+  }
+
+  private markSubmitUnsent(sendFailed = false): void {
+    this.unsentSubmit = true
+    if (sendFailed) {
+      this.status.content = "Not sent · send failed; press Enter to retry when ready"
+      return
+    }
+    this.renderConnectionMessage()
   }
 
   private setActive(active: boolean, startedAt?: number): void {
@@ -1460,6 +1516,7 @@ export class NanobotTui {
   }
 
   private readyStatus(detail = this.readyDetail): string {
+    if (this.unsentSubmit) return "Not sent · press Enter to retry"
     if (this.transcriptNavigation.awayFromBottom) {
       return this.transcriptNavigation.unseenOutput
         ? "New output · Ctrl+End latest"
@@ -2083,6 +2140,7 @@ export class NanobotTui {
   }
 
   private clearComposer(): void {
+    this.unsentSubmit = false
     this.draft.clear()
     this.composer.setText("")
   }
@@ -2383,7 +2441,7 @@ export class NanobotTui {
     options: MessageOptions = {},
   ): void {
     if (!this.ready) {
-      this.status.content = "Preparing chat…"
+      this.markSubmitUnsent()
       return
     }
     if (this.activeTurn && lifecycle === "agent_turn") {
@@ -2393,10 +2451,11 @@ export class NanobotTui {
     let turnId: string
     try {
       turnId = this.client.send(content, options)
-    } catch (error) {
-      this.status.content = error instanceof Error ? error.message : String(error)
+    } catch {
+      this.markSubmitUnsent(true)
       return
     }
+    this.unsentSubmit = false
     this.commandTurns.set(turnId, lifecycle)
     if (silent) this.silentCommandTurns.add(turnId)
     if (/^\/model(?:\s|$)/iu.test(content)) this.modelCommandTurns.add(turnId)
