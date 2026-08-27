@@ -38,7 +38,7 @@ from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
 from nanobot.agent.tools.exec_session import ExecSessionManager
 from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
-from nanobot.agent.tools.message import MessageTool
+from nanobot.agent.tools.message import capture_message_deliveries
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.agent.turn_delivery import (
@@ -144,7 +144,6 @@ class TurnContext:
     final_content: str | None = None
     all_messages: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str = ""
-    had_injections: bool = False
     streamed_content: bool = False
 
     input_persisted_early: bool = False
@@ -1723,18 +1722,12 @@ class AgentLoop:
         msg: InboundMessage,
         final_content: str,
         stop_reason: str,
-        had_injections: bool,
         streamed_content: bool,
         *,
         log_content: bool = True,
         turn_latency_ms: int | None = None,
     ) -> OutboundMessage | None:
         """Assemble the final outbound message from turn results."""
-        # MessageTool suppression
-        if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
-            if not had_injections or stop_reason == "empty_final_response":
-                return None
-
         if log_content:
             preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
             logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
@@ -1890,10 +1883,6 @@ class AgentLoop:
             )
         is_subagent = ctx.kind is TurnKind.SYSTEM and ctx.msg.sender_id == "subagent"
 
-        if ctx.kind is TurnKind.USER and (message_tool := self.tools.get("message")):
-            if isinstance(message_tool, MessageTool):
-                message_tool.start_turn()
-
         _hist_kwargs: dict[str, Any] = {
             "max_tokens": self._replay_token_budget(runtime),
             "extend_to_user": is_subagent,
@@ -1994,28 +1983,34 @@ class AgentLoop:
         if ctx.visible_run_started_at is None:
             ctx.visible_run_started_at = time.time()
         await ctx.delivery.running(started_at=ctx.visible_run_started_at)
-        result = await self._run_agent_loop(
-            ctx.initial_messages,
-            runtime=runtime,
-            on_progress=ctx.on_progress,
-            on_stream=ctx.on_stream,
-            on_stream_end=ctx.on_stream_end,
-            on_retry_wait=ctx.on_retry_wait,
-            session=ctx.session,
-            pending_queue=ctx.pending_queue,
-            ephemeral=ctx.ephemeral,
-            run_extra_hooks_for_ephemeral=ctx.run_extra_hooks_for_ephemeral,
-            hooks=ctx.hooks,
-            hook_factories=ctx.hook_factories,
-            turn_scopes=ctx.turn_scopes,
-            tools=ctx.tools,
-            request_context=ctx.request_context,
-            provider_state=ctx.provider_state,
-        )
+        with capture_message_deliveries() as message_sends:
+            result = await self._run_agent_loop(
+                ctx.initial_messages,
+                runtime=runtime,
+                on_progress=ctx.on_progress,
+                on_stream=ctx.on_stream,
+                on_stream_end=ctx.on_stream_end,
+                on_retry_wait=ctx.on_retry_wait,
+                session=ctx.session,
+                pending_queue=ctx.pending_queue,
+                ephemeral=ctx.ephemeral,
+                run_extra_hooks_for_ephemeral=ctx.run_extra_hooks_for_ephemeral,
+                hooks=ctx.hooks,
+                hook_factories=ctx.hook_factories,
+                turn_scopes=ctx.turn_scopes,
+                tools=ctx.tools,
+                request_context=ctx.request_context,
+                provider_state=ctx.provider_state,
+            )
         ctx.final_content = result.final_content
         ctx.all_messages = result.messages
         ctx.stop_reason = result.stop_reason
-        ctx.had_injections = result.had_injections
+        if (
+            ctx.kind is TurnKind.USER
+            and (ctx.delivery.route.channel, ctx.delivery.route.chat_id) in message_sends
+            and (not result.had_injections or result.stop_reason == "empty_final_response")
+        ):
+            ctx.suppress_response = True
         ctx.usage = result.usage
         ctx.delivery.record_usage(ctx.usage)
         if ctx.kind is TurnKind.USER:
@@ -2084,7 +2079,6 @@ class AgentLoop:
             ctx.delivery.delivery_message,
             cast(str, ctx.final_content),
             ctx.stop_reason,
-            ctx.had_injections,
             ctx.streamed_content,
             log_content=ctx.require_session().policy.log_content,
             turn_latency_ms=ctx.turn_latency_ms,
