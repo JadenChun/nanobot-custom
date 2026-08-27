@@ -65,7 +65,11 @@ import {
   type TranscriptNavigation,
   type TranscriptTheme,
 } from "./transcript"
-import { ComposerDraft } from "./composer-draft"
+import { ComposerDraft, MAX_DRAFT_IMAGES } from "./composer-draft"
+import {
+  createClipboardImageReader,
+  type ClipboardImageReader,
+} from "./clipboard-image"
 import { BranchMenu, branchPoints } from "./branch-menu"
 import {
   MentionMenu,
@@ -184,6 +188,7 @@ const LIGHT: Palette = {
 const COMPOSER_PLACEHOLDER = "Ask nanobot anything"
 const ACTIVE_COMPOSER_PLACEHOLDER = "Enter send now · Tab send next"
 const COMPACT_ACTIVE_COMPOSER_PLACEHOLDER = "Enter now · Tab next"
+const IMAGE_PLACEHOLDER_STYLE = "image.placeholder"
 const SHIMMER_PAUSE = 16
 const SHIMMER_BAND = 4
 const SHIMMER_INTERVAL_MS = 80
@@ -256,6 +261,12 @@ function syntaxStyle(palette: Palette): SyntaxStyle {
     "markup.link.url": { ...color(palette.link), underline: true },
     "markup.raw": color(palette.warm),
     conceal: color(palette.faint),
+  })
+}
+
+function composerSyntaxStyle(palette: Palette): SyntaxStyle {
+  return SyntaxStyle.fromStyles({
+    [IMAGE_PLACEHOLDER_STYLE]: { fg: RGBA.fromHex(palette.accent), bold: true },
   })
 }
 
@@ -440,6 +451,7 @@ export class NanobotTui {
   private readonly titleText: TextRenderable
   private readonly composerFrame: BoxRenderable
   private readonly composer: TextareaRenderable
+  private composerSyntax: SyntaxStyle
   private readonly status: TextRenderable
   private readonly meta: TextRenderable
   private readonly host: TuiHost
@@ -510,8 +522,14 @@ export class NanobotTui {
   private hostWorkspace: string
   private hostBranch: string
   private readonly apiReauthenticator: ApiReauthenticator | undefined
+  private readonly clipboardImageReader: ClipboardImageReader
   private apiRefreshPromise: Promise<GatewayApiConnection> | null = null
   private skillLoadId = 0
+  private clipboardImagePending = false
+  private clipboardPasteGeneration = 0
+  private composerValue = ""
+  private composerCursor = 0
+  private reconcilingComposer = false
 
   private constructor(
     renderer: CliRenderer,
@@ -519,8 +537,10 @@ export class NanobotTui {
     client?: ChatClient,
     treeSitterClient = getTreeSitterClient(),
     host: TuiHost = createTuiHost({}),
+    clipboardImageReader: ClipboardImageReader = createClipboardImageReader(),
   ) {
     this.renderer = renderer
+    this.clipboardImageReader = clipboardImageReader
     this.defaultModelName = options.model
     this.defaultModelPreset = options.modelPreset
     this.modelName = options.model
@@ -534,6 +554,7 @@ export class NanobotTui {
     this.backgroundKnown = options.theme !== "auto" || renderer.themeMode !== null
     this.activeThemeMode = this.resolveThemeMode(renderer.themeMode)
     this.palette = this.activeThemeMode === "light" ? LIGHT : DARK
+    this.composerSyntax = composerSyntaxStyle(this.palette)
     this.host = host
     this.transcript = new Transcript(
       renderer,
@@ -730,6 +751,7 @@ export class NanobotTui {
       backgroundColor: composerSurface,
       focusedBackgroundColor: composerSurface,
       cursorColor: this.palette.accent,
+      syntaxStyle: this.composerSyntax,
       // A steady line cursor avoids the block-cell trails produced by some
       // terminals when a retained full-screen UI redraws around the composer.
       cursorStyle: { style: "line", blinking: false },
@@ -743,23 +765,14 @@ export class NanobotTui {
         { name: "return", action: "submit" },
       ],
       onCursorChange: () => {
+        this.keepComposerCursorOutsideImages()
         if (!this.sessionMenu.visible && !this.branchMenu.visible) this.syncComposerMenus()
       },
-      onContentChange: () => {
-        this.draft.prune(this.composer.plainText)
-        const clearedUnsent = this.unsentSubmit && !this.composer.plainText.trim()
-        if (clearedUnsent) this.unsentSubmit = false
-        this.runtimeControls.hide()
-        if (this.contextPanel.visible && this.composer.plainText) this.contextPanel.hide()
-        this.syncComposerPlaceholder()
-        if (this.sessionMenu.visible) this.syncSessionMenu()
-        else if (this.branchMenu.visible) this.syncBranchMenu()
-        else this.syncComposerMenus()
-        this.resizeComposer()
-        if (clearedUnsent && !this.activeTurn) {
-          this.status.content = this.ready ? this.readyStatus() : this.connectionMessage
-        }
-      },
+      onContentChange: () => this.handleComposerContentChange(),
+      onMouseDown: () => queueMicrotask(() => this.keepComposerCursorOutsideImages()),
+      onMouseUp: () => queueMicrotask(() => this.keepComposerCursorOutsideImages()),
+      onMouseDrag: () => queueMicrotask(() => this.keepComposerCursorOutsideImages()),
+      onMouseDragEnd: () => queueMicrotask(() => this.keepComposerCursorOutsideImages()),
       // IMEs may commit their final composed glyph after Enter. Matching the
       // OpenCode/OpenTUI integration, defer twice before reading plainText.
       onSubmit: () => this.deferSubmit(),
@@ -845,8 +858,16 @@ export class NanobotTui {
     client?: ChatClient,
     treeSitterClient?: TreeSitterClient,
     host?: TuiHost,
+    clipboardImageReader?: ClipboardImageReader,
   ): NanobotTui {
-    return new NanobotTui(renderer, options, client, treeSitterClient, host)
+    return new NanobotTui(
+      renderer,
+      options,
+      client,
+      treeSitterClient,
+      host,
+      clipboardImageReader,
+    )
   }
 
   async start(): Promise<void> {
@@ -889,7 +910,6 @@ export class NanobotTui {
   private submit(): void {
     if (this.quitting || this.composer.isDestroyed) return
     const visibleContent = this.composer.plainText.trim()
-    const content = this.draft.expand(visibleContent).trim()
     if (this.sessionLoading) {
       this.status.content = "Loading sessions…"
       return
@@ -945,6 +965,10 @@ export class NanobotTui {
       return
     }
     const command = this.commandMenu.resolve(visibleContent)
+    if ((command || visibleContent.startsWith("!")) && this.draft.media(visibleContent).length) {
+      this.status.content = "Images cannot be used with commands · remove the image first"
+      return
+    }
     if (command?.source === "tui") {
       if (command.command.action === "sessions") void this.openSessions()
       else if (command.command.action === "context") void this.openContext()
@@ -968,7 +992,8 @@ export class NanobotTui {
       this.markSubmitUnsent()
       return
     }
-    const prompt = { content, options: mentionOptions(content, this.availableMentions()) }
+    const prompt = this.composerPrompt()
+    if (!this.canSendPrompt(prompt)) return
     if (this.activeTurn) {
       this.sendPrompt(prompt, true)
       return
@@ -990,7 +1015,12 @@ export class NanobotTui {
     this.mentionMenu.hide()
     this.skillMenu.hide()
     this.recordPrompt(prompt.content)
-    this.transcript.user(prompt.content, turnId)
+    this.transcript.user(
+      prompt.content,
+      turnId,
+      prompt.options.media,
+      prompt.displayContent,
+    )
     this.hostBlocked = false
     this.setCurrentTask(prompt.content)
     if (steering) {
@@ -1080,12 +1110,13 @@ export class NanobotTui {
         this.reconcileTurnOwnership(event)
         return
       case "user_message": {
-        const attachments = event.media_urls?.map((media) => media.name).filter(Boolean) || []
-        const content = [
+        if (this.transcript.user(
           event.text,
-          attachments.length ? `Attachments: ${attachments.join(", ")}` : "",
-        ].filter(Boolean).join("\n")
-        if (this.transcript.user(content, event.turn_id)) this.recordPrompt(event.text)
+          event.turn_id,
+          event.media_urls,
+        )) {
+          this.recordPrompt(event.text)
+        }
         this.hostBlocked = false
         this.setCurrentTask(event.text)
         this.reconcileTurnOwnership(event)
@@ -1544,6 +1575,36 @@ export class NanobotTui {
     return queue
   }
 
+  private composerPrompt(): QueuedPrompt {
+    const visible = this.composer.plainText.trim()
+    const content = this.draft.expand(visible).trim()
+    const media = this.draft.media(visible)
+    const displayContent = this.draft.display(visible).trim()
+    return {
+      content,
+      ...(media.length ? { displayContent } : {}),
+      options: {
+        ...mentionOptions(content, this.availableMentions()),
+        ...(media.length ? { media } : {}),
+      },
+    }
+  }
+
+  private hasPrompt(prompt: QueuedPrompt): boolean {
+    return Boolean(prompt.content || prompt.options.media?.length)
+  }
+
+  private canSendPrompt(prompt: QueuedPrompt): boolean {
+    if (this.draft.hasImageLabelConflict(this.composer.plainText)) {
+      this.status.content = "Duplicate image placeholder text · rename or remove it before sending"
+      return false
+    }
+    if (!this.hasPrompt(prompt)) return false
+    if ((prompt.options.media?.length || 0) <= MAX_DRAFT_IMAGES) return true
+    this.status.content = `Remove images until ${MAX_DRAFT_IMAGES} or fewer remain`
+    return false
+  }
+
   private restoreQueuedPrompts(): void {
     const queued = this.promptQueue.restore()
     if (!queued.length) return
@@ -1555,6 +1616,10 @@ export class NanobotTui {
   private queueFollowUp(): void {
     if (!this.activeTurn || !this.ready) return
     const visibleContent = this.composer.plainText.trim()
+    if (this.draft.media(visibleContent).length) {
+      this.status.content = "Images cannot be queued · press Enter to send now"
+      return
+    }
     const content = this.draft.expand(visibleContent).trim()
     if (!content) return
     this.promptQueue.enqueue({
@@ -1719,6 +1784,18 @@ export class NanobotTui {
         return
       }
     }
+    if (
+      (key.ctrl || key.meta)
+      && key.name.toLocaleLowerCase() === "v"
+      && !this.sessionLoading
+      && !this.sessionMenu.visible
+      && !this.branchMenu.visible
+      && !this.contextPanel.visible
+    ) {
+      key.preventDefault()
+      void this.pasteClipboardImage()
+      return
+    }
     if (this.activeTurn && !key.ctrl && !key.meta && key.name === "tab") {
       this.queueFollowUp()
       key.preventDefault()
@@ -1734,6 +1811,20 @@ export class NanobotTui {
       this.status.content = expanded ? "Tool details expanded" : "Tool details collapsed"
       key.preventDefault()
       return
+    }
+    if (!key.ctrl && !key.meta && !key.shift && (key.name === "left" || key.name === "right")) {
+      const direction = key.name === "left" ? -1 : 1
+      const target = this.draft.moveImageCursor(
+        this.composer.plainText,
+        this.composerStringCursor(),
+        direction,
+      )
+      if (target !== null) {
+        this.composerCursor = target
+        this.setComposerStringCursor(this.composer.plainText, target)
+        key.preventDefault()
+        return
+      }
     }
     if (!key.ctrl && !key.meta && (key.name === "up" || key.name === "down")) {
       const direction = key.name === "up" ? -1 : 1
@@ -1795,7 +1886,7 @@ export class NanobotTui {
   }
 
   private navigateHistory(direction: -1 | 1): boolean {
-    if (this.promptHistory.length === 0) return false
+    if (this.promptHistory.length === 0 || this.draft.imageCount) return false
     if (direction < 0) {
       if (this.historyCursor === this.promptHistory.length) this.historyDraft = this.composer.plainText
       if (this.historyCursor === 0) return false
@@ -1846,6 +1937,11 @@ export class NanobotTui {
     this.composer.textColor = this.palette.text
     this.composer.focusedTextColor = this.palette.text
     this.composer.cursorColor = this.palette.accent
+    const previousComposerSyntax = this.composerSyntax
+    this.composerSyntax = composerSyntaxStyle(this.palette)
+    this.composer.syntaxStyle = this.composerSyntax
+    this.syncComposerImageHighlights(this.composer.plainText)
+    void this.renderer.idle().catch(() => {}).finally(() => previousComposerSyntax.destroy())
     this.renderTitleColor()
     this.status.fg = this.palette.muted
     this.meta.fg = this.palette.faint
@@ -2116,7 +2212,58 @@ export class NanobotTui {
     return this.composer.editBuffer.getTextRange(0, this.composer.cursorOffset).length
   }
 
+  private keepComposerCursorOutsideImages(): void {
+    if (this.reconcilingComposer) return
+    const value = this.composer.plainText
+    const cursor = this.composerStringCursor()
+    const target = this.draft.snapImageCursor(value, cursor, this.composerCursor)
+    this.composerCursor = target
+    if (target !== cursor) this.setComposerStringCursor(value, target)
+  }
+
+  private handleComposerContentChange(): void {
+    if (this.reconcilingComposer) return
+    let value = this.composer.plainText
+    let cursor = this.composerStringCursor()
+    const edit = this.draft.reconcileImageEdit(this.composerValue, value, cursor)
+    if (edit.value !== value) {
+      this.reconcilingComposer = true
+      try {
+        this.composer.replaceText(edit.value)
+        this.composer.clearSelection()
+        this.setComposerStringCursor(edit.value, edit.cursor)
+      } finally {
+        this.reconcilingComposer = false
+      }
+      value = edit.value
+      cursor = edit.cursor
+    }
+    this.composerValue = value
+    this.composerCursor = cursor
+    this.draft.prune(value)
+    this.syncComposerImageHighlights(value)
+    const clearedUnsent = this.unsentSubmit && !value.trim()
+    if (clearedUnsent) this.unsentSubmit = false
+    this.runtimeControls.hide()
+    if (this.contextPanel.visible && value) this.contextPanel.hide()
+    this.syncComposerPlaceholder()
+    if (this.sessionMenu.visible) this.syncSessionMenu()
+    else if (this.branchMenu.visible) this.syncBranchMenu()
+    else this.syncComposerMenus()
+    this.resizeComposer()
+    if (clearedUnsent && !this.activeTurn) {
+      this.status.content = this.ready ? this.readyStatus() : this.connectionMessage
+    }
+    if (edit.removedImages.length) {
+      this.status.content = `Removed ${edit.removedImages.join(", ")}`
+    }
+  }
+
   private setComposerStringCursor(value: string, cursor: number): void {
+    this.composer.cursorOffset = this.composerOffsetForStringIndex(value, cursor)
+  }
+
+  private composerOffsetForStringIndex(value: string, cursor: number): number {
     const target = Math.min(Math.max(cursor, 0), value.length)
     const before = value.slice(0, target)
     const row = before.split("\n").length - 1
@@ -2130,10 +2277,25 @@ export class NanobotTui {
       if (candidateLength > target) break
       if (candidateLength === target) offset = candidate
     }
-    this.composer.cursorOffset = offset
+    return offset
+  }
+
+  private syncComposerImageHighlights(value: string): void {
+    this.composer.clearAllHighlights()
+    const styleId = this.composerSyntax.getStyleId(IMAGE_PLACEHOLDER_STYLE)
+    if (styleId === null) return
+    for (const range of this.draft.imagePlaceholderRanges(value)) {
+      this.composer.addHighlightByCharRange({
+        start: this.composerOffsetForStringIndex(value, range.start),
+        end: this.composerOffsetForStringIndex(value, range.end),
+        styleId,
+        priority: 100,
+      })
+    }
   }
 
   private setComposer(content: string): void {
+    this.clipboardPasteGeneration += 1
     this.draft.clear()
     this.composer.setText(content)
     this.composer.cursorOffset = content.length
@@ -2141,8 +2303,42 @@ export class NanobotTui {
 
   private clearComposer(): void {
     this.unsentSubmit = false
-    this.draft.clear()
-    this.composer.setText("")
+    this.setComposer("")
+  }
+
+  private async pasteClipboardImage(): Promise<void> {
+    if (this.clipboardImagePending) return
+    if (this.draft.imageCount >= MAX_DRAFT_IMAGES) {
+      this.status.content = `A message can include up to ${MAX_DRAFT_IMAGES} images`
+      return
+    }
+    const generation = this.clipboardPasteGeneration
+    this.clipboardImagePending = true
+    this.status.content = "Reading clipboard image…"
+    try {
+      const image = await this.clipboardImageReader.read()
+      if (this.quitting || generation !== this.clipboardPasteGeneration) return
+      const insertion = this.draft.image(image, this.composer.plainText)
+      if (!insertion) {
+        this.status.content = `A message can include up to ${MAX_DRAFT_IMAGES} images`
+        return
+      }
+      this.composer.insertText(insertion.text)
+      this.status.content = `Pasted ${insertion.description} · review before sending`
+    } catch (error) {
+      if (
+        this.quitting
+        || this.composer.isDestroyed
+        || generation !== this.clipboardPasteGeneration
+      ) return
+      const message = error instanceof Error
+        ? error.message
+        : "Clipboard image paste is unavailable"
+      this.status.content = message
+      this.transcript.notice(message, true)
+    } finally {
+      this.clipboardImagePending = false
+    }
   }
 
   private handlePaste(event: PasteEvent): void {
@@ -2496,6 +2692,7 @@ export class NanobotTui {
   }
 
   private recordPrompt(content: string): void {
+    if (!content) return
     if (this.promptHistory.at(-1) !== content) this.promptHistory.push(content)
     if (this.promptHistory.length > 50) this.promptHistory.shift()
     this.historyCursor = this.promptHistory.length
@@ -2723,10 +2920,14 @@ export class NanobotTui {
   }
 
   private handleDestroy = (): void => {
+    this.quitting = true
+    this.clipboardPasteGeneration += 1
     if (this.shimmerTimer) clearInterval(this.shimmerTimer)
     this.stopSessionRefresh()
+    this.composerSyntax.destroy()
     this.transcript.destroy()
     this.diffViewer.destroy()
+    void this.clipboardImageReader.dispose().catch(() => {})
     this.host.release()
     this.client.close()
   }
