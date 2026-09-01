@@ -62,10 +62,6 @@ class MemoryStore:
     # Deliberately excludes memory/.dream_cursor so progress bookkeeping never
     # appears as a durable-memory edit in the audit record.
     _DREAM_CONTENT_PATHS = ("SOUL.md", "USER.md", "memory/MEMORY.md")
-    # Per-file cap when embedding current contents into the Dream prompt. The
-    # durable files are tiny in practice (~5 KB total), but a runaway file must
-    # not unbounded the prompt.
-    _DREAM_FILE_EMBED_CAP = 8000
     _LEGACY_ENTRY_START_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2}[^\]]*)\]\s*")
     _LEGACY_TIMESTAMP_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\]\s*")
     _LEGACY_RAW_MESSAGE_RE = re.compile(
@@ -549,9 +545,7 @@ class MemoryStore:
         Returns ``(prompt, last_cursor)`` or ``None`` if nothing to process.
 
         The current contents of the durable memory files (SOUL.md, USER.md,
-        memory/MEMORY.md) are embedded so the model edits the real files rather
-        than a stale mental model — eliminating a class of failed/out-of-bounds
-        edits that previously produced hallucinated audit records.
+        memory/MEMORY.md) reach Dream through the normal agent system context.
         """
         last_cursor = self.get_last_dream_cursor()
         entries = self.read_unprocessed_history(since_cursor=last_cursor)
@@ -564,34 +558,8 @@ class MemoryStore:
             for e in batch
         )
         template = self._dream_template()
-        files_section = self._render_current_memory_files()
-        prompt = (
-            f"{template}\n\n{files_section}\n\n"
-            f"## Conversation History\n{history_text}"
-        )
+        prompt = f"{template}\n\n## Conversation History\n{history_text}"
         return (prompt, batch[-1]["cursor"])
-
-    def _render_current_memory_files(self) -> str:
-        """Render the durable memory files' current contents for the Dream prompt.
-
-        Missing files render as ``(empty)``; oversized files are capped. The
-        section is the ground truth the model must edit against.
-        """
-        files = [
-            ("SOUL.md", self.soul_file),
-            ("USER.md", self.user_file),
-            ("memory/MEMORY.md", self.memory_file),
-        ]
-        blocks: list[str] = []
-        for label, path in files:
-            try:
-                content = path.read_text(encoding="utf-8") if path.exists() else ""
-            except OSError:
-                content = ""
-            if len(content) > self._DREAM_FILE_EMBED_CAP:
-                content = truncate_text(content, self._DREAM_FILE_EMBED_CAP) + "\n...[truncated]"
-            blocks.append(f"### {label}\n{content}" if content.strip() else f"### {label}\n(empty)")
-        return "## Current Memory Files\n" + "\n\n".join(blocks)
 
     def dream_content_diff(self) -> str:
         """Structured summary of uncommitted changes to the durable memory files.
