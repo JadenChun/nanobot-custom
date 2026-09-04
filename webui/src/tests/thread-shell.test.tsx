@@ -426,6 +426,78 @@ describe("ThreadShell", () => {
     );
   });
 
+  it("renders each logical round in a completed turn as its own usage bar", async () => {
+    const client = makeClient();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Ausage-chart/webui-thread")) {
+        return Promise.resolve(httpJson({
+          schemaVersion: 3,
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              content: "First response",
+              turnId: "turn-1",
+              createdAt: 1_000,
+              usage: {
+                prompt_tokens: 18_000,
+                completion_tokens: 280,
+                cached_tokens: 12_000,
+                request_count: 2,
+              },
+              roundUsages: [
+                { prompt_tokens: 8_000, completion_tokens: 120, cached_tokens: 2_000 },
+                { prompt_tokens: 10_000, completion_tokens: 160, cached_tokens: 10_000 },
+              ],
+            },
+            {
+              id: "assistant-2",
+              role: "assistant",
+              content: "Second response",
+              turnId: "turn-2",
+              createdAt: 2_000,
+              contextWindowTokens: 65_536,
+              usage: {
+                prompt_tokens: 29_400,
+                completion_tokens: 416,
+                cached_tokens: 26_180,
+                context_tokens: 14_700,
+                request_count: 2,
+              },
+              roundUsages: [
+                { prompt_tokens: 13_000, completion_tokens: 180, cached_tokens: 10_000 },
+                { prompt_tokens: 16_400, completion_tokens: 236, cached_tokens: 16_180 },
+              ],
+            },
+          ] satisfies UIMessage[],
+        }));
+      }
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        json: async () => ({}),
+      });
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={session("usage-chart")}
+        title="Usage chart"
+        onToggleSidebar={() => {}}
+        settingsSnapshot={modelSettings("openai-codex/gpt-5.5", "openai_codex")}
+      />,
+      "openai-codex/gpt-5.5",
+    ));
+
+    const trigger = await screen.findByTestId("composer-context-usage");
+    fireEvent.click(trigger);
+    expect(await screen.findAllByTestId("round-usage-bar")).toHaveLength(4);
+    expect(screen.getByRole("img", {
+      name: /input tokens 16,400.*KV cache hit rate 99%.*output tokens 236/i,
+    })).toBeInTheDocument();
+  });
+
   it("moves the session handle into the pane only when the workbench is split", () => {
     const client = makeClient();
     const portal = document.createElement("div");

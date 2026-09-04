@@ -3311,6 +3311,7 @@ async def test_send_turn_end_includes_latency_ms_when_present() -> None:
         event=TurnEndEvent(
             latency_ms=1500,
             usage=usage,
+            round_usages=(usage,),
             context_window_tokens=128_000,
         ),
     ))
@@ -3333,6 +3334,21 @@ async def test_send_turn_end_includes_latency_ms_when_present() -> None:
                 "ttft_ms": 125,
                 "timed_requests": 1,
             },
+            "round_usages": [
+                {
+                    "prompt_tokens": 80,
+                    "completion_tokens": 20,
+                    "total_tokens": 100,
+                    "context_tokens": 80,
+                    "cached_tokens": 40,
+                    "request_count": 1,
+                    "estimated_tokens": 0,
+                    "generation_ms": 500,
+                    "measured_completion_tokens": 20,
+                    "ttft_ms": 125,
+                    "timed_requests": 1,
+                }
+            ],
             "context_window_tokens": 128_000,
         },
         {"event": "session_updated", "chat_id": "chat-1", "scope": "thread"},
