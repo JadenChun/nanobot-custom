@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from loguru import logger
 
+from nanobot.bus.outbound_events import ContextCompactionCallback
 from nanobot.session.manager import MIN_COMPACTED_REPLAY_MESSAGES, Session, SessionManager
 from nanobot.session.summary import SessionSummary, session_summary_from_metadata
 
@@ -15,18 +16,22 @@ if TYPE_CHECKING:
     from nanobot.agent.memory import Consolidator
     from nanobot.utils.llm_runtime import LLMRuntime
 
+IdleCompactionCallback = Callable[[str], ContextCompactionCallback | None]
+
 
 class AutoCompact:
     _RECENT_SUFFIX_MESSAGES = MIN_COMPACTED_REPLAY_MESSAGES
     _INTERNAL_SESSION_PREFIXES = ("dream:",)
 
     def __init__(self, sessions: SessionManager, consolidator: Consolidator,
-                 session_ttl_minutes: int = 0):
+                 session_ttl_minutes: int = 0,
+                 bind_compaction: IdleCompactionCallback | None = None):
         self.sessions = sessions
         self.consolidator = consolidator
         self._ttl = session_ttl_minutes
         self._archiving: set[str] = set()
         self._summaries: dict[str, SessionSummary] = {}
+        self._bind_compaction = bind_compaction
 
     def _is_expired(self, ts: datetime | str | None,
                     now: datetime | None = None) -> bool:
@@ -48,7 +53,10 @@ class AutoCompact:
 
     def _has_unarchived_messages(self, key: str) -> bool:
         session = self.sessions.get_or_create(key)
-        return session.last_archived < len(session.messages)
+        return any(
+            not message.get("_command")
+            for message in session.messages[session.last_archived:]
+        )
 
     @classmethod
     def _is_internal_session(cls, key: str) -> bool:
@@ -88,6 +96,7 @@ class AutoCompact:
                 key,
                 runtime=runtime,
                 max_suffix=self._RECENT_SUFFIX_MESSAGES,
+                on_compaction=self._bind_compaction(key) if self._bind_compaction else None,
             )
             if summary and summary != "(nothing)":
                 session = self.sessions.get_or_create(key)

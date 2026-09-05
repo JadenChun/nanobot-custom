@@ -50,10 +50,14 @@ from nanobot.agent.turn_delivery import (
 from nanobot.agent.turn_delivery import TurnRoute as TurnRoute
 from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
 from nanobot.bus.events import INBOUND_META_USER_SHELL, InboundMessage, OutboundMessage
-from nanobot.bus.outbound_events import StreamedResponseEvent
+from nanobot.bus.outbound_events import (
+    ContextCompactionCallback,
+    StreamedResponseEvent,
+)
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import RuntimeEventBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
+from nanobot.command.router import normalize_command_text
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
 from nanobot.llm_usage.context import source_from_request
 from nanobot.providers.base import LLMProvider, LLMUsage, ProviderConversationState
@@ -456,6 +460,7 @@ class AgentLoop:
             sessions=self.sessions,
             consolidator=self.consolidator,
             session_ttl_minutes=session_ttl_minutes,
+            bind_compaction=self._idle_compaction_callback,
         )
         self._idle_compact_check_interval_s = idle_compact_check_interval_seconds
         self._next_idle_compact_check_at = time.monotonic()
@@ -798,6 +803,14 @@ class AgentLoop:
         dispatch_fn: Callable[[CommandContext], Awaitable[OutboundMessage | None]],
     ) -> None:
         """Dispatch a command directly from the run() loop and publish the result."""
+        if normalize_command_text(raw).lower() == "/compact":
+            # Compaction must wait for the active turn to commit its session.
+            task = asyncio.create_task(self._dispatch(msg))
+            self._track_active_task(key, task)
+            # Enter dispatch's cancellation handler before consuming a queued /stop.
+            await asyncio.sleep(0)
+            return
+
         async def dispatch_and_publish() -> None:
             ctx = CommandContext(msg=msg, session=None, key=key, raw=raw, loop=self)
             result = await dispatch_fn(ctx)
@@ -909,18 +922,27 @@ class AgentLoop:
             return UNIFIED_SESSION_KEY
         return msg.session_key
 
-    def _remember_unified_session_route(
+    def _idle_compaction_callback(
+        self,
+        session_key: str,
+    ) -> ContextCompactionCallback | None:
+        """Bind one idle compaction to its current user-facing destination."""
+        session = self.sessions.get_or_create(session_key)
+        return self.turn_delivery_factory.session_compaction_callback(
+            session_key, session.metadata,
+        )
+
+    def _remember_session_route(
         self,
         session: Session,
         msg: InboundMessage,
         *,
+        delivery: TurnDelivery,
         is_user_turn: bool,
     ) -> None:
-        """Remember the latest user-facing route for unified-session delivery."""
+        """Remember the latest user-facing destination, including channel threads."""
         if (
-            not self._unified_session
-            or session.key != UNIFIED_SESSION_KEY
-            or not is_user_turn
+            not is_user_turn
             or msg.channel in {"cli", "system"}
             or msg.sender_id == "subagent"
         ):
@@ -928,7 +950,9 @@ class AgentLoop:
         _, automation_metadata = automation_history_overrides(msg.metadata)
         if automation_metadata:
             return
-        remember_last_channel(session.metadata, msg.channel, msg.chat_id)
+        delivery.remember_session_route(session.metadata)
+        if self._unified_session and session.key == UNIFIED_SESSION_KEY:
+            remember_last_channel(session.metadata, msg.channel, msg.chat_id)
 
     async def _run_agent_loop(
         self,
@@ -937,6 +961,7 @@ class AgentLoop:
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
         on_retry_wait: Callable[[str], Awaitable[None]] | None = None,
+        on_context_compaction: ContextCompactionCallback | None = None,
         *,
         runtime: LLMRuntime,
         session: Session | None = None,
@@ -1222,6 +1247,7 @@ class AgentLoop:
                     channel=request_ctx.channel,
                     metadata=request_metadata,
                 ),
+                compaction_callback=on_context_compaction,
             ))
         finally:
             turn_scope_stack.close()
@@ -1419,6 +1445,7 @@ class AgentLoop:
 
         delivery = self.turn_delivery_factory.unrouted(msg, session_key)
         pending: asyncio.Queue[InboundMessage] | None = None
+        completion_published = False
         try:
             async with lock, gate:
                 # Only the task that owns the session lock may publish the
@@ -1443,6 +1470,7 @@ class AgentLoop:
                         response,
                         publish_completion=not continuing,
                     )
+                    completion_published = not continuing
                     for _, coordinator in self._automation_turn_coordinators:
                         coordinator.complete(msg, response=response)
                 except asyncio.CancelledError:
@@ -1520,6 +1548,10 @@ class AgentLoop:
                     if not turn_continuation.internal_continuation_pending(msg.metadata):
                         await delivery.idle()
                     await self._publish_next_deferred_automation_turn(session_key)
+        except asyncio.CancelledError:
+            if not completion_published and normalize_command_text(msg.content).lower() == "/compact":
+                await delivery.complete(None, publish_completion=True)
+            raise
         finally:
             if (
                 recovery_task_registered
@@ -1811,9 +1843,10 @@ class AgentLoop:
         else:
             logger.info("Processing message from {}:{}: [content hidden]", msg.channel, msg.sender_id)
 
-        self._remember_unified_session_route(
+        self._remember_session_route(
             session,
             msg,
+            delivery=ctx.delivery,
             is_user_turn=ctx.original_user_text is not None,
         )
         await ctx.delivery.started()
@@ -1859,6 +1892,9 @@ class AgentLoop:
             turn_scopes=ctx.turn_scopes,
         )
         result = await self.commands.dispatch(cmd_ctx)
+        if cmd_ctx.raw.lower() == "/compact":
+            # Compaction reports through events, not an archiveable command reply.
+            return True
         if result is not None:
             ctx.outbound = result
             # Shortcut commands skip BUILD and SAVE, so we must persist the
@@ -2022,6 +2058,7 @@ class AgentLoop:
                 tools=ctx.tools,
                 request_context=ctx.request_context,
                 provider_state=ctx.provider_state,
+                on_context_compaction=ctx.delivery.context_compaction,
             )
         ctx.final_content = result.final_content
         ctx.all_messages = result.messages
