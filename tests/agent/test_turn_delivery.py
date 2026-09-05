@@ -6,7 +6,6 @@ from nanobot.agent.turn_delivery import TurnDeliveryFactory
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import ContextCompactionEvent
 from nanobot.bus.queue import MessageBus
-from nanobot.bus.runtime_events import RuntimeEventBus
 from nanobot.session.manager import SessionManager
 from nanobot.session.webui_turns import WebuiTurnRoutePolicy
 from nanobot.webui.metadata import (
@@ -31,7 +30,7 @@ from nanobot.webui.metadata import (
 async def test_idle_compaction_uses_the_session_delivery_route(
     key, channel, chat_id, metadata, unified,
 ) -> None:
-    factory = TurnDeliveryFactory(MessageBus(), RuntimeEventBus())
+    factory = TurnDeliveryFactory(MessageBus())
     event = ContextCompactionEvent(compaction_id="compact-1", phase="started")
     key = "unified:default" if unified else key
     msg = InboundMessage(
@@ -45,9 +44,9 @@ async def test_idle_compaction_uses_the_session_delivery_route(
     session_metadata = {}
     delivery.remember_session_route(session_metadata)
 
-    callback = factory.session_compaction_callback(key, session_metadata)
-    assert callback is not None
-    await callback(event)
+    sink = factory.session_events(key, session_metadata)
+    assert sink.publish is not None
+    await sink.emit(event)
 
     outbound = factory.bus.outbound.get_nowait()
     assert (outbound.channel, outbound.chat_id, outbound.metadata) == (channel, chat_id, metadata)
@@ -55,7 +54,7 @@ async def test_idle_compaction_uses_the_session_delivery_route(
 
 
 async def test_idle_compaction_keeps_its_route_when_a_unified_session_moves() -> None:
-    factory = TurnDeliveryFactory(MessageBus(), RuntimeEventBus())
+    factory = TurnDeliveryFactory(MessageBus())
     key = "unified:default"
     session_metadata = {}
     original = InboundMessage(
@@ -63,15 +62,15 @@ async def test_idle_compaction_keeps_its_route_when_a_unified_session_moves() ->
         metadata={"slack": {"thread_ts": "1700000000.000100"}},
     )
     factory.create(original, key).remember_session_route(session_metadata)
-    callback = factory.session_compaction_callback(key, session_metadata)
-    assert callback is not None
-    await callback(ContextCompactionEvent("compact-1", "started"))
+    sink = factory.session_events(key, session_metadata)
+    assert sink.publish is not None
+    await sink.emit(ContextCompactionEvent("compact-1", "started"))
 
     latest = InboundMessage(
         channel="telegram", sender_id="user", chat_id="42", content="next question",
     )
     factory.create(latest, key).remember_session_route(session_metadata)
-    await callback(ContextCompactionEvent("compact-1", "succeeded"))
+    await sink.emit(ContextCompactionEvent("compact-1", "succeeded"))
 
     events = [factory.bus.outbound.get_nowait() for _ in range(2)]
     assert [(msg.channel, msg.chat_id, msg.metadata) for msg in events] == [
@@ -80,11 +79,11 @@ async def test_idle_compaction_keeps_its_route_when_a_unified_session_moves() ->
 
 
 async def test_idle_compaction_can_deliver_to_a_legacy_websocket_session() -> None:
-    factory = TurnDeliveryFactory(MessageBus(), RuntimeEventBus())
+    factory = TurnDeliveryFactory(MessageBus())
     event = ContextCompactionEvent(compaction_id="compact-1", phase="succeeded")
-    callback = factory.session_compaction_callback("websocket:chat", {})
-    assert callback is not None
-    await callback(event)
+    sink = factory.session_events("websocket:chat", {})
+    assert sink.publish is not None
+    await sink.emit(event)
     outbound = factory.bus.outbound.get_nowait()
     assert (outbound.channel, outbound.chat_id, outbound.event) == ("websocket", "chat", event)
 
@@ -92,7 +91,6 @@ async def test_idle_compaction_can_deliver_to_a_legacy_websocket_session() -> No
 def test_websocket_lifecycles_get_distinct_internal_owners(tmp_path: Path) -> None:
     factory = TurnDeliveryFactory(
         MessageBus(),
-        RuntimeEventBus(),
         route_policy=WebuiTurnRoutePolicy(SessionManager(tmp_path / "sessions")),
     )
     first_msg = InboundMessage(
@@ -141,7 +139,6 @@ def test_websocket_lifecycle_reuses_registered_ingress_owner(tmp_path: Path) -> 
     )
     factory = TurnDeliveryFactory(
         MessageBus(),
-        RuntimeEventBus(),
         route_policy=WebuiTurnRoutePolicy(SessionManager(tmp_path / "sessions")),
     )
 
@@ -163,7 +160,6 @@ def test_internal_user_input_uses_the_persisted_webui_route(tmp_path: Path) -> N
     sessions.save(target)
     factory = TurnDeliveryFactory(
         MessageBus(),
-        RuntimeEventBus(),
         route_policy=WebuiTurnRoutePolicy(sessions),
     )
     msg = InboundMessage(
@@ -194,7 +190,6 @@ async def test_same_chat_different_sessions_restore_previous_active_projection(
 
     factory = TurnDeliveryFactory(
         MessageBus(),
-        RuntimeEventBus(),
         route_policy=WebuiTurnRoutePolicy(SessionManager(tmp_path / "sessions")),
     )
     first_msg = InboundMessage(
@@ -253,7 +248,6 @@ def test_late_subagent_route_requires_webui_owned_session(tmp_path: Path) -> Non
     sessions = SessionManager(tmp_path)
     factory = TurnDeliveryFactory(
         MessageBus(),
-        RuntimeEventBus(),
         route_policy=WebuiTurnRoutePolicy(sessions),
     )
     session_key = "websocket:chat-a"
