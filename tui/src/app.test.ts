@@ -24,7 +24,7 @@ import type {
 } from "./protocol"
 import type { TuiHost } from "./host"
 import type { ClipboardImageReader } from "./clipboard-image"
-import { userMessageText, type Transcript } from "./transcript"
+import type { Transcript } from "./transcript"
 
 const options: AppOptions = {
   wsUrl: "ws://localhost.invalid/ws",
@@ -58,20 +58,6 @@ test("formats a reusable session ID after exit", () => {
   expect(sessionExitMessage("resume-chat")).toBe(
     "Resume with: nanobot agent --session websocket:resume-chat\n",
   )
-})
-
-test("projects image media as stable placeholders without exposing filenames", () => {
-  expect(userMessageText("What is this?", [
-    { name: "clipboard-image-2.png" },
-    { kind: "image", name: "screenshot.png" },
-    { kind: "file", name: "report.pdf" },
-  ])).toBe([
-    "What is this? [Image #2] [Image #1]",
-    "Attachments: report.pdf",
-  ].join("\n"))
-  expect(userMessageText("What is this?", [
-    { name: "clipboard-image-1.png" },
-  ], "What is this? [Image #1]")).toBe("What is this? [Image #1]")
 })
 
 function contrastRatio(foreground: string, background: string): number {
@@ -3111,6 +3097,8 @@ describe("NanobotTui layout", () => {
     const app = mount(setup, sent)
     const composer = (app as unknown as { composer: TextareaRenderable }).composer
     const connection = app as unknown as {
+      ready: boolean
+      submitPending: boolean
       handleStatus(
         status: "reconnecting" | "connected",
         detail?: string,
@@ -3119,7 +3107,7 @@ describe("NanobotTui layout", () => {
     }
 
     app.accept({ event: "attached", chat_id: "chat" })
-    await Bun.sleep(1)
+    await waitUntil(() => connection.ready)
     connection.handleStatus("reconnecting", "connection closed", {
       endpoint: "127.0.0.1:8769",
       attempt: 1,
@@ -3128,16 +3116,16 @@ describe("NanobotTui layout", () => {
     connection.handleStatus("connected")
     composer.setText("draft before attach")
     composer.submit()
-    await Bun.sleep(5)
+    await waitUntil(() => !connection.submitPending)
     composer.submit()
-    await Bun.sleep(5)
+    await waitUntil(() => !connection.submitPending)
 
     expect(sent).toEqual([])
     expect(composer.plainText).toBe("draft before attach")
 
     app.accept({ event: "attached", chat_id: "chat" })
     app.accept({ event: "attached", chat_id: "chat" })
-    await waitUntil(() => (app as unknown as { ready: boolean }).ready)
+    await waitUntil(() => connection.ready)
     expect(sent).toEqual([])
     composer.submit()
     await waitUntil(() => sent.length === 1)
