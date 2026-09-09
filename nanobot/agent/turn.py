@@ -14,7 +14,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias
+
+if TYPE_CHECKING:
+    from nanobot.providers.base import LLMUsage
 
 __all__ = [
     "ApprovalGrant",
@@ -681,6 +684,7 @@ class TurnResult:
     record: RunRecord | None = None
     policy_metadata: Mapping[str, Any] = field(default_factory=dict)
     messages: list[dict[str, Any]] | None = None
+    llm_usage: LLMUsage | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, RunStatus):

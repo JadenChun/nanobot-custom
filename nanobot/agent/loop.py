@@ -1857,7 +1857,8 @@ class AgentLoop:
                                 error=runner.error if runner else None,
                                 usage={k: v for k, v in runner.usage.to_dict().items()
                                        if isinstance(v, int) and not isinstance(v, bool)} if runner and runner.usage else {},
-                                sent_messages=tuple(context.delivery.sent_messages))
+                                sent_messages=tuple(context.delivery.sent_messages),
+                                llm_usage=runner.usage if runner else None)
                             if status is RunStatus.APPROVAL_REQUIRED:
                                 await self.approval_admission.store(session_key=key, channel=target.channel,
                                     chat_id=target.chat_id or '', summary=str(result.policy_metadata.get('summary') or 'risky action'))
@@ -2723,6 +2724,42 @@ class AgentLoop:
         attributes: Mapping[str, Any] | None = None,
     ) -> OutboundMessage | None:
         """Process an external message directly and return the outbound payload."""
+        result = await self._execute_direct(
+            content, session_key=session_key, channel=channel, chat_id=chat_id,
+            sender_id=sender_id, media=media, on_progress=on_progress,
+            on_stream=on_stream, on_stream_end=on_stream_end, ephemeral=ephemeral,
+            _run_extra_hooks_for_ephemeral=_run_extra_hooks_for_ephemeral,
+            hooks=hooks, hook_factories=hook_factories, tools=tools,
+            persist_user_message=persist_user_message, runtime=runtime,
+            on_runtime_admitted=on_runtime_admitted, attributes=attributes,
+        )
+        return result.outbound
+
+    async def _execute_direct(
+        self,
+        content: str,
+        session_key: str = "cli:direct",
+        channel: str = "cli",
+        chat_id: str = "direct",
+        sender_id: str = "user",
+        media: list[str] | None = None,
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+        on_stream: Callable[[str], Awaitable[None]] | None = None,
+        on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        ephemeral: bool = False,
+        _run_extra_hooks_for_ephemeral: bool = False,
+        hooks: list[AgentHook] | None = None,
+        hook_factories: list[AgentTurnHookFactory] | None = None,
+        tools: ToolRegistry | None = None,
+        persist_user_message: bool = True,
+        runtime: LLMRuntime | None = None,
+        on_runtime_admitted: Callable[[LLMRuntime], Awaitable[None]] | None = None,
+        attributes: Mapping[str, Any] | None = None,
+        *,
+        source: TurnSource = TurnSource.DIRECT,
+        trace_mode: TraceMode = TraceMode.NONE,
+    ) -> TurnResult:
+        """Execute a direct adapter request while preserving canonical results."""
         if channel == "system":
             raise ValueError("channel 'system' is reserved for internal messages")
         metadata: dict[str, Any] = {}
@@ -2732,7 +2769,7 @@ class AgentLoop:
             channel=channel, sender_id=sender_id, chat_id=chat_id,
             content=content, media=media or [], metadata=metadata,
         )
-        request = TurnRequest(content=content, session_key=session_key,
+        request = TurnRequest(content=content, session_key=session_key, source=source, trace_mode=trace_mode,
             route=DeliveryTarget(channel=channel, chat_id=chat_id), sender_id=sender_id,
             media=tuple(media or ()), metadata=metadata, hooks=tuple(hooks or ()),
             callbacks=TurnCallbacks(on_progress=on_progress, on_stream=on_stream, on_stream_end=on_stream_end))
@@ -2748,7 +2785,7 @@ class AgentLoop:
             on_runtime_admitted=on_runtime_admitted, attributes=dict(attributes or {}),
             raise_errors=True, on_admission_end=admission_ended)
         result = await self.execute_turn(request, _tools=tools, _options=options)
-        return result.outbound
+        return result
 
     def _get_session_lock(self, session_key: str) -> asyncio.Lock:
         """Return the shared lock while allowing idle session entries to expire."""

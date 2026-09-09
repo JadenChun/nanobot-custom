@@ -7,11 +7,12 @@ from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
-from nanobot.agent.hook import AgentHook, SDKCaptureHook
+from nanobot.agent.hook import AgentHook
 from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.mcp import MCPProvider
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import RunStatus, TraceMode, TurnSource
 from nanobot.config.schema import Config
 from nanobot.providers.base import LLMUsage
 from nanobot.providers.image_generation import image_gen_provider_configs
@@ -38,7 +39,7 @@ from nanobot.sdk.types import (
     SessionSnapshot,
     StreamEvent,
     StreamEventType,
-    result_from_response,
+    result_from_turn,
 )
 from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -150,13 +151,14 @@ class Nanobot:
         message: str,
         *,
         session_key: str = "sdk:default",
-        channel: str = "cli",
-        chat_id: str = "direct",
+        channel: str | None = None,
+        chat_id: str | None = None,
         sender_id: str = "user",
         media: list[str] | None = None,
         ephemeral: bool = False,
         attributes: Mapping[str, Any] | None = None,
         hooks: list[AgentHook] | None = None,
+        include_messages: bool = False,
         model: str | None = None,
         model_preset: str | None = None,
     ) -> RunResult:
@@ -175,11 +177,13 @@ class Nanobot:
                 providers and turn-hook factories. Attributes are kept separate
                 from nanobot's trusted internal message metadata.
             hooks: Optional lifecycle hooks for this run.
+            include_messages: Include a detached, sanitized trace for this invocation.
             model: Override the model for this run only.
             model_preset: Override the model preset for this run only.
         """
-        capture = SDKCaptureHook()
-        per_run_hooks = [capture, *(hooks or [])]
+        channel = "sdk" if channel is None else channel
+        chat_id = (session_key if channel == "sdk" else "direct") if chat_id is None else chat_id
+        per_run_hooks = list(hooks or [])
         runtime = self._loop.runtime_resolver.resolve_override(
             model=model,
             model_preset=model_preset,
@@ -198,30 +202,36 @@ class Nanobot:
             kwargs["runtime"] = runtime
         if self._mcp_provider is not None:
             await self._mcp_provider.connect()
-        response = await self._loop.process_direct(
-            message,
-            **kwargs,
-            hooks=per_run_hooks,
+        response = await self._loop._execute_direct(
+            message, **kwargs, hooks=per_run_hooks, source=TurnSource.SDK,
+            trace_mode=TraceMode.SANITIZED if include_messages else TraceMode.NONE,
         )
 
-        return result_from_response(response, capture)
+        return result_from_turn(response, include_messages=include_messages)
 
     async def run_streamed(
         self,
         message: str,
         *,
         session_key: str = "sdk:default",
-        channel: str = "cli",
-        chat_id: str = "direct",
+        channel: str | None = None,
+        chat_id: str | None = None,
         sender_id: str = "user",
         media: list[str] | None = None,
         ephemeral: bool = False,
         attributes: Mapping[str, Any] | None = None,
         hooks: list[AgentHook] | None = None,
+        include_messages: bool = False,
         model: str | None = None,
         model_preset: str | None = None,
     ) -> RunStream:
-        """Start a streamed run and return a handle for events and final result."""
+        """Start a streamed run and return a handle for events and final result.
+
+        include_messages controls the final sanitized trace. Explicit stream
+        events retain their tool and reasoning fields.
+        """
+        channel = "sdk" if channel is None else channel
+        chat_id = (session_key if channel == "sdk" else "direct") if chat_id is None else chat_id
         override_runtime = self._loop.runtime_resolver.resolve_override(
             model=model,
             model_preset=model_preset,
@@ -230,8 +240,7 @@ class Nanobot:
         queue: asyncio.Queue[StreamEvent | object] = asyncio.Queue(maxsize=256)
         emitter = SDKStreamEmitter(queue)
         stream_hook = SDKStreamingHook(emitter)
-        capture = SDKCaptureHook()
-        per_run_hooks = [capture, stream_hook, *(hooks or [])]
+        per_run_hooks = [stream_hook, *(hooks or [])]
         run_started = False
 
         async def _emit_run_started(runtime: LLMRuntime | None = None) -> None:
@@ -281,16 +290,18 @@ class Nanobot:
             try:
                 if self._mcp_provider is not None:
                     await self._mcp_provider.connect()
-                response = await self._loop.process_direct(
-                    message,
-                    **kwargs,
-                    hooks=per_run_hooks,
+                response = await self._loop._execute_direct(
+                    message, **kwargs, hooks=per_run_hooks, source=TurnSource.SDK,
+                    trace_mode=TraceMode.SANITIZED if include_messages else TraceMode.NONE,
                 )
                 await _emit_run_started()
                 await emitter.text_completed(resuming=False, force=False)
-                result = result_from_response(response, capture)
+                result = result_from_turn(response, include_messages=include_messages)
                 await emitter.emit(StreamEvent(
-                    type=STREAM_EVENT_RUN_COMPLETED,
+                    type=(STREAM_EVENT_RUN_FAILED if result.error or result.status in
+                          (RunStatus.ERROR, RunStatus.TOOL_ERROR, RunStatus.CANCELLED)
+                          else STREAM_EVENT_RUN_COMPLETED),
+                    error=result.error,
                     content=result.content,
                     result=result,
                     usage=result.usage,
@@ -316,13 +327,14 @@ class Nanobot:
         message: str,
         *,
         session_key: str = "sdk:default",
-        channel: str = "cli",
-        chat_id: str = "direct",
+        channel: str | None = None,
+        chat_id: str | None = None,
         sender_id: str = "user",
         media: list[str] | None = None,
         ephemeral: bool = False,
         attributes: Mapping[str, Any] | None = None,
         hooks: list[AgentHook] | None = None,
+        include_messages: bool = False,
         model: str | None = None,
         model_preset: str | None = None,
     ) -> AsyncIterator[StreamEvent]:
@@ -337,6 +349,7 @@ class Nanobot:
             ephemeral=ephemeral,
             attributes=attributes,
             hooks=hooks,
+            include_messages=include_messages,
             model=model,
             model_preset=model_preset,
         )

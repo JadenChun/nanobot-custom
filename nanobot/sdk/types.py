@@ -6,6 +6,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, TypeAlias, cast
 
+from nanobot.agent.trace import sanitize_trace
+from nanobot.agent.turn import RunStatus, TurnResult
 from nanobot.providers.base import LLMUsage
 from nanobot.runtime_context import public_history_messages
 
@@ -51,13 +53,15 @@ STREAM_EVENT_TYPES: tuple[StreamEventType, ...] = (
 class RunResult:
     """Result of a single agent run."""
 
-    content: str
+    content: str = ""
     tools_used: list[str] = field(default_factory=list)
     messages: list[dict[str, Any]] = field(default_factory=list)
     usage: LLMUsage | None = None
     stop_reason: str | None = None
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    run_id: str | None = None
+    status: RunStatus = RunStatus.COMPLETED
 
 
 @dataclass(slots=True)
@@ -172,4 +176,19 @@ def result_from_response(response: Any, capture: Any) -> RunResult:
         stop_reason=capture.stop_reason,
         error=capture.error,
         metadata=metadata,
+    )
+
+
+def result_from_turn(result: TurnResult, *, include_messages: bool = False) -> RunResult:
+    """Project the canonical outcome without exposing raw SDK hook exchanges."""
+    return RunResult(
+        content=str(result.content or ""),
+        tools_used=list(result.tools_used),
+        messages=sanitize_trace(result.messages) if include_messages else [],
+        usage=deepcopy(result.llm_usage),
+        stop_reason=result.stop_reason,
+        error=result.error,
+        metadata=deepcopy(result.outbound.metadata) if result.outbound is not None else {},
+        run_id=result.run_id,
+        status=result.status,
     )
