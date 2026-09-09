@@ -44,6 +44,7 @@ from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, res
 from nanobot.agent.tools.message import capture_message_deliveries
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
+from nanobot.agent.turn import HistoryMode, TurnSource
 from nanobot.agent.turn import TurnContext as RunTurnContext
 from nanobot.agent.turn_delivery import (
     TurnDelivery,
@@ -188,6 +189,11 @@ class TurnContext:
     visible_run_started_at: float | None = None
     turn_latency_ms: int | None = None
     usage: LLMUsage | None = None
+
+    @property
+    def fresh_history(self) -> bool:
+        request = self.run_context.request if self.run_context is not None else None
+        return request is not None and request.history_mode is HistoryMode.FRESH
 
     def require_runtime(self) -> LLMRuntime:
         """Return the runtime established by the BUILD stage."""
@@ -980,6 +986,11 @@ class AgentLoop:
             raise ValueError("canonical run context is required for tool authorization")
         if run_context.policy.workspace is None or run_context.policy.context_manager is None:
             raise ValueError("canonical run context is missing workspace policy dependencies")
+        fresh_history = (run_context.request is not None
+                         and run_context.request.history_mode is HistoryMode.FRESH)
+        if fresh_history:
+            pending_queue = None
+            provider_state = None
         tool_policy = RiskyActionPolicy(
             workspace=run_context.policy.workspace,
             approval_granted=bool(run_context.policy.approval_granted),
@@ -988,7 +999,7 @@ class AgentLoop:
         self._sync_subagent_runtime_limits()
 
         async def _checkpoint(payload: dict[str, Any]) -> None:
-            if session is None:
+            if session is None or fresh_history:
                 return
             public_payload = dict(payload)
             private_state = public_payload.pop("provider_state", None)
@@ -1167,7 +1178,7 @@ class AgentLoop:
                 "or call update_goal with action='complete' if the work is truly finished."
             )
 
-        session_metadata = session.metadata if session is not None else None
+        session_metadata = {} if fresh_history else (session.metadata if session is not None else None)
         run_context_token = set_current_turn_context(run_context)
         try:
             for scope in turn_scopes or ():
@@ -1214,7 +1225,7 @@ class AgentLoop:
                         session_key=session.key,
                         tools=effective_tools.get_definitions(),
                     )
-                    if session is not None and not ephemeral
+                    if session is not None and not ephemeral and not fresh_history
                     else None
                 ),
                 consolidate_provider_compaction=(
@@ -1224,7 +1235,7 @@ class AgentLoop:
                         session_key=session.key,
                         tools=effective_tools.get_definitions(),
                     )
-                    if session is not None and not ephemeral
+                    if session is not None and not ephemeral and not fresh_history
                     else None
                 ),
                 injection_callback=_drain_pending,
@@ -1237,7 +1248,7 @@ class AgentLoop:
                     metadata=session_metadata,
                     message_metadata=request_metadata,
                 ),
-                continuation_callback=_goal_continue,
+                continuation_callback=None if fresh_history else _goal_continue,
                 finalize_on_max_iterations=turn_continuation.should_finalize_on_max_iterations(
                     pending_queue_available=pending_queue is not None and session is not None,
                     session_metadata=session_metadata,
@@ -1260,7 +1271,7 @@ class AgentLoop:
                 reset_request_context(request_token)
                 reset_file_states(file_state_token)
         if session is not None and not ephemeral:
-            session.provider_state = result.provider_state
+            session.provider_state = None if fresh_history else result.provider_state
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
             should_stream = turn_continuation.should_stream_budget_response(
@@ -1831,6 +1842,8 @@ class AgentLoop:
         if ctx.kind is TurnKind.USER:
             self.workspace_scopes.persist_message_scope(session, msg)
 
+        if ctx.fresh_history:
+            return
         if restore_runtime_checkpoint(session):
             self.sessions.save(session)
         if (
@@ -1840,6 +1853,9 @@ class AgentLoop:
             self.sessions.save(session)
 
     async def _compact_session(self, ctx: TurnContext) -> None:
+        if ctx.fresh_history:
+            ctx.pending_summary = None
+            return
         session = ctx.require_session()
         ctx.session, pending = self.auto_compact.prepare_session(
             session,
@@ -1848,6 +1864,9 @@ class AgentLoop:
         ctx.pending_summary = pending
 
     async def _dispatch_command(self, ctx: TurnContext) -> bool:
+        request = ctx.run_context.request if ctx.run_context is not None else None
+        if request is not None and request.source in (TurnSource.CRON, TurnSource.HEARTBEAT):
+            return False
         if ctx.kind is TurnKind.SYSTEM or ctx.msg.channel == "system":
             return False
         session = ctx.require_session()
@@ -1913,7 +1932,7 @@ class AgentLoop:
             )
         if ctx.on_runtime_admitted is not None:
             await ctx.on_runtime_admitted(runtime)
-        if not ctx.ephemeral:
+        if not ctx.ephemeral and not ctx.fresh_history:
             ctx.session, ctx.pending_summary = self.auto_compact.prepare_session(
                 session,
                 ctx.session_key,
@@ -1921,8 +1940,13 @@ class AgentLoop:
             session = ctx.require_session()
         is_subagent = ctx.kind is TurnKind.SYSTEM and ctx.msg.sender_id == "subagent"
 
-        ctx.history = session.get_history(extend_to_user=is_subagent)
-        stored_state = session.provider_state
+        ctx.history = [] if ctx.fresh_history else session.get_history(extend_to_user=is_subagent)
+        if ctx.fresh_history:
+            ctx.pending_summary = None
+            ctx.provider_state = None
+            # The append changes the portable transcript: an old handle cannot survive it.
+            session.provider_state = None
+        stored_state = None if ctx.fresh_history else session.provider_state
         subagent_followup_persisted = False
         if is_subagent:
             # Keep the durable internal delivery as an assistant record, but
@@ -2022,7 +2046,7 @@ class AgentLoop:
                 runtime=runtime,
                 streaming=ctx.streaming,
                 session=ctx.session,
-                pending_queue=ctx.pending_queue,
+                pending_queue=None if ctx.fresh_history else ctx.pending_queue,
                 ephemeral=ctx.ephemeral,
                 run_extra_hooks_for_ephemeral=ctx.run_extra_hooks_for_ephemeral,
                 hooks=ctx.hooks,
@@ -2037,7 +2061,7 @@ class AgentLoop:
         ctx.run_result = result
         ctx.final_content = result.final_content
         ctx.all_messages = result.messages
-        ctx.summary_checkpoint = result.summary_checkpoint
+        ctx.summary_checkpoint = None if ctx.fresh_history else result.summary_checkpoint
         ctx.provider_compaction_applied = result.provider_compaction_applied
         ctx.stop_reason = result.stop_reason
         ctx.failure_error_kind = result.failure_error_kind
@@ -2049,7 +2073,7 @@ class AgentLoop:
             ctx.suppress_response = True
         ctx.usage = result.usage
         ctx.delivery.record_usage(result.round_usages)
-        if ctx.kind is TurnKind.USER:
+        if ctx.kind is TurnKind.USER and not ctx.fresh_history:
             await turn_continuation.maybe_continue_turn(ctx)
 
     async def _persist_turn(self, ctx: TurnContext) -> None:

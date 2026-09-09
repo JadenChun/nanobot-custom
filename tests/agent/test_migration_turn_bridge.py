@@ -8,7 +8,7 @@ from nanobot.agent.loop import AgentLoop
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.file_state import FileStateStore
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.turn import RunPolicyContext, TurnContext
+from nanobot.agent.turn import HistoryMode, RunPolicyContext, TurnContext, TurnRequest
 from nanobot.context_repo import ContextRepoManager
 
 
@@ -21,7 +21,8 @@ async def test_missing_policy_context_fails_before_runtime_access():
 
 
 @pytest.mark.parametrize("failure", [None, "cancel", "runner", "entry", "exit", "hook"])
-async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeypatch, failure):
+@pytest.mark.parametrize("fresh", [False, True])
+async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeypatch, failure, fresh):
     import nanobot.agent.loop as module
     loop = object.__new__(AgentLoop)
     loop._sync_subagent_runtime_limits = lambda: None
@@ -38,9 +39,17 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     loop.sessions = None
     loop.runner = SimpleNamespace(run=AsyncMock(return_value=AgentRunResult(final_content='done', messages=[])))
     monkeypatch.setattr(module, 'build_agent_turn_hook', lambda spec: None)
-    monkeypatch.setattr(module, 'runner_wall_llm_timeout_s', lambda *args, **kwargs: None)
+    if not fresh:
+        monkeypatch.setattr(module, 'runner_wall_llm_timeout_s', lambda *args, **kwargs: None)
+    from nanobot.session.manager import Session
+    active_session = Session(key='cron:fixture') if fresh else None
+    if fresh:
+        active_session.provider_state = object()
+        loop._set_runtime_checkpoint = lambda *args: pytest.fail('shared checkpoint written')
     context = TurnContext(policy=RunPolicyContext(workspace=tmp_path, context_manager=ContextRepoManager(),
                                                   approval_granted=failure is None))
+    if fresh:
+        context.request = TurnRequest(history_mode=HistoryMode.FRESH)
     from nanobot.agent.delegation import current_turn_context
     async def run(spec):
         assert current_turn_context() is context
@@ -48,7 +57,7 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
             raise asyncio.CancelledError()
         if failure == "runner":
             raise RuntimeError("runner")
-        return AgentRunResult(final_content='done', messages=[])
+        return AgentRunResult(final_content='done', messages=[], provider_state=object())
     loop.runner.run.side_effect = run
     class Scope:
         def __enter__(self):
@@ -74,9 +83,9 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     try:
         if failure:
             with pytest.raises(asyncio.CancelledError if failure == 'cancel' else RuntimeError):
-                await loop._run_agent_loop(None, runtime=None, run_context=context, turn_scopes=[Scope()])
+                await loop._run_agent_loop(None, runtime=None, run_context=context, turn_scopes=[Scope()], session=active_session)
         else:
-            await loop._run_agent_loop(None, runtime=None, run_context=context, turn_scopes=[Scope()])
+            await loop._run_agent_loop(None, runtime=None, run_context=context, turn_scopes=[Scope()], session=active_session)
         assert current_turn_context() is outer
         assert current_request_context() is previous_request
         assert current_workspace_scope() is previous_scope
@@ -92,3 +101,12 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     assert spec.tool_policy.workspace == tmp_path
     assert spec.tool_policy.approval_granted is (failure is None)
     assert spec.fail_on_tool_error is True
+    if fresh:
+        assert spec.continuation_callback is None
+        assert spec.provider_state is None
+        assert spec.consolidate_history is None
+        assert spec.consolidate_provider_compaction is None
+        await spec.checkpoint_callback({"provider_state": object()})
+        if failure is None:
+            assert active_session.provider_state is None
+        assert await spec.injection_callback() == []
