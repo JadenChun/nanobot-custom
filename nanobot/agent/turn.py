@@ -353,6 +353,7 @@ class TurnContext:
     policy: RunPolicyContext = field(default_factory=RunPolicyContext)
     delivery: DeliveryState = field(default_factory=DeliveryState)
     messages: list[dict[str, Any]] = field(default_factory=list)
+    sanitized_messages: list[dict[str, Any]] | None = None
     tool_results: list[Any] = field(default_factory=list)
     tools_used: list[str] = field(default_factory=list)
     cancelled: bool = False

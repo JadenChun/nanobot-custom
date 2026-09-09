@@ -59,6 +59,7 @@ from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, res
 from nanobot.agent.tools.message import capture_message_deliveries
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
+from nanobot.agent.trace import sanitize_trace
 from nanobot.agent.turn import (
     DeliveryState,
     DeliveryTarget,
@@ -67,6 +68,7 @@ from nanobot.agent.turn import (
     RunRecord,
     RunStatus,
     SessionRunRef,
+    TraceMode,
     TurnCallbacks,
     TurnRequest,
     TurnResult,
@@ -194,6 +196,8 @@ class TurnContext:
     streamed_content: bool = False
 
     input_persisted_early: bool = False
+    trace_input_message: dict[str, Any] | None = None
+    trace_detail_messages: list[dict[str, Any]] = field(default_factory=list)
     save_skip: int = 0
 
     outbound: OutboundMessage | None = None
@@ -761,6 +765,7 @@ class AgentLoop:
         runtime_context_blocks: list[RuntimeContextBlock] | None = None,
         *,
         run_id: str | None = None,
+        trace_owner: TurnContext | None = None,
         **kwargs: Any,
     ) -> bool:
         """Persist the triggering user message before the turn starts.
@@ -794,6 +799,7 @@ class AgentLoop:
             if run_id:
                 extra["_run_id"] = run_id
             session.add_message("user", text, **extra)
+            self._capture_trace_row(trace_owner, session.messages[-1], is_input=True)
             self._mark_pending_user_turn(session)
             followup_id = msg.metadata.get(PENDING_FOLLOWUP_ID_KEY)
             if isinstance(followup_id, str) and followup_id:
@@ -1879,6 +1885,8 @@ class AgentLoop:
                 raise
         finally:
             if result is not None:
+                if request.trace_mode is TraceMode.SANITIZED:
+                    result.messages = context.sanitized_messages or []
                 record.status, record.stop_reason = result.status, result.stop_reason
                 record.tools_used = tuple(result.tools_used)
                 record.usage = dict(result.usage)
@@ -1983,15 +1991,39 @@ class AgentLoop:
 
             ctx.events = EventSink(track_output, ctx.events.accepts)
 
-        await self._run_turn_stage(ctx, "restore", self._restore_turn)
-        await self._run_turn_stage(ctx, "compact", self._compact_session)
-        if await self._run_turn_stage(ctx, "command", self._dispatch_command):
+        try:
+            await self._run_turn_stage(ctx, "restore", self._restore_turn)
+            await self._run_turn_stage(ctx, "compact", self._compact_session)
+            if await self._run_turn_stage(ctx, "command", self._dispatch_command):
+                return ctx
+            await self._run_turn_stage(ctx, "build", self._build_turn)
+            await self._run_turn_stage(ctx, "run", self._run_turn)
+            await self._run_turn_stage(ctx, "save", self._persist_turn)
+            await self._run_turn_stage(ctx, "respond", self._prepare_outbound)
             return ctx
-        await self._run_turn_stage(ctx, "build", self._build_turn)
-        await self._run_turn_stage(ctx, "run", self._run_turn)
-        await self._run_turn_stage(ctx, "save", self._persist_turn)
-        await self._run_turn_stage(ctx, "respond", self._prepare_outbound)
-        return ctx
+        finally:
+            if run_context is not None and run_context.request is not None and run_context.request.trace_mode is TraceMode.SANITIZED:
+                rows = []
+                for row in ctx.trace_detail_messages:
+                    if row is ctx.trace_input_message:
+                        # Replace exactly this invocation's triggering input.
+                        row = {"role": row["role"], "content": run_context.request.content}
+                    rows.append(row)
+                run_context.sanitized_messages = sanitize_trace(rows)
+
+    @staticmethod
+    def _capture_trace_row(
+        ctx: TurnContext | None, row: dict[str, Any], *, is_input: bool = False,
+    ) -> None:
+        """Capture exact appended rows before a fallible save, only when requested."""
+        if ctx is None or ctx.run_context is None or ctx.run_context.request is None:
+            return
+        if ctx.run_context.request.trace_mode is not TraceMode.SANITIZED:
+            return
+        ctx.trace_detail_messages.append(row)
+        if is_input:
+            ctx.trace_input_message = row
+
 
     async def _run_turn_stage(
         self,
@@ -2161,12 +2193,14 @@ class AgentLoop:
             if cmd_ctx.raw.lower() != "/new":
                 ctx.input_persisted_early = self._persist_user_message_early(
                     ctx.msg, session, _command=True,
-                    run_id=ctx.run_context.run_id if ctx.run_context else None
+                    run_id=ctx.run_context.run_id if ctx.run_context else None,
+                    trace_owner=ctx,
                 )
                 session.add_message(
                     "assistant", result.content, _command=True,
                     **({"_run_id": ctx.run_context.run_id} if ctx.run_context and ctx.run_context.run_id else {})
                 )
+                self._capture_trace_row(ctx, session.messages[-1])
                 self._clear_pending_user_turn(session)
                 self.sessions.save(session)
                 if not ctx.ephemeral:
@@ -2219,6 +2253,7 @@ class AgentLoop:
                 session,
                 ctx.msg,
                 run_id=ctx.run_context.run_id if ctx.run_context else None,
+                trace_owner=ctx,
             )
             if subagent_followup_persisted:
                 logger.debug("Subagent result persisted for session {}", ctx.session_key)
@@ -2285,6 +2320,7 @@ class AgentLoop:
                 session,
                 runtime_context_blocks=ctx.runtime_context_blocks,
                 run_id=ctx.run_context.run_id if ctx.run_context else None,
+                trace_owner=ctx,
             )
             if staged_provider_state and not ctx.input_persisted_early:
                 session.provider_state = stored_state
@@ -2376,6 +2412,7 @@ class AgentLoop:
             summary_checkpoint=ctx.summary_checkpoint,
             input_persisted_early=ctx.input_persisted_early,
             run_id=ctx.run_context.run_id if ctx.run_context else None,
+            trace_owner=ctx,
         )
         if (
             not ctx.ephemeral
@@ -2484,6 +2521,7 @@ class AgentLoop:
         summary_checkpoint: SessionSummaryCheckpoint | None = None,
         input_persisted_early: bool = False,
         run_id: str | None = None,
+        trace_owner: TurnContext | None = None,
     ) -> None:
         """Commit new-turn messages and an optional summary boundary."""
         declared_tool_call_ids = {
@@ -2591,6 +2629,7 @@ class AgentLoop:
             if run_id:
                 entry["_run_id"] = run_id
             session.messages.append(entry)
+            self._capture_trace_row(trace_owner, entry)
             if role == "user":
                 saved_followup_ids.update(followup_id for followup_id in followup_ids if followup_id)
             if role == "assistant":
@@ -2615,6 +2654,7 @@ class AgentLoop:
 
     def _persist_subagent_followup(
         self, session: Session, msg: InboundMessage, *, run_id: str | None = None,
+        trace_owner: TurnContext | None = None,
     ) -> bool:
         """Persist subagent follow-ups before prompt assembly so history stays durable.
 
@@ -2643,6 +2683,7 @@ class AgentLoop:
             subagent_task_id=task_id,
             **({"_run_id": run_id} if run_id else {}),
         )
+        self._capture_trace_row(trace_owner, session.messages[-1], is_input=True)
         return True
 
     def _set_runtime_checkpoint(self, session: Session, payload: dict[str, Any]) -> None:
