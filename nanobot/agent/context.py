@@ -19,6 +19,7 @@ from nanobot.bus.events import (
     RUNTIME_CONTROL_SESSION_DISCARD,
     InboundMessage,
 )
+from nanobot.context_repo import ContextRepoManager
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
     RuntimeContextBlock,
@@ -89,14 +90,17 @@ class TranscriptInput:
 class ContextBuilder:
     """Builds the context (system prompt + messages) for the agent."""
 
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md"]
+    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
     _SKIPPABLE_DEFAULTS = {"AGENTS.md", "USER.md"}
 
-    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None):
+    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None, *, context_paths: list[Path] | None = None, context_manager: ContextRepoManager | None = None):
         self.workspace = workspace
         self.timezone = timezone
         self.memory = MemoryStore(workspace)
-        self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None)
+        self.context_manager = context_manager or ContextRepoManager.from_config(context_paths=context_paths)
+        self.context_paths = self.context_manager.paths
+        self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None,
+                                   extra_paths=self.context_manager.skill_roots())
 
     def build_system_prompt(
         self,
@@ -114,6 +118,9 @@ class ContextBuilder:
         if bootstrap:
             parts.append(bootstrap)
 
+        if self.context_paths:
+            parts.append("# Context Repositories\n\n" + self.context_manager.prompt_summary()
+                         + "\nFollow each repository's writable, protected, store and proposal policies.")
         parts.append(render_template("agent/tool_contract.md"))
 
         project_path = root.expanduser().resolve()
@@ -128,6 +135,21 @@ class ContextBuilder:
             memory = self.memory.read_memory()
             if memory and not self._is_template_content(memory, "memory/MEMORY.md"):
                 parts.append(f"# Memory\n\n## Long-term Memory\n{memory}")
+
+        # Managed repositories retain their supplemental durable context.
+        for memory_file in self.context_manager.memory_files():
+            content = memory_file.read_text(encoding="utf-8")
+            if content.strip():
+                parts.append(f"# Context Memory ({memory_file.parent.parent.name})\n\n{content}")
+        run_summaries = []
+        for run_file in self.context_manager.run_summary_files():
+            content = run_file.read_text(encoding="utf-8").strip()
+            if content:
+                run_summaries.append(
+                    f"## {run_file.parent.parent.name}/{run_file.relative_to(run_file.parent.parent)}\n\n{content}"
+                )
+        if run_summaries:
+            parts.append("# Context Repo Run State\n\n" + "\n\n".join(run_summaries))
 
         active_skills = self.skills.get_always_skills()
         if active_skills:
@@ -199,6 +221,8 @@ class ContextBuilder:
             ("AGENTS.md", project_root),
             ("SOUL.md", self.workspace),
             ("USER.md", self.workspace),
+            ("TOOLS.md", self.workspace),
+            ("IDENTITY.md", self.workspace),
         ]
 
         for filename, root in sources:
@@ -218,6 +242,10 @@ class ContextBuilder:
                     continue
                 parts.append(f"## {filename}\n\n{content}")
 
+        for context_file in self.context_manager.context_files():
+            repo = self.context_manager.find_repo_for_path(context_file)
+            suffix = f" ({repo.name})" if repo else ""
+            parts.append(f"## {context_file.name}{suffix}\n\n{context_file.read_text(encoding='utf-8')}")
         return "\n\n".join(parts) if parts else ""
 
     @staticmethod

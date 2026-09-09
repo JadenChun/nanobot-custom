@@ -9,3 +9,9 @@ Clean-home, network-denied validation passed 245 tests, with 38 deselected. Case
 A reused read-only High analyst reviewed dispatcher/runner/delegation boundaries. Its two findings—lost tool-error terminal metadata and inflated crawler total context capacity—were corrected and narrowly rechecked. This is reduced-isolation review, not fresh full P2 acceptance. Implementation is direct under the user's revised authorization after native worker capacity failures.
 
 Remaining P2 work includes canonical factories and tool exposure, context-repository prompt integration, remaining process/web/message/image adapters and their negative tests. P3 provider/channel ports, P4 durable context, P5 canonical turn integration and P6 rehearsal are still required. No live state, deployment or original-checkout promotion has occurred.
+
+## Context assets follow-up
+
+Restored `TOOLS.md` and `IDENTITY.md` from the agent workspace while retaining upstream project-scoped `AGENTS.md`. ContextBuilder accepts the existing context manager/ordered roots, includes repository entrypoints and policy summaries, and preserves supplemental memory/run summaries. External skills retain workspace-first, ordered-library-before-builtin precedence and disabled filtering. The upstream test requiring TOOLS.md omission was intentionally updated to the accepted fork contract; historical fork test copies remain unchanged.
+
+Validation: `pytest tests/agent/test_migration_context_assets.py tests/agent/test_context_builder.py -q` under network-denied sandbox: **56 passed**. Scoped Ruff and diff whitespace checks pass. This follow-up does not wire ContextBuilder dependencies into AgentLoop; that remains canonical integration work.

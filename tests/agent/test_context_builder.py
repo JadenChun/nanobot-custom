@@ -108,12 +108,12 @@ class TestLoadBootstrapFiles:
         for name in ContextBuilder.BOOTSTRAP_FILES:
             assert f"## {name}" in result
 
-    def test_legacy_tools_md_is_not_bootstrapped(self, tmp_path):
+    def test_custom_tools_md_is_bootstrapped(self, tmp_path):
         (tmp_path / "TOOLS.md").write_text("workspace tool notes", encoding="utf-8")
         builder = _builder(tmp_path)
         result = builder._load_bootstrap_files()
-        assert "TOOLS.md" not in result
-        assert "workspace tool notes" not in result
+        assert "TOOLS.md" in result
+        assert "workspace tool notes" in result
 
     def test_utf8_content(self, tmp_path):
         (tmp_path / "AGENTS.md").write_text("用中文回复", encoding="utf-8")
