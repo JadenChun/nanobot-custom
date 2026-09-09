@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import suppress
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -1012,6 +1014,8 @@ class ChannelManager:
 
         Note: CancelledError is re-raised to allow graceful shutdown.
         """
+        if isinstance(msg.event, (StreamDeltaEvent, StreamEndEvent)):
+            msg = replace(msg, metadata={**msg.metadata, "_delivery_id": uuid.uuid4().hex})
         max_attempts = max(self.config.channels.send_max_retries, 1)
         attempt = 0
 

@@ -328,3 +328,23 @@ async def test_result_mode_drops_progress_but_keeps_tool_hint_and_final_media(ma
     finally:
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_manager_stream_retry_id_is_stable_private_and_fresh(manager, monkeypatch):
+    from nanobot.bus.outbound_events import StreamDeltaEvent
+    message = outbound_message_for_event(channel='mock', chat_id='42', event=StreamDeltaEvent(content='x'))
+    message.metadata['_delivery_id'] = 'caller-forged'
+    seen = []
+    async def send(channel, msg):
+        seen.append(msg.metadata['_delivery_id'])
+        if len(seen) == 1:
+            raise OSError('retry fixture')
+    monkeypatch.setattr(manager, '_send_once', send)
+    monkeypatch.setattr(manager.channels['mock'], 'should_retry_send_error', lambda exc: True)
+    monkeypatch.setattr('nanobot.channels.manager.asyncio.sleep', AsyncMock())
+    await manager._send_with_retry(manager.channels['mock'], message)
+    await manager._send_with_retry(manager.channels['mock'], message)
+    assert seen[0] == seen[1] and seen[2] != seen[1]
+    assert seen[0] != 'caller-forged'
+    assert message.metadata['_delivery_id'] == 'caller-forged'

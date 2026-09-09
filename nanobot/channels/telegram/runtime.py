@@ -7,6 +7,7 @@ import os
 import re
 import time
 import unicodedata
+import weakref
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
@@ -390,6 +391,10 @@ class _StreamBuf:
     message_id: int | None = None
     last_edit: float = 0.0
     stream_id: str | None = None
+    accepted_delivery_id: str | None = None
+    pending_chunks: list[tuple[str, str]] | None = None
+    pending_cursor: int = 0
+    pending_thread_kwargs: dict[str, int] | None = None
 
 
 @dataclass
@@ -509,6 +514,7 @@ class TelegramChannel(BaseChannel):
         super().__init__(config, bus)
         self.config: TelegramConfig = config
         self._app: TelegramApplication | None = None
+        self._stream_locks = weakref.WeakValueDictionary()
         self._typing_tasks: dict[str, asyncio.Task[None]] = {}  # chat_id -> typing loop task
         self._media_group_buffers: dict[str, dict[str, Any]] = {}
         self._media_group_tasks: dict[str, asyncio.Task[None]] = {}
@@ -1016,6 +1022,14 @@ class TelegramChannel(BaseChannel):
                     allow_sending_without_reply=True
                 )
 
+        caption = None
+        if (msg.media and msg.content and msg.content != "[empty message]"
+                and len(msg.content.encode("utf-16-le")) // 2 <= 1024
+                and not getattr(msg, "buttons", None) and not progress_event):
+            caption = _markdown_to_telegram_html(msg.content)
+        if msg.media and not msg.content:
+            caption = "Attached file."
+        caption_sent = False
         # Send media files
         for media_path in (msg.media or []):
             try:
@@ -1033,6 +1047,8 @@ class TelegramChannel(BaseChannel):
                     "audio": "audio",
                 }.get(media_type, "document")
                 extra: dict[str, Any] = {}
+                if caption is not None and not caption_sent:
+                    extra.update(caption=caption, parse_mode="HTML")
                 if media_type == "video":
                     extra["supports_streaming"] = True
 
@@ -1049,6 +1065,7 @@ class TelegramChannel(BaseChannel):
                         **thread_kwargs,
                         **extra,
                     )
+                    caption_sent = caption_sent or "caption" in extra
                     continue
 
                 media_bytes = Path(media_path).read_bytes()
@@ -1062,6 +1079,7 @@ class TelegramChannel(BaseChannel):
                     **extra,
                     **send_kwargs,
                 )
+                caption_sent = caption_sent or "caption" in extra
             except Exception:
                 filename = media_path.rsplit("/", 1)[-1]
                 self.logger.exception("Failed to send media {}", media_path)
@@ -1073,7 +1091,7 @@ class TelegramChannel(BaseChannel):
                 )
 
         # Send text content
-        if msg.content and msg.content != "[empty message]":
+        if msg.content and msg.content != "[empty message]" and not caption_sent:
             render_as_blockquote = bool(progress_event and progress_event.tool_hint)
             buttons = cast(list[list[str]], getattr(msg, "buttons", None) or [])
             reply_markup = self._build_keyboard(buttons) if buttons else None
@@ -1181,7 +1199,17 @@ class TelegramChannel(BaseChannel):
     def _is_not_modified_error(exc: Exception) -> bool:
         return isinstance(exc, BadRequest) and "message is not modified" in str(exc).lower()
 
-    async def send_delta(
+    async def send_delta(self, chat_id, delta, metadata=None, *, stream_id=None,
+                         stream_end=False, resuming=False, merge_next=False):
+        lock = self._stream_locks.get(chat_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._stream_locks[chat_id] = lock
+        async with lock:
+            await self._send_delta_locked(chat_id, delta, metadata, stream_id=stream_id,
+                                          stream_end=stream_end, resuming=resuming, merge_next=merge_next)
+
+    async def _send_delta_locked(
         self,
         chat_id: str,
         delta: str,
@@ -1199,6 +1227,13 @@ class TelegramChannel(BaseChannel):
         meta = metadata or {}
         int_chat_id = int(chat_id)
 
+        pending = self._stream_bufs.get(chat_id)
+        if (pending is not None and pending.pending_chunks is not None
+                and (stream_id is None or pending.stream_id is None or pending.stream_id == stream_id)):
+            thread = meta.get("message_thread_id")
+            await self._flush_stream_overflow(int_chat_id, pending,
+                                             {"message_thread_id": thread} if thread is not None else {})
+
         if stream_end and merge_next:
             if not delta:
                 return
@@ -1209,7 +1244,8 @@ class TelegramChannel(BaseChannel):
                 return
             if stream_id is not None and buf.stream_id is not None and buf.stream_id != stream_id:
                 return
-            self._stop_typing(chat_id)
+            if not resuming:
+                self._stop_typing(chat_id)
             if reply_to_message_id := meta.get("message_id"):
                 with suppress(ValueError):
                     await self._remove_reaction(chat_id, int(reply_to_message_id))
@@ -1284,7 +1320,10 @@ class TelegramChannel(BaseChannel):
             self._stream_bufs[chat_id] = buf
         elif buf.stream_id is None:
             buf.stream_id = stream_id
-        buf.text += delta
+        delivery_id = meta.get("_delivery_id")
+        if delivery_id is None or delivery_id != buf.accepted_delivery_id:
+            buf.text += delta
+            buf.accepted_delivery_id = delivery_id
 
         if not buf.text.strip():
             return
@@ -1294,7 +1333,8 @@ class TelegramChannel(BaseChannel):
         if message_thread_id := meta.get("message_thread_id"):
             stream_thread_kwargs["message_thread_id"] = message_thread_id
         if buf.message_id is None:
-            preview = _strip_md_block(buf.text)
+            initial = _split_telegram_markdown(buf.text, TELEGRAM_MAX_MESSAGE_LEN)[0]
+            preview = _strip_md_block(initial)
             try:
                 sent = await self._call_with_retry(
                     app.bot.send_message,
@@ -1306,6 +1346,8 @@ class TelegramChannel(BaseChannel):
             except Exception as e:
                 self.logger.warning("Stream initial send failed: {}", e)
                 raise  # Let ChannelManager handle retry
+            if len(buf.text) > TELEGRAM_MAX_MESSAGE_LEN:
+                await self._flush_stream_overflow(int_chat_id, buf, stream_thread_kwargs)
         elif (now - buf.last_edit) >= self.config.stream_edit_interval:
             if len(buf.text) > TELEGRAM_MAX_MESSAGE_LEN:
                 await self._flush_stream_overflow(int_chat_id, buf, stream_thread_kwargs)
@@ -1338,36 +1380,45 @@ class TelegramChannel(BaseChannel):
         intermediate chunks as standalone messages, then opens a new message
         for the tail so subsequent deltas continue streaming into it.
         """
-        chunks = _split_telegram_markdown_html_chunks(buf.text, TELEGRAM_HTML_MAX_LEN)
-        if len(chunks) <= 1:
-            return
+        if buf.pending_chunks is None:
+            chunks = _split_telegram_markdown_html_chunks(buf.text, TELEGRAM_HTML_MAX_LEN)
+            if len(chunks) <= 1:
+                return
+            buf.pending_chunks = chunks
+            buf.pending_cursor = 0
+            buf.pending_thread_kwargs = dict(thread_kwargs)
+        thread_kwargs = buf.pending_thread_kwargs or {}
+        chunks = buf.pending_chunks
         app = self._require_app()
         first_markdown, first_html = chunks[0]
-        try:
-            await self._call_with_retry(
-                app.bot.edit_message_text,
-                chat_id=chat_id, message_id=buf.message_id,
-                text=first_html,
-                parse_mode="HTML",
-            )
-        except BadRequest as e:
-            if not self._is_not_modified_error(e):
-                self.logger.warning(
-                    "Stream overflow HTML edit failed, falling back to plain text: {}", e
+        if buf.pending_cursor == 0:
+            try:
+                await self._call_with_retry(
+                    app.bot.edit_message_text,
+                    chat_id=chat_id, message_id=buf.message_id,
+                    text=first_html,
+                    parse_mode="HTML",
                 )
-                try:
-                    await self._call_with_retry(
-                        app.bot.edit_message_text,
-                        chat_id=chat_id, message_id=buf.message_id,
-                        text=first_markdown,
+            except BadRequest as e:
+                if not self._is_not_modified_error(e):
+                    self.logger.warning(
+                        "Stream overflow HTML edit failed, falling back to plain text: {}", e
                     )
-                except Exception as plain_error:
-                    if not self._is_not_modified_error(plain_error):
-                        self.logger.warning("Stream overflow plain edit failed: {}", plain_error)
-                        raise
-        except Exception as e:
-            self.logger.warning("Stream overflow edit failed: {}", e)
-            raise
+                    try:
+                        await self._call_with_retry(
+                            app.bot.edit_message_text,
+                            chat_id=chat_id, message_id=buf.message_id,
+                            text=first_markdown,
+                        )
+                    except Exception as plain_error:
+                        if not self._is_not_modified_error(plain_error):
+                            self.logger.warning("Stream overflow plain edit failed: {}", plain_error)
+                            raise
+            except Exception as e:
+                self.logger.warning("Stream overflow edit failed: {}", e)
+                raise
+
+            buf.pending_cursor = 1
 
         async def send_chunk(markdown: str, html: str) -> Any:
             try:
@@ -1384,12 +1435,16 @@ class TelegramChannel(BaseChannel):
                     chat_id=chat_id, text=markdown, **thread_kwargs,
                 )
 
-        for markdown, html in chunks[1:-1]:
-            await send_chunk(markdown, html)
-        markdown_tail, tail_html = chunks[-1]
-        sent = await send_chunk(markdown_tail, tail_html)
-        buf.message_id = sent.message_id
-        buf.text = markdown_tail
+        while buf.pending_cursor < len(chunks):
+            markdown, html = chunks[buf.pending_cursor]
+            sent = await send_chunk(markdown, html)
+            buf.pending_cursor += 1
+            if buf.pending_cursor == len(chunks):
+                buf.message_id = sent.message_id
+                buf.text = markdown
+        buf.pending_chunks = None
+        buf.pending_thread_kwargs = None
+        buf.pending_cursor = 0
 
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""
@@ -1764,6 +1819,11 @@ class TelegramChannel(BaseChannel):
         """Handle incoming messages (text, photos, voice, documents)."""
         if not update.message or not update.effective_user:
             return
+        if update.message.chat.type != "private":
+            self.logger.info(
+                "Telegram group update received: chat_id={} chat_type={} sender_user_id={}",
+                update.message.chat_id, update.message.chat.type, update.effective_user.id,
+            )
         if not self._is_update_allowed(update.message, update.effective_user):
             return
         if not self._running:

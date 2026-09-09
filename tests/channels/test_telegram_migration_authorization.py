@@ -194,3 +194,22 @@ async def test_quota_error_does_not_expose_auth_response(monkeypatch):
     result = await cmd_quota(SimpleNamespace(msg=SimpleNamespace(
         channel='telegram', chat_id='42', metadata={})))
     assert 'secret-token' not in result.content
+
+
+def test_webui_partial_save_preserves_fast_commands_and_chat_restrictions():
+    from nanobot.channels.registry import load_channel_plugin
+    from nanobot.config.schema import Config
+    from nanobot.webui.settings_system import save_channel_config_values
+    original = {'enabled': False, 'token': 'synthetic', 'allowFrom': ['42'],
+                'allowChats': ['-10'], 'fastCommands': {'/report': ['runner', '--fixed']},
+                'fastCommandWorkdir': '/configured', 'fastCommandTimeout': 19}
+    config = Config.model_validate({'channels': {'telegram': original}})
+    save_channel_config_values(config, 'telegram', {'allowChats': '-20, -30'},
+                               load_channel_plugin=load_channel_plugin)
+    restored = Config.model_validate(config.model_dump(by_alias=True))
+    telegram = TelegramConfig.model_validate(restored.channels.telegram)
+    assert telegram.allow_chats == ['-20', '-30']
+    assert telegram.allow_from == ['42']
+    assert telegram.fast_commands == original['fastCommands']
+    assert telegram.fast_command_workdir == '/configured'
+    assert telegram.fast_command_timeout == 19
