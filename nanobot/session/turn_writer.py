@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -10,12 +9,9 @@ from typing import Any
 
 from nanobot.agent.tools.execution import KnownToolResult, ToolResultCallback
 from nanobot.agent.turn import ToolOutcome
-from nanobot.runtime_context import public_history_message
 from nanobot.session.execution_owner import ExecutionOwner
 from nanobot.session.source import SourceValidationError, canonical_events, new_source_event
 from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
-from nanobot.session.summary import is_summary_checkpoint
-from nanobot.utils.helpers import content_with_media_breadcrumbs
 
 
 def _persisted_content(value: Any) -> Any:
@@ -152,21 +148,6 @@ class SourceTurnWriter:
 
     @staticmethod
     def project_events(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
-        messages, identities = [], []
-        for event in events:
-            if event.get('_parent_stream_id') is not None or event.get('_command'):
-                continue
-            if is_summary_checkpoint(event):
-                continue
-            public = public_history_message(event)
-            row = {key: deepcopy(public[key]) for key in
-                   ('role', 'content', 'tool_calls', 'tool_call_id', 'name') if key in public}
-            if row.get('role') not in {'user', 'assistant', 'tool'}:
-                continue
-            content = row.get('content')
-            if isinstance(content, dict):
-                row['content'] = json.dumps(content, ensure_ascii=False)
-            row['content'] = content_with_media_breadcrumbs(row['role'], row.get('content'), event.get('media'))
-            messages.append(row)
-            identities.append(event['_event_id'])
-        return messages, identities
+        from nanobot.session.source_projection import project_events
+
+        return project_events(events)

@@ -296,3 +296,31 @@ Unresolved nodes by file: `test_runner.py` 18, `test_runner_context_trim.py` 6,
 `test_runner_injections.py` 18, `test_runner_progress_deltas.py` 3,
 `test_model_command.py` 15. These include legacy ABI expectations and guarded
 startup tests; they are not waived and must be reconciled before migration success.
+
+### Source projection foundation (implementation resumed)
+
+`session/source_projection.py` now provides detached event-bearing nodes, scoped
+root checkpoint projection, explicit stream-local projection, newest-user pinning,
+and eligible closed-prefix selection. Only validated checkpoints marked
+`projection_scope="root"`, `projection_version=1` are applied; unscoped or
+incompatible checkpoints fall back to source. Child/fresh stream selection never
+inherits a root checkpoint. Checkpoint text is historical evidence in an assistant
+message, never system policy. Public source sanitization was extracted unchanged
+from `SourceTurnWriter` so projection does not import agent startup.
+
+Boundary selection uses exact event identities, global execution closure for roots,
+and local closure for isolated streams. Invalid source linkage fails explicitly;
+unacknowledged visible events prevent advancement. No storage, summary generation,
+or provider calls occur in these helpers. The current runner still uses full source:
+governor request-ticket acknowledgment, bounded auxiliary generation, pressure
+compaction, checkpoint publication, and authorized model-facing instruction binding
+remain unwired. This slice does not enable migration activation or offloading.
+
+Evidence: 296 session/source-engine tests passed with network denied; Ruff and
+diff checks passed. Fourteen projection tests cover scope, pinning, incompatible
+checkpoint fallback, repeated-content identity, global/local tool closure,
+corruption rejection, rollback projection, and checkpoint reuse after real store
+reload. Read-only review accepted the foundation (12 tests before the two final
+storage/corruption additions). Isolated writer-test collection still encounters the
+existing missing `ExecToolConfig` startup import; combined session/source-engine
+collection passes. This broader import/ABI qualification remains unresolved.
