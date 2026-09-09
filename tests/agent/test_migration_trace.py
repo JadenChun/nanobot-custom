@@ -44,7 +44,7 @@ def stage_host(tmp_path, *, fail=False):
     loop = host(tmp_path)
     session = Session(key='cli:test')
     session.add_run_message('previous', 'user', 'previous secret')
-    loop.sessions = SimpleNamespace(save=Mock())
+    loop.sessions = SimpleNamespace(save=Mock(), source_backend=lambda key: None)
     loop.runtime_event_publisher = SimpleNamespace(session_turn_persisted=AsyncMock())
     delivery = SimpleNamespace(session_key=session.key, streaming=False, events=NO_EVENTS,
                                record_latency=Mock())

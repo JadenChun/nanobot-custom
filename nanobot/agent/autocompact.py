@@ -56,6 +56,8 @@ class AutoCompact:
 
     def _has_unarchived_messages(self, key: str) -> bool:
         session = self.sessions.get_or_create(key)
+        if "source_schema_version" in session.metadata:
+            return False
         return any(
             not message.get("_command") and not is_summary_checkpoint(message)
             for message in session.messages[session.last_archived:]

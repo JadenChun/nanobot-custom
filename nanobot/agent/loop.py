@@ -20,6 +20,7 @@ from contextlib import (
     nullcontext,
     suppress,
 )
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
@@ -114,6 +115,7 @@ from nanobot.security.workspace_access import (
 )
 from nanobot.session import turn_continuation
 from nanobot.session.automation_turns import automation_history_overrides
+from nanobot.session.execution_owner import acquire_execution
 from nanobot.session.goal_state import (
     goal_state_runtime_lines,
     runner_wall_llm_timeout_s,
@@ -138,6 +140,7 @@ from nanobot.session.summary import (
     SessionSummary,
     SessionSummaryCheckpoint,
 )
+from nanobot.session.turn_writer import SourceTurnWriter
 from nanobot.triggers.local_turns import LocalTriggerTurnCoordinator
 from nanobot.utils.cancellation import task_is_cancelling
 from nanobot.utils.document import reference_non_image_attachments
@@ -199,6 +202,7 @@ class TurnContext:
     input_persisted_early: bool = False
     trace_input_message: dict[str, Any] | None = None
     trace_detail_messages: list[dict[str, Any]] = field(default_factory=list)
+    source_metadata_base: dict[str, Any] = field(default_factory=dict)
     save_skip: int = 0
 
     outbound: OutboundMessage | None = None
@@ -671,7 +675,10 @@ class AgentLoop:
         runtime = self.runtime_resolver.resolve_preset(name)
         session = self.sessions.get_or_create(session_key)
         session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = runtime.model_preset
-        self.sessions.save(session)
+        if self.sessions.source_backend(session_key) is not None:
+            self.sessions.update_session_metadata(session_key, {SESSION_MODEL_PRESET_METADATA_KEY: runtime.model_preset})
+        else:
+            self.sessions.save(session)
         return runtime
 
     def _publish_runtime_selection(
@@ -817,6 +824,21 @@ class AgentLoop:
             extra.pop("_run_id", None)
             if run_id:
                 extra["_run_id"] = run_id
+            writer = (trace_owner.run_context.source_writer
+                      if trace_owner is not None and trace_owner.run_context is not None else None)
+            if writer is not None:
+                request = trace_owner.run_context.request
+                # Approval expansion/runtime instructions stay in the projection.
+                original = request.content if request is not None else text
+                _, automation = automation_history_overrides(msg.metadata)
+                source_extra = {key: value for key, value in extra.items()
+                                if key not in {RUNTIME_CONTEXT_HISTORY_META, "_run_id"}}
+                retained_media = list(request.media) if request is not None else media_paths
+                entry = writer.append_message({**source_extra, "role": "user", "content": original,
+                    **({"media": retained_media} if retained_media else {}), **automation,
+                    **({"_command": True} if kwargs.get("_command") else {})})
+                self._capture_trace_row(trace_owner, entry, is_input=True)
+                return True
             session.add_message("user", text, **extra)
             self._capture_trace_row(trace_owner, session.messages[-1], is_input=True)
             self._mark_pending_user_turn(session)
@@ -1080,7 +1102,8 @@ class AgentLoop:
             raise ValueError("canonical run context is missing workspace policy dependencies")
         fresh_history = (run_context.request is not None
                          and run_context.request.history_mode is HistoryMode.FRESH)
-        if fresh_history:
+        source_writer = run_context.source_writer
+        if fresh_history or source_writer is not None:
             pending_queue = None
             provider_state = None
         tool_policy = RiskyActionPolicy(
@@ -1091,7 +1114,7 @@ class AgentLoop:
         self._sync_subagent_runtime_limits()
 
         async def _checkpoint(payload: dict[str, Any]) -> None:
-            if session is None or fresh_history:
+            if session is None or fresh_history or source_writer is not None:
                 return
             public_payload = dict(payload)
             private_state = public_payload.pop("provider_state", None)
@@ -1310,6 +1333,7 @@ class AgentLoop:
                 session_key=session.key if session else None,
                 provider_retry_mode=self.provider_retry_mode,
                 checkpoint_callback=_checkpoint,
+                source_writer=source_writer,
                 consolidate_history=(
                     partial(
                         self.consolidator.summarize_transcript,
@@ -1317,7 +1341,7 @@ class AgentLoop:
                         session_key=session.key,
                         tools=effective_tools.get_definitions(),
                     )
-                    if session is not None and not ephemeral and not fresh_history
+                    if session is not None and not ephemeral and not fresh_history and source_writer is None
                     else None
                 ),
                 consolidate_provider_compaction=(
@@ -1327,7 +1351,7 @@ class AgentLoop:
                         session_key=session.key,
                         tools=effective_tools.get_definitions(),
                     )
-                    if session is not None and not ephemeral and not fresh_history
+                    if session is not None and not ephemeral and not fresh_history and source_writer is None
                     else None
                 ),
                 injection_callback=_drain_pending,
@@ -1363,7 +1387,7 @@ class AgentLoop:
                 reset_request_context(request_token)
                 reset_file_states(file_state_token)
         if session is not None and not ephemeral:
-            session.provider_state = None if fresh_history else result.provider_state
+            session.provider_state = None if fresh_history or source_writer is not None else result.provider_state
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
             should_stream = turn_continuation.should_stream_budget_response(
@@ -1793,6 +1817,26 @@ class AgentLoop:
         assert target is not None
         return key, target
 
+    @asynccontextmanager
+    async def _source_execution(self, key: str, context: RunTurnContext) -> AsyncIterator[None]:
+        backend = self.sessions.source_backend(key)
+        if backend is None:
+            yield
+            return
+        async with acquire_execution(backend, key, run_id=context.run_id) as owner:
+            # Recovery may only enter the explicit reset route. Never consume an
+            # approval or request a model while uncertain effects remain.
+            reset = (context.request is not None and context.request.source not in (TurnSource.CRON, TurnSource.HEARTBEAT)
+                     and context.request.content.strip().lower() == "/new")
+            if owner.recovery_required and not reset:
+                raise RuntimeError("Source session requires recovery before execution")
+            context.execution_owner = owner
+            context.source_writer = SourceTurnWriter(backend.source, owner, run_id=context.run_id)
+            try:
+                yield
+            finally:
+                self.sessions.invalidate(key)
+
     async def execute_turn(self, request: TurnRequest, *, _tools: ToolRegistry | None = None,
                            _options: _TurnExecutionOptions | None = None) -> TurnResult:
         """Admit one serialized canonical turn into the upstream stage pipeline."""
@@ -1825,10 +1869,13 @@ class AgentLoop:
                 else f'{target.channel}:{target.chat_id}'),
             resumed_run_id=grant.resumed_run_id, metadata=dict(request.metadata),
             delivery_target=target, scheduled_link=request.scheduled_link)
+        record.metadata.pop("source_stream_id", None)
         self.run_store.save(record)
         result: TurnResult | None = None
         try:
-            async with self._admit_after_bus_cleanup(key):
+            async with self._admit_after_bus_cleanup(key), self._source_execution(key, context):
+                if context.source_writer is not None:
+                    record.metadata["source_stream_id"] = context.source_writer.stream_id
                 try:
                     scope = options.admission_scope(key) if options.admission_scope else nullcontext(_AdmittedTurnIO())
                     async with scope as io:
@@ -2027,7 +2074,9 @@ class AgentLoop:
         finally:
             if run_context is not None and run_context.request is not None and run_context.request.trace_mode is TraceMode.SANITIZED:
                 rows = []
-                for row in ctx.trace_detail_messages:
+                source_writer = run_context.source_writer
+                trace_rows = source_writer.committed_events if source_writer is not None else ctx.trace_detail_messages
+                for row in trace_rows:
                     if row is ctx.trace_input_message:
                         # Replace exactly this invocation's triggering input.
                         row = {"role": row["role"], "content": run_context.request.content}
@@ -2119,6 +2168,10 @@ class AgentLoop:
             ctx.msg = dataclasses.replace(msg, content=new_content, media=image_paths)
             msg = ctx.msg
 
+        writer = ctx.run_context.source_writer if ctx.run_context is not None else None
+        if writer is not None:
+            ctx.session = writer.owner.read_snapshot().to_session()
+            ctx.source_metadata_base = deepcopy(ctx.session.metadata)
         if ctx.session is None:
             if msg.require_existing_session:
                 ctx.session = self.sessions.get_cached(ctx.session_key)
@@ -2156,7 +2209,7 @@ class AgentLoop:
         if ctx.kind is TurnKind.USER:
             self.workspace_scopes.persist_message_scope(session, msg)
 
-        if ctx.fresh_history:
+        if writer is not None or ctx.fresh_history:
             return
         if restore_runtime_checkpoint(session):
             self.sessions.save(session)
@@ -2167,7 +2220,7 @@ class AgentLoop:
             self.sessions.save(session)
 
     async def _compact_session(self, ctx: TurnContext) -> None:
-        if ctx.fresh_history:
+        if ctx.fresh_history or (ctx.run_context is not None and ctx.run_context.source_writer is not None):
             ctx.pending_summary = None
             return
         session = ctx.require_session()
@@ -2183,6 +2236,8 @@ class AgentLoop:
             return False
         if ctx.kind is TurnKind.SYSTEM or ctx.msg.channel == "system":
             return False
+        if ctx.run_context is not None and ctx.run_context.source_writer is not None:
+            return await self._dispatch_source_command(ctx)
         session = ctx.require_session()
         raw = ctx.msg.content.strip()
         _, automation_metadata = automation_history_overrides(ctx.msg.metadata)
@@ -2236,7 +2291,58 @@ class AgentLoop:
             return True
         return False
 
+    async def _dispatch_source_command(self, ctx: TurnContext) -> bool:
+        assert ctx.run_context is not None and ctx.run_context.source_writer is not None
+        raw = normalize_command_text(ctx.msg.content).strip()
+        if not raw.startswith('/'):
+            return False
+        writer = ctx.run_context.source_writer
+        command = raw.split(maxsplit=1)[0].lower()
+        if raw.lower() == '/new':
+            await writer.owner.quiesce()
+            writer.store.reset_source_session(writer.owner.key, writer.owner.read_snapshot().state, [], owner=writer.owner)
+            self.discard_session_file_state(ctx.session_key)
+            self.sessions.invalidate(ctx.session_key)
+            text = 'New session started.'
+        else:
+            writer.owner.validate_dispatch()
+            if command in {'/help', '/model', '/history', '/status'}:
+                result = await self.commands.dispatch(CommandContext(
+                    msg=ctx.msg, session=ctx.session, key=ctx.session_key, raw=raw,
+                    loop=self, runtime=ctx.runtime, is_user_turn=True, turn_scopes=ctx.turn_scopes))
+                text = result.content if result is not None else 'Command unavailable.'
+            elif command == '/compact':
+                text = 'Source checkpoint compaction is not available in this migration candidate yet.'
+            else:
+                text = 'This command is not available for source sessions in this migration candidate yet.'
+            self._persist_user_message_early(ctx.msg, ctx.require_session(), trace_owner=ctx, _command=True)
+            writer.append_message({'role': 'assistant', 'content': text, '_command': True})
+        ctx.outbound = OutboundMessage(channel=ctx.msg.channel, chat_id=ctx.msg.chat_id, content=text,
+                                       metadata=dict(ctx.msg.metadata))
+        return True
+
+    async def _build_source_turn(self, ctx: TurnContext) -> None:
+        assert ctx.run_context is not None and ctx.run_context.source_writer is not None
+        writer = ctx.run_context.source_writer
+        session = ctx.require_session()
+        runtime = ctx.runtime or self.runtime_for_session(session)
+        ctx.runtime = runtime
+        if ctx.on_runtime_admitted is not None:
+            await ctx.on_runtime_admitted(runtime)
+        ctx.history = [] if ctx.fresh_history else writer.project_history()[0]
+        ctx.pending_summary = None
+        ctx.provider_state = None
+        await ctx.delivery.runtime_admitted(runtime)
+        ctx.request_context = self._request_context_for_turn(ctx)
+        ctx.runtime_context_blocks = await self._resolve_runtime_context_for_turn(ctx)
+        ctx.input_persisted_early = self._persist_user_message_early(
+            ctx.msg, session, run_id=ctx.run_context.run_id, trace_owner=ctx)
+        ctx.transcript_input = self._build_transcript_input(ctx)
+
     async def _build_turn(self, ctx: TurnContext) -> None:
+        if ctx.run_context is not None and ctx.run_context.source_writer is not None:
+            await self._build_source_turn(ctx)
+            return
         session = ctx.require_session()
         runtime = ctx.runtime
         if runtime is None:
@@ -2403,10 +2509,24 @@ class AgentLoop:
             ctx.suppress_response = True
         ctx.usage = result.usage
         ctx.delivery.record_usage(result.round_usages)
-        if ctx.kind is TurnKind.USER and not ctx.fresh_history:
+        if (ctx.kind is TurnKind.USER and not ctx.fresh_history
+                and (ctx.run_context is None or ctx.run_context.source_writer is None)):
             await turn_continuation.maybe_continue_turn(ctx)
 
     async def _persist_turn(self, ctx: TurnContext) -> None:
+        if ctx.run_context is not None and ctx.run_context.source_writer is not None:
+            writer = ctx.run_context.source_writer
+            updates = {key: value for key, value in ctx.require_session().metadata.items()
+                       if key not in ctx.source_metadata_base or value != ctx.source_metadata_base[key]}
+            if ctx.usage is not None:
+                updates['_last_usage'] = ctx.usage.to_dict()
+            writer.store.update_metadata(writer.owner.key, updates)
+            ctx.turn_latency_ms = max(0, int((time.time() - ctx.turn_wall_started_at) * 1000))
+            ctx.delivery.record_latency(ctx.turn_latency_ms)
+            if not ctx.ephemeral:
+                await self.runtime_event_publisher.session_turn_persisted(
+                    ctx.msg, ctx.session_key, turn_id=ctx.turn_id, attributes=ctx.attributes)
+            return
         session = ctx.require_session()
         turn_continuation.prepare_save_boundary(ctx)
 

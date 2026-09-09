@@ -1,7 +1,7 @@
 """Strict source transactions over the existing private, locked JSONL store.
 
-This API is dormant until governed execution supplies a fenced execution owner.
-Storage CAS prevents stale commits; it does not authorize or fence tool dispatch.
+Explicitly converted sessions use this API with a fenced execution owner.
+Storage CAS prevents stale commits; dispatch authority belongs to that owner.
 """
 
 from __future__ import annotations

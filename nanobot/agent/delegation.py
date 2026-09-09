@@ -437,6 +437,10 @@ class ForegroundAgentManager:
         if max_output_tokens is not None or reasoning_effort is not None:
             runtime = runtime.with_generation_overrides(
                 max_tokens=max_output_tokens, reasoning_effort=reasoning_effort)
+        source_writer = (turn_context.source_writer.child_stream()
+                         if turn_context is not None and turn_context.source_writer is not None else None)
+        if source_writer is not None:
+            source_writer.append_message({"role": "user", "content": assignment})
         result = await (runner or self.runner).run(AgentRunSpec(
             initial_messages=[
                 {"role": "system", "content": prompt},
@@ -447,6 +451,7 @@ class ForegroundAgentManager:
             max_iterations=max_iterations,
             max_tool_result_chars=16000,
             turn_context=turn_context,
+            source_writer=source_writer,
             hook=_DelegationHook(role, call_id),
             concurrent_tools=role in {"planner", "reviewer", "explorer"},
             fail_on_tool_error=True,

@@ -119,6 +119,7 @@ class ContextGovernanceConfig:
     max_tool_result_chars: int
     context_window_tokens: int | None = None
     max_tokens: int | None = None
+    preserve_source: bool = False
 
 
 @dataclass(slots=True)
@@ -318,6 +319,8 @@ class ContextGovernor:
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """Build the normalized model-facing copy of a raw transcript."""
+        if config.preserve_source:
+            return deepcopy(messages)
         governed = self.prepare_for_model(config, messages)
         return self._merge_adjacent_user_messages_for_model(governed)
 
@@ -585,6 +588,13 @@ class ContextGovernor:
         transcript: list[dict[str, Any]] | None = None,
     ) -> tuple[list[dict[str, Any]], ProviderCallContext | None]:
         """Prepare, compact or fit, and record the exact provider payload."""
+        if state.config.preserve_source:
+            prepared = self.ensure_request_fits(state.config, deepcopy(messages), tool_definitions=tool_definitions)
+            state.messages = deepcopy(prepared)
+            state.tool_definitions = deepcopy(tool_definitions)
+            # Source checkpoints have not yet been wired into provider state.
+            # Keep every request portable and omit native compaction hints.
+            return prepared, ProviderCallContext(events=state.events)
         prepared = self.prepare_messages_for_model(state.config, messages)
         model_messages: list[dict[str, Any]] | None = prepared
         supplemental_messages: list[dict[str, Any]] | None = None
@@ -699,6 +709,8 @@ class ContextGovernor:
         result: Any,
     ) -> Any:
         result = ensure_nonempty_tool_result(tool_name, result)
+        if config.preserve_source:
+            return result
         if tool_name in TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS:
             return result
 

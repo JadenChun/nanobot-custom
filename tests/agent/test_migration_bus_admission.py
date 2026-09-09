@@ -254,7 +254,7 @@ async def test_redirected_cancel_uses_effective_key_and_compact_completes(tmp_pa
     await loop.approval_admission.store(session_key='cron:job', channel='telegram', chat_id='42', summary='task')
     loop._preserve_inflight_turns_on_shutdown = False
     keys = []
-    loop.sessions = SimpleNamespace(get_or_create=lambda key: keys.append(key) or object(), save=Mock())
+    loop.sessions = SimpleNamespace(get_or_create=lambda key: keys.append(key) or object(), save=Mock(), source_backend=lambda key: None)
     loop._clear_pending_user_turn = Mock()
     monkeypatch.setattr(module, 'restore_runtime_checkpoint', lambda session: True)
     loop._process_turn.side_effect = asyncio.CancelledError()

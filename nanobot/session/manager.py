@@ -2035,6 +2035,15 @@ class SessionManager:
         with self._jsonl_store.locked_session_files() as sessions_dir:
             yield sessions_dir
 
+    def source_backend(self, key: str) -> JsonlSessionStore | None:
+        """Select strict execution only for explicitly converted default-store sessions."""
+        if self._store is not self._jsonl_store:
+            return None
+        payload = self._jsonl_store.read_metadata(key)
+        if payload is not None and "source_schema_version" in payload.get("metadata", {}):
+            return self._jsonl_store
+        return None
+
     def get_or_create(self, key: str) -> Session:
         """
         Get an existing session or create a new one.

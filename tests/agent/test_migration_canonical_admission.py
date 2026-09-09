@@ -11,6 +11,7 @@ from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import DelegationBudget, DeliveryTarget, RunStatus, TurnRequest
 from nanobot.agent.turn_admission import ApprovalAdmission
+from nanobot.session.manager import SessionManager
 
 
 def host(tmp_path):
@@ -19,7 +20,8 @@ def host(tmp_path):
         foreground_manager=SimpleNamespace(new_budget=DelegationBudget),
         resource_policy=SimpleNamespace(workspace=tmp_path, context_manager=object()))
     loop.approval_admission = ApprovalAdmission()
-    loop.run_store = RunStore(tmp_path)
+    loop.sessions = SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "sessions")
+    loop.run_store = RunStore(tmp_path, session_manager=loop.sessions)
     loop._session_locks = weakref.WeakValueDictionary()
     loop._concurrency_gate = None
     loop._bus_cleanup_tasks = {}

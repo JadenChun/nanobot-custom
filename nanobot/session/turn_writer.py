@@ -1,0 +1,172 @@
+"""Trusted per-invocation source streams sharing one admitted execution owner."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Any
+
+from nanobot.agent.tools.execution import KnownToolResult, ToolResultCallback
+from nanobot.agent.turn import ToolOutcome
+from nanobot.runtime_context import public_history_message
+from nanobot.session.execution_owner import ExecutionOwner
+from nanobot.session.source import SourceValidationError, canonical_events, new_source_event
+from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
+from nanobot.session.summary import is_summary_checkpoint
+from nanobot.utils.helpers import content_with_media_breadcrumbs
+
+
+def _persisted_content(value: Any) -> Any:
+    """Retain text evidence without newly persisting inline images or reasoning."""
+    if not isinstance(value, list):
+        return value
+    retained = []
+    for block in value:
+        if isinstance(block, dict):
+            if block.get('type') in {'thinking', 'reasoning', 'redacted_thinking', 'reasoning_content'}:
+                continue
+            image = block.get('image_url')
+            if (block.get('type') == 'image_url' and isinstance(image, dict)
+                    and isinstance(image.get('url'), str) and image['url'].startswith('data:image/')):
+                retained.append({'type': 'text', 'text': '[Image data unavailable in persisted source.]'})
+                continue
+        retained.append(block)
+    return retained
+
+
+@dataclass
+class _Writes:
+    snapshot: SourceSnapshot
+    failed: bool = False
+    pending: dict[str, Any] | None = None
+    committed: list[dict[str, Any]] = field(default_factory=list)
+
+
+class SourceTurnWriter:
+    """Allocate identities before writes; never replay a failed write or effect."""
+
+    def __init__(self, store: SourceSessionStore, owner: ExecutionOwner, *, run_id: str,
+                 parent_stream_id: str | None = None, writes: _Writes | None = None):
+        self.store, self.owner, self.run_id = store, owner, run_id
+        self.stream_id = uuid.uuid4().hex
+        self.parent_stream_id = parent_stream_id
+        self._writes = writes or _Writes(owner.read_snapshot())
+        self._batch_callback: ToolResultCallback | None = None
+
+    def fail(self) -> None:
+        """Stop every stream after a mandatory runner or recording failure."""
+        self._writes.failed = True
+
+    def child_stream(self) -> SourceTurnWriter:
+        return SourceTurnWriter(self.store, self.owner, run_id=self.run_id,
+                                parent_stream_id=self.stream_id, writes=self._writes)
+
+    @property
+    def committed_events(self) -> list[dict[str, Any]]:
+        return deepcopy([e for e in self._writes.committed if e.get('_stream_id') == self.stream_id])
+
+    def _append(self, payload: dict[str, Any], *, execution_ids: list[str] | None = None,
+                execution_id: str | None = None) -> dict[str, Any]:
+        if self._writes.failed:
+            raise SourceValidationError('Source turn recording failed')
+        try:
+            self.owner.validate_dispatch()
+            clean = deepcopy(payload)
+            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id'):
+                clean.pop(key, None)
+            if 'content' in clean:
+                clean['content'] = _persisted_content(clean['content'])
+            event = new_source_event(clean, run_id=self.run_id)
+            event['_stream_id'] = self.stream_id
+            if self.parent_stream_id is not None:
+                event['_parent_stream_id'] = self.parent_stream_id
+            if execution_ids is not None:
+                event['_execution_ids'] = execution_ids
+            if execution_id is not None:
+                event['_execution_id'] = execution_id
+            self._writes.pending = event
+            current = self.owner.read_snapshot()
+            # Metadata may advance independently. Source changes must belong to
+            # this invocation's shared coordinator, including its child streams.
+            if current.events != self._writes.snapshot.events:
+                raise SourceValidationError('Source turn changed outside admitted writer')
+            committed = self.store.append_source_events(self.owner.key, current.state, [event], owner=self.owner)
+        except BaseException:
+            self._writes.failed = True
+            raise
+        self._writes.snapshot = committed
+        self._writes.committed.append(event)
+        self._writes.pending = None
+        return deepcopy(event)
+
+    def append_message(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if payload.get('role') not in {'user', 'assistant'} or 'tool_calls' in payload:
+            self._writes.failed = True
+            raise SourceValidationError('Invalid source turn message')
+        return self._append(payload)
+
+    def begin_tool_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
+        calls = payload.get('tool_calls')
+        if payload.get('role') != 'assistant' or not isinstance(calls, list) or not calls:
+            self._writes.failed = True
+            raise SourceValidationError('Invalid source tool batch')
+        ids = [uuid.uuid4().hex for _ in calls]
+        event = self._append(payload, execution_ids=ids)
+        declared = deepcopy(calls)
+        completed: set[int] = set()
+
+        async def record(value: KnownToolResult) -> None:
+            try:
+                index = value.ordinal
+                if (type(index) is not int or not 0 <= index < len(declared) or index in completed
+                        or value.tool_call_id != declared[index].get('id')
+                        or value.name != declared[index].get('function', {}).get('name')):
+                    self._writes.failed = True
+                    raise SourceValidationError('Invalid source result binding')
+                raw = value.raw_result.content if isinstance(value.raw_result, ToolOutcome) else value.raw_result
+                if isinstance(raw, str):
+                    raw = str(raw)
+                canonical_events([{'content': raw}])
+                self._append({'role': 'tool', 'tool_call_id': value.tool_call_id, 'name': value.name,
+                              'content': raw, '_dispatched': value.dispatched,
+                              '_outcome_status': value.event.get('status', '')}, execution_id=ids[index])
+                completed.add(index)
+            except BaseException:
+                self._writes.failed = True
+                raise
+
+        self._batch_callback = record
+        return event
+
+    async def record_tool_result(self, value: KnownToolResult) -> None:
+        if self._batch_callback is None:
+            self._writes.failed = True
+            raise SourceValidationError('Source result has no committed intent')
+        await self._batch_callback(value)
+
+    def project_history(self) -> tuple[list[dict[str, Any]], list[str]]:
+        """Detached root history with provenance, independent of archival cursors."""
+        return self.project_events(self.owner.read_snapshot().events)
+
+    @staticmethod
+    def project_events(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+        messages, identities = [], []
+        for event in events:
+            if event.get('_parent_stream_id') is not None or event.get('_command'):
+                continue
+            if is_summary_checkpoint(event):
+                continue
+            public = public_history_message(event)
+            row = {key: deepcopy(public[key]) for key in
+                   ('role', 'content', 'tool_calls', 'tool_call_id', 'name') if key in public}
+            if row.get('role') not in {'user', 'assistant', 'tool'}:
+                continue
+            content = row.get('content')
+            if isinstance(content, dict):
+                row['content'] = json.dumps(content, ensure_ascii=False)
+            row['content'] = content_with_media_breadcrumbs(row['role'], row.get('content'), event.get('media'))
+            messages.append(row)
+            identities.append(event['_event_id'])
+        return messages, identities

@@ -235,3 +235,64 @@ Canonical acquisition and the production source sink are not wired yet. Applicat
 execution identities must be bound to durable assistant intent by that sink; batch
 ordinals alone are not durable identities. User/final event persistence, source
 projection, nested delegation, and recovery admission remain integration gates.
+
+## P4D canonical source execution
+
+Explicitly upgraded default-store sessions (`source_schema_version=1`) now execute
+through the real canonical stages using `SourceTurnWriter`. Source ownership is
+acquired for the resolved approval key before approval consumption and retained
+through stage/delivery cleanup. Recovery-required sessions cannot request a model
+or dispatch tools; the explicit `/new` path quiesces and resets under ownership.
+Legacy sessions are not automatically converted and retain their existing path.
+
+The writer assigns fresh event, stream, and execution identities independently of
+caller run IDs and provider call IDs. A shared transaction coordinator supports
+separate parent/delegate streams without overwriting parent batch bindings. User
+input is committed before generation; known assistant responses/call intent are
+committed before post-response observers; each known tool result is committed
+before its observers. Synthetic terminal responses are separate source events.
+Recording failures poison the whole invocation so a failed child cannot be turned
+into a recoverable parent result and followed by more effects. No automatic write
+or effect retries are introduced. Text remains complete in source; existing privacy
+behavior is retained for inline image data and reasoning blocks, with explicit
+unavailable image placeholders rather than new unapproved binary retention.
+
+Source projection reads retained root events independent of the archival cursor,
+removes explicitly marked old runtime injections, preserves media breadcrumbs,
+excludes child streams and command rows, and carries source identity provenance.
+Fresh mode adds durable events while projecting only the current invocation.
+Root traces bind to a trusted stream ID so child details and prior invocations
+with a reused run ID cannot leak into the current trace. Source finalization emits
+metadata deltas, not stale whole-metadata snapshots or legacy full-session saves.
+
+This is the first working source execution slice, not final context governance:
+requests retain full source and fail at the hard budget boundary. Legacy reduction,
+offloading, idle summary publication, recovery sidecars, and provider-state resume
+are excluded from this path. Source checkpoints are not yet used for projection.
+Main and nested planner/scoped worker paths run through actual factories/runner/tools
+in network- and process-blocked fixtures. `/new`, `/model`, `/help`, `/history`, and
+`/status` have source-compatible paths; `/compact` and other commands give an
+explicit candidate limitation until their source adapters are completed. New/reset
+archival receipts, scheduled/injection/continuation integration, command parity,
+checkpoint/offload/provider coordination, copied-state conversion, and activation
+qualification remain mandatory subsequent work. The production guard remains.
+
+Evidence: 496 network-denied session/migration/runner/atomic/history tests passed
+with two guarded plugin-loader cases deselected; 25 mocked-provider API tests
+passed. Subsequent targeted additions pass in 18 real source-engine tests and 11
+writer tests, covering ownership wait before approval consumption, concurrent title
+updates, writer/dispatch owner matching, source write failures, nested worker writes, policy terminals, large raw
+text, reused run IDs, source history, and observer/cancellation failure boundaries.
+Ruff and diff checks pass. Independent review accepted the source execution
+corrections. Admission test hosts now provide the newly required SessionManager
+or explicit legacy-store capability instead of uninitialized mock dependencies.
+
+Broader qualification is still red: an additional runner/governance/autocompact/
+provider-state/model-command selection produced **58 failures, 317 passes, 6 setup
+errors, and 4 deselections**. Running the identical selection against an exported
+pre-change `0436c0d6` tree produced the identical failing node set and counts.
+Unresolved nodes by file: `test_runner.py` 18, `test_runner_context_trim.py` 6,
+`test_runner_fallback.py` 3, `test_runner_governance.py` 1,
+`test_runner_injections.py` 18, `test_runner_progress_deltas.py` 3,
+`test_model_command.py` 15. These include legacy ABI expectations and guarded
+startup tests; they are not waived and must be reconciled before migration success.

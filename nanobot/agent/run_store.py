@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -137,4 +138,10 @@ class RunStore:
             return []
         manager = self.session_manager or SessionManager(self.workspace)
         session = manager.get_or_create(record.session_ref.session_key)
+        if "source_schema_version" in session.metadata:
+            stream_id = record.metadata.get("source_stream_id")
+            if not isinstance(stream_id, str) or not stream_id:
+                return []
+            session = replace(session, messages=[e for e in session.messages
+                if e.get("_stream_id") == stream_id and e.get("_parent_stream_id") is None])
         return session.get_run_messages(run_id)

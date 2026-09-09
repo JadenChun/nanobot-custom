@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
@@ -60,6 +60,9 @@ from nanobot.utils.runtime import (
     build_length_recovery_message,
     is_blank_text,
 )
+
+if TYPE_CHECKING:
+    from nanobot.session.turn_writer import SourceTurnWriter
 
 ContinuationCallback = Callable[[], str | None]
 CheckpointCallback = Callable[[dict[str, Any]], Awaitable[None]]
@@ -121,6 +124,7 @@ class AgentRunSpec:
     llm_usage_source: LLMUsageSource | None = None
     events: EventSink = NO_EVENTS
     tool_result_callback: ToolResultCallback | None = None
+    source_writer: SourceTurnWriter | None = None
 
 
 @dataclass(slots=True)
@@ -315,8 +319,11 @@ class AgentRunner:
         return True
 
     async def run(self, spec: AgentRunSpec) -> AgentRunResult:
+        if (spec.source_writer is not None and (spec.turn_context is None
+                or spec.turn_context.execution_owner is not spec.source_writer.owner)):
+            raise ValueError("Source recording requires the same dispatch owner")
         if (spec.turn_context is not None and spec.turn_context.execution_owner is not None
-                and spec.tool_result_callback is None):
+                and spec.tool_result_callback is None and spec.source_writer is None):
             raise ValueError("Execution ownership requires durable tool-result recording")
         hook = spec.hook or AgentHook()
         messages, compaction = self._initial_transcript_and_compaction(spec)
@@ -329,12 +336,16 @@ class AgentRunner:
             await hook.before_run(context)
             result = await self._run_core(spec, hook, messages, compaction)
         except asyncio.CancelledError as exc:
+            if spec.source_writer is not None:
+                spec.source_writer.fail()
             context.messages = deepcopy(messages)
             context.stop_reason = "cancelled"
             context.error = None
             context.exception = exc
             raise
         except Exception as exc:
+            if spec.source_writer is not None:
+                spec.source_writer.fail()
             context.messages = deepcopy(messages)
             context.stop_reason = "error"
             context.error = f"Error: {type(exc).__name__}: {exc}"
@@ -437,6 +448,7 @@ class AgentRunner:
             max_tool_result_chars=spec.max_tool_result_chars,
             context_window_tokens=spec.runtime.context_window_tokens,
             max_tokens=spec.runtime.generation.max_tokens,
+            preserve_source=spec.source_writer is not None,
         )
         request_state = ModelRequestState(
             config=governance_config,
@@ -468,7 +480,7 @@ class AgentRunner:
             )
             assert request_state.messages is not None
             messages_for_model = request_state.messages
-            conversation_state.observe_response(response, messages)
+            conversation_state.observe_response(response, messages, adopt_candidate_state=spec.source_writer is None)
             if request_state.compaction is not None:
                 request_state.compaction.accept_request(
                     messages_for_model,
@@ -534,7 +546,8 @@ class AgentRunner:
                     messages=messages,
                     turn_context=spec.turn_context,
                     fail_on_tool_error=spec.fail_on_tool_error,
-                    tool_result_callback=spec.tool_result_callback,
+                    tool_result_callback=(spec.source_writer.record_tool_result if spec.source_writer is not None
+                                          else spec.tool_result_callback),
                 )
                 terminal = next((r for r in results if isinstance(r, ToolOutcome)
                                  and r.stop_reason), None)
@@ -591,6 +604,8 @@ class AgentRunner:
                     final_content = str(terminal.content or "")
                     context.stop_reason = stop_reason
                     context.final_content = final_content
+                    if spec.source_writer is not None:
+                        spec.source_writer.append_message(build_assistant_message(final_content))
                     break
                 empty_content_retries = 0
                 length_recovery_parts.clear()
@@ -745,6 +760,8 @@ class AgentRunner:
                     final_content = clean or spec.error_message or _DEFAULT_ERROR_MESSAGE
                 stop_reason = "error"
                 error = final_content
+                if spec.source_writer is not None:
+                    spec.source_writer.append_message(build_assistant_message(_PERSISTED_MODEL_ERROR_PLACEHOLDER))
                 self._append_model_error_placeholder(messages)
                 context.final_content = final_content
                 context.error = error
@@ -764,6 +781,8 @@ class AgentRunner:
                 final_content = EMPTY_FINAL_RESPONSE_MESSAGE
                 stop_reason = "empty_final_response"
                 error = final_content
+                if spec.source_writer is not None:
+                    spec.source_writer.append_message(build_assistant_message(final_content))
                 self._append_final_message(messages, final_content)
                 context.final_content = final_content
                 context.error = error
@@ -836,6 +855,7 @@ class AgentRunner:
                     request_state=request_state,
                     round_usages=round_usages,
                 )
+            synthetic_terminal = terminal_content is None
             if terminal_content is None:
                 terminal_content = self._max_iterations_fallback(spec)
             if length_recovery_parts:
@@ -846,6 +866,8 @@ class AgentRunner:
                 pending_stream_content = terminal_tail
             else:
                 final_content = terminal_content
+            if spec.source_writer is not None and synthetic_terminal:
+                spec.source_writer.append_message(build_assistant_message(terminal_content))
             self._append_final_message(messages, terminal_content)
 
         return AgentRunResult(
@@ -869,6 +891,18 @@ class AgentRunner:
             ),
             provider_compaction_applied=request_state.provider_compaction_applied,
         )
+
+    @staticmethod
+    def _record_source_response(spec: AgentRunSpec, response: LLMResponse) -> None:
+        writer = spec.source_writer
+        if writer is None or response.finish_reason == "error":
+            return
+        _, content = extract_reasoning(response.reasoning_content, response.thinking_blocks, response.content)
+        if response.should_execute_tools:
+            writer.begin_tool_batch(build_assistant_message(content or "",
+                tool_calls=[call.to_openai_tool_call() for call in response.tool_calls]))
+        elif not is_blank_text(content):
+            writer.append_message(build_assistant_message(content))
 
     def _build_request_kwargs(
         self,
@@ -1056,6 +1090,8 @@ class AgentRunner:
                     finish_reason="error",
                     error_kind="timeout",
                 )
+        dropped, all_dropped, original_finish_reason = self._drop_malformed_tool_calls(response)
+        self._record_source_response(spec, response)
         _pause_generation()
         await _close_native_reasoning()
         if first_output_at is not None:
@@ -1080,9 +1116,6 @@ class AgentRunner:
                     "error": response.content
                     or "Model request failed before the provider-hosted tool completed.",
                 })
-        dropped, all_dropped, original_finish_reason = (
-            self._drop_malformed_tool_calls(response)
-        )
         if (
             all_dropped
             and original_finish_reason in ("tool_calls", "function_call")
@@ -1238,6 +1271,8 @@ class AgentRunner:
                 transcript=messages if compaction is not None else None,
             )
         except Exception:
+            if spec.source_writer is not None:
+                raise
             logger.exception(
                 "Budget-exhausted finalization failed for {}; using fallback",
                 spec.session_key or "default",
@@ -1311,6 +1346,7 @@ class AgentRunner:
             current_request_boundary=(len(transcript) if transcript is not None else None),
         )
         request_state.provider_compaction_applied |= response.provider_compaction_applied
+        self._record_source_response(spec, response)
         return response
 
     @staticmethod
