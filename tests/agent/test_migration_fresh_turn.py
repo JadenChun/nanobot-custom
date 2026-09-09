@@ -100,3 +100,22 @@ async def test_fresh_runner_summary_cannot_replace_retained_history_boundary(mon
     assert ctx.summary_checkpoint is None
     assert ctx.run_result is result
     assert loop._run_agent_loop.await_args.kwargs['pending_queue'] is None
+
+
+@pytest.mark.parametrize('sent,suppressed', [('final', True), ('progress', False), ('', False)])
+async def test_canonical_final_suppression_requires_matching_text(sent, suppressed):
+    from nanobot.agent.runner import AgentRunResult
+    from nanobot.agent.tools.message import MessageTool
+    loop = object.__new__(AgentLoop)
+    ctx = stage()
+    ctx.delivery.running = AsyncMock()
+    ctx.delivery.record_usage = lambda usage: None
+    ctx.delivery.route = SimpleNamespace(channel='telegram', chat_id='42')
+    ctx.transcript_input = object()
+    tool = MessageTool(send_callback=AsyncMock())
+    async def run(*args, **kwargs):
+        await tool.execute(content=sent, channel='telegram', chat_id='42')
+        return AgentRunResult(final_content='final', messages=[])
+    loop._run_agent_loop = run
+    await loop._run_turn(ctx)
+    assert ctx.suppress_response is suppressed

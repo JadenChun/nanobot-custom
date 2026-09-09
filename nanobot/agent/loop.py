@@ -7,12 +7,14 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import os
+import re
 import time
+import uuid
 import weakref
 from collections.abc import Coroutine, Iterable, Mapping
 from contextlib import AbstractContextManager, ExitStack, nullcontext, suppress
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 from functools import partial
 from pathlib import Path
@@ -31,6 +33,7 @@ from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.model_runtime import ModelRuntimeResolver
 from nanobot.agent.policy import RiskyActionPolicy
+from nanobot.agent.run_store import RunStore
 from nanobot.agent.runner import (
     _MAX_INJECTIONS_PER_TURN,
     AgentRunner,
@@ -38,14 +41,31 @@ from nanobot.agent.runner import (
     AgentRunSpec,
 )
 from nanobot.agent.subagent import SubagentManager
-from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
+from nanobot.agent.tools.context import (
+    ForkToolDependencies,
+    RequestContext,
+    bind_request_context,
+    reset_request_context,
+)
 from nanobot.agent.tools.exec_session import ExecSessionManager
 from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from nanobot.agent.tools.message import capture_message_deliveries
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
-from nanobot.agent.turn import HistoryMode, TurnSource
+from nanobot.agent.turn import (
+    DeliveryState,
+    DeliveryTarget,
+    HistoryMode,
+    RunPolicyContext,
+    RunRecord,
+    RunStatus,
+    SessionRunRef,
+    TurnRequest,
+    TurnResult,
+    TurnSource,
+)
 from nanobot.agent.turn import TurnContext as RunTurnContext
+from nanobot.agent.turn_admission import ApprovalAdmission
 from nanobot.agent.turn_delivery import (
     TurnDelivery,
     TurnDeliveryFactory,
@@ -314,6 +334,7 @@ class AgentLoop:
         local_trigger_store: LocalTriggerStore | None = None,
         idle_compact_check_interval_seconds: int = 0,
         recovery_admission: RecoveryAdmission | None = None,
+        fork_dependencies: ForkToolDependencies | None = None,
     ):
         from nanobot.migration_guard import require_runtime_ready
         require_runtime_ready()
@@ -390,6 +411,9 @@ class AgentLoop:
 
         self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
         self.sessions = session_manager or SessionManager(workspace)
+        self._fork_dependencies = fork_dependencies
+        self.approval_admission = ApprovalAdmission()
+        self.run_store = RunStore(workspace, self.sessions)
         # One file-read/write tracker per logical session. The tool registry is
         # shared by this loop, so tools resolve the active state via contextvars.
         self._file_state_store = FileStateStore(max_sessions=SESSION_CACHE_MAX_SIZE)
@@ -652,6 +676,7 @@ class AgentLoop:
             timezone=self.context.timezone or "UTC",
             workspace_sandbox=self.workspace_scopes.sandbox_status,
             runtime_control=AgentRuntimeControl(self),
+            fork_dependencies=self._fork_dependencies,
         )
         loader = ToolLoader()
         registered = loader.load(ctx, self.tools)
@@ -1639,7 +1664,130 @@ class AgentLoop:
         self._running = False
         logger.info("Agent loop stopping")
 
-    async def _process_message(
+    @staticmethod
+    def _request_route(request: TurnRequest) -> tuple[str, DeliveryTarget]:
+        target = request.delivery_target or request.route
+        channel = target.channel if target else ''
+        chat_id = target.chat_id if target else ''
+        key = request.session_key or (f'{channel}:{chat_id}' if channel and chat_id else 'cli:direct')
+        if not channel or not chat_id:
+            channel, separator, chat_id = key.partition(':')
+            if not separator:
+                channel, chat_id = 'cli', key
+            target = DeliveryTarget(channel=channel, chat_id=chat_id,
+                                    message_id=target.message_id if target else None)
+        assert target is not None
+        return key, target
+
+    async def execute_turn(self, request: TurnRequest, *, _tools: ToolRegistry | None = None) -> TurnResult:
+        """Admit one serialized canonical turn into the upstream stage pipeline."""
+        if not isinstance(request, TurnRequest):
+            raise TypeError('execute_turn expects a TurnRequest')
+        deps = self._fork_dependencies
+        if deps is None:
+            raise ValueError('canonical admission requires foreground dependencies')
+        key, target = self._request_route(request)
+        snapshot = await self.approval_admission.snapshot(key, request.content)
+        key = snapshot.effective_key
+        run_id = request.run_id
+        if not run_id or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}', run_id):
+            run_id = uuid.uuid4().hex
+        grant = request.approval_grant or request.approval
+        context = RunTurnContext(
+            request=request, run_id=run_id, session_key=key,
+            delegation_budget=deps.foreground_manager.new_budget(),
+            policy=RunPolicyContext(workspace=deps.resource_policy.workspace,
+                context_manager=deps.resource_policy.context_manager,
+                approval_grant=grant, approval_granted=bool(grant.granted), source=request.source),
+            delivery=DeliveryState(primary=target), lock_owner=f'main:{key}',
+            metadata=dict(request.metadata),
+        )
+        record = RunRecord(run_id=run_id, source=request.source,
+            session_ref=SessionRunRef(session_key=key, run_id=run_id),
+            visible_session_key=(request.scheduled_link.visible_session_key
+                if request.scheduled_link and request.scheduled_link.visible_session_key
+                else f'{target.channel}:{target.chat_id}'),
+            resumed_run_id=grant.resumed_run_id, metadata=dict(request.metadata),
+            delivery_target=target, scheduled_link=request.scheduled_link)
+        self.run_store.save(record)
+        result: TurnResult | None = None
+        try:
+            async with self._get_session_lock(key), self._concurrency_gate or nullcontext():
+                action = await self.approval_admission.consume(snapshot)
+                if action in ('negative', 'stale'):
+                    text = ('Cancelled the pending risky action.' if action == 'negative' else
+                            'That approval request is no longer current. Please reply to the latest approval request.')
+                    result = TurnResult(run_id=run_id, status=RunStatus.CANCELLED,
+                        content=text, stop_reason='cancelled' if action == 'negative' else 'approval_stale',
+                        outbound=OutboundMessage(channel=target.channel, chat_id=target.chat_id or '', content=text))
+                else:
+                    content = request.content
+                    if action == 'affirmative' and snapshot.pending is not None:
+                        context.policy.approval_granted = True
+                        content = ('The user approved the previously blocked risky action. '
+                            f'Resume the task that required approval: {snapshot.pending.summary}.'
+                            f'\n\nOriginal approval reply: {request.content}')
+                    routing_metadata = dict(request.metadata)
+                    if target.message_id is not None:
+                        routing_metadata["message_id"] = target.message_id
+                    msg = InboundMessage(channel=target.channel, chat_id=target.chat_id or '',
+                        sender_id=request.sender_id, content=content, media=list(request.media),
+                        metadata=routing_metadata, session_key_override=key)
+                    effective_tools = _tools if _tools is not None else (
+                        self.tools.filtered(list(request.tool_names)) if request.tool_names is not None else self.tools)
+                    stage = await self._process_turn(msg, session_key=key, run_context=context,
+                        tools=effective_tools, hooks=list(request.hooks),
+                        on_progress=request.callbacks.on_progress, on_stream=request.callbacks.on_stream,
+                        on_stream_end=request.callbacks.on_stream_end)
+                    runner = stage.run_result
+                    status = RunStatus.COMMAND if runner is None else {
+                        'completed': RunStatus.COMPLETED, 'approval_required': RunStatus.APPROVAL_REQUIRED,
+                        'policy_blocked': RunStatus.POLICY_BLOCKED, 'tool_error': RunStatus.TOOL_ERROR,
+                        'max_iterations': RunStatus.MAX_ITERATIONS, 'cancelled': RunStatus.CANCELLED,
+                    }.get(runner.stop_reason, RunStatus.ERROR)
+                    result = TurnResult(run_id=run_id, status=status,
+                        content=runner.final_content if runner else (stage.outbound.content if stage.outbound else None),
+                        stop_reason=runner.stop_reason if runner else 'command', outbound=stage.outbound,
+                        tools_used=list(runner.tools_used) if runner else [],
+                        policy_metadata=dict(runner.policy_metadata) if runner else {},
+                        error=runner.error if runner else None,
+                        usage={k: v for k, v in runner.usage.to_dict().items()
+                               if isinstance(v, int) and not isinstance(v, bool)} if runner and runner.usage else {},
+                        sent_messages=tuple(context.delivery.sent_messages))
+                    if status is RunStatus.APPROVAL_REQUIRED:
+                        await self.approval_admission.store(session_key=key, channel=target.channel,
+                            chat_id=target.chat_id or '', summary=str(result.policy_metadata.get('summary') or 'risky action'))
+        except asyncio.CancelledError:
+            context.cancelled = True
+            result = TurnResult(run_id=run_id, status=RunStatus.CANCELLED, stop_reason='cancelled',
+                                sent_messages=tuple(context.delivery.sent_messages))
+            raise
+        except Exception as exc:
+            result = TurnResult(run_id=run_id, status=RunStatus.ERROR, stop_reason='error',
+                error=str(exc), sent_messages=tuple(context.delivery.sent_messages))
+        finally:
+            if result is not None:
+                record.status, record.stop_reason = result.status, result.stop_reason
+                record.tools_used = tuple(result.tools_used)
+                record.usage = dict(result.usage)
+                record.error_type = result.status.value if result.error else None
+                record.completed_at = record.updated_at = datetime.now(timezone.utc).isoformat()
+                result.record = self.run_store.save(record)
+        assert result is not None
+        callback = request.callbacks.on_error if result.error else request.callbacks.on_complete
+        if callback is not None:
+            try:
+                returned = callback(result)
+                if hasattr(returned, '__await__'):
+                    await returned
+            except Exception:
+                logger.warning('Canonical turn callback failed after run {}', run_id)
+        return result
+
+    async def _process_message(self, msg: InboundMessage, **kwargs: Any) -> OutboundMessage | None:
+        return (await self._process_turn(msg, **kwargs)).outbound
+
+    async def _process_turn(
         self,
         msg: InboundMessage,
         session_key: str | None = None,
@@ -1656,7 +1804,8 @@ class AgentLoop:
         delivery: TurnDelivery | None = None,
         on_runtime_admitted: Callable[[LLMRuntime], Awaitable[None]] | None = None,
         attributes: Mapping[str, Any] | None = None,
-    ) -> OutboundMessage | None:
+        run_context: RunTurnContext | None = None,
+    ) -> TurnContext:
         """Process a single inbound message and return the response."""
         kind = TurnKind.USER if msg.is_user_input else TurnKind.SYSTEM
         if kind is TurnKind.SYSTEM:
@@ -1673,6 +1822,7 @@ class AgentLoop:
         t0 = time.time()
         ctx = TurnContext(
             msg=msg,
+            run_context=run_context,
             session=None,
             session_key=key,
             turn_id=f"{key}:{time.time_ns()}",
@@ -1727,12 +1877,12 @@ class AgentLoop:
         await self._run_turn_stage(ctx, "restore", self._restore_turn)
         await self._run_turn_stage(ctx, "compact", self._compact_session)
         if await self._run_turn_stage(ctx, "command", self._dispatch_command):
-            return ctx.outbound
+            return ctx
         await self._run_turn_stage(ctx, "build", self._build_turn)
         await self._run_turn_stage(ctx, "run", self._run_turn)
         await self._run_turn_stage(ctx, "save", self._persist_turn)
         await self._run_turn_stage(ctx, "respond", self._prepare_outbound)
-        return ctx.outbound
+        return ctx
 
     async def _run_turn_stage(
         self,
@@ -2065,9 +2215,17 @@ class AgentLoop:
         ctx.provider_compaction_applied = result.provider_compaction_applied
         ctx.stop_reason = result.stop_reason
         ctx.failure_error_kind = result.failure_error_kind
+        sent_to_primary = (ctx.kind is TurnKind.USER and
+                           (ctx.delivery.route.channel, ctx.delivery.route.chat_id) in message_sends)
+        if ctx.kind is TurnKind.USER and ctx.run_context is not None:
+            final_text = (result.final_content or "").strip()
+            sent_to_primary = bool(final_text) and any(
+                (message.channel, message.chat_id) == (ctx.delivery.route.channel, ctx.delivery.route.chat_id)
+                and isinstance(message.content, str) and message.content.strip() == final_text
+                for message in ctx.sent_messages
+            )
         if (
-            ctx.kind is TurnKind.USER
-            and (ctx.delivery.route.channel, ctx.delivery.route.chat_id) in message_sends
+            ctx.kind is TurnKind.USER and sent_to_primary
             and (not result.had_injections or result.stop_reason == "empty_final_response")
         ):
             ctx.suppress_response = True
