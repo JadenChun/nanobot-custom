@@ -186,21 +186,55 @@ class ToolRegistry:
             return arguments_payload
         return cls._coerce_argument_value(arguments_payload.get("arguments"))
 
-    async def execute(self, name: str, params: Any) -> Any:
-        """Execute a tool by name with given parameters."""
-        hint = "\n\n[Analyze the error above and try a different approach.]"
-        tool, params, error = self.prepare_call(name, params)
-        if error:
-            return ToolResult.error(str(error) + hint)
+    @staticmethod
+    async def execute_prepared(tool: Tool, params: dict[str, Any], context: Any = None) -> Any:
+        """Execute a validated call once, retaining terminal fork metadata."""
+        from nanobot.agent.turn import ToolOutcome
 
+        result = (await tool.execute_with_context(context, **params)
+                  if context is not None else await tool.execute(**params))
+        outcome = result if isinstance(result, ToolOutcome) else ToolOutcome(content=result)
+        if is_tool_error_result(outcome.content) or (
+            isinstance(outcome.content, str) and not isinstance(outcome.content, ToolResult)
+            and outcome.content.startswith("Error")
+        ):
+            return ToolOutcome(content=outcome.content, stop_reason=outcome.stop_reason or "tool_error",
+                               policy_metadata=outcome.policy_metadata)
+        return outcome
+
+    async def execute(self, name: str, params: Any, context: Any = None, *, execution_context: Any = None) -> Any:
+        """Preserve contextual outcomes and upstream preparation/legacy errors."""
+        from nanobot.agent.turn import ToolOutcome
+
+        context = context if context is not None else execution_context
+        hint = "\n\n[Analyze the error above and try a different approach.]"
         try:
-            assert tool is not None  # guarded by prepare_call()
-            result = await tool.execute(**params)
-            if is_tool_error_result(result):
-                return ToolResult.error(str(result) + hint)
-            return result
-        except Exception as e:
-            return ToolResult.error(f"Error executing {name}: {str(e)}" + hint)
+            tool, params, error = self.prepare_call(name, params)
+            if error:
+                outcome = ToolOutcome(content=ToolResult.error(str(error) + hint), stop_reason="tool_error")
+            else:
+                assert tool is not None
+                outcome = await self.execute_prepared(tool, params, context)
+                if outcome.stop_reason == "tool_error" and isinstance(outcome.content, str):
+                    outcome = ToolOutcome(content=ToolResult.error(outcome.content + hint),
+                                          stop_reason=outcome.stop_reason, policy_metadata=outcome.policy_metadata)
+        except Exception as exc:
+            outcome = ToolOutcome(content=ToolResult.error(f"Error executing {name}: {exc}" + hint),
+                                  stop_reason="tool_error")
+        return outcome if context is not None else outcome.content
+
+    async def execute_with_context(self, name: str, params: Any, context: Any) -> Any:
+        return await self.execute(name, params, context=context)
+
+    def iter_tools(self):
+        return iter(self._tools.values())
+
+    def filtered(self, names: list[str]) -> ToolRegistry:
+        registry = ToolRegistry()
+        for name in names:
+            if name in self._tools:
+                registry.register(self._tools[name])
+        return registry
 
     @property
     def tool_names(self) -> list[str]:

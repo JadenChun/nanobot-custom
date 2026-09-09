@@ -7,7 +7,6 @@ import contextvars
 import json
 import re
 import uuid
-from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +26,12 @@ from nanobot.agent.tools.filesystem import (
     SearchFilesTool,
     WriteFileTool,
 )
-from nanobot.agent.tools.mcp import connect_mcp_servers, is_read_only_mcp_tool
+from nanobot.agent.tools.mcp import (
+    MCPConnection,
+    _close_mcp_connections,
+    connect_mcp_servers,
+    is_read_only_mcp_tool,
+)
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.social_crawl import (
     SocialCrawlTool,
@@ -45,6 +49,7 @@ from nanobot.config.schema import (
 )
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 from nanobot.providers.base import LLMProvider
+from nanobot.utils.llm_runtime import LLMRuntime
 
 # Legacy explore/crawler tools call the manager directly.  Keep their bridge
 # task-local so concurrent canonical turns cannot share routing or budgets.
@@ -137,8 +142,9 @@ class ForegroundAgentManager:
             context_manager=self.context_manager,
             restrict_to_workspace=restrict_to_workspace,
         )
-        self.runner = AgentRunner(provider)
-        self.crawler_runner = AgentRunner(crawler_provider or provider)
+        self.runner = AgentRunner()
+        self.crawler_provider = crawler_provider or provider
+        self.crawler_runner = AgentRunner()
         self.crawler_model = crawler_model or self.model
         self.crawler_max_iterations = max(1, min(crawler_max_iterations, 100))
         self.crawler_max_input_tokens = max(1000, crawler_max_input_tokens)
@@ -146,7 +152,7 @@ class ForegroundAgentManager:
         self.crawler_reasoning_effort = crawler_reasoning_effort
         self._mcp_servers = mcp_servers or {}
         self._read_only_mcp_tools = ToolRegistry()
-        self._mcp_stack: AsyncExitStack | None = None
+        self._mcp_connections: dict[str, MCPConnection] = {}
         self._mcp_connected = False
         self._mcp_connecting = False
         self._file_lock_registry = file_lock_registry or FileLockRegistry()
@@ -261,20 +267,18 @@ class ForegroundAgentManager:
             return
         self._mcp_connecting = True
         try:
-            self._mcp_stack = AsyncExitStack()
-            await self._mcp_stack.__aenter__()
-            await connect_mcp_servers(
-                self._mcp_servers,
-                self._read_only_mcp_tools,
-                self._mcp_stack,
-                tool_filter=lambda wrapper: wrapper.is_read_only,
-            )
+            discovered = ToolRegistry()
+            self._mcp_connections = await connect_mcp_servers(self._mcp_servers, discovered)
+            for tool in discovered.iter_tools():
+                if is_read_only_mcp_tool(tool):
+                    self._read_only_mcp_tools.register(tool)
             self._mcp_connected = True
-        except BaseException as exc:
+        except asyncio.CancelledError:
+            await self.close()
+            raise
+        except Exception as exc:
             logger.error("Foreground delegation MCP connection failed: {}", exc)
-            if self._mcp_stack:
-                await self._mcp_stack.aclose()
-                self._mcp_stack = None
+            await self.close()
         finally:
             self._mcp_connecting = False
 
@@ -294,7 +298,7 @@ class ForegroundAgentManager:
         fs_kwargs = {
             "workspace": self.workspace,
             "allowed_dir": allowed_dir,
-            "extra_allowed_dirs": extra_read,
+            "extra_read_allowed_dirs": extra_read,
             "resource_policy": self.resource_policy,
         }
         tools.register(ReadFileTool(**fs_kwargs))
@@ -346,20 +350,20 @@ class ForegroundAgentManager:
         tools.register(ReadFileTool(
             workspace=self.workspace,
             allowed_dir=allowed_dir,
-            extra_allowed_dirs=extra_read,
+            extra_read_allowed_dirs=extra_read,
             resource_policy=self.resource_policy,
         ))
         tools.register(ListDirTool(
             workspace=self.workspace,
             allowed_dir=allowed_dir,
-            extra_allowed_dirs=extra_read,
+            extra_read_allowed_dirs=extra_read,
             resource_policy=self.resource_policy,
         ))
         lock_owner = f"foreground-worker:{call_id}"
         tools.register(WriteFileTool(
             workspace=self.workspace,
             allowed_dir=allowed_dir,
-            extra_allowed_dirs=extra_write,
+            extra_write_allowed_dirs=extra_write,
             resource_policy=self.resource_policy,
             lock_registry=self._file_lock_registry,
             lock_owner=lock_owner,
@@ -368,7 +372,7 @@ class ForegroundAgentManager:
         tools.register(EditFileTool(
             workspace=self.workspace,
             allowed_dir=allowed_dir,
-            extra_allowed_dirs=extra_write,
+            extra_write_allowed_dirs=extra_write,
             resource_policy=self.resource_policy,
             lock_registry=self._file_lock_registry,
             lock_owner=lock_owner,
@@ -416,11 +420,14 @@ class ForegroundAgentManager:
                 {"role": "user", "content": assignment},
             ],
             tools=tools,
-            model=model or self.model,
+            runtime=LLMRuntime.capture(
+                self.crawler_provider if runner is self.crawler_runner else self.provider,
+                model or self.model,
+                context_window_tokens=max_input_tokens or 120000,
+            ).with_generation_overrides(max_tokens=max_output_tokens, reasoning_effort=reasoning_effort),
             max_iterations=max_iterations,
-            max_input_tokens=max_input_tokens,
-            max_tokens=max_output_tokens,
-            reasoning_effort=reasoning_effort,
+            max_tool_result_chars=16000,
+            turn_context=turn_context,
             hook=_DelegationHook(role, call_id),
             concurrent_tools=role in {"planner", "reviewer", "explorer"},
             fail_on_tool_error=True,
@@ -725,10 +732,10 @@ with exact source URLs, visible dates, limitations, and uncertainty."""
         return self._role_result(result, "crawler", turn_context)
 
     async def close(self) -> None:
-        if self._mcp_stack:
-            await self._mcp_stack.aclose()
-            self._mcp_stack = None
-            self._mcp_connected = False
+        connections, self._mcp_connections = self._mcp_connections, {}
+        self._mcp_connected = False
+        self._read_only_mcp_tools = ToolRegistry()
+        await _close_mcp_connections(connections)
 
 
 __all__ = ["ForegroundAgentManager"]

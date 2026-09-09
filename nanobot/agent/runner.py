@@ -25,8 +25,10 @@ from nanobot.agent.context_governance import (
     TranscriptBuilder,
 )
 from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
+from nanobot.agent.policy import ToolPolicy
 from nanobot.agent.tools.execution import execute_tool_calls
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.events import NO_EVENTS, EventSink
 from nanobot.llm_usage.context import (
     LLMUsageSource,
@@ -95,6 +97,9 @@ class AgentRunSpec:
     runtime: LLMRuntime
     max_iterations: int
     max_tool_result_chars: int
+    tool_policy: ToolPolicy | None = None
+    turn_context: TurnContext | None = None
+    fail_on_tool_error: bool = False
     transcript_input: TranscriptInput | None = None
     transcript_builder: TranscriptBuilder | None = None
     hook: AgentHook | None = None
@@ -129,6 +134,7 @@ class AgentRunResult:
     # produce that round's response are folded into the same usage value.
     round_usages: list[LLMUsage] = field(default_factory=list)
     stop_reason: str = "completed"
+    policy_metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     failure_error_kind: str | None = None
     tool_events: list[dict[str, str]] = field(default_factory=list)
@@ -398,6 +404,7 @@ class AgentRunner:
         round_usages: list[LLMUsage] = []
         error: str | None = None
         failure_error_kind: str | None = None
+        policy_metadata: dict[str, Any] = {}
         stop_reason = "completed"
         tool_events: list[dict[str, str]] = []
         external_lookup_counts: dict[str, int] = {}
@@ -519,7 +526,14 @@ class AgentRunner:
                     workspace_violation_counts=workspace_violation_counts,
                     hook=hook,
                     context=context,
+                    tool_policy=spec.tool_policy,
+                    messages=messages,
+                    turn_context=spec.turn_context,
+                    fail_on_tool_error=spec.fail_on_tool_error,
                 )
+                terminal = next((r for r in results if isinstance(r, ToolOutcome)
+                                 and r.stop_reason), None)
+                results = [r.content if isinstance(r, ToolOutcome) else r for r in results]
                 tool_events.extend(new_events)
                 tools_used.extend(
                     tool_call.name
@@ -566,6 +580,13 @@ class AgentRunner:
                         ),
                     },
                 )
+                if terminal is not None:
+                    stop_reason = terminal.stop_reason or "policy_blocked"
+                    policy_metadata = dict(terminal.policy_metadata)
+                    final_content = str(terminal.content or "")
+                    context.stop_reason = stop_reason
+                    context.final_content = final_content
+                    break
                 empty_content_retries = 0
                 length_recovery_parts.clear()
                 # Checkpoint 1: drain injections after tools, before next LLM call
@@ -829,6 +850,7 @@ class AgentRunner:
             usage=usage,
             round_usages=round_usages,
             stop_reason=stop_reason,
+            policy_metadata=policy_metadata,
             error=error,
             failure_error_kind=failure_error_kind,
             tool_events=tool_events,

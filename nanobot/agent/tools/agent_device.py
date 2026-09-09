@@ -107,7 +107,15 @@ class AgentDeviceTool(Tool):
         self.timeout = timeout
         self.max_output_chars = max_output_chars
         self.working_dir = working_dir
-        self.read_only = read_only
+        self._read_only_mode = read_only
+
+    @property
+    def read_only(self) -> bool:
+        return self._read_only_mode
+
+    @property
+    def exclusive(self) -> bool:
+        return True
 
     @property
     def supports_parallel_calls(self) -> bool:

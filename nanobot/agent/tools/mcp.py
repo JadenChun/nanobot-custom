@@ -11,7 +11,9 @@ import shutil
 import urllib.parse
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from contextlib import AsyncExitStack, suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
+from urllib.parse import urlparse
 
 import httpx
 from loguru import logger
@@ -592,6 +594,99 @@ def _mcp_image_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]
     return json.dumps(payload, ensure_ascii=False)
 
 
+_READ_ONLY_PREFIXES = (
+    "get_",
+    "list_",
+    "inspect_",
+    "preview_",
+    "read_",
+    "search_",
+    "find_",
+    "fetch_",
+    "status_",
+)
+
+_SERIAL_ONLY_PREFIXES = (
+    "preview_",
+)
+
+_MUTATING_PREFIXES = (
+    "create_",
+    "open_",
+    "add_",
+    "update_",
+    "set_",
+    "remove_",
+    "delete_",
+    "trim_",
+    "split_",
+    "move_",
+    "import_",
+    "save_",
+    "export_",
+    "generate_",
+    "cancel_",
+    "retake_",
+    "fill_",
+)
+
+@dataclass(frozen=True, slots=True)
+class MCPToolMetadata:
+    """Normalized MCP metadata used for policy decisions inside nanobot."""
+
+    server_name: str
+    original_name: str
+    wrapped_name: str
+    transport_type: str
+    server_url: str | None
+    server_command: str | None
+    read_only_hint: bool | None
+    destructive_hint: bool | None
+    idempotent_hint: bool | None
+    open_world_hint: bool | None
+    trusted_for_heuristics: bool
+    read_only: bool
+    read_only_source: str
+    supports_parallel_calls: bool
+
+def _annotation_bool(annotations: Any, field_name: str) -> bool | None:
+    value = getattr(annotations, field_name, None)
+    return value if isinstance(value, bool) else None
+
+def _is_trusted_local_mcp(transport_type: str, server_url: str | None) -> bool:
+    if transport_type == "stdio":
+        return True
+    if not server_url:
+        return False
+    parsed = urlparse(server_url)
+    return parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+
+def _classify_read_only(
+    tool_name: str,
+    *,
+    transport_type: str,
+    server_url: str | None,
+    annotations: Any,
+) -> tuple[bool, str, bool]:
+    read_only_hint = _annotation_bool(annotations, "readOnlyHint")
+    if read_only_hint is not None:
+        return read_only_hint, "annotation", _is_trusted_local_mcp(transport_type, server_url)
+
+    trusted_for_heuristics = _is_trusted_local_mcp(transport_type, server_url)
+    if trusted_for_heuristics:
+        lowered_name = tool_name.lower()
+        if lowered_name.startswith(_READ_ONLY_PREFIXES):
+            return True, "heuristic", True
+        if lowered_name.startswith(_MUTATING_PREFIXES):
+            return False, "heuristic", True
+        return False, "heuristic_default_mutating", True
+
+    return False, "default_mutating", False
+
+def is_read_only_mcp_tool(tool: Tool) -> bool:
+    """Return whether a wrapped MCP tool is classified as read-only."""
+    return isinstance(tool, MCPToolWrapper) and tool.is_read_only
+
 class MCPToolWrapper(_MCPWrapperBase):
     """Wraps a single MCP server tool as a nanobot Tool."""
 
@@ -603,6 +698,10 @@ class MCPToolWrapper(_MCPWrapperBase):
         server_name: str,
         tool_def: MCPToolDefinition,
         tool_timeout: int = 30,
+        *,
+        transport_type: str = "stdio",
+        server_url: str | None = None,
+        server_command: str | None = None,
     ):
         self._set_mcp_connection(session, server_name)
         self._original_name = tool_def.name
@@ -611,6 +710,49 @@ class MCPToolWrapper(_MCPWrapperBase):
         raw_schema = tool_def.inputSchema or {"type": "object", "properties": {}}
         self._parameters = _normalize_schema_for_openai(raw_schema)
         self._tool_timeout = tool_timeout
+        annotations = getattr(tool_def, "annotations", None)
+        read_only, source, trusted_for_heuristics = _classify_read_only(
+            tool_def.name,
+            transport_type=transport_type,
+            server_url=server_url,
+            annotations=annotations,
+        )
+        self._mcp_metadata = MCPToolMetadata(
+            server_name=server_name,
+            original_name=tool_def.name,
+            wrapped_name=self._name,
+            transport_type=transport_type,
+            server_url=server_url or None,
+            server_command=server_command or None,
+            read_only_hint=_annotation_bool(annotations, "readOnlyHint"),
+            destructive_hint=_annotation_bool(annotations, "destructiveHint"),
+            idempotent_hint=_annotation_bool(annotations, "idempotentHint"),
+            open_world_hint=_annotation_bool(annotations, "openWorldHint"),
+            trusted_for_heuristics=trusted_for_heuristics,
+            read_only=read_only,
+            read_only_source=source,
+            supports_parallel_calls=not tool_def.name.lower().startswith(_SERIAL_ONLY_PREFIXES),
+        )
+
+    @property
+    def mcp_metadata(self) -> MCPToolMetadata:
+        return self._mcp_metadata
+
+    @property
+    def is_read_only(self) -> bool:
+        return self._mcp_metadata.read_only
+
+    @property
+    def read_only(self) -> bool:
+        return self.is_read_only
+
+    @property
+    def supports_parallel_calls(self) -> bool:
+        return self._mcp_metadata.supports_parallel_calls
+
+    @property
+    def exclusive(self) -> bool:
+        return not self.supports_parallel_calls
 
     @property
     def name(self) -> str:
@@ -1157,7 +1299,8 @@ async def connect_mcp_servers(
                         name,
                     )
                     continue
-                wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
+                wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout,
+                                         transport_type=transport_type, server_url=cfg.url, server_command=cfg.command)
                 registry.register(wrapper)
                 logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
                 registered_count += 1

@@ -56,11 +56,12 @@ class SkillsLoader:
     specific tools or perform certain tasks.
     """
 
-    def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None, disabled_skills: set[str] | None = None):
+    def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None, disabled_skills: set[str] | None = None, *, extra_paths: list[Path] | None = None):
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self.disabled_skills = disabled_skills or set()
+        self.extra_paths = extra_paths or []
 
     def _skill_aliases(self) -> dict[str, str]:
         """Return compatibility aliases owned by installed CLI Apps."""
@@ -102,6 +103,10 @@ class SkillsLoader:
         plugin_skills = enabled_agent_plugin_skills(self.workspace)
         skills = self._skill_entries_from_dir(self.workspace_skills, "workspace")
         seen_names = {entry["name"] for entry in skills}
+        for root in self.extra_paths:
+            entries = self._skill_entries_from_dir(root, "library", skip_names=seen_names)
+            skills.extend(entries)
+            seen_names.update(entry["name"] for entry in entries)
         for name, path in plugin_skills:
             if name in seen_names:
                 continue

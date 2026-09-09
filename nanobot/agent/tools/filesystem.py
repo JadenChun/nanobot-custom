@@ -2,9 +2,11 @@
 
 # pyright: reportPrivateUsage=false, reportUnusedFunction=false
 
+import contextvars
 import difflib
 import mimetypes
 import os
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +24,27 @@ from nanobot.agent.tools.schema import (
 from nanobot.config_base import Base
 from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.utils.helpers import build_image_content_blocks, detect_image_mime
+
+
+def _resolve_path(
+    path: str,
+    workspace: Path | None = None,
+    allowed_dir: Path | None = None,
+    extra_allowed_dirs: list[Path] | None = None,
+    extra_allowed_files: list[Path] | None = None,
+    *,
+    include_media_dir: bool = False,
+) -> Path:
+    """Translate the fork's container alias before upstream containment checks."""
+    if workspace is not None:
+        if path == "/workspace":
+            path = str(workspace)
+        elif path.startswith("/workspace/"):
+            path = str(workspace / path[len("/workspace/"):])
+    return resolve_workspace_path(
+        path, workspace, allowed_dir, extra_allowed_dirs, extra_allowed_files,
+        include_media_dir=include_media_dir,
+    )
 
 
 class FileToolsConfig(Base):
@@ -55,7 +78,16 @@ class _FsTool(Tool):
         restrict_to_workspace: bool | None = None,
         sandbox_restricts_workspace: bool = False,
         extra_read_allowed_files: list[Path] | None = None,
+        resource_policy: Any | None = None,
+        lock_registry: Any | None = None,
+        lock_owner: str | None = None,
+        allowed_write_scope: Any | None = None,
     ):
+        self._resource_policy = resource_policy
+        self._lock_registry = lock_registry
+        self._lock_owner = lock_owner or "agent:unknown"
+        self._allowed_write_scope = tuple(allowed_write_scope or ())
+        self._lock_owner_var = contextvars.ContextVar(f"{type(self).__name__}_owner", default=self._lock_owner)
         self._workspace = workspace
         self._allowed_dir = allowed_dir
         # Legacy alias: extra_allowed_dirs is read-only. Write-capable tools
@@ -66,6 +98,8 @@ class _FsTool(Tool):
         ]
         self._extra_read_allowed_files = list(extra_read_allowed_files or [])
         self._extra_write_allowed_dirs = list(extra_write_allowed_dirs or [])
+        if resource_policy is not None:
+            self._extra_write_allowed_dirs.extend(resource_policy.extra_write_dirs())
         self._extra_write_allowed_files = list(extra_write_allowed_files or [])
         self._restrict_to_workspace = (
             bool(restrict_to_workspace)
@@ -78,6 +112,58 @@ class _FsTool(Tool):
         # current async task, which keeps shared tool instances session-safe.
         self._explicit_file_states = file_states
         self._fallback_file_states = FileStates()
+
+    def _record_touch(self, path: Path) -> None:
+        if self._resource_policy:
+            self._resource_policy.record_touch(path)
+
+    def _is_hidden(self, path: Path) -> bool:
+        return bool(self._resource_policy and self._resource_policy.is_hidden(path))
+
+    def set_lock_owner(self, owner: str) -> None:
+        self._lock_owner = owner
+        self._lock_owner_var.set(owner)
+
+    async def execute_with_context(self, context: Any, **kwargs: Any) -> Any:
+        """Use the current turn's lock owner without mutating shared tool state."""
+        owner = context.lock_owner or self._lock_owner
+        token = self._lock_owner_var.set(owner)
+        try:
+            return await self.execute(**kwargs)
+        finally:
+            self._lock_owner_var.reset(token)
+
+    def _write_scope_error(self, path: Path) -> str | None:
+        if not self._allowed_write_scope:
+            return None
+        if any(scope.allows(path) for scope in self._allowed_write_scope):
+            return None
+        allowed = ", ".join(scope.describe() for scope in self._allowed_write_scope)
+        return f"Error: Path {path} is outside the declared write scope. Allowed targets: {allowed}"
+
+    async def _acquire_lock(self, path: Path) -> str | None:
+        if self._lock_registry is None:
+            return None
+        lock_owner = self._lock_owner_var.get()
+        owner = await self._lock_registry.acquire(path, lock_owner)
+        if owner is None:
+            return None
+        return f"Error: File is currently locked for editing by {owner}: {path}"
+
+    async def _release_lock(self, path: Path) -> None:
+        if self._lock_registry is None:
+            return
+        await self._lock_registry.release(path, self._lock_owner_var.get())
+
+    @asynccontextmanager
+    async def _mutation_guard(self, path: Path):
+        error = await self._acquire_lock(path)
+        if error:
+            raise PermissionError(error)
+        try:
+            yield
+        finally:
+            await self._release_lock(path)
 
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
@@ -138,7 +224,7 @@ class _FsTool(Tool):
         allowed_root = self._effective_allowed_root(access.allowed_root)
         if extra_files_require_allowed_root and allowed_root is None:
             extra_allowed_files = None
-        return resolve_workspace_path(
+        return _resolve_path(
             path,
             access.project_path,
             allowed_root,
@@ -170,24 +256,42 @@ class _FsTool(Tool):
                     )
             except (OSError, RuntimeError):
                 pass
-        return self._resolve_with_extra(
+        resolved = self._resolve_with_extra(
             path,
             [*self._extra_read_allowed_dirs, *plugin_skill_dirs],
             self._extra_read_allowed_files,
             include_media_dir=True,
             extra_files_require_allowed_root=True,
         )
+        if _is_blocked(resolved):
+            raise PermissionError("Access to protected credential filename is blocked")
+        if self._resource_policy:
+            self._resource_policy.validate_path(resolved, "read")
+        return resolved
+
 
     def _resolve_write(self, path: str) -> Path:
-        return self._resolve_with_extra(
+        resolved = self._resolve_with_extra(
             path,
             self._extra_write_allowed_dirs,
             self._extra_write_allowed_files,
             include_media_dir=False,
         )
 
-    def _resolve(self, path: str) -> Path:
-        return self._resolve_read(path)
+        if _is_blocked(resolved):
+            raise PermissionError("Access to protected credential filename is blocked")
+        if self._resource_policy:
+            self._resource_policy.validate_path(resolved, "edit" if self.name == "edit_file" else "write")
+        scope_error = self._write_scope_error(resolved)
+        if scope_error:
+            raise PermissionError(scope_error)
+        return resolved
+
+    def _resolve(self, path: str, action: str = "read") -> Path:
+        resolved = self._resolve_read(path)
+        if self._resource_policy and action != "read":
+            self._resource_policy.validate_path(resolved, action)
+        return resolved
 
     def _display_workspace(self) -> Path | None:
         return current_tool_workspace(self._workspace).project_path
@@ -591,10 +695,12 @@ class WriteFileTool(_FsTool):
             if content is None:
                 raise ValueError("Unknown content")
             fp = self._resolve_write(path)
-            fp.parent.mkdir(parents=True, exist_ok=True)
-            fp.write_text(content, encoding="utf-8")
-            self._file_states.record_write(fp)
-            return f"Successfully wrote {len(content)} characters to {fp}"
+            async with self._mutation_guard(fp):
+                fp.parent.mkdir(parents=True, exist_ok=True)
+                fp.write_text(content, encoding="utf-8")
+                self._file_states.record_write(fp)
+                self._record_touch(fp)
+                return f"Successfully wrote {len(content)} characters to {fp}"
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -932,127 +1038,131 @@ class EditFileTool(_FsTool):
                 return ToolResult.error("Error: expected_replacements must be >= 1.")
 
             fp = self._resolve_write(path)
-            file_exists = fp.exists()
-            if file_exists and old_text == new_text:
-                return ToolResult.error("Error: new_text must be different from old_text.")
+            async with self._mutation_guard(fp):
+                file_exists = fp.exists()
+                if file_exists and old_text == new_text:
+                    return ToolResult.error("Error: new_text must be different from old_text.")
 
-            # Create-file semantics: old_text='' + file doesn't exist → create
-            if not file_exists:
+                # Create-file semantics: old_text='' + file doesn't exist → create
+                if not file_exists:
+                    if old_text == "":
+                        fp.parent.mkdir(parents=True, exist_ok=True)
+                        fp.write_text(new_text, encoding="utf-8")
+                        self._file_states.record_write(fp)
+                        self._record_touch(fp)
+                        return f"Successfully created {fp}"
+                    return self._file_not_found_msg(path, fp)
+
+                # File size protection
+                try:
+                    fsize = fp.stat().st_size
+                except OSError:
+                    fsize = 0
+                if fsize > self._MAX_EDIT_FILE_SIZE:
+                    return ToolResult.error(f"Error: File too large to edit ({fsize / (1024**3):.1f} GiB). Maximum is 1 GiB.")
+
+                # Create-file: old_text='' but file exists and not empty → reject
                 if old_text == "":
-                    fp.parent.mkdir(parents=True, exist_ok=True)
+                    raw = fp.read_bytes()
+                    content = raw.decode("utf-8")
+                    if content.strip():
+                        return ToolResult.error(f"Error: Cannot create file — {path} already exists and is not empty.")
                     fp.write_text(new_text, encoding="utf-8")
                     self._file_states.record_write(fp)
-                    return f"Successfully created {fp}"
-                return self._file_not_found_msg(path, fp)
+                    self._record_touch(fp)
+                    return f"Successfully edited {fp}"
 
-            # File size protection
-            try:
-                fsize = fp.stat().st_size
-            except OSError:
-                fsize = 0
-            if fsize > self._MAX_EDIT_FILE_SIZE:
-                return ToolResult.error(f"Error: File too large to edit ({fsize / (1024**3):.1f} GiB). Maximum is 1 GiB.")
+                # Read-before-edit check
+                warning = self._file_states.check_read(fp)
 
-            # Create-file: old_text='' but file exists and not empty → reject
-            if old_text == "":
                 raw = fp.read_bytes()
-                content = raw.decode("utf-8")
-                if content.strip():
-                    return ToolResult.error(f"Error: Cannot create file — {path} already exists and is not empty.")
-                fp.write_text(new_text, encoding="utf-8")
+                uses_crlf = b"\r\n" in raw
+                content = raw.decode("utf-8").replace("\r\n", "\n")
+                norm_old = old_text.replace("\r\n", "\n")
+                matches = _find_matches(content, norm_old)
+
+                if not matches:
+                    return self._not_found_msg(old_text, content, path)
+                count = len(matches)
+                if replace_all and occurrence is not None:
+                    return ToolResult.error("Error: occurrence cannot be used with replace_all=true.")
+                if replace_all and line_hint is not None:
+                    return ToolResult.error("Error: line_hint cannot be used with replace_all=true.")
+                if occurrence is not None and line_hint is not None:
+                    return ToolResult.error("Error: line_hint cannot be used with occurrence.")
+                if occurrence is not None and occurrence > count:
+                    return ToolResult.error(
+                        f"Error: occurrence {occurrence} is out of range; "
+                        f"old_text appears {count} time(s)."
+                    )
+                if count > 1 and not replace_all and occurrence is None and line_hint is None:
+                    line_numbers = [match.line for match in matches]
+                    preview = ", ".join(f"line {n}" for n in line_numbers[:3])
+                    if len(line_numbers) > 3:
+                        preview += ", ..."
+                    location_hint = f" at {preview}" if preview else ""
+                    return (
+                        f"Warning: old_text appears {count} times{location_hint}. "
+                        "Provide more context, set occurrence to choose one match, "
+                        "or set replace_all=true."
+                    )
+
+                norm_new = new_text.replace("\r\n", "\n")
+
+                # Trailing whitespace stripping (skip markdown to preserve double-space line breaks)
+                if fp.suffix.lower() not in self._MARKDOWN_EXTS:
+                    norm_new = self._strip_trailing_ws(norm_new)
+
+                if replace_all:
+                    selected = matches
+                elif occurrence is not None:
+                    selected = [matches[occurrence - 1]]
+                elif line_hint is not None:
+                    candidates = [match for match in matches if _match_covers_line(match, line_hint)]
+                    if not candidates:
+                        locations = ", ".join(f"line {match.line}" for match in matches[:3])
+                        if len(matches) > 3:
+                            locations += ", ..."
+                        return ToolResult.error(
+                            f"Error: line_hint {line_hint} does not match the old_text location. "
+                            f"old_text appears at {locations}. Re-read the intended region and "
+                            "copy old_text that covers the target line."
+                        )
+                    if len(candidates) > 1:
+                        return ToolResult.error(
+                            f"Error: line_hint {line_hint} is ambiguous; "
+                            f"old_text appears {len(candidates)} times on that line."
+                        )
+                    selected = candidates
+                else:
+                    selected = [matches[0]]
+                if expected_replacements is not None and len(selected) != expected_replacements:
+                    return ToolResult.error(
+                        f"Error: expected {expected_replacements} replacements but "
+                        f"would make {len(selected)}."
+                    )
+                new_content = content
+                for match in reversed(selected):
+                    replacement = _preserve_quote_style(norm_old, match.text, norm_new)
+                    replacement = _reindent_like_match(norm_old, match.text, replacement)
+
+                    # Delete-line cleanup: when deleting text (new_text=''), consume trailing
+                    # newline to avoid leaving a blank line
+                    end = match.end
+                    if replacement == "" and not match.text.endswith("\n") and content[end:end + 1] == "\n":
+                        end += 1
+
+                    new_content = new_content[: match.start] + replacement + new_content[end:]
+                if uses_crlf:
+                    new_content = new_content.replace("\n", "\r\n")
+
+                fp.write_bytes(new_content.encode("utf-8"))
                 self._file_states.record_write(fp)
-                return f"Successfully edited {fp}"
-
-            # Read-before-edit check
-            warning = self._file_states.check_read(fp)
-
-            raw = fp.read_bytes()
-            uses_crlf = b"\r\n" in raw
-            content = raw.decode("utf-8").replace("\r\n", "\n")
-            norm_old = old_text.replace("\r\n", "\n")
-            matches = _find_matches(content, norm_old)
-
-            if not matches:
-                return self._not_found_msg(old_text, content, path)
-            count = len(matches)
-            if replace_all and occurrence is not None:
-                return ToolResult.error("Error: occurrence cannot be used with replace_all=true.")
-            if replace_all and line_hint is not None:
-                return ToolResult.error("Error: line_hint cannot be used with replace_all=true.")
-            if occurrence is not None and line_hint is not None:
-                return ToolResult.error("Error: line_hint cannot be used with occurrence.")
-            if occurrence is not None and occurrence > count:
-                return ToolResult.error(
-                    f"Error: occurrence {occurrence} is out of range; "
-                    f"old_text appears {count} time(s)."
-                )
-            if count > 1 and not replace_all and occurrence is None and line_hint is None:
-                line_numbers = [match.line for match in matches]
-                preview = ", ".join(f"line {n}" for n in line_numbers[:3])
-                if len(line_numbers) > 3:
-                    preview += ", ..."
-                location_hint = f" at {preview}" if preview else ""
-                return (
-                    f"Warning: old_text appears {count} times{location_hint}. "
-                    "Provide more context, set occurrence to choose one match, "
-                    "or set replace_all=true."
-                )
-
-            norm_new = new_text.replace("\r\n", "\n")
-
-            # Trailing whitespace stripping (skip markdown to preserve double-space line breaks)
-            if fp.suffix.lower() not in self._MARKDOWN_EXTS:
-                norm_new = self._strip_trailing_ws(norm_new)
-
-            if replace_all:
-                selected = matches
-            elif occurrence is not None:
-                selected = [matches[occurrence - 1]]
-            elif line_hint is not None:
-                candidates = [match for match in matches if _match_covers_line(match, line_hint)]
-                if not candidates:
-                    locations = ", ".join(f"line {match.line}" for match in matches[:3])
-                    if len(matches) > 3:
-                        locations += ", ..."
-                    return ToolResult.error(
-                        f"Error: line_hint {line_hint} does not match the old_text location. "
-                        f"old_text appears at {locations}. Re-read the intended region and "
-                        "copy old_text that covers the target line."
-                    )
-                if len(candidates) > 1:
-                    return ToolResult.error(
-                        f"Error: line_hint {line_hint} is ambiguous; "
-                        f"old_text appears {len(candidates)} times on that line."
-                    )
-                selected = candidates
-            else:
-                selected = [matches[0]]
-            if expected_replacements is not None and len(selected) != expected_replacements:
-                return ToolResult.error(
-                    f"Error: expected {expected_replacements} replacements but "
-                    f"would make {len(selected)}."
-                )
-            new_content = content
-            for match in reversed(selected):
-                replacement = _preserve_quote_style(norm_old, match.text, norm_new)
-                replacement = _reindent_like_match(norm_old, match.text, replacement)
-
-                # Delete-line cleanup: when deleting text (new_text=''), consume trailing
-                # newline to avoid leaving a blank line
-                end = match.end
-                if replacement == "" and not match.text.endswith("\n") and content[end:end + 1] == "\n":
-                    end += 1
-
-                new_content = new_content[: match.start] + replacement + new_content[end:]
-            if uses_crlf:
-                new_content = new_content.replace("\n", "\r\n")
-
-            fp.write_bytes(new_content.encode("utf-8"))
-            self._file_states.record_write(fp)
-            msg = f"Successfully edited {fp}"
-            if warning:
-                msg = f"{warning}\n{msg}"
-            return msg
+                self._record_touch(fp)
+                msg = f"Successfully edited {fp}"
+                if warning:
+                    msg = f"{warning}\n{msg}"
+                return msg
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -1162,6 +1272,13 @@ class ListDirTool(_FsTool):
                 for item in sorted(dp.rglob("*")):
                     if any(p in self._IGNORE_DIRS for p in item.parts):
                         continue
+                    if _is_blocked(item) or self._is_hidden(item):
+                        continue
+                    try:
+                        if self._resource_policy:
+                            self._resource_policy.validate_path(item.resolve(), "read")
+                    except PermissionError:
+                        continue
                     total += 1
                     if len(items) < cap:
                         rel = item.relative_to(dp)
@@ -1169,6 +1286,13 @@ class ListDirTool(_FsTool):
             else:
                 for item in sorted(dp.iterdir()):
                     if item.name in self._IGNORE_DIRS:
+                        continue
+                    if _is_blocked(item) or self._is_hidden(item):
+                        continue
+                    try:
+                        if self._resource_policy:
+                            self._resource_policy.validate_path(item.resolve(), "read")
+                    except PermissionError:
                         continue
                     total += 1
                     if len(items) < cap:
@@ -1186,3 +1310,221 @@ class ListDirTool(_FsTool):
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
             return ToolResult.error(f"Error listing directory: {e}")
+
+
+_BLOCKED_FILENAMES: frozenset[str] = frozenset({
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.production",
+    ".env.staging",
+    ".env.test",
+})
+
+
+def _is_blocked(path: Path) -> bool:
+    """Return True if *path* matches a blocked filename."""
+    return path.name in _BLOCKED_FILENAMES
+
+
+def _find_match(content: str, old_text: str) -> tuple[str | None, int]:
+    """Locate old_text in content: exact first, then line-trimmed sliding window.
+
+    Both inputs should use LF line endings (caller normalises CRLF).
+    Returns (matched_fragment, count) or (None, 0).
+    """
+    if old_text in content:
+        return old_text, content.count(old_text)
+
+    old_lines = old_text.splitlines()
+    if not old_lines:
+        return None, 0
+    stripped_old = [line.strip() for line in old_lines]
+    content_lines = content.splitlines()
+
+    candidates = []
+    for i in range(len(content_lines) - len(stripped_old) + 1):
+        window = content_lines[i : i + len(stripped_old)]
+        if [line.strip() for line in window] == stripped_old:
+            candidates.append("\n".join(window))
+
+    if candidates:
+        return candidates[0], len(candidates)
+    return None, 0
+
+
+class SearchFilesTool(_FsTool):
+    """Search bounded UTF-8 repository text without invoking a shell."""
+
+    _plugin_discoverable = False
+
+    @property
+    def read_only(self) -> bool:
+        return True
+
+    _DEFAULT_MAX_RESULTS = 100
+    _MAX_RESULTS = 500
+    _DEFAULT_MAX_OUTPUT_CHARS = 20_000
+    _MAX_OUTPUT_CHARS = 50_000
+    _MAX_QUERY_CHARS = 500
+    _MAX_FILE_BYTES = 2_000_000
+    _MAX_LINE_CHARS = 2_000
+
+    @property
+    def name(self) -> str:
+        return "search_files"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Search UTF-8 text files under a workspace or permitted context-repository path. "
+            "Search is literal, bounded, read-only, and skips protected, binary, and common "
+            "dependency/cache directories."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Literal text to find (not a shell or regular expression).",
+                    "minLength": 1,
+                    "maxLength": self._MAX_QUERY_CHARS,
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Directory below the workspace or permitted context root.",
+                },
+                "case_sensitive": {
+                    "type": "boolean",
+                    "description": "Whether matching respects letter case (default false).",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum matching lines to return (default 100, max 500).",
+                    "minimum": 1,
+                    "maximum": self._MAX_RESULTS,
+                },
+                "max_output_chars": {
+                    "type": "integer",
+                    "description": "Maximum response size (default 20,000, max 50,000).",
+                    "minimum": 1_000,
+                    "maximum": self._MAX_OUTPUT_CHARS,
+                },
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        }
+
+    async def execute(
+        self,
+        query: str | None = None,
+        path: str = ".",
+        case_sensitive: bool = False,
+        max_results: int | None = None,
+        max_output_chars: int | None = None,
+        **kwargs: Any,
+    ) -> str:
+        """Return bounded ``path:line: text`` matches, never modifying files."""
+        try:
+            if not isinstance(query, str) or not query:
+                return "Error: search query must be a non-empty string"
+            if len(query) > self._MAX_QUERY_CHARS:
+                return f"Error: search query exceeds {self._MAX_QUERY_CHARS} characters"
+            if not isinstance(path, str) or not path:
+                return "Error: search path must be a non-empty directory path"
+
+            root = self._resolve(path, "list")
+            if not root.exists():
+                return f"Error: Directory not found: {path}"
+            if not root.is_dir():
+                return f"Error: Not a directory: {path}"
+
+            result_limit = max_results or self._DEFAULT_MAX_RESULTS
+            if isinstance(result_limit, bool) or not isinstance(result_limit, int):
+                return "Error: max_results must be an integer"
+            result_limit = max(1, min(result_limit, self._MAX_RESULTS))
+            output_limit = max_output_chars or self._DEFAULT_MAX_OUTPUT_CHARS
+            if isinstance(output_limit, bool) or not isinstance(output_limit, int):
+                return "Error: max_output_chars must be an integer"
+            output_limit = max(1_000, min(output_limit, self._MAX_OUTPUT_CHARS))
+            needle = query if case_sensitive else query.casefold()
+            matches: list[str] = []
+            total_matches = 0
+
+            for candidate in self._iter_files(root):
+                if total_matches > result_limit:
+                    break
+                try:
+                    # Resolve and validate every candidate rather than relying
+                    # solely on the root check. This enforces context-repo
+                    # readable/protected patterns during traversal as well.
+                    readable = self._resolve(str(candidate), "read")
+                    if readable != candidate:
+                        candidate = readable
+                    raw = candidate.read_bytes()
+                    if len(raw) > self._MAX_FILE_BYTES or b"\x00" in raw[:8192]:
+                        continue
+                    text = raw.decode("utf-8")
+                except (OSError, UnicodeDecodeError, PermissionError):
+                    continue
+
+                for line_number, line in enumerate(text.splitlines(), start=1):
+                    haystack = line if case_sensitive else line.casefold()
+                    if needle not in haystack:
+                        continue
+                    total_matches += 1
+                    if len(matches) < result_limit:
+                        try:
+                            relative = candidate.relative_to(root)
+                        except ValueError:
+                            relative = candidate.name
+                        display = line[: self._MAX_LINE_CHARS]
+                        if len(line) > self._MAX_LINE_CHARS:
+                            display += "..."
+                        matches.append(f"{relative}:{line_number}: {display}")
+                    if total_matches > result_limit:
+                        break
+
+            if not matches:
+                return f"No matches for {query!r} under {path}"
+
+            result = "\n".join(matches)
+            if total_matches > result_limit:
+                result += (
+                    f"\n\n(truncated, showing first {result_limit} matches; "
+                    "increase max_results to inspect more)"
+                )
+            if len(result) > output_limit:
+                result = result[:output_limit].rstrip()
+                result += f"\n\n(output truncated at {output_limit} characters)"
+            return result
+        except PermissionError as exc:
+            return f"Error: {exc}"
+        except Exception as exc:
+            return f"Error searching files: {exc}"
+
+    def _iter_files(self, root: Path):
+        """Yield regular files while refusing symlinks and ignored directories."""
+        pending = [root]
+        ignored = ListDirTool._IGNORE_DIRS
+        while pending:
+            directory = pending.pop()
+            try:
+                entries = sorted(directory.iterdir(), key=lambda item: item.name)
+            except OSError:
+                continue
+            for entry in entries:
+                if entry.is_symlink() or entry.name in ignored or _is_blocked(entry):
+                    continue
+                if self._is_hidden(entry):
+                    continue
+                try:
+                    if entry.is_dir():
+                        pending.append(entry)
+                    elif entry.is_file():
+                        yield entry
+                except OSError:
+                    continue

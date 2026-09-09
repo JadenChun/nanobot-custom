@@ -341,6 +341,61 @@ class Session:
         }
         self.last_archived = boundary
 
+    SCHEDULED_RING_KEY = "_recent_scheduled_runs"
+    SCHEDULED_RING_LIMIT = 20
+
+    def add_run_message(self, run_id: str, role: str, content: str, **kwargs: Any) -> None:
+        """Add a detail message tagged for a specific run."""
+        self.add_message(role, content, _run_id=run_id, **kwargs)
+
+    def get_run_messages(self, run_id: str) -> list[dict[str, Any]]:
+        """Return persisted detail messages belonging to ``run_id``.
+
+        Unlike :meth:`get_history`, this is a trace-facing API and therefore
+        retains the internal tag and any other persisted detail fields.
+        """
+        matching = [dict(message) for message in self.messages if message.get("_run_id") == run_id]
+        if matching:
+            return matching
+        # Compatibility for scheduled links stored in the bounded metadata
+        # ring.  The full detail remains in the cron execution session; this
+        # synthetic view keeps older trace readers source-compatible without
+        # appending a second instruction/result pair to visible history.
+        for item in self.recent_scheduled_runs():
+            if item.get("run_id") == run_id:
+                return [
+                    {"role": "user", "content": item.get("instruction", ""), "_run_id": run_id},
+                    {"role": "assistant", "content": item.get("result", ""), "_run_id": run_id},
+                ]
+        return []
+
+    def recent_scheduled_runs(self) -> list[dict[str, Any]]:
+        """Return the bounded scheduled-awareness metadata ring."""
+        value = self.metadata.get(self.SCHEDULED_RING_KEY, [])
+        if not isinstance(value, list):
+            return []
+        # Entries written before approval metadata was introduced remain
+        # readable; callers and the projection use ``False`` for the missing
+        # field without rewriting the legacy metadata.
+        return [dict(item) for item in value if isinstance(item, dict)][-self.SCHEDULED_RING_LIMIT:]
+
+    @staticmethod
+    def _strip_internal_metadata(value: Any) -> Any:
+        """Remove internal keys recursively from model-facing message data."""
+        if isinstance(value, dict):
+            return {
+                key: Session._strip_internal_metadata(item)
+                for key, item in value.items()
+                if not str(key).startswith("_")
+            }
+        if isinstance(value, list):
+            return [Session._strip_internal_metadata(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(Session._strip_internal_metadata(item) for item in value)
+        return value
+
+    messages_for_run = get_run_messages
+
     def get_history(
         self,
         max_messages: int = 0,
@@ -439,7 +494,7 @@ class Session:
             for key in ("tool_calls", "tool_call_id", "name", "reasoning_content", "thinking_blocks"):
                 if key in message:
                     entry[key] = message[key]
-            out.append(entry)
+            out.append(self._strip_internal_metadata(entry))
 
         if max_tokens > 0 and out:
             kept: list[dict[str, Any]] = []

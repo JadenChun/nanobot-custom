@@ -9,7 +9,9 @@ from typing import Any, cast
 from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
+from nanobot.agent.policy import ToolPolicy
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
+from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import ToolCallRequest
 from nanobot.utils.runtime import (
     repeated_external_lookup_error,
@@ -59,11 +61,25 @@ async def execute_tool_calls(
     workspace_violation_counts: dict[str, int],
     hook: AgentHook,
     context: AgentHookContext,
+    tool_policy: ToolPolicy | None = None,
+    messages: list[dict[str, Any]] | None = None,
+    turn_context: TurnContext | None = None,
+    fail_on_tool_error: bool = False,
 ) -> tuple[list[Any], list[dict[str, str]]]:
     """Execute one model response's tool calls in stable result order."""
+    # Policy inspects the complete response before any side effect can begin.
+    terminal: ToolOutcome | None = None
+    if tool_policy is not None:
+        decision = await tool_policy.evaluate(messages=messages or [], tool_calls=tool_calls)
+        if decision.action != "allow":
+            terminal = ToolOutcome(decision.response, decision.stop_reason or "policy_blocked",
+                                   decision.metadata)
     tool_results: list[tuple[Any, dict[str, str]]] = []
+    # Contextual delegates require strict stop propagation across the batch.
+    concurrent = concurrent and turn_context is None and tool_policy is None and not fail_on_tool_error
+
     for batch in _partition_tool_batches(tools, tool_calls, concurrent=concurrent):
-        if concurrent and len(batch) > 1:
+        if concurrent and len(batch) > 1 and terminal is None:
             batch_results = await asyncio.gather(*(
                 _execute_tool_call(
                     tools,
@@ -72,12 +88,23 @@ async def execute_tool_calls(
                     workspace_violation_counts,
                     hook,
                     context,
+                    turn_context,
                 )
                 for tool_call in batch
             ))
-            tool_results.extend(batch_results)
+            terminal = next((value for value, _ in batch_results
+                             if isinstance(value, ToolOutcome) and value.stop_reason
+                             and value.stop_reason != "tool_error"), None)
+            tool_results.extend((value.content if isinstance(value, ToolOutcome)
+                                 and value.stop_reason == "tool_error" else value, event)
+                                for value, event in batch_results)
         else:
             for tool_call in batch:
+                if terminal is not None:
+                    payload = terminal if not tool_results else "Skipped: tool batch stopped."
+                    tool_results.append((payload, {"name": tool_call.name, "status": "skipped",
+                                                   "detail": "tool batch stopped"}))
+                    continue
                 result = await _execute_tool_call(
                     tools,
                     tool_call,
@@ -85,7 +112,17 @@ async def execute_tool_calls(
                     workspace_violation_counts,
                     hook,
                     context,
+                    turn_context,
                 )
+                outcome, event = result
+                if isinstance(outcome, ToolOutcome):
+                    if outcome.stop_reason and (outcome.stop_reason != "tool_error" or fail_on_tool_error):
+                        terminal = outcome
+                    else:
+                        result = (outcome.content, event)
+                elif fail_on_tool_error and event.get("status") == "error":
+                    terminal = ToolOutcome(outcome, "tool_error")
+                    result = (terminal, event)
                 tool_results.append(result)
 
     results = [result for result, _event in tool_results]
@@ -100,6 +137,7 @@ async def _execute_tool_call(
     workspace_violation_counts: dict[str, int],
     hook: AgentHook,
     context: AgentHookContext,
+    turn_context: TurnContext | None = None,
 ) -> tuple[Any, dict[str, str]]:
     lookup_error = repeated_external_lookup_error(
         tool_call.name,
@@ -146,7 +184,7 @@ async def _execute_tool_call(
     await hook.before_execute_tool(context, tool_call, tool, params)
     try:
         if tool is not None:
-            result = await tool.execute(**params)
+            result = await tools.execute_prepared(tool, params, turn_context)
         else:
             result = await tools.execute(tool_call.name, params)
     except asyncio.CancelledError:
@@ -170,7 +208,16 @@ async def _execute_tool_call(
             return handled
         return payload, event
 
-    if is_tool_error_result(result):
+    outcome = result if isinstance(result, ToolOutcome) else None
+    if outcome is not None:
+        result = outcome.content
+        if outcome.stop_reason and outcome.stop_reason != "tool_error":
+            await hook.after_execute_tool(context, tool_call, tool, params, result)
+            return outcome, {"name": tool_call.name, "status": "stopped",
+                             "detail": outcome.stop_reason}
+
+    if is_tool_error_result(result) or (outcome is not None and outcome.stop_reason == "tool_error"):
+        result = str(result)
         await hook.on_execute_tool_error(context, tool_call, tool, params, result)
         payload = _with_retry_hint(result)
         event = {
@@ -186,8 +233,8 @@ async def _execute_tool_call(
             workspace_violation_counts=workspace_violation_counts,
         )
         if handled is not None:
-            return handled
-        return payload, event
+            payload, event = handled
+        return ToolOutcome(payload, "tool_error", outcome.policy_metadata if outcome else {}), event
 
     await hook.after_execute_tool(context, tool_call, tool, params, result)
 
