@@ -23,6 +23,18 @@ def build_result_messages(
     ]
 
 
+
+def is_client_deliverable(verification_verdict, *, skip_verification: bool) -> bool:
+    """Whether a client-facing scheduled result may be delivered to the group.
+
+    FAIL CLOSED: for ANY client-facing job, group delivery requires an explicit
+    PASS verification verdict.  ``skip_verification`` does not bypass the gate;
+    it only controls whether the framework's internal verifier runs.  A
+    missing/FAIL/PARTIAL verdict never delivers to the group.
+    """
+    return verification_verdict == "PASS"
+
+
 def build_explicit_fanout_messages(
     destinations: list[CronDestination],
     sent_messages: Iterable[OutboundMessage],

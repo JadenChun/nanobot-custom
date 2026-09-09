@@ -50,6 +50,38 @@ Required values:
 - `OAUTH_BROKER_INTERNAL_API_KEY` in `nanobot.env`; it must match the OAuth
   broker's internal API key.
 
+## Client Delivery and Verification Gate
+
+Client-facing scheduled workflows (Daily Trend Pulse, Daily Content Idea,
+Weekly Performance Review) publish their verified result deterministically to
+the client group (`-5340461568`).  Delivery must NOT depend on the
+owner-notification evaluator.
+
+The framework exposes `payload.skip_verification` per job.  For every
+client-facing job the runtime requires an explicit `PASS` verification verdict
+before publishing to the group; a `FAIL`, `PARTIAL`, or missing verdict never
+reaches the group and is surfaced as an operational failure (owner alert).
+
+Meaning of `skip_verification` per job:
+
+- `false` (default) — the framework's internal verifier runs and produces the
+  deterministic PASS/FAIL/PARTIAL verdict that gates client delivery.
+- `true` — the internal verifier is skipped (used by the Daily Meta analytics
+  sync, whose `deliver=false` means no automatic group delivery at all).
+
+So, for the scheduled client jobs:
+
+| Job | skip_verification | deliver | Behavior |
+|-----|-------------------|---------|----------|
+| Daily Trend Pulse | false | true | PASS -> group; FAIL/PARTIAL/missing -> no group + owner alert |
+| Daily Content Idea | false | true | PASS -> group; FAIL/PARTIAL/missing -> no group + owner alert |
+| Weekly Performance Review | false | true | PASS -> group; FAIL/PARTIAL/missing -> no group + owner alert |
+| Daily Meta analytics sync | true | false | success -> silent; partial/failure -> owner DM only |
+
+`evaluate_response` remains only for owner-notification behaviour and never
+gates required client-group delivery.
+
+
 ## Multiple Cron Destinations
 
 Cron jobs keep `payload.channel` and `payload.to` as their primary execution

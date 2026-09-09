@@ -752,7 +752,7 @@ def gateway(
         """Execute a cron job through the agent."""
         from nanobot.agent.tools.cron import CronTool
         from nanobot.agent.tools.message import MessageTool
-        from nanobot.cron.delivery import build_explicit_fanout_messages, build_result_messages
+        from nanobot.cron.delivery import build_explicit_fanout_messages, build_result_messages, is_client_deliverable
         from nanobot.utils.evaluator import evaluate_response
 
         delivery_destinations = job.payload.delivery_destinations()
@@ -817,23 +817,36 @@ def gateway(
                 await bus.publish_outbound(outbound)
             return response
 
-        if delivery_destinations and response:
+        # Required client delivery must not depend on the owner-notification
+        # evaluator.  It is gated only on the deterministic verification verdict
+        # propagated from the agent loop.  A missing/FAIL/PARTIAL verdict never
+        # reaches the client group and is surfaced as an operational failure.
+        verification_verdict = (
+            (getattr(resp, "metadata", {}) or {}).get("_verification")
+            if resp is not None
+            else "MISSING"
+        )
+        # For ANY client-facing scheduled job, group delivery requires an
+        # explicit PASS verdict.  skip_verification no longer bypasses the gate;
+        # it only controls whether the framework's internal verifier runs.  A
+        # MISSING verdict (verifier metadata not propagated) fails closed.
+        verified = is_client_deliverable(
+            verification_verdict, skip_verification=job.payload.skip_verification
+        )
+
+        if delivery_destinations and response and verified:
             try:
-                should_notify = await evaluate_response(
-                    response, job.payload.message, provider, agent.model,
+                sent_messages = (
+                    message_tool.sent_messages_in_turn
+                    if isinstance(message_tool, MessageTool)
+                    else ()
                 )
-                if should_notify:
-                    sent_messages = (
-                        message_tool.sent_messages_in_turn
-                        if isinstance(message_tool, MessageTool)
-                        else ()
-                    )
-                    for outbound in build_result_messages(
-                        response,
-                        delivery_destinations,
-                        sent_messages,
-                    ):
-                        await bus.publish_outbound(outbound)
+                for outbound in build_result_messages(
+                    response,
+                    delivery_destinations,
+                    sent_messages,
+                ):
+                    await bus.publish_outbound(outbound)
             except Exception as exc:
                 agent.record_task_failure(
                     session_key=f"cron:{job.id}",
@@ -844,6 +857,16 @@ def gateway(
                     error=str(exc),
                 )
                 raise
+        elif delivery_destinations and response and not verified:
+            err = "verification required but no PASS verdict; refusing to deliver unverified client output"
+            agent.record_task_failure(
+                session_key=f"cron:{job.id}",
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to or "direct",
+                label=f"Scheduled task delivery '{job.name}'",
+                task=job.payload.message,
+                error=err,
+            )
         return response
     cron.on_job = on_cron_job
 

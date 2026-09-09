@@ -588,6 +588,75 @@ async def test_run_main_task_verifies_without_plan_object(tmp_path):
         chat_id="direct",
     )
 
+@pytest.mark.asyncio
+async def test_run_main_task_records_initial_pass_verdict(tmp_path):
+    """The initial-verifier PASS path must record the deterministic verdict so
+    the client-delivery gate can require an explicit PASS."""
+    loop, _provider = _make_loop(tmp_path, planning_mode="agent")
+
+    initial_result = AgentRunResult(
+        final_content="Done",
+        messages=[{"role": "assistant", "content": "Done"}],
+        tools_used=["edit_file"],
+    )
+    loop._run_agent = AsyncMock(return_value=initial_result)  # type: ignore[method-assign]
+    loop._run_internal_verifier = AsyncMock(return_value=  # type: ignore[method-assign]
+        _VerificationResult(verdict="PASS", issues=[], feedback="")
+    )
+
+    result = await loop._run_main_task(
+        [{"role": "user", "content": "ok"}],
+        task_text="ok",
+        channel="cli",
+        chat_id="direct",
+        message_id=None,
+        approval_granted=False,
+        planned=None,
+    )
+
+    assert result.policy_metadata.get("verification", {}).get("verdict") == "PASS"
+
+
+@pytest.mark.asyncio
+async def test_run_main_task_initial_fail_does_not_record_pass(tmp_path):
+    """An initial FAIL verdict must not be recorded as PASS (fail closed)."""
+    loop, _provider = _make_loop(tmp_path, planning_mode="agent")
+
+    initial_result = AgentRunResult(
+        final_content="Initial answer",
+        messages=[{"role": "assistant", "content": "Initial answer"}],
+        tools_used=["edit_file"],
+    )
+    revised_result = AgentRunResult(
+        final_content="Revised answer",
+        messages=[{"role": "assistant", "content": "Revised answer"}],
+        tools_used=["edit_file"],
+    )
+    loop._run_agent = AsyncMock(side_effect=[initial_result, revised_result])  # type: ignore[method-assign]
+    loop._run_internal_verifier = AsyncMock(side_effect=[  # type: ignore[method-assign]
+        _VerificationResult(verdict="FAIL", issues=["Missing test"], feedback="Add a test."),
+        _VerificationResult(verdict="PARTIAL", issues=["Still missing"], feedback="Fix."),
+    ])
+
+    planned = _PlanDecision(
+        decision="execute",
+        action_summary="Fix the bug",
+        review_goal="Verify the bug is fixed",
+        references=[],
+    )
+    result = await loop._run_main_task(
+        [{"role": "user", "content": "fix"}],
+        task_text="fix",
+        channel="cli",
+        chat_id="direct",
+        message_id=None,
+        approval_granted=False,
+        planned=planned,
+    )
+
+    # Final verdict is PARTIAL, so delivery must not be marked PASS.
+    assert result.policy_metadata.get("verification", {}).get("verdict") != "PASS"
+
 
 @pytest.mark.asyncio
 async def test_process_direct_injects_richer_planner_handoff_into_action(tmp_path):

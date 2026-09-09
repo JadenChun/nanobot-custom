@@ -1618,6 +1618,10 @@ End your response with exactly:
             chat_id=chat_id,
         )
         if verification.verdict == "PASS":
+            result.policy_metadata["verification"] = {
+                "verdict": verification.verdict,
+                "issues": verification.issues,
+            }
             logger.info("Action phase accepted after initial verification on {}:{}", channel, chat_id)
             return result
 
@@ -2148,6 +2152,11 @@ End your response with exactly:
         meta = dict(msg.metadata or {})
         if on_stream is not None and result.stop_reason != "approval_required":
             meta["_streamed"] = True
+        verification = (getattr(result, "policy_metadata", {}) or {}).get("verification")
+        if verification is not None:
+            meta["_verification"] = str(verification.get("verdict", "")).strip().upper()
+        else:
+            meta["_verification"] = "MISSING"
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=final_content,
             metadata=meta,
