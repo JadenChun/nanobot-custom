@@ -1,8 +1,6 @@
 from pathlib import Path
 
 from nanobot.config.paths import (
-    get_browser_test_artifacts_dir,
-    get_bridge_install_dir,
     get_cli_history_path,
     get_cron_dir,
     get_data_dir,
@@ -35,18 +33,12 @@ def test_media_dir_supports_channel_namespace(monkeypatch, tmp_path: Path) -> No
 
 def test_shared_and_legacy_paths_remain_global() -> None:
     assert get_cli_history_path() == Path.home() / ".nanobot" / "history" / "cli_history"
-    assert get_bridge_install_dir() == Path.home() / ".nanobot" / "bridge"
     assert get_legacy_sessions_dir() == Path.home() / ".nanobot" / "sessions"
 
 
 def test_workspace_path_is_explicitly_resolved() -> None:
     assert get_workspace_path() == Path.home() / ".nanobot" / "workspace"
     assert get_workspace_path("~/custom-workspace") == Path.home() / "custom-workspace"
-
-
-def test_browser_test_artifacts_dir_is_workspace_scoped() -> None:
-    assert get_browser_test_artifacts_dir() == Path.home() / ".nanobot" / "workspace" / "artifacts" / "browser-tests"
-    assert get_browser_test_artifacts_dir("~/custom-workspace") == Path.home() / "custom-workspace" / "artifacts" / "browser-tests"
 
 
 def test_is_default_workspace_distinguishes_default_and_custom_paths() -> None:

@@ -1,15 +1,18 @@
 """Test message tool suppress logic for final replies."""
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nanobot.agent.context import TranscriptInput
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.message import MessageTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMResponse, ToolCallRequest
+from nanobot.utils.progress_events import output_events
 
 
 def _make_loop(tmp_path: Path) -> AgentLoop:
@@ -23,7 +26,12 @@ class TestMessageToolSuppressLogic:
     """Final reply suppressed only when message tool sends to the same target."""
 
     @pytest.mark.asyncio
-    async def test_suppress_when_sent_to_same_target(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("ephemeral", [False, True])
+    async def test_suppress_when_sent_to_same_target(
+        self,
+        tmp_path: Path,
+        ephemeral: bool,
+    ) -> None:
         loop = _make_loop(tmp_path)
         tool_call = ToolCallRequest(
             id="call1", name="message",
@@ -31,7 +39,7 @@ class TestMessageToolSuppressLogic:
         )
         calls = iter([
             LLMResponse(content="", tool_calls=[tool_call]),
-            LLMResponse(content="Hello", tool_calls=[]),
+            LLMResponse(content="Done", tool_calls=[]),
         ])
         loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
         loop.tools.get_definitions = MagicMock(return_value=[])
@@ -42,71 +50,10 @@ class TestMessageToolSuppressLogic:
             mt.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
 
         msg = InboundMessage(channel="feishu", sender_id="user1", chat_id="chat123", content="Send")
-        result = await loop._process_message(msg)
+        result = await loop._process_message(msg, ephemeral=ephemeral)
 
         assert len(sent) == 1
-        assert isinstance(mt, MessageTool)
-        assert mt.sent_messages_in_turn == tuple(sent)
         assert result is None  # suppressed
-
-    @pytest.mark.asyncio
-    async def test_not_suppress_when_primary_message_is_auxiliary_text(self, tmp_path: Path) -> None:
-        loop = _make_loop(tmp_path)
-        tool_call = ToolCallRequest(
-            id="call1", name="message",
-            arguments={"content": "Attachment ready", "channel": "feishu", "chat_id": "chat123"},
-        )
-        calls = iter([
-            LLMResponse(content="", tool_calls=[tool_call]),
-            LLMResponse(content="The final answer", tool_calls=[]),
-        ])
-        loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
-        loop.tools.get_definitions = MagicMock(return_value=[])
-
-        sent: list[OutboundMessage] = []
-        mt = loop.tools.get("message")
-        if isinstance(mt, MessageTool):
-            mt.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
-
-        msg = InboundMessage(channel="feishu", sender_id="user1", chat_id="chat123", content="Send")
-        result = await loop._process_message(msg)
-
-        assert len(sent) == 1
-        assert result is not None
-        assert result.content == "The final answer"
-
-    @pytest.mark.asyncio
-    async def test_not_suppress_when_primary_send_only_has_attachment(self, tmp_path: Path) -> None:
-        loop = _make_loop(tmp_path)
-        tool_call = ToolCallRequest(
-            id="call1", name="message",
-            arguments={
-                "content": "",
-                "channel": "feishu",
-                "chat_id": "chat123",
-                "media": ["report.pdf"],
-            },
-        )
-        calls = iter([
-            LLMResponse(content="", tool_calls=[tool_call]),
-            LLMResponse(content="The report is attached", tool_calls=[]),
-        ])
-        loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
-        loop.tools.get_definitions = MagicMock(return_value=[])
-
-        sent: list[OutboundMessage] = []
-        mt = loop.tools.get("message")
-        if isinstance(mt, MessageTool):
-            mt.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
-
-        msg = InboundMessage(channel="feishu", sender_id="user1", chat_id="chat123", content="Send")
-        result = await loop._process_message(msg)
-
-        assert len(sent) == 1
-        assert sent[0].content == ""
-        assert sent[0].media == ["report.pdf"]
-        assert result is not None
-        assert result.content == "The report is attached"
 
     @pytest.mark.asyncio
     async def test_not_suppress_when_sent_to_different_target(self, tmp_path: Path) -> None:
@@ -136,32 +83,6 @@ class TestMessageToolSuppressLogic:
         assert result.channel == "feishu"
 
     @pytest.mark.asyncio
-    async def test_cron_run_suppresses_final_result_after_explicit_message(self, tmp_path: Path) -> None:
-        loop = _make_loop(tmp_path)
-        tool_call = ToolCallRequest(
-            id="call1",
-            name="message",
-            arguments={"content": "Attachment ready", "channel": "telegram", "chat_id": "123"},
-        )
-        calls = iter([
-            LLMResponse(content="", tool_calls=[tool_call]),
-            LLMResponse(content="Attachment ready", tool_calls=[]),
-        ])
-        loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
-        loop.tools.get_definitions = MagicMock(return_value=[])
-
-        sent: list[OutboundMessage] = []
-        mt = loop.tools.get("message")
-        if isinstance(mt, MessageTool):
-            mt.set_send_callback(AsyncMock(side_effect=lambda message: sent.append(message)))
-
-        msg = InboundMessage(channel="telegram", sender_id="cron", chat_id="123", content="Run")
-        result = await loop._process_message(msg, session_key="cron:daily-content")
-
-        assert len(sent) == 1
-        assert result is None  # explicit Telegram delivery already completed the turn
-
-    @pytest.mark.asyncio
     async def test_not_suppress_when_no_message_tool_used(self, tmp_path: Path) -> None:
         loop = _make_loop(tmp_path)
         loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="Hello!", tool_calls=[]))
@@ -172,6 +93,70 @@ class TestMessageToolSuppressLogic:
 
         assert result is not None
         assert "Hello" in result.content
+
+    @pytest.mark.asyncio
+    async def test_internal_message_check_keeps_final_response(self, tmp_path: Path) -> None:
+        loop = _make_loop(tmp_path)
+        tool_call = ToolCallRequest(
+            id="call1", name="message",
+            arguments={"content": "all clear", "channel": "feishu", "chat_id": "chat123"},
+        )
+        calls = iter([
+            LLMResponse(content="", tool_calls=[tool_call]),
+            LLMResponse(content="Heartbeat summary", tool_calls=[]),
+        ])
+        loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+
+        mt = loop.tools.get("message")
+        assert isinstance(mt, MessageTool)
+        token = mt.set_suppress_delivery(True)
+        try:
+            msg = InboundMessage(
+                channel="feishu", sender_id="user1", chat_id="chat123", content="Check",
+            )
+            result = await loop._process_message(msg)
+        finally:
+            mt.reset_suppress_delivery(token)
+
+        assert result is not None
+        assert result.content == "Heartbeat summary"
+
+    @pytest.mark.asyncio
+    async def test_injected_followup_with_message_tool_does_not_emit_empty_fallback(
+        self, tmp_path: Path
+    ) -> None:
+        loop = _make_loop(tmp_path)
+        tool_call = ToolCallRequest(
+            id="call1", name="message",
+            arguments={"content": "Tool reply", "channel": "feishu", "chat_id": "chat123"},
+        )
+        calls = iter([
+            LLMResponse(content="First answer", tool_calls=[]),
+            LLMResponse(content="", tool_calls=[tool_call]),
+            LLMResponse(content="", tool_calls=[]),
+            LLMResponse(content="", tool_calls=[]),
+            LLMResponse(content="", tool_calls=[]),
+        ])
+        loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+
+        sent: list[OutboundMessage] = []
+        mt = loop.tools.get("message")
+        if isinstance(mt, MessageTool):
+            mt.set_send_callback(AsyncMock(side_effect=lambda m: sent.append(m)))
+
+        pending_queue = asyncio.Queue()
+        await pending_queue.put(
+            InboundMessage(channel="feishu", sender_id="user1", chat_id="chat123", content="follow-up")
+        )
+
+        msg = InboundMessage(channel="feishu", sender_id="user1", chat_id="chat123", content="Start")
+        result = await loop._process_message(msg, pending_queue=pending_queue)
+
+        assert len(sent) == 1
+        assert sent[0].content == "Tool reply"
+        assert result is None
 
     async def test_progress_hides_internal_reasoning(self, tmp_path: Path) -> None:
         loop = _make_loop(tmp_path)
@@ -194,28 +179,26 @@ class TestMessageToolSuppressLogic:
         async def on_progress(content: str, *, tool_hint: bool = False) -> None:
             progress.append((content, tool_hint))
 
-        final_content, _, _ = await loop._run_agent_loop([], on_progress=on_progress)
+        result = await loop._run_agent_loop(
+            TranscriptInput(history=[], current_message=None),
+            runtime=loop.llm_runtime(),
+            events=output_events(on_progress=on_progress),
+        )
 
-        assert final_content == "Done"
+        assert result.final_content == "Done"
         assert progress == [
             ("Visible", False),
-            ('read_file("foo.txt")', True),
+            ('read foo.txt', True),
         ]
 
+class TestMessageToolSchema:
 
-class TestMessageToolTurnTracking:
-
-    def test_sent_in_turn_tracks_same_target(self) -> None:
+    def test_schema_discourages_current_chat_replies(self) -> None:
         tool = MessageTool()
-        tool.set_context("feishu", "chat1")
-        assert not tool._sent_in_turn
-        tool._sent_in_turn = True
-        assert tool._sent_in_turn
 
-    def test_start_turn_resets(self) -> None:
-        tool = MessageTool()
-        tool._sent_in_turn = True
-        tool._sent_messages_in_turn = [OutboundMessage("feishu", "chat1", "done")]
-        tool.start_turn()
-        assert not tool._sent_in_turn
-        assert tool.sent_messages_in_turn == ()
+        assert "Do not use this for the normal reply in the current chat" in tool.description
+        assert "generate_image creates images in the current chat" in tool.description
+        assert (
+            "Do not use this for a normal reply in the current chat"
+            in tool.parameters["properties"]["content"]["description"]
+        )

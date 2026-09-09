@@ -1,7 +1,26 @@
 """Cron types."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal, cast, overload
+
+from nanobot.utils.dict_keys import get_camel_snake
+
+
+@overload
+def _store_int(value: Any, default: Literal[None]) -> int | None: ...
+
+
+@overload
+def _store_int(value: Any, default: int = 0) -> int: ...
+
+
+def _store_int(value: Any, default: int | None = 0) -> int | None:
+    """Coerce JSON numerics to int; treat null/blank like a missing key."""
+    if value is None or value == "":
+        return default
+    return int(value)
 
 
 @dataclass
@@ -17,13 +36,15 @@ class CronSchedule:
     # Timezone for cron expressions
     tz: str | None = None
 
-
-@dataclass(frozen=True)
-class CronDestination:
-    """One channel/chat destination for a cron result."""
-
-    channel: str
-    to: str
+    @classmethod
+    def from_store_dict(cls, data: dict[str, Any]) -> CronSchedule:
+        return cls(
+            kind=data["kind"],
+            at_ms=_store_int(get_camel_snake(data, "atMs", "at_ms"), None),
+            every_ms=_store_int(get_camel_snake(data, "everyMs", "every_ms"), None),
+            expr=data.get("expr"),
+            tz=data.get("tz"),
+        )
 
 
 @dataclass
@@ -31,32 +52,34 @@ class CronPayload:
     """What to do when the job runs."""
     kind: Literal["system_event", "agent_turn"] = "agent_turn"
     message: str = ""
-    # Deliver response to channel
+    # Legacy delivery fields used by pre-session-bound cron jobs.
     deliver: bool = False
     channel: str | None = None  # e.g. "whatsapp"
     to: str | None = None  # e.g. phone number
-    # Additional result destinations. channel/to remains the execution context.
-    additional_destinations: list[CronDestination] = field(default_factory=list)
+    channel_meta: dict[str, Any] = field(default_factory=dict)
+    session_key: str | None = None  # original session key for correct session recording
+    origin_channel: str | None = None
+    origin_chat_id: str | None = None
+    origin_metadata: dict[str, Any] = field(default_factory=dict)
 
-    def delivery_destinations(self) -> list[CronDestination]:
-        """Return de-duplicated primary and additional result destinations."""
-        if not self.deliver:
-            return []
-
-        destinations: list[CronDestination] = []
-        if self.to:
-            destinations.append(CronDestination(channel=self.channel or "cli", to=str(self.to)))
-        destinations.extend(self.additional_destinations)
-
-        unique: list[CronDestination] = []
-        seen: set[tuple[str, str]] = set()
-        for destination in destinations:
-            key = (destination.channel, destination.to)
-            if not destination.channel or not destination.to or key in seen:
-                continue
-            seen.add(key)
-            unique.append(destination)
-        return unique
+    @classmethod
+    def from_store_dict(cls, data: dict[str, Any]) -> CronPayload:
+        return cls(
+            kind=data.get("kind", "agent_turn"),
+            message=data.get("message", ""),
+            deliver=data.get("deliver", False),
+            channel=data.get("channel"),
+            to=data.get("to"),
+            channel_meta=dict(
+                get_camel_snake(data, "channelMeta", "channel_meta", {}) or {}
+            ),
+            session_key=get_camel_snake(data, "sessionKey", "session_key"),
+            origin_channel=get_camel_snake(data, "originChannel", "origin_channel"),
+            origin_chat_id=get_camel_snake(data, "originChatId", "origin_chat_id"),
+            origin_metadata=dict(
+                get_camel_snake(data, "originMetadata", "origin_metadata", {}) or {}
+            ),
+        )
 
 
 @dataclass
@@ -66,14 +89,15 @@ class CronRunRecord:
     status: Literal["ok", "error", "skipped"]
     duration_ms: int = 0
     error: str | None = None
-    # Canonical agent-turn identifier.  ``None`` keeps older persisted stores
-    # and third-party callbacks source-compatible.
-    run_id: str | None = None
-    # Canonical turn lifecycle status, retained alongside the historical
-    # coarse ``ok/error/skipped`` compatibility field.
-    run_status: str | None = None
-    # Stable execution occurrence identifier (normally the execution start ms).
-    occurrence_id: str | None = None
+
+    @classmethod
+    def from_store_dict(cls, data: dict[str, Any]) -> CronRunRecord:
+        return cls(
+            run_at_ms=_store_int(get_camel_snake(data, "runAtMs", "run_at_ms", 0)),
+            status=data["status"],
+            duration_ms=_store_int(get_camel_snake(data, "durationMs", "duration_ms", 0)),
+            error=data.get("error"),
+        )
 
 
 @dataclass
@@ -82,9 +106,32 @@ class CronJobState:
     next_run_at_ms: int | None = None
     last_run_at_ms: int | None = None
     last_status: Literal["ok", "error", "skipped"] | None = None
-    last_run_status: str | None = None
     last_error: str | None = None
     run_history: list[CronRunRecord] = field(default_factory=list)
+
+    @classmethod
+    def from_store_dict(cls, data: dict[str, Any]) -> CronJobState:
+        history = cast(
+            list[object],
+            get_camel_snake(data, "runHistory", "run_history", []) or [],
+        )
+        return cls(
+            next_run_at_ms=_store_int(
+                get_camel_snake(data, "nextRunAtMs", "next_run_at_ms"), None
+            ),
+            last_run_at_ms=_store_int(
+                get_camel_snake(data, "lastRunAtMs", "last_run_at_ms"), None
+            ),
+            last_status=get_camel_snake(data, "lastStatus", "last_status"),
+            last_error=get_camel_snake(data, "lastError", "last_error"),
+            run_history=[
+                record
+                if isinstance(record, CronRunRecord)
+                else CronRunRecord.from_store_dict(cast(dict[str, Any], record))
+                for record in history
+                if isinstance(record, (dict, CronRunRecord))
+            ],
+        )
 
 
 @dataclass
@@ -99,6 +146,39 @@ class CronJob:
     created_at_ms: int = 0
     updated_at_ms: int = 0
     delete_after_run: bool = False
+
+    @classmethod
+    def from_dict(cls, kwargs: dict[str, Any]) -> CronJob:
+        state_kwargs = dict(cast(dict[str, Any], kwargs.get("state", {})))
+        state_kwargs["run_history"] = [
+            record
+            if isinstance(record, CronRunRecord)
+            else CronRunRecord(**cast(dict[str, Any], record))
+            for record in cast(list[object], state_kwargs.get("run_history", []))
+        ]
+        kwargs["schedule"] = CronSchedule(
+            **cast(dict[str, Any], kwargs.get("schedule", {"kind": "every"}))
+        )
+        kwargs["payload"] = CronPayload(**cast(dict[str, Any], kwargs.get("payload", {})))
+        kwargs["state"] = CronJobState(**state_kwargs)
+        return cls(**cast(Any, kwargs))
+
+    @classmethod
+    def from_store_dict(cls, data: dict[str, Any]) -> CronJob:
+        """Load a job from jobs.json (camelCase with snake_case fallbacks)."""
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            enabled=data.get("enabled", True),
+            schedule=CronSchedule.from_store_dict(data["schedule"]),
+            payload=CronPayload.from_store_dict(data.get("payload") or {}),
+            state=CronJobState.from_store_dict(data.get("state") or {}),
+            created_at_ms=_store_int(get_camel_snake(data, "createdAtMs", "created_at_ms", 0)),
+            updated_at_ms=_store_int(get_camel_snake(data, "updatedAtMs", "updated_at_ms", 0)),
+            delete_after_run=bool(
+                get_camel_snake(data, "deleteAfterRun", "delete_after_run", False)
+            ),
+        )
 
 
 @dataclass
