@@ -36,7 +36,11 @@ class MessageBus:
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
         """Publish a message from a channel to the agent."""
-        await self.inbound.put(msg)
+        self.publish_inbound_nowait(msg)
+
+    def publish_inbound_nowait(self, msg: InboundMessage) -> None:
+        """Enqueue locally without a cancellation gap; the inbound queue is unbounded."""
+        self.inbound.put_nowait(msg)
 
     async def consume_inbound(self) -> InboundMessage:
         """Consume the next inbound message (blocks until available)."""

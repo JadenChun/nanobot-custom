@@ -11,8 +11,15 @@ import re
 import time
 import uuid
 import weakref
-from collections.abc import Coroutine, Iterable, Mapping
-from contextlib import AbstractContextManager, ExitStack, nullcontext, suppress
+from collections.abc import AsyncIterator, Coroutine, Iterable, Mapping
+from contextlib import (
+    AbstractAsyncContextManager,
+    AbstractContextManager,
+    ExitStack,
+    asynccontextmanager,
+    nullcontext,
+    suppress,
+)
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
@@ -83,6 +90,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.command.router import normalize_command_text
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
+from nanobot.cron.session_turns import cron_trigger
 from nanobot.events import NO_EVENTS, AgentEvent, EventSink
 from nanobot.llm_usage.context import source_from_request
 from nanobot.providers.base import LLMProvider, LLMUsage, ProviderConversationState
@@ -150,6 +158,7 @@ if TYPE_CHECKING:
 _T = TypeVar("_T")
 _SUBAGENT_PROVIDER_TASK_META = "subagent_provider_task_id"
 _SUBAGENT_TERMINAL_WAIT_SECONDS = 300.0
+_BUS_CLEANUP_TIMEOUT_SECONDS = 5.0
 
 
 class TurnKind(Enum):
@@ -229,6 +238,15 @@ class TurnContext:
         return self.session
 
 
+@dataclass
+class _AdmittedTurnIO:
+    pending_queue: asyncio.Queue[InboundMessage] | None = None
+    delivery: TurnDelivery | None = None
+    result: TurnResult | None = None
+    delivery_error: str | None = None
+    message: InboundMessage | None = None
+
+
 @dataclass(frozen=True)
 class _TurnExecutionOptions:
     """Trusted adapter options; never reconstructed from inbound metadata."""
@@ -241,6 +259,8 @@ class _TurnExecutionOptions:
     attributes: Mapping[str, Any] = field(default_factory=dict)
     raise_errors: bool = False
     on_admission_end: Callable[[str], Awaitable[None]] | None = None
+    admission_scope: Callable[[str], AbstractAsyncContextManager[_AdmittedTurnIO]] | None = None
+    inbound: InboundMessage | None = None
 
 
 class AgentLoop:
@@ -464,6 +484,8 @@ class AgentLoop:
         # When a session has an active task, new messages for that session
         # are routed here instead of creating a new task.
         self._pending_queues: dict[str, asyncio.Queue[InboundMessage]] = {}
+        self._pending_republish: dict[str, list[InboundMessage]] = {}
+        self._bus_cleanup_tasks: dict[str, set[asyncio.Future[Any]]] = {}
         self._preserve_inflight_turns_on_shutdown = False
         self._deferred_automation_turns: dict[str, list[InboundMessage]] = {}
         self._cron_turns = CronTurnCoordinator(
@@ -1476,146 +1498,169 @@ class AgentLoop:
         """
         self._preserve_inflight_turns_on_shutdown = True
 
-    async def _dispatch(self, msg: InboundMessage) -> None:
-        """Process a message: per-session serial, cross-session concurrent."""
-        session_key = self._effective_session_key(msg)
-        if session_key != msg.session_key:
-            msg = dataclasses.replace(msg, session_key_override=session_key)
-        recovery_task_registered = False
-        recovery_admission = self._recovery_admission
-        current_task: asyncio.Task[Any] | None = None
-        if recovery_admission is not None:
-            recovery_id = msg.metadata.get(RECOVERY_INBOUND_METADATA_KEY)
-            if isinstance(recovery_id, str) and recovery_id:
-                current_task = asyncio.current_task()
-                if current_task is not None:
-                    recovery_admission.register_recovery_task(session_key, current_task)
-                    recovery_task_registered = True
-            if not await recovery_admission.admit(msg):
-                logger.info("Skipped stale recovery for session {}", session_key)
-                if recovery_task_registered and current_task is not None:
-                    recovery_admission.unregister_recovery_task(session_key, current_task)
-                return
-        lock = self._get_session_lock(session_key)
-        gate = self._concurrency_gate or nullcontext()
+    @asynccontextmanager
+    async def _bus_turn_scope(self, original: InboundMessage, key: str) -> AsyncIterator[_AdmittedTurnIO]:
+        """Own bus delivery and the injection queue inside canonical admission."""
+        msg = dataclasses.replace(original, session_key_override=key, metadata=dict(original.metadata))
+        delivery = self.turn_delivery_factory.unrouted(msg, key)
+        pending: asyncio.Queue[InboundMessage] = asyncio.Queue(maxsize=20)
+        io = _AdmittedTurnIO(pending_queue=pending, delivery=delivery)
+        self._pending_queues[key] = pending
+        current = asyncio.current_task()
+        if current is not None and key != original.session_key:
+            self._track_active_task(key, current)
+        stage_entered = False
 
-        delivery = self.turn_delivery_factory.unrouted(msg, session_key)
-        pending: asyncio.Queue[InboundMessage] | None = None
-        completion_published = False
-        try:
-            async with lock, gate:
-                # Only the task that owns the session lock may publish the
-                # active mid-turn injection queue for this session.
-                pending = asyncio.Queue(maxsize=20)
-                self._pending_queues[session_key] = pending
+        def notify(error: BaseException | None = None) -> None:
+            for _, coordinator in self._automation_turn_coordinators:
                 try:
-                    delivery = self.turn_delivery_factory.create(
-                        msg,
-                        session_key,
-                        enable_stream=True,
-                    )
-                    response = await self._process_message(
-                        msg,
-                        pending_queue=pending,
-                        delivery=delivery,
-                    )
-                    continuing = turn_continuation.internal_continuation_pending(msg.metadata)
-                    await delivery.complete(
-                        response,
-                        publish_completion=not continuing,
-                    )
-                    completion_published = not continuing
-                    for _, coordinator in self._automation_turn_coordinators:
-                        coordinator.complete(msg, response=response)
-                except asyncio.CancelledError:
-                    for _, coordinator in self._automation_turn_coordinators:
-                        coordinator.complete(msg, error=asyncio.CancelledError())
-                    logger.info("Task cancelled for session {}", session_key)
-                    try:
-                        await delivery.abort_stream()
-                    except Exception:
-                        logger.debug(
-                            "Could not close stream for cancelled session {}",
-                            session_key,
-                            exc_info=True,
-                        )
-                    # An explicit turn stop materializes partial context so
-                    # the next prompt can see completed tool results.  Gateway
-                    # shutdown keeps the durable checkpoint untouched instead,
-                    # allowing RecoveryCoordinator to offer Continue safely.
-                    if (
-                        session_key in self._discarding_sessions
-                        or self._preserve_inflight_turns_on_shutdown
-                    ):
-                        raise
-                    try:
-                        key = self._effective_session_key(msg)
-                        session = self.sessions.get_or_create(key)
-                        if restore_runtime_checkpoint(session):
-                            self._clear_pending_user_turn(session)
-                            self.sessions.save(session)
-                            logger.info(
-                                "Restored partial context for cancelled session {}",
-                                key,
-                            )
-                    except Exception:
-                        logger.debug(
-                            "Could not restore checkpoint for cancelled session {}",
-                            session_key,
-                            exc_info=True,
-                        )
-                    raise
-                except Exception as exc:
-                    logger.exception("Error processing message for session {}", session_key)
-                    await delivery.fail(
-                        publish_completion=not turn_continuation.internal_continuation_pending(
-                            msg.metadata
-                        )
-                    )
-                    for _, coordinator in self._automation_turn_coordinators:
-                        coordinator.complete(msg, error=exc)
-                finally:
-                    # Drain any messages still in the pending queue and re-publish
-                    # them to the bus so they are processed as fresh inbound messages
-                    # rather than silently lost.  Only remove our own queue; a
-                    # later task waiting on the lock must not be able to steal
-                    # cleanup ownership.
-                    queue = None
-                    if self._pending_queues.get(session_key) is pending:
-                        queue = self._pending_queues.pop(session_key, None)
+                    if error is not None:
+                        coordinator.complete(msg, error=error)
                     else:
-                        queue = pending
-                    if queue is not None:
-                        leftover = 0
-                        while True:
-                            try:
-                                item = queue.get_nowait()
-                            except asyncio.QueueEmpty:
-                                break
-                            await self.bus.publish_inbound(item)
-                            leftover += 1
-                        if leftover:
-                            logger.info(
-                                "Re-published {} leftover message(s) to bus for session {}",
-                                leftover, session_key,
-                            )
-                    if not turn_continuation.internal_continuation_pending(msg.metadata):
-                        await delivery.idle()
-                    await self._publish_next_deferred_automation_turn(session_key)
+                        coordinator.complete(msg, response=io.result.outbound if io.result else None)
+                except Exception:
+                    logger.warning('Automation completion observer failed for {}', key)
+
+        def continuing() -> bool:
+            return turn_continuation.internal_continuation_pending((io.message or msg).metadata)
+
+        async def bounded(awaitable: Awaitable[Any]) -> Any:
+            operation = asyncio.ensure_future(awaitable)
+            try:
+                done, _ = await asyncio.wait({operation}, timeout=_BUS_CLEANUP_TIMEOUT_SECONDS)
+                if done:
+                    return operation.result()
+                raise TimeoutError('bus cleanup deadline exceeded')
+            finally:
+                if not operation.done():
+                    self._bus_cleanup_tasks.setdefault(key, set()).add(operation)
+                    operation.cancel()
+                    # Do not let cancellation-resistant collaborators hold admission.
+                    # Consume eventual errors; admission waits for every late operation.
+                    def finished(task: asyncio.Future[Any]) -> None:
+                        if not task.cancelled():
+                            task.exception()
+                    operation.add_done_callback(finished)
+
+        async def cleanup() -> None:
+            if self._pending_queues.get(key) is pending:
+                self._pending_queues.pop(key)
+            items = self._pending_republish.pop(key, [])
+            while not pending.empty():
+                items.append(pending.get_nowait())
+            for index, item in enumerate(items):
+                try:
+                    self.bus.publish_inbound_nowait(item)
+                except Exception:
+                    self._pending_republish[key] = items[index:]
+                    logger.warning('Retained unpublished pending input for {}', key)
+                    break
+            try:
+                if not continuing():
+                    await bounded(delivery.idle())
+            except Exception:
+                logger.warning('Bus idle publication failed for {}', key)
+            try:
+                if not continuing():
+                    self.runtime_event_publisher.clear_turn(key)
+            except Exception:
+                logger.warning('Bus turn clearing failed for {}', key)
+            try:
+                await bounded(self._publish_next_deferred_automation_turn(key))
+            except Exception:
+                logger.warning('Deferred automation publication failed for {}', key)
+
+        try:
+            delivery = self.turn_delivery_factory.create(msg, key, enable_stream=True)
+            io.delivery = delivery
+            stage_entered = True
+            yield io
         except asyncio.CancelledError:
-            if not completion_published and normalize_command_text(msg.content).lower() == "/compact":
-                await delivery.complete(None, publish_completion=True)
+            notify(asyncio.CancelledError())
+            try:
+                await bounded(delivery.abort_stream())
+            except Exception:
+                logger.warning('Stream abort failed for {}', key)
+            if stage_entered and key not in self._discarding_sessions and not self._preserve_inflight_turns_on_shutdown:
+                try:
+                    session = self.sessions.get_or_create(key)
+                    if restore_runtime_checkpoint(session):
+                        self._clear_pending_user_turn(session)
+                        self.sessions.save(session)
+                except Exception:
+                    logger.warning('Cancelled checkpoint restoration failed for {}', key)
+            if normalize_command_text(msg.content).lower() == '/compact':
+                try:
+                    await bounded(delivery.complete(None, publish_completion=True))
+                except Exception:
+                    logger.warning('Cancelled compact completion failed for {}', key)
             raise
+        except Exception as exc:
+            notify(exc)
+            try:
+                await bounded(delivery.fail(publish_completion=not continuing()))
+            except Exception:
+                logger.warning('Bus failure publication failed for {}', key)
+            raise
+        else:
+            assert io.result is not None
+            notify()
+            try:
+                await delivery.complete(io.result.outbound,
+                    publish_completion=not continuing())
+            except asyncio.CancelledError:
+                io.delivery_error = 'CancelledError'
+                try:
+                    await bounded(delivery.abort_stream())
+                except Exception:
+                    logger.warning('Stream abort after delivery cancellation failed for {}', key)
+                raise
+            except Exception as exc:
+                io.delivery_error = type(exc).__name__
+                logger.warning('Computed turn delivery failed for {}: {}', key, type(exc).__name__)
         finally:
-            if (
-                recovery_task_registered
-                and current_task is not None
-                and recovery_admission is not None
-            ):
-                recovery_admission.unregister_recovery_task(session_key, current_task)
-            if pending is None:
-                await delivery.idle()
-                await self._publish_next_deferred_automation_turn(session_key)
+            # Finish admitted cleanup before releasing its lock, including repeated cancellation.
+            task = asyncio.create_task(cleanup())
+            cancelled = False
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    cancelled = True
+            task.result()
+            if cancelled:
+                raise asyncio.CancelledError()
+
+    async def _dispatch(self, msg: InboundMessage) -> None:
+        """Adapt trusted bus ingress to canonical admission without another lock."""
+        registration_key = self._effective_session_key(msg)
+        msg = dataclasses.replace(msg, session_key_override=registration_key)
+        recovery = self._recovery_admission
+        task = asyncio.current_task()
+        registered = False
+        try:
+            recovery_id = msg.metadata.get(RECOVERY_INBOUND_METADATA_KEY)
+            if recovery is not None:
+                if isinstance(recovery_id, str) and recovery_id and task is not None:
+                    recovery.register_recovery_task(registration_key, task)
+                    registered = True
+                if not await recovery.admit(msg):
+                    return
+            request = TurnRequest(content=msg.content, session_key=registration_key,
+                source=(TurnSource.CRON if cron_trigger(msg.metadata) else
+                        TurnSource.GATEWAY if msg.is_user_input else TurnSource.SYSTEM_COMPAT),
+                route=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id,
+                                     message_id=msg.metadata.get('message_id')),
+                sender_id=msg.sender_id, media=tuple(msg.media), metadata=dict(msg.metadata))
+            await self.execute_turn(request, _options=_TurnExecutionOptions(
+                inbound=msg, admission_scope=partial(self._bus_turn_scope, msg), raise_errors=True))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('Bus turn failed for {}', registration_key)
+        finally:
+            if registered and recovery is not None and task is not None:
+                recovery.unregister_recovery_task(registration_key, task)
 
     async def aclose(self) -> None:
         """Stop active work, then close resources owned by the agent loop.
@@ -1679,6 +1724,27 @@ class AgentLoop:
         self._running = False
         logger.info("Agent loop stopping")
 
+    @asynccontextmanager
+    async def _admit_after_bus_cleanup(self, key: str) -> AsyncIterator[None]:
+        """Wait outside admission while an earlier lifecycle operation can act.
+
+        Keep the caller's original approval snapshot: replaying raw inbound text
+        after this wait could approve a different, newer pending request.
+        asyncio.wait does not cancel these owner-retained futures if the waiter
+        is cancelled. Only the admitted owner clears a settled fence.
+        """
+        lock = self._get_session_lock(key)
+        while True:
+            async with lock:
+                pending = {task for task in self._bus_cleanup_tasks.get(key, ())
+                           if not task.done()}
+                if not pending:
+                    self._bus_cleanup_tasks.pop(key, None)
+                    async with self._concurrency_gate or nullcontext():
+                        yield
+                    return
+            await asyncio.wait(pending)
+
     @staticmethod
     def _request_route(request: TurnRequest) -> tuple[str, DeliveryTarget]:
         target = request.delivery_target or request.route
@@ -1729,56 +1795,64 @@ class AgentLoop:
         self.run_store.save(record)
         result: TurnResult | None = None
         try:
-            async with self._get_session_lock(key), self._concurrency_gate or nullcontext():
+            async with self._admit_after_bus_cleanup(key):
                 try:
-                    action = await self.approval_admission.consume(snapshot)
-                    if action in ('negative', 'stale'):
-                        text = ('Cancelled the pending risky action.' if action == 'negative' else
-                                'That approval request is no longer current. Please reply to the latest approval request.')
-                        result = TurnResult(run_id=run_id, status=RunStatus.CANCELLED,
-                            content=text, stop_reason='cancelled' if action == 'negative' else 'approval_stale',
-                            outbound=OutboundMessage(channel=target.channel, chat_id=target.chat_id or '', content=text))
-                    else:
-                        content = request.content
-                        if action == 'affirmative' and snapshot.pending is not None:
-                            context.policy.approval_granted = True
-                            content = ('The user approved the previously blocked risky action. '
-                                f'Resume the task that required approval: {snapshot.pending.summary}.'
-                                f'\n\nOriginal approval reply: {request.content}')
-                        routing_metadata = dict(request.metadata)
-                        if target.message_id is not None:
-                            routing_metadata["message_id"] = target.message_id
-                        msg = InboundMessage(channel=target.channel, chat_id=target.chat_id or '',
-                            sender_id=request.sender_id, content=content, media=list(request.media),
-                            metadata=routing_metadata, session_key_override=key)
-                        effective_tools = _tools if _tools is not None else (
-                            self.tools.filtered(list(request.tool_names)) if request.tool_names is not None else self.tools)
-                        stage = await self._process_turn(msg, session_key=key, run_context=context,
-                            tools=effective_tools, hooks=list(request.hooks),
-                            on_progress=request.callbacks.on_progress, on_stream=request.callbacks.on_stream,
-                            on_stream_end=request.callbacks.on_stream_end,
-                            ephemeral=options.ephemeral,
-                            run_extra_hooks_for_ephemeral=options.run_extra_hooks_for_ephemeral,
-                            hook_factories=list(options.hook_factories), runtime=options.runtime,
-                            on_runtime_admitted=options.on_runtime_admitted, attributes=dict(options.attributes))
-                        runner = stage.run_result
-                        status = RunStatus.COMMAND if runner is None else {
-                            'completed': RunStatus.COMPLETED, 'approval_required': RunStatus.APPROVAL_REQUIRED,
-                            'policy_blocked': RunStatus.POLICY_BLOCKED, 'tool_error': RunStatus.TOOL_ERROR,
-                            'max_iterations': RunStatus.MAX_ITERATIONS, 'cancelled': RunStatus.CANCELLED,
-                        }.get(runner.stop_reason, RunStatus.ERROR)
-                        result = TurnResult(run_id=run_id, status=status,
-                            content=runner.final_content if runner else (stage.outbound.content if stage.outbound else None),
-                            stop_reason=runner.stop_reason if runner else 'command', outbound=stage.outbound,
-                            tools_used=list(runner.tools_used) if runner else [],
-                            policy_metadata=dict(runner.policy_metadata) if runner else {},
-                            error=runner.error if runner else None,
-                            usage={k: v for k, v in runner.usage.to_dict().items()
-                                   if isinstance(v, int) and not isinstance(v, bool)} if runner and runner.usage else {},
-                            sent_messages=tuple(context.delivery.sent_messages))
-                        if status is RunStatus.APPROVAL_REQUIRED:
-                            await self.approval_admission.store(session_key=key, channel=target.channel,
-                                chat_id=target.chat_id or '', summary=str(result.policy_metadata.get('summary') or 'risky action'))
+                    scope = options.admission_scope(key) if options.admission_scope else nullcontext(_AdmittedTurnIO())
+                    async with scope as io:
+                        action = await self.approval_admission.consume(snapshot)
+                        if action in ('negative', 'stale'):
+                            text = ('Cancelled the pending risky action.' if action == 'negative' else
+                                    'That approval request is no longer current. Please reply to the latest approval request.')
+                            result = TurnResult(run_id=run_id, status=RunStatus.CANCELLED,
+                                content=text, stop_reason='cancelled' if action == 'negative' else 'approval_stale',
+                                outbound=OutboundMessage(channel=target.channel, chat_id=target.chat_id or '', content=text))
+                        else:
+                            content = request.content
+                            if action == 'affirmative' and snapshot.pending is not None:
+                                context.policy.approval_granted = True
+                                content = ('The user approved the previously blocked risky action. '
+                                    f'Resume the task that required approval: {snapshot.pending.summary}.'
+                                    f'\n\nOriginal approval reply: {request.content}')
+                            routing_metadata = dict(request.metadata)
+                            if target.message_id is not None:
+                                routing_metadata["message_id"] = target.message_id
+                            envelope = options.inbound or InboundMessage(channel=target.channel,
+                                chat_id=target.chat_id or '', sender_id=request.sender_id, content=content)
+                            msg = dataclasses.replace(envelope, channel=target.channel, chat_id=target.chat_id or '',
+                                content=content, media=list(request.media), metadata=routing_metadata, session_key_override=key)
+                            effective_tools = _tools if _tools is not None else (
+                                self.tools.filtered(list(request.tool_names)) if request.tool_names is not None else self.tools)
+                            io.message = msg
+                            stage = await self._process_turn(msg, session_key=key, run_context=context,
+                                delivery=io.delivery, pending_queue=io.pending_queue,
+                                tools=effective_tools, hooks=list(request.hooks),
+                                on_progress=request.callbacks.on_progress, on_stream=request.callbacks.on_stream,
+                                on_stream_end=request.callbacks.on_stream_end,
+                                ephemeral=options.ephemeral,
+                                run_extra_hooks_for_ephemeral=options.run_extra_hooks_for_ephemeral,
+                                hook_factories=list(options.hook_factories), runtime=options.runtime,
+                                on_runtime_admitted=options.on_runtime_admitted, attributes=dict(options.attributes))
+                            runner = stage.run_result
+                            status = RunStatus.COMMAND if runner is None else {
+                                'completed': RunStatus.COMPLETED, 'approval_required': RunStatus.APPROVAL_REQUIRED,
+                                'policy_blocked': RunStatus.POLICY_BLOCKED, 'tool_error': RunStatus.TOOL_ERROR,
+                                'max_iterations': RunStatus.MAX_ITERATIONS, 'cancelled': RunStatus.CANCELLED,
+                            }.get(runner.stop_reason, RunStatus.ERROR)
+                            result = TurnResult(run_id=run_id, status=status,
+                                content=runner.final_content if runner else (stage.outbound.content if stage.outbound else None),
+                                stop_reason=runner.stop_reason if runner else 'command', outbound=stage.outbound,
+                                tools_used=list(runner.tools_used) if runner else [],
+                                policy_metadata=dict(runner.policy_metadata) if runner else {},
+                                error=runner.error if runner else None,
+                                usage={k: v for k, v in runner.usage.to_dict().items()
+                                       if isinstance(v, int) and not isinstance(v, bool)} if runner and runner.usage else {},
+                                sent_messages=tuple(context.delivery.sent_messages))
+                            if status is RunStatus.APPROVAL_REQUIRED:
+                                await self.approval_admission.store(session_key=key, channel=target.channel,
+                                    chat_id=target.chat_id or '', summary=str(result.policy_metadata.get('summary') or 'risky action'))
+                        io.result = result
+                    if io.delivery_error:
+                        record.metadata['delivery_error_type'] = io.delivery_error
                 finally:
                     if options.on_admission_end is not None:
                         try:
@@ -1787,8 +1861,11 @@ class AgentLoop:
                             logger.warning('Turn admission cleanup failed for run {}', run_id)
         except asyncio.CancelledError:
             context.cancelled = True
-            result = TurnResult(run_id=run_id, status=RunStatus.CANCELLED, stop_reason='cancelled',
-                                sent_messages=tuple(context.delivery.sent_messages))
+            if result is None:
+                result = TurnResult(run_id=run_id, status=RunStatus.CANCELLED, stop_reason='cancelled',
+                                    sent_messages=tuple(context.delivery.sent_messages))
+            else:
+                record.metadata['delivery_error_type'] = 'CancelledError'
             raise
         except Exception as exc:
             result = TurnResult(run_id=run_id, status=RunStatus.ERROR, stop_reason='error',
@@ -1813,9 +1890,6 @@ class AgentLoop:
             except Exception:
                 logger.warning('Canonical turn callback failed after run {}', run_id)
         return result
-
-    async def _process_message(self, msg: InboundMessage, **kwargs: Any) -> OutboundMessage | None:
-        return (await self._process_turn(msg, **kwargs)).outbound
 
     async def _process_turn(
         self,

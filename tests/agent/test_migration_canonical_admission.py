@@ -22,6 +22,8 @@ def host(tmp_path):
     loop.run_store = RunStore(tmp_path)
     loop._session_locks = weakref.WeakValueDictionary()
     loop._concurrency_gate = None
+    loop._bus_cleanup_tasks = {}
+    loop._pending_republish = {}
     loop.tools = ToolRegistry()
     loop._process_turn = AsyncMock(return_value=SimpleNamespace(
         run_result=AgentRunResult(final_content='answer', messages=[]), outbound=None))
