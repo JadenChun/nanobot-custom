@@ -123,3 +123,93 @@ async def test_trusted_reply_and_scheduled_provenance(tmp_path):
     assert record.visible_session_key == 'telegram:42:topic:7'
     assert record.metadata['purpose'] == 'fixture'
     assert record.scheduled_link.job_id == 'job'
+
+
+async def test_direct_adapter_uses_canonical_admission_and_preserves_options(tmp_path):
+    from nanobot.bus.events import OutboundMessage
+    loop = host(tmp_path)
+    loop.runtime_event_publisher = SimpleNamespace(run_status_changed=AsyncMock(), clear_turn=lambda key: None)
+    outbound = OutboundMessage(channel='cli', chat_id='direct', content='answer')
+    loop._process_turn.return_value.outbound = outbound
+    runtime, hook, factory = object(), object(), object()
+    admitted, progress = AsyncMock(), AsyncMock()
+    result = await asyncio.wait_for(loop.process_direct('task', session_key='cli:test',
+        runtime=runtime, hooks=[hook], hook_factories=[factory], on_runtime_admitted=admitted,
+        on_progress=progress, ephemeral=True, _run_extra_hooks_for_ephemeral=True,
+        persist_user_message=False, attributes={'fixture': 1}), timeout=1)
+    assert result is outbound
+    call = loop._process_turn.await_args
+    assert call.kwargs['run_context'].session_key == 'cli:test'
+    assert call.kwargs['runtime'] is runtime
+    assert call.kwargs['hooks'] == [hook] and call.kwargs['hook_factories'] == [factory]
+    assert call.kwargs['on_runtime_admitted'] is admitted
+    assert call.kwargs['on_progress'] is progress
+    assert call.kwargs['ephemeral'] and call.kwargs['run_extra_hooks_for_ephemeral']
+    assert call.kwargs['attributes'] == {'fixture': 1}
+    from nanobot.session.turn_continuation import SKIP_USER_PERSIST_META
+    assert call.args[0].metadata[SKIP_USER_PERSIST_META]
+    loop.runtime_event_publisher.run_status_changed.assert_awaited_once()
+
+
+async def test_direct_exception_propagates_after_terminal_record(tmp_path):
+    loop = host(tmp_path)
+    loop.runtime_event_publisher = SimpleNamespace(run_status_changed=AsyncMock(), clear_turn=lambda key: None)
+    loop._process_turn.side_effect = ValueError('fixture failure')
+    with pytest.raises(ValueError, match='fixture failure'):
+        await loop.process_direct('task')
+    records = list(loop.run_store.runs_dir.glob('*.json'))
+    assert len(records) == 1
+    assert loop.run_store.load(records[0].stem).status is RunStatus.ERROR
+    loop._process_turn.assert_awaited_once()
+
+
+async def test_cancelled_direct_waiter_does_not_publish_idle_for_active_turn(tmp_path):
+    loop = host(tmp_path)
+    idle = AsyncMock()
+    loop.runtime_event_publisher = SimpleNamespace(run_status_changed=idle, clear_turn=lambda key: None)
+    lock = loop._get_session_lock('cli:same')
+    await lock.acquire()
+    task = asyncio.create_task(loop.process_direct('waiting', session_key='cli:same'))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    idle.assert_not_awaited()
+    lock.release()
+
+
+async def test_direct_approval_cleanup_uses_effective_key_while_lock_owned(tmp_path):
+    loop = host(tmp_path)
+    await loop.approval_admission.store(session_key='cron:job', channel='telegram', chat_id='42', summary='task')
+    observed = []
+    async def idle(msg, key, status):
+        assert loop._get_session_lock(key).locked()
+        observed.append((key, status))
+    loop.runtime_event_publisher = SimpleNamespace(run_status_changed=idle, clear_turn=lambda key: None)
+    await loop.process_direct('yes', session_key='telegram:42', channel='telegram', chat_id='42')
+    assert observed == [('cron:job', 'idle')]
+
+
+async def test_cancelled_gate_waiter_does_not_publish_idle(tmp_path):
+    loop = host(tmp_path)
+    loop._concurrency_gate = asyncio.Semaphore(0)
+    idle = AsyncMock()
+    loop.runtime_event_publisher = SimpleNamespace(run_status_changed=idle, clear_turn=lambda key: None)
+    task = asyncio.create_task(loop.process_direct('waiting', session_key='cli:same'))
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    idle.assert_not_awaited()
+    assert not loop._get_session_lock('cli:same').locked()
+
+
+async def test_idle_publisher_failure_still_clears_and_unlocks(tmp_path):
+    loop = host(tmp_path)
+    cleared = []
+    loop.runtime_event_publisher = SimpleNamespace(
+        run_status_changed=AsyncMock(side_effect=RuntimeError('publisher')),
+        clear_turn=cleared.append)
+    await loop.process_direct('task', session_key='cli:same')
+    assert cleared == ['cli:same']
+    assert not loop._get_session_lock('cli:same').locked()

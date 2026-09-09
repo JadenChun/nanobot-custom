@@ -515,7 +515,7 @@ async def test_empty_response_falls_back_without_retry(aiohttp_client) -> None:
 
 @pytest.mark.asyncio
 async def test_process_direct_accepts_media() -> None:
-    """process_direct should forward media paths to _process_message."""
+    """process_direct forwards media through canonical admission."""
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus
     from nanobot.bus.runtime_events import RuntimeEventPublisher
@@ -526,12 +526,14 @@ async def test_process_direct_accepts_media() -> None:
 
     captured_msg = None
 
-    async def fake_process(msg, *, session_key="", on_progress=None, on_stream=None, on_stream_end=None, ephemeral=False):
-        nonlocal captured_msg
-        captured_msg = msg
-        return None
+    from nanobot.agent.turn import TurnResult
 
-    loop._process_message = fake_process
+    async def fake_execute(request, **kwargs):
+        nonlocal captured_msg
+        captured_msg = request
+        return TurnResult()
+
+    loop.execute_turn = fake_execute
 
     await loop.process_direct(
         content="analyze this",
@@ -540,7 +542,7 @@ async def test_process_direct_accepts_media() -> None:
     )
 
     assert captured_msg is not None
-    assert captured_msg.media == ["/tmp/image.png", "/tmp/report.pdf"]
+    assert captured_msg.media == ("/tmp/image.png", "/tmp/report.pdf")
     assert captured_msg.content == "analyze this"
 
 

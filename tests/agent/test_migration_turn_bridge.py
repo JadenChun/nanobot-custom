@@ -29,6 +29,9 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     loop.workspace_scopes = SimpleNamespace(for_turn=lambda **kwargs: SimpleNamespace(project_path=tmp_path))
     loop.context = SimpleNamespace(build_transcript=lambda *args, **kwargs: None)
     loop.tools = ToolRegistry()
+    from nanobot.agent.tools.message import MessageTool
+    loop.tools.register(MessageTool())
+    selected_tools = ToolRegistry()
     loop._file_state_store = FileStateStore()
     loop.tool_hint_max_length = 100
     loop._hook_factories = []
@@ -83,9 +86,9 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     try:
         if failure:
             with pytest.raises(asyncio.CancelledError if failure == 'cancel' else RuntimeError):
-                await loop._run_agent_loop(None, runtime=None, run_context=context, turn_scopes=[Scope()], session=active_session)
+                await loop._run_agent_loop(None, runtime=None, run_context=context, turn_scopes=[Scope()], session=active_session, tools=selected_tools)
         else:
-            await loop._run_agent_loop(None, runtime=None, run_context=context, turn_scopes=[Scope()], session=active_session)
+            await loop._run_agent_loop(None, runtime=None, run_context=context, turn_scopes=[Scope()], session=active_session, tools=selected_tools)
         assert current_turn_context() is outer
         assert current_request_context() is previous_request
         assert current_workspace_scope() is previous_scope
@@ -96,6 +99,7 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
         loop.runner.run.assert_not_awaited()
         return
     spec = loop.runner.run.await_args.args[0]
+    assert spec.tools is selected_tools and not spec.tools.tool_names
     assert spec.turn_context is context
     assert spec.tool_policy.context_manager is context.policy.context_manager
     assert spec.tool_policy.workspace == tmp_path

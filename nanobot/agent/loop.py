@@ -60,6 +60,7 @@ from nanobot.agent.turn import (
     RunRecord,
     RunStatus,
     SessionRunRef,
+    TurnCallbacks,
     TurnRequest,
     TurnResult,
     TurnSource,
@@ -226,6 +227,20 @@ class TurnContext:
         if self.session is None:
             raise RuntimeError("turn session is not initialized; RESTORE must run before this stage")
         return self.session
+
+
+@dataclass(frozen=True)
+class _TurnExecutionOptions:
+    """Trusted adapter options; never reconstructed from inbound metadata."""
+
+    ephemeral: bool = False
+    run_extra_hooks_for_ephemeral: bool = False
+    hook_factories: tuple[AgentTurnHookFactory, ...] = ()
+    runtime: LLMRuntime | None = None
+    on_runtime_admitted: Callable[[LLMRuntime], Awaitable[None]] | None = None
+    attributes: Mapping[str, Any] = field(default_factory=dict)
+    raise_errors: bool = False
+    on_admission_end: Callable[[str], Awaitable[None]] | None = None
 
 
 class AgentLoop:
@@ -799,7 +814,7 @@ class AgentLoop:
         assert ctx.request_context is not None
         return await self._resolve_runtime_context_for_request(
             ctx.request_context,
-            ctx.tools or self.tools,
+            ctx.tools if ctx.tools is not None else self.tools,
         )
 
     async def _resolve_runtime_context_for_request(
@@ -1186,7 +1201,7 @@ class AgentLoop:
                 request_ctx,
                 workspace=effective_scope.project_path,
             )
-        effective_tools = tools or self.tools
+        effective_tools = tools if tools is not None else self.tools
         file_state_token = bind_file_states(self._file_state_store.for_session(active_session_key))
         request_token = bind_request_context(request_ctx)
         workspace_token = bind_workspace_scope(effective_scope)
@@ -1679,10 +1694,12 @@ class AgentLoop:
         assert target is not None
         return key, target
 
-    async def execute_turn(self, request: TurnRequest, *, _tools: ToolRegistry | None = None) -> TurnResult:
+    async def execute_turn(self, request: TurnRequest, *, _tools: ToolRegistry | None = None,
+                           _options: _TurnExecutionOptions | None = None) -> TurnResult:
         """Admit one serialized canonical turn into the upstream stage pipeline."""
         if not isinstance(request, TurnRequest):
             raise TypeError('execute_turn expects a TurnRequest')
+        options = _options or _TurnExecutionOptions()
         deps = self._fork_dependencies
         if deps is None:
             raise ValueError('canonical admission requires foreground dependencies')
@@ -1713,50 +1730,61 @@ class AgentLoop:
         result: TurnResult | None = None
         try:
             async with self._get_session_lock(key), self._concurrency_gate or nullcontext():
-                action = await self.approval_admission.consume(snapshot)
-                if action in ('negative', 'stale'):
-                    text = ('Cancelled the pending risky action.' if action == 'negative' else
-                            'That approval request is no longer current. Please reply to the latest approval request.')
-                    result = TurnResult(run_id=run_id, status=RunStatus.CANCELLED,
-                        content=text, stop_reason='cancelled' if action == 'negative' else 'approval_stale',
-                        outbound=OutboundMessage(channel=target.channel, chat_id=target.chat_id or '', content=text))
-                else:
-                    content = request.content
-                    if action == 'affirmative' and snapshot.pending is not None:
-                        context.policy.approval_granted = True
-                        content = ('The user approved the previously blocked risky action. '
-                            f'Resume the task that required approval: {snapshot.pending.summary}.'
-                            f'\n\nOriginal approval reply: {request.content}')
-                    routing_metadata = dict(request.metadata)
-                    if target.message_id is not None:
-                        routing_metadata["message_id"] = target.message_id
-                    msg = InboundMessage(channel=target.channel, chat_id=target.chat_id or '',
-                        sender_id=request.sender_id, content=content, media=list(request.media),
-                        metadata=routing_metadata, session_key_override=key)
-                    effective_tools = _tools if _tools is not None else (
-                        self.tools.filtered(list(request.tool_names)) if request.tool_names is not None else self.tools)
-                    stage = await self._process_turn(msg, session_key=key, run_context=context,
-                        tools=effective_tools, hooks=list(request.hooks),
-                        on_progress=request.callbacks.on_progress, on_stream=request.callbacks.on_stream,
-                        on_stream_end=request.callbacks.on_stream_end)
-                    runner = stage.run_result
-                    status = RunStatus.COMMAND if runner is None else {
-                        'completed': RunStatus.COMPLETED, 'approval_required': RunStatus.APPROVAL_REQUIRED,
-                        'policy_blocked': RunStatus.POLICY_BLOCKED, 'tool_error': RunStatus.TOOL_ERROR,
-                        'max_iterations': RunStatus.MAX_ITERATIONS, 'cancelled': RunStatus.CANCELLED,
-                    }.get(runner.stop_reason, RunStatus.ERROR)
-                    result = TurnResult(run_id=run_id, status=status,
-                        content=runner.final_content if runner else (stage.outbound.content if stage.outbound else None),
-                        stop_reason=runner.stop_reason if runner else 'command', outbound=stage.outbound,
-                        tools_used=list(runner.tools_used) if runner else [],
-                        policy_metadata=dict(runner.policy_metadata) if runner else {},
-                        error=runner.error if runner else None,
-                        usage={k: v for k, v in runner.usage.to_dict().items()
-                               if isinstance(v, int) and not isinstance(v, bool)} if runner and runner.usage else {},
-                        sent_messages=tuple(context.delivery.sent_messages))
-                    if status is RunStatus.APPROVAL_REQUIRED:
-                        await self.approval_admission.store(session_key=key, channel=target.channel,
-                            chat_id=target.chat_id or '', summary=str(result.policy_metadata.get('summary') or 'risky action'))
+                try:
+                    action = await self.approval_admission.consume(snapshot)
+                    if action in ('negative', 'stale'):
+                        text = ('Cancelled the pending risky action.' if action == 'negative' else
+                                'That approval request is no longer current. Please reply to the latest approval request.')
+                        result = TurnResult(run_id=run_id, status=RunStatus.CANCELLED,
+                            content=text, stop_reason='cancelled' if action == 'negative' else 'approval_stale',
+                            outbound=OutboundMessage(channel=target.channel, chat_id=target.chat_id or '', content=text))
+                    else:
+                        content = request.content
+                        if action == 'affirmative' and snapshot.pending is not None:
+                            context.policy.approval_granted = True
+                            content = ('The user approved the previously blocked risky action. '
+                                f'Resume the task that required approval: {snapshot.pending.summary}.'
+                                f'\n\nOriginal approval reply: {request.content}')
+                        routing_metadata = dict(request.metadata)
+                        if target.message_id is not None:
+                            routing_metadata["message_id"] = target.message_id
+                        msg = InboundMessage(channel=target.channel, chat_id=target.chat_id or '',
+                            sender_id=request.sender_id, content=content, media=list(request.media),
+                            metadata=routing_metadata, session_key_override=key)
+                        effective_tools = _tools if _tools is not None else (
+                            self.tools.filtered(list(request.tool_names)) if request.tool_names is not None else self.tools)
+                        stage = await self._process_turn(msg, session_key=key, run_context=context,
+                            tools=effective_tools, hooks=list(request.hooks),
+                            on_progress=request.callbacks.on_progress, on_stream=request.callbacks.on_stream,
+                            on_stream_end=request.callbacks.on_stream_end,
+                            ephemeral=options.ephemeral,
+                            run_extra_hooks_for_ephemeral=options.run_extra_hooks_for_ephemeral,
+                            hook_factories=list(options.hook_factories), runtime=options.runtime,
+                            on_runtime_admitted=options.on_runtime_admitted, attributes=dict(options.attributes))
+                        runner = stage.run_result
+                        status = RunStatus.COMMAND if runner is None else {
+                            'completed': RunStatus.COMPLETED, 'approval_required': RunStatus.APPROVAL_REQUIRED,
+                            'policy_blocked': RunStatus.POLICY_BLOCKED, 'tool_error': RunStatus.TOOL_ERROR,
+                            'max_iterations': RunStatus.MAX_ITERATIONS, 'cancelled': RunStatus.CANCELLED,
+                        }.get(runner.stop_reason, RunStatus.ERROR)
+                        result = TurnResult(run_id=run_id, status=status,
+                            content=runner.final_content if runner else (stage.outbound.content if stage.outbound else None),
+                            stop_reason=runner.stop_reason if runner else 'command', outbound=stage.outbound,
+                            tools_used=list(runner.tools_used) if runner else [],
+                            policy_metadata=dict(runner.policy_metadata) if runner else {},
+                            error=runner.error if runner else None,
+                            usage={k: v for k, v in runner.usage.to_dict().items()
+                                   if isinstance(v, int) and not isinstance(v, bool)} if runner and runner.usage else {},
+                            sent_messages=tuple(context.delivery.sent_messages))
+                        if status is RunStatus.APPROVAL_REQUIRED:
+                            await self.approval_admission.store(session_key=key, channel=target.channel,
+                                chat_id=target.chat_id or '', summary=str(result.policy_metadata.get('summary') or 'risky action'))
+                finally:
+                    if options.on_admission_end is not None:
+                        try:
+                            await options.on_admission_end(key)
+                        except Exception:
+                            logger.warning('Turn admission cleanup failed for run {}', run_id)
         except asyncio.CancelledError:
             context.cancelled = True
             result = TurnResult(run_id=run_id, status=RunStatus.CANCELLED, stop_reason='cancelled',
@@ -1765,6 +1793,8 @@ class AgentLoop:
         except Exception as exc:
             result = TurnResult(run_id=run_id, status=RunStatus.ERROR, stop_reason='error',
                 error=str(exc), sent_messages=tuple(context.delivery.sent_messages))
+            if options.raise_errors:
+                raise
         finally:
             if result is not None:
                 record.status, record.stop_reason = result.status, result.stop_reason
@@ -1964,7 +1994,7 @@ class AgentLoop:
                 ctx.session = self.sessions.get_or_create(ctx.session_key)
         session = ctx.session
         ctx.ephemeral = ctx.ephemeral or not session.policy.persist
-        tools = ctx.tools or self.tools
+        tools = ctx.tools if ctx.tools is not None else self.tools
         if session.policy.disabled_tools:
             restricted = ToolRegistry()
             for name in tools.tool_names:
@@ -2569,38 +2599,23 @@ class AgentLoop:
             channel=channel, sender_id=sender_id, chat_id=chat_id,
             content=content, media=media or [], metadata=metadata,
         )
-        # Share the dispatch lock so direct calls serialize with bus turns.
-        lock = self._get_session_lock(session_key)
-        try:
-            async with lock:
-                kwargs: dict[str, Any] = {
-                    "session_key": session_key,
-                    "on_progress": on_progress,
-                    "on_stream": on_stream,
-                    "on_stream_end": on_stream_end,
-                    "ephemeral": ephemeral,
-                }
-                if _run_extra_hooks_for_ephemeral:
-                    kwargs["run_extra_hooks_for_ephemeral"] = True
-                if hooks is not None:
-                    kwargs["hooks"] = hooks
-                if hook_factories is not None:
-                    kwargs["hook_factories"] = hook_factories
-                if tools is not None:
-                    kwargs["tools"] = tools
-                if runtime is not None:
-                    kwargs["runtime"] = runtime
-                if on_runtime_admitted is not None:
-                    kwargs["on_runtime_admitted"] = on_runtime_admitted
-                if attributes is not None:
-                    kwargs["attributes"] = dict(attributes)
-                return await self._process_message(
-                    msg,
-                    **kwargs,
-                )
-        finally:
-            await self.runtime_event_publisher.run_status_changed(msg, session_key, "idle")
-            self.runtime_event_publisher.clear_turn(session_key)
+        request = TurnRequest(content=content, session_key=session_key,
+            route=DeliveryTarget(channel=channel, chat_id=chat_id), sender_id=sender_id,
+            media=tuple(media or ()), metadata=metadata, hooks=tuple(hooks or ()),
+            callbacks=TurnCallbacks(on_progress=on_progress, on_stream=on_stream, on_stream_end=on_stream_end))
+        async def admission_ended(effective_key: str) -> None:
+            try:
+                await self.runtime_event_publisher.run_status_changed(msg, effective_key, "idle")
+            finally:
+                self.runtime_event_publisher.clear_turn(effective_key)
+
+        options = _TurnExecutionOptions(ephemeral=ephemeral,
+            run_extra_hooks_for_ephemeral=_run_extra_hooks_for_ephemeral,
+            hook_factories=tuple(hook_factories or ()), runtime=runtime,
+            on_runtime_admitted=on_runtime_admitted, attributes=dict(attributes or {}),
+            raise_errors=True, on_admission_end=admission_ended)
+        result = await self.execute_turn(request, _tools=tools, _options=options)
+        return result.outbound
 
     def _get_session_lock(self, session_key: str) -> asyncio.Lock:
         """Return the shared lock while allowing idle session entries to expire."""
