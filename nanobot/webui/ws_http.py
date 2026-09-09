@@ -1054,7 +1054,11 @@ class GatewayHTTPHandler:
             return _http_error(404, "automation not found")
         if job.payload.kind == "system_event":
             return _http_error(403, "system automation is protected")
-        if action in {"enable", "run"} and not is_bound_cron_job(job):
+        if action == "run":
+            diagnostic = self.cron_service.admission_diagnostic(job)
+            if diagnostic:
+                return _http_error(409, diagnostic)
+        if action == "enable" and not is_bound_cron_job(job):
             return _http_error(409, "automation has no linked chat")
 
         if action == "enable":

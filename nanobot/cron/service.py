@@ -16,6 +16,7 @@ from typing import Any, Callable, Coroutine, Literal
 from filelock import FileLock
 from loguru import logger
 
+from nanobot.cron.migration import cron_admission_diagnostic, prepare_staging_job
 from nanobot.cron.session_turns import is_bound_cron_job
 from nanobot.cron.types import (
     CronJob,
@@ -91,31 +92,6 @@ def _validate_schedule_for_add(schedule: CronSchedule) -> None:
                 raise ValueError(f"unknown timezone '{schedule.tz}'") from None
 
 
-def _has_legacy_delivery_context(payload: CronPayload) -> bool:
-    return bool(payload.deliver or payload.channel or payload.to or payload.channel_meta)
-
-
-def _legacy_session_key(payload: CronPayload) -> str | None:
-    if payload.session_key:
-        return payload.session_key
-    if payload.channel and payload.to:
-        return f"{payload.channel}:{payload.to}"
-    return None
-
-
-def _disable_malformed_legacy_job(job: CronJob) -> None:
-    reason = "legacy cron payload is missing channel/to; recreate it from a chat session"
-    job.payload.deliver = False
-    job.payload.channel = None
-    job.payload.to = None
-    job.payload.channel_meta = {}
-    job.enabled = False
-    job.state.next_run_at_ms = None
-    job.state.last_status = "error"
-    job.state.last_error = reason
-    logger.warning("Cron: disabled malformed legacy job '{}' ({}): {}", job.name, job.id, reason)
-
-
 def _persistable_origin_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Return a detached JSON-safe routing snapshot for a cron payload."""
     snapshot: dict[str, Any] = {}
@@ -130,49 +106,22 @@ def _persistable_origin_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_agent_turn_job(job: CronJob) -> bool:
-    """Make routing metadata persistable and migrate legacy user cron payloads.
-
-    Pre-bound user cron jobs stored their delivery target in ``channel``/``to``.
-    Normal user-created legacy jobs always have those fields; if they are
-    missing, keep the record for inspection but disable it instead of preserving
-    a runtime legacy execution path.
-    """
-    payload = job.payload
-    origin_metadata = _persistable_origin_metadata(payload.origin_metadata)
-    changed = origin_metadata != payload.origin_metadata
-    payload.origin_metadata = origin_metadata
-
-    if payload.kind != "agent_turn" or not _has_legacy_delivery_context(payload):
-        return changed
-
-    if not payload.channel or not payload.to:
-        _disable_malformed_legacy_job(job)
-        return True
-
-    payload.session_key = _legacy_session_key(payload)
-    payload.origin_channel = payload.origin_channel or payload.channel
-    payload.origin_chat_id = payload.origin_chat_id or payload.to
-    if not payload.origin_metadata:
-        payload.origin_metadata = _persistable_origin_metadata(payload.channel_meta or {})
-
-    payload.deliver = False
-    payload.channel = None
-    payload.to = None
-    payload.channel_meta = {}
-    job.updated_at_ms = max(job.updated_at_ms, _now_ms())
-    logger.info("Cron: migrated legacy job '{}' ({}) to session-bound payload", job.name, job.id)
-    return True
+    """Prepare compatible bindings without rewriting delivery or historical state."""
+    prepared = prepare_staging_job(job)
+    if prepared.diagnostic:
+        return False
+    payload = prepared.job.payload
+    payload.origin_metadata = _persistable_origin_metadata(payload.origin_metadata)
+    changed = payload != job.payload
+    if changed:
+        job.payload = payload
+    return changed
 
 
 class CronService:
     """Service for managing and executing scheduled jobs."""
 
     _MAX_RUN_HISTORY = 20
-    _UNBOUND_AGENT_JOB_REASON = (
-        "agent cron payload is missing bound session delivery context; "
-        "recreate it from a chat session"
-    )
-
     def __init__(
         self,
         store_path: Path,
@@ -195,40 +144,19 @@ class CronService:
         """Return whether this instance currently owns the live store."""
         return self._running or self._active_executions > 0
 
-    def _is_unbound_agent_job(self, job: CronJob) -> bool:
-        return job.payload.kind == "agent_turn" and not is_bound_cron_job(job)
+    def admission_diagnostic(self, job: CronJob) -> str | None:
+        """Explain an execution fence separately from historical run errors."""
+        return cron_admission_diagnostic(job)
 
-    def _enforce_agent_binding(self, job: CronJob) -> bool:
-        """Disable user cron jobs that cannot be routed to a concrete session."""
-        if not self._is_unbound_agent_job(job):
-            return False
-        if (
-            not job.enabled
-            and job.state.next_run_at_ms is None
-            and job.state.last_status == "error"
-            and job.state.last_error
-        ):
-            return False
+    def _prepare_agent_binding(self, job: CronJob) -> bool:
+        return _normalize_agent_turn_job(job)
 
-        job.enabled = False
-        job.state.next_run_at_ms = None
-        job.state.last_status = "error"
-        job.state.last_error = self._UNBOUND_AGENT_JOB_REASON
-        job.updated_at_ms = max(job.updated_at_ms, _now_ms())
-        logger.warning(
-            "Cron: disabled unbound agent job '{}' ({}): {}",
-            job.name,
-            job.id,
-            self._UNBOUND_AGENT_JOB_REASON,
-        )
-        return True
-
-    def _enforce_store_agent_bindings(self) -> bool:
+    def _prepare_store_agent_bindings(self) -> bool:
         if not self._store:
             return False
         changed = False
         for job in self._store.jobs:
-            changed = self._enforce_agent_binding(job) or changed
+            changed = self._prepare_agent_binding(job) or changed
         return changed
 
     def _load_jobs(self) -> tuple[list[CronJob], int] | None:
@@ -342,7 +270,7 @@ class CronService:
         jobs, version = loaded
         self._store = CronStore(version=version, jobs=jobs)
         self._merge_action()
-        if self._enforce_store_agent_bindings() and self._should_persist_store():
+        if self._prepare_store_agent_bindings() and self._should_persist_store():
             self._save_store()
 
         return self._store
@@ -508,7 +436,7 @@ class CronService:
             return
         now = _now_ms()
         for job in self._store.jobs:
-            if self._enforce_agent_binding(job):
+            if self.admission_diagnostic(job):
                 continue
             if job.enabled:
                 job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
@@ -518,7 +446,7 @@ class CronService:
         if not self._store:
             return None
         times = [j.state.next_run_at_ms for j in self._store.jobs
-                 if j.enabled and j.state.next_run_at_ms]
+                 if j.enabled and j.state.next_run_at_ms and not self.admission_diagnostic(j)]
         return min(times) if times else None
 
     def _arm_timer(self) -> None:
@@ -566,6 +494,7 @@ class CronService:
             due_jobs = [
                 j for j in store.jobs
                 if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
+                and not self.admission_diagnostic(j)
             ]
 
             for job in due_jobs:
@@ -590,6 +519,8 @@ class CronService:
 
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job."""
+        if self.admission_diagnostic(job):
+            return
         start_ms = _now_ms()
         logger.info("Cron: executing job '{}' ({})", job.name, job.id)
 
@@ -715,8 +646,7 @@ class CronService:
             updated_at_ms=now,
             delete_after_run=delete_after_run,
         )
-        _normalize_agent_turn_job(job)
-        self._enforce_agent_binding(job)
+        self._prepare_agent_binding(job)
         if self._should_persist_store():
             store = self._require_store()
             store.jobs.append(job)
@@ -786,7 +716,7 @@ class CronService:
             if job.id == job_id:
                 job.enabled = enabled
                 job.updated_at_ms = _now_ms()
-                self._enforce_agent_binding(job)
+                self._prepare_agent_binding(job)
                 if job.enabled:
                     job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
                 else:
@@ -838,8 +768,7 @@ class CronService:
             job.payload.to = to
         if delete_after_run is not None:
             job.delete_after_run = delete_after_run
-        _normalize_agent_turn_job(job)
-        self._enforce_agent_binding(job)
+        self._prepare_agent_binding(job)
 
         job.updated_at_ms = _now_ms()
         if job.enabled:
@@ -869,9 +798,7 @@ class CronService:
             store = self._require_store(reload_during_execution=reload_store)
             for job in store.jobs:
                 if job.id == job_id:
-                    if self._is_unbound_agent_job(job):
-                        self._enforce_agent_binding(job)
-                        self._save_store()
+                    if self.admission_diagnostic(job):
                         return False
                     if not force and not job.enabled:
                         return False

@@ -63,7 +63,7 @@ def cron_run_id(metadata: Mapping[str, Any] | None) -> str | None:
 
 
 def is_bound_cron_job(job: CronJob) -> bool:
-    """True for session-bound cron jobs with complete delivery context."""
+    """True for supported cron jobs with complete execution context; not admission."""
     payload = job.payload
     if (
         payload.kind != "agent_turn"
@@ -72,9 +72,4 @@ def is_bound_cron_job(job: CronJob) -> bool:
         or not payload.origin_chat_id
     ):
         return False
-    return not (
-        payload.deliver
-        or payload.channel
-        or payload.to
-        or payload.channel_meta
-    )
+    return payload.execution_mode in ("session_bound", "legacy_fresh")

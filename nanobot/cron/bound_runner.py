@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from nanobot.agent.tools.cron import CronTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.cron.migration import cron_admission_diagnostic
 from nanobot.cron.session_delivery import origin_delivery_context
 from nanobot.cron.session_turns import CRON_DEFER_UNTIL_IDLE_META, CRON_TRIGGER_META
 from nanobot.cron.types import CronJob
@@ -69,6 +70,9 @@ async def run_bound_cron_job(
     cron: CronRunRecorder,
 ) -> str | None:
     """Execute a session-bound cron job as a normal agent session turn."""
+    diagnostic = cron_admission_diagnostic(job)
+    if diagnostic:
+        raise ValueError(f"cron job {job.id} cannot execute: {diagnostic}")
     session_key = job.payload.session_key
     if not session_key:
         raise ValueError(f"cron job {job.id} is missing payload.session_key")

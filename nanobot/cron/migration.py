@@ -46,3 +46,19 @@ def prepare_staging_job(job: CronJob) -> PreparedCronJob:
     if not payload.origin_metadata:
         payload.origin_metadata = deepcopy(payload.channel_meta)
     return PreparedCronJob(prepared, 'legacy_fresh')
+
+
+def cron_admission_diagnostic(job: CronJob) -> str | None:
+    """Fence unsupported execution/delivery without modifying stored job state."""
+    prepared = prepare_staging_job(job)
+    if prepared.diagnostic:
+        return prepared.diagnostic
+    if prepared.execution_mode == "system_event":
+        return None
+    if prepared.execution_mode == "legacy_fresh":
+        return "legacy fresh-history execution and delivery adapter is not installed"
+    payload = prepared.job.payload
+    if (payload.deliver or payload.channel or payload.to or payload.channel_meta
+            or payload.additional_destinations):
+        return "legacy delivery adapter is not installed"
+    return None

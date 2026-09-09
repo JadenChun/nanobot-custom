@@ -557,6 +557,9 @@ def _run_gateway(
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
+        diagnostic = cron.admission_diagnostic(job)
+        if diagnostic:
+            raise CronJobSkippedError(diagnostic)
         async def _silent(*_args: Any, **_kwargs: Any) -> None:
             pass
 
