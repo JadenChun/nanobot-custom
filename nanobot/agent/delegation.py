@@ -7,6 +7,8 @@ import contextvars
 import json
 import re
 import uuid
+from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,7 @@ from nanobot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
+from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.filesystem import (
     EditFileTool,
     ListDirTool,
@@ -121,10 +124,15 @@ class ForegroundAgentManager:
         crawler_max_output_tokens: int = 2000,
         crawler_reasoning_effort: str | None = "low",
         file_lock_registry: FileLockRegistry | None = None,
+        runtime: LLMRuntime | None = None,
+        crawler_runtime: LLMRuntime | None = None,
+        context_window_tokens: int = 120000,
     ) -> None:
         self.provider = provider
         self.workspace = workspace
         self.model = model or provider.get_default_model()
+        self._baseline_runtime = runtime or LLMRuntime.capture(
+            provider, self.model, context_window_tokens=context_window_tokens)
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
         self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
@@ -143,9 +151,11 @@ class ForegroundAgentManager:
             restrict_to_workspace=restrict_to_workspace,
         )
         self.runner = AgentRunner()
-        self.crawler_provider = crawler_provider or provider
+        self.crawler_provider = crawler_runtime.provider if crawler_runtime else (crawler_provider or provider)
         self.crawler_runner = AgentRunner()
-        self.crawler_model = crawler_model or self.model
+        self.crawler_model = crawler_runtime.model if crawler_runtime else (crawler_model or self.model)
+        self._crawler_runtime = crawler_runtime or LLMRuntime.capture(
+            self.crawler_provider, self.crawler_model, context_window_tokens=crawler_max_input_tokens)
         self.crawler_max_iterations = max(1, min(crawler_max_iterations, 100))
         self.crawler_max_input_tokens = max(1000, crawler_max_input_tokens)
         self.crawler_max_output_tokens = max(256, crawler_max_output_tokens)
@@ -164,6 +174,10 @@ class ForegroundAgentManager:
             f"{self.__class__.__name__}_legacy_budget",
             default=None,
         )
+
+    @property
+    def file_lock_registry(self) -> FileLockRegistry:
+        return self._file_lock_registry
 
     def start_turn(self) -> None:
         """Reset the compatibility budget in the current task.
@@ -240,10 +254,8 @@ class ForegroundAgentManager:
         return "\n\n".join(sections)
 
     def _base_prompt(self, title: str) -> str:
-        from nanobot.agent.context import ContextBuilder
-
         parts = [
-            f"# {title}\n\n{ContextBuilder._build_runtime_context(None, None)}",
+            f"# {title}\n\nCurrent Time: {datetime.now().astimezone().isoformat(timespec='seconds')}",
             (
                 "You are a foreground role called by Nanobot's main orchestrator. Complete only "
                 "the bounded assignment and return evidence to the orchestrator. Never address "
@@ -414,17 +426,24 @@ class ForegroundAgentManager:
                 "by parent approval."
             )
             prompt = prompt + capability_prompt
+        request = current_request_context()
+        runtime = (self._crawler_runtime if role == "crawler" else
+                   request.runtime if request is not None and request.runtime is not None else
+                   self._baseline_runtime)
+        if model is not None:
+            runtime = replace(runtime, model=model)
+        if max_input_tokens is not None:
+            runtime = replace(runtime, context_window_tokens=max_input_tokens)
+        if max_output_tokens is not None or reasoning_effort is not None:
+            runtime = runtime.with_generation_overrides(
+                max_tokens=max_output_tokens, reasoning_effort=reasoning_effort)
         result = await (runner or self.runner).run(AgentRunSpec(
             initial_messages=[
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": assignment},
             ],
             tools=tools,
-            runtime=LLMRuntime.capture(
-                self.crawler_provider if runner is self.crawler_runner else self.provider,
-                model or self.model,
-                context_window_tokens=max_input_tokens or 120000,
-            ).with_generation_overrides(max_tokens=max_output_tokens, reasoning_effort=reasoning_effort),
+            runtime=runtime,
             max_iterations=max_iterations,
             max_tool_result_chars=16000,
             turn_context=turn_context,

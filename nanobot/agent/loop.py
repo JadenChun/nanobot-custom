@@ -36,6 +36,7 @@ from nanobot.agent.automation_turns import publish_next_deferred_turn
 from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
 from nanobot.agent.cron_turns import CronTurnCoordinator
 from nanobot.agent.delegation import reset_current_turn_context, set_current_turn_context
+from nanobot.agent.foreground import build_foreground_dependencies, validate_foreground_dependencies
 from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.model_runtime import ModelRuntimeResolver
@@ -374,6 +375,7 @@ class AgentLoop:
         idle_compact_check_interval_seconds: int = 0,
         recovery_admission: RecoveryAdmission | None = None,
         fork_dependencies: ForkToolDependencies | None = None,
+        _owns_fork_dependencies: bool = False,
     ):
         from nanobot.migration_guard import require_runtime_ready
         require_runtime_ready()
@@ -448,9 +450,18 @@ class AgentLoop:
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
 
-        self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
-        self.sessions = session_manager or SessionManager(workspace)
+        if fork_dependencies is None:
+            fork_dependencies = build_foreground_dependencies(
+                workspace=workspace, runtime=self.runtime_resolver.runtime,
+                tools_config=_tc, restrict_to_workspace=restrict_to_workspace)
+            _owns_fork_dependencies = True
+        validate_foreground_dependencies(fork_dependencies, workspace=workspace,
+                                         restrict_to_workspace=restrict_to_workspace)
         self._fork_dependencies = fork_dependencies
+        self._owned_foreground_manager = fork_dependencies.foreground_manager if _owns_fork_dependencies else None
+        self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills,
+                                      context_manager=fork_dependencies.resource_policy.context_manager)
+        self.sessions = session_manager or SessionManager(workspace)
         self.approval_admission = ApprovalAdmission()
         self.run_store = RunStore(workspace, self.sessions)
         # One file-read/write tracker per logical session. The tool registry is
@@ -575,6 +586,14 @@ class AgentLoop:
             config,
             provider_snapshot_loader,
         )
+        if extra.get("fork_dependencies") is None:
+            extra["fork_dependencies"] = build_foreground_dependencies(
+                workspace=config.workspace_path,
+                runtime=LLMRuntime.capture(provider, model, context_window_tokens=context_window_tokens),
+                tools_config=config.tools, restrict_to_workspace=config.tools.restrict_to_workspace,
+                config=config,
+            )
+            extra["_owns_fork_dependencies"] = True
         return cls(
             bus=bus,
             provider=provider,
@@ -1710,7 +1729,10 @@ class AgentLoop:
         finally:
             self._background_tasks.clear()
 
+        owned_foreground = getattr(self, "_owned_foreground_manager", None)
+        self._owned_foreground_manager = None
         cleanup_steps = (
+            *((owned_foreground.close,) if owned_foreground is not None else ()),
             self.subagents.close,
             self._exec_session_manager.close_all,
         )
