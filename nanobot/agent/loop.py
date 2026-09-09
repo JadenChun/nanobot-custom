@@ -759,6 +759,8 @@ class AgentLoop:
         msg: InboundMessage,
         session: Session,
         runtime_context_blocks: list[RuntimeContextBlock] | None = None,
+        *,
+        run_id: str | None = None,
         **kwargs: Any,
     ) -> bool:
         """Persist the triggering user message before the turn starts.
@@ -788,6 +790,9 @@ class AgentLoop:
             )
             if runtime_context_meta is not None:
                 extra[RUNTIME_CONTEXT_HISTORY_META] = runtime_context_meta
+            extra.pop("_run_id", None)
+            if run_id:
+                extra["_run_id"] = run_id
             session.add_message("user", text, **extra)
             self._mark_pending_user_turn(session)
             followup_id = msg.metadata.get(PENDING_FOLLOWUP_ID_KEY)
@@ -2155,10 +2160,12 @@ class AgentLoop:
             # intentionally clears the session.
             if cmd_ctx.raw.lower() != "/new":
                 ctx.input_persisted_early = self._persist_user_message_early(
-                    ctx.msg, session, _command=True
+                    ctx.msg, session, _command=True,
+                    run_id=ctx.run_context.run_id if ctx.run_context else None
                 )
                 session.add_message(
-                    "assistant", result.content, _command=True
+                    "assistant", result.content, _command=True,
+                    **({"_run_id": ctx.run_context.run_id} if ctx.run_context and ctx.run_context.run_id else {})
                 )
                 self._clear_pending_user_turn(session)
                 self.sessions.save(session)
@@ -2211,6 +2218,7 @@ class AgentLoop:
             subagent_followup_persisted = self._persist_subagent_followup(
                 session,
                 ctx.msg,
+                run_id=ctx.run_context.run_id if ctx.run_context else None,
             )
             if subagent_followup_persisted:
                 logger.debug("Subagent result persisted for session {}", ctx.session_key)
@@ -2276,6 +2284,7 @@ class AgentLoop:
                 ctx.msg,
                 session,
                 runtime_context_blocks=ctx.runtime_context_blocks,
+                run_id=ctx.run_context.run_id if ctx.run_context else None,
             )
             if staged_provider_state and not ctx.input_persisted_early:
                 session.provider_state = stored_state
@@ -2366,6 +2375,7 @@ class AgentLoop:
             turn_latency_ms=ctx.turn_latency_ms,
             summary_checkpoint=ctx.summary_checkpoint,
             input_persisted_early=ctx.input_persisted_early,
+            run_id=ctx.run_context.run_id if ctx.run_context else None,
         )
         if (
             not ctx.ephemeral
@@ -2473,6 +2483,7 @@ class AgentLoop:
         turn_latency_ms: int | None = None,
         summary_checkpoint: SessionSummaryCheckpoint | None = None,
         input_persisted_early: bool = False,
+        run_id: str | None = None,
     ) -> None:
         """Commit new-turn messages and an optional summary boundary."""
         declared_tool_call_ids = {
@@ -2575,6 +2586,10 @@ class AgentLoop:
                 if isinstance(runtime_context_meta, dict):
                     entry[RUNTIME_CONTEXT_HISTORY_META] = runtime_context_meta
             entry.setdefault("timestamp", datetime.now().isoformat())
+            # Attribution comes only from canonical admission, never provider fields.
+            entry.pop("_run_id", None)
+            if run_id:
+                entry["_run_id"] = run_id
             session.messages.append(entry)
             if role == "user":
                 saved_followup_ids.update(followup_id for followup_id in followup_ids if followup_id)
@@ -2598,7 +2613,9 @@ class AgentLoop:
             acknowledge_pending_followups(session, saved_followup_ids)
         session.updated_at = datetime.now()
 
-    def _persist_subagent_followup(self, session: Session, msg: InboundMessage) -> bool:
+    def _persist_subagent_followup(
+        self, session: Session, msg: InboundMessage, *, run_id: str | None = None,
+    ) -> bool:
         """Persist subagent follow-ups before prompt assembly so history stays durable.
 
         Returns True if a new entry was appended; False if the follow-up was
@@ -2624,6 +2641,7 @@ class AgentLoop:
             sender_id=msg.sender_id,
             injected_event="subagent_result",
             subagent_task_id=task_id,
+            **({"_run_id": run_id} if run_id else {}),
         )
         return True
 

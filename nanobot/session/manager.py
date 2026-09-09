@@ -354,7 +354,7 @@ class Session:
         Unlike :meth:`get_history`, this is a trace-facing API and therefore
         retains the internal tag and any other persisted detail fields.
         """
-        matching = [dict(message) for message in self.messages if message.get("_run_id") == run_id]
+        matching = [deepcopy(message) for message in self.messages if message.get("_run_id") == run_id]
         if matching:
             return matching
         # Compatibility for scheduled links stored in the bounded metadata
