@@ -1,0 +1,62 @@
+{
+  "record": "CANDIDATE-001",
+  "status": "PASS; P0-CANDIDATE-ACCEPTED",
+  "base_commit": "4aa562d92828189b3fcefad079773efbab1d715a",
+  "evidence_directory": "integrated-accepted",
+  "result": {
+    "test_files": 62,
+    "historical_nodeids": 868,
+    "added_nodeids": 8,
+    "collected": 876,
+    "passed": 876,
+    "failed": 0,
+    "skipped": 0,
+    "errors": 0,
+    "warnings": 33,
+    "duration_seconds": 30.93,
+    "exit_code": 0
+  },
+  "overlay_files": {
+    "tests/cli/test_commands.py": "5b9e9f01eb4e2fc926cca49289845f4b6d4363618b3e9f3091e2fbf446b6eadb",
+    "deploy/README.md": "e2f6faf83f1fcf52d5583e00b5850769bd4557250fb2e4f99d178ad40182b52c",
+    "deploy/scripts/local_crawl4ai_common.ps1": "d57e9aaa43345fa378baa31f3c2c330988fccc42bcde9b18e6ba791aa060490e",
+    "deploy/scripts/setup_local_crawl4ai_profile.ps1": "30f210f2db67e1ff2e418df6daf482e7fc9b50c334e36e5cea71757c132224b7",
+    "deploy/scripts/start_local_marketing_agent.ps1": "6bcd0d7518d904ddb2c54def5228faec5d45d992d63340d9afa2dbebcfff5029",
+    "tests/deploy/test_local_marketing_powershell.py": "0f3da4f7d4b62a61e76ac30db3bb3825b4cc57ab91911a1d3c44d17d763ab5a0"
+  },
+  "durable_evidence_sha256": {
+    "junit.xml": "9236d1cb278a03fa2b087789b1cb71a3da727d002f4639e89ba6c04f9fe0f75f",
+    "pytest.log": "9430c16cff68eece2a2502adaf91f14bab6185a6876f937c4c076f190b06d563",
+    "invocation.json": "51c03a331c995fe049441ef69e5a4357e420898bd8906386a0671f2cab45eae4",
+    "overlay-manifest.json": "0e58b59e2c5ef2c72c64da2f2ad32791affb3f16aae32616116826a32f336bbe",
+    "exit.txt": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+  },
+  "qualification_limit": "Portable PowerShell 7 mocked tests on macOS; no real Windows or upstream-migration qualification.",
+  "invocation": {
+    "base": "4aa562d92828189b3fcefad079773efbab1d715a",
+    "overlay_manifest": "overlay-manifest.json",
+    "python": "/tmp/nanobot-p0-staging-4aa562d.InGOY2/.venv/bin/python",
+    "environment": {
+      "PATH": "/tmp/nanobot-p0-staging-4aa562d.InGOY2/.venv/bin:/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-pwsh-bw81crio/runtime:/usr/bin:/bin:/usr/sbin:/sbin",
+      "HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p0-fixes-3nl_e0d0/integrated-accepted/home",
+      "XDG_CONFIG_HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p0-fixes-3nl_e0d0/integrated-accepted/config",
+      "XDG_CACHE_HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p0-fixes-3nl_e0d0/integrated-accepted/cache",
+      "XDG_DATA_HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p0-fixes-3nl_e0d0/integrated-accepted/data",
+      "PYTHONPATH": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p0-fixes-3nl_e0d0/source",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTHONNOUSERSITE": "1",
+      "POWERSHELL_TELEMETRY_OPTOUT": "1",
+      "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+      "DOTNET_SYSTEM_NET_DISABLEIPV6": "1"
+    },
+    "sandbox": "(version 1) (allow default) (deny network*) (allow network-inbound (local ip \"localhost:*\")) (allow network-outbound (remote ip \"localhost:*\"))",
+    "source_import": "/private/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p0-fixes-3nl_e0d0/source/nanobot/__init__.py",
+    "test_files": 62
+  },
+  "candidate_case_results": {
+    "path": "p0-candidate-cases.tsv",
+    "sha256": "17800ea80c448bf99082a4e739581884f3e44c05aeeedb693c9c4c562b339bc2",
+    "case_rows": 876,
+    "source": "accepted junit.xml; each classname is matched to exactly one selected module prefix, retaining class suffixes in nodeids"
+  }
+}

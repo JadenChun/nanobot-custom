@@ -19,6 +19,25 @@ from nanobot.providers.registry import find_by_name
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def preserve_loguru_activation_state():
+    """Keep CLI logging flags from changing Loguru state for later test modules."""
+    from loguru import logger
+
+    core = logger._core
+    with core.lock:
+        activation_list = list(core.activation_list)
+        enabled = dict(core.enabled)
+        activation_none = core.activation_none
+
+    yield
+
+    with core.lock:
+        core.activation_list = activation_list
+        core.enabled = enabled
+        core.activation_none = activation_none
+
+
 class _StopGatewayError(RuntimeError):
     pass
 

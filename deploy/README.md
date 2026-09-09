@@ -230,3 +230,44 @@ session, which is intentional for the 2 GB Lightsail instance. TikTok remains ou
 initial scope. The worker accepts only open, inspect, CSS-selector click, scroll, wait, and
 close operations; it never accepts arbitrary JavaScript, cookies, credentials, or proxy
 settings from the agent.
+
+## Local Windows Crawl4AI Profile
+
+For a local, headed Edge worker, use PowerShell 7 or later from a checkout whose Python
+environment already has the Crawl4AI worker dependency. These scripts do not install
+dependencies or rewrite the Nanobot configuration.
+
+First set `agents.crawler.enabled` to `true` in your existing Nanobot config, then prepare the
+dedicated profile:
+
+```powershell
+pwsh -File .\deploy\scripts\setup_local_crawl4ai_profile.ps1
+```
+
+The setup script uses only
+`%LOCALAPPDATA%\nanobot\egocat-marketing\crawl4ai-edge-profile`; it never copies or opens a
+personal Edge profile. Log in manually to the opened Facebook and TikTok windows, close every
+window using that profile, then type `READY`. The resulting `.nanobot-profile-ready` marker
+means the operator completed this preparation step; it is not proof that either site remains
+logged in.
+
+Run the foreground agent with the existing Python and config paths:
+
+```powershell
+pwsh -File .\deploy\scripts\start_local_marketing_agent.ps1 `
+  -PythonExecutable .\.venv\Scripts\python.exe `
+  -ConfigPath $env:USERPROFILE\.nanobot\config.json
+```
+
+The launcher defaults to TCP port `18791` and the explicit `facebook.com` and `tiktok.com`
+allowlist. Override hosts only with explicit values, for example
+`-AllowedHosts facebook.com,tiktok.com`. It refuses a missing marker, an active dedicated
+profile, an occupied port, or a disabled crawler. Worker health is newline-delimited JSON over
+loopback TCP, not an HTTP endpoint; an idle headed Edge profile is expected before the agent
+starts. Logs are written beside the dedicated profile under
+`%LOCALAPPDATA%\nanobot\egocat-marketing\logs`.
+
+When the launcher exits, it asks its owned worker to reset, then stops only that returned worker
+process and restores the launcher's environment. Windows `Stop-Process` cannot guarantee that
+Python `finally` handlers run, so the reset request is best effort and should not be replaced by
+browser process-name kills.
