@@ -47,6 +47,14 @@ class CronSchedule:
         )
 
 
+@dataclass(frozen=True)
+class CronDestination:
+    """One channel/chat destination for a cron result."""
+
+    channel: str
+    to: str
+
+
 @dataclass
 class CronPayload:
     """What to do when the job runs."""
@@ -56,11 +64,34 @@ class CronPayload:
     deliver: bool = False
     channel: str | None = None  # e.g. "whatsapp"
     to: str | None = None  # e.g. phone number
+    additional_destinations: list[CronDestination] = field(default_factory=list)
     channel_meta: dict[str, Any] = field(default_factory=dict)
     session_key: str | None = None  # original session key for correct session recording
+    execution_mode: Literal["session_bound", "legacy_fresh"] = "session_bound"
     origin_channel: str | None = None
     origin_chat_id: str | None = None
     origin_metadata: dict[str, Any] = field(default_factory=dict)
+
+    def delivery_destinations(self) -> list[CronDestination]:
+        """Return de-duplicated primary and additional result destinations."""
+        if not self.deliver:
+            return []
+
+        destinations: list[CronDestination] = []
+        if self.to:
+            destinations.append(CronDestination(channel=self.channel or "cli", to=str(self.to)))
+        destinations.extend(self.additional_destinations)
+
+        unique: list[CronDestination] = []
+        seen: set[tuple[str, str]] = set()
+        for destination in destinations:
+            key = (destination.channel, destination.to)
+            if not destination.channel or not destination.to or key in seen:
+                continue
+            seen.add(key)
+            unique.append(destination)
+        return unique
+
 
     @classmethod
     def from_store_dict(cls, data: dict[str, Any]) -> CronPayload:
@@ -70,10 +101,15 @@ class CronPayload:
             deliver=data.get("deliver", False),
             channel=data.get("channel"),
             to=data.get("to"),
+            additional_destinations=[
+                entry if isinstance(entry, CronDestination) else CronDestination(**entry)
+                for entry in (get_camel_snake(data, "additionalDestinations", "additional_destinations", []) or [])
+            ],
             channel_meta=dict(
                 get_camel_snake(data, "channelMeta", "channel_meta", {}) or {}
             ),
             session_key=get_camel_snake(data, "sessionKey", "session_key"),
+            execution_mode=get_camel_snake(data, "executionMode", "execution_mode", "session_bound"),
             origin_channel=get_camel_snake(data, "originChannel", "origin_channel"),
             origin_chat_id=get_camel_snake(data, "originChatId", "origin_chat_id"),
             origin_metadata=dict(
@@ -89,6 +125,9 @@ class CronRunRecord:
     status: Literal["ok", "error", "skipped"]
     duration_ms: int = 0
     error: str | None = None
+    run_id: str | None = None
+    run_status: str | None = None
+    occurrence_id: str | None = None
 
     @classmethod
     def from_store_dict(cls, data: dict[str, Any]) -> CronRunRecord:
@@ -97,6 +136,9 @@ class CronRunRecord:
             status=data["status"],
             duration_ms=_store_int(get_camel_snake(data, "durationMs", "duration_ms", 0)),
             error=data.get("error"),
+            run_id=get_camel_snake(data, "runId", "run_id"),
+            run_status=get_camel_snake(data, "runStatus", "run_status"),
+            occurrence_id=get_camel_snake(data, "occurrenceId", "occurrence_id"),
         )
 
 
@@ -107,6 +149,7 @@ class CronJobState:
     last_run_at_ms: int | None = None
     last_status: Literal["ok", "error", "skipped"] | None = None
     last_error: str | None = None
+    last_run_status: str | None = None
     run_history: list[CronRunRecord] = field(default_factory=list)
 
     @classmethod
@@ -124,6 +167,7 @@ class CronJobState:
             ),
             last_status=get_camel_snake(data, "lastStatus", "last_status"),
             last_error=get_camel_snake(data, "lastError", "last_error"),
+            last_run_status=get_camel_snake(data, "lastRunStatus", "last_run_status"),
             run_history=[
                 record
                 if isinstance(record, CronRunRecord)
@@ -149,6 +193,7 @@ class CronJob:
 
     @classmethod
     def from_dict(cls, kwargs: dict[str, Any]) -> CronJob:
+        kwargs = dict(kwargs)
         state_kwargs = dict(cast(dict[str, Any], kwargs.get("state", {})))
         state_kwargs["run_history"] = [
             record
@@ -159,7 +204,7 @@ class CronJob:
         kwargs["schedule"] = CronSchedule(
             **cast(dict[str, Any], kwargs.get("schedule", {"kind": "every"}))
         )
-        kwargs["payload"] = CronPayload(**cast(dict[str, Any], kwargs.get("payload", {})))
+        kwargs["payload"] = CronPayload.from_store_dict(cast(dict[str, Any], kwargs.get("payload", {})))
         kwargs["state"] = CronJobState(**state_kwargs)
         return cls(**cast(Any, kwargs))
 

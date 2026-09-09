@@ -396,8 +396,10 @@ class CronService:
                         "deliver": j.payload.deliver,
                         "channel": j.payload.channel,
                         "to": j.payload.to,
+                        "additionalDestinations": [asdict(destination) for destination in j.payload.additional_destinations],
                         "channelMeta": j.payload.channel_meta,
                         "sessionKey": j.payload.session_key,
+                        "executionMode": j.payload.execution_mode,
                         "originChannel": j.payload.origin_channel,
                         "originChatId": j.payload.origin_chat_id,
                         "originMetadata": j.payload.origin_metadata,
@@ -407,12 +409,16 @@ class CronService:
                         "lastRunAtMs": j.state.last_run_at_ms,
                         "lastStatus": j.state.last_status,
                         "lastError": j.state.last_error,
+                        "lastRunStatus": j.state.last_run_status,
                         "runHistory": [
                             {
                                 "runAtMs": r.run_at_ms,
                                 "status": r.status,
                                 "durationMs": r.duration_ms,
                                 "error": r.error,
+                                "runId": r.run_id,
+                                "runStatus": r.run_status,
+                                "occurrenceId": r.occurrence_id,
                             }
                             for r in j.state.run_history
                         ],
