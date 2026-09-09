@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import secrets
@@ -520,8 +521,12 @@ class OpenAICompatProvider(LLMProvider):
         extra_query: dict[str, str] | None = None,
         proxy: str | None = None,
         provider_name: str = "openai",
+        timeout: float | None = None,
     ):
         super().__init__(api_key, api_base, provider_name=provider_name)
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("Provider timeout must be finite and positive")
+        self._configured_timeout = max(5.0, timeout) if timeout is not None else None
         self.default_model = default_model
         self.extra_headers = extra_headers or {}
         self._spec = spec
@@ -555,7 +560,7 @@ class OpenAICompatProvider(LLMProvider):
         """Create the OpenAI client using the current module-level AsyncOpenAI."""
         import httpx
 
-        timeout_s = _openai_compat_timeout_s()
+        timeout_s = self._configured_timeout if self._configured_timeout is not None else _openai_compat_timeout_s()
         http_client: httpx.AsyncClient | None = None
         if self._proxy:
             http_client = httpx.AsyncClient(
@@ -1994,7 +1999,7 @@ class OpenAICompatProvider(LLMProvider):
         provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
         client = await self._ensure_client()
-        idle_timeout_s = resolve_stream_idle_timeout_s()
+        idle_timeout_s = self._configured_timeout if self._configured_timeout is not None else resolve_stream_idle_timeout_s()
         try:
             if self._should_use_responses_api(model, reasoning_effort):
                 try:

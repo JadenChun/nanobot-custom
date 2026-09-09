@@ -701,7 +701,7 @@ class Config(BaseSettings):
                 continue
             p = getattr(self.providers, spec.name, None)
             if p and model_prefix and normalized_prefix == spec.name:
-                if spec.is_oauth or spec.is_local or spec.is_direct or p.api_key:
+                if spec.is_oauth or spec.is_local or spec.is_direct or p.effective_keys:
                     return p, spec.name
 
         # Check for custom provider by prefix (e.g., "companyProxy/gpt-4").
@@ -735,7 +735,7 @@ class Config(BaseSettings):
                     )
                     if not p.api_base or foreign_prefix:
                         continue
-                if spec.is_oauth or spec.is_local or spec.is_direct or p.api_key:
+                if spec.is_oauth or spec.is_local or spec.is_direct or p.effective_keys:
                     return p, spec.name
 
         # Fallback: configured local providers can route models without
@@ -763,7 +763,7 @@ class Config(BaseSettings):
             if spec.is_oauth or spec.is_transcription_only:
                 continue
             p = getattr(self.providers, spec.name, None)
-            if p and p.api_key:
+            if p and p.effective_keys:
                 return p, spec.name
 
         # Final fallback: check for any configured custom provider
@@ -801,7 +801,7 @@ class Config(BaseSettings):
     ) -> str | None:
         """Get API key for the given model. Falls back to first available key."""
         p = self.get_provider(model, preset=preset)
-        return p.api_key if p else None
+        return p.effective_keys[0] if p and p.effective_keys else None
 
     def get_api_base(
         self,

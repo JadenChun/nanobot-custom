@@ -1,0 +1,6 @@
+{
+  "passed": 44,
+  "raw_evidence": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-transport-final-6cdiet58",
+  "junit_sha256": "c118001025822e650a36cdfe1e6fffdf4ead275120f167bf7ade11d3eda5cd79",
+  "environment": "explicit environment, clean HOME, network denied"
+}

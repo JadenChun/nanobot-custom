@@ -117,7 +117,7 @@ def _resolve_provider_setup(
     elif backend in {"anthropic", "openai_compat"} and not (
         backend == "openai_compat" and model.startswith("bedrock/")
     ):
-        needs_key = not (p and p.api_key)
+        needs_key = not (p and p.effective_keys)
         exempt = spec and (spec.is_oauth or spec.is_local or spec.is_direct)
         if needs_key and not exempt:
             raise ValueError(f"No API key configured for provider '{provider_name}'.")
@@ -164,6 +164,7 @@ def _make_provider_core(
     p = setup.provider_config
     spec = setup.spec
     backend = setup.backend
+    effective_key = p.effective_keys[0] if p and p.effective_keys else None
 
     if backend == "openai_codex":
         from nanobot.providers.openai_codex_provider import OpenAICodexProvider
@@ -189,7 +190,7 @@ def _make_provider_core(
         if p is None or p.api_base is None:
             raise RuntimeError("validated Azure provider setup is missing api_base")
         provider = AzureOpenAIProvider(
-            api_key=p.api_key or "",
+            api_key=effective_key or "",
             api_base=p.api_base,
             default_model=model,
             provider_name=provider_name,
@@ -202,7 +203,7 @@ def _make_provider_core(
         from nanobot.providers.anthropic_provider import AnthropicProvider
 
         provider = AnthropicProvider(
-            api_key=p.api_key if p else None,
+            api_key=effective_key,
             api_base=config.get_api_base(model, preset=preset),
             default_model=model,
             extra_headers=_provider_extra_headers(spec, p),
@@ -212,7 +213,7 @@ def _make_provider_core(
         from nanobot.providers.bedrock_provider import BedrockProvider
 
         provider = BedrockProvider(
-            api_key=p.api_key if p else None,
+            api_key=effective_key,
             api_base=p.api_base if p else None,
             default_model=model,
             region=getattr(p, "region", None) if p else None,
@@ -224,13 +225,14 @@ def _make_provider_core(
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 
         provider = OpenAICompatProvider(
-            api_key=p.api_key if p else None,
+            api_key=effective_key,
             api_base=config.get_api_base(model, preset=preset),
             default_model=model,
             extra_headers=_provider_extra_headers(spec, p),
             spec=spec,
             extra_body=p.extra_body if p else None,
             api_type=p.api_type if p and provider_name == "openai" else "auto",
+            timeout=p.timeout if p else None,
             extra_query=p.extra_query if p else None,
             proxy=p.proxy if p else None,
             provider_name=provider_name,
@@ -345,6 +347,9 @@ def provider_signature(
             fallback.context_window_tokens,
             getattr(fp, "proxy", None) if fp else None,
             fp.thinking_style if fp else None,
+            tuple(fp.effective_keys) if fp else (),
+            fp.rate_limit if fp else 0,
+            fp.timeout if fp else None,
         )
 
     provider_name = config.get_provider_name(resolved.model, preset=resolved)
@@ -366,6 +371,9 @@ def provider_signature(
         resolved.context_window_tokens,
         getattr(p, "proxy", None) if p else None,
         p.thinking_style if p else None,
+        tuple(p.effective_keys) if p else (),
+        p.rate_limit if p else 0,
+        p.timeout if p else None,
         tuple(_fallback_signature(fallback) for fallback in fallback_presets),
     )
 
