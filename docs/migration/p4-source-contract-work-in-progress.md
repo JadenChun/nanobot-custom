@@ -1,9 +1,10 @@
 # P4 source persistence work in progress
 
 The migration remains guarded and incomplete. Dormant source-event and context-
-checkpoint validation contracts are implemented, alongside legacy session write
-protection. No production caller uses the strict source/checkpoint helpers yet;
-governed storage transactions and execution ownership remain to implement.
+checkpoint validation contracts, strict JSONL source transactions, and legacy
+session write protection are implemented. Governed execution does not yet use
+these transactions; execution ownership and mandatory runner persistence remain
+to implement.
 
 ## Implemented contract
 
@@ -90,18 +91,87 @@ and pass in the accepted suites. The remaining legacy fixture/API/guard/default-
 failures are not counted as passing or as production acceptance. Idle TTL remains
 zero and the production guard remains in place.
 
-## Next storage package
+## Strict source transactions
 
-Add explicit locked source upgrade and strict append/reset/checkpoint transactions,
-including revision/generation/incarnation/parent-checkpoint CAS. Restore the separate
-generation-checked consolidation-offset transaction. Source-schema sessions must
-reject legacy recovery overlays and all mutation paths that could rewrite source
-without strict validation; ordinary full saves already reject that schema. Add
-strict malformed-source handling, two-process stale checkpoint tests, and fsync/cache
-publication failure tests for governed snapshots. Do not use content deduplication
-as source identity or treat a legacy hidden summary marker as a source boundary.
+`JsonlSessionStore.source` exposes the concrete JSONL source API in
+`nanobot/session/source_store.py`: explicit upgrade, strict snapshot load, append,
+checkpoint commit, reset, unrelated metadata update, and consolidation-cursor CAS.
+There is no fallback to ordinary `Session.save` or an unqualified third-party store.
 
-Execution leases, durable runner events, projection provenance, provider-state
-coordination, offloading, idle compaction, and remaining migration packages are
-still open. The accepted legacy write tests do not establish governed persistence
-or production readiness.
+Source state compares storage-root identity, session key, incarnation, revision,
+generation, the raw checkpoint ID, and a canonical fingerprint of the complete raw
+checkpoint value. A snapshot from a copied/relocated store must be reloaded before
+writing. All source mutation CAS checks run under the existing process-safe file
+lock and reject even append-only revision drift. An idempotent append retry is
+examined only after CAS succeeds against a freshly loaded state.
+
+Explicit upgrade strictly parses the original bytes, preserves event content and
+unrelated metadata, assigns missing event IDs, and does no legacy exec-name or
+argument normalization. Structured tool call IDs are paired with exactly one
+unresolved earlier call, and assigned execution IDs. Sequential repeated provider
+IDs remain distinct. Orphan/duplicate/ambiguous results and overlapping legacy
+provider IDs reject the upgrade without a write. An unmatched trailing call remains
+unresolved and prevents a checkpoint from covering it. Unknown historical run
+attribution is not inferred. Provider handles are discarded by upgrade; existing
+recovery sidecars or active legacy recovery metadata require separate reconciliation.
+
+The source parser accepts only the supported schema and explicit state fields,
+unique IDs, valid execution links, and JSON-safe retained evidence. It performs no
+repair, sidecar overlay, or write-on-read migration. A malformed or unsupported
+checkpoint is retained in raw metadata and CAS fingerprinting but ignored for
+projection, with a content-free diagnostic. A loaded checkpoint's source revision
+must precede the containing file revision; later appends or metadata writes do not
+make its unchanged covered prefix invalid.
+
+Checkpoint commit validates against the exact current snapshot and atomically
+writes source plus checkpoint, advancing revision only. It inserts no continuation
+row, edits no source event, and leaves archive cursor/activity time unchanged.
+Reset advances generation, clears checkpoint/recovery state, and invalidates old
+snapshots. The separate consolidation operation advances both `last_archived` and
+`last_consolidated` compatibility aliases together; these aliases describe the
+memory archive cursor, independently of `context_checkpoint.boundary`. Upgrade
+preserves legacy headers containing either alias.
+
+Source writes use the existing private-file atomic writer with file fsync before
+replace and directory fsync afterward. Platforms/filesystems that do not support
+directory fsync retain the existing documented weaker guarantee; deployment
+qualification remains required. Results are detached and returned only after the
+write succeeds. Failure before replacement retains the old complete snapshot;
+failure after replacement can be resolved by reloading the new complete snapshot.
+These primitives do not publish a speculative runtime projection or cache entry.
+
+Compatibility readers recognize source format and use the strict source reader,
+so they do not rewrite exec records or overlay old sidecars. Ordinary full writes
+and runtime-sidecar writes reject source sessions. Metadata updates use the strict
+source transaction and the same ownership filter in disk and cache. A pre-upgrade
+cached legacy object is invalidated when a metadata update observes source format.
+
+Ordinary readers now require an intact, unambiguous first metadata row to identify
+the format. An empty/truncated/malformed/null header cannot silently become an empty
+or repaired legacy session. Explicit legacy repair remains a separate read-only
+recovery operation; automatic legacy-tail recovery requires an intact legacy header.
+Tests formerly expecting automatic recovery of unidentified headers now verify
+failure without altering evidence and, where possible, explicit salvage instead.
+
+Evidence: 304 network-denied session/atomic/history/actual-engine/detail tests,
+117 network-denied canonical/bus/SDK/policy/trace tests, and 25 mocked-provider API
+tests pass (446 total). The 36 strict-source tests include actual two-process
+checkpoint contention, store binding, delete/recreate identity, before/after replace
+failures, fsync ordering, malformed headers/counters, legacy exact pairing, checkpoint
+persistence through later revisions, cursor independence, and compatibility/cache
+paths. Ruff/diff checks pass. Independent review accepted the corrected archive
+aliases, unidentified-header handling, cache filtering, and store binding.
+
+These tests also found and corrected an earlier legacy append-identity corner case:
+two appended positions referencing the same Python dictionary now receive distinct
+identities instead of collapsing into one event.
+
+## Next execution package
+
+Integrate cross-process execution ownership and fencing, mandatory durable user/call/
+result events, source-based projection provenance, and provider-state invalidation.
+The existing storage CAS does not fence tool dispatch or reconcile uncertain external
+outcomes. Consolidation's source transaction is implemented, but memory receipt and
+runner wiring still require acceptance. Offloading, context governance, idle
+compaction, provider coordination, cron/auth/startup work, and overall migration
+validation remain open. No runtime guard has been removed.

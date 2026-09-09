@@ -8,7 +8,7 @@ import pytest
 from filelock import Timeout
 
 from nanobot.providers.base import ProviderConversationState
-from nanobot.session.manager import Session, SessionManager
+from nanobot.session.manager import Session, SessionManager, SessionStorageError
 
 
 class TestAtomicSave:
@@ -305,7 +305,9 @@ class TestRepairCorruptFile:
             '{"role": "user", "content": "survived"}',
         ])
 
-        session = mgr._load("test:badmeta")
+        with pytest.raises(SessionStorageError):
+            mgr._load("test:badmeta")
+        session = mgr._repair("test:badmeta")
         assert session is not None
         assert len(session.messages) == 1
         assert session.messages[0]["content"] == "survived"
@@ -320,19 +322,19 @@ class TestRepairCorruptFile:
             "{{invalid json",
         ])
 
-        session = mgr._load("test:allbad")
-        assert session is None
+        with pytest.raises(SessionStorageError):
+            mgr._load("test:allbad")
+        assert mgr._repair("test:allbad") is None
 
-    def test_empty_file_returns_empty_session(self, tmp_path: Path):
+    def test_empty_existing_file_requires_explicit_recovery(self, tmp_path: Path):
         mgr = SessionManager(tmp_path)
         path = mgr._get_session_path("test:empty")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("", encoding="utf-8")
 
-        session = mgr._load("test:empty")
-        assert session is not None
-        assert session.messages == []
-        assert session.key == "test:empty"
+        with pytest.raises(SessionStorageError):
+            mgr._load("test:empty")
+        assert path.read_bytes() == b""
 
     def test_repair_preserves_valid_messages_amid_corruption(self, tmp_path: Path):
         mgr = SessionManager(tmp_path)
@@ -414,15 +416,16 @@ class TestRepairCorruptFile:
         ])
 
         sessions = mgr.list_sessions()
-        assert any(s["key"] == "test:list-repair" for s in sessions)
+        assert not any(s["key"] == "test:list-repair" for s in sessions)
+        assert mgr._repair("test:list-repair").messages[0]["content"] == "hello"
 
-    def test_get_or_create_returns_new_session_for_corrupt_file(self, tmp_path: Path):
+    def test_get_or_create_does_not_discard_corrupt_header(self, tmp_path: Path):
         mgr = SessionManager(tmp_path)
         path = mgr._get_session_path("test:fallback")
 
         self._write_corrupt_jsonl(path, ["{{{{"])
 
-        session = mgr.get_or_create("test:fallback")
-        assert session is not None
-        assert session.messages == []
-        assert session.key == "test:fallback"
+        before = path.read_bytes()
+        with pytest.raises(SessionStorageError):
+            mgr.get_or_create("test:fallback")
+        assert path.read_bytes() == before

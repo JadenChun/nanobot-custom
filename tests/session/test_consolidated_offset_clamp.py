@@ -3,7 +3,9 @@
 import json
 from pathlib import Path
 
-from nanobot.session.manager import Session, SessionManager
+import pytest
+
+from nanobot.session.manager import Session, SessionManager, SessionStorageError
 
 
 def _session(count: int, last_consolidated: object) -> Session:
@@ -94,8 +96,8 @@ def test_last_archived_field_migrates_with_legacy_alias(tmp_path: Path):
     assert metadata["last_consolidated"] == 1
 
 
-def test_loaded_null_metadata_becomes_empty_dict(tmp_path: Path):
-    """Session jsonl metadata:null must load as {} so agent .pop/.get work."""
+def test_loaded_null_metadata_requires_explicit_recovery(tmp_path: Path):
+    """A missing metadata object cannot safely identify legacy versus source storage."""
     manager = SessionManager(tmp_path)
     path = manager._get_session_path("chan:chat")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,12 +112,10 @@ def test_loaded_null_metadata_becomes_empty_dict(tmp_path: Path):
         }) + "\n",
         encoding="utf-8",
     )
-    session = manager.get_or_create("chan:chat")
-    assert session.metadata == {}
-    session.metadata["title"] = "ok"
-    assert session.metadata["title"] == "ok"
-    session.metadata.pop("title", None)
-    assert session.metadata == {}
+    before = path.read_bytes()
+    with pytest.raises(SessionStorageError):
+        manager.get_or_create("chan:chat")
+    assert path.read_bytes() == before
 
 
 def test_session_post_init_coerces_null_metadata():

@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Collection, Generator, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Callable, Collection, Generator, Protocol, TypedDict, cast
 from weakref import WeakValueDictionary
 
 from filelock import FileLock
@@ -29,6 +29,7 @@ from nanobot.runtime_context import (
 )
 from nanobot.session.history_visibility import HIDDEN_HISTORY_META, is_hidden_history_message
 from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
+from nanobot.session.persistence_metadata import DURABLE_METADATA_KEYS, accepted_metadata_updates
 from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
 from nanobot.utils.helpers import (
     content_with_media_breadcrumbs,
@@ -40,6 +41,10 @@ from nanobot.utils.helpers import (
     strip_think,
 )
 from nanobot.utils.subagent_channel_display import scrub_subagent_announce_body
+
+if TYPE_CHECKING:
+    from nanobot.session.source_store import SourceSessionStore
+
 
 SESSION_CACHE_MAX_SIZE = 128
 _MESSAGE_TIME_PREFIX_RE = re.compile(r"^\[Message Time: [^\]]+\]\n?")
@@ -56,10 +61,7 @@ _PROVIDER_STATE_RECORD_PREFIX_RE = re.compile(
 )
 _RUNTIME_CHECKPOINT_KEY = "runtime_checkpoint"
 _RUNTIME_CHECKPOINT_VERSION = 2
-_RESERVED_DURABLE_METADATA = frozenset({
-    "context_checkpoint", "source_schema_version", "execution_lease",
-    "revision", "generation", "incarnation",
-})
+_RESERVED_DURABLE_METADATA = DURABLE_METADATA_KEYS
 _RUNTIME_CHECKPOINT_SUFFIX = ".checkpoint.json"
 _FORK_VOLATILE_METADATA_KEYS = {
     "goal_state",
@@ -301,7 +303,7 @@ class Session:
     _base_incarnation: str | None = field(default=None, repr=False, compare=False)
     _replacement_pending: bool = field(default=False, repr=False, compare=False)
     _projection_edit_pending: bool = field(default=False, repr=False, compare=False)
-    _append_ids: dict[int, tuple[dict[str, Any], str]] = field(default_factory=dict, repr=False, compare=False)
+    _append_ids: dict[tuple[int, int], tuple[dict[str, Any], str]] = field(default_factory=dict, repr=False, compare=False)
 
     def _remember_committed_base(self) -> None:
         self._base_messages = deepcopy(self.messages)
@@ -673,6 +675,12 @@ class JsonlSessionStore:
             )
             with self._session_files_lock:
                 self._migrate_from_workspace(canonical_workspace)
+
+    @property
+    def source(self) -> "SourceSessionStore":
+        from nanobot.session.source_store import SourceSessionStore
+
+        return SourceSessionStore(self)
 
     @contextmanager
     def locked_session_files(self) -> Generator[Path, None, None]:
@@ -1129,10 +1137,39 @@ class JsonlSessionStore:
         with self._session_files_lock:
             return self._load_unlocked(key)
 
+    @staticmethod
+    def _format_header(path: Path) -> dict[str, Any]:
+        """Identify format only from an intact, unambiguous first metadata row."""
+        def unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result = dict(pairs)
+            if len(result) != len(pairs):
+                raise ValueError("Duplicate session header key")
+            return result
+
+        try:
+            if not stat.S_ISREG(path.lstat().st_mode):
+                raise SessionStorageError()
+            with path.open(encoding="utf-8") as handle:
+                first = next((line for line in handle if line.strip()), "")
+            header = _json_object(json.loads(first, object_pairs_hook=unique))
+            if header.get("_type") != "metadata" or not isinstance(header.get("metadata", {}), dict):
+                raise SessionStorageError()
+            return header
+        except (*_SESSION_DATA_ERRORS, UnicodeError, RecursionError):
+            raise SessionStorageError() from None
+
+    @classmethod
+    def _has_legacy_header(cls, path: Path) -> bool:
+        try:
+            return "source_schema_version" not in cls._format_header(path).get("metadata", {})
+        except SessionStorageError:
+            return False
+
     def _load_unlocked(self, key: str, *, strict: bool = False) -> Session | None:
         path = self.get_session_path(key)
         if not path.exists():
             return None
+        self._format_header(path)
 
         try:
             messages: list[dict[str, Any]] = []
@@ -1171,6 +1208,8 @@ class JsonlSessionStore:
                             if isinstance(metadata_value, dict)
                             else {}
                         )
+                        if "source_schema_version" in metadata:
+                            return self.source.load_source_snapshot(key).to_session()
                         created_at_value = cast(object, data.get("created_at"))
                         updated_at_value = cast(object, data.get("updated_at"))
                         created_at = (
@@ -1191,7 +1230,7 @@ class JsonlSessionStore:
                     else:
                         messages.append(data)
 
-            if strict and not metadata_seen:
+            if not metadata_seen:
                 raise SessionStorageError()
             session = Session(
                 key=key,
@@ -1210,7 +1249,7 @@ class JsonlSessionStore:
             session._remember_committed_base()
             return session
         except _SESSION_DATA_ERRORS as e:
-            if strict:
+            if strict or not self._has_legacy_header(path):
                 raise SessionStorageError() from None
             logger.warning("Failed to load session {}: {}", key, e)
             repaired = self._repair_unlocked(key)
@@ -1264,6 +1303,8 @@ class JsonlSessionStore:
                             if isinstance(metadata_value, dict)
                             else {}
                         )
+                        if "source_schema_version" in metadata:
+                            return self.source.load_source_snapshot(key).to_session()
                         created_at_value = cast(object, data.get("created_at"))
                         if isinstance(created_at_value, str) and created_at_value:
                             with suppress(ValueError):
@@ -1352,13 +1393,14 @@ class JsonlSessionStore:
                 raise SessionWriteConflict()
             candidate.messages = deepcopy(disk.messages if disk else [])
             by_id = {row.get("_event_id"): row for row in candidate.messages if row.get("_event_id")}
-            for row in session.messages[len(base):]:
+            for position, row in enumerate(session.messages[len(base):], start=len(base)):
                 # Keep identity stable across a failed atomic-write retry without
                 # mutating the caller's event or committed revision bookkeeping.
-                pending = session._append_ids.get(id(row))
+                append_key = (position, id(row))
+                pending = session._append_ids.get(append_key)
                 if pending is None or pending[0] is not row:
                     pending = (row, uuid.uuid4().hex)
-                    session._append_ids[id(row)] = pending
+                    session._append_ids[append_key] = pending
                 identity = pending[1]
                 addition = deepcopy(row)
                 addition["_event_id"] = identity
@@ -1499,6 +1541,8 @@ class JsonlSessionStore:
                 tmp.unlink(missing_ok=True)
 
     def _overlay_runtime_checkpoint_unlocked(self, session: Session, main_path: Path) -> None:
+        if "source_schema_version" in session.metadata:
+            return
         checkpoint_path = self.get_runtime_checkpoint_path(session.key)
         try:
             checkpoint_stat = checkpoint_path.lstat()
@@ -1618,6 +1662,9 @@ class JsonlSessionStore:
             session = self._load_unlocked(key, strict=True)
             if session is None:
                 return False
+            if "source_schema_version" in session.metadata:
+                self.source.update_metadata(key, updates)
+                return True
             self._overlay_runtime_checkpoint_unlocked(session, self.get_session_path(key))
             session.metadata.update({
                 name: deepcopy(value) for name, value in updates.items()
@@ -1657,6 +1704,7 @@ class JsonlSessionStore:
         path = self.get_session_path(key)
         if not path.exists():
             return None
+        self._format_header(path)
         try:
             messages: list[dict[str, Any]] = []
             metadata: dict[str, Any] = {}
@@ -1678,6 +1726,8 @@ class JsonlSessionStore:
                             if isinstance(metadata_value, dict)
                             else {}
                         )
+                        if "source_schema_version" in metadata:
+                            return self.session_payload(self.source.load_source_snapshot(key).to_session())
                         created_at_value = cast(object, data.get("created_at"))
                         updated_at_value = cast(object, data.get("updated_at"))
                         stored_key_value = cast(object, data.get("key"))
@@ -1703,6 +1753,8 @@ class JsonlSessionStore:
                 "messages": messages,
             }
         except _SESSION_DATA_ERRORS as e:
+            if not self._has_legacy_header(path):
+                raise SessionStorageError() from None
             logger.warning("Failed to read session {}: {}", key, e)
             repaired = self._repair_unlocked(key, path=path)
             if repaired is not None:
@@ -1718,6 +1770,7 @@ class JsonlSessionStore:
         path = self.get_session_path(key)
         if not path.exists():
             return None
+        self._format_header(path)
         try:
             with open(path, encoding="utf-8") as f:
                 for line in f:
@@ -1729,6 +1782,12 @@ class JsonlSessionStore:
                     if data.get("_type") != "metadata":
                         return None
                     metadata_value = cast(object, data.get("metadata", {}))
+                    if isinstance(metadata_value, dict) and "source_schema_version" in metadata_value:
+                        source = self.source.load_source_snapshot(key).to_session()
+                        return {
+                            "key": source.key, "created_at": source.created_at.isoformat(),
+                            "updated_at": source.updated_at.isoformat(), "metadata": source.metadata,
+                        }
                     key_value = cast(object, data.get("key"))
                     created_at_value = cast(object, data.get("created_at"))
                     updated_at_value = cast(object, data.get("updated_at"))
@@ -1748,6 +1807,8 @@ class JsonlSessionStore:
                     }
             return None
         except _SESSION_DATA_ERRORS as e:
+            if not self._has_legacy_header(path):
+                raise SessionStorageError() from None
             logger.warning("Failed to read session metadata {}: {}", key, e)
             repaired = self._repair_unlocked(key, path=path)
             if repaired is not None:
@@ -1842,6 +1903,9 @@ class JsonlSessionStore:
             except FileNotFoundError:
                 continue
             except _SESSION_DATA_ERRORS:
+                if not self._has_legacy_header(path):
+                    logger.warning("Ignoring session listing with unidentifiable storage header")
+                    continue
                 repaired = self._repair_unlocked(storage_key, path=path)
                 if repaired is not None:
                     sessions.append(
@@ -2181,10 +2245,17 @@ class SessionManager:
         """Atomically update metadata without replacing session history."""
         updated = self._store.update_metadata(key, updates, fsync=fsync)
         if updated and (session := self.get_cached(key)) is not None:
-            accepted = {
-                name: deepcopy(value) for name, value in updates.items()
-                if name not in _RESERVED_DURABLE_METADATA
-            }
+            is_source = "source_schema_version" in session.metadata
+            if self._store is self._jsonl_store:
+                persisted = self._store.read_metadata(key)
+                if persisted is None:
+                    self.invalidate(key)
+                    return updated
+                is_source = "source_schema_version" in persisted["metadata"]
+                if is_source and "source_schema_version" not in session.metadata:
+                    self.invalidate(key)
+                    return updated
+            accepted = accepted_metadata_updates(updates, source=is_source)
             session.metadata.update(accepted)
             # These changes already committed. Do not replay them as local
             # modifications over a later writer when this cached object saves.

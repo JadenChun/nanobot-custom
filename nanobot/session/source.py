@@ -78,6 +78,9 @@ def validate_event_ids(events: list[dict[str, Any]]) -> None:
         identity = event.get("_event_id")
         if not isinstance(identity, str) or not identity.strip() or identity in seen:
             raise SourceValidationError("Invalid source event identity")
+        run_id = event.get("_run_id")
+        if run_id is not None and (not isinstance(run_id, str) or not run_id.strip()):
+            raise SourceValidationError("Invalid source run identity")
         seen.add(identity)
     canonical_events(events)
 
@@ -115,9 +118,16 @@ def validate_closed_boundary(events: list[dict[str, Any]], boundary: int) -> Non
     references exactly one earlier call; duplicate provider IDs remain legal.
     """
     prefix_digest(events, boundary)
-    pending: dict[str, str] = {}
+    if validate_execution_links(events[:boundary]):
+        raise SourceValidationError("Unresolved source execution boundary")
+
+
+def validate_execution_links(events: list[dict[str, Any]]) -> frozenset[str]:
+    """Validate committed call/result evidence, permitting unresolved tail calls."""
+    canonical_events(events)
+    pending: dict[str, tuple[str, object]] = {}
     used: set[str] = set()
-    for event in events[:boundary]:
+    for event in events:
         if not isinstance(event, dict):
             raise SourceValidationError("Invalid source event representation")
         calls = event.get("tool_calls")
@@ -140,13 +150,15 @@ def validate_closed_boundary(events: list[dict[str, Any]], boundary: int) -> Non
                 ):
                     raise SourceValidationError("Invalid source provider call identity")
                 used.add(identity)
-                pending[identity] = call["id"]
+                pending[identity] = (call["id"], event.get("_run_id"))
         if event.get("role") == "tool":
             identity = event.get("_execution_id")
             if not isinstance(identity, str) or identity not in pending:
                 raise SourceValidationError("Invalid source execution result")
-            if event.get("tool_call_id") != pending[identity]:
+            provider_id, run_id = pending[identity]
+            if event.get("tool_call_id") != provider_id or (
+                run_id is not None and event.get("_run_id") is not None and event["_run_id"] != run_id
+            ):
                 raise SourceValidationError("Invalid source result provenance")
             del pending[identity]
-    if pending:
-        raise SourceValidationError("Unresolved source execution boundary")
+    return frozenset(pending)
