@@ -36,6 +36,7 @@ async def test_image_generation_reload_replaces_and_removes_live_tool(
     monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
     config = load_config()
     config.providers.openrouter.api_key = "first-key"
+    config.tools.image_generation.configuration_source = "upstream"
     config.tools.image_generation.enabled = True
     config.tools.image_generation.provider = "openrouter"
     config.tools.image_generation.model = "openai/first-image-model"
@@ -83,6 +84,7 @@ async def test_image_generation_reload_reaches_agent_runtime_control(
     monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
     config = load_config()
     config.providers.openrouter.api_key = "image-key"
+    config.tools.image_generation.configuration_source = "upstream"
     config.tools.image_generation.enabled = True
     save_config(config)
 

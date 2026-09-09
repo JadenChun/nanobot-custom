@@ -40,7 +40,7 @@ def test_exact_default_main_tools_and_dependency_handoff(context, monkeypatch):
     names, registry = load(context, monkeypatch)
     assert set(names) == {'read_file', 'write_file', 'edit_file', 'list_dir', 'exec', 'web_search',
                           'web_fetch', 'message', 'plan_task', 'delegate_task', 'review_work',
-                          'explore', 'agent_browser', 'agent_device'}
+                          'explore', 'agent_browser', 'agent_device', 'generate_image'}
     assert registry.get('write_file')._resource_policy is context.fork_dependencies.resource_policy
     assert registry.get('write_file')._lock_registry is context.fork_dependencies.file_locks
     assert registry.get('agent_browser').working_dir == context.workspace

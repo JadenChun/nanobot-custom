@@ -494,6 +494,11 @@ def update_image_generation_settings(
         )
         if not selected_provider or not selected_provider["configured"]:
             raise WebUISettingsError("image generation provider is not configured")
+    if any(value is not None for value in (provider_name, enabled, model, default_aspect_ratio,
+                                           default_image_size, max_images_per_turn)):
+        if image_config.configuration_source != "upstream":
+            image_config.configuration_source = "upstream"
+            changed = True
     return changed
 
 

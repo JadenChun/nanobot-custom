@@ -536,6 +536,14 @@ class ToolsConfig(Base):
     tool implementations.
     """
 
+    @model_validator(mode="before")
+    @classmethod
+    def _select_image_configuration(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "image_generation" not in data and "imageGeneration" not in data:
+            data = dict(data)
+            data["image_generation"] = {"configuration_source": "legacy"}
+        return data
+
     agent_browser: AgentBrowserConfig = Field(default_factory=AgentBrowserConfig)
     agent_device: AgentDeviceConfig = Field(default_factory=AgentDeviceConfig)
     desktop_use: DesktopUseConfig = Field(default_factory=DesktopUseConfig)

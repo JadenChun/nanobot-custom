@@ -34,6 +34,13 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         self._cached_definitions = None
 
+    def replace(self, tool: Tool) -> None:
+        """Explicitly replace an existing registration during validated reload."""
+        if tool.name not in self._tools:
+            raise ValueError(f"Cannot replace unregistered tool: {tool.name}")
+        self._tools[tool.name] = tool
+        self._cached_definitions = None
+
     def unregister(self, name: str) -> None:
         """Unregister a tool by name."""
         self._tools.pop(name, None)

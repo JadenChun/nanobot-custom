@@ -366,6 +366,10 @@ class OpenRouterImageGenerationClient(ImageGenerationProvider):
         "OpenRouter API key is not configured. Set providers.openrouter.apiKey."
     )
 
+    def __init__(self, *, legacy_request: bool = False, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.legacy_request = legacy_request
+
     def _default_base_url(self) -> str:
         return "https://openrouter.ai/api/v1"
 
@@ -406,6 +410,10 @@ class OpenRouterImageGenerationClient(ImageGenerationProvider):
             image_config["image_size"] = image_size
         if image_config:
             body["image_config"] = image_config
+        if self.legacy_request and not references:
+            body["messages"] = [{"role": "user", "content": f"{prompt} (aspect ratio: {aspect_ratio or '16:9'})"}]
+            body["modalities"] = ["image"]
+            body.pop("image_config", None)
         body.update(self.extra_body)
 
         headers = {
@@ -430,13 +438,17 @@ class OpenRouterImageGenerationClient(ImageGenerationProvider):
             message = _as_json_object(choice.get("message")) or {}
             message_content = message.get("content")
             if isinstance(message_content, str):
-                text_parts.append(message_content)
-            for image in _as_json_objects(message.get("images")):
+                if message_content.startswith("data:image/"):
+                    images.append(message_content)
+                else:
+                    text_parts.append(message_content)
+            for image in [*_as_json_objects(message.get("images")), *_as_json_objects(message_content)]:
                 image_url = _as_json_object(image.get("image_url") or image.get("imageUrl"))
                 url_value = image_url.get("url") if image_url is not None else None
                 if isinstance(url_value, str) and url_value.startswith("data:image/"):
                     images.append(url_value)
 
+        images = list(dict.fromkeys(images))
         self._require_images(images, data)
 
         return GeneratedImageResponse(
