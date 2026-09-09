@@ -36,6 +36,17 @@ ProviderCompactionScope = Literal["prior_context", "current_request"]
 RetryStatusCallback = Callable[[RetryStatusEvent], Awaitable[None]]
 
 
+def track_stream_delivery(kwargs: dict[str, Any], delivered: list[bool]) -> None:
+    """Mark external delivery before invoking a callback, across all delta kinds."""
+    for name in ("on_content_delta", "on_thinking_delta", "on_tool_call_delta"):
+        callback = kwargs.get(name)
+        if callback is not None:
+            async def track(*args, _callback=callback, **kw):
+                delivered[0] = True
+                await _callback(*args, **kw)
+            kwargs[name] = track
+
+
 def resolve_stream_idle_timeout_s(
     *,
     env_value: str | None = None,
@@ -1464,33 +1475,19 @@ class LLMProvider(ABC):
         if reasoning_effort is self._SENTINEL:
             reasoning_effort = self.generation.reasoning_effort
 
-        has_streamed_content = False
-
-        async def _tracking_delta(text: str) -> None:
-            nonlocal has_streamed_content
-            if text:
-                has_streamed_content = True
-            if on_content_delta:
-                await on_content_delta(text)
-
-        async def _recover_stream() -> None:
-            nonlocal has_streamed_content
-            if on_stream_recover:
-                await on_stream_recover()
-            has_streamed_content = False
+        delivered = [False]
 
         kw: dict[str, Any] = dict(
             messages=messages, tools=tools, model=model,
             max_tokens=max_tokens, temperature=temperature,
             reasoning_effort=reasoning_effort, tool_choice=tool_choice,
-            on_content_delta=_tracking_delta if on_content_delta is not None else None,
+            on_content_delta=on_content_delta,
             on_thinking_delta=on_thinking_delta,
             on_tool_call_delta=on_tool_call_delta,
         )
         if provider_context is not None:
             kw["provider_context"] = provider_context
-        if on_stream_recover and getattr(self, "supports_stream_recover_callback", False):
-            kw["on_stream_recover"] = _recover_stream
+        track_stream_delivery(kw, delivered)
         on_retry_wait, on_retry_exhausted, on_retry_status = await self._retry_notifications(
             provider_context, on_retry_wait, on_retry_exhausted, on_retry_status,
         )
@@ -1502,8 +1499,8 @@ class LLMProvider(ABC):
             on_retry_wait=on_retry_wait,
             on_retry_exhausted=on_retry_exhausted,
             on_retry_status=on_retry_status,
-            should_retry_guard=lambda: not has_streamed_content,
-            on_stream_recover=_recover_stream if on_stream_recover else None,
+            should_retry_guard=lambda: not delivered[0],
+            on_stream_recover=on_stream_recover,
         )
 
     async def chat_with_retry(
@@ -1773,30 +1770,9 @@ class LLMProvider(ABC):
                 return response
             last_response = response
             if should_retry_guard is not None and not should_retry_guard():
-                is_timeout = (response.error_kind or "").lower() == "timeout"
-                if is_timeout:
-                    if on_stream_recover:
-                        logger.warning(
-                            "LLM stream stalled after content was emitted; "
-                            "starting a new stream segment and retrying"
-                        )
-                        await on_stream_recover()
-                    else:
-                        logger.warning(
-                            "LLM stream stalled after content was emitted; "
-                            "suppressing delta callbacks and retrying"
-                        )
-                        kw.setdefault("on_content_delta", None)
-                        kw["on_content_delta"] = None
-                        kw["on_thinking_delta"] = None
-                        kw["on_tool_call_delta"] = None
-                        should_retry_guard = None
-                else:
-                    logger.warning(
-                        "LLM stream failed after content was emitted; skipping retry"
-                    )
-                    await _finish_retry_status("cleared", response)
-                    return response
+                logger.warning("LLM retry guard stopped replay of this request")
+                await _finish_retry_status("cleared", response)
+                return response
             error_key = ((response.content or "").strip().lower() or None)
             if error_key and error_key == last_error_key:
                 identical_error_count += 1

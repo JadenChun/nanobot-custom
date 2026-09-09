@@ -1,0 +1,39 @@
+{
+  "command": [
+    "/usr/bin/sandbox-exec",
+    "-p",
+    "(version 1) (allow default) (deny network*)",
+    "/Users/jaden/Documents/github/nanobot-migration-integration/.venv/bin/python",
+    "-m",
+    "pytest",
+    "tests/providers/test_pooled_provider.py",
+    "tests/providers/test_key_pool_coordinator.py",
+    "tests/providers/test_migration_provider_configuration.py",
+    "tests/providers/test_provider_retry.py",
+    "tests/providers/test_conversation_state.py",
+    "tests/providers/test_openai_compat_timeout.py",
+    "tests/providers/test_stream_idle_timeout_config.py",
+    "tests/providers/test_provider_sdk_retry_defaults.py",
+    "tests/providers/test_provider_default_headers.py",
+    "tests/providers/test_extra_query_config.py",
+    "tests/providers/test_llm_usage_observer.py",
+    "-q",
+    "--junitxml=/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-pool-validation-gt7qnpf5/results.xml"
+  ],
+  "environment": {
+    "HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-pool-validation-gt7qnpf5/home",
+    "XDG_CONFIG_HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-pool-validation-gt7qnpf5/home/config",
+    "XDG_CACHE_HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-pool-validation-gt7qnpf5/home/cache",
+    "PATH": "/Users/jaden/Documents/github/nanobot-migration-integration/.venv/bin:/usr/bin:/bin",
+    "PYTHONPATH": "/Users/jaden/Documents/github/nanobot-migration-integration",
+    "TMPDIR": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-pool-validation-gt7qnpf5"
+  },
+  "exit_code": 0,
+  "raw_directory": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-pool-validation-gt7qnpf5",
+  "artifacts": {
+    "results.xml": "056520f76bd2b65ab48e39b77dfe2fd57c2593525a4893aaac62b1499c4712c6",
+    "output.log": "7789ea582bef5e59f70a04359a0af4e2d65a51cd6bd2256b9fe938992d952d4b",
+    "invocation.json": "a5e92b9803d4161fb4150aedfeafa94c3d88a9e97f2aa98fa373d10675626a84"
+  },
+  "passed": 165
+}

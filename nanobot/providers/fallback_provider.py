@@ -22,6 +22,7 @@ from nanobot.providers.base import (
     ProviderConversationState,
     RetryEventCallback,
     RetryStatusCallback,
+    track_stream_delivery,
 )
 
 # Circuit breaker tuned to match OpenAICompatProvider's Responses API breaker.
@@ -102,18 +103,16 @@ FallbackModelObserver = Callable[[str], Awaitable[None]]
 class FallbackProvider(LLMProvider):
     """Wrap a primary provider and transparently failover to fallback models.
 
-    When the primary model returns a fallbackable error before content has been
-    streamed, the wrapper tries each fallback model in order. Streamed timeout
-    errors are the recovery exception: the caller may close the current stream
-    segment, then the wrapper continues failover with later deltas in a new
-    segment. Each fallback model may reside on a different provider — a factory
+    When the primary model returns a fallbackable error before any delta has been
+    delivered, the wrapper tries each fallback model in order. Content, reasoning,
+    and tool-call delivery prohibit replay, including timeout recovery.
+    Each fallback model may reside on a different provider — a factory
     callable creates the underlying provider on-the-fly.
 
     Key design:
     - Failover is request-scoped (the wrapper itself is stateless between turns).
     - Retrying entry points exhaust one provider's retry policy before failover.
-    - Skipped when content was already streamed to avoid duplicate output,
-      except timeout recovery can resume in a new stream segment.
+    - Skipped after any externally delivered delta to avoid duplicate output.
     - Recursive failover is prevented by the factory returning plain providers.
     - Primary provider is circuit-broken after repeated failures to avoid
       wasting requests on a known-bad endpoint.
@@ -243,24 +242,7 @@ class FallbackProvider(LLMProvider):
         if stream:
             streamed = [False]
             has_streamed = streamed
-            original_delta = call_kwargs.get("on_content_delta")
-
-            async def _tracking_delta(text: str) -> None:
-                if text:
-                    streamed[0] = True
-                if original_delta:
-                    await original_delta(text)
-
-            async def _recover_stream() -> None:
-                streamed[0] = False
-                if on_stream_recover:
-                    await on_stream_recover()
-
-            if original_delta is not None:
-                call_kwargs["on_content_delta"] = _tracking_delta
-            if on_stream_recover is not None:
-                call_kwargs["on_stream_recover"] = _recover_stream
-                recover_stream = _recover_stream
+            track_stream_delivery(call_kwargs, streamed)
 
         async def _call_provider(
             provider: LLMProvider,
@@ -308,15 +290,7 @@ class FallbackProvider(LLMProvider):
             return await self._primary.chat_stream(**kwargs)
 
         has_streamed: list[bool] = [False]
-        original_delta = kwargs.get("on_content_delta")
-
-        async def _tracking_delta(text: str) -> None:
-            if text:
-                has_streamed[0] = True
-            if original_delta:
-                await original_delta(text)
-
-        kwargs["on_content_delta"] = _tracking_delta
+        track_stream_delivery(kwargs, has_streamed)
         return await self._try_with_fallback(
             lambda p, kw: p.chat_stream(**kw),
             kwargs,
@@ -424,15 +398,7 @@ class FallbackProvider(LLMProvider):
             return await self._primary.chat_stream_with_context(**call_kwargs)
 
         has_streamed: list[bool] = [False]
-        original_delta = call_kwargs.get("on_content_delta")
-
-        async def _tracking_delta(text: str) -> None:
-            if text:
-                has_streamed[0] = True
-            if original_delta:
-                await original_delta(text)
-
-        call_kwargs["on_content_delta"] = _tracking_delta
+        track_stream_delivery(call_kwargs, has_streamed)
         return await self._try_with_fallback(
             lambda p, kw: p.chat_stream_with_context(**kw),
             call_kwargs,
@@ -474,23 +440,7 @@ class FallbackProvider(LLMProvider):
             primary_error = (response.content or primary_error)[:120]
 
             if has_streamed is not None and has_streamed[0]:
-                is_timeout = (response.error_kind or "").lower() == "timeout"
-                if is_timeout:
-                    logger.warning(
-                        "Primary model '{}' stream stalled after content was emitted; "
-                        "attempting failover anyway",
-                        primary_model,
-                    )
-                    has_streamed[0] = False
-                    if on_stream_recover:
-                        await on_stream_recover()
-                    else:
-                        kwargs["on_content_delta"] = None
-                else:
-                    logger.warning(
-                        "Primary model error but content already streamed; skipping failover"
-                    )
-                    return response
+                return response
 
             if not self._should_fallback(response):
                 logger.warning(
@@ -515,20 +465,7 @@ class FallbackProvider(LLMProvider):
         for idx, fallback in enumerate(self._fallback_presets):
             fallback_model = fallback.model
             if has_streamed is not None and has_streamed[0]:
-                is_timeout = (
-                    last_response is not None
-                    and (last_response.error_kind or "").lower() == "timeout"
-                )
-                if is_timeout and on_stream_recover:
-                    logger.warning(
-                        "Fallback model '{}' stream stalled after content was emitted; "
-                        "starting a new stream segment and trying next fallback",
-                        self._fallback_presets[idx - 1].model if idx > 0 else primary_model,
-                    )
-                    has_streamed[0] = False
-                    await on_stream_recover()
-                else:
-                    break
+                break
             if idx == 0 and primary_skipped:
                 logger.info(
                     "Primary model '{}' circuit open, trying fallback '{}'",

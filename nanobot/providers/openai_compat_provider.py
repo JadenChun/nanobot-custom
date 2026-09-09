@@ -34,6 +34,7 @@ from nanobot.providers.base import (
     parse_tool_arguments,
     resolve_stream_idle_timeout_s,
     tool_arguments_json_for_replay,
+    track_stream_delivery,
 )
 from nanobot.providers.openai_responses import (
     ResponsesStreamCapture,
@@ -1998,6 +1999,13 @@ class OpenAICompatProvider(LLMProvider):
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
+        delivered = [False]
+        callbacks = dict(on_content_delta=on_content_delta, on_thinking_delta=on_thinking_delta,
+                         on_tool_call_delta=on_tool_call_delta)
+        track_stream_delivery(callbacks, delivered)
+        on_content_delta = callbacks['on_content_delta']
+        on_thinking_delta = callbacks['on_thinking_delta']
+        on_tool_call_delta = callbacks['on_tool_call_delta']
         client = await self._ensure_client()
         idle_timeout_s = self._configured_timeout if self._configured_timeout is not None else resolve_stream_idle_timeout_s()
         try:
@@ -2069,6 +2077,8 @@ class OpenAICompatProvider(LLMProvider):
                             result.provider_compaction_scope = "current_request"
                     return result
                 except Exception as responses_error:
+                    if delivered[0]:
+                        raise
                     if self._spec and self._spec.name == "github_copilot":
                         # Copilot gateway exposes GPT-5/o-series only via /responses;
                         # falling back to /chat/completions cannot succeed and would

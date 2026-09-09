@@ -224,19 +224,27 @@ def _make_provider_core(
     else:
         from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 
-        provider = OpenAICompatProvider(
-            api_key=effective_key,
-            api_base=config.get_api_base(model, preset=preset),
-            default_model=model,
-            extra_headers=_provider_extra_headers(spec, p),
-            spec=spec,
-            extra_body=p.extra_body if p else None,
-            api_type=p.api_type if p and provider_name == "openai" else "auto",
-            timeout=p.timeout if p else None,
-            extra_query=p.extra_query if p else None,
-            proxy=p.proxy if p else None,
-            provider_name=provider_name,
-        )
+        def make_leaf(key: str | None) -> OpenAICompatProvider:
+            return OpenAICompatProvider(
+                api_key=key,
+                api_base=config.get_api_base(model, preset=preset),
+                default_model=model,
+                extra_headers=_provider_extra_headers(spec, p),
+                spec=spec,
+                extra_body=p.extra_body if p else None,
+                api_type=p.api_type if p and provider_name == "openai" else "auto",
+                timeout=p.timeout if p else None,
+                extra_query=p.extra_query if p else None,
+                proxy=p.proxy if p else None,
+                provider_name=provider_name,
+            )
+        keys = p.effective_keys if p else []
+        if keys and (len(keys) > 1 or p.rate_limit > 0):
+            from nanobot.providers.pooled_provider import PooledProvider
+            provider = PooledProvider([make_leaf(key) for key in keys], keys, p.rate_limit)
+        else:
+            provider = make_leaf(effective_key)
+
 
     provider.generation = preset.to_generation_settings()
     return provider

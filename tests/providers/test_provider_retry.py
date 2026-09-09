@@ -292,7 +292,7 @@ async def test_chat_stream_with_retry_does_not_retry_after_emitting_content(monk
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_with_retry_retries_timeout_after_emitting_content(monkeypatch) -> None:
+async def test_chat_stream_with_retry_stops_timeout_after_emitting_content(monkeypatch) -> None:
     first = LLMResponse(
         content="Error calling LLM: stream stalled for more than 30 seconds",
         finish_reason="error",
@@ -319,16 +319,16 @@ async def test_chat_stream_with_retry_retries_timeout_after_emitting_content(mon
         on_content_delta=_on_delta,
     )
 
-    assert response.content == "full retry response"
-    assert response.finish_reason == "stop"
-    assert provider.calls == 2
+    assert response is first
+    assert response.finish_reason == "error"
+    assert provider.calls == 1
     assert deltas == ["partial"]
-    assert delays == [1]
-    assert provider.last_kwargs.get("on_content_delta") is None
+    assert delays == []
+    assert provider.last_kwargs.get("on_content_delta") is not None
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_with_retry_retries_timeout_in_new_stream_segment(
+async def test_chat_stream_with_retry_does_not_recover_delivered_timeout(
     monkeypatch,
 ) -> None:
     first = LLMResponse(
@@ -361,12 +361,12 @@ async def test_chat_stream_with_retry_retries_timeout_in_new_stream_segment(
         on_stream_recover=_on_stream_recover,
     )
 
-    assert response.content == "full retry response"
-    assert response.finish_reason == "stop"
-    assert provider.calls == 2
-    assert deltas == ["partial", "full retry response"]
-    assert recoveries == ["recover"]
-    assert delays == [1]
+    assert response is first
+    assert response.finish_reason == "error"
+    assert provider.calls == 1
+    assert deltas == ["partial"]
+    assert recoveries == []
+    assert delays == []
     assert provider.last_kwargs.get("on_content_delta") is not None
 
 

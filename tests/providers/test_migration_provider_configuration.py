@@ -47,10 +47,14 @@ async def test_factory_timeout_reaches_lazy_sdk_client():
     config = configured()
     config.providers.openai.timeout = 17.0
     provider = make_provider(config)
-    assert provider._configured_timeout == 17.0
+    for leaf in provider._leaves:
+        assert leaf._configured_timeout == 17.0
     with patch('nanobot.providers.openai_compat_provider.AsyncOpenAI') as constructor:
-        await provider._ensure_client()
-    assert constructor.call_args.kwargs['timeout'] == 17.0
+        for leaf in provider._leaves:
+            await leaf._ensure_client()
+    assert constructor.call_count == 2
+    assert [call.kwargs['api_key'] for call in constructor.call_args_list] == ['first', 'second']
+    assert all(call.kwargs['timeout'] == 17.0 for call in constructor.call_args_list)
     assert constructor.call_args.kwargs['max_retries'] == 0
 
 
@@ -62,10 +66,10 @@ def test_invalid_explicit_timeout_is_rejected(timeout):
 
 def test_factory_default_timeout_precedes_upstream_environment(monkeypatch):
     monkeypatch.setenv("NANOBOT_OPENAI_COMPAT_TIMEOUT_S", "300")
-    assert make_provider(configured())._configured_timeout == 60.0
+    assert all(leaf._configured_timeout == 60.0 for leaf in make_provider(configured())._leaves)
     config = configured()
     config.providers.openai.timeout = 1.0
-    assert make_provider(config)._configured_timeout == 5.0
+    assert all(leaf._configured_timeout == 5.0 for leaf in make_provider(config)._leaves)
 
 
 def test_fallback_pool_changes_invalidate_signature():
