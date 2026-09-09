@@ -150,6 +150,8 @@ class TurnContext:
     runtime_context_blocks: list[RuntimeContextBlock] = field(default_factory=list)
     attributes: dict[str, Any] = field(default_factory=dict)
 
+    run_result: AgentRunResult | None = None
+    sent_messages: list[OutboundMessage] = field(default_factory=list)
     final_content: str | None = None
     all_messages: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str = ""
@@ -1991,7 +1993,7 @@ class AgentLoop:
             ctx.visible_run_started_at = time.time()
         await ctx.delivery.running(started_at=ctx.visible_run_started_at)
         assert ctx.transcript_input is not None
-        with capture_message_deliveries() as message_sends:
+        with capture_message_deliveries(ctx.sent_messages) as message_sends:
             result = await self._run_agent_loop(
                 ctx.transcript_input,
                 runtime=runtime,
@@ -2008,6 +2010,7 @@ class AgentLoop:
                 provider_state=ctx.provider_state,
                 events=ctx.events,
             )
+        ctx.run_result = result
         ctx.final_content = result.final_content
         ctx.all_messages = result.messages
         ctx.summary_checkpoint = result.summary_checkpoint

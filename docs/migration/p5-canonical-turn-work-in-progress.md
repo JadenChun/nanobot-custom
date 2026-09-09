@@ -1,0 +1,19 @@
+# Canonical turn integration in progress
+
+Current scope is one upstream stage pipeline and runner, consuming preserved TurnRequest/TurnResult contracts. Production and cron legacy execution remain guarded.
+
+First implemented dependency: MessageTool contextual execution delegates to the existing validated send path. It binds the trusted turn route, preserves same-target reply metadata, strips cross-target reply metadata, and captures detached full outbound records only after the callback acknowledges success. Failed, cancelled and intentionally suppressed sends do not become receipts. Records are invocation-local; loop capture and contextual delivery must share one list, with mismatches rejected before submission. The compatibility delivered flag means acknowledged callback submission, and incoming reply IDs are not assigned as sent-message IDs; the old target-set capture remains supported. The upstream run stage captures those records and retains the actual AgentRunResult, including policy metadata and terminal status, for canonical result conversion. Callback acknowledgement is not proof of external delivery; crash uncertainty remains a later receipt/reconciliation concern.
+
+Validation: network-denied message-tool and migration-ledger fixtures pass30 tests, including concurrent contexts, callback mutation isolation, cancellation, reply routing, suppression, and the real loop run stage with injected collaborators. Ruff passes after import sorting. Seven existing suppression fixtures fail at the unchanged migration guard before running a turn; they are not accepted or counted as passing.
+
+Next implementation contract from shared-loop analysis:
+
+1. Add execute_turn as the sole admission owner; move existing direct/bus lock ownership into it. Preserve approval snapshot/revalidation/consumption by identity and cancellation cleanup. Do not wrap process_direct with a second lock. Transfer pending queues under the same owner with identity-safe removal.
+2. Distinguish upstream stage TurnContext from the public RunTurnContext. Construct one public context using real foreground dependencies and pass it, mandatory RiskyActionPolicy, and fail_on_tool_error through _run_agent_loop into AgentRunSpec. Bind invocation context for delegates. Observer hooks never replace authorization.
+3. Fresh mode uses empty prior model history but retains and appends to the detail session. Skip prior recovery checkpoints, provider handles, summaries, injection queues and background continuation. Preserve configured memory/assets and current runtime context. Thread an explicit new-turn save boundary; do not clear stored history or use ephemeral to simulate fresh input.
+4. Convert the actual runner outcome into distinct canonical statuses, tool usage, policy metadata, sanitized opt-in traces and the shared send ledger. Apply staging final-text duplicate suppression, not any-send suppression. Isolate callbacks and invoke once. Cancellation finalizes then re-raises.
+5. Map direct/bus/SDK/API adapters to this path. Bus and cron own publication; computation does not start another delivery workflow.
+
+Required evidence includes actual upstream engine/contextual registry execution, same-key serialization/different-key concurrency, cancellation during admission, zero tools for mixed forbidden batches, no call after terminal outcomes, approval races, fresh projection seeded with history/checkpoint/provider state while retaining detail history, explicit matching/nonmatching/media sends, callback isolation and constructor guard retention.
+
+P4 still owns crash-safe session revisions/generations, checkpoint/reset fencing, authoritative governor and durable provider invalidation. Cron additionally needs occurrence propagation, fanout, receipts and reconciliation. This checkpoint does not establish canonical admission or fresh-history execution yet.

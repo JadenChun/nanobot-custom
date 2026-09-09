@@ -5,15 +5,24 @@
 from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import ToolContext, current_request_context
+from nanobot.agent.tools.context import (
+    RequestContext,
+    ToolContext,
+    bind_request_context,
+    current_request_context,
+    reset_request_context,
+)
 from nanobot.agent.tools.path_utils import resolve_workspace_path
 from nanobot.agent.tools.schema import ArraySchema, StringSchema, tool_parameters_schema
+from nanobot.agent.turn import TurnContext
 from nanobot.bus.events import OutboundMessage
 from nanobot.config.paths import get_workspace_path
 from nanobot.security.workspace_access import current_tool_workspace
@@ -24,15 +33,22 @@ _CURRENT_MESSAGE_SENDS: ContextVar[set[tuple[str, str]] | None] = ContextVar(
 )
 
 
+_CURRENT_MESSAGE_RECORDS: ContextVar[list[OutboundMessage] | None] = ContextVar(
+    "message_records", default=None,
+)
+
+
 @contextmanager
-def capture_message_deliveries() -> Generator[set[tuple[str, str]], None, None]:
+def capture_message_deliveries(records: list[OutboundMessage] | None = None) -> Generator[set[tuple[str, str]], None, None]:
     """Record successful MessageTool targets within one agent run."""
     sends: set[tuple[str, str]] = set()
     token = _CURRENT_MESSAGE_SENDS.set(sends)
+    record_token = _CURRENT_MESSAGE_RECORDS.set(records)
     try:
         yield sends
     finally:
         _CURRENT_MESSAGE_SENDS.reset(token)
+        _CURRENT_MESSAGE_RECORDS.reset(record_token)
 
 
 @tool_parameters(
@@ -99,6 +115,41 @@ class MessageTool(Tool):
             workspace=ctx.workspace,
             restrict_to_workspace=ctx.config.restrict_to_workspace,
         )
+
+    async def execute_with_context(
+        self, context: TurnContext, **kwargs: Any,
+    ) -> ToolResult | str:
+        """Use the trusted turn route and record acknowledged sends per invocation."""
+        captured = _CURRENT_MESSAGE_RECORDS.get()
+        if captured is not None and captured is not context.delivery.sent_messages:
+            raise ValueError("turn capture and contextual message ledger must share one list")
+        target = context.delivery.primary or context.delivery.target
+        request_token = None
+        if target is not None:
+            current = current_request_context()
+            same_target = current is not None and (current.channel, current.chat_id) == (
+                target.channel, target.chat_id,
+            )
+            routing = current or RequestContext(channel=target.channel, chat_id=target.chat_id or "")
+            request_token = bind_request_context(replace(
+                routing, channel=target.channel, chat_id=target.chat_id or "",
+                session_key=context.session_key,
+                message_id=target.message_id or (routing.message_id if same_target else None),
+                metadata=dict(routing.metadata) if same_target else {},
+            ))
+        token = _CURRENT_MESSAGE_RECORDS.set(context.delivery.sent_messages)
+        before = len(context.delivery.sent_messages)
+        try:
+            result = await self.execute(**kwargs)
+            for message in context.delivery.sent_messages[before:]:
+                if target and (message.channel, message.chat_id) == (target.channel, target.chat_id):
+                    # Legacy flag means callback submission succeeded, not remote delivery.
+                    context.delivery.delivered = True
+            return result
+        finally:
+            _CURRENT_MESSAGE_RECORDS.reset(token)
+            if request_token is not None:
+                reset_request_context(request_token)
 
     def set_send_callback(self, callback: Callable[[OutboundMessage], Awaitable[None]]) -> None:
         """Set the callback for sending messages."""
@@ -248,7 +299,11 @@ class MessageTool(Tool):
             return f"Message acknowledged for {channel}:{chat_id} (not delivered)"
 
         try:
+            record = deepcopy(msg)
             await self._send_callback(msg)
+            records = _CURRENT_MESSAGE_RECORDS.get()
+            if records is not None:
+                records.append(record)
             sends = _CURRENT_MESSAGE_SENDS.get()
             if sends is not None:
                 sends.add((channel, chat_id))
