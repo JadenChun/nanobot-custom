@@ -40,7 +40,8 @@ from nanobot.agent.tools.schema import (
 )
 from nanobot.config.paths import get_media_dir
 from nanobot.config_base import Base
-from nanobot.security.workspace_access import current_scope_allows_loopback, current_tool_workspace
+from nanobot.context_repo import ResourceAccessPolicy
+from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.security.workspace_policy import is_path_within
 
 _IS_WINDOWS = sys.platform == "win32"
@@ -161,6 +162,14 @@ class _PreparedCommand:
 )
 class ExecTool(Tool):
     """Tool to execute shell commands."""
+    _DESKTOP_MUTATION_COMMAND_RE = re.compile(
+        r"(?:^|(?:&&|\|\||[;|&()\n]))\s*"
+        r"(?:(?:command|exec|nohup|sudo)\s+)*"
+        r"(?:env\s+(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*)?"
+        r"(?:[A-Za-z_][A-Za-z0-9_]*=[^\s]+\s+)*"
+        r"(?:/(?:usr/)?bin/)?(?:open|osascript|xdotool|wmctrl)(?=\s|$)",
+        re.IGNORECASE,
+    )
     _scopes = {"core", "subagent"}
 
     config_key = "exec"
@@ -190,6 +199,8 @@ class ExecTool(Tool):
             allow_patterns=cfg.allow_patterns,
             deny_patterns=cfg.deny_patterns,
             session_manager=ctx.exec_session_manager,
+            resource_policy=ctx.fork_dependencies.resource_policy if ctx.fork_dependencies else None,
+            desktop_use_active=ctx.config.desktop_use.enabled,
         )
 
     def __init__(
@@ -208,7 +219,11 @@ class ExecTool(Tool):
         sandbox_rw_binds: list[str] | None = None,
         allowed_env_keys: list[str] | None = None,
         session_manager: ExecSessionManager | None = None,
+        resource_policy: ResourceAccessPolicy | None = None,
+        desktop_use_active: bool = False,
     ):
+        self.resource_policy = resource_policy
+        self.desktop_use_active = desktop_use_active
         self.timeout = timeout
         self.working_dir = working_dir
         self.sandbox = sandbox
@@ -434,24 +449,24 @@ class ExecTool(Tool):
                     "Error: working_dir could not be resolved"
                     + _WORKSPACE_BOUNDARY_NOTE
                 )
-            if not is_path_within(requested, resolved_root):
+            if not is_path_within(requested, resolved_root) and not self._managed_exec_path(requested):
                 return ToolResult.error(
                     "Error: working_dir is outside the configured workspace"
                     + _WORKSPACE_BOUNDARY_NOTE
                 )
 
-        # Full access is an explicit trust decision. Keep the application-level
-        # command guard aligned with the selected access mode instead of
-        # continuing to block commands after workspace restriction is disabled.
-        if access.restrict_to_workspace:
-            guard_error = self._guard_command(
-                command,
-                cwd,
-                restrict_to_workspace=True,
-                workspace_root=workspace_root,
-            )
-            if guard_error:
-                return guard_error
+        guard_error = self._guard_command(
+            command, cwd, restrict_to_workspace=access.restrict_to_workspace,
+            workspace_root=workspace_root,
+        )
+        if guard_error:
+            return guard_error
+        if self.sandbox and workspace_root:
+            root = Path(workspace_root).resolve()
+            if not is_path_within(Path(cwd).resolve(), root) and not any(
+                is_path_within(Path(cwd).resolve(), bind) for bind in self._active_sandbox_bind_roots(root)
+            ):
+                return ToolResult.error("Error: managed working directory is not mounted in the configured sandbox")
 
         if self.sandbox:
             if _IS_WINDOWS:
@@ -816,32 +831,25 @@ class ExecTool(Tool):
         cmd = command.strip()
         lower = cmd.lower()
 
-        # allow_patterns take priority over deny_patterns so that users can
-        # exempt specific commands (e.g. "rm -rf" inside a build directory)
-        # from the hardcoded deny list via configuration. A chained command is
-        # only explicitly allowed when every top-level shell segment matches.
+        # Retain the fork's deny-first contract even in full-access mode.
+        for pattern in self.deny_patterns:
+            if re.search(pattern, lower):
+                return ToolResult.error("Error: Command blocked by deny pattern filter")
         segments = self._split_shell_segments(lower)
-        explicitly_allowed = bool(self.allow_patterns) and bool(segments) and all(
+        if self.allow_patterns and (not segments or not all(
             any(re.fullmatch(pattern, segment) for pattern in self.allow_patterns)
             for segment in segments
-        )
-        if not explicitly_allowed:
-            for pattern in self.deny_patterns:
-                if re.search(pattern, lower):
-                    return ToolResult.error("Error: Command blocked by deny pattern filter")
-
-            if self.allow_patterns:
-                return ToolResult.error("Error: Command blocked by allowlist filter (not in allowlist)")
-
+        )):
+            return ToolResult.error("Error: Command blocked by allowlist filter (not in allowlist)")
+        if self.desktop_use_active and self._DESKTOP_MUTATION_COMMAND_RE.search(cmd):
+            return ToolResult.error("Error: Shell-based desktop mutation is blocked because desktop_use is enabled")
         from nanobot.security.network import contains_internal_url
-        if contains_internal_url(
-            cmd,
-            allow_loopback=current_scope_allows_loopback(
-                enabled=self.webui_allow_local_service_access,
-            ),
-        ):
-            # The runner turns this marker into a non-retryable security hint.
+        if contains_internal_url(cmd):
             return ToolResult.error("Error: Command blocked by safety guard (internal/private URL detected)")
+        if self.resource_policy:
+            policy_error = self.resource_policy.validate_exec(command, cwd)
+            if policy_error:
+                return ToolResult.error(policy_error)
 
         should_restrict = self.restrict_to_workspace if restrict_to_workspace is None else restrict_to_workspace
         if should_restrict:
@@ -900,6 +908,8 @@ class ExecTool(Tool):
                     allowed = is_path_within(p, resolved_workspace)
                 if not allowed and sandbox_bind_roots:
                     allowed = any(is_path_within(p, root) for root in sandbox_bind_roots)
+                if not allowed and self._managed_exec_path(p):
+                    allowed = not self.sandbox or any(is_path_within(p, root) for root in sandbox_bind_roots)
                 if p.is_absolute() and not allowed:
                     return ToolResult.error(
                         "Error: Command blocked by safety guard (path outside working dir)"
@@ -907,6 +917,19 @@ class ExecTool(Tool):
                     )
 
         return None
+
+    def _managed_exec_path(self, path: Path) -> bool:
+        """Only declared context/target roots can extend command access."""
+        if self.resource_policy is None:
+            return False
+        manager = self.resource_policy.context_manager
+        if manager.find_repo_for_path(path) is None and manager.find_target_repo_for_path(path) is None:
+            return False
+        try:
+            self.resource_policy.validate_path(path, "exec")
+        except PermissionError:
+            return False
+        return True
 
     @staticmethod
     def _split_shell_segments(command: str) -> list[str]:

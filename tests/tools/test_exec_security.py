@@ -47,7 +47,7 @@ async def test_exec_blocks_wget_localhost():
     assert "Error" in result
 
 
-def test_exec_full_workspace_scope_allows_loopback(tmp_path):
+def test_exec_full_workspace_scope_preserves_loopback_guard(tmp_path):
     tool = ExecTool(working_dir=str(tmp_path))
     scope = build_workspace_scope(tmp_path, "full", source_channel="websocket")
     token = bind_workspace_scope(scope)
@@ -56,7 +56,8 @@ def test_exec_full_workspace_scope_allows_loopback(tmp_path):
             error = tool._guard_command("curl http://localhost:8765/", str(tmp_path))
     finally:
         reset_workspace_scope(token)
-    assert error is None
+    assert error is not None
+    assert "internal/private" in error
 
 
 def test_exec_core_full_workspace_scope_blocks_loopback(tmp_path):
@@ -118,7 +119,7 @@ def test_exec_full_workspace_scope_still_blocks_metadata(tmp_path):
         "echo http://169.254.169.254/latest/meta-data/",
     ],
 )
-async def test_exec_full_access_skips_command_guard(tmp_path, command):
+async def test_exec_full_access_preserves_command_guard(tmp_path, command):
     tool = ExecTool(
         working_dir=str(tmp_path),
         restrict_to_workspace=False,
@@ -126,11 +127,11 @@ async def test_exec_full_access_skips_command_guard(tmp_path, command):
     )
     result = await tool.execute(command=command)
 
-    assert "Exit code: 0" in result
-    assert "Command blocked" not in result
+    assert result.is_error
+    assert "Command blocked" in result
 
 
-async def test_exec_full_workspace_scope_skips_command_guard(tmp_path):
+async def test_exec_full_workspace_scope_preserves_command_guard(tmp_path):
     tool = ExecTool(working_dir=str(tmp_path), restrict_to_workspace=True)
     scope = build_workspace_scope(tmp_path, "full", source_channel="websocket")
     token = bind_workspace_scope(scope)
@@ -141,8 +142,8 @@ async def test_exec_full_workspace_scope_skips_command_guard(tmp_path):
     finally:
         reset_workspace_scope(token)
 
-    assert "Exit code: 0" in result
-    assert "Command blocked" not in result
+    assert result.is_error
+    assert "Command blocked" in result
 
 
 @pytest.mark.asyncio

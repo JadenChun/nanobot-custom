@@ -8,12 +8,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from nanobot.agent.delegation import ForegroundAgentManager
     from nanobot.agent.subagent import SubagentManager
     from nanobot.agent.tools.exec_session import ExecSessionManager
     from nanobot.agent.tools.file_state import FileStates
     from nanobot.agent.tools.runtime_control import RuntimeControl
+    from nanobot.agent.write_guard import FileLockRegistry
     from nanobot.bus.queue import MessageBus
     from nanobot.config.schema import ProviderConfig, ToolsConfig
+    from nanobot.context_repo import ResourceAccessPolicy
     from nanobot.cron.service import CronService
     from nanobot.providers.factory import ProviderSnapshot
     from nanobot.security.workspace_access import WorkspaceSandboxStatus
@@ -75,6 +78,17 @@ def current_request_session_key() -> str | None:
     return ctx.session_key if ctx else None
 
 
+@dataclass(frozen=True)
+class ForkToolDependencies:
+    """Trusted construction inputs supplied by the owning foreground harness."""
+
+    foreground_manager: ForegroundAgentManager
+    resource_policy: ResourceAccessPolicy
+    file_locks: FileLockRegistry
+    crawler_enabled: bool = False
+    explore_max_iterations: int = 100
+
+
 @dataclass
 class ToolContext:
     config: ToolsConfig
@@ -90,3 +104,4 @@ class ToolContext:
     timezone: str = "UTC"
     workspace_sandbox: WorkspaceSandboxStatus | None = None
     runtime_control: RuntimeControl | None = None
+    fork_dependencies: ForkToolDependencies | None = None

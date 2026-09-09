@@ -182,7 +182,11 @@ class _FsTool(Tool):
         return cls(
             workspace=agent_workspace,
             allowed_dir=allowed_dir,
-            extra_read_allowed_dirs=[BUILTIN_SKILLS_DIR, resolved_agent_workspace / "skills"],
+            extra_read_allowed_dirs=[BUILTIN_SKILLS_DIR, resolved_agent_workspace / "skills",
+                                     *(ctx.fork_dependencies.resource_policy.extra_read_dirs()
+                                       if ctx.fork_dependencies else [])],
+            resource_policy=ctx.fork_dependencies.resource_policy if ctx.fork_dependencies else None,
+            lock_registry=ctx.fork_dependencies.file_locks if ctx.fork_dependencies else None,
             extra_read_allowed_files=[resolved_agent_workspace / "memory" / "history.jsonl"],
             file_states=ctx.file_state_store,
             restrict_to_workspace=ctx.config.restrict_to_workspace,

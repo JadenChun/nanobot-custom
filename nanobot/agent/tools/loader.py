@@ -92,38 +92,17 @@ class ToolLoader:
     def load(self, ctx: ToolContext, registry: ToolRegistry, *, scope: str = "core") -> list[str]:
         from nanobot.migration_guard import require_runtime_ready
         require_runtime_ready()
-        registered: list[str] = []
-        builtin_names: set[str] = set()
-        sources = [(self.discover(), False), (self._discover_plugins().values(), True)]
-        for source, is_plugin_source in sources:
-            for tool_cls in source:
-                cls_label = tool_cls.__name__
-                try:
-                    if scope not in getattr(tool_cls, "_scopes", {"core"}):
-                        continue
-                    if not tool_cls.enabled(ctx):
-                        continue
-                    tool = tool_cls.create(ctx)
-                    if is_plugin_source:
-                        tool = _LegacyErrorPrefixTool(tool)
-                    if registry.has(tool.name):
-                        if is_plugin_source and tool.name in builtin_names:
-                            logger.warning(
-                                "Plugin %s skipped: conflicts with built-in tool %s",
-                                cls_label, tool.name,
-                            )
-                            continue
-                        logger.warning(
-                            "Tool name collision: %s from %s overwrites existing",
-                            tool.name, cls_label,
-                        )
-                    registry.register(tool)
-                    registered.append(tool.name)
-                    if not is_plugin_source:
-                        builtin_names.add(tool.name)
-                except Exception:
-                    logger.exception("Failed to register tool: %s", cls_label)
-        return registered
+        from nanobot.agent.tools.fork_factories import construct_core_tools
+
+        if scope != "core":
+            raise ValueError(f"Unsupported runtime tool scope: {scope}")
+        tools = construct_core_tools(ctx)
+        names = [tool.name for tool in tools]
+        if len(names) != len(set(names)) or any(registry.has(name) for name in names):
+            raise ValueError("Duplicate tool registration in foreground factory manifest")
+        for tool in tools:
+            registry.register(tool)
+        return names
 
 
 class _LegacyErrorPrefixTool(Tool):

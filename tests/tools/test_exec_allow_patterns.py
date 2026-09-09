@@ -1,4 +1,4 @@
-"""Tests for allow_patterns priority over deny_patterns."""
+"""Tests for preserved deny-first policy and segment-level allowlists."""
 
 from __future__ import annotations
 
@@ -13,11 +13,12 @@ def test_deny_patterns_block_rm_rf():
     assert "deny pattern filter" in result.lower()
 
 
-def test_allow_patterns_bypass_deny():
-    """allow_patterns take priority: matching command skips deny check."""
+def test_allow_patterns_cannot_bypass_deny():
+    """An allowlist cannot override the preserved deny policy."""
     tool = ExecTool(allow_patterns=[r"rm\s+-rf\s+/tmp/.*"])
     result = tool._guard_command("rm -rf /tmp/build", "/tmp")
-    assert result is None
+    assert result is not None
+    assert "deny pattern filter" in result
 
 
 def test_allow_patterns_must_match_to_bypass():
@@ -37,14 +38,15 @@ def test_extra_deny_patterns_from_config():
     assert tool._guard_command("rm -rf /tmp/x", "/tmp") is not None
 
 
-def test_allow_patterns_bypass_extra_deny():
-    """allow_patterns also bypasses user-supplied deny patterns."""
+def test_allow_patterns_cannot_bypass_extra_deny():
+    """An allowlist cannot override the preserved deny policy."""
     tool = ExecTool(
         deny_patterns=[r"\bping\b"],
         allow_patterns=[r"\bping\s+example\.com\b"],
     )
     result = tool._guard_command("ping example.com", "/tmp")
-    assert result is None
+    assert result is not None
+    assert "deny pattern filter" in result
 
 
 def test_allow_patterns_is_whitelist_only():
@@ -126,11 +128,12 @@ def test_deny_patterns_search_original_command_with_quoted_hash():
     assert "deny pattern filter" in result.lower()
 
 
-def test_allow_patterns_fullmatch_allows_exact_command():
-    """A full-command allow pattern can still exempt an exact denied command."""
+def test_allow_patterns_fullmatch_cannot_override_denied_command():
+    """An allowlist cannot override the preserved deny policy."""
     tool = ExecTool(allow_patterns=[r"rm\s+-rf\s+/tmp/build"])
     result = tool._guard_command("rm -rf /tmp/build", "/tmp")
-    assert result is None
+    assert result is not None
+    assert "deny pattern filter" in result
 
 
 def test_guard_allow_patterns_allow_single_matching_segment():
