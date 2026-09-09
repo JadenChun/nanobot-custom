@@ -79,3 +79,25 @@ def test_fallback_pool_changes_invalidate_signature():
     before = provider_signature(config)
     config.providers.deepseek.api_keys[1] = "changed"
     assert provider_signature(config) != before
+
+
+def test_legacy_and_upstream_fallback_are_mutually_exclusive():
+    with pytest.raises(ValueError, match='not both'):
+        Config.model_validate({'agents': {'defaults': {
+            'fallback': [{'provider': 'openai', 'model': 'legacy'}],
+            'fallbackModels': [{'provider': 'openai', 'model': 'upstream'}],
+        }}})
+
+
+def test_legacy_fallback_transport_and_policy_invalidate_signature():
+    from nanobot.config.schema import FallbackEntry
+    config = configured()
+    config.agents.defaults.fallback = [FallbackEntry(provider='deepseek', model='deepseek-chat')]
+    config.providers.deepseek.api_keys = ['fallback']
+    before = provider_signature(config)
+    config.providers.deepseek.timeout = 23
+    assert provider_signature(config) != before
+    legacy = provider_signature(config)
+    config.agents.defaults.fallback = []
+    config.agents.defaults.fallback_models = [InlineFallbackConfig(provider='deepseek', model='deepseek-chat')]
+    assert provider_signature(config) != legacy

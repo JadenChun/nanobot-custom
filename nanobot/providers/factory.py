@@ -271,8 +271,14 @@ def _inline_fallback_preset(
 
 
 def _resolve_fallback_presets(config: Config, primary: ModelPresetConfig) -> list[ModelPresetConfig]:
+    defaults = config.agents.defaults
+    if defaults.fallback and defaults.fallback_models:
+        raise ValueError("Configure either legacy fallback or fallback_models, not both")
+    if defaults.fallback:
+        return [primary.model_copy(update={"model": entry.model, "provider": entry.provider})
+                for entry in defaults.fallback]
     presets: list[ModelPresetConfig] = []
-    for fallback in config.agents.defaults.fallback_models:
+    for fallback in defaults.fallback_models:
         if isinstance(fallback, str):
             presets.append(config.model_presets[fallback])
         else:
@@ -293,11 +299,15 @@ def make_provider(
     the failover path to create providers for fallback models.
     """
     resolved = _resolve_model_preset(config, preset_name=preset_name, preset=preset)
-    provider = _make_provider_core(config, preset=resolved, model=model)
     fallback_presets = _resolve_fallback_presets(config, resolved)
+    provider = _make_provider_core(config, preset=resolved, model=model)
 
     if fallback_presets:
-        provider = FallbackProvider(
+        wrapper = FallbackProvider
+        if config.agents.defaults.fallback:
+            from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
+            wrapper = LegacyFallbackProvider
+        provider = wrapper(
             primary=provider,
             fallback_presets=fallback_presets,
             provider_factory=lambda fb: _make_provider_core(config, preset=fb),
@@ -382,6 +392,7 @@ def provider_signature(
         tuple(p.effective_keys) if p else (),
         p.rate_limit if p else 0,
         p.timeout if p else None,
+        "legacy" if config.agents.defaults.fallback else "upstream",
         tuple(_fallback_signature(fallback) for fallback in fallback_presets),
     )
 
