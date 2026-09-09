@@ -4,7 +4,7 @@ from copy import deepcopy
 from typing import Any
 
 DURABLE_METADATA_KEYS = frozenset({
-    "context_checkpoint", "source_schema_version", "execution_lease",
+    "context_checkpoint", "source_schema_version", "execution_lease", "execution_recovery_required",
     "revision", "generation", "incarnation",
 })
 LEGACY_RECOVERY_KEYS = frozenset({

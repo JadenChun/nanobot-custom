@@ -1675,7 +1675,17 @@ class JsonlSessionStore:
             return True
 
     def delete(self, key: str) -> bool:
-        with self._session_files_lock:
+        from nanobot.session.execution_owner import ExecutionOwnershipError, execution_lock_guard
+
+        # Recheck format after taking execution ownership: upgrade can race a delete.
+        with execution_lock_guard(self, key), self._session_files_lock:
+            path = self.get_session_path(key)
+            if path.exists() and "source_schema_version" in self._format_header(path).get("metadata", {}):
+                snapshot = self.source.load_source_snapshot(key)
+                if any(name in snapshot.header["metadata"] for name in ("execution_lease", "execution_recovery_required")):
+                    raise ExecutionOwnershipError()
+                self.source._delete_unlocked(key, snapshot.state)
+                return True
             return self._delete_unlocked(key)
 
     def _delete_unlocked(self, key: str) -> bool:

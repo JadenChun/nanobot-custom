@@ -175,3 +175,34 @@ outcomes. Consolidation's source transaction is implemented, but memory receipt 
 runner wiring still require acceptance. Offloading, context governance, idle
 compaction, provider coordination, cron/auth/startup work, and overall migration
 validation remain open. No runtime guard has been removed.
+
+## P4B execution ownership primitive
+
+The dormant source store now has a per-session cross-process execution lock and a
+nonserializable, task/PID-bound `ExecutionOwner`. Acquisition persists an exact
+lease before returning authority. The lock spans dispatch validation and effects;
+there is no lease expiry or takeover of a live owner. Registered child tasks may
+share authority; unregistered children cannot dispatch, mutate, or self-register.
+Root cleanup stops new dispatch and drains registered tasks even when cancelled.
+Lock files remain in place across deletion so competing processes share one inode.
+
+Source append/checkpoint/consolidation/reset/delete transactions take execution
+authority before the short storage lock. Owned writes retain exact revision CAS;
+metadata-only writes preserve reserved ownership fields. Destructive owned writes
+require root quiescence and invalidate the capability. Ownerless writes reject
+live locks, abandoned leases, and durable recovery markers. Abandoned ownership or
+unresolved calls prevent dispatch until explicit reconciliation; release preserves
+recovery evidence. Persistence failures before/after replacement never authorize
+an acquired capability or permit retry of uncertain effects.
+
+Validation: 327 network-denied session/atomic/history/actual-engine/detail tests,
+71 network-denied canonical/bus/SDK/policy/trace tests, and 25 mocked-provider API
+tests pass (423 total for this checkpoint). The 23 ownership tests include actual
+process contention and abrupt process exit, stale lease tokens/incarnation/generation,
+child registration, cancellation while draining, reset/delete fences, persistent
+lock inode, and acquisition/release persistence failures. Ruff and diff checks pass.
+Independent review passed the child-task and durable-recovery-marker corrections.
+
+This primitive is not yet acquired by the canonical runner. Mandatory durable
+user/intent/per-result/final events and dispatch wiring are the next package.
+Production runtime remains guarded; these results do not establish migration readiness.

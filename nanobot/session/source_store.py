@@ -28,6 +28,7 @@ from nanobot.session.source import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.manager import JsonlSessionStore, Session
 
 
@@ -272,9 +273,10 @@ class SourceSessionStore:
         return result
 
     def upgrade_source_session(self, key: str, *, expected_revision: int, expected_generation: int, expected_incarnation: str) -> SourceSnapshot:
+        from nanobot.session.execution_owner import execution_transaction
         from nanobot.session.manager import SessionWriteConflict
 
-        with self._backend.locked_session_files():
+        with execution_transaction(self._backend, key, allow_legacy=True):
             header, events = self._read_unlocked(key, require_source=False)
             state = self._state(header)
             if (
@@ -310,8 +312,10 @@ class SourceSessionStore:
             header.setdefault("updated_at", now)
             return self._write(header, upgraded)
 
-    def append_source_events(self, key: str, expected: SourceState, events: list[dict[str, Any]]) -> SourceSnapshot:
-        with self._backend.locked_session_files():
+    def append_source_events(self, key: str, expected: SourceState, events: list[dict[str, Any]], *, owner: ExecutionOwner | None = None) -> SourceSnapshot:
+        from nanobot.session.execution_owner import execution_transaction
+
+        with execution_transaction(self._backend, key, owner):
             header, committed = self._current_unlocked(key, expected)
             merged = merge_source_events(committed, events)
             if merged == committed:
@@ -320,8 +324,10 @@ class SourceSessionStore:
             header["updated_at"] = datetime.now().isoformat()
             return self._write(header, merged)
 
-    def commit_context_checkpoint(self, key: str, expected: SourceState, candidate: dict[str, Any]) -> SourceSnapshot:
-        with self._backend.locked_session_files():
+    def commit_context_checkpoint(self, key: str, expected: SourceState, candidate: dict[str, Any], *, owner: ExecutionOwner | None = None) -> SourceSnapshot:
+        from nanobot.session.execution_owner import execution_transaction
+
+        with execution_transaction(self._backend, key, owner):
             header, events = self._current_unlocked(key, expected)
             validated = validate_context_checkpoint(
                 candidate, events, generation=expected.generation,
@@ -331,16 +337,21 @@ class SourceSessionStore:
             header["revision"] += 1
             return self._write(header, events)
 
-    def reset_source_session(self, key: str, expected: SourceState, replacement_events: list[dict[str, Any]]) -> SourceSnapshot:
-        with self._backend.locked_session_files():
+    def reset_source_session(self, key: str, expected: SourceState, replacement_events: list[dict[str, Any]], *, owner: ExecutionOwner | None = None) -> SourceSnapshot:
+        from nanobot.session.execution_owner import execution_transaction
+
+        with execution_transaction(self._backend, key, owner, destructive=True):
             header, _ = self._current_unlocked(key, expected)
             header["revision"] += 1
             header["generation"] += 1
             header["last_archived"] = header["last_consolidated"] = 0
             header["updated_at"] = datetime.now().isoformat()
-            for name in {"context_checkpoint", "_last_summary", "execution_lease", *LEGACY_RECOVERY_KEYS}:
+            for name in {"context_checkpoint", "_last_summary", "execution_lease", "execution_recovery_required", *LEGACY_RECOVERY_KEYS}:
                 header["metadata"].pop(name, None)
-            return self._write(header, replacement_events)
+            result = self._write(header, replacement_events)
+            if owner is not None:
+                owner._invalidate_after_destructive_write()
+            return result
 
     def update_metadata(self, key: str, updates: dict[str, Any]) -> SourceSnapshot:
         with self._backend.locked_session_files():
@@ -350,8 +361,10 @@ class SourceSessionStore:
             header["revision"] += 1
             return self._write(header, events)
 
-    def advance_consolidated(self, key: str, expected: SourceState, end_offset: int) -> SourceSnapshot:
-        with self._backend.locked_session_files():
+    def advance_consolidated(self, key: str, expected: SourceState, end_offset: int, *, owner: ExecutionOwner | None = None) -> SourceSnapshot:
+        from nanobot.session.execution_owner import execution_transaction
+
+        with execution_transaction(self._backend, key, owner):
             header, events = self._current_unlocked(key, expected)
             if not header.get("last_consolidated", 0) <= _counter(end_offset) <= len(events):
                 raise SourceValidationError("Invalid consolidation boundary")
@@ -360,3 +373,17 @@ class SourceSessionStore:
             header["last_archived"] = header["last_consolidated"] = end_offset
             header["revision"] += 1
             return self._write(header, events)
+
+
+    def delete_source_session(self, key: str, expected: SourceState, *, owner: ExecutionOwner | None = None) -> None:
+        from nanobot.session.execution_owner import execution_transaction
+
+        with execution_transaction(self._backend, key, owner, destructive=True):
+            self._delete_unlocked(key, expected, owner=owner)
+
+    def _delete_unlocked(self, key: str, expected: SourceState, *, owner: ExecutionOwner | None = None) -> None:
+        self._current_unlocked(key, expected)
+        self._backend.get_session_path(key).unlink()
+        if owner is not None:
+            owner._invalidate_after_destructive_write()
+        self._backend._fsync_directory(self._backend.sessions_dir)
