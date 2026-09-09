@@ -26,7 +26,7 @@ from nanobot.agent.context_governance import (
 )
 from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from nanobot.agent.policy import ToolPolicy
-from nanobot.agent.tools.execution import execute_tool_calls
+from nanobot.agent.tools.execution import ToolResultCallback, execute_tool_calls
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.events import NO_EVENTS, EventSink
@@ -120,6 +120,7 @@ class AgentRunSpec:
     provider_state: ProviderConversationState | None = None
     llm_usage_source: LLMUsageSource | None = None
     events: EventSink = NO_EVENTS
+    tool_result_callback: ToolResultCallback | None = None
 
 
 @dataclass(slots=True)
@@ -314,6 +315,9 @@ class AgentRunner:
         return True
 
     async def run(self, spec: AgentRunSpec) -> AgentRunResult:
+        if (spec.turn_context is not None and spec.turn_context.execution_owner is not None
+                and spec.tool_result_callback is None):
+            raise ValueError("Execution ownership requires durable tool-result recording")
         hook = spec.hook or AgentHook()
         messages, compaction = self._initial_transcript_and_compaction(spec)
         context = AgentRunHookContext(messages=deepcopy(messages))
@@ -530,6 +534,7 @@ class AgentRunner:
                     messages=messages,
                     turn_context=spec.turn_context,
                     fail_on_tool_error=spec.fail_on_tool_error,
+                    tool_result_callback=spec.tool_result_callback,
                 )
                 terminal = next((r for r in results if isinstance(r, ToolOutcome)
                                  and r.stop_reason), None)

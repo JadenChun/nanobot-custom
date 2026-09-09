@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from copy import deepcopy
+from dataclasses import dataclass
 from typing import Any, cast
 
 from loguru import logger
@@ -17,6 +19,30 @@ from nanobot.utils.runtime import (
     repeated_external_lookup_error,
     repeated_workspace_violation_error,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class KnownToolResult:
+    """Detached evidence before projection normalization or observer callbacks."""
+
+    ordinal: int
+    tool_call_id: str
+    name: str
+    raw_result: Any
+    result: Any
+    event: dict[str, str]
+    dispatched: bool
+
+
+ToolResultCallback = Callable[[KnownToolResult], Awaitable[None]]
+
+
+async def _record_result(callback: ToolResultCallback | None, ordinal: int,
+                         call: ToolCallRequest, raw: Any, result: Any,
+                         event: dict[str, str], *, dispatched: bool) -> None:
+    if callback is not None:
+        await callback(KnownToolResult(ordinal, call.id, call.name, deepcopy(raw),
+                                       deepcopy(result), deepcopy(event), dispatched))
 
 _RETRY_HINT = "\n\n[Analyze the error above and try a different approach.]"
 # SSRF is a hard security block at the tool boundary, but the agent turn
@@ -65,8 +91,11 @@ async def execute_tool_calls(
     messages: list[dict[str, Any]] | None = None,
     turn_context: TurnContext | None = None,
     fail_on_tool_error: bool = False,
+    tool_result_callback: ToolResultCallback | None = None,
 ) -> tuple[list[Any], list[dict[str, str]]]:
     """Execute one model response's tool calls in stable result order."""
+    if turn_context is not None and turn_context.execution_owner is not None and tool_result_callback is None:
+        raise ValueError("Execution ownership requires durable tool-result recording")
     # Policy inspects the complete response before any side effect can begin.
     terminal: ToolOutcome | None = None
     if tool_policy is not None:
@@ -76,8 +105,10 @@ async def execute_tool_calls(
                                    decision.metadata)
     tool_results: list[tuple[Any, dict[str, str]]] = []
     # Contextual delegates require strict stop propagation across the batch.
-    concurrent = concurrent and turn_context is None and tool_policy is None and not fail_on_tool_error
+    concurrent = (concurrent and turn_context is None and tool_policy is None
+                  and not fail_on_tool_error and tool_result_callback is None)
 
+    ordinal = 0
     for batch in _partition_tool_batches(tools, tool_calls, concurrent=concurrent):
         if concurrent and len(batch) > 1 and terminal is None:
             batch_results = await asyncio.gather(*(
@@ -102,8 +133,11 @@ async def execute_tool_calls(
             for tool_call in batch:
                 if terminal is not None:
                     payload = terminal if not tool_results else "Skipped: tool batch stopped."
-                    tool_results.append((payload, {"name": tool_call.name, "status": "skipped",
-                                                   "detail": "tool batch stopped"}))
+                    event = {"name": tool_call.name, "status": "skipped", "detail": "tool batch stopped"}
+                    await _record_result(tool_result_callback, ordinal, tool_call, payload,
+                                         payload, event, dispatched=False)
+                    ordinal += 1
+                    tool_results.append((payload, event))
                     continue
                 result = await _execute_tool_call(
                     tools,
@@ -113,7 +147,10 @@ async def execute_tool_calls(
                     hook,
                     context,
                     turn_context,
+                    tool_result_callback,
+                    ordinal,
                 )
+                ordinal += 1
                 outcome, event = result
                 if isinstance(outcome, ToolOutcome):
                     if outcome.stop_reason and (outcome.stop_reason != "tool_error" or fail_on_tool_error):
@@ -138,6 +175,8 @@ async def _execute_tool_call(
     hook: AgentHook,
     context: AgentHookContext,
     turn_context: TurnContext | None = None,
+    tool_result_callback: ToolResultCallback | None = None,
+    ordinal: int = 0,
 ) -> tuple[Any, dict[str, str]]:
     lookup_error = repeated_external_lookup_error(
         tool_call.name,
@@ -150,7 +189,10 @@ async def _execute_tool_call(
             "status": "error",
             "detail": "repeated external lookup blocked",
         }
-        return _with_retry_hint(lookup_error), event
+        payload = _with_retry_hint(lookup_error)
+        await _record_result(tool_result_callback, ordinal, tool_call, lookup_error,
+                             payload, event, dispatched=False)
+        return payload, event
 
     prepare_call = cast(
         Callable[[str, Any], object] | None,
@@ -178,10 +220,14 @@ async def _execute_tool_call(
             workspace_violation_counts=workspace_violation_counts,
         )
         if handled is not None:
-            return handled
+            payload, event = handled
+        await _record_result(tool_result_callback, ordinal, tool_call, prep_error,
+                             payload, event, dispatched=False)
         return payload, event
 
     await hook.before_execute_tool(context, tool_call, tool, params)
+    if turn_context is not None and turn_context.execution_owner is not None:
+        turn_context.execution_owner.validate_dispatch()
     try:
         if tool is not None:
             result = await tools.execute_prepared(tool, params, turn_context)
@@ -190,7 +236,6 @@ async def _execute_tool_call(
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        await hook.on_execute_tool_error(context, tool_call, tool, params, exc)
         event = {
             "name": tool_call.name,
             "status": "error",
@@ -205,20 +250,26 @@ async def _execute_tool_call(
             workspace_violation_counts=workspace_violation_counts,
         )
         if handled is not None:
-            return handled
+            payload, event = handled
+        await _record_result(tool_result_callback, ordinal, tool_call,
+                             {"exception_type": type(exc).__name__, "message": str(exc)},
+                             payload, event, dispatched=True)
+        await hook.on_execute_tool_error(context, tool_call, tool, params, exc)
         return payload, event
 
+    raw_result = result
     outcome = result if isinstance(result, ToolOutcome) else None
     if outcome is not None:
         result = outcome.content
         if outcome.stop_reason and outcome.stop_reason != "tool_error":
+            event = {"name": tool_call.name, "status": "stopped", "detail": outcome.stop_reason}
+            await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
+                                 outcome, event, dispatched=True)
             await hook.after_execute_tool(context, tool_call, tool, params, result)
-            return outcome, {"name": tool_call.name, "status": "stopped",
-                             "detail": outcome.stop_reason}
+            return outcome, event
 
     if is_tool_error_result(result) or (outcome is not None and outcome.stop_reason == "tool_error"):
         result = str(result)
-        await hook.on_execute_tool_error(context, tool_call, tool, params, result)
         payload = _with_retry_hint(result)
         event = {
             "name": tool_call.name,
@@ -234,9 +285,11 @@ async def _execute_tool_call(
         )
         if handled is not None:
             payload, event = handled
-        return ToolOutcome(payload, "tool_error", outcome.policy_metadata if outcome else {}), event
-
-    await hook.after_execute_tool(context, tool_call, tool, params, result)
+        classified = ToolOutcome(payload, "tool_error", outcome.policy_metadata if outcome else {})
+        await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
+                             classified, event, dispatched=True)
+        await hook.on_execute_tool_error(context, tool_call, tool, params, result)
+        return classified, event
 
     detail = "" if result is None else str(result)
     detail = detail.replace("\n", " ").strip()
@@ -244,7 +297,11 @@ async def _execute_tool_call(
         detail = "(empty)"
     elif len(detail) > 120:
         detail = detail[:120] + "..."
-    return result, {"name": tool_call.name, "status": "ok", "detail": detail}
+    event = {"name": tool_call.name, "status": "ok", "detail": detail}
+    await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
+                         result, event, dispatched=True)
+    await hook.after_execute_tool(context, tool_call, tool, params, result)
+    return result, event
 
 
 def is_ssrf_violation(text: str) -> bool:

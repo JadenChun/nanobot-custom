@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 
 if TYPE_CHECKING:
     from nanobot.providers.base import LLMUsage
+    from nanobot.session.execution_owner import ExecutionOwner
 
 __all__ = [
     "ApprovalGrant",
@@ -362,6 +363,7 @@ class TurnContext:
     cancelled: bool = False
     lock_owner: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
+    execution_owner: ExecutionOwner | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.request is not None:

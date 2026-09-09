@@ -206,3 +206,32 @@ Independent review passed the child-task and durable-recovery-marker corrections
 This primitive is not yet acquired by the canonical runner. Mandatory durable
 user/intent/per-result/final events and dispatch wiring are the next package.
 Production runtime remains guarded; these results do not establish migration readiness.
+
+## P4C mandatory result recording boundary
+
+`AgentRunSpec.tool_result_callback` now receives one detached `KnownToolResult`
+per known result before post-tool/error observers. It retains batch ordinal,
+provider call ID/name, full raw application evidence, classified result/event, and
+whether dispatch occurred. Preparation/repeated-lookup rejection, policy rejection,
+and skipped calls are recorded without claiming dispatch. Tool exceptions retain
+structured type/message evidence; cancellation never fabricates a result.
+
+A trusted typed `TurnContext.execution_owner` is checked immediately before tool
+execution, outside tool exception handling. An owner without a recording callback
+fails before provider/tool work. Callback-enabled batches are sequential. Recording
+failures propagate once, preventing later tools and model continuation; observers
+cannot erase already recorded evidence. The async callback permits a source sink
+to perform a synchronous atomic transaction before any suspension. Existing
+no-owner/no-callback execution retains its concurrency behavior.
+
+Evidence: 414 network-denied session/migration/runner tests passed, with two existing
+plugin-loader tests deselected because the unchanged production runtime guard
+rejects their loader. A further real-source cancellation regression passed in the
+17-test focused result-recording suite: the first result remains durable when the
+second call is cancelled, and unresolved intent prevents later dispatch. Ruff/diff
+checks pass. Independent review accepted the bounded recording seam.
+
+Canonical acquisition and the production source sink are not wired yet. Application
+execution identities must be bound to durable assistant intent by that sink; batch
+ordinals alone are not durable identities. User/final event persistence, source
+projection, nested delegation, and recovery admission remain integration gates.
