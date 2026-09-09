@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import time
 import unicodedata
@@ -408,6 +409,10 @@ class TelegramConfig(Base):
     token: str = ""
     mode: Literal["polling", "webhook"] = "polling"
     allow_from: list[str] = Field(default_factory=list)
+    allow_chats: list[str] = Field(default_factory=list)
+    fast_commands: dict[str, list[str]] = Field(default_factory=dict)
+    fast_command_workdir: str = ""
+    fast_command_timeout: int = 120
     proxy: str | None = None
     reply_to_message: bool = False
     react_emoji: str = "👀"
@@ -474,6 +479,7 @@ class TelegramChannel(BaseChannel):
         BotCommand("stop", "Stop the current task"),
         BotCommand("restart", "Restart the bot"),
         BotCommand("status", "Show bot status"),
+        BotCommand("quota", "Show Codex OAuth quota"),
         BotCommand("history", "Show recent conversation messages"),
         BotCommand("goal", "Start a sustained objective (long-running task)"),
         BotCommand("trigger", "Create a named local trigger"),
@@ -490,7 +496,7 @@ class TelegramChannel(BaseChannel):
     # Regex for slash commands routed to AgentLoop via ``_forward_command``.
     # Hyphenated ``dream-*`` commands stay on a separate handler (below).
     TELEGRAM_BUS_SLASH_COMMAND_RE = re.compile(
-        r"^/(?:new|stop|restart|status|dream|history|goal|trigger|pairing|model|skill)(?:@\w+)?(?:\s+.*)?$"
+        r"^/(?:new|stop|restart|status|quota|dream|history|goal|trigger|pairing|model|skill)(?:@\w+)?(?:\s+.*)?$"
     )
 
     @classmethod
@@ -522,14 +528,18 @@ class TelegramChannel(BaseChannel):
             raise RuntimeError("Telegram application is not started")
         return self._app
 
+    def is_chat_allowed(self, chat_id: str | int, chat_type: str) -> bool:
+        """Group restrictions supplement sender authorization; private chats pass."""
+        allowed = self.config.allow_chats
+        return chat_type == "private" or not allowed or "*" in allowed or str(chat_id) in allowed
+
     def is_allowed(self, sender_id: str) -> bool:
         """Preserve Telegram's legacy id|username allowlist matching."""
-        if super().is_allowed(sender_id):
-            return True
-
-        allow_list = getattr(self.config, "allow_from", [])
-        if not allow_list or "*" in allow_list:
+        allow_list = self.config.allow_from
+        if not allow_list:
             return False
+        if "*" in allow_list or str(sender_id) in allow_list:
+            return True
 
         sender_str = str(sender_id)
         if sender_str.count("|") != 1:
@@ -540,6 +550,10 @@ class TelegramChannel(BaseChannel):
             return False
 
         return sid in allow_list or username in allow_list
+
+    def _is_update_allowed(self, message, user) -> bool:
+        return (self.is_allowed(self._sender_id(user))
+                and self.is_chat_allowed(message.chat_id, message.chat.type))
 
     @staticmethod
     def _normalize_telegram_command(content: str) -> str:
@@ -655,6 +669,13 @@ class TelegramChannel(BaseChannel):
             )
         )
         self._app.add_handler(MessageHandler(filters.Regex(r"^/help(?:@\w+)?$"), self._on_help))
+
+        if self.config.fast_commands:
+            names = [re.escape(name.lstrip("/")) for name in self.config.fast_commands]
+            self._app.add_handler(MessageHandler(
+                filters.Regex(re.compile(r"^/(?:" + "|".join(names) + r")(?:@\w+)?(?:\s.*)?$", re.IGNORECASE)),
+                self._forward_command,
+            ))
 
         # Add message handler for text, photos, video, voice, documents, and locations
         self._app.add_handler(
@@ -1376,9 +1397,7 @@ class TelegramChannel(BaseChannel):
             return
 
         user = update.effective_user
-        sender_id = self._sender_id(user)
-        if not self.is_allowed(sender_id):
-            await self._send_pairing_code_if_private(sender_id, update.message, user)
+        if not self._is_update_allowed(update.message, user):
             return
         await update.message.reply_text(
             f"👋 Hi {user.first_name}! I'm nanobot.\n\n"
@@ -1391,9 +1410,7 @@ class TelegramChannel(BaseChannel):
         if not update.message or not update.effective_user:
             return
         user = update.effective_user
-        sender_id = self._sender_id(user)
-        if not self.is_allowed(sender_id):
-            await self._send_pairing_code_if_private(sender_id, update.message, user)
+        if not self._is_update_allowed(update.message, user):
             return
         await update.message.reply_text(build_help_text())
 
@@ -1661,9 +1678,51 @@ class TelegramChannel(BaseChannel):
             if not self._inbound_buffers.get(key):
                 self._inbound_workers.pop(key, None)
 
+    async def _try_fast_command(self, message) -> bool:
+        """Execute operator-configured argv only; message arguments are never passed."""
+        text = (message.text or "").strip()
+        head = text.split(maxsplit=1)[0] if text else ""
+        name = head.split("@", 1)[0].lower()
+        argv = self.config.fast_commands.get(name)
+        if not argv:
+            return False
+        process = await asyncio.create_subprocess_exec(
+            *argv, cwd=self.config.fast_command_workdir or None,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            start_new_session=os.name != "nt",
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=self.config.fast_command_timeout)
+        except BaseException:
+            from nanobot.agent.tools.shell import ExecTool
+            cleanup = asyncio.create_task(ExecTool._kill_process_tree(process))
+            # Cleanup has bounded waits internally. Repeated cancellation of
+            # this handler must not abandon its owned process or descendants.
+            while not cleanup.done():
+                try:
+                    await asyncio.shield(cleanup)
+                except asyncio.CancelledError:
+                    continue
+            cleanup.result()
+            raise
+        output = stdout.decode(errors="replace").strip()
+        error = stderr.decode(errors="replace").strip()
+        if process.returncode:
+            output = error or output or f"{name} failed with exit code {process.returncode}."
+        output = output or f"{name} completed."
+        reply = ReplyParameters(message_id=message.message_id, allow_sending_without_reply=True) if self.config.reply_to_message else None
+        thread = getattr(message, "message_thread_id", None)
+        for chunk in split_message(output, TELEGRAM_MAX_MESSAGE_LEN):
+            await self._send_text(int(message.chat_id), chunk, reply,
+                                  {"message_thread_id": thread} if thread is not None else {})
+        return True
+
     async def _forward_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Forward slash commands to the bus for unified handling in AgentLoop."""
         if not update.message or not update.effective_user:
+            return
+        if not self._is_update_allowed(update.message, update.effective_user):
             return
         if not self._running:
             await self._process_forward_command(update, context)
@@ -1677,10 +1736,12 @@ class TelegramChannel(BaseChannel):
         if message is None or user is None:
             return
         sender_id = self._sender_id(user)
-        if not self.is_allowed(sender_id):
-            await self._send_pairing_code_if_private(sender_id, message, user)
+        if not self._is_update_allowed(message, user):
             return
         self._remember_thread_context(message)
+
+        if await self._try_fast_command(message):
+            return
 
         # Strip @bot_username suffix if present
         content = message.text or ""
@@ -1703,6 +1764,8 @@ class TelegramChannel(BaseChannel):
         """Handle incoming messages (text, photos, voice, documents)."""
         if not update.message or not update.effective_user:
             return
+        if not self._is_update_allowed(update.message, update.effective_user):
+            return
         if not self._running:
             await self._process_message_update(update, context)
             return
@@ -1717,8 +1780,7 @@ class TelegramChannel(BaseChannel):
             return
         chat_id = message.chat_id
         sender_id = self._sender_id(user)
-        if not self.is_allowed(sender_id):
-            await self._send_pairing_code_if_private(sender_id, message, user)
+        if not self._is_update_allowed(message, user):
             return
         self._remember_thread_context(message)
 
@@ -1775,11 +1837,13 @@ class TelegramChannel(BaseChannel):
             if key not in self._media_group_buffers:
                 self._media_group_buffers[key] = {
                     "sender_id": sender_id, "chat_id": str_chat_id,
+                    "chat_type": message.chat.type,
                     "contents": [], "media": [],
                     "metadata": metadata,
                     "session_key": session_key,
                 }
                 self._start_typing(str_chat_id)
+                self._media_group_buffers[key]["typing_task"] = self._typing_tasks.get(str_chat_id)
                 await self._add_reaction(str_chat_id, message.message_id, self.config.react_emoji)
             buf = self._media_group_buffers[key]
             if content and content != "[empty message]":
@@ -1808,6 +1872,18 @@ class TelegramChannel(BaseChannel):
         try:
             await asyncio.sleep(0.6)
             if not (buf := self._media_group_buffers.pop(key, None)):
+                return
+            if not self.is_allowed(buf["sender_id"]) or not self.is_chat_allowed(
+                buf["chat_id"], buf.get("chat_type", "group")
+            ):
+                task = buf.get("typing_task")
+                if task is not None:
+                    if self._typing_tasks.get(buf["chat_id"]) is task:
+                        self._typing_tasks.pop(buf["chat_id"], None)
+                    if not task.done():
+                        task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
                 return
             content = "\n".join(buf["contents"]) or "[empty message]"
             await self._handle_message(
@@ -1963,6 +2039,8 @@ class TelegramChannel(BaseChannel):
             self.logger.warning("Callback query without chat_id")
             return
         if not self.is_allowed(sender_id):
+            return
+        if not self.is_chat_allowed(chat_id, query_message.chat.type):
             return
         button_label = query.data or ""
         await query.answer()

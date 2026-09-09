@@ -297,3 +297,34 @@ async def _pump_one(manager: ChannelManager) -> None:
             await dispatch_one(manager.bus.outbound.get_nowait())
         except asyncio.QueueEmpty:
             break
+
+
+@pytest.mark.asyncio
+async def test_result_mode_drops_progress_but_keeps_tool_hint_and_final_media(manager):
+    manager.config.channels.task_update_mode = 'result'
+    channel = manager.channels['mock']
+    channel.send_progress = True
+    channel.send_tool_hints = True
+    channel.show_reasoning = True
+    delivered = []
+    done = asyncio.Event()
+    async def queue(channel, message):
+        delivered.append(message)
+        if message.content == 'final':
+            done.set()
+    manager._queue_outbound = queue
+    progress = [ProgressEvent(content='progress'), ProgressEvent(content='reasoning', reasoning=True)]
+    hint = outbound_message_for_event(channel='mock', chat_id='42', event=ProgressEvent(content='tool', tool_hint=True))
+    final = OutboundMessage(channel='mock', chat_id='42', content='final', media=['fixture.png'])
+    for event in progress:
+        await manager.bus.publish_outbound(outbound_message_for_event(channel='mock', chat_id='42', event=event))
+    await manager.bus.publish_outbound(hint)
+    await manager.bus.publish_outbound(final)
+    task = asyncio.create_task(manager._dispatch_outbound_loop())
+    try:
+        await asyncio.wait_for(done.wait(), 1)
+        assert delivered == [hint, final]
+        assert delivered[-1].media == ['fixture.png']
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

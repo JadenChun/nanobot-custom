@@ -52,7 +52,9 @@ sudo systemctl enable --now nanobot-gateway
 Required values:
 
 - Telegram bot token in `/opt/marketing-agent/.nanobot/config.json`.
-- Telegram `allowFrom` or `allowChats` in `/opt/marketing-agent/.nanobot/config.json`.
+- Telegram `allowFrom` in `/opt/marketing-agent/.nanobot/config.json` authorizes senders.
+  Optional `allowChats` further restricts groups; it never grants sender access.
+  An empty `allowFrom` denies all senders, even when `allowChats` is configured.
 - Provider API key in `/opt/marketing-agent/.nanobot/config.json`, or through `NANOBOT_*` env vars.
 - `OAUTH_BROKER_INTERNAL_API_KEY` in `nanobot.env`; it must match the OAuth
   broker's internal API key.

@@ -98,6 +98,7 @@ BUILTIN_COMMAND_SPECS: tuple[BuiltinCommandSpec, ...] = (
         "Display runtime, provider, and channel status.",
         "activity",
     ),
+    BuiltinCommandSpec("/quota", "Show Codex quota", "Show Codex OAuth quota and reset windows.", "activity"),
     BuiltinCommandSpec(
         "/model",
         "Switch model preset",
@@ -261,6 +262,18 @@ async def cmd_restart(ctx: CommandContext) -> OutboundMessage:
         channel=msg.channel, chat_id=msg.chat_id, content="Restarting...",
         metadata=dict(msg.metadata or {})
     )
+
+
+async def cmd_quota(ctx: CommandContext) -> OutboundMessage:
+    """Display quota windows without starting an agent turn."""
+    from nanobot.providers.codex_auth import format_codex_usage, get_codex_usage
+    try:
+        content = format_codex_usage(await asyncio.to_thread(get_codex_usage))
+    except Exception:
+        # Credential transport errors may contain sensitive response bodies.
+        content = "Unable to check Codex quota. Check the configured Codex login and connection."
+    return OutboundMessage(channel=ctx.msg.channel, chat_id=ctx.msg.chat_id,
+                           content=content, metadata={**(ctx.msg.metadata or {}), "render_as": "text"})
 
 
 async def cmd_status(ctx: CommandContext) -> OutboundMessage:
@@ -1074,9 +1087,11 @@ def register_builtin_commands(router: CommandRouter) -> None:
     router.priority("/stop", cmd_stop)
     router.priority("/restart", cmd_restart)
     router.priority("/status", cmd_status)
+    router.priority("/quota", cmd_quota)
     router.exact("/new", cmd_new)
     router.exact("/compact", cmd_compact)
     router.exact("/status", cmd_status)
+    router.exact("/quota", cmd_quota)
     router.exact("/model", cmd_model)
     router.prefix("/model ", cmd_model)
     router.exact("/history", cmd_history)

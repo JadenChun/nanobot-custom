@@ -14,6 +14,7 @@ export default {
         { key: "channels.telegram.token" },
         { key: "channels.telegram.proxy" },
         { key: "channels.telegram.allowFrom" },
+        { key: "channels.telegram.allowChats" },
         { key: "channels.telegram.groupPolicy" },
       ],
     },

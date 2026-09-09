@@ -299,7 +299,7 @@ class TestProgressFiltering:
 
     def test_progress_visibility_uses_global_defaults(self, manager):
         assert manager._should_send_progress("mock", tool_hint=False) is True
-        assert manager._should_send_progress("mock", tool_hint=True) is True
+        assert manager._should_send_progress("mock", tool_hint=True) is False
 
     def test_progress_visibility_uses_channel_overrides(self, manager, bus):
         manager.channels["mock"] = manager._build_channel(

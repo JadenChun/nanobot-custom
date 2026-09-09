@@ -10,6 +10,7 @@ SETUP_SPEC = ChannelSetupSpec(
         "token": field("secret"),
         "proxy": field("secret"),
         "allowFrom": field("list"),
+        "allowChats": field("list"),
         "groupPolicy": field("enum", choices=GROUP_POLICIES, default="mention"),
     },
     required=(required("token"),),

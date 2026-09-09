@@ -785,6 +785,9 @@ class ChannelManager:
 
                 event = msg.event
                 progress_event = event if isinstance(event, ProgressEvent) else None
+                if (progress_event and not progress_event.tool_hint
+                        and self.config.channels.task_update_mode != "verbose"):
+                    continue
                 if progress_event and (
                     progress_event.reasoning_delta
                     or progress_event.reasoning_end
