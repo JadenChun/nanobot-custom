@@ -285,7 +285,10 @@ def _refresh_token(refresh_token: str, account_id: str | None) -> OAuthToken:
 
     refreshed_token = _clean_str(payload.get("refresh_token")) or refresh_token
     refreshed_account = _clean_str(payload.get("account_id")) or account_id or _account_id_from_access_token(access)
-    expires = _coerce_expires_ms(payload.get("expires_in") or payload.get("expires_at"), access)
+    expires = _coerce_expires_ms(
+        payload.get("expires_in") if payload.get("expires_in") is not None else payload.get("expires_at"),
+        access, duration=payload.get("expires_in") is not None,
+    )
     if not refreshed_account or expires is None:
         raise RuntimeError("Token refresh response missing account metadata")
 
@@ -297,17 +300,17 @@ def _refresh_token(refresh_token: str, account_id: str | None) -> OAuthToken:
     )
 
 
-def _coerce_expires_ms(raw: Any, access_token: str | None, last_refresh: Any | None = None) -> int | None:
+def _coerce_expires_ms(raw: Any, access_token: str | None, last_refresh: Any | None = None, *, duration: bool = False) -> int | None:
     if isinstance(raw, int):
-        return raw if raw > 10_000_000_000 else _now_ms() + raw * 1000
+        return raw if raw > 10_000_000_000 else (_now_ms() if duration else 0) + raw * 1000
     if isinstance(raw, float):
         value = int(raw)
-        return value if value > 10_000_000_000 else _now_ms() + value * 1000
+        return value if value > 10_000_000_000 else (_now_ms() if duration else 0) + value * 1000
     if isinstance(raw, str) and raw.strip():
         text = raw.strip()
         if text.isdigit():
             value = int(text)
-            return value if value > 10_000_000_000 else _now_ms() + value * 1000
+            return value if value > 10_000_000_000 else (_now_ms() if duration else 0) + value * 1000
         try:
             dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
         except ValueError:

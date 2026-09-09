@@ -49,7 +49,6 @@ API_CHAT_ID = "default"
 _AGENT_LOOP_KEY = web.AppKey[Any]("agent_loop")
 _MODEL_NAME_KEY = web.AppKey[str]("model_name")
 _REQUEST_TIMEOUT_KEY = web.AppKey[float]("request_timeout")
-_SESSION_LOCKS_KEY = web.AppKey[dict[str, asyncio.Lock]]("session_locks")
 _PREPARE_AGENT_KEY = web.AppKey[Callable[[], Awaitable[None]] | None]("prepare_agent")
 _MISSING = object()
 
@@ -333,13 +332,6 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         return _error_json(400, f"Only configured model '{model_name}' is available")
 
     session_key = f"api:{session_id}" if session_id else API_SESSION_KEY
-    session_locks: dict[str, asyncio.Lock] = _app_value(
-        request.app,
-        _SESSION_LOCKS_KEY,
-        "session_locks",
-    )
-    session_lock = session_locks.setdefault(session_key, asyncio.Lock())
-
     logger.info(
         "API request session_key={} media={} text={} stream={}",
         session_key, len(media_paths), text[:80], stream,
@@ -372,22 +364,21 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
         async def _run() -> None:
             nonlocal stream_failed
             try:
-                async with session_lock:
-                    async with asyncio.timeout(timeout_s):
-                        await _prepare_agent(request.app)
-                        response = await agent_loop.process_direct(
-                            content=text,
-                            media=media_paths if media_paths else None,
-                            session_key=session_key,
-                            channel="api",
-                            chat_id=API_CHAT_ID,
-                            on_stream=_on_stream,
-                            on_stream_end=_on_stream_end,
-                        )
-                    if not emitted_content:
-                        response_text = _response_text(response)
-                        if response_text.strip():
-                            await queue.put(response_text)
+                async with asyncio.timeout(timeout_s):
+                    await _prepare_agent(request.app)
+                    response = await agent_loop.process_direct(
+                        content=text,
+                        media=media_paths if media_paths else None,
+                        session_key=session_key,
+                        channel="api",
+                        chat_id=API_CHAT_ID,
+                        on_stream=_on_stream,
+                        on_stream_end=_on_stream_end,
+                    )
+                if not emitted_content:
+                    response_text = _response_text(response)
+                    if response_text.strip():
+                        await queue.put(response_text)
             except Exception:
                 stream_failed = True
                 logger.exception("Streaming error for session {}", session_key)
@@ -412,33 +403,28 @@ async def handle_chat_completions(request: web.Request) -> web.Response | web.St
             await resp.write(_SSE_DONE)
         return resp
 
-    # -- non-streaming path (original logic) --
+    # process_direct is the sole session-serialization owner. The timeout
+    # includes waiting for admission; empty output must never replay tool work.
     usage_capture = _UsageCaptureHook()
     try:
-        async with session_lock:
-            try:
-                async with asyncio.timeout(timeout_s):
-                    await _prepare_agent(request.app)
-                    response = await agent_loop.process_direct(
-                        content=text,
-                        media=media_paths if media_paths else None,
-                        session_key=session_key,
-                        channel="api",
-                        chat_id=API_CHAT_ID,
-                        hooks=[usage_capture],
-                    )
-                response_text = _response_text(response)
-                if not response_text or not response_text.strip():
-                    logger.warning("Empty response for session {}, using fallback", session_key)
-                    response_text = EMPTY_FINAL_RESPONSE_MESSAGE
-
-            except asyncio.TimeoutError:
-                return _error_json(504, f"Request timed out after {timeout_s}s")
-            except Exception:
-                logger.exception("Error processing request for session {}", session_key)
-                return _error_json(500, "Internal server error", err_type="server_error")
+        async with asyncio.timeout(timeout_s):
+            await _prepare_agent(request.app)
+            response = await agent_loop.process_direct(
+                content=text,
+                media=media_paths if media_paths else None,
+                session_key=session_key,
+                channel="api",
+                chat_id=API_CHAT_ID,
+                hooks=[usage_capture],
+            )
+        response_text = _response_text(response)
+        if not response_text or not response_text.strip():
+            logger.warning("Empty response for session {}, using fallback", session_key)
+            response_text = EMPTY_FINAL_RESPONSE_MESSAGE
+    except asyncio.TimeoutError:
+        return _error_json(504, f"Request timed out after {timeout_s}s")
     except Exception:
-        logger.exception("Unexpected API lock error for session {}", session_key)
+        logger.exception("Error processing request for session {}", session_key)
         return _error_json(500, "Internal server error", err_type="server_error")
 
     return web.json_response(
@@ -494,7 +480,6 @@ def create_app(
     app[_AGENT_LOOP_KEY] = agent_loop
     app[_MODEL_NAME_KEY] = model_name
     app[_REQUEST_TIMEOUT_KEY] = request_timeout
-    app[_SESSION_LOCKS_KEY] = {}  # per-user locks, keyed by session_key
     app[_PREPARE_AGENT_KEY] = prepare_agent
 
     @web.middleware

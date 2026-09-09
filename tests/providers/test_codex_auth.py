@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from nanobot.providers import codex_auth
 from nanobot.providers.codex_auth import (
     _load_official_codex_token,
     _nanobot_token_path,
@@ -195,3 +196,24 @@ def test_format_codex_usage_renders_windows_and_reset_time(monkeypatch: pytest.M
     assert "Primary: 75% remaining" in content
     assert "window 15m" not in content
     assert "Primary: 75% remaining\nReset at 2023-11-15 07:13 MYT" in content
+
+
+@pytest.mark.parametrize('raw', [1700000000, 1700000000.0, '1700000000', 1700000000000])
+def test_absolute_expiry_never_becomes_duration(raw):
+    assert codex_auth._coerce_expires_ms(raw, None) == 1700000000000
+
+
+def test_explicit_refresh_duration_is_relative(monkeypatch):
+    monkeypatch.setattr(codex_auth, '_now_ms', lambda: 1700000000000)
+    assert codex_auth._coerce_expires_ms(3600, None, duration=True) == 1700003600000
+
+
+@pytest.mark.parametrize('expiry,expected', [({'expires_at': 1700000000}, 1700000000000),
+                                            ({'expires_in': 0, 'expires_at': 1800000000}, 1700000000000)])
+def test_refresh_expiry_field_semantics(monkeypatch, expiry, expected):
+    from types import SimpleNamespace
+    payload = {'access_token': 'synthetic', 'account_id': 'fixture', **expiry}
+    monkeypatch.setattr(codex_auth, '_now_ms', lambda: 1700000000000)
+    monkeypatch.setattr(codex_auth.httpx, 'post', lambda *args, **kwargs:
+                        SimpleNamespace(status_code=200, json=lambda: payload))
+    assert _refresh_token('synthetic-refresh', 'fixture').expires == expected

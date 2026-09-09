@@ -216,15 +216,15 @@ async def test_no_user_message_returns_400(aiohttp_client, app) -> None:
 
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
 @pytest.mark.asyncio
-async def test_stream_true_returns_sse(aiohttp_client, app) -> None:
+async def test_stream_true_preserves_fork_rejection(aiohttp_client, app) -> None:
     client = await aiohttp_client(app)
     resp = await client.post(
         "/v1/chat/completions",
         headers=AUTH_HEADERS,
         json={"messages": [{"role": "user", "content": "hello"}], "stream": True},
     )
-    assert resp.status == 200
-    assert resp.content_type == "text/event-stream"
+    assert resp.status == 400
+    assert "Streaming is not supported" in (await resp.json())["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -542,3 +542,36 @@ async def test_process_direct_accepts_media() -> None:
     assert captured_msg is not None
     assert captured_msg.media == ["/tmp/image.png", "/tmp/report.pdf"]
     assert captured_msg.content == "analyze this"
+
+
+def test_api_installs_no_second_session_lock(mock_agent):
+    app = create_app(mock_agent, model_name='test', api_key=API_KEY)
+    assert not any('session_lock' in str(key) for key in app.keys())
+
+
+@pytest.mark.asyncio
+async def test_api_timeout_includes_core_admission_and_lock_remains_usable(aiohttp_client):
+    lock = asyncio.Lock()
+    effects = []
+
+    async def process(content, **kwargs):
+        async with lock:
+            effects.append(content)
+            return content
+
+    agent = _make_mock_agent()
+    agent.process_direct = process
+    client = await aiohttp_client(create_app(agent, model_name='m', api_key=API_KEY,
+                                            request_timeout=0.02))
+    await lock.acquire()
+    try:
+        response = await client.post('/v1/chat/completions', headers=AUTH_HEADERS,
+                                     json={'messages': [{'role': 'user', 'content': 'queued'}]})
+        assert response.status == 504
+        assert effects == []
+    finally:
+        lock.release()
+    response = await client.post('/v1/chat/completions', headers=AUTH_HEADERS,
+                                 json={'messages': [{'role': 'user', 'content': 'next'}]})
+    assert response.status == 200
+    assert effects == ['next']

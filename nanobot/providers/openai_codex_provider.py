@@ -158,33 +158,16 @@ class OpenAICodexProvider(LLMProvider):
                 emit_deltas: bool,
             ) -> LLMResponse:
                 wire_body = _without_response_item_ids(request_body)
-                try:
-                    return await _request_codex(
-                        DEFAULT_CODEX_URL,
-                        headers,
-                        wire_body,
-                        verify=self._ssl_context(verify=True),
-                        proxy=self.proxy,
-                        on_content_delta=on_content_delta if emit_deltas else None,
-                        on_thinking_delta=on_thinking_delta if emit_deltas else None,
-                        on_tool_call_delta=on_tool_call_delta if emit_deltas else None,
-                    )
-                except Exception as exc:
-                    if "CERTIFICATE_VERIFY_FAILED" not in str(exc):
-                        raise
-                    logger.warning(
-                        "SSL verification failed for Codex API; retrying with verify=False"
-                    )
-                    return await _request_codex(
-                        DEFAULT_CODEX_URL,
-                        headers,
-                        wire_body,
-                        verify=self._ssl_context(verify=False),
-                        proxy=self.proxy,
-                        on_content_delta=on_content_delta if emit_deltas else None,
-                        on_thinking_delta=on_thinking_delta if emit_deltas else None,
-                        on_tool_call_delta=on_tool_call_delta if emit_deltas else None,
-                    )
+                return await _request_codex(
+                    DEFAULT_CODEX_URL,
+                    headers,
+                    wire_body,
+                    verify=self._ssl_context(verify=True),
+                    proxy=self.proxy,
+                    on_content_delta=on_content_delta if emit_deltas else None,
+                    on_thinking_delta=on_thinking_delta if emit_deltas else None,
+                    on_tool_call_delta=on_tool_call_delta if emit_deltas else None,
+                )
 
             compact_threshold = resolve_compact_threshold(
                 (provider_context.context_window_tokens if provider_context is not None else None),

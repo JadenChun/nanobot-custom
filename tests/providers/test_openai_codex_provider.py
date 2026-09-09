@@ -991,3 +991,21 @@ async def test_codex_stream_surfaces_reasoning_summary(monkeypatch) -> None:
 
 async def _append(target: list[str], value: str) -> None:
     target.append(value)
+
+
+@pytest.mark.asyncio
+async def test_certificate_failure_never_retries_without_verification(monkeypatch):
+    _mock_codex_token(monkeypatch)
+    contexts = []
+
+    async def fail_certificate(_url, _headers, _body, *, verify, **kwargs):
+        contexts.append(verify)
+        raise ssl.SSLCertVerificationError('CERTIFICATE_VERIFY_FAILED')
+
+    monkeypatch.setattr('nanobot.providers.openai_codex_provider._request_codex', fail_certificate)
+    response = await OpenAICodexProvider().chat([{'role': 'user', 'content': 'hello'}])
+    assert response.finish_reason == 'error'
+    assert len(contexts) == 1
+    assert isinstance(contexts[0], ssl.SSLContext)
+    assert contexts[0].verify_mode == ssl.CERT_REQUIRED
+    assert contexts[0].check_hostname
