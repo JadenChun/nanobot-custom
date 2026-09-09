@@ -188,7 +188,8 @@ class TestAtomicSave:
     ):
         import nanobot.session.manager as session_manager
 
-        monkeypatch.setattr(session_manager, "_SESSION_LIST_PREVIEW_MAX_CHARS", 100)
+        # Include the additive event identity in the visible row budget.
+        monkeypatch.setattr(session_manager, "_SESSION_LIST_PREVIEW_MAX_CHARS", 200)
         mgr = SessionManager(tmp_path)
         session = Session(
             key="test:provider-state-preview",

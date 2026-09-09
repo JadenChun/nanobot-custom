@@ -7,8 +7,8 @@ import json
 import os
 import re
 import secrets
-import shutil
 import stat
+import uuid
 from collections import OrderedDict
 from contextlib import contextmanager, suppress
 from copy import deepcopy
@@ -55,7 +55,11 @@ _PROVIDER_STATE_RECORD_PREFIX_RE = re.compile(
     r'^\s*\{\s*"_type"\s*:\s*"provider_state"\s*(?:,|\})'
 )
 _RUNTIME_CHECKPOINT_KEY = "runtime_checkpoint"
-_RUNTIME_CHECKPOINT_VERSION = 1
+_RUNTIME_CHECKPOINT_VERSION = 2
+_RESERVED_DURABLE_METADATA = frozenset({
+    "context_checkpoint", "source_schema_version", "execution_lease",
+    "revision", "generation", "incarnation",
+})
 _RUNTIME_CHECKPOINT_SUFFIX = ".checkpoint.json"
 _FORK_VOLATILE_METADATA_KEYS = {
     "goal_state",
@@ -286,6 +290,40 @@ class Session:
     provider_state: ProviderConversationState | None = field(default=None, repr=False)
     policy: SessionPolicy = field(default_factory=SessionPolicy, repr=False, compare=False)
 
+    revision: int = 0
+    generation: int = 0
+    incarnation: str = field(default_factory=lambda: secrets.token_hex(16))
+    _base_messages: list[dict[str, Any]] | None = field(default=None, repr=False, compare=False)
+    _base_metadata: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    _base_provider_state: ProviderConversationState | None = field(default=None, repr=False, compare=False)
+    _base_revision: int = field(default=0, repr=False, compare=False)
+    _base_generation: int = field(default=0, repr=False, compare=False)
+    _base_incarnation: str | None = field(default=None, repr=False, compare=False)
+    _replacement_pending: bool = field(default=False, repr=False, compare=False)
+    _projection_edit_pending: bool = field(default=False, repr=False, compare=False)
+    _append_ids: dict[int, tuple[dict[str, Any], str]] = field(default_factory=dict, repr=False, compare=False)
+
+    def _remember_committed_base(self) -> None:
+        self._base_messages = deepcopy(self.messages)
+        self._base_metadata = deepcopy(self.metadata)
+        self._base_provider_state = deepcopy(self.provider_state)
+        self._base_revision = self.revision
+        self._base_generation = self.generation
+        self._base_incarnation = self.incarnation
+        self._replacement_pending = False
+        self._projection_edit_pending = False
+        self._append_ids.clear()
+
+    def replace_messages(self, messages: list[dict[str, Any]]) -> None:
+        """Request a revision-checked transcript replacement on the next save."""
+        self.messages = deepcopy(messages)
+        self._replacement_pending = True
+        self.last_consolidated = 0
+        self.provider_state = None
+        for key in ("context_checkpoint", "runtime_checkpoint", "_last_summary"):
+            self.metadata.pop(key, None)
+        self.updated_at = datetime.now()
+
     def __post_init__(self) -> None:
         if not isinstance(cast(object, self.metadata), dict):
             self.metadata = {}
@@ -328,6 +366,7 @@ class Session:
         last_active: datetime | None = None,
     ) -> None:
         """Replace replay before a hidden boundary while preserving the transcript."""
+        self._projection_edit_pending = True
         boundary = len(self.messages) if insert_at is None else insert_at
         self.messages.insert(boundary, {
             "role": "user",
@@ -531,11 +570,7 @@ class Session:
 
     def clear(self) -> None:
         """Clear all messages and reset session to initial state."""
-        self.messages = []
-        self.last_archived = 0
-        self.provider_state = None
-        self.updated_at = datetime.now()
-        self.metadata.pop("_last_summary", None)
+        self.replace_messages([])
 
 class SessionPayload(TypedDict):
     key: str
@@ -1094,7 +1129,7 @@ class JsonlSessionStore:
         with self._session_files_lock:
             return self._load_unlocked(key)
 
-    def _load_unlocked(self, key: str) -> Session | None:
+    def _load_unlocked(self, key: str, *, strict: bool = False) -> Session | None:
         path = self.get_session_path(key)
         if not path.exists():
             return None
@@ -1106,6 +1141,9 @@ class JsonlSessionStore:
             updated_at: datetime | None = None
             last_consolidated = 0
             provider_state: ProviderConversationState | None = None
+            revision = generation = 0
+            incarnation = "legacy"
+            metadata_seen = False
 
             with open(path, encoding="utf-8") as f:
                 for line in f:
@@ -1118,6 +1156,15 @@ class JsonlSessionStore:
 
                     record_type = data.get("_type")
                     if record_type == "metadata":
+                        if strict and (metadata_seen or messages or provider_state is not None):
+                            raise SessionStorageError()
+                        metadata_seen = True
+                        revision = _storage_counter(data.get("revision", 0))
+                        generation = _storage_counter(data.get("generation", 0))
+                        incarnation = data.get("incarnation", "legacy")
+                        if not isinstance(incarnation, str) or not incarnation:
+                            raise SessionStorageError()
+
                         metadata_value = cast(object, data.get("metadata", {}))
                         metadata = (
                             cast(dict[str, Any], metadata_value)
@@ -1144,6 +1191,8 @@ class JsonlSessionStore:
                     else:
                         messages.append(data)
 
+            if strict and not metadata_seen:
+                raise SessionStorageError()
             session = Session(
                 key=key,
                 messages=messages,
@@ -1152,12 +1201,17 @@ class JsonlSessionStore:
                 metadata=metadata,
                 last_consolidated=last_consolidated,
                 provider_state=provider_state,
+                revision=revision, generation=generation, incarnation=incarnation,
             )
-            self._overlay_runtime_checkpoint_unlocked(session, path)
+            if not strict:
+                self._overlay_runtime_checkpoint_unlocked(session, path)
             if _migrate_legacy_exec_session_records(session.messages, session.metadata):
                 session.provider_state = None
+            session._remember_committed_base()
             return session
         except _SESSION_DATA_ERRORS as e:
+            if strict:
+                raise SessionStorageError() from None
             logger.warning("Failed to load session {}: {}", key, e)
             repaired = self._repair_unlocked(key)
             if repaired is not None:
@@ -1265,7 +1319,118 @@ class JsonlSessionStore:
 
     def save(self, session: Session, *, fsync: bool = False) -> None:
         with self._session_files_lock:
-            self._save_unlocked(session, fsync=fsync)
+            self._save_checked_unlocked(session, fsync=fsync)
+
+    def _save_checked_unlocked(self, session: Session, *, fsync: bool = False) -> None:
+        disk = self._load_unlocked(session.key, strict=True)
+        if disk is not None:
+            self._overlay_runtime_checkpoint_unlocked(disk, self.get_session_path(session.key))
+        base = session._base_messages
+        if disk is None:
+            if base is not None:
+                raise SessionWriteConflict()
+        elif (
+            base is None
+            or disk.generation != session._base_generation
+            or disk.incarnation != session._base_incarnation
+        ):
+            raise SessionWriteConflict()
+        if session.metadata.get("source_schema_version") is not None or (
+            disk is not None and disk.metadata.get("source_schema_version") is not None
+        ):
+            raise SessionWriteConflict()
+        candidate = deepcopy(session)
+        if session._replacement_pending or session._projection_edit_pending:
+            if disk is not None and disk.revision != session._base_revision:
+                raise SessionWriteConflict()
+            candidate.generation = (disk.generation if disk else 0) + int(session._replacement_pending)
+        else:
+            base = base or []
+            if session.messages[:len(base)] != base or len(session.messages) < len(base):
+                raise SessionWriteConflict()
+            if disk is not None and disk.messages[:len(base)] != base:
+                raise SessionWriteConflict()
+            candidate.messages = deepcopy(disk.messages if disk else [])
+            by_id = {row.get("_event_id"): row for row in candidate.messages if row.get("_event_id")}
+            for row in session.messages[len(base):]:
+                # Keep identity stable across a failed atomic-write retry without
+                # mutating the caller's event or committed revision bookkeeping.
+                pending = session._append_ids.get(id(row))
+                if pending is None or pending[0] is not row:
+                    pending = (row, uuid.uuid4().hex)
+                    session._append_ids[id(row)] = pending
+                identity = pending[1]
+                addition = deepcopy(row)
+                addition["_event_id"] = identity
+                if identity in by_id:
+                    if by_id[identity] != addition:
+                        raise SessionWriteConflict()
+                else:
+                    candidate.messages.append(addition)
+                    by_id[identity] = addition
+            candidate.generation = disk.generation if disk else 0
+        if disk is not None:
+            candidate.metadata = _merge_session_metadata(session, disk)
+            candidate.incarnation = disk.incarnation
+            candidate.created_at = disk.created_at
+            current_checkpoint = session.metadata.get(_RUNTIME_CHECKPOINT_KEY)
+            base_checkpoint = session._base_metadata.get(_RUNTIME_CHECKPOINT_KEY)
+            disk_checkpoint = disk.metadata.get(_RUNTIME_CHECKPOINT_KEY)
+            if not session._replacement_pending and current_checkpoint != base_checkpoint:
+                if disk_checkpoint not in (base_checkpoint, current_checkpoint):
+                    raise SessionWriteConflict()
+                if disk.messages != (session._base_messages or []) and current_checkpoint != disk_checkpoint:
+                    raise SessionWriteConflict()
+            if (
+                not session._replacement_pending
+                and (
+                    disk.messages != (session._base_messages or [])
+                    or disk_checkpoint != base_checkpoint
+                )
+                and len(candidate.messages) > len(disk.messages)
+                and candidate.metadata.get(_RUNTIME_CHECKPOINT_KEY) is not None
+            ):
+                # Never discard dispatch evidence to make two branches merge.
+                raise SessionWriteConflict()
+            candidate.updated_at = max(session.updated_at, disk.updated_at, key=lambda value: value.timestamp())
+            if not session._replacement_pending:
+                if session.provider_state == session._base_provider_state:
+                    candidate.provider_state = deepcopy(disk.provider_state)
+                elif disk.provider_state not in (session._base_provider_state, session.provider_state):
+                    raise SessionWriteConflict()
+                if disk.messages != (session._base_messages or []):
+                    if (
+                        session.provider_state != session._base_provider_state
+                        and session.provider_state != disk.provider_state
+                    ):
+                        raise SessionWriteConflict()
+                    if len(candidate.messages) > len(disk.messages):
+                        # Independent transcript branches cannot share a provider handle.
+                        candidate.provider_state = None
+            if not session._replacement_pending and not session._projection_edit_pending:
+                candidate.last_consolidated = max(disk.last_consolidated, session.last_consolidated)
+        else:
+            candidate.metadata = {
+                key: deepcopy(value) for key, value in session.metadata.items()
+                if key not in _RESERVED_DURABLE_METADATA
+            }
+        if session._replacement_pending:
+            for key in ("context_checkpoint", "runtime_checkpoint", "_last_summary"):
+                candidate.metadata.pop(key, None)
+            candidate.provider_state = None
+        candidate.revision = (disk.revision if disk else 0) + 1
+        self._save_unlocked(candidate, fsync=fsync)
+        # Publish only after the complete write (including requested fsync) succeeds.
+        session.messages = candidate.messages
+        session.metadata = candidate.metadata
+        session.revision = candidate.revision
+        session.generation = candidate.generation
+        session.incarnation = candidate.incarnation
+        session.created_at = candidate.created_at
+        session.updated_at = candidate.updated_at
+        session.last_consolidated = candidate.last_consolidated
+        session.provider_state = candidate.provider_state
+        session._remember_committed_base()
 
     def save_runtime_checkpoint(self, session: Session) -> None:
         """Atomically persist only the volatile in-flight turn state.
@@ -1279,12 +1444,26 @@ class JsonlSessionStore:
             if not path.exists():
                 # A user turn normally creates the session first. Internal callers
                 # may checkpoint a fresh session, so establish the durable base once.
-                self._save_unlocked(session)
+                self._save_checked_unlocked(session)
                 return
 
+            disk = self._load_unlocked(session.key, strict=True)
+            if disk is None or disk.metadata.get("source_schema_version") is not None or (
+                disk.revision != session._base_revision
+                or disk.generation != session._base_generation
+                or disk.incarnation != session._base_incarnation
+            ):
+                raise SessionWriteConflict()
+            self._overlay_runtime_checkpoint_unlocked(disk, path)
             checkpoint = session.metadata.get(_RUNTIME_CHECKPOINT_KEY)
+            if disk.metadata.get(_RUNTIME_CHECKPOINT_KEY) not in (
+                session._base_metadata.get(_RUNTIME_CHECKPOINT_KEY), checkpoint,
+            ) or disk.provider_state not in (session._base_provider_state, session.provider_state):
+                raise SessionWriteConflict()
             if not isinstance(checkpoint, dict):
-                self.get_runtime_checkpoint_path(session.key).unlink(missing_ok=True)
+                # Removal must also clear a checkpoint materialized in the main
+                # file by an unrelated metadata write, retaining current handles.
+                self._save_checked_unlocked(session)
                 return
 
             payload: dict[str, Any] = {
@@ -1292,6 +1471,9 @@ class JsonlSessionStore:
                 "session_key": session.key,
                 "base_updated_at": session.updated_at.isoformat(),
                 "base_message_count": len(session.messages),
+                "base_revision": disk.revision,
+                "base_generation": disk.generation,
+                "base_incarnation": disk.incarnation,
                 "checkpoint": checkpoint,
                 "provider_state": (
                     session.provider_state.to_private_record()
@@ -1311,6 +1493,8 @@ class JsonlSessionStore:
                         separators=(",", ":"),
                     )
                 os.replace(tmp, target)
+                session._base_metadata[_RUNTIME_CHECKPOINT_KEY] = deepcopy(checkpoint)
+                session._base_provider_state = deepcopy(session.provider_state)
             finally:
                 tmp.unlink(missing_ok=True)
 
@@ -1336,6 +1520,9 @@ class JsonlSessionStore:
                 or raw.get("session_key") != session.key
                 or raw.get("base_updated_at") != session.updated_at.isoformat()
                 or raw.get("base_message_count") != len(session.messages)
+                or raw.get("base_revision") != session.revision
+                or raw.get("base_generation") != session.generation
+                or raw.get("base_incarnation") != session.incarnation
                 or not isinstance(raw.get("checkpoint"), dict)
             ):
                 checkpoint_path.unlink(missing_ok=True)
@@ -1372,12 +1559,16 @@ class JsonlSessionStore:
 
         try:
             with open(tmp_path, "x", encoding="utf-8") as f:
+                os.chmod(tmp_path, 0o600)
                 metadata_line = {
                     "_type": "metadata",
                     "key": session.key,
                     "created_at": session.created_at.isoformat(),
                     "updated_at": session.updated_at.isoformat(),
                     "metadata": session.metadata,
+                    "revision": session.revision,
+                    "generation": session.generation,
+                    "incarnation": session.incarnation,
                     "last_archived": session.last_archived,
                     # Keep old nanobot releases able to read sessions written
                     # during the field-name migration.
@@ -1422,41 +1613,19 @@ class JsonlSessionStore:
         *,
         fsync: bool = False,
     ) -> bool:
-        """Atomically replace only a session file's metadata record."""
+        """Advance metadata revision, retaining the authoritative recovery overlay."""
         with self._session_files_lock:
-            path = self.get_session_path(key)
-            if not path.exists():
+            session = self._load_unlocked(key, strict=True)
+            if session is None:
                 return False
-            tmp_path = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
-            try:
-                with open(path, encoding="utf-8") as source:
-                    first_line = source.readline()
-                    data = _json_object(json.loads(first_line))
-                    if data.get("_type") != "metadata":
-                        return False
-                    raw_metadata = cast(object, data.get("metadata", {}))
-                    metadata = (
-                        dict(cast(dict[str, Any], raw_metadata))
-                        if isinstance(raw_metadata, dict)
-                        else {}
-                    )
-                    metadata.update(deepcopy(updates))
-                    data["metadata"] = metadata
-                    with open(tmp_path, "x", encoding="utf-8") as target:
-                        target.write(json.dumps(data, ensure_ascii=False) + "\n")
-                        shutil.copyfileobj(source, target)
-                        if fsync:
-                            target.flush()
-                            os.fsync(target.fileno())
-                os.replace(tmp_path, path)
-                if fsync:
-                    self._fsync_directory(path.parent)
-                return True
-            except _SESSION_DATA_ERRORS as exc:
-                logger.warning("Failed to update session metadata {}: {}", key, exc)
-                return False
-            finally:
-                tmp_path.unlink(missing_ok=True)
+            self._overlay_runtime_checkpoint_unlocked(session, self.get_session_path(key))
+            session.metadata.update({
+                name: deepcopy(value) for name, value in updates.items()
+                if name not in _RESERVED_DURABLE_METADATA
+            })
+            session.revision += 1
+            self._save_unlocked(session, fsync=fsync)
+            return True
 
     def delete(self, key: str) -> bool:
         with self._session_files_lock:
@@ -2012,7 +2181,14 @@ class SessionManager:
         """Atomically update metadata without replacing session history."""
         updated = self._store.update_metadata(key, updates, fsync=fsync)
         if updated and (session := self.get_cached(key)) is not None:
-            session.metadata.update(deepcopy(updates))
+            accepted = {
+                name: deepcopy(value) for name, value in updates.items()
+                if name not in _RESERVED_DURABLE_METADATA
+            }
+            session.metadata.update(accepted)
+            # These changes already committed. Do not replay them as local
+            # modifications over a later writer when this cached object saves.
+            session._base_metadata.update(deepcopy(accepted))
         return updated
 
     def list_sessions(self) -> list[dict[str, Any]]:
@@ -2030,3 +2206,40 @@ class SessionWriteConflict(Exception):  # noqa: N818 - public conflict contract
 
     def __init__(self) -> None:
         super().__init__(self.DEFAULT_MESSAGE)
+
+
+class SessionStorageError(Exception):
+    """Existing evidence could not be read safely; never include its content."""
+
+    def __init__(self) -> None:
+        super().__init__("Session storage is invalid; recovery is required.")
+
+
+def _storage_counter(value: object) -> int:
+    if type(value) is not int or value < 0:
+        raise SessionStorageError()
+    return value
+
+
+def _merge_session_metadata(session: Session, disk: Session) -> dict[str, Any]:
+    """Apply only caller changes to the disk snapshot, preserving reserved state."""
+    merged = deepcopy(disk.metadata)
+    base = session._base_metadata
+    for key in base.keys() | session.metadata.keys():
+        if key in _RESERVED_DURABLE_METADATA:
+            continue
+        if key not in session.metadata:
+            if key in base and disk.metadata.get(key) == base[key]:
+                merged.pop(key, None)
+        elif key not in base or session.metadata[key] != base[key]:
+            merged[key] = deepcopy(session.metadata[key])
+    key = Session.SCHEDULED_RING_KEY
+    if session.metadata.get(key) != base.get(key):
+        ring = disk.recent_scheduled_runs()
+        known = {item.get("run_id") for item in ring}
+        for item in session.recent_scheduled_runs():
+            if item.get("run_id") not in known:
+                ring.append(deepcopy(item))
+                known.add(item.get("run_id"))
+        merged[key] = ring[-Session.SCHEDULED_RING_LIMIT:]
+    return merged
