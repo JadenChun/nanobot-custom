@@ -70,7 +70,8 @@ async def test_reply_id_inherited_only_for_primary_and_suppression_has_no_receip
     assert len(ctx.delivery.sent_messages) == 2
 
 
-async def test_actual_run_stage_retains_runner_outcome_and_plain_tool_ledger():
+@pytest.mark.parametrize("contextual", [False, True])
+async def test_actual_run_stage_retains_runner_outcome_and_plain_tool_ledger(contextual):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
@@ -85,7 +86,10 @@ async def test_actual_run_stage_retains_runner_outcome_and_plain_tool_ledger():
     result = AgentRunResult(final_content='blocked', messages=[], stop_reason='policy_blocked',
                             policy_metadata={'reason': 'fixture'}, tools_used=['message'])
     async def run(*args, **kwargs):
-        await tool.execute(content='explicit', channel='telegram', chat_id='42')
+        if contextual:
+            await tool.execute_with_context(kwargs['run_context'], content='explicit')
+        else:
+            await tool.execute(content='explicit', channel='telegram', chat_id='42')
         return result
     # Exercise the real stage with injected collaborators; never construct a runtime.
     loop = object.__new__(AgentLoop)
@@ -95,7 +99,11 @@ async def test_actual_run_stage_retains_runner_outcome_and_plain_tool_ledger():
                        session_key='cron:test', turn_id='test', runtime=object(),
                        kind=TurnKind.SYSTEM, delivery=delivery)
     ctx.transcript_input = object()
+    if contextual:
+        ctx.run_context = context('42')
     await loop._run_turn(ctx)
+    if contextual:
+        assert ctx.sent_messages is ctx.run_context.delivery.sent_messages
     assert ctx.run_result is result
     assert ctx.stop_reason == 'policy_blocked'
     assert [(m.chat_id, m.content) for m in ctx.sent_messages] == [('42', 'explicit')]

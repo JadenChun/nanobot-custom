@@ -26,9 +26,11 @@ from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.automation_turns import publish_next_deferred_turn
 from nanobot.agent.context import ContextBuilder, PersistedPromptContextResolver, TranscriptInput
 from nanobot.agent.cron_turns import CronTurnCoordinator
+from nanobot.agent.delegation import reset_current_turn_context, set_current_turn_context
 from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.model_runtime import ModelRuntimeResolver
+from nanobot.agent.policy import RiskyActionPolicy
 from nanobot.agent.runner import (
     _MAX_INJECTIONS_PER_TURN,
     AgentRunner,
@@ -42,6 +44,7 @@ from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, res
 from nanobot.agent.tools.message import capture_message_deliveries
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
+from nanobot.agent.turn import TurnContext as RunTurnContext
 from nanobot.agent.turn_delivery import (
     TurnDelivery,
     TurnDeliveryFactory,
@@ -150,6 +153,7 @@ class TurnContext:
     runtime_context_blocks: list[RuntimeContextBlock] = field(default_factory=list)
     attributes: dict[str, Any] = field(default_factory=dict)
 
+    run_context: RunTurnContext | None = None
     run_result: AgentRunResult | None = None
     sent_messages: list[OutboundMessage] = field(default_factory=list)
     final_content: str | None = None
@@ -961,6 +965,7 @@ class AgentLoop:
         tools: ToolRegistry | None = None,
         request_context: RequestContext | None = None,
         provider_state: ProviderConversationState | None = None,
+        run_context: RunTurnContext | None = None,
     ) -> AgentRunResult:
         """Run the agent iteration loop.
 
@@ -971,6 +976,15 @@ class AgentLoop:
 
         Returns the complete result produced by ``AgentRunner``.
         """
+        if run_context is None:
+            raise ValueError("canonical run context is required for tool authorization")
+        if run_context.policy.workspace is None or run_context.policy.context_manager is None:
+            raise ValueError("canonical run context is missing workspace policy dependencies")
+        tool_policy = RiskyActionPolicy(
+            workspace=run_context.policy.workspace,
+            approval_granted=bool(run_context.policy.approval_granted),
+            context_manager=run_context.policy.context_manager,
+        )
         self._sync_subagent_runtime_limits()
 
         async def _checkpoint(payload: dict[str, Any]) -> None:
@@ -1154,6 +1168,7 @@ class AgentLoop:
             )
 
         session_metadata = session.metadata if session is not None else None
+        run_context_token = set_current_turn_context(run_context)
         try:
             for scope in turn_scopes or ():
                 turn_scope_stack.enter_context(scope)
@@ -1178,6 +1193,9 @@ class AgentLoop:
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=None,
                 tools=effective_tools,
+                tool_policy=tool_policy,
+                turn_context=run_context,
+                fail_on_tool_error=True,
                 runtime=runtime,
                 max_iterations=self.max_iterations,
                 max_tool_result_chars=self.max_tool_result_chars,
@@ -1234,10 +1252,13 @@ class AgentLoop:
                 events=events,
             ))
         finally:
-            turn_scope_stack.close()
-            reset_workspace_scope(workspace_token)
-            reset_request_context(request_token)
-            reset_file_states(file_state_token)
+            try:
+                turn_scope_stack.close()
+            finally:
+                reset_current_turn_context(run_context_token)
+                reset_workspace_scope(workspace_token)
+                reset_request_context(request_token)
+                reset_file_states(file_state_token)
         if session is not None and not ephemeral:
             session.provider_state = result.provider_state
         if result.stop_reason == "max_iterations":
@@ -1993,6 +2014,8 @@ class AgentLoop:
             ctx.visible_run_started_at = time.time()
         await ctx.delivery.running(started_at=ctx.visible_run_started_at)
         assert ctx.transcript_input is not None
+        if ctx.run_context is not None:
+            ctx.sent_messages = ctx.run_context.delivery.sent_messages
         with capture_message_deliveries(ctx.sent_messages) as message_sends:
             result = await self._run_agent_loop(
                 ctx.transcript_input,
@@ -2008,6 +2031,7 @@ class AgentLoop:
                 tools=ctx.tools,
                 request_context=ctx.request_context,
                 provider_state=ctx.provider_state,
+                run_context=ctx.run_context,
                 events=ctx.events,
             )
         ctx.run_result = result
