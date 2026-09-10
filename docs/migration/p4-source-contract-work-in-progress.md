@@ -407,3 +407,32 @@ guard code and activation sites remain unchanged.
 pass; read-only review found no regression. This closes the previously listed
 configuration-test failures, not the outstanding source governor, startup rollout,
 or overall migration acceptance gates.
+
+### Explicit request ledger
+
+`session/source_request.py` now supplies detached source/runtime/checkpoint
+transcripts and invocation-local request tickets. Initial eligible IDs must be
+represented source nodes. Issuing a ticket grants no eligibility; acknowledgment
+consumes the exact local ticket and includes only its explicitly bound source IDs,
+never output appended after issuance. Discarded, reused, forged, cross-ledger, and
+pre-projection-replacement tickets fail. Request-only extensions may contain
+runtime instructions but cannot omit or edit the active projection. Projection
+replacement invalidates pending tickets while retaining acknowledged evidence.
+
+Evidence: eight ledger tests plus fourteen projection tests pass; independent
+review ran all 22. The combined session/source-engine/summary selection passes
+317 tests. Ruff/diff checks pass. This is provenance machinery, not activated
+compaction: runner/governor call sites still must supply authoritative bindings
+and acknowledge only after validated success and mandatory recording.
+
+Next integration must preserve IDs at `_build_source_turn` and early user
+persistence, bind the current model-facing user instruction separately from
+persisted evidence, and carry a typed source transcript in `AgentRunSpec`.
+Assistant response recording must return its event ID through the request result;
+tool replay must bind the ID from `record_tool_result_event` by batch ordinal.
+Length/continuation/malformed/finalization notes are explicit runtime nodes.
+Each request stack frame must retain its own ticket: recursive malformed retries
+discard the failed ticket and acknowledge only their validated replacement, never
+a mutable shared last-ticket slot. Only then can the governor select eligible
+closed prefixes, run bounded summaries, and publish checkpoints after rebuilt
+request validation and strict source CAS. Production activation remains guarded.
