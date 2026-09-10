@@ -131,3 +131,50 @@ All 360 session tests pass with network denied; scoped Ruff and diff checks pass
 Immutable blob storage, owned source-header publication, provenance adapters,
 retrieval policy/grants, governor/checkpoint references and integrated offloading
 acceptance remain unimplemented. This evidence does not authorize activation.
+
+## Private blob implementation evidence
+
+`session/artifact_store.py` implements a dormant private byte store with
+runtime-selected workspace/session/incarnation/generation binding. It retains the
+persisted workspace UUID and hashes session/incarnation strings only as safe
+filename components. Its caller must still select and validate the configured
+private root against workspace/context-repository locations; no runtime factory
+or model tool exposes this constructor yet.
+
+All path traversal uses directory-relative no-follow operations from the filesystem
+anchor. Private directories/files require current-user ownership and restrictive
+permissions; unexpected types and hard links are rejected. Root identity and
+namespace/lock reachability are rechecked. Successful installation uses exclusive
+temporary creation, complete writes, file fsync, no-overwrite link installation,
+temporary unlink and directory fsync. Existing identical bytes are fully verified
+and synced before reuse. Required parent entries are synced even when adopted
+from another creator. No descriptor or model reference is published by this API.
+
+Store transactions retain a persistent advisory lock, ordered before any future
+source-session transaction. Review isolated a macOS concurrent O_CREAT/O_NOFOLLOW
+lock-open race; lookup and exclusive creation are now separate bounded paths.
+A crash between blob link and temporary unlink is recoverable only when exactly
+one runtime-named staging entry matches the inode and complete descriptor
+length/digest/UTF-8 integrity. Arbitrary or corrupt multiply linked files remain
+errors. Replacement during installation can leave unreachable private bytes but
+cannot be reported as reachable publication success or write through an outside
+symlink. The future publisher must call `assert_reachable()` immediately before
+its source CAS while retaining the store transaction.
+
+Reads verify the entire immutable blob, including empty output ranges, and return
+at most 16,384 raw bytes. Ranges may split UTF-8 code points; the eventual text tool
+must implement its documented boundary policy. The dormant store defaults to a
+64 MiB per-blob cap; application configuration, aggregate disk quotas, backup
+inclusion and cross-platform enablement still require integration. No eviction or
+model-visible retrieval is implemented. POSIX no-follow/directory-relative support
+is required; other platforms fail closed until an equivalent implementation is
+qualified. These platform limits do not enable or disable existing runtime paths.
+
+All 34 blob tests pass, including two spawned concurrent writers, a real process
+exit immediately after link installation, adopted-directory durability, symlink
+replacement, corruption, strict ranges, root/lock replacement and unsupported
+filesystem capability rejection. Independent review accepted the correction bundle
+and independently ran those 34 tests. All 394 session tests pass with network
+denied; scoped Ruff and diff checks pass. Source-header publication, trusted
+provenance and read authorization, effective tool registration, governor/reference
+integration and whole-migration acceptance remain unfinished.

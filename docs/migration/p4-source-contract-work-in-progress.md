@@ -731,3 +731,16 @@ records the fields, reviewed source-intent correction, 60 passing artifact cases
 and 360 passing session tests. Private storage/publication and all authorization/
 projection integrations remain next; source inline retention and the production
 migration guard are unchanged.
+
+### Private immutable artifact byte store
+
+The dormant artifact store now provides no-follow private filesystem operations,
+namespace binding, immutable verified blobs, bounded byte ranges, and store-lock
+transactions. Reviewed corrections address concurrent macOS lock creation,
+adopted-directory durability and interrupted hard-link installation. Actual
+multi-process tests cover concurrent writes and crash recovery. All 394 session
+tests pass, including 34 blob-store tests independently rerun in review; Ruff/diff
+checks pass. [The offloading contract](p4-artifact-offloading-contract.md) records
+platform/capacity limits and remaining integration gates. This store does not
+publish descriptors, authorize reads, expose references or change the production
+guard. Owned source metadata publication is the next storage integration.

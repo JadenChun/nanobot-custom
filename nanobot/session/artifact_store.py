@@ -1,0 +1,328 @@
+"""Private immutable artifact bytes; no descriptor publication or read grants.
+
+POSIX directory-relative no-follow operations are required. Unsupported platforms
+fail closed until an equivalent implementation is qualified. Transactions retain
+an advisory store lock; callers acquire source-session transactions after it.
+"""
+
+from __future__ import annotations
+
+import codecs
+import hashlib
+import os
+import re
+import secrets
+import stat
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+from nanobot.session.artifact import (
+    ArtifactDescriptor,
+    ArtifactValidationError,
+    parse_artifact_descriptor,
+    parse_artifact_reference,
+)
+
+MAX_RANGE_BYTES = 16_384
+DEFAULT_MAX_BLOB_BYTES = 64 * 1024 * 1024
+_CAPABILITY = object()
+
+
+class ArtifactStorageError(OSError):
+    """Content-free storage failure; no reference may be published on failure."""
+
+
+def _private(info: os.stat_result, *, directory: bool, links: int = 1) -> None:
+    expected = stat.S_ISDIR if directory else stat.S_ISREG
+    if (not expected(info.st_mode) or info.st_uid != os.getuid()
+            or stat.S_IMODE(info.st_mode) & 0o077
+            or (not directory and info.st_nlink != links)):
+        raise ArtifactStorageError('Artifact storage object is not private or has an unexpected type')
+
+
+def _flags() -> int:
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK
+
+
+class PrivateArtifactStore:
+    """A private namespace selected by trusted runtime state, never model input."""
+
+    def __init__(self, root: Path, *, workspace_id: str, session_key: str,
+                 incarnation: str, generation: int,
+                 max_blob_bytes: int = DEFAULT_MAX_BLOB_BYTES):
+        if (os.name != 'posix' or not all(hasattr(os, flag) for flag in ('O_DIRECTORY', 'O_NOFOLLOW'))
+                or not {os.open, os.mkdir, os.stat, os.unlink, os.link} <= os.supports_dir_fd
+                or os.link not in os.supports_follow_symlinks):
+            raise ArtifactStorageError('Safe artifact filesystem operations are unavailable')
+        root = Path(root)
+        if not root.is_absolute() or root == Path(root.anchor) or '..' in root.parts:
+            raise ArtifactValidationError('Artifact root must be an absolute non-root directory')
+        parse_artifact_reference('artifact:' + workspace_id)
+        if (not isinstance(session_key, str) or not session_key.strip()
+                or not isinstance(incarnation, str) or not incarnation.strip()
+                or type(generation) is not int or generation < 0
+                or type(max_blob_bytes) is not int or max_blob_bytes <= 0):
+            raise ArtifactValidationError('Invalid artifact store namespace or capacity')
+        self.root = root
+        self.workspace_id, self.session_key = workspace_id, session_key
+        self.incarnation, self.generation = incarnation, generation
+        self.max_blob_bytes = max_blob_bytes
+        # Hash only filename components. The persisted workspace UUID remains
+        # the workspace identity; full source bindings stay in the descriptor.
+        self._parts = (workspace_id, hashlib.sha256(session_key.encode()).hexdigest(),
+                       hashlib.sha256(incarnation.encode()).hexdigest(), str(generation))
+        self._root_identity: tuple[int, int] | None = None
+        with self._root_fd(create=True) as fd:
+            info = os.fstat(fd)
+            self._root_identity = (info.st_dev, info.st_ino)
+
+    @contextmanager
+    def _root_fd(self, *, create: bool = False) -> Iterator[int]:
+        """Walk from the filesystem anchor without resolving or following links."""
+        fd = None
+        try:
+            fd = os.open(self.root.anchor, _flags())
+            parts = self.root.parts[1:]
+            for index, part in enumerate(parts):
+                if create and index == len(parts) - 1:
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=fd)
+                    except FileExistsError:
+                        pass
+                    os.fsync(fd)
+                child = os.open(part, _flags(), dir_fd=fd)
+                os.close(fd)
+                fd = child
+            info = os.fstat(fd)
+            _private(info, directory=True)
+            if self._root_identity is not None and self._root_identity != (info.st_dev, info.st_ino):
+                raise ArtifactStorageError('Artifact root identity changed')
+            yield fd
+        except OSError:
+            raise ArtifactStorageError('Private artifact root is unavailable') from None
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    @contextmanager
+    def transaction(self) -> Iterator[ArtifactBlobTransaction]:
+        """Hold store lock before any caller's source-session CAS transaction."""
+        import fcntl
+
+        opened = []
+        lock_fd = None
+        transaction = None
+        try:
+            with self._root_fd() as root_fd:
+                parent = root_fd
+                for part in self._parts:
+                    try:
+                        os.mkdir(part, 0o700, dir_fd=parent)
+                    except FileExistsError:
+                        pass
+                    os.fsync(parent)
+                    child = os.open(part, _flags(), dir_fd=parent)
+                    opened.append(child)
+                    _private(os.fstat(child), directory=True)
+                    parent = child
+                # macOS may report ENOENT for concurrent O_CREAT|O_NOFOLLOW
+                # opens. Separate lookup from atomic exclusive creation.
+                for _ in range(8):
+                    try:
+                        lock_fd = os.open('.lock', os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                        break
+                    except FileNotFoundError:
+                        try:
+                            lock_fd = os.open('.lock', os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+                                              | os.O_NONBLOCK, 0o600, dir_fd=parent)
+                            break
+                        except FileExistsError:
+                            continue
+                if lock_fd is None:
+                    raise ArtifactStorageError('Artifact lock could not be established')
+                _private(os.fstat(lock_fd), directory=False)
+                os.fsync(lock_fd)
+                os.fsync(parent)
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                transaction = ArtifactBlobTransaction(_CAPABILITY, self, parent, lock_fd)
+                yield transaction
+        except OSError:
+            raise ArtifactStorageError('Private artifact transaction failed') from None
+        finally:
+            if transaction is not None:
+                transaction._active = False
+            if lock_fd is not None:
+                os.close(lock_fd)
+            for fd in reversed(opened):
+                os.close(fd)
+
+
+class ArtifactBlobTransaction:
+    """Internal integrity-checked byte operations; callers still need read policy."""
+
+    def __init__(self, capability: object, store: PrivateArtifactStore, directory_fd: int, lock_fd: int):
+        if capability is not _CAPABILITY:
+            raise ArtifactStorageError('Artifact transaction requires a store capability')
+        self._store, self._fd, self._active = store, directory_fd, True
+        self._directory_identity = self._inode(os.fstat(directory_fd))
+        self._lock_identity = self._inode(os.fstat(lock_fd))
+
+    @staticmethod
+    def _inode(info: os.stat_result) -> tuple[int, int]:
+        return info.st_dev, info.st_ino
+
+    def assert_reachable(self) -> None:
+        """Recheck namespace/lock binding immediately before descriptor publication."""
+        if not self._active:
+            raise ArtifactStorageError('Artifact transaction has ended')
+        opened = []
+        try:
+            with self._store._root_fd() as root:
+                parent = root
+                for part in self._store._parts:
+                    child = os.open(part, _flags(), dir_fd=parent)
+                    opened.append(child)
+                    _private(os.fstat(child), directory=True)
+                    parent = child
+                lock = os.stat('.lock', dir_fd=parent, follow_symlinks=False)
+                _private(lock, directory=False)
+                if (self._inode(os.fstat(parent)) != self._directory_identity
+                        or self._inode(lock) != self._lock_identity):
+                    raise ArtifactStorageError('Artifact namespace or lock binding changed')
+        finally:
+            for fd in reversed(opened):
+                os.close(fd)
+
+    def _descriptor(self, descriptor: ArtifactDescriptor) -> ArtifactDescriptor:
+        if not self._active:
+            raise ArtifactStorageError('Artifact transaction has ended')
+        self.assert_reachable()
+        descriptor = parse_artifact_descriptor(descriptor.to_dict())
+        store = self._store
+        if ((descriptor.workspace_id, descriptor.session_key, descriptor.incarnation, descriptor.generation)
+                != (store.workspace_id, store.session_key, store.incarnation, store.generation)):
+            raise ArtifactValidationError('Artifact belongs to another store namespace')
+        if descriptor.byte_length > store.max_blob_bytes:
+            raise ArtifactStorageError('Artifact exceeds configured blob capacity')
+        return descriptor
+
+    def put(self, descriptor: ArtifactDescriptor, content: bytes) -> None:
+        """Install complete immutable bytes, or verify an identical existing blob."""
+        descriptor = self._descriptor(descriptor)
+        if (not isinstance(content, bytes) or len(content) != descriptor.byte_length
+                or hashlib.sha256(content).hexdigest() != descriptor.sha256):
+            raise ArtifactValidationError('Artifact bytes do not match descriptor integrity')
+        try:
+            content.decode('utf-8')
+        except UnicodeError:
+            raise ArtifactValidationError('Artifact bytes are not UTF-8 text') from None
+        name = descriptor.artifact_id + '.blob'
+        try:
+            os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            self._recover_linked_install(descriptor)
+            self._verified_range(descriptor, offset=0, limit=0, durable=True)
+            return
+        temporary = '.tmp-' + secrets.token_hex(16)
+        fd = None
+        try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_NONBLOCK,
+                         0o600, dir_fd=self._fd)
+            _private(os.fstat(fd), directory=False)
+            remaining = memoryview(content)
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise ArtifactStorageError('Artifact write did not advance')
+                remaining = remaining[written:]
+            os.fsync(fd)
+            try:
+                os.link(temporary, name, src_dir_fd=self._fd, dst_dir_fd=self._fd, follow_symlinks=False)
+            except FileExistsError:
+                # A separately installed blob must match exactly; never overwrite.
+                self._verified_range(descriptor, offset=0, limit=0, durable=True)
+        finally:
+            if fd is not None:
+                os.close(fd)
+                os.unlink(temporary, dir_fd=self._fd)
+        os.fsync(self._fd)
+        self.assert_reachable()
+
+    def _recover_linked_install(self, descriptor: ArtifactDescriptor) -> None:
+        """Recover only a verified blob's single matching internal staging link."""
+        name = descriptor.artifact_id + '.blob'
+        info = os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+        if info.st_nlink != 2:
+            return
+        _private(info, directory=False, links=2)
+        matches = []
+        for entry in os.listdir(self._fd):
+            if re.fullmatch(r'\.tmp-[0-9a-f]{32}', entry) is None:
+                continue
+            candidate = os.stat(entry, dir_fd=self._fd, follow_symlinks=False)
+            if self._inode(candidate) == self._inode(info):
+                _private(candidate, directory=False, links=2)
+                matches.append(entry)
+        if len(matches) != 1:
+            raise ArtifactStorageError('Artifact has unexpected hard links')
+        self._verified_range(descriptor, offset=0, limit=0, durable=True, links=2)
+        # Names are runtime-owned under the store lock. Do not delete an entry
+        # that changed after verification, and never follow a temporary alias.
+        if any(self._inode(os.stat(entry, dir_fd=self._fd, follow_symlinks=False)) != self._inode(info)
+               for entry in (name, matches[0])):
+            raise ArtifactStorageError('Artifact staging binding changed')
+        os.unlink(matches[0], dir_fd=self._fd)
+        os.fsync(self._fd)
+
+    def read_range(self, descriptor: ArtifactDescriptor, *, offset: int = 0,
+                   limit: int = MAX_RANGE_BYTES) -> bytes:
+        """Return raw UTF-8 byte offsets after verifying the entire immutable blob.
+
+        A range may split a code point. The eventual text tool must apply its
+        documented boundary policy; this internal API does not decode ranges.
+        """
+        return self._verified_range(descriptor, offset=offset, limit=limit, durable=False)
+
+    def _verified_range(self, descriptor: ArtifactDescriptor, *, offset: int, limit: int,
+                        durable: bool, links: int = 1) -> bytes:
+        descriptor = self._descriptor(descriptor)
+        if (type(offset) is not int or offset < 0 or type(limit) is not int
+                or not 0 <= limit <= MAX_RANGE_BYTES):
+            raise ArtifactValidationError('Invalid bounded artifact byte range')
+        fd = os.open(descriptor.artifact_id + '.blob', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                     dir_fd=self._fd)
+        try:
+            before = os.fstat(fd)
+            _private(before, directory=False, links=links)
+            if before.st_size != descriptor.byte_length:
+                raise ArtifactStorageError('Artifact byte length mismatch')
+            digest, position, result = hashlib.sha256(), 0, bytearray()
+            decoder = codecs.getincrementaldecoder('utf-8')()
+            while chunk := os.read(fd, 65_536):
+                if position + len(chunk) > descriptor.byte_length:
+                    raise ArtifactStorageError('Artifact grew during read')
+                digest.update(chunk)
+                decoder.decode(chunk)
+                start, end = max(offset - position, 0), min(offset + limit - position, len(chunk))
+                if end > start:
+                    result.extend(chunk[start:end])
+                position += len(chunk)
+            decoder.decode(b'', final=True)
+            after = os.fstat(fd)
+            _private(after, directory=False, links=links)
+            if (position != descriptor.byte_length or digest.hexdigest() != descriptor.sha256
+                    or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                    != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+                raise ArtifactStorageError('Artifact integrity verification failed')
+            if durable:
+                os.fsync(fd)
+                os.fsync(self._fd)
+            self.assert_reachable()
+            return bytes(result)
+        except UnicodeError:
+            raise ArtifactStorageError('Artifact is not UTF-8 text') from None
+        finally:
+            os.close(fd)
