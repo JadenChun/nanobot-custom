@@ -201,3 +201,24 @@ def test_invalid_manifest_is_not_treated_as_empty(failure):
     with pytest.raises(ArtifactValidationError):
         published_artifacts(source, workspace_id=WORKSPACE)
     assert source == before
+
+
+def test_attestation_requires_receipt_and_cannot_relabel_origin():
+    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+    from nanobot.session.artifact import attested_artifact_origin
+
+    raw, source = fixture()
+    descriptor = parse_artifact_descriptor(raw)
+    with pytest.raises(ArtifactValidationError):
+        attested_artifact_origin(descriptor, source, workspace_id=WORKSPACE)
+    receipt = FilesystemReadReceipt(descriptor.source_access, 'a' * 64,
+                                    descriptor.byte_length, descriptor.sha256)
+    source.events[1].update(_source_origin=receipt.to_dict(), _dispatched=True, _outcome_status='ok')
+    assert attested_artifact_origin(descriptor, source, workspace_id=WORKSPACE) == receipt
+    changed = replace(descriptor, source_access=replace(descriptor.source_access,
+        access_class='context_repository', repository='forged'))
+    with pytest.raises(ArtifactValidationError):
+        attested_artifact_origin(changed, source, workspace_id=WORKSPACE)
+    source.events[1]['_source_origin']['sha256'] = '0' * 64
+    with pytest.raises(ArtifactValidationError):
+        attested_artifact_origin(descriptor, source, workspace_id=WORKSPACE)

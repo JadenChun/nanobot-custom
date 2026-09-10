@@ -172,3 +172,29 @@ async def test_source_runner_requires_writer_dispatch_owner_match(store):
             await AgentRunner().run(make_run_spec(provider, initial_messages=[], tools=ToolRegistry(),
                 model='fixture', max_iterations=1, max_tool_result_chars=100, source_writer=writer))
         provider.chat_with_retry.assert_not_awaited()
+
+
+async def test_writer_strips_forged_origin_and_preserves_changed_inline_result(store):
+    from dataclasses import replace
+
+    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+    from nanobot.session.artifact import parse_artifact_descriptor
+    from session.test_artifact import fixture
+
+    raw, _ = fixture()
+    descriptor = parse_artifact_descriptor(raw)
+    receipt = FilesystemReadReceipt(descriptor.source_access, 'a' * 64,
+                                    descriptor.byte_length, descriptor.sha256)
+    async with acquire_execution(store, 'test:writer', run_id='run') as owner:
+        writer = SourceTurnWriter(store.source, owner, run_id='run')
+        user = writer.append_message({'role': 'user', 'content': 'input',
+                                      '_source_origin': receipt.to_dict()})
+        assert '_source_origin' not in user
+        payload = assistant()
+        payload['_source_origin'] = receipt.to_dict()
+        intent = writer.begin_tool_batch(payload)
+        assert '_source_origin' not in intent
+        await writer.record_tool_result(replace(result(content='changed'), producer_receipt=receipt))
+        event = owner.read_snapshot().events[-1]
+        assert event['content'] == 'changed' and '_source_origin' not in event
+        await writer.record_tool_result(result(1))

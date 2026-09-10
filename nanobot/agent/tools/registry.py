@@ -201,6 +201,15 @@ class ToolRegistry:
         result = (await tool.execute_with_context(context, **params)
                   if context is not None else await tool.execute(**params))
         outcome = result if isinstance(result, ToolOutcome) else ToolOutcome(content=result)
+        if outcome.producer_receipt is not None:
+            from nanobot.agent.tools.filesystem import ReadFileTool
+            from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+
+            receipt = outcome.producer_receipt
+            if (type(tool) is not ReadFileTool or type(receipt) is not FilesystemReadReceipt
+                    or not receipt.matches(outcome.content)):
+                outcome = ToolOutcome(outcome.content, outcome.stop_reason, outcome.policy_metadata)
+
         if is_tool_error_result(outcome.content) or (
             isinstance(outcome.content, str) and not isinstance(outcome.content, ToolResult)
             and outcome.content.startswith("Error")

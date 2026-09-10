@@ -8,6 +8,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
+from loguru import logger
+
 from nanobot.agent.tools.execution import KnownToolResult
 from nanobot.agent.turn import ToolOutcome
 from nanobot.session.execution_owner import ExecutionOwner
@@ -65,17 +67,19 @@ class SourceTurnWriter:
         return deepcopy([e for e in self._writes.committed if e.get('_stream_id') == self.stream_id])
 
     def _append(self, payload: dict[str, Any], *, execution_ids: list[str] | None = None,
-                execution_id: str | None = None) -> dict[str, Any]:
+                execution_id: str | None = None, source_origin: dict[str, Any] | None = None) -> dict[str, Any]:
         if self._writes.failed:
             raise SourceValidationError('Source turn recording failed')
         try:
             self.owner.validate_dispatch()
             clean = deepcopy(payload)
-            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id'):
+            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id', '_source_origin'):
                 clean.pop(key, None)
             if 'content' in clean:
                 clean['content'] = _persisted_content(clean['content'])
             event = new_source_event(clean, run_id=self.run_id)
+            if source_origin is not None:
+                event['_source_origin'] = deepcopy(source_origin)
             event['_stream_id'] = self.stream_id
             if self.parent_stream_id is not None:
                 event['_parent_stream_id'] = self.parent_stream_id
@@ -126,9 +130,22 @@ class SourceTurnWriter:
                 if isinstance(raw, str):
                     raw = str(raw)
                 canonical_events([{'content': raw}])
-                committed = self._append({'role': 'tool', 'tool_call_id': value.tool_call_id, 'name': value.name,
+                origin = None
+                if value.producer_receipt is not None:
+                    from nanobot.agent.tools.read_provenance import parse_read_receipt
+
+                    try:
+                        receipt = parse_read_receipt(value.producer_receipt.to_dict())
+                    except (ValueError, AttributeError, TypeError):
+                        receipt = None
+                    if receipt is not None and value.dispatched and value.event.get('status') == 'ok' and receipt.matches(raw):
+                        origin = receipt.to_dict()
+                    else:
+                        logger.debug('Ignoring unmatched filesystem producer receipt')
+                committed = self._append({'role': 'tool' , 'tool_call_id': value.tool_call_id, 'name': value.name,
                               'content': raw, '_dispatched': value.dispatched,
-                              '_outcome_status': value.event.get('status', '')}, execution_id=ids[index])
+                              '_outcome_status': value.event.get('status', '')}, execution_id=ids[index],
+                              source_origin=origin)
                 completed.add(index)
                 return committed['_event_id']
             except BaseException:

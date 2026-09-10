@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
@@ -20,6 +20,9 @@ from nanobot.utils.runtime import (
     repeated_workspace_violation_error,
 )
 
+if TYPE_CHECKING:
+    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+
 
 @dataclass(frozen=True, slots=True)
 class KnownToolResult:
@@ -32,6 +35,7 @@ class KnownToolResult:
     result: Any
     event: dict[str, str]
     dispatched: bool
+    producer_receipt: FilesystemReadReceipt | None = None
 
 
 ToolResultCallback = Callable[[KnownToolResult], Awaitable[None]]
@@ -39,10 +43,11 @@ ToolResultCallback = Callable[[KnownToolResult], Awaitable[None]]
 
 async def _record_result(callback: ToolResultCallback | None, ordinal: int,
                          call: ToolCallRequest, raw: Any, result: Any,
-                         event: dict[str, str], *, dispatched: bool) -> None:
+                         event: dict[str, str], *, dispatched: bool,
+                         producer_receipt: FilesystemReadReceipt | None = None) -> None:
     if callback is not None:
         await callback(KnownToolResult(ordinal, call.id, call.name, deepcopy(raw),
-                                       deepcopy(result), deepcopy(event), dispatched))
+                                       deepcopy(result), deepcopy(event), dispatched, producer_receipt))
 
 _RETRY_HINT = "\n\n[Analyze the error above and try a different approach.]"
 # SSRF is a hard security block at the tool boundary, but the agent turn
@@ -299,7 +304,8 @@ async def _execute_tool_call(
         detail = detail[:120] + "..."
     event = {"name": tool_call.name, "status": "ok", "detail": detail}
     await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
-                         result, event, dispatched=True)
+                         result, event, dispatched=True,
+                         producer_receipt=outcome.producer_receipt if outcome else None)
     await hook.after_execute_tool(context, tool_call, tool, params, result)
     return result, event
 

@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 if TYPE_CHECKING:
+    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.providers.base import LLMUsage
     from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.source_request import SourceTranscript
@@ -733,6 +734,7 @@ class ToolOutcome:
     content: Any = None
     stop_reason: str | None = None
     policy_metadata: Mapping[str, Any] = field(default_factory=dict)
+    producer_receipt: FilesystemReadReceipt | None = None
 
     @property
     def result(self) -> Any:

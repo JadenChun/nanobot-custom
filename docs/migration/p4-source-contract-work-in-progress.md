@@ -769,3 +769,15 @@ Final validation: all 417 session tests passed with network denied; scoped Ruff
 and diff checks passed. The reviewer independently reran all 17 publication tests
 and accepted this dormant package. This is package acceptance, not migration
 completion or runtime enablement.
+
+### Actual filesystem producer evidence
+
+Contextual ordinary-text reads now persist execution-bound producer receipts via
+registry, execution callback and source writer. Receipts bind the exact returned
+text, policy locator and root identity; provider projections omit them. The
+artifact attestation validator rejects missing/mismatching provenance and origin
+relabeling. Legacy conversion removes untrusted receipt metadata. Independent
+review accepted this correction. See the offloading contract for qualified-read
+limits and unsupported adapters. Retrieval authorization, grants, runtime artifact
+publication and projection integration remain unfinished; the migration guard is
+unchanged.

@@ -48,6 +48,15 @@ async def test_canonical_source_turn_persists_each_event_once(engine_config, mon
         assert [e['role'] for e in events] == ['user', 'assistant', 'tool', 'assistant']
         assert not validate_execution_links(events)
         assert len({e['_event_id'] for e in events}) == 4
+        from nanobot.agent.tools.read_provenance import parse_read_receipt, root_binding
+        receipt = parse_read_receipt(events[2]['_source_origin'])
+        assert receipt.matches(events[2]['content'])
+        assert receipt.source_access.relative_path == 'sample.txt'
+        assert receipt.root_binding == root_binding(engine_config.workspace_path)
+        assert events[2]['_execution_id'] == events[1]['_execution_ids'][0]
+        assert events[2]['_run_id'] == events[1]['_run_id']
+        assert events[2]['_stream_id'] == events[1]['_stream_id']
+        assert '_source_origin' not in str(provider.calls[-1][0])
         assert len(provider.calls) == 2
         assert [e['role'] for e in result.messages] == ['user', 'assistant', 'tool', 'assistant']
     finally:
@@ -836,5 +845,32 @@ async def test_real_local_pressure_compaction_preserves_root_and_continues_lengt
         assert 'root private' not in str(summaries[0])
         assert 'first_segment' in str(summaries[0])
         assert 'second_segment' not in str(summaries[0])
+    finally:
+        await loop.aclose()
+
+
+async def test_read_receipts_distinguish_repeated_provider_call_ids(engine_config, monkeypatch):
+    from nanobot.agent.tools.read_provenance import parse_read_receipt
+
+    for name in ('first', 'second'):
+        (engine_config.workspace_path / name).write_text(name)
+    provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(id='same', name='read_file',
+            arguments={'path': name}) for name in ('first', 'second')]),
+        LLMResponse(content='done'),
+    ])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop)
+    forbid_legacy(loop, monkeypatch)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='read both', session_key='cli:source'))
+        assert result.error is None, result.error
+        events = backend.source.load_source_snapshot('cli:source').events
+        results = [event for event in events if event['role'] == 'tool']
+        assert len(results) == 2
+        assert results[0]['_execution_id'] != results[1]['_execution_id']
+        for name, event in zip(('first', 'second'), results):
+            receipt = parse_read_receipt(event['_source_origin'])
+            assert receipt.source_access.relative_path == name and receipt.matches(event['content'])
     finally:
         await loop.aclose()

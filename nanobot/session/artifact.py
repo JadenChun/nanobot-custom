@@ -11,7 +11,7 @@ import hashlib
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from nanobot.session.source import (
     SourceValidationError,
@@ -19,6 +19,9 @@ from nanobot.session.source import (
     validate_execution_links,
 )
 from nanobot.session.source_store import SourceSnapshot
+
+if TYPE_CHECKING:
+    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
 
 _ID = re.compile(r'[0-9a-f]{32}\Z')
 _DIGEST = re.compile(r'[0-9a-f]{64}\Z')
@@ -220,3 +223,22 @@ def published_artifacts(snapshot: SourceSnapshot, *, workspace_id: str) -> tuple
         bindings.add(descriptor.idempotency_key)
         descriptors.append(descriptor)
     return tuple(descriptors)
+
+
+def attested_artifact_origin(descriptor: ArtifactDescriptor, snapshot: SourceSnapshot, *,
+                             workspace_id: str) -> FilesystemReadReceipt:
+    """Require producer evidence in addition to source text; still not a read grant.
+
+    The returned receipt's root binding must match current policy during retrieval.
+    Legacy inline events without producer receipts cannot be retroactively attested.
+    """
+    from nanobot.agent.tools.read_provenance import parse_read_receipt
+
+    text = bound_artifact_text(descriptor, snapshot, workspace_id=workspace_id).decode('utf-8')
+    event = next(row for row in snapshot.events if row['_event_id'] == descriptor.event_id)
+    receipt = parse_read_receipt(event.get('_source_origin'))
+    if (event.get('_dispatched') is not True or event.get('_outcome_status') != 'ok'
+            or descriptor.block_index is not None or receipt.source_access != descriptor.source_access
+            or not receipt.matches(text)):
+        raise ArtifactValidationError('Artifact lacks matching producer evidence')
+    return receipt

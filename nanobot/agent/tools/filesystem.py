@@ -6,7 +6,7 @@ import contextvars
 import difflib
 import mimetypes
 import os
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -398,15 +398,27 @@ class ReadFileTool(_FsTool):
     def read_only(self) -> bool:
         return True
 
-    async def execute(
+    async def execute(self, path: str | None = None, offset: int = 1,
+                      limit: int | None = None, pages: str | None = None,
+                      force: bool = False, **kwargs: Any) -> Any:
+        return await self._execute_read(path, offset, limit, pages, force)
+
+    async def execute_with_context(self, context: Any, **kwargs: Any) -> Any:
+        return await self._execute_read(**kwargs, _attest=True)
+
+    async def _execute_read(
         self,
         path: str | None = None,
         offset: int = 1,
         limit: int | None = None,
         pages: str | None = None,
         force: bool = False,
+        _attest: bool = False,
         **kwargs: Any,
     ) -> Any:
+        stack = ExitStack()
+        qualified = None
+        locator = None
         try:
             if not path:
                 return ToolResult.error("Error reading file: Unknown path")
@@ -486,8 +498,18 @@ class ReadFileTool(_FsTool):
                 if entry:
                     entry.can_dedup = False
 
-            # Read the file content after dedup check
-            raw = fp.read_bytes()
+            # Attestation observes the actual descriptor used for this read.
+            if _attest:
+                from nanobot.agent.tools.read_provenance import locate_read, qualified_text_bytes
+
+                access = current_tool_workspace(self._workspace,
+                    restrict_to_workspace=self._restrict_to_workspace,
+                    sandbox_restricts_workspace=self._sandbox_restricts_workspace)
+                locator = locate_read(fp, access.project_path, self._resource_policy)
+                if locator is not None:
+                    qualified = stack.enter_context(qualified_text_bytes(
+                        fp, max_bytes=self._MAX_FILE_SIZE_BYTES))
+            raw = qualified[0] if qualified is not None else fp.read_bytes()
             try:
                 text_content = raw.decode("utf-8")
             except UnicodeDecodeError:
@@ -546,11 +568,32 @@ class ReadFileTool(_FsTool):
             else:
                 result += f"\n\n(End of file — {total} lines total)"
             self._file_states.record_read(fp, offset=offset, limit=limit)
+            if qualified is not None and locator is not None:
+                import hashlib
+
+                from nanobot.agent.tools.read_provenance import (
+                    FilesystemReadReceipt,
+                    parse_read_receipt,
+                )
+                from nanobot.agent.turn import ToolOutcome
+
+                qualified[1]()
+                encoded = result.encode('utf-8')
+                receipt = FilesystemReadReceipt(locator[0], locator[1], len(encoded),
+                                                 hashlib.sha256(encoded).hexdigest())
+                # Unsupported locator spellings retain the original inline text.
+                try:
+                    receipt = parse_read_receipt(receipt.to_dict())
+                except ValueError:
+                    return result
+                return ToolOutcome(content=result, producer_receipt=receipt)
             return result
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
             return ToolResult.error(f"Error reading file: {e}")
+        finally:
+            stack.close()
 
     def _read_pdf(self, fp: Path, pages: str | None) -> str:
         from nanobot.utils.document import PdfPageRangeError, PdfSafetyError, extract_pdf_pages

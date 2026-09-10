@@ -1,9 +1,10 @@
 # P4 tool-output offloading implementation contract
 
-Status: pending implementation. This contract refines the accepted
+Status: partially implemented; model-facing offloading remains pending. This contract refines the accepted
 [context design](../context-management-migration-design.md); it does not authorize
 runtime activation or change migration completion scope. Source pressure compaction
-is implemented separately; artifact-backed evidence is not implemented yet.
+is implemented separately. Descriptor/blob/publication and filesystem producer
+evidence foundations exist; retrieval and artifact-backed projections remain pending.
 
 ## Required resulting behavior
 
@@ -178,3 +179,41 @@ and independently ran those 34 tests. All 394 session tests pass with network
 denied; scoped Ruff and diff checks pass. Source-header publication, trusted
 provenance and read authorization, effective tool registration, governor/reference
 integration and whole-migration acceptance remain unfinished.
+
+## Producer receipt implementation evidence
+
+Ordinary contextual built-in `read_file` text results now carry an immutable receipt
+separate from returned content. The receipt covers the exact UTF-8 representation
+including decoding, line numbers and pagination footer. A no-follow descriptor
+chain qualifies the final text read and verifies object identity and change stamps
+through rendering. This claim excludes the earlier legacy format sniff and early
+image/empty/dedup paths; those retain existing behavior and receive no receipt.
+Unsupported platforms/extra-root namespaces retain inline results without
+attestation. PDF/Office/image adapters and general tools remain outstanding.
+
+Locators mirror managed target/context precedence, distinguish target names by
+owning context, and include a hash binding to the actual project/repository root.
+That binding prevents later retrieval from silently rebasing a relative locator
+onto another project. Retrieval still needs to validate it against current policy;
+a valid receipt alone is not an access grant.
+
+The registry accepts receipts only from the concrete built-in producer and checks
+returned-text integrity. Execution carries them separately to the mandatory source
+writer, which reserves `_source_origin`, verifies the persisted text and attaches
+provenance to its own allocated event/execution/run/stream envelope. Legacy upgrade
+strips this reserved field rather than retroactively authenticating old metadata.
+Detached model projections omit it. `attested_artifact_origin` checks receipt/text
+and descriptor-origin equality; dormant descriptor publication still does not
+require this validator or grant reads. The next runtime publisher/retriever must
+require it before emitting or resolving model-facing references.
+
+Tests cover real-engine canonical receipt persistence and repeated provider call
+IDs; exact pagination/CRLF/decoding; same-instance concurrent reads; spoofed producer
+and altered result rejection; protected paths; managed-root precedence; namespace
+replacement; unsupported results/platforms; forged writer fields; and legacy
+upgrade. Read-only review found and verified the legacy-upgrade correction.
+
+Validation for producer integration: 556 combined session/filesystem/source-engine
+tests and 10 runner tool-execution tests passed with network denied. Two existing
+guarded plugin fixtures were deselected; these are not waived for overall migration
+acceptance. Scoped Ruff and diff checks passed.
