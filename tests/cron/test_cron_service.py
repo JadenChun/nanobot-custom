@@ -4,7 +4,7 @@ import json
 import pytest
 
 from nanobot.cron.service import CronService
-from nanobot.cron.types import CronDestination, CronSchedule
+from nanobot.cron.types import CronDestination, CronSchedule, CronVerifier
 
 
 def test_add_job_rejects_unknown_timezone(tmp_path) -> None:
@@ -192,3 +192,60 @@ async def test_running_service_honors_external_disable(tmp_path) -> None:
         assert called == []
     finally:
         service.stop()
+
+
+def test_verifiers_are_persisted_and_loaded(tmp_path) -> None:
+    store_path = tmp_path / "cron" / "jobs.json"
+    service = CronService(store_path)
+
+    job = service.add_job(
+        name="verified-trend",
+        schedule=CronSchedule(kind="cron", expr="0 6 * * *", tz="Asia/Kuala_Lumpur"),
+        message="Run trend",
+        deliver=True,
+        channel="telegram",
+        to="-5340461568",
+        verifiers=[
+            CronVerifier(
+                name="trend_report",
+                argv=("python", "tools/verify_trend_report.py", "--json"),
+                cwd="/repo",
+                timeout=180.0,
+                status_file="/repo/report.md",
+            ),
+        ],
+    )
+
+    raw = json.loads(store_path.read_text(encoding="utf-8"))
+    stored = raw["jobs"][0]["payload"]["verifiers"]
+    assert stored[0]["name"] == "trend_report"
+    assert stored[0]["argv"] == ["python", "tools/verify_trend_report.py", "--json"]
+    assert stored[0]["timeout"] == 180.0
+    assert stored[0]["status_file"] == "/repo/report.md"
+
+    loaded = CronService(store_path).get_job(job.id)
+    assert loaded is not None
+    assert len(loaded.payload.verifiers) == 1
+    v = loaded.payload.verifiers[0]
+    assert v.name == "trend_report"
+    assert v.argv == ("python", "tools/verify_trend_report.py", "--json")
+    assert v.timeout == 180.0
+    assert v.status_file == "/repo/report.md"
+
+
+def test_legacy_job_without_verifiers_still_loads(tmp_path) -> None:
+    store_path = tmp_path / "cron" / "jobs.json"
+    service = CronService(store_path)
+    job = service.add_job(
+        name="legacy",
+        schedule=CronSchedule(kind="cron", expr="0 9 * * *", tz="Asia/Kuala_Lumpur"),
+        message="m",
+    )
+    raw = json.loads(store_path.read_text(encoding="utf-8"))
+    for j in raw["jobs"]:
+        j["payload"].pop("verifiers", None)
+    store_path.write_text(json.dumps(raw), encoding="utf-8")
+
+    loaded = CronService(store_path).get_job(job.id)
+    assert loaded is not None
+    assert loaded.payload.verifiers == []

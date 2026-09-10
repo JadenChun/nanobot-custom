@@ -26,6 +26,33 @@ class CronDestination:
     to: str
 
 
+DEFAULT_STATUS_REGEX = r"(?im)^\*\*Internal status:\*\*\s*([A-Za-z_]+)"
+
+
+@dataclass(frozen=True)
+class CronVerifier:
+    """One authoritative external verifier for a scheduled client job.
+
+    ``argv`` is executed directly via ``asyncio.create_subprocess_exec`` (never
+    through a shell).  Entries may contain ``{date}`` (the cron run's date in the
+    job timezone) and ``{repo_root}`` (the verifier working directory) templates.
+
+    Contract: the verifier must exit 0 AND print a JSON object containing
+    ``"verified": true`` or ``"ok": true``.  Any other outcome (non-zero exit,
+    missing/unparseable output, timeout, exec error) is not a PASS.
+    """
+
+    name: str
+    argv: tuple[str, ...]
+    cwd: str | None = None
+    timeout: float = 120.0
+    # Optional: resolve a `{status}` argv template from a file (e.g. the run's
+    # internal report) using a regex.  Unresolved -> empty (the verifier will
+    # then fail closed).
+    status_file: str | None = None
+    status_regex: str = DEFAULT_STATUS_REGEX
+
+
 @dataclass
 class CronPayload:
     """What to do when the job runs."""
@@ -45,6 +72,10 @@ class CronPayload:
     # chat id here; it is set per job in the cron store.
     alert_channel: str | None = None  # e.g. "telegram"
     alert_to: str | None = None  # e.g. owner Telegram UID
+    # Authoritative external verifiers.  When non-empty their aggregate result
+    # (NOT the internal LLM verifier) decides whether the verified client result
+    # may be delivered.
+    verifiers: list[CronVerifier] = field(default_factory=list)
 
     def alert_destination(self) -> "CronDestination | None":
         """Return the configured owner operational-alert destination, if any."""

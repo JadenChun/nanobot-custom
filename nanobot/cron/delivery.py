@@ -1,11 +1,15 @@
 """Build de-duplicated outbound deliveries for cron results."""
 
+import asyncio
+import json
+import re
 from collections.abc import Iterable
+from pathlib import Path
 
 from loguru import logger
 
 from nanobot.bus.events import DeliveryResult, OutboundMessage
-from nanobot.cron.types import CronDestination
+from nanobot.cron.types import CronDestination, CronVerifier
 
 
 def build_result_messages(
@@ -94,6 +98,136 @@ async def send_owner_alert(
             job_name, failure_stage, result.error,
         )
     return result
+
+
+
+def _resolve_status(verifier, *, date: str, repo_root: str | None) -> str:
+    """Resolve a verifier's `{status}` input from its configured status file."""
+    if not verifier.status_file:
+        return ""
+    path = str(verifier.status_file).replace("{date}", date).replace("{repo_root}", repo_root or "")
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(verifier.status_regex, text)
+    return match.group(1) if match else ""
+
+
+def _render_verifier_argv(
+    argv: Iterable[str],
+    *,
+    date: str,
+    repo_root: str | None,
+    response_file: str | None = None,
+    status: str = "",
+) -> list[str]:
+    """Substitute the run-scoped templates in a verifier argv.
+
+    ``{date}``          - the run's date in the job timezone
+    ``{repo_root}``     - the verifier working directory
+    ``{response_file}`` - a file containing THIS run's exact client response
+    ``{status}``        - an internal status resolved from ``status_file``
+    """
+    rendered = []
+    for a in argv:
+        value = str(a).replace("{date}", date).replace("{repo_root}", repo_root or "")
+        if response_file is not None:
+            value = value.replace("{response_file}", response_file)
+        value = value.replace("{status}", status)
+        rendered.append(value)
+    return rendered
+
+
+def _verifier_passed(returncode: int, stdout: bytes) -> str:
+    """Classify one verifier process result as PASS / FAIL / MISSING.
+
+    exit != 0 -> FAIL.  exit == 0 -> require a truthful JSON object on stdout
+    (``verified`` or ``ok`` is true); otherwise MISSING (malformed/untruthful).
+    """
+    if returncode != 0:
+        return "FAIL"
+    text = (stdout or b"").decode("utf-8", "replace").strip()
+    if not text:
+        return "MISSING"
+    # The verifiers print a single JSON object; tolerate leading noise.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return "MISSING"
+    try:
+        payload = json.loads(text[start:end + 1])
+    except Exception:
+        return "MISSING"
+    if not isinstance(payload, dict):
+        return "MISSING"
+    if payload.get("verified") is True or payload.get("ok") is True:
+        return "PASS"
+    return "MISSING"
+
+
+async def run_external_verifiers(
+    verifiers: Iterable["CronVerifier"],
+    *,
+    date: str,
+    default_cwd: str | None = None,
+    response_file: str | None = None,
+) -> tuple[str, list[dict]]:
+    """Run authoritative external verifiers and aggregate the result.
+
+    Each verifier runs via ``asyncio.create_subprocess_exec`` (no shell).  The
+    per-verifier outcome is PASS / FAIL / MISSING (timeout, exec error, or
+    malformed/untruthful output).  Aggregation:
+
+        any MISSING -> MISSING
+        else any FAIL -> FAIL
+        else -> PASS
+
+    Returns ``(aggregate, details)``.  Only PASS is eligible for client
+    delivery.  Verifier stdout/stderr is NEVER returned as client content.
+    """
+    details: list[dict] = []
+    for verifier in verifiers:
+        cwd = verifier.cwd or default_cwd
+        argv = _render_verifier_argv(
+            verifier.argv,
+            date=date,
+            repo_root=cwd,
+            response_file=response_file,
+            status=_resolve_status(verifier, date=date, repo_root=cwd),
+        )
+        status = "MISSING"
+        error = ""
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except (FileNotFoundError, OSError, NotImplementedError) as exc:
+            details.append({"name": verifier.name, "status": "MISSING", "error": str(exc)[:300]})
+            continue
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=verifier.timeout)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            details.append({"name": verifier.name, "status": "MISSING", "error": "verifier timed out"})
+            continue
+        status = _verifier_passed(proc.returncode, stdout)
+        if status != "PASS":
+            error = (stderr or b"").decode("utf-8", "replace").strip()[-300:]
+        details.append({"name": verifier.name, "status": status, "error": error})
+
+    statuses = [d["status"] for d in details]
+    if any(s == "MISSING" for s in statuses):
+        aggregate = "MISSING"
+    elif any(s == "FAIL" for s in statuses):
+        aggregate = "FAIL"
+    else:
+        aggregate = "PASS"
+    return aggregate, details
 
 
 def build_explicit_fanout_messages(

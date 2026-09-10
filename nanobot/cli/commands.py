@@ -664,8 +664,28 @@ async def _run_cron_job(agent, bus, job) -> str | None:
         build_result_messages,
         classify_delivery_results,
         is_client_deliverable,
+        run_external_verifiers,
         send_owner_alert,
     )
+
+    external_verifiers = list(job.payload.verifiers)
+    # When authoritative external verifiers are configured, the internal
+    # Nanobot LLM verifier is skipped entirely (its verdict is not authoritative
+    # for these jobs).  skip_verification otherwise keeps its existing meaning.
+    skip_internal_verifier = bool(external_verifiers) or job.payload.skip_verification
+
+    def _run_date() -> str:
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        if job.schedule.tz:
+            try:
+                from zoneinfo import ZoneInfo
+
+                now = datetime.now(ZoneInfo(job.schedule.tz))
+            except Exception:
+                pass
+        return now.strftime("%Y-%m-%d")
 
     delivery_destinations = job.payload.delivery_destinations()
     alert_destination = job.payload.alert_destination()
@@ -717,7 +737,7 @@ async def _run_cron_job(agent, bus, job) -> str | None:
                 channel=job.payload.channel or "cli",
                 chat_id=job.payload.to or "direct",
                 planning_mode=job.payload.planning_mode,
-                skip_verification=job.payload.skip_verification,
+                skip_verification=skip_internal_verifier,
                 approval_granted=True,
             )
         except Exception as exc:
@@ -743,32 +763,57 @@ async def _run_cron_job(agent, bus, job) -> str | None:
     response = resp.content if resp else ""
 
     message_tool = agent.tools.get("message")
-    if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
-        for outbound in build_explicit_fanout_messages(
-            delivery_destinations,
-            message_tool.sent_messages_in_turn,
-        ):
-            await bus.publish_outbound(outbound)
-        return response
+    sent_messages = (
+        message_tool.sent_messages_in_turn
+        if isinstance(message_tool, MessageTool)
+        else ()
+    )
 
-    # Required client delivery is gated only on the deterministic verification
-    # verdict (never on the owner-notification evaluator).  A missing/FAIL/
-    # PARTIAL verdict never reaches the client group.
-    verification_verdict = (
-        (getattr(resp, "metadata", {}) or {}).get("_verification")
-        if resp is not None
-        else "MISSING"
-    )
-    verified = is_client_deliverable(
-        verification_verdict, skip_verification=job.payload.skip_verification
-    )
+    # Delivery verdict.  Authoritative EXTERNAL verifiers (when configured)
+    # override the internal verdict entirely; otherwise the deterministic
+    # internal `_verification` gate applies.  A non-PASS verdict never reaches
+    # the client group.
+    if external_verifiers:
+        # Persist THIS run's exact client response so content verifiers check
+        # precisely what would be delivered, not whichever dated file is newest.
+        import tempfile
+
+        fd, response_path = tempfile.mkstemp(prefix="cron-response-", suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(response)
+        try:
+            external_status, _details = await run_external_verifiers(
+                external_verifiers,
+                date=_run_date(),
+                default_cwd=os.getcwd(),
+                response_file=response_path,
+            )
+        finally:
+            try:
+                os.unlink(response_path)
+            except OSError:
+                pass
+        verified = external_status == "PASS"
+        verdict_source = f"external verifier verdict={external_status}"
+    else:
+        if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
+            for outbound in build_explicit_fanout_messages(
+                delivery_destinations,
+                message_tool.sent_messages_in_turn,
+            ):
+                await bus.publish_outbound(outbound)
+            return response
+        verification_verdict = (
+            (getattr(resp, "metadata", {}) or {}).get("_verification")
+            if resp is not None
+            else "MISSING"
+        )
+        verified = is_client_deliverable(
+            verification_verdict, skip_verification=job.payload.skip_verification
+        )
+        verdict_source = "internal verification verdict"
 
     if delivery_destinations and response and verified:
-        sent_messages = (
-            message_tool.sent_messages_in_turn
-            if isinstance(message_tool, MessageTool)
-            else ()
-        )
         outbounds = build_result_messages(response, delivery_destinations, sent_messages)
         results = []
         for outbound in outbounds:
@@ -805,10 +850,10 @@ async def _run_cron_job(agent, bus, job) -> str | None:
             )
         # outcome == "success": group delivered, owner stays silent.
     elif delivery_destinations and response and not verified:
-        err = "verification required but no PASS verdict; refusing to deliver unverified client output"
+        err = f"client delivery blocked: {verdict_source}; refusing to deliver unverified client output"
         await _owner_alert(
             "Failed",
-            "The content did not pass verification. "
+            "The content did not pass the required verification. "
             "Nothing was sent to the client group.",
         )
         agent.record_task_failure(

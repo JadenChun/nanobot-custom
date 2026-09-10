@@ -18,6 +18,8 @@ from nanobot.cron.types import (
     CronRunRecord,
     CronSchedule,
     CronStore,
+    CronVerifier,
+    DEFAULT_STATUS_REGEX,
 )
 
 
@@ -134,6 +136,18 @@ class CronService:
                             skip_verification=j["payload"].get("skip_verification", False),
                             alert_channel=j["payload"].get("alert_channel"),
                             alert_to=j["payload"].get("alert_to"),
+                            verifiers=[
+                                CronVerifier(
+                                    name=str(v.get("name") or "verifier"),
+                                    argv=tuple(str(a) for a in v.get("argv", [])),
+                                    cwd=v.get("cwd"),
+                                    timeout=float(v.get("timeout", 120.0)),
+                                    status_file=v.get("status_file"),
+                                    status_regex=v.get("status_regex") or DEFAULT_STATUS_REGEX,
+                                )
+                                for v in j["payload"].get("verifiers", []) or []
+                                if isinstance(v, dict) and v.get("argv")
+                            ],
                         ),
                         state=CronJobState(
                             next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
@@ -198,6 +212,17 @@ class CronService:
                         "skip_verification": j.payload.skip_verification,
                         "alert_channel": j.payload.alert_channel,
                         "alert_to": j.payload.alert_to,
+                        "verifiers": [
+                            {
+                                "name": v.name,
+                                "argv": list(v.argv),
+                                "cwd": v.cwd,
+                                "timeout": v.timeout,
+                                "status_file": v.status_file,
+                                "status_regex": v.status_regex,
+                            }
+                            for v in j.payload.verifiers
+                        ],
                     },
                     "state": {
                         "nextRunAtMs": j.state.next_run_at_ms,
@@ -358,6 +383,7 @@ class CronService:
         additional_destinations: list[CronDestination] | None = None,
         alert_channel: str | None = None,
         alert_to: str | None = None,
+        verifiers: list[CronVerifier] | None = None,
     ) -> CronJob:
         """Add a new job."""
         store = self._load_store()
@@ -380,6 +406,7 @@ class CronService:
                 skip_verification=skip_verification,
                 alert_channel=alert_channel,
                 alert_to=alert_to,
+                verifiers=list(verifiers or []),
             ),
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,
