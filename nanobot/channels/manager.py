@@ -135,13 +135,13 @@ class ChannelManager:
 
                 if msg.metadata.get("_progress"):
                     if msg.metadata.get("_tool_hint") and not self.config.channels.send_tool_hints:
-                        self._resolve_ack(msg, DeliveryResult(success=True))
+                        self._resolve_ack(msg, DeliveryResult(status="success"))
                         continue
                     if (
                         not msg.metadata.get("_tool_hint")
                         and self.config.channels.task_update_mode != "verbose"
                     ):
-                        self._resolve_ack(msg, DeliveryResult(success=True))
+                        self._resolve_ack(msg, DeliveryResult(status="success"))
                         continue
 
                 # Coalesce consecutive _stream_delta messages for the same (channel, chat_id)
@@ -158,7 +158,7 @@ class ChannelManager:
                     self._resolve_ack(
                         msg,
                         DeliveryResult(
-                            success=False, error=f"unknown channel: {msg.channel}"
+                            status="failed", error=f"unknown channel: {msg.channel}"
                         ),
                     )
 
@@ -243,7 +243,7 @@ class ChannelManager:
         for attempt in range(max_attempts):
             try:
                 await self._send_once(channel, msg)
-                self._resolve_ack(msg, DeliveryResult(success=True))
+                self._resolve_ack(msg, DeliveryResult(status="success"))
                 return  # Send succeeded
             except asyncio.CancelledError:
                 raise  # Propagate cancellation for graceful shutdown
@@ -256,7 +256,7 @@ class ChannelManager:
                     self._resolve_ack(
                         msg,
                         DeliveryResult(
-                            success=False,
+                            status="failed",
                             error=f"{type(e).__name__}: {e}",
                         ),
                     )

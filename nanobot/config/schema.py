@@ -28,8 +28,9 @@ class ChannelsConfig(Base):
     send_max_retries: int = Field(default=3, ge=0, le=10)  # Max delivery attempts (initial send included)
     # Max seconds a caller waits for a downstream delivery acknowledgement
     # (see MessageBus.publish_outbound_and_wait).  Bounded so a caller cannot
-    # hang forever; large enough to cover the channel retry envelope.
-    delivery_ack_timeout: float = Field(default=120.0, ge=1.0, le=600.0)
+    # hang forever; sized to cover the realistic channel retry envelope (an
+    # elapsed wait resolves as DeliveryResult.status == "unknown").
+    delivery_ack_timeout: float = Field(default=300.0, ge=1.0, le=600.0)
 
 
 class MaxTokensConfig(Base):

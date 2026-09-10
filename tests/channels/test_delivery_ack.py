@@ -163,7 +163,7 @@ async def test_ack_resolved_exactly_once(bus, manager):
         result = await bus.publish_outbound_and_wait(msg, timeout=2.0)
         assert result.success is True
         # A second resolve attempt must be a no-op (ack already done).
-        manager._resolve_ack(msg, DeliveryResult(success=False, error="late"))
+        manager._resolve_ack(msg, DeliveryResult(status="failed", error="late"))
         assert msg.delivery_ack.result().success is True
     finally:
         task.cancel()

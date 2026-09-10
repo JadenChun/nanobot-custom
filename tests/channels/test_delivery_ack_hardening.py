@@ -98,17 +98,18 @@ async def test_late_send_after_timeout_does_not_crash(bus, manager):
         assert chan.send_calls == 1          # client still received it
         assert not task.done()               # dispatcher survived
         # Resolving a cancelled ack is a safe no-op.
-        manager._resolve_ack(msg, DeliveryResult(success=True, error="late"))
+        manager._resolve_ack(msg, DeliveryResult(status="success", error="late"))
     finally:
         task.cancel()
 
 
 # 5. configured default accommodates the real retry envelope
 def test_default_timeout_covers_retry_envelope():
-    # Telegram read/connect timeout is 30s; manager retries 3 attempts -> the
-    # default must exceed a single attempt and a couple of retries.
-    assert DELIVERY_ACK_TIMEOUT_S >= 90.0
-    # ...but must stay bounded so a cron run cannot stall indefinitely.
+    # Realistic envelope: 3 manager attempts x 3 telegram attempts x 30s
+    # connect/read stall + backoffs ~= 277.5s.  The default must cover the
+    # realistic envelope so normal transient failures resolve in-wait...
+    assert DELIVERY_ACK_TIMEOUT_S >= 278.0
+    # ...but stay bounded so a cron run cannot stall indefinitely.
     assert DELIVERY_ACK_TIMEOUT_S <= 600.0
     assert ChannelsConfig().delivery_ack_timeout == DELIVERY_ACK_TIMEOUT_S
 
@@ -138,3 +139,58 @@ async def test_progress_message_does_not_complete_final_ack(bus):
         assert final.delivery_ack.result().success is True
     finally:
         task.cancel()
+
+# 7. timeout is UNKNOWN, not a confirmed failure
+@pytest.mark.asyncio
+async def test_timeout_status_is_unknown_not_failed(bus):
+    result = await bus.publish_outbound_and_wait(
+        OutboundMessage(channel="mock", chat_id="c", content="hi"), timeout=0.05
+    )
+    assert result.status == "unknown"
+    assert result.success is False
+    assert "timed out" in (result.error or "")
+
+
+# 8. terminal channel failure is a CONFIRMED failure
+@pytest.mark.asyncio
+async def test_terminal_failure_status_is_failed(bus, manager):
+    chan = MockChannel({}, bus, fail_times=99)
+    manager.channels["mock"] = chan
+    task = await _dispatcher(manager)
+    try:
+        result = await bus.publish_outbound_and_wait(
+            OutboundMessage(channel="mock", chat_id="c", content="hi"), timeout=2.0
+        )
+        assert result.status == "failed"
+        assert result.success is False
+        assert "RuntimeError" in (result.error or "")
+    finally:
+        task.cancel()
+
+
+# 9. the CONFIGURED timeout actually reaches the waiter
+@pytest.mark.asyncio
+async def test_configured_timeout_is_used_by_default(manager):
+    # Bus carries the configured default; no explicit timeout passed.
+    configured = MessageBus(outbound_ack_timeout=0.05)
+    import time
+    t0 = time.monotonic()
+    result = await configured.publish_outbound_and_wait(
+        OutboundMessage(channel="mock", chat_id="c", content="hi")  # no timeout arg
+    )
+    elapsed = time.monotonic() - t0
+    assert result.status == "unknown"
+    assert elapsed < 2.0  # used the 0.05s configured value, not the 300s default
+
+
+# 10. per-call timeout overrides the configured value
+@pytest.mark.asyncio
+async def test_per_call_timeout_overrides_configured_default(bus):
+    import time
+    bus._outbound_ack_timeout = 100.0  # configured large
+    t0 = time.monotonic()
+    result = await bus.publish_outbound_and_wait(
+        OutboundMessage(channel="mock", chat_id="c", content="hi"), timeout=0.05
+    )
+    assert result.status == "unknown"
+    assert time.monotonic() - t0 < 2.0

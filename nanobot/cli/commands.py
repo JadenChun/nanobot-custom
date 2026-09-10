@@ -583,7 +583,7 @@ def serve(
     port = port if port is not None else api_cfg.port
     timeout = timeout if timeout is not None else api_cfg.timeout
     sync_workspace_templates(runtime_config.workspace_path)
-    bus = MessageBus()
+    bus = MessageBus(outbound_ack_timeout=runtime_config.channels.delivery_ack_timeout)
     provider = _make_provider(runtime_config)
     session_manager = SessionManager(runtime_config.workspace_path)
     agent_loop = AgentLoop(
@@ -704,7 +704,7 @@ def gateway(
 
     console.print(f"{__logo__} Starting nanobot gateway version {__version__} on port {port}...")
     sync_workspace_templates(config.workspace_path)
-    bus = MessageBus()
+    bus = MessageBus(outbound_ack_timeout=config.channels.delivery_ack_timeout)
     provider = _make_provider(config)
     session_manager = SessionManager(config.workspace_path)
 
@@ -1056,7 +1056,7 @@ def agent(
     config = _load_runtime_config(config, workspace)
     sync_workspace_templates(config.workspace_path)
 
-    bus = MessageBus()
+    bus = MessageBus(outbound_ack_timeout=config.channels.delivery_ack_timeout)
     provider = _make_provider(config)
 
     # Preserve existing single-workspace installs, but keep custom workspaces clean.

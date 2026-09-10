@@ -3,7 +3,9 @@
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
+
+DeliveryStatus = Literal["success", "failed", "unknown"]
 
 
 @dataclass
@@ -29,13 +31,27 @@ class InboundMessage:
 class DeliveryResult:
     """Terminal downstream result for one outbound message.
 
-    Transport acknowledgement only: ``success=True`` means the channel accepted
-    the message (e.g. Telegram's ``send_message`` returned).  It is NOT proof
-    the recipient read it.
+    Transport acknowledgement only.  Three distinct states:
+
+    * ``success``  — the channel accepted the message (e.g. Telegram's
+      ``send_message`` returned).  NOT proof the recipient read it.
+    * ``failed``   — the dispatcher exhausted its send retries and the channel
+      raised.  This is a CONFIRMED transport failure.
+    * ``unknown``  — the caller's bounded acknowledgement wait elapsed before
+      the final send result was observed (or no result could be determined).
+      The send may still succeed late; this is NOT a confirmed failure and must
+      not be treated as delivered or auto-resent.
+
+    ``.success`` is kept as a convenience property for callers that only care
+    about the positive case.
     """
 
-    success: bool
+    status: DeliveryStatus
     error: str | None = None
+
+    @property
+    def success(self) -> bool:
+        return self.status == "success"
 
 
 @dataclass

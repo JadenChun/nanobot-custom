@@ -6,18 +6,24 @@ from loguru import logger
 
 from nanobot.bus.events import DeliveryResult, InboundMessage, OutboundMessage
 
-# Bounded wait for a delivery acknowledgement, sized from the REAL retry
+# Bounded wait for a delivery acknowledgement, derived from the REAL retry
 # envelope in this repo:
-#   * Telegram HTTPXRequest: connect_timeout=30s, read_timeout=30s, pool_timeout=5s
-#   * TelegramChannel._call_with_retry: 3 attempts (TimedOut only), 0.5s+1.0s backoff
-#     -> worst case ~91s for one channel.send()
+#   * One HTTP request uses httpx *phase* timeouts (not additive for the caller,
+#     but the per-request pathological ceiling is connect(30)+read(30)+write(5,
+#     default)+pool(5) = 70s; a single stalled phase is typically ~30s).
+#   * TelegramChannel._call_with_retry: 3 attempts (TimedOut only), 0.5s+1.0s
+#     backoff.  _send_text also falls back from HTML to plain text, i.e. up to
+#     6 HTTP attempts per channel.send().
 #   * ChannelManager._send_with_retry: send_max_retries (default 3) attempts,
-#     1s+2s backoff -> upper bound well above that.
-# 120s comfortably covers the intended retry policy under normal failure
-# conditions (a couple of network timeouts + backoff) while staying bounded so
-# a cron run cannot stall indefinitely.  Overridable per call (and via
-# channels.delivery_ack_timeout) for callers that need a different bound.
-DELIVERY_ACK_TIMEOUT_S = 120.0
+#     1s+2s backoff.
+#   => up to 18 HTTP attempts.  Realistic network-failure worst case is
+#      3 * (3*30 + 1.5) + 3 ~= 277.5s; the pathological ceiling is ~1272s.
+# 300s covers the realistic retry envelope so normal transient failures resolve
+# within the wait, while remaining bounded so a cron run cannot stall forever.
+# It is intentionally shorter than the pathological ceiling: if it elapses the
+# result is UNKNOWN (see DeliveryResult.status), never assumed failed.
+# Overridable per call and via channels.delivery_ack_timeout.
+DELIVERY_ACK_TIMEOUT_S = 300.0
 
 
 class MessageBus:
@@ -28,9 +34,12 @@ class MessageBus:
     them and pushes responses to the outbound queue.
     """
 
-    def __init__(self):
+    def __init__(self, *, outbound_ack_timeout: float | None = None):
         self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
         self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
+        # Configured default wait for delivery acknowledgements (channels
+        # .delivery_ack_timeout).  ``None`` falls back to the module default.
+        self._outbound_ack_timeout = outbound_ack_timeout
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
         """Publish a message from a channel to the agent."""
@@ -48,7 +57,7 @@ class MessageBus:
         self,
         msg: OutboundMessage,
         *,
-        timeout: float = DELIVERY_ACK_TIMEOUT_S,
+        timeout: float | None = None,
     ) -> DeliveryResult:
         """Enqueue an outbound message and await its terminal delivery result.
 
@@ -58,6 +67,10 @@ class MessageBus:
         bounded ``timeout`` yields a failure result instead of hanging if the
         acknowledgement is never resolved (dispatcher stopped, unexpected bug).
         """
+        effective_timeout = (
+            timeout if timeout is not None
+            else (self._outbound_ack_timeout or DELIVERY_ACK_TIMEOUT_S)
+        )
         loop = asyncio.get_running_loop()
         ack: asyncio.Future[DeliveryResult] = loop.create_future()
         msg.delivery_ack = ack
@@ -68,15 +81,16 @@ class MessageBus:
         # crashes the dispatcher nor revives the result.  The queued message is
         # unaffected and may still be delivered.
         try:
-            return await asyncio.wait_for(ack, timeout=timeout)
+            return await asyncio.wait_for(ack, timeout=effective_timeout)
         except asyncio.TimeoutError:
             logger.warning(
                 "Delivery acknowledgement timed out after {}s for {}:{}; "
-                "downstream send result is unknown",
-                timeout, msg.channel, msg.chat_id,
+                "downstream send result is UNKNOWN",
+                effective_timeout, msg.channel, msg.chat_id,
             )
+            # UNKNOWN, not FAILED: the queued send may still complete late.
             return DeliveryResult(
-                success=False, error="delivery acknowledgement timed out"
+                status="unknown", error="delivery acknowledgement timed out"
             )
 
     async def consume_outbound(self) -> OutboundMessage:

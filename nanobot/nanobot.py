@@ -63,7 +63,7 @@ class Nanobot:
             )
 
         provider = _make_provider(config)
-        bus = MessageBus()
+        bus = MessageBus(outbound_ack_timeout=config.channels.delivery_ack_timeout)
         defaults = config.agents.defaults
 
         loop = AgentLoop(
