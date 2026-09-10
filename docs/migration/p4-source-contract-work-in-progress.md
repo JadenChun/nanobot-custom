@@ -744,3 +744,28 @@ checks pass. [The offloading contract](p4-artifact-offloading-contract.md) recor
 platform/capacity limits and remaining integration gates. This store does not
 publish descriptors, authorize reads, expose references or change the production
 guard. Owned source metadata publication is the next storage integration.
+
+### Owned artifact descriptor publication
+
+The dormant source publisher now validates the exact configured private store,
+blob durability, dispatch-capable execution ownership, strict source CAS before
+idempotency, and immutable manifest/source bindings. Publication increments only
+the metadata revision; canonical events, activity time, archive cursors and
+checkpoint remain unchanged. Generic metadata updates cannot replace the manifest;
+reset clears it and deletion removes source authority while retaining blob bytes.
+
+Focused read-only review found no implementation defect and requested additional
+failure coverage. Seventeen publication tests now cover reload/retry/stale CAS,
+identity/origin conflicts, missing/corrupt/closed/wrong-store blobs, pre-publication
+disk failure, invalid manifest, missing/closing/recovery-required owners,
+namespace replacement before and after verification, stale legacy save, reset
+and deletion. Manifest parser tests independently cover duplicate bindings and
+malformed schemas. These tests do not establish authenticated producer provenance
+or read authorization. Runtime store configuration, trusted producer receipts,
+retrieval/grants and projection/checkpoint integration remain required. The
+production migration guard remains enabled.
+
+Final validation: all 417 session tests passed with network denied; scoped Ruff
+and diff checks passed. The reviewer independently reran all 17 publication tests
+and accepted this dormant package. This is package acceptance, not migration
+completion or runtime enablement.

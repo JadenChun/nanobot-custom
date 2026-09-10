@@ -5,7 +5,7 @@ from typing import Any
 
 DURABLE_METADATA_KEYS = frozenset({
     "context_checkpoint", "source_schema_version", "execution_lease", "execution_recovery_required",
-    "revision", "generation", "incarnation",
+    "revision", "generation", "incarnation", "artifact_manifest",
 })
 LEGACY_RECOVERY_KEYS = frozenset({
     "runtime_checkpoint", "pending_user_turn", "pending_user_followups", "webui_recovery",

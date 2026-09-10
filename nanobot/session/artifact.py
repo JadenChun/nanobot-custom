@@ -191,3 +191,32 @@ def bound_artifact_text(descriptor: ArtifactDescriptor, snapshot: SourceSnapshot
     if len(encoded) != descriptor.byte_length or hashlib.sha256(encoded).hexdigest() != descriptor.sha256:
         raise ArtifactValidationError('Artifact content does not match source integrity')
     return encoded
+
+
+def published_artifacts(snapshot: SourceSnapshot, *, workspace_id: str) -> tuple[ArtifactDescriptor, ...]:
+    """Validate manifest membership and source integrity, never retrieval access.
+
+    Invalid metadata is retained by source readers for rollback. Artifact users
+    must reject it rather than replacing it with an empty, writable manifest.
+    """
+    _opaque_id(workspace_id)
+    metadata = snapshot.header.get('metadata', {})
+    if not isinstance(metadata, dict):
+        raise ArtifactValidationError('Invalid artifact manifest metadata')
+    if 'artifact_manifest' not in metadata:
+        return ()
+    manifest = metadata['artifact_manifest']
+    if (not isinstance(manifest, dict) or set(manifest) != {'schema_version', 'descriptors'}
+            or type(manifest['schema_version']) is not int or manifest['schema_version'] != 1
+            or not isinstance(manifest['descriptors'], dict)):
+        raise ArtifactValidationError('Invalid artifact manifest schema')
+    descriptors = []
+    bindings = set()
+    for artifact_id, raw in manifest['descriptors'].items():
+        descriptor = parse_artifact_descriptor(raw)
+        if artifact_id != descriptor.artifact_id or descriptor.idempotency_key in bindings:
+            raise ArtifactValidationError('Conflicting artifact manifest identity')
+        bound_artifact_text(descriptor, snapshot, workspace_id=workspace_id)
+        bindings.add(descriptor.idempotency_key)
+        descriptors.append(descriptor)
+    return tuple(descriptors)

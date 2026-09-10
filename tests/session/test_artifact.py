@@ -164,3 +164,40 @@ def test_non_call_execution_fields_cannot_spoof_intent_provenance(extra_ids):
     source.events[1]['_stream_id'] = 'wrong actual call stream'
     with pytest.raises(ArtifactValidationError, match='stream provenance'):
         bound_artifact_text(descriptor, source, workspace_id=WORKSPACE)
+
+
+def test_manifest_membership_preserves_exact_immutable_descriptor_bindings():
+    from nanobot.session.artifact import published_artifacts
+
+    raw, source = fixture()
+    assert published_artifacts(source, workspace_id=WORKSPACE) == ()
+    source.header['metadata'] = {'artifact_manifest': {'schema_version': 1,
+        'descriptors': {ARTIFACT: raw}}}
+    assert published_artifacts(source, workspace_id=WORKSPACE) == (parse_artifact_descriptor(raw),)
+    raw['sha256'] = '0' * 64
+    with pytest.raises(ArtifactValidationError, match='integrity'):
+        published_artifacts(source, workspace_id=WORKSPACE)
+
+
+@pytest.mark.parametrize('failure', ['null', 'version', 'fields', 'wrong_id', 'duplicate_binding'])
+def test_invalid_manifest_is_not_treated_as_empty(failure):
+    from nanobot.session.artifact import published_artifacts
+
+    raw, source = fixture()
+    manifest = {'schema_version': 1, 'descriptors': {ARTIFACT: raw}}
+    if failure == 'null':
+        manifest = None
+    elif failure == 'version':
+        manifest['schema_version'] = True
+    elif failure == 'fields':
+        manifest['grant_all'] = True
+    elif failure == 'wrong_id':
+        manifest['descriptors']['c' * 32] = manifest['descriptors'].pop(ARTIFACT)
+    else:
+        duplicate = {**raw, 'artifact_id': 'c' * 32}
+        manifest['descriptors']['c' * 32] = duplicate
+    source.header['metadata'] = {'artifact_manifest': manifest}
+    before = deepcopy(source)
+    with pytest.raises(ArtifactValidationError):
+        published_artifacts(source, workspace_id=WORKSPACE)
+    assert source == before

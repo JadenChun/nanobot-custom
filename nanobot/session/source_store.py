@@ -28,6 +28,8 @@ from nanobot.session.source import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.session.artifact import ArtifactDescriptor
+    from nanobot.session.artifact_store import ArtifactBlobTransaction, PrivateArtifactStore
     from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.manager import JsonlSessionStore, Session
 
@@ -138,8 +140,15 @@ def _upgrade_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 class SourceSessionStore:
     """Mandatory strict operations; never fall back to ordinary Session.save."""
 
-    def __init__(self, backend: JsonlSessionStore):
+    def __init__(self, backend: JsonlSessionStore, *, artifact_store: PrivateArtifactStore | None = None):
         self._backend = backend
+        if artifact_store is not None and (
+            artifact_store.workspace_id != backend.sessions_dir.name
+            or artifact_store.root == backend.workspace
+            or artifact_store.root.is_relative_to(backend.workspace)
+        ):
+            raise SourceValidationError('Invalid configured artifact store binding')
+        self._artifact_store = artifact_store
         self._store_identity = hashlib.sha256(str(backend.sessions_dir.resolve()).encode()).hexdigest()
 
     def _state(self, header: dict[str, Any]) -> SourceState:
@@ -337,6 +346,49 @@ class SourceSessionStore:
             header["revision"] += 1
             return self._write(header, events)
 
+    def commit_artifact_descriptor(self, key: str, expected: SourceState, descriptor: ArtifactDescriptor, *,
+                                   owner: ExecutionOwner, blobs: ArtifactBlobTransaction) -> SourceSnapshot:
+        """Trusted internal publication; this does not attest origin or grant reads.
+
+        Runtime producers must authenticate source_access before calling. No
+        retrieval path may treat this dormant primitive's manifest membership as
+        origin proof. The caller retains the configured artifact transaction,
+        ordered before owner/session locks, throughout publication.
+        """
+        from nanobot.session.artifact import (
+            bound_artifact_text,
+            parse_artifact_descriptor,
+            published_artifacts,
+        )
+        from nanobot.session.artifact_store import ArtifactBlobTransaction
+        from nanobot.session.execution_owner import ExecutionOwnershipError, execution_transaction
+
+        if owner is None:
+            raise ExecutionOwnershipError()
+        if self._artifact_store is None or not isinstance(blobs, ArtifactBlobTransaction):
+            raise SourceValidationError('Artifact publication requires a configured store transaction')
+        descriptor = parse_artifact_descriptor(descriptor.to_dict())
+        blobs.verify_durable(descriptor, store=self._artifact_store)
+        owner.validate_dispatch()
+        with execution_transaction(self._backend, key, owner):
+            header, events = self._current_unlocked(key, expected)
+            owner.validate_dispatch()
+            snapshot = self._snapshot(header, events)
+            bound_artifact_text(descriptor, snapshot, workspace_id=self._backend.sessions_dir.name)
+            existing = published_artifacts(snapshot, workspace_id=self._backend.sessions_dir.name)
+            for item in existing:
+                if item.artifact_id == descriptor.artifact_id or item.idempotency_key == descriptor.idempotency_key:
+                    if item != descriptor:
+                        raise SourceValidationError('Conflicting immutable artifact publication')
+                    blobs.verify_durable(descriptor, store=self._artifact_store)
+                    return snapshot
+            header['metadata']['artifact_manifest'] = {'schema_version': 1, 'descriptors': {
+                item.artifact_id: item.to_dict() for item in (*existing, descriptor)
+            }}
+            header['revision'] += 1
+            blobs.assert_reachable()
+            return self._write(header, events)
+
     def reset_source_session(self, key: str, expected: SourceState, replacement_events: list[dict[str, Any]], *, owner: ExecutionOwner | None = None) -> SourceSnapshot:
         from nanobot.session.execution_owner import execution_transaction
 
@@ -346,7 +398,7 @@ class SourceSessionStore:
             header["generation"] += 1
             header["last_archived"] = header["last_consolidated"] = 0
             header["updated_at"] = datetime.now().isoformat()
-            for name in {"context_checkpoint", "_last_summary", "execution_lease", "execution_recovery_required", *LEGACY_RECOVERY_KEYS}:
+            for name in {"context_checkpoint", "artifact_manifest", "_last_summary", "execution_lease", "execution_recovery_required", *LEGACY_RECOVERY_KEYS}:
                 header["metadata"].pop(name, None)
             result = self._write(header, replacement_events)
             if owner is not None:

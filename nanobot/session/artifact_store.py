@@ -207,6 +207,12 @@ class ArtifactBlobTransaction:
             raise ArtifactStorageError('Artifact exceeds configured blob capacity')
         return descriptor
 
+    def verify_durable(self, descriptor: ArtifactDescriptor, *, store: PrivateArtifactStore) -> None:
+        """Verify bytes under the exact runtime-configured store binding."""
+        if self._store is not store:
+            raise ArtifactStorageError('Artifact transaction uses another configured store')
+        self._verified_range(descriptor, offset=0, limit=0, durable=True)
+
     def put(self, descriptor: ArtifactDescriptor, content: bytes) -> None:
         """Install complete immutable bytes, or verify an identical existing blob."""
         descriptor = self._descriptor(descriptor)
