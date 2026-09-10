@@ -132,6 +132,8 @@ class CronService:
                             ],
                             planning_mode=j["payload"].get("planning_mode"),
                             skip_verification=j["payload"].get("skip_verification", False),
+                            alert_channel=j["payload"].get("alert_channel"),
+                            alert_to=j["payload"].get("alert_to"),
                         ),
                         state=CronJobState(
                             next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
@@ -194,6 +196,8 @@ class CronService:
                         ],
                         "planning_mode": j.payload.planning_mode,
                         "skip_verification": j.payload.skip_verification,
+                        "alert_channel": j.payload.alert_channel,
+                        "alert_to": j.payload.alert_to,
                     },
                     "state": {
                         "nextRunAtMs": j.state.next_run_at_ms,
@@ -352,6 +356,8 @@ class CronService:
         planning_mode: str | None = None,
         skip_verification: bool = False,
         additional_destinations: list[CronDestination] | None = None,
+        alert_channel: str | None = None,
+        alert_to: str | None = None,
     ) -> CronJob:
         """Add a new job."""
         store = self._load_store()
@@ -372,6 +378,8 @@ class CronService:
                 additional_destinations=list(additional_destinations or []),
                 planning_mode=planning_mode,
                 skip_verification=skip_verification,
+                alert_channel=alert_channel,
+                alert_to=alert_to,
             ),
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,

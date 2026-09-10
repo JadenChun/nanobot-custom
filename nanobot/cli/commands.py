@@ -650,6 +650,178 @@ def _resolve_context_paths(config: Config) -> list[Path] | None:
     return [Path(p).expanduser().resolve() for p in raw if p]
 
 
+async def _run_cron_job(agent, bus, job) -> str | None:
+    """Execute one scheduled job through the agent and deliver its result.
+
+    Delivery is transport-acknowledged (``bus.publish_outbound_and_wait``) and
+    fail-closed on the deterministic verification verdict.  At most ONE owner
+    operational alert is sent per run; routine success never alerts the owner.
+    """
+    from nanobot.agent.tools.cron import CronTool
+    from nanobot.agent.tools.message import MessageTool
+    from nanobot.cron.delivery import (
+        build_explicit_fanout_messages,
+        build_result_messages,
+        classify_delivery_results,
+        is_client_deliverable,
+        send_owner_alert,
+    )
+
+    delivery_destinations = job.payload.delivery_destinations()
+    alert_destination = job.payload.alert_destination()
+    alert_channel = alert_destination.channel if alert_destination else None
+    alert_to = alert_destination.to if alert_destination else None
+    alerted = False
+
+    async def _owner_alert(failure_stage: str, reason: str) -> None:
+        """Send at most one owner alert for this run (local run-level dedup)."""
+        nonlocal alerted
+        if alerted:
+            return
+        alerted = True
+        await send_owner_alert(
+            bus,
+            channel=alert_channel,
+            to=alert_to,
+            job_name=job.name,
+            failure_stage=failure_stage,
+            reason=reason,
+        )
+
+    reminder_note = (
+        "[Scheduled Task] Timer finished.\n\n"
+        f"Task '{job.name}' has been triggered.\n"
+        f"Scheduled instruction: {job.payload.message}\n\n"
+        "This is a fresh execution of this scheduled task. "
+        "Execute it now — do not simply echo a status update or say 'in progress'. "
+        "Either complete the task directly and deliver the result, "
+        "or use the spawn tool to start background work and confirm to the user that work has begun. "
+        "If the background task needs to modify workspace files, include write_scope with the "
+        "workspace-relative files or directories it may change."
+    )
+
+    # Clear stale history so previous "in progress" messages don't mislead this run.
+    cron_session = agent.sessions.get_or_create(f"cron:{job.id}")
+    cron_session.retain_recent_legal_suffix(0)
+    agent.sessions.save(cron_session)
+
+    cron_tool = agent.tools.get("cron")
+    cron_token = None
+    if isinstance(cron_tool, CronTool):
+        cron_token = cron_tool.set_cron_context(True)
+    try:
+        try:
+            resp = await agent.process_direct(
+                reminder_note,
+                session_key=f"cron:{job.id}",
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to or "direct",
+                planning_mode=job.payload.planning_mode,
+                skip_verification=job.payload.skip_verification,
+                approval_granted=True,
+            )
+        except Exception as exc:
+            # GENERATION / AGENT EXECUTION FAILURE: no group result, one alert.
+            await _owner_alert(
+                "Failed",
+                "The scheduled task failed while producing a result. "
+                "Nothing was sent to the client group.",
+            )
+            agent.record_task_failure(
+                session_key=f"cron:{job.id}",
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to or "direct",
+                label=f"Scheduled task '{job.name}'",
+                task=job.payload.message,
+                error=str(exc),
+            )
+            raise
+    finally:
+        if isinstance(cron_tool, CronTool) and cron_token is not None:
+            cron_tool.reset_cron_context(cron_token)
+
+    response = resp.content if resp else ""
+
+    message_tool = agent.tools.get("message")
+    if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
+        for outbound in build_explicit_fanout_messages(
+            delivery_destinations,
+            message_tool.sent_messages_in_turn,
+        ):
+            await bus.publish_outbound(outbound)
+        return response
+
+    # Required client delivery is gated only on the deterministic verification
+    # verdict (never on the owner-notification evaluator).  A missing/FAIL/
+    # PARTIAL verdict never reaches the client group.
+    verification_verdict = (
+        (getattr(resp, "metadata", {}) or {}).get("_verification")
+        if resp is not None
+        else "MISSING"
+    )
+    verified = is_client_deliverable(
+        verification_verdict, skip_verification=job.payload.skip_verification
+    )
+
+    if delivery_destinations and response and verified:
+        sent_messages = (
+            message_tool.sent_messages_in_turn
+            if isinstance(message_tool, MessageTool)
+            else ()
+        )
+        outbounds = build_result_messages(response, delivery_destinations, sent_messages)
+        results = []
+        for outbound in outbounds:
+            results.append(await bus.publish_outbound_and_wait(outbound))
+        outcome = classify_delivery_results(results)
+        if outcome == "failed":
+            err = "client delivery failed for one or more required destinations"
+            await _owner_alert(
+                "Delivery Failed",
+                "The result was verified, but delivery to the client group failed.",
+            )
+            agent.record_task_failure(
+                session_key=f"cron:{job.id}",
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to or "direct",
+                label=f"Scheduled task delivery '{job.name}'",
+                task=job.payload.message,
+                error=err,
+            )
+        elif outcome == "unknown":
+            err = "client delivery unconfirmed (delivery acknowledgement timed out)"
+            await _owner_alert(
+                "Delivery Unconfirmed",
+                "Delivery confirmation timed out. "
+                "The final client-group send status is unknown.",
+            )
+            agent.record_task_failure(
+                session_key=f"cron:{job.id}",
+                channel=job.payload.channel or "cli",
+                chat_id=job.payload.to or "direct",
+                label=f"Scheduled task delivery '{job.name}'",
+                task=job.payload.message,
+                error=err,
+            )
+        # outcome == "success": group delivered, owner stays silent.
+    elif delivery_destinations and response and not verified:
+        err = "verification required but no PASS verdict; refusing to deliver unverified client output"
+        await _owner_alert(
+            "Failed",
+            "The content did not pass verification. "
+            "Nothing was sent to the client group.",
+        )
+        agent.record_task_failure(
+            session_key=f"cron:{job.id}",
+            channel=job.payload.channel or "cli",
+            chat_id=job.payload.to or "direct",
+            label=f"Scheduled task delivery '{job.name}'",
+            task=job.payload.message,
+            error=err,
+        )
+    return response
+
+
 # ============================================================================
 # Gateway / Server
 # ============================================================================
@@ -750,124 +922,7 @@ def gateway(
     # Set cron callback (needs agent)
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
-        from nanobot.agent.tools.cron import CronTool
-        from nanobot.agent.tools.message import MessageTool
-        from nanobot.cron.delivery import build_explicit_fanout_messages, build_result_messages, is_client_deliverable
-        from nanobot.utils.evaluator import evaluate_response
-
-        delivery_destinations = job.payload.delivery_destinations()
-
-        reminder_note = (
-            "[Scheduled Task] Timer finished.\n\n"
-            f"Task '{job.name}' has been triggered.\n"
-            f"Scheduled instruction: {job.payload.message}\n\n"
-            "This is a fresh execution of this scheduled task. "
-            "Execute it now — do not simply echo a status update or say 'in progress'. "
-            "Either complete the task directly and deliver the result, "
-            "or use the spawn tool to start background work and confirm to the user that work has begun. "
-            "If the background task needs to modify workspace files, include write_scope with the "
-            "workspace-relative files or directories it may change."
-        )
-
-        # Clear stale history so previous "in progress" messages don't mislead this run.
-        # Only wipes messages — metadata is preserved and any stale planner handoff in
-        # metadata is auto-cleared by the loop when the new message arrives.
-        # Background subagents are asyncio tasks and are unaffected by this clearing.
-        cron_session = agent.sessions.get_or_create(f"cron:{job.id}")
-        cron_session.retain_recent_legal_suffix(0)
-        agent.sessions.save(cron_session)
-
-        cron_tool = agent.tools.get("cron")
-        cron_token = None
-        if isinstance(cron_tool, CronTool):
-            cron_token = cron_tool.set_cron_context(True)
-        try:
-            try:
-                resp = await agent.process_direct(
-                    reminder_note,
-                    session_key=f"cron:{job.id}",
-                    channel=job.payload.channel or "cli",
-                    chat_id=job.payload.to or "direct",
-                    planning_mode=job.payload.planning_mode,
-                    skip_verification=job.payload.skip_verification,
-                    approval_granted=True,
-                )
-            except Exception as exc:
-                agent.record_task_failure(
-                    session_key=f"cron:{job.id}",
-                    channel=job.payload.channel or "cli",
-                    chat_id=job.payload.to or "direct",
-                    label=f"Scheduled task '{job.name}'",
-                    task=job.payload.message,
-                    error=str(exc),
-                )
-                raise
-        finally:
-            if isinstance(cron_tool, CronTool) and cron_token is not None:
-                cron_tool.reset_cron_context(cron_token)
-
-        response = resp.content if resp else ""
-
-        message_tool = agent.tools.get("message")
-        if isinstance(message_tool, MessageTool) and message_tool._sent_in_turn:
-            for outbound in build_explicit_fanout_messages(
-                delivery_destinations,
-                message_tool.sent_messages_in_turn,
-            ):
-                await bus.publish_outbound(outbound)
-            return response
-
-        # Required client delivery must not depend on the owner-notification
-        # evaluator.  It is gated only on the deterministic verification verdict
-        # propagated from the agent loop.  A missing/FAIL/PARTIAL verdict never
-        # reaches the client group and is surfaced as an operational failure.
-        verification_verdict = (
-            (getattr(resp, "metadata", {}) or {}).get("_verification")
-            if resp is not None
-            else "MISSING"
-        )
-        # For ANY client-facing scheduled job, group delivery requires an
-        # explicit PASS verdict.  skip_verification no longer bypasses the gate;
-        # it only controls whether the framework's internal verifier runs.  A
-        # MISSING verdict (verifier metadata not propagated) fails closed.
-        verified = is_client_deliverable(
-            verification_verdict, skip_verification=job.payload.skip_verification
-        )
-
-        if delivery_destinations and response and verified:
-            try:
-                sent_messages = (
-                    message_tool.sent_messages_in_turn
-                    if isinstance(message_tool, MessageTool)
-                    else ()
-                )
-                for outbound in build_result_messages(
-                    response,
-                    delivery_destinations,
-                    sent_messages,
-                ):
-                    await bus.publish_outbound(outbound)
-            except Exception as exc:
-                agent.record_task_failure(
-                    session_key=f"cron:{job.id}",
-                    channel=job.payload.channel or "cli",
-                    chat_id=job.payload.to or "direct",
-                    label=f"Scheduled task delivery '{job.name}'",
-                    task=job.payload.message,
-                    error=str(exc),
-                )
-                raise
-        elif delivery_destinations and response and not verified:
-            err = "verification required but no PASS verdict; refusing to deliver unverified client output"
-            agent.record_task_failure(
-                session_key=f"cron:{job.id}",
-                channel=job.payload.channel or "cli",
-                chat_id=job.payload.to or "direct",
-                label=f"Scheduled task delivery '{job.name}'",
-                task=job.payload.message,
-                error=err,
-            )
-        return response
+        return await _run_cron_job(agent, bus, job)
     cron.on_job = on_cron_job
 
     # Create channel manager

@@ -2,7 +2,9 @@
 
 from collections.abc import Iterable
 
-from nanobot.bus.events import OutboundMessage
+from loguru import logger
+
+from nanobot.bus.events import DeliveryResult, OutboundMessage
 from nanobot.cron.types import CronDestination
 
 
@@ -33,6 +35,65 @@ def is_client_deliverable(verification_verdict, *, skip_verification: bool) -> b
     missing/FAIL/PARTIAL verdict never delivers to the group.
     """
     return verification_verdict == "PASS"
+
+
+
+def classify_delivery_results(results: Iterable[DeliveryResult]) -> str:
+    """Aggregate per-destination transport results into one outcome.
+
+    Returns "success" when every required destination was confirmed (or there
+    were none), "failed" when any confirmed transport failure occurred, and
+    "unknown" when nothing failed but at least one result was unconfirmed.
+    """
+    statuses = [r.status for r in results]
+    if not statuses:
+        return "success"
+    if any(s == "failed" for s in statuses):
+        return "failed"
+    if any(s == "unknown" for s in statuses):
+        return "unknown"
+    return "success"
+
+
+async def send_owner_alert(
+    bus,
+    *,
+    channel: str | None,
+    to: str | None,
+    job_name: str,
+    failure_stage: str,
+    reason: str,
+) -> DeliveryResult | None:
+    """Send ONE concise owner operational-alert DM via the existing transport.
+
+    Returns ``None`` when no owner alert destination is configured (no-op).
+    The alert is sent with the delivery-acknowledged transport so its own
+    transport result can be logged; a failed/unknown owner alert is only
+    logged and NEVER re-alerts (no recursion).
+    """
+    destination = CronDestination(channel=channel or "telegram", to=str(to)) if to else None
+    if destination is None:
+        return None
+    msg = OutboundMessage(
+        channel=destination.channel,
+        chat_id=destination.to,
+        content=f"\u26a0\ufe0f {job_name} {failure_stage}\n\n{reason}",
+        metadata={"_owner_alert": True},
+    )
+    result = await bus.publish_outbound_and_wait(msg)
+    if result.status == "success":
+        logger.info("Owner alert delivered: {} — {}", job_name, failure_stage)
+    elif result.status == "failed":
+        logger.error(
+            "Owner alert transport FAILED: {} — {} ({})",
+            job_name, failure_stage, result.error,
+        )
+    else:
+        logger.warning(
+            "Owner alert confirmation UNKNOWN: {} — {} ({})",
+            job_name, failure_stage, result.error,
+        )
+    return result
 
 
 def build_explicit_fanout_messages(

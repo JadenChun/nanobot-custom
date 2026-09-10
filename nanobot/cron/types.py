@@ -40,6 +40,20 @@ class CronPayload:
     # Per-job overrides for the agent loop
     planning_mode: Literal["on", "off", "agent"] | None = None  # None = use global default
     skip_verification: bool = False
+    # Owner operational-alert destination, separate from the client `to`.
+    # Not configured (None) => no owner alerts for this job.  Never hard-code a
+    # chat id here; it is set per job in the cron store.
+    alert_channel: str | None = None  # e.g. "telegram"
+    alert_to: str | None = None  # e.g. owner Telegram UID
+
+    def alert_destination(self) -> "CronDestination | None":
+        """Return the configured owner operational-alert destination, if any."""
+        if not self.alert_to:
+            return None
+        return CronDestination(
+            channel=self.alert_channel or self.channel or "telegram",
+            to=str(self.alert_to),
+        )
 
     def delivery_destinations(self) -> list[CronDestination]:
         """Return de-duplicated primary and additional result destinations."""
