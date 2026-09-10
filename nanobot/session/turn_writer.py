@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
-from nanobot.agent.tools.execution import KnownToolResult, ToolResultCallback
+from nanobot.agent.tools.execution import KnownToolResult
 from nanobot.agent.turn import ToolOutcome
 from nanobot.session.execution_owner import ExecutionOwner
 from nanobot.session.source import SourceValidationError, canonical_events, new_source_event
@@ -49,7 +50,7 @@ class SourceTurnWriter:
         self.stream_id = uuid.uuid4().hex
         self.parent_stream_id = parent_stream_id
         self._writes = writes or _Writes(owner.read_snapshot())
-        self._batch_callback: ToolResultCallback | None = None
+        self._batch_callback: Callable[[KnownToolResult], Awaitable[str]] | None = None
 
     def fail(self) -> None:
         """Stop every stream after a mandatory runner or recording failure."""
@@ -113,7 +114,7 @@ class SourceTurnWriter:
         declared = deepcopy(calls)
         completed: set[int] = set()
 
-        async def record(value: KnownToolResult) -> None:
+        async def record(value: KnownToolResult) -> str:
             try:
                 index = value.ordinal
                 if (type(index) is not int or not 0 <= index < len(declared) or index in completed
@@ -125,10 +126,11 @@ class SourceTurnWriter:
                 if isinstance(raw, str):
                     raw = str(raw)
                 canonical_events([{'content': raw}])
-                self._append({'role': 'tool', 'tool_call_id': value.tool_call_id, 'name': value.name,
+                committed = self._append({'role': 'tool', 'tool_call_id': value.tool_call_id, 'name': value.name,
                               'content': raw, '_dispatched': value.dispatched,
                               '_outcome_status': value.event.get('status', '')}, execution_id=ids[index])
                 completed.add(index)
+                return committed['_event_id']
             except BaseException:
                 self._writes.failed = True
                 raise
@@ -137,10 +139,14 @@ class SourceTurnWriter:
         return event
 
     async def record_tool_result(self, value: KnownToolResult) -> None:
+        await self.record_tool_result_event(value)
+
+    async def record_tool_result_event(self, value: KnownToolResult) -> str:
+        """Return the exact durable identity without changing callback compatibility."""
         if self._batch_callback is None:
             self._writes.failed = True
             raise SourceValidationError('Source result has no committed intent')
-        await self._batch_callback(value)
+        return await self._batch_callback(value)
 
     def project_history(self) -> tuple[list[dict[str, Any]], list[str]]:
         """Detached root history with provenance, independent of archival cursors."""

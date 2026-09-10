@@ -35,8 +35,8 @@ async def test_writer_allocates_trusted_events_and_distinct_execution_links(stor
         writer = SourceTurnWriter(store.source, owner, run_id='run')
         user = writer.append_message({'role': 'user', 'content': 'input', '_run_id': 'forged'})
         intent = writer.begin_tool_batch(assistant())
-        await writer.record_tool_result(result())
-        await writer.record_tool_result(result(1, 'second'))
+        first_id = await writer.record_tool_result_event(result())
+        second_id = await writer.record_tool_result_event(result(1, 'second'))
         final = writer.append_message({'role': 'assistant', 'content': 'done'})
         snapshot = owner.read_snapshot()
         assert [e['role'] for e in snapshot.events] == ['user', 'assistant', 'tool', 'tool', 'assistant']
@@ -46,6 +46,8 @@ async def test_writer_allocates_trusted_events_and_distinct_execution_links(stor
         assert not validate_execution_links(snapshot.events)
         assert snapshot.events[2]['_execution_id'] == intent['_execution_ids'][0]
         assert snapshot.events[3]['_execution_id'] == intent['_execution_ids'][1]
+        assert first_id == snapshot.events[2]['_event_id']
+        assert second_id == snapshot.events[3]['_event_id'] and first_id != second_id
 
 
 async def test_result_binding_and_duplicate_callback_fail_without_writes(store):
