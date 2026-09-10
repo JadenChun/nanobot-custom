@@ -23,6 +23,7 @@ from nanobot.agent.context_governance import (
     HistoryConsolidator,
     ModelRequestState,
     ProviderCompactionConsolidator,
+    SourceCompactionState,
     TranscriptBuilder,
 )
 from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
@@ -140,6 +141,7 @@ class AgentRunSpec:
     source_writer: SourceTurnWriter | None = None
     source_transcript: SourceTranscript | None = None
     source_initial_eligible_ids: frozenset[str] = frozenset()
+    source_isolated: bool = False
 
 
 @dataclass(slots=True)
@@ -493,6 +495,9 @@ class AgentRunner:
             config=governance_config,
             conversation=conversation_state,
             compaction=compaction,
+            source_compaction=SourceCompactionState(spec.source_writer, spec.runtime, messages,
+                spec.source_writer.stream_id if spec.source_isolated or spec.source_writer.parent_stream_id is not None else None)
+                if spec.source_writer is not None else None,
             source=SourceRequestLedger(spec.source_transcript,
                 initial_eligible_ids=spec.source_initial_eligible_ids)
                 if spec.source_transcript is not None else None,

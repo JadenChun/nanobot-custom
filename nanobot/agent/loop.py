@@ -1331,6 +1331,7 @@ class AgentLoop:
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=None,
                 source_transcript=source_transcript,
+                source_isolated=fresh_history,
                 source_initial_eligible_ids=frozenset(
                     node.event_id for node in run_context.source_history.nodes if isinstance(node, SourceNode)
                 ) if run_context.source_history is not None else frozenset(),

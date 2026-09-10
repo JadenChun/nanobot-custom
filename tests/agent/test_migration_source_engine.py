@@ -655,3 +655,29 @@ async def test_source_tickets_follow_governor_resulting_view(engine_config, monk
         assert state.source.eligible_ids == {events[0]['_event_id']}
     finally:
         await loop.aclose()
+
+
+async def test_source_compaction_scope_and_live_transcript_follow_admission(engine_config, monkeypatch):
+    provider = ScriptedProvider([LLMResponse(content='root'), LLMResponse(content='fresh')])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    upgrade(loop)
+    prepare = loop.runner.context_governor.prepare_request
+    scopes = []
+
+    async def observe(state, messages, **kwargs):
+        compaction = state.source_compaction
+        assert compaction.raw_messages is kwargs['transcript']
+        assert compaction.raw_messages == state.source.transcript.messages()
+        scopes.append((compaction.stream_id, compaction.writer.stream_id))
+        return await prepare(state, messages, **kwargs)
+
+    monkeypatch.setattr(loop.runner.context_governor, 'prepare_request', observe)
+    try:
+        for mode in (HistoryMode.SESSION, HistoryMode.FRESH):
+            result = await loop.execute_turn(TurnRequest(content='input', session_key='cli:source', history_mode=mode))
+            assert result.error is None, result.error
+        assert scopes[0][0] is None
+        assert scopes[1][0] == scopes[1][1]
+        assert scopes[0][1] != scopes[1][1]
+    finally:
+        await loop.aclose()

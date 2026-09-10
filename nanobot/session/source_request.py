@@ -43,7 +43,7 @@ class SourceRequestLedger:
     """Invocation-local provenance, isolated from other runs and child streams."""
 
     def __init__(self, transcript: SourceTranscript, *, initial_eligible_ids: frozenset[str]):
-        self._validate(transcript)
+        self.validate_transcript(transcript)
         represented = {node.event_id for node in transcript.nodes if isinstance(node, SourceNode)}
         if not initial_eligible_ids <= represented:
             raise SourceValidationError('Initial eligibility requires represented source nodes')
@@ -54,7 +54,7 @@ class SourceRequestLedger:
         self._pending: dict[str, SourceRequestTicket] = {}
 
     @staticmethod
-    def _validate(transcript: SourceTranscript) -> None:
+    def validate_transcript(transcript: SourceTranscript) -> None:
         source_ids, runtime_ids = set(), set()
         checkpoints = 0
         for node in transcript.nodes:
@@ -78,12 +78,20 @@ class SourceRequestLedger:
         return deepcopy(self._transcript)
 
     @property
+    def projection_epoch(self) -> int:
+        return self._epoch
+
+    @property
+    def has_pending_requests(self) -> bool:
+        return bool(self._pending)
+
+    @property
     def eligible_ids(self) -> frozenset[str]:
         return self._initial | frozenset(self._acknowledged)
 
     def append_source(self, event_id: str, message: dict[str, Any]) -> None:
         candidate = SourceTranscript((*self._transcript.nodes, SourceNode(event_id, deepcopy(message))))
-        self._validate(candidate)
+        self.validate_transcript(candidate)
         self._transcript = candidate
 
     def append_runtime(self, message: dict[str, Any]) -> RuntimeNode:
@@ -93,7 +101,7 @@ class SourceRequestLedger:
 
     def validate_view(self, view: SourceTranscript) -> tuple[RuntimeNode, ...]:
         """Validate without issuing/acknowledging; return detached request-only notes."""
-        self._validate(view)
+        self.validate_transcript(view)
         # Equality detects unauthorized edits; identities come from explicit
         # nodes, never from matching message content or transcript positions.
         if view.nodes[:len(self._transcript.nodes)] != self._transcript.nodes:
@@ -133,7 +141,7 @@ class SourceRequestLedger:
 
     def replace_projection(self, transcript: SourceTranscript) -> None:
         """Publish an already committed projection and invalidate outstanding views."""
-        self._validate(transcript)
+        self.validate_transcript(transcript)
         self._transcript = deepcopy(transcript)
         self._epoch += 1
         self._pending.clear()

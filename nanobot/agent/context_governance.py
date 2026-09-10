@@ -12,7 +12,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
@@ -37,7 +37,10 @@ from nanobot.runtime_context import (
     reattach_runtime_context,
 )
 from nanobot.session.history_visibility import is_hidden_history_message
-from nanobot.session.source import SourceValidationError
+from nanobot.session.source import SourceValidationError, prefix_digest
+from nanobot.session.source_compaction import SourceCompactionCandidate
+from nanobot.session.source_projection import CheckpointNode, RuntimeNode
+from nanobot.session.source_request import SourceTranscript
 from nanobot.session.summary import (
     SUMMARY_CONTINUATION_TEXT,
     SessionSummaryCheckpoint,
@@ -48,13 +51,16 @@ from nanobot.utils.helpers import (
     find_legal_message_start,
     maybe_persist_tool_result,
     truncate_text,
+    truncate_text_to_tokens,
 )
 from nanobot.utils.runtime import ensure_nonempty_tool_result
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.providers.base import LLMProvider
-    from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
+    from nanobot.session.source_request import SourceRequestLedger
+    from nanobot.session.turn_writer import SourceTurnWriter
+    from nanobot.utils.llm_runtime import LLMRuntime
 
 TranscriptBuilder = Callable[[TranscriptInput], list[dict[str, Any]]]
 HistoryConsolidator = Callable[
@@ -193,6 +199,26 @@ class ContextCompactionState:
 
 
 @dataclass(slots=True)
+class SourceCompactionState:
+    """Invocation-owned publication state; local scopes never write root metadata."""
+
+    writer: SourceTurnWriter
+    runtime: LLMRuntime
+    raw_messages: list[dict[str, Any]]
+    stream_id: str | None
+    local_boundary: int = 0
+    local_checkpoint: CheckpointNode | None = None
+
+
+@dataclass(frozen=True)
+class SourceCompactionAttempt:
+    candidate: SourceCompactionCandidate
+    projection_epoch: int
+    request_notes: tuple[RuntimeNode, ...]
+    tool_definitions: list[dict[str, Any]] | None
+
+
+@dataclass(slots=True)
 class ModelRequestState:
     """Context state shared by every provider request in one runner turn."""
 
@@ -204,12 +230,98 @@ class ModelRequestState:
     compaction: ContextCompactionState | None = None
     source: SourceRequestLedger | None = None
     source_view: SourceTranscript | None = None
+    source_compaction: SourceCompactionState | None = None
     provider_compaction_applied: bool = False
     events: EventSink = NO_EVENTS
 
 
 class ContextGovernor:
     """Own model-request context while preserving persisted history."""
+
+    @staticmethod
+    def capture_source_compaction(state: ModelRequestState, view: SourceTranscript, *,
+                                  tool_definitions: list[dict[str, Any]] | None) -> SourceCompactionAttempt:
+        source, compaction = state.source, state.source_compaction
+        if source is None or compaction is None or source.has_pending_requests:
+            raise SourceValidationError('Source compaction requires a quiescent request ledger')
+        notes = source.validate_view(view)
+        active = source.transcript
+        if compaction.raw_messages != active.messages():
+            raise SourceValidationError('Runner transcript differs from active source projection')
+        candidate = SourceCompactionCandidate.capture(compaction.writer.owner.read_snapshot(), active,
+            eligible_ids=source.eligible_ids, stream_id=compaction.stream_id,
+            local_boundary=compaction.local_boundary, local_checkpoint=compaction.local_checkpoint)
+        return SourceCompactionAttempt(candidate, source.projection_epoch, notes, deepcopy(tool_definitions))
+
+    def publish_source_compaction(self, state: ModelRequestState, attempt: SourceCompactionAttempt, *,
+                                  boundary: int, summary: str,
+                                  auxiliary_usage: dict[str, int] | None) -> SourceTranscript:
+        """Validate the complete payload, commit under captured CAS, then publish.
+
+        There is no await between durable publication and replacing the ledger/raw
+        list. A failure never retries generation, refreshes CAS, or edits source.
+        """
+        source, compaction = state.source, state.source_compaction
+        if source is None or compaction is None:
+            raise SourceValidationError('Source compaction state is unavailable')
+        candidate = attempt.candidate
+        if (source.has_pending_requests or source.projection_epoch != attempt.projection_epoch
+                or source.transcript != candidate.transcript
+                or compaction.raw_messages != candidate.transcript.messages()
+                or compaction.stream_id != candidate.stream_id):
+            raise SourceValidationError('Source projection changed during compaction')
+        if (not isinstance(summary, str) or not summary.strip() or len(summary) > 64_000
+                or truncate_text_to_tokens(summary, 2048) != summary):
+            raise SourceValidationError('Invalid bounded source summary')
+        if auxiliary_usage is not None and (not auxiliary_usage or any(
+                type(value) is not int or value < 0 for value in auxiliary_usage.values())):
+            raise SourceValidationError('Invalid source auxiliary usage')
+        checkpoint = CheckpointNode(uuid4().hex, summary)
+        active = candidate.rebuild(boundary, checkpoint)
+        # Validate local publication before any durable mutation.
+        source.validate_transcript(active)
+        view = active.with_runtime(*attempt.request_notes)
+        source.validate_transcript(view)
+        prepared = self.ensure_request_fits(state.config, view.messages(),
+                                           tool_definitions=attempt.tool_definitions)
+        writer = compaction.writer
+        writer.owner.validate_dispatch()
+        captured = candidate.snapshot
+        if candidate.stream_id is None:
+            proposal = {
+                'schema_version': 1, 'digest_version': 1, 'summary_format_version': 1,
+                'session_generation': captured.state.generation,
+                'source_revision': captured.state.revision,
+                'checkpoint_id': checkpoint.checkpoint_id,
+                'parent_checkpoint_id': captured.state.checkpoint_id,
+                'producing_model': compaction.runtime.model,
+                'producing_provider': compaction.runtime.provider.provider_name,
+                'digest_algorithm': 'sha256', 'created_at': datetime.now(timezone.utc).isoformat(),
+                'summary': summary, 'artifact_references': [], 'boundary': boundary,
+                'boundary_event_id': captured.events[boundary - 1]['_event_id'],
+                'prefix_digest': prefix_digest(captured.events, boundary),
+                'auxiliary_usage': auxiliary_usage,
+                'projection_scope': 'root', 'projection_version': 1,
+            }
+            writer.store.commit_context_checkpoint(writer.owner.key, captured.state, proposal, owner=writer.owner)
+        else:
+            current = writer.owner.read_snapshot()
+            before, after = captured.state, current.state
+            if ((before.store_identity, before.session_key, before.incarnation, before.generation)
+                    != (after.store_identity, after.session_key, after.incarnation, after.generation)
+                    or [e for e in captured.events if e.get('_stream_id') == candidate.stream_id]
+                    != [e for e in current.events if e.get('_stream_id') == candidate.stream_id]):
+                raise SourceValidationError('Local source changed during compaction')
+        source.replace_projection(active)
+        compaction.raw_messages[:] = active.messages()
+        if candidate.stream_id is not None:
+            compaction.local_boundary, compaction.local_checkpoint = boundary, checkpoint
+        state.source_view = view
+        state.messages = deepcopy(prepared)
+        state.tool_definitions = deepcopy(attempt.tool_definitions)
+        state.usage = None
+        state.conversation.replace_transcript(compaction.raw_messages)
+        return view
 
     @staticmethod
     def _merge_message_content(left: Any, right: Any) -> str | list[dict[str, Any]]:

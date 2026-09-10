@@ -621,3 +621,36 @@ guarded plugin fixtures deselected. Both legacy context-governance tests pass;
 scoped Ruff and diff checks pass. Pressure-triggered auxiliary generation, raw-list
 publication, strict checkpoint CAS orchestration, and all remaining migration
 acceptance work remain required. Production activation remains guarded.
+
+### Owner-fenced governor checkpoint publication
+
+`ModelRequestState` now holds invocation-owned source compaction state: the trusted
+writer, captured runtime, actual runner message-list reference, admission-derived
+root/local scope, and temporary local checkpoint state. Full-history roots use
+root scope; fresh runs and child writers use their own stream IDs. An actual-engine
+test checks root/fresh scope and raw-list identity at request preparation.
+
+The existing governor captures canonical candidates, projection epoch, request-only
+notes, and tool definitions before auxiliary work. Its publication method rejects
+ledger/raw/epoch drift or outstanding tickets, validates the bounded summary and
+complete rebuilt request (including tools/retry notes), and commits root checkpoints
+with the originally captured SourceState and execution owner. Metadata-only drift
+fails CAS. Local publication instead checks ownership, generation/incarnation and
+exact scoped events, allows unrelated sibling/root appends, and never writes root
+checkpoint metadata. Publication has no await between commit and ledger/raw-list
+replacement; it clears usage assumptions and provider continuation state.
+
+Real-store tests verify durable root reload, writer append after checkpoint commit,
+retained source prefixes, local checkpoint reuse, preservation of an existing root
+checkpoint, pending/metadata/source/epoch/raw drift, oversized complete requests,
+and write failure. Independent review accepted the slice and ran 13 publication
+tests; the final strengthened local-root preservation and same-stream drift cases
+pass in the 14-test focused suite. The broader selection passed 525 tests with two
+guarded plugin fixtures deselected before that final additional regression. Scoped
+Ruff and diff checks pass.
+
+Automatic pressure detection and bounded auxiliary generation still do not invoke
+this publication method. Their usage/call accounting, cancellation handling and
+actual-engine pressure/retry acceptance are the next integration. Production
+activation, offloading, provider-state enablement and whole-migration acceptance
+remain guarded and incomplete.
