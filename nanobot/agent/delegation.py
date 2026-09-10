@@ -10,7 +10,7 @@ import uuid
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -41,18 +41,19 @@ from nanobot.agent.tools.social_crawl import (
     authenticated_crawl_enabled,
     crawl_tools_enabled,
 )
-from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+from nanobot.agent.tools.web import WebFetchTool, WebSearchConfig, WebSearchTool
 from nanobot.agent.turn import DelegationBudget, ToolOutcome, TurnContext
 from nanobot.agent.write_guard import FileLockRegistry, WriteScope
 from nanobot.config.schema import (
     AgentBrowserConfig,
     AgentDeviceConfig,
-    ExecToolConfig,
-    WebSearchConfig,
 )
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 from nanobot.providers.base import LLMProvider
 from nanobot.utils.llm_runtime import LLMRuntime
+
+if TYPE_CHECKING:
+    from nanobot.agent.tools.shell import ExecToolConfig
 
 # Legacy explore/crawler tools call the manager directly.  Keep their bridge
 # task-local so concurrent canonical turns cannot share routing or budgets.

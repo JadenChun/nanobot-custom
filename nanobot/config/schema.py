@@ -1,6 +1,7 @@
 """Configuration schema using Pydantic."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
@@ -536,6 +537,15 @@ class ToolsConfig(Base):
     tool implementations.
     """
 
+    @classmethod
+    def model_rebuild(cls, *, force: bool = False, raise_errors: bool = True,
+                      _parent_namespace_depth: int = 2,
+                      _types_namespace: Mapping[str, Any] | None = None) -> bool | None:
+        namespace = dict(_types_namespace or {})
+        namespace.update(_tool_config_types())
+        return super().model_rebuild(force=force, raise_errors=raise_errors,
+            _parent_namespace_depth=_parent_namespace_depth, _types_namespace=namespace)
+
     @model_validator(mode="before")
     @classmethod
     def _select_image_configuration(cls, data: Any) -> Any:
@@ -596,6 +606,15 @@ class Config(BaseSettings):
         validation_alias=AliasChoices("modelPresets", "model_presets"),
         serialization_alias="modelPresets",
     )
+
+    @classmethod
+    def model_rebuild(cls, *, force: bool = False, raise_errors: bool = True,
+                      _parent_namespace_depth: int = 2,
+                      _types_namespace: Mapping[str, Any] | None = None) -> bool | None:
+        namespace = dict(_types_namespace or {})
+        namespace.update(_tool_config_types())
+        return super().model_rebuild(force=force, raise_errors=raise_errors,
+            _parent_namespace_depth=_parent_namespace_depth, _types_namespace=namespace)
 
     def __init__(self, **values: Any) -> None:
         if not type(self).__pydantic_complete__:
@@ -829,35 +848,48 @@ class Config(BaseSettings):
     )
 
 
+_TOOL_CONFIG_MODULES = {
+    "CliAppsToolConfig": "nanobot.agent.tools.cli_apps",
+    "FileToolsConfig": "nanobot.agent.tools.filesystem",
+    "ImageGenerationToolConfig": "nanobot.agent.tools.image_generation",
+    "MyToolConfig": "nanobot.agent.tools.self",
+    "ExecToolConfig": "nanobot.agent.tools.shell",
+    "WebFetchConfig": "nanobot.agent.tools.web",
+    "WebSearchConfig": "nanobot.agent.tools.web",
+    "WebToolsConfig": "nanobot.agent.tools.web",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve historical aliases after a tool-first import cycle has unwound."""
+    from importlib import import_module
+
+    module_name = _TOOL_CONFIG_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
+
+
+def _tool_config_types() -> dict[str, Any]:
+    """Collect canonical types without recursively rebuilding Pydantic models."""
+    namespace = {}
+    for name in _TOOL_CONFIG_MODULES:
+        try:
+            namespace[name] = globals().get(name) or __getattr__(name)
+        except AttributeError as exc:
+            # A tool may currently be importing this schema before defining its
+            # config class. Defer the eager attempt; first-use rebuild retries.
+            raise ImportError(f'Tool configuration {name} is not yet available') from exc
+    return namespace
+
+
 def _resolve_tool_config_refs() -> None:
-    """Resolve forward references in ToolsConfig by importing tool config classes.
-
-    Must be called after all modules are loaded (breaks circular imports).
-    Re-exports the classes into this module's namespace so existing imports
-    like ``from nanobot.config.schema import ExecToolConfig`` continue to work.
-    """
-    import sys
-
-    from nanobot.agent.tools.cli_apps import CliAppsToolConfig
-    from nanobot.agent.tools.filesystem import FileToolsConfig
-    from nanobot.agent.tools.image_generation import ImageGenerationToolConfig
-    from nanobot.agent.tools.self import MyToolConfig
-    from nanobot.agent.tools.shell import ExecToolConfig
-    from nanobot.agent.tools.web import WebFetchConfig, WebSearchConfig, WebToolsConfig
-
-    # Re-export into this module's namespace
-    mod = sys.modules[__name__]
-    mod.ExecToolConfig = ExecToolConfig  # type: ignore[attr-defined]
-    mod.FileToolsConfig = FileToolsConfig  # type: ignore[attr-defined]
-    mod.CliAppsToolConfig = CliAppsToolConfig  # type: ignore[attr-defined]
-    mod.WebToolsConfig = WebToolsConfig  # type: ignore[attr-defined]
-    mod.WebSearchConfig = WebSearchConfig  # type: ignore[attr-defined]
-    mod.WebFetchConfig = WebFetchConfig  # type: ignore[attr-defined]
-    mod.MyToolConfig = MyToolConfig  # type: ignore[attr-defined]
-    mod.ImageGenerationToolConfig = ImageGenerationToolConfig  # type: ignore[attr-defined]
-
-    ToolsConfig.model_rebuild()
-    Config.model_rebuild()
+    """Resolve both public schemas once canonical tool classes are importable."""
+    namespace = _tool_config_types()
+    ToolsConfig.model_rebuild(_types_namespace=namespace)
+    Config.model_rebuild(_types_namespace=namespace)
 
 
 # Eagerly resolve when the import chain allows it (no circular deps at this

@@ -352,3 +352,37 @@ closed chunks, limit an attempt to four calls, aggregate all auxiliary usage,
 validate the finalized rebuilt main request, and publish under strict source CAS.
 Provider-specific finalized-request budget validation also remains an integration
 gate. The runtime activation guard remains unchanged.
+
+### Provider regression reconciliation and startup import qualification
+
+The 24 old fallback tests now exercise `LegacyFallbackProvider` through its
+preset/factory boundary with explicitly named synthetic providers. Checks retain
+quota/rate-only traversal, primary-only model overrides, generation propagation,
+and no fallback after streaming output. Cooldown assertions use the pinned staging
+code's actual five-minute behavior (the old comments incorrectly said twelve
+hours). The provider/pool/observer selection passes 105 tests.
+
+`SourceTurnWriter.record_tool_result_event` now returns the exact committed result
+event ID; the existing callback remains return-free for execution compatibility.
+This supplies explicit ordinal-bound provenance for subsequent governor wiring.
+
+Agent and configuration package exports now load lazily, preserving exported
+names and canonical identities. Delegation imports tool configuration classes from
+their owning modules. Schema aliases resolve lazily; Config and ToolsConfig supply
+canonical tool types during Pydantic first-use rebuild without changing field
+types or suppressing validation failures. These changes remove observed startup
+cycles without requiring test import warmups or disabling the runtime guard.
+
+Evidence: 31 fresh-interpreter cases pass, covering independent first-use model
+validation, JSON validation, schema generation, alias lookup, export identity, and
+tool/path imports avoiding agent-loop/schema initialization. Independent review
+also ran these 31 cases. Standalone legacy-policy and source-writer files pass
+20 and 11 tests respectively. The combined source/provider/import selection passes
+465 tests; Ruff/diff checks pass. Automatic first-use `TypeAdapter(Config)` after a
+delegation-first import remains unsupported; no production caller was found. It is
+not covered by these startup acceptance claims.
+
+Broader configuration qualification remains red: `tests/config` has 113 passes and
+9 failures (legacy token object/save expectations, empty legacy context paths,
+timezone detection, and guard-blocked onboarding). Those require reconciliation
+before overall migration success. Source governor integration remains pending.
