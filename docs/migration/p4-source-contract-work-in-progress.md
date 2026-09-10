@@ -458,3 +458,20 @@ in entry-point plugin fixtures; neither fixture reached the changed source path.
 Response/tool/runtime append bindings, ticket issuance/acknowledgment, and pressure
 compaction remain required. This step changes initial construction only and does
 not enable migration runtime activation.
+
+### Recorded assistant response identities
+
+Runner requests now return a `RecordedResponse` containing the provider response
+and its exact durable event ID (or None when no response event was recorded).
+Main and recursive malformed-request paths propagate the record belonging to the
+response actually returned. No-tools and finalization paths preserve that identity;
+no-tools mandatory recording now precedes the governor observer. Existing writes
+remain single writes, and provider response objects carry no invented private IDs.
+
+An actual-engine malformed → malformed → no-tools regression verifies four source
+events exactly once and the final answer's event ID through both recursive returns.
+Independent review ran 31 engine/writer tests and accepted the identity flow.
+The combined session/migration/runner/summary selection passes 481 tests with the
+two previously documented activation-guard plugin fixtures deselected. Ruff/diff
+checks pass. Replay-node binding, ticket issuance/acknowledgment, checkpoint reuse,
+and pressure compaction remain unfinished; production activation remains guarded.

@@ -333,3 +333,33 @@ async def test_source_initial_transcript_binds_actual_events_and_fresh_scope(eng
         assert first.nodes[-1].event_id != second.nodes[-1].event_id
     finally:
         await loop.aclose()
+
+
+async def test_malformed_retry_chain_returns_final_recorded_identity(engine_config, monkeypatch):
+    def malformed(text):
+        return LLMResponse(content=text, finish_reason='tool_calls',
+            tool_calls=[ToolCallRequest(id='same', name='', arguments={})])
+    provider = ScriptedProvider([malformed('first attempt'), malformed('second attempt'),
+                                 LLMResponse(content='final answer')])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop)
+    captured = []
+    request = loop.runner._request_model
+
+    async def observe(*args, **kwargs):
+        recorded, usage = await request(*args, **kwargs)
+        captured.append(recorded)
+        return recorded, usage
+
+    monkeypatch.setattr(loop.runner, '_request_model', observe)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='request', session_key='cli:source'))
+        assert result.error is None and result.content == 'final answer'
+        events = backend.source.load_source_snapshot('cli:source').events
+        assert [event['content'] for event in events] == ['request', 'first attempt', 'second attempt', 'final answer']
+        assert len(captured) == 2
+        assert all(recorded.source_event_id == events[-1]['_event_id'] for recorded in captured)
+        assert all(recorded.response.content == 'final answer' for recorded in captured)
+        assert not validate_execution_links(events)
+    finally:
+        await loop.aclose()

@@ -65,6 +65,14 @@ if TYPE_CHECKING:
     from nanobot.session.source_request import SourceTranscript
     from nanobot.session.turn_writer import SourceTurnWriter
 
+@dataclass(frozen=True)
+class RecordedResponse:
+    """A provider response and its exact mandatory source-write identity."""
+
+    response: LLMResponse
+    source_event_id: str | None
+
+
 ContinuationCallback = Callable[[], str | None]
 CheckpointCallback = Callable[[dict[str, Any]], Awaitable[None]]
 InjectionCallback = Callable[..., Awaitable[Iterable[Any] | None]]
@@ -477,7 +485,7 @@ class AgentRunner:
                 if request_state.compaction is not None
                 else messages
             )
-            response, raw_usage = await self._request_model(
+            recorded_response, raw_usage = await self._request_model(
                 spec,
                 request_messages,
                 hook,
@@ -485,6 +493,7 @@ class AgentRunner:
                 request_state=request_state,
                 transcript=messages,
             )
+            response = recorded_response.response
             assert request_state.messages is not None
             messages_for_model = request_state.messages
             conversation_state.observe_response(response, messages, adopt_candidate_state=spec.source_writer is None)
@@ -660,12 +669,13 @@ class AgentRunner:
                 )
                 if hook.wants_streaming():
                     await hook.on_stream_end(context, resuming=False)
-                response = await self._request_finalization_retry(
+                recorded_response = await self._request_finalization_retry(
                     spec,
                     messages_for_model,
                     request_state=request_state,
                     transcript=messages,
                 )
+                response = recorded_response.response
                 retry_usage = self._record_request_usage(spec, request_state, response)
                 round_usages.append(retry_usage)
                 usage = self._merge_usage(usage, retry_usage)
@@ -900,16 +910,19 @@ class AgentRunner:
         )
 
     @staticmethod
-    def _record_source_response(spec: AgentRunSpec, response: LLMResponse) -> None:
+    def _record_source_response(spec: AgentRunSpec, response: LLMResponse) -> str | None:
         writer = spec.source_writer
         if writer is None or response.finish_reason == "error":
             return
         _, content = extract_reasoning(response.reasoning_content, response.thinking_blocks, response.content)
         if response.should_execute_tools:
-            writer.begin_tool_batch(build_assistant_message(content or "",
+            event = writer.begin_tool_batch(build_assistant_message(content or "",
                 tool_calls=[call.to_openai_tool_call() for call in response.tool_calls]))
+            return event["_event_id"]
         elif not is_blank_text(content):
-            writer.append_message(build_assistant_message(content))
+            event = writer.append_message(build_assistant_message(content))
+            return event["_event_id"]
+        return None
 
     def _build_request_kwargs(
         self,
@@ -940,7 +953,7 @@ class AgentRunner:
         request_state: ModelRequestState,
         malformed_retry: bool = False,
         transcript: list[dict[str, Any]] | None,
-    ) -> tuple[LLMResponse, LLMUsage]:
+    ) -> tuple[RecordedResponse, LLMUsage]:
         timeout_s = self._resolve_llm_timeout_s(spec)
         tool_definitions = spec.tools.get_definitions()
         messages, provider_context = await self.context_governor.prepare_request(
@@ -1098,7 +1111,7 @@ class AgentRunner:
                     error_kind="timeout",
                 )
         dropped, all_dropped, original_finish_reason = self._drop_malformed_tool_calls(response)
-        self._record_source_response(spec, response)
+        recorded = RecordedResponse(response, self._record_source_response(spec, response))
         _pause_generation()
         await _close_native_reasoning()
         if first_output_at is not None:
@@ -1161,10 +1174,10 @@ class AgentRunner:
             fallback_usage = self._record_request_usage(
                 spec,
                 request_state,
-                fallback_response,
+                fallback_response.response,
             )
             return fallback_response, round_usage + fallback_usage
-        return response, round_usage
+        return recorded, round_usage
 
     @staticmethod
     def _drop_malformed_tool_calls(
@@ -1232,7 +1245,7 @@ class AgentRunner:
         *,
         request_state: ModelRequestState,
         transcript: list[dict[str, Any]],
-    ) -> LLMResponse:
+    ) -> RecordedResponse:
         retry_messages = self._finalization_retry_messages(messages)
         response = await self._request_no_tools(
             spec,
@@ -1241,7 +1254,7 @@ class AgentRunner:
             transcript=transcript,
         )
         request_state.conversation.observe_response(
-            response,
+            response.response,
             transcript,
             adopt_candidate_state=False,
         )
@@ -1271,7 +1284,7 @@ class AgentRunner:
         )
         retry_messages = self._budget_exhausted_finalization_messages(request_messages)
         try:
-            response = await self._request_no_tools(
+            recorded = await self._request_no_tools(
                 spec,
                 retry_messages,
                 request_state=request_state,
@@ -1286,6 +1299,7 @@ class AgentRunner:
             )
             return None, usage
 
+        response = recorded.response
         raw_usage = self._record_request_usage(spec, request_state, response)
         round_usages.append(raw_usage)
         usage = self._merge_usage(usage, raw_usage)
@@ -1318,7 +1332,7 @@ class AgentRunner:
         *,
         request_state: ModelRequestState,
         transcript: list[dict[str, Any]] | None = None,
-    ) -> LLMResponse:
+    ) -> RecordedResponse:
         messages, provider_context = await self.context_governor.prepare_request(
             request_state,
             messages,
@@ -1347,14 +1361,14 @@ class AgentRunner:
                 finish_reason="error",
                 error_kind="timeout",
             )
+        recorded = RecordedResponse(response, self._record_source_response(spec, response))
         await self.context_governor.summarize_provider_compaction(
             request_state,
             response,
             current_request_boundary=(len(transcript) if transcript is not None else None),
         )
         request_state.provider_compaction_applied |= response.provider_compaction_applied
-        self._record_source_response(spec, response)
-        return response
+        return recorded
 
     @staticmethod
     def _resolve_llm_timeout_s(spec: AgentRunSpec) -> float | None:
