@@ -665,6 +665,7 @@ async def _run_cron_job(agent, bus, job) -> str | None:
         classify_delivery_results,
         is_client_deliverable,
         run_external_verifiers,
+        run_post_delivery_command,
         send_owner_alert,
     )
 
@@ -692,6 +693,36 @@ async def _run_cron_job(agent, bus, job) -> str | None:
     alert_channel = alert_destination.channel if alert_destination else None
     alert_to = alert_destination.to if alert_destination else None
     alerted = False
+
+    async def _post_delivery(ack_status: str) -> None:
+        """Report the client-delivery outcome to the marketing context.
+
+        Nanobot deliberately owns no delivery-status semantics: the marketing
+        helper maps the ACK outcome to its own stored delivery status.  Best
+        effort - a bookkeeping failure must never affect delivery or alerts.
+        """
+        command = job.payload.post_delivery_command
+        if not command:
+            return
+        from loguru import logger
+
+        try:
+            outcome = await run_post_delivery_command(
+                command,
+                date=_run_date(),
+                ack_status=ack_status,
+                repo_root=os.getcwd(),
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Post-delivery hook raised for {}: {}", job.name, exc)
+            return
+        logger.info(
+            "Post-delivery hook for {}: ack_status={} result={} {}",
+            job.name,
+            ack_status,
+            outcome["status"],
+            outcome["error"],
+        )
 
     async def _owner_alert(failure_stage: str, reason: str) -> None:
         """Send at most one owner alert for this run (local run-level dedup)."""
@@ -819,6 +850,7 @@ async def _run_cron_job(agent, bus, job) -> str | None:
         for outbound in outbounds:
             results.append(await bus.publish_outbound_and_wait(outbound))
         outcome = classify_delivery_results(results)
+        ack_status = outcome
         if outcome == "failed":
             err = "client delivery failed for one or more required destinations"
             await _owner_alert(
@@ -850,6 +882,7 @@ async def _run_cron_job(agent, bus, job) -> str | None:
             )
         # outcome == "success": group delivered, owner stays silent.
     elif delivery_destinations and response and not verified:
+        ack_status = "blocked"
         err = f"client delivery blocked: {verdict_source}; refusing to deliver unverified client output"
         await _owner_alert(
             "Failed",
@@ -864,6 +897,12 @@ async def _run_cron_job(agent, bus, job) -> str | None:
             task=job.payload.message,
             error=err,
         )
+    else:
+        ack_status = None
+
+    if ack_status is not None:
+        await _post_delivery(ack_status)
+
     return response
 
 

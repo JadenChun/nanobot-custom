@@ -76,6 +76,11 @@ class CronPayload:
     # (NOT the internal LLM verifier) decides whether the verified client result
     # may be delivered.
     verifiers: list[CronVerifier] = field(default_factory=list)
+    # Optional marketing-side post-delivery bookkeeping command.  Nanobot only
+    # invokes it after the client-delivery outcome is known; the business logic
+    # (for example mapping an ACK outcome to a stored delivery status) lives in
+    # the marketing context.  Templates: {date}, {ack_status}, {repo_root}.
+    post_delivery_command: list[str] | None = None
 
     def alert_destination(self) -> "CronDestination | None":
         """Return the configured owner operational-alert destination, if any."""

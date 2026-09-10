@@ -4,11 +4,12 @@
 Version-controlled migration for the runtime cron store
 (``/opt/marketing-agent/.nanobot/workspace/cron/jobs.json``).
 
-It adds/normalizes ONLY ``payload.verifiers`` for the three client-facing jobs:
+It adds/normalizes ``payload.verifiers`` for the three client-facing jobs, plus
+the optional ``payload.post_delivery_command`` for the Daily Content Idea:
 
-  * Daily trend research
-  * Weekly performance review
-  * Daily Content Idea (telegram-shape verifier only; see PILLAR NOTE below)
+  * Daily trend research      -> trend_report, trend_telegram
+  * Weekly performance review -> weekly_report, weekly_telegram
+  * Daily Content Idea        -> daily_content_idea (composite) + post-delivery hook
 
 It never alters schedules, ``to`` (client group), ``deliver``,
 ``skip_verification``, ``alert_channel``/``alert_to``, the Meta analytics job, or
@@ -20,12 +21,14 @@ directly (no shell) and must exit 0 AND print a JSON object with
 client delivery.  Templates: ``{date}`` (run date, job tz), ``{repo_root}``
 (verifier cwd) and ``{response_file}`` (this run's exact client response).
 
-PILLAR NOTE: ``verify_idea_pillar.py`` requires ``--expected-pillar`` (the
-rotation-assigned pillar).  That assignment is prompt-driven and has no
-deterministic source until the delivery-status/rotation resolver lands, so it is
-deliberately NOT wired here.  Until then the Daily Content Idea job keeps its
-existing internal-verifier gate for pillar assignment while the telegram-shape
-verifier becomes authoritative for the client-format contract.
+COMPOSITE DAILY IDEA VERIFIER: ``tools/verify_daily_content_idea.py`` resolves
+the rotation-assigned pillar itself from the delivered-only history (marketing
+context) and checks BOTH the pillar fit and the Telegram client contract.  The
+pillar is NEVER computed by Nanobot and never injected as a constant.
+
+POST-DELIVERY HOOK: ``tools/mark_delivery_status.py`` maps the client-delivery
+ACK outcome (``{ack_status}``) to the marketing record's ``delivery_status``.
+It carries the marketing business logic; Nanobot only invokes it.
 
 Dry-run by default.  Pass ``--apply`` to write (a ``.bak`` backup is made).
 """
@@ -45,6 +48,16 @@ _T = "{repo_root}/agent-workspace/outputs/research/{date}-daily-trend-research.m
 _TC = "{repo_root}/agent-workspace/runs/{date}-daily-trend-research/collection.json"
 _WR = "{repo_root}/agent-workspace/outputs/reports/{date}-weekly-performance-review.md"
 _WP = "{repo_root}/agent-workspace/state/weekly-performance-review-input.json"
+_ID = "{repo_root}/agent-workspace/outputs/ideas/{date}-daily-content-idea.md"
+
+#: Optional marketing-side post-delivery bookkeeping.  Nanobot reports the
+#: client-delivery ACK outcome; marketing maps it to its own delivery status.
+POST_DELIVERY_BY_JOB: dict[str, list[str]] = {
+    "Daily Content Idea": [
+        PYTHON, "{repo_root}/tools/mark_delivery_status.py",
+        "--date", "{date}", "--ack", "{ack_status}", "--json",
+    ],
+}
 
 VERIFIERS_BY_JOB: dict[str, list[dict]] = {
     "Daily trend research": [
@@ -93,13 +106,20 @@ VERIFIERS_BY_JOB: dict[str, list[dict]] = {
     ],
     "Daily Content Idea": [
         {
-            "name": "idea_telegram",
+            # Composite marketing verifier: resolves the rotation-assigned pillar
+            # from the delivered-only history, then checks BOTH the pillar fit
+            # (internal report) and the Telegram client contract (this run's
+            # response).  Nanobot never computes --expected-pillar itself.
+            "name": "daily_content_idea",
             "argv": [
-                PYTHON, "{repo_root}/tools/verify_telegram_output.py",
-                "--kind", "idea", "--input", "{response_file}", "--json",
+                PYTHON, "{repo_root}/tools/verify_daily_content_idea.py",
+                "--input", "{response_file}",
+                "--idea-report", _ID,
+                "--date", "{date}",
+                "--json",
             ],
             "cwd": REPO_ROOT,
-            "timeout": 120,
+            "timeout": 180,
         },
     ],
 }
@@ -121,17 +141,27 @@ def migrate(data: dict, *, apply: bool) -> list[dict]:
         if name not in VERIFIERS_BY_JOB:
             continue
         payload = job.setdefault("payload", {})
+        change: dict = {"id": job.get("id"), "name": name}
+
         before = payload.get("verifiers")
         after = VERIFIERS_BY_JOB[name]
         if before != after:
-            changes.append({
-                "id": job.get("id"),
-                "name": name,
-                "verifier_names_before": [v.get("name") for v in (before or [])],
-                "verifier_names_after": [v.get("name") for v in after],
-            })
+            change["verifier_names_before"] = [v.get("name") for v in (before or [])]
+            change["verifier_names_after"] = [v.get("name") for v in after]
             if apply:
                 payload["verifiers"] = after
+
+        if name in POST_DELIVERY_BY_JOB:
+            before_cmd = payload.get("post_delivery_command")
+            after_cmd = POST_DELIVERY_BY_JOB[name]
+            if before_cmd != after_cmd:
+                change["post_delivery_command_before"] = before_cmd
+                change["post_delivery_command_after"] = after_cmd
+                if apply:
+                    payload["post_delivery_command"] = after_cmd
+
+        if len(change) > 2:
+            changes.append(change)
     return changes
 
 
@@ -153,7 +183,11 @@ def main(argv: list[str] | None = None) -> int:
         mode = "APPLIED" if args.apply else "DRY-RUN"
         print(f"[{mode}] {len(changes)} job(s) would change")
         for c in changes:
-            print(f"  - {c['name']}: {c['verifier_names_before']} -> {c['verifier_names_after']}")
+            print(f"  - {c['name']}")
+            if "verifier_names_after" in c:
+                print(f"      verifiers: {c.get('verifier_names_before')} -> {c['verifier_names_after']}")
+            if "post_delivery_command_after" in c:
+                print(f"      post_delivery_command -> {c['post_delivery_command_after']}")
     return 0
 
 

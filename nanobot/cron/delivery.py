@@ -230,6 +230,52 @@ async def run_external_verifiers(
     return aggregate, details
 
 
+async def run_post_delivery_command(
+    command: Iterable[str],
+    *,
+    date: str,
+    ack_status: str,
+    repo_root: str | None = None,
+    timeout: float = 60.0,
+) -> dict:
+    """Run an optional post-delivery bookkeeping command.
+
+    The marketing context owns the business logic; Nanobot only invokes it.
+    Entries may contain ``{date}``, ``{ack_status}`` and ``{repo_root}``
+    templates.  Executed directly via ``create_subprocess_exec`` (never a
+    shell).  Best effort by design: the outcome is reported but never raised, so
+    bookkeeping can never break client delivery or owner alerts.
+    """
+    argv = [
+        str(entry).replace("{ack_status}", ack_status)
+        for entry in _render_verifier_argv(command, date=date, repo_root=repo_root)
+    ]
+    result: dict = {"ack_status": ack_status, "status": "unknown", "error": ""}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=repo_root,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except (FileNotFoundError, OSError, NotImplementedError) as exc:
+        result["error"] = str(exc)[:300]
+        return result
+    try:
+        _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        result["error"] = "post-delivery command timed out"
+        return result
+    if proc.returncode == 0:
+        result["status"] = "ok"
+    else:
+        result["status"] = "failed"
+        result["error"] = (stderr or b"").decode("utf-8", "replace").strip()[-300:]
+    return result
+
+
 def build_explicit_fanout_messages(
     destinations: list[CronDestination],
     sent_messages: Iterable[OutboundMessage],

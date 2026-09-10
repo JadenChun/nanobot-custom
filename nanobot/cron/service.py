@@ -148,6 +148,11 @@ class CronService:
                                 for v in j["payload"].get("verifiers", []) or []
                                 if isinstance(v, dict) and v.get("argv")
                             ],
+                            post_delivery_command=(
+                                list(j["payload"]["post_delivery_command"])
+                                if j["payload"].get("post_delivery_command")
+                                else None
+                            ),
                         ),
                         state=CronJobState(
                             next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
@@ -223,6 +228,7 @@ class CronService:
                             }
                             for v in j.payload.verifiers
                         ],
+                        "post_delivery_command": j.payload.post_delivery_command,
                     },
                     "state": {
                         "nextRunAtMs": j.state.next_run_at_ms,
@@ -384,6 +390,7 @@ class CronService:
         alert_channel: str | None = None,
         alert_to: str | None = None,
         verifiers: list[CronVerifier] | None = None,
+        post_delivery_command: list[str] | None = None,
     ) -> CronJob:
         """Add a new job."""
         store = self._load_store()
@@ -407,6 +414,9 @@ class CronService:
                 alert_channel=alert_channel,
                 alert_to=alert_to,
                 verifiers=list(verifiers or []),
+                post_delivery_command=(
+                    list(post_delivery_command) if post_delivery_command else None
+                ),
             ),
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,
