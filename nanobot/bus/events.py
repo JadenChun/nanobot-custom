@@ -48,10 +48,12 @@ class OutboundMessage:
     reply_to: str | None = None
     media: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
-    # Internal, non-serialized delivery acknowledgement.  Deliberately NOT in
-    # metadata (which may be copied/logged/serialized).  ``None`` = fire-and-forget.
-    delivery_ack: "asyncio.Future[DeliveryResult] | None" = field(
-        default=None, repr=False, compare=False
-    )
+
+    def __post_init__(self) -> None:
+        # Runtime-only delivery acknowledgement.  Deliberately a plain instance
+        # attribute (NOT a dataclass field) so dataclasses.asdict()/astuple()/
+        # fields() can never include a Future.  The channel dispatcher resolves
+        # it after the final downstream send attempt.  None = fire-and-forget.
+        self.delivery_ack: asyncio.Future[DeliveryResult] | None = None
 
 

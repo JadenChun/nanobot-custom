@@ -2,14 +2,22 @@
 
 import asyncio
 
+from loguru import logger
+
 from nanobot.bus.events import DeliveryResult, InboundMessage, OutboundMessage
 
-# Bounded wait for a delivery acknowledgement.  Covers the dispatcher's outer
-# retry/backoff (send_max_retries attempts, 1s + 2s backoff) plus the channel's
-# own bounded send retries, with headroom for a short queue backlog before the
-# dispatcher picks the message up.  Prevents a caller hanging forever if the
-# dispatcher is stopped or an acknowledgement is never resolved.
-DELIVERY_ACK_TIMEOUT_S = 30.0
+# Bounded wait for a delivery acknowledgement, sized from the REAL retry
+# envelope in this repo:
+#   * Telegram HTTPXRequest: connect_timeout=30s, read_timeout=30s, pool_timeout=5s
+#   * TelegramChannel._call_with_retry: 3 attempts (TimedOut only), 0.5s+1.0s backoff
+#     -> worst case ~91s for one channel.send()
+#   * ChannelManager._send_with_retry: send_max_retries (default 3) attempts,
+#     1s+2s backoff -> upper bound well above that.
+# 120s comfortably covers the intended retry policy under normal failure
+# conditions (a couple of network timeouts + backoff) while staying bounded so
+# a cron run cannot stall indefinitely.  Overridable per call (and via
+# channels.delivery_ack_timeout) for callers that need a different bound.
+DELIVERY_ACK_TIMEOUT_S = 120.0
 
 
 class MessageBus:
@@ -54,9 +62,19 @@ class MessageBus:
         ack: asyncio.Future[DeliveryResult] = loop.create_future()
         msg.delivery_ack = ack
         await self.publish_outbound(msg)
+        # ``asyncio.wait_for`` CANCELS ``ack`` on timeout.  That is safe: the
+        # dispatcher's ``_resolve_ack`` checks ``ack.done()`` and becomes a
+        # no-op for a cancelled future, so a late successful send neither
+        # crashes the dispatcher nor revives the result.  The queued message is
+        # unaffected and may still be delivered.
         try:
             return await asyncio.wait_for(ack, timeout=timeout)
         except asyncio.TimeoutError:
+            logger.warning(
+                "Delivery acknowledgement timed out after {}s for {}:{}; "
+                "downstream send result is unknown",
+                timeout, msg.channel, msg.chat_id,
+            )
             return DeliveryResult(
                 success=False, error="delivery acknowledgement timed out"
             )
