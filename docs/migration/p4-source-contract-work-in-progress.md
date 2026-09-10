@@ -554,3 +554,46 @@ runner/summary selection passes 492 tests with the same two guarded plugin
 fixtures deselected. Ruff and diff checks pass. Automatic pressure compaction,
 checkpoint publication from the governor, offloading, and whole-migration
 acceptance remain pending; production activation remains guarded.
+
+### Captured pressure-compaction candidates
+
+`session/source_compaction.py` now captures a detached source snapshot and typed
+active projection for the existing governor. Root boundaries come from compatible
+stored checkpoints and count all canonical events; local boundaries belong only
+to the explicit fresh/child stream. Advancing boundaries use validated eligibility
+and execution closure. New summary evidence comes from disjoint canonical slices,
+never the expanded model request or an already-covered pinned instruction.
+
+Rebuilding preserves active runtime nodes and surviving authorized source nodes,
+replaces the historical checkpoint, and retains the newest canonical user by its
+exact durable ID. Capture rejects foreign, duplicate, omitted, reordered, or
+unexpected covered source nodes and checkpoint drift. Hidden-only advancement
+cannot publish a summary with no new visible evidence. Independent review found
+and corrected a pin-selection risk in reordered projections; regressions now prove
+canonical ordering and role-independent pin selection. All 13 helper tests pass.
+
+This helper performs no provider calls, token reduction, writes, or ledger
+publication. Governor orchestration remains the next required integration:
+
+- Capture source writer, immutable runtime, admission-derived root/local scope,
+  local checkpoint state, and the runner's actual raw message list reference.
+- Validate the explicit request view before transport without issuing a ticket;
+  separate request-only runtime suffixes from the active ledger projection.
+- Measure the complete request including tools and retry notes; select bounded
+  disjoint chunks, fold the prior summary, and accumulate every auxiliary call's
+  usage. At most four summary calls are allowed per attempt.
+- Rebuild and validate the complete candidate request before durable root CAS.
+  Use the originally captured full SourceState, including metadata revision and
+  raw parent checkpoint identity; do not refresh/rebase after generation.
+- For fresh/child candidates, revalidate ownership and exact local stream evidence
+  without writing root checkpoint metadata. Unrelated sibling appends need not
+  invalidate an unchanged local stream.
+- Publish the ledger projection and replace the runner's raw list by slice without
+  an intervening await. Keep retry notes request-only, clear usage/provider-state
+  assumptions, and issue tickets from the resulting view. Preserve the production
+  guard until all integrated acceptance requirements pass.
+
+Validation after the review correction: 505 combined session/migration/runner/
+summary tests pass, with the same two guarded plugin fixtures deselected. Scoped
+Ruff and diff checks pass. This is candidate-selection acceptance only, not
+pressure-compaction or whole-migration acceptance.
