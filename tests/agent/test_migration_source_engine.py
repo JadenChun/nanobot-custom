@@ -947,3 +947,81 @@ async def test_engine_reads_attested_artifact_after_restart_only_with_history_ac
         assert str(tmp_path / 'private-artifacts') not in str(second.calls)
     finally:
         await loop.aclose()
+
+
+async def test_engine_offloads_large_reads_and_retrieves_without_recursive_publication(engine_config, tmp_path, monkeypatch):
+    import re
+    from copy import deepcopy
+
+    from nanobot.agent.runner import AgentRunner
+    from nanobot.session.artifact import published_artifacts
+    from nanobot.session.artifact_reader import ArtifactReader
+    from nanobot.session.artifact_store import PrivateArtifactStore
+    from nanobot.session.source import prefix_digest
+
+    for name in ('one', 'two'):
+        (engine_config.workspace_path / name).write_text(name + 'x' * 50000)
+    class OffloadProvider(ScriptedProvider):
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            self.calls.append((deepcopy(messages), deepcopy(tools), model))
+            if len(self.calls) == 1:
+                return LLMResponse(content=None, tool_calls=[ToolCallRequest(id='same', name='read_file',
+                    arguments={'path': name}) for name in ('one', 'two')])
+            if len(self.calls) == 2:
+                rows = [row for row in messages if row.get('role') == 'tool']
+                assert len(rows) == 2 and all(len(row['content']) < 1600 for row in rows)
+                self.references = [re.search(r'artifact:[0-9a-f]{32}', row['content'])[0] for row in rows]
+                assert self.references[0] != self.references[1]
+                self.before = backend.source.load_source_snapshot('cli:source')
+                return LLMResponse(content=None, tool_calls=[ToolCallRequest(id='retrieve', name='read_artifact',
+                    arguments={'reference': self.references[0], 'max_bytes': 16384})])
+            assert len(self.calls) == 3
+            retrieval = [row for row in messages if row.get('name') == 'read_artifact'][-1]
+            assert len(retrieval['content']) > 16000
+            assert 'Incomplete preview' not in retrieval['content']
+            return LLMResponse(content='done')
+    provider = OffloadProvider([])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop)
+    def factory(writer, isolated, read_file):
+        state = writer.owner.read_snapshot().state
+        store = PrivateArtifactStore(tmp_path.resolve() / 'artifacts',
+            workspace_id=backend.sessions_dir.name, session_key=state.session_key,
+            incarnation=state.incarnation, generation=state.generation)
+        return ArtifactReader(writer, 'isolated_stream' if isolated else 'root_history', store, read_file)
+    loop.runner = AgentRunner(artifact_reader_factory=factory)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='read both then retrieve', session_key='cli:source'))
+        assert result.error is None, result.error
+        snapshot = backend.source.load_source_snapshot('cli:source')
+        descriptors = published_artifacts(snapshot, workspace_id=backend.sessions_dir.name)
+        assert {item.reference for item in descriptors} == set(provider.references)
+        assert prefix_digest(snapshot.events, len(provider.before.events)) == prefix_digest(
+            provider.before.events, len(provider.before.events))
+        assert all(len(row['content']) > 50000 for row in snapshot.events if row.get('name') == 'read_file')
+        retrieval = next(row for row in snapshot.events if row.get('name') == 'read_artifact')
+        assert '_artifact_read' in retrieval and '_source_origin' not in retrieval
+        assert str(tmp_path / 'artifacts') not in str(provider.calls)
+    finally:
+        await loop.aclose()
+
+    from nanobot.session.source_store import SourceSessionStore
+
+    restarted_provider = ScriptedProvider([LLMResponse(content='continued')])
+    restarted = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=restarted_provider)
+    restarted.runner = AgentRunner(artifact_reader_factory=factory)
+    def no_republication(*args, **kwargs):
+        raise AssertionError('Restart must reuse existing artifact descriptors')
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(SourceSessionStore, 'commit_artifact_descriptor', no_republication)
+            result = await restarted.execute_turn(TurnRequest(content='continue', session_key='cli:source'))
+        assert result.error is None, result.error
+        after = restarted.sessions._jsonl_store.source.load_source_snapshot('cli:source')
+        assert published_artifacts(after, workspace_id=backend.sessions_dir.name) == descriptors
+        projected_reads = [row for row in restarted_provider.calls[0][0] if row.get('name') == 'read_file']
+        assert len(projected_reads) == 2
+        assert all(len(row['content']) < 1600 for row in projected_reads)
+        assert {re.search(r'artifact:[0-9a-f]{32}', row['content'])[0] for row in projected_reads} == set(provider.references)
+    finally:
+        await restarted.aclose()

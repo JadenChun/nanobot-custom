@@ -266,3 +266,40 @@ namespace replacement, forged markers and current private-root exclusion. Final
 combined validation passed 603 tests with network denied; two existing guarded
 plugin fixtures remain deselected and are not waived for overall acceptance.
 Scoped Ruff and diff checks passed.
+
+## Main-request offloading implementation
+
+With the optional admitted artifact-reader factory present, the source governor
+now offloads attested scalar text results longer than 16000 characters before
+pressure compaction. It publishes immutable bytes/descriptors using captured CAS,
+then renders a deterministic opaque reference, sizes and at most 1200 preview
+characters. The canonical result and source IDs remain unchanged. Unsupported
+formats/producers and retrieval results remain inline.
+
+`SourceNode.artifact` is an internal typed binding, excluded from messages sent to
+the provider. Literal `artifact:` strings never establish this binding. Every
+prepare revalidates bound descriptors, producer evidence, current policy and blob
+integrity. Existing descriptor IDs/timestamps are reused. A multi-descriptor
+operation advances its expected source state only through its own successful
+commits; it never reloads/rebases after a CAS conflict. Partially published metadata
+can remain without changing canonical source or granting access.
+
+Ledger replacement checks the captured epoch/transcript/raw-list and absence of
+outstanding request tickets, updates the ledger/raw list synchronously and clears
+usage/provider state. Request-only retry notes remain outside the active ledger.
+If the actual request has no retrieval tool definition, authorized bound evidence
+returns inline. Storage/CAS failure also falls back inline only after source
+access is validated. Policy revocation and owner loss abort; inline restoration
+cannot bypass those failures. The complete request still passes the final budget
+guard. Restart reconstructs references from canonical source and verified manifests
+without publication churn.
+
+### Enforced summary limitation
+
+Pressure summaries still use canonical disjoint inline evidence, never generated
+reference/preview nodes. Oversized indivisible canonical groups retain the existing
+auxiliary-budget rejection. Evidence with trusted `_artifact_read` metadata is
+rejected for summary publication until dependency support exists. Checkpoint
+`artifact_references` remains empty-only. Reference-aware summary dependency
+publication, validation and rollback remain a required subsequent package; this
+main-request integration does not claim to implement them.

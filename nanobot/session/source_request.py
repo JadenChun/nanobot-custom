@@ -13,7 +13,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from nanobot.session.source import SourceValidationError
-from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode
+from nanobot.session.source_projection import (
+    ArtifactProjectionBinding,
+    CheckpointNode,
+    RuntimeNode,
+    SourceNode,
+)
 
 RequestNode = SourceNode | RuntimeNode | CheckpointNode
 
@@ -61,6 +66,18 @@ class SourceRequestLedger:
             if isinstance(node, SourceNode):
                 if not node.event_id or node.event_id in source_ids:
                     raise SourceValidationError('Duplicate or missing source request identity')
+                if node.artifact is not None:
+                    from nanobot.session.artifact import parse_artifact_reference
+
+                    binding = node.artifact
+                    if (type(binding) is not ArtifactProjectionBinding or binding.event_id != node.event_id
+                            or not isinstance(binding.artifact_id, str)
+                            or not isinstance(binding.execution_id, str) or not binding.execution_id
+                            or binding.block_index is not None or not isinstance(binding.content_sha256, str)
+                            or len(binding.content_sha256) != 64
+                            or any(c not in '0123456789abcdef' for c in binding.content_sha256)):
+                        raise SourceValidationError('Invalid source artifact projection binding')
+                    parse_artifact_reference('artifact:' + binding.artifact_id)
                 source_ids.add(node.event_id)
             elif isinstance(node, RuntimeNode):
                 if not node.node_id or node.node_id in runtime_ids:

@@ -24,9 +24,19 @@ from nanobot.utils.helpers import content_with_media_breadcrumbs
 
 
 @dataclass(frozen=True)
+class ArtifactProjectionBinding:
+    artifact_id: str
+    event_id: str
+    execution_id: str
+    content_sha256: str
+    block_index: None = None
+
+
+@dataclass(frozen=True)
 class SourceNode:
     event_id: str
     message: dict[str, Any]
+    artifact: ArtifactProjectionBinding | None = None
 
 
 @dataclass(frozen=True)

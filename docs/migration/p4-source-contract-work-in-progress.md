@@ -797,3 +797,22 @@ reference dependencies and whole-migration acceptance remain pending.
 Read-only review accepted the correction bundle and independently passed 32
 focused artifact/retrieval tests. This accepts the explicit-factory retrieval
 package only; the production migration guard remains enabled.
+
+### Automatic main-request offloading with an admitted factory
+
+Large attested scalar results now become typed, verified reference projections
+before pressure preparation while canonical text remains inline. The actual
+engine test covers two large reads sharing a provider call ID, distinct artifact
+identities, bounded previews, retrieval without recursive publication, unchanged
+canonical prefix and restart reuse without any descriptor publication. Focused
+checks cover stable revisions, runtime retry notes, no-tools inline fallback and
+hard budget failure, storage corruption, policy revocation, stale CAS, owner loss
+and canonical summary evidence. Reference-aware summaries remain blocked by an
+explicit trusted-retrieval dependency guard; configuration defaults, general-tool
+adapters, grants and whole-migration activation remain pending.
+Final validation: 643 combined session, source-engine, artifact, filesystem,
+pressure/publication and runner tool tests passed with network denied; two
+existing guarded plugin fixtures remain deselected, not waived. Scoped Ruff and
+diff checks passed. Read-only review independently passed 98 focused tests and
+accepted this bounded package. A final canonical-order regression also passes.
+The production migration guard remains enabled.

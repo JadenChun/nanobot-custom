@@ -92,7 +92,10 @@ class SourceCompactionCandidate:
             raise SourceValidationError('Evidence must start at a closed eligible boundary')
         if start >= boundary:
             raise SourceValidationError('Evidence chunk must advance its boundary')
-        return source_nodes(self._events()[start:boundary], stream_id=self.stream_id)
+        evidence = self._events()[start:boundary]
+        if any('_artifact_read' in event for event in evidence):
+            raise SourceValidationError('Artifact retrieval summary dependencies are not implemented')
+        return source_nodes(evidence, stream_id=self.stream_id)
 
     def _require_boundary(self, boundary: int) -> None:
         if type(boundary) is not int or boundary not in self.boundaries:

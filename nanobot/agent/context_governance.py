@@ -37,10 +37,11 @@ from nanobot.runtime_context import (
     detach_runtime_context,
     reattach_runtime_context,
 )
+from nanobot.session.artifact_projection import ArtifactProjector
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.source import SourceValidationError, prefix_digest
 from nanobot.session.source_compaction import SourceCompactionCandidate
-from nanobot.session.source_projection import CheckpointNode, RuntimeNode
+from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode
 from nanobot.session.source_request import SourceTranscript
 from nanobot.session.summary import (
     SUMMARY_CONTINUATION_TEXT,
@@ -246,12 +247,53 @@ class ModelRequestState:
     source: SourceRequestLedger | None = None
     source_view: SourceTranscript | None = None
     source_compaction: SourceCompactionState | None = None
+    artifact_projector: ArtifactProjector | None = None
     provider_compaction_applied: bool = False
     events: EventSink = NO_EVENTS
 
 
 class ContextGovernor:
     """Own model-request context while preserving persisted history."""
+
+    @staticmethod
+    def project_source_artifacts(state: ModelRequestState, view: SourceTranscript, *,
+                                 tool_definitions: list[dict[str, Any]] | None) -> SourceTranscript:
+        from nanobot.agent.tools.artifact import ReadArtifactTool
+
+        source, compaction = state.source, state.source_compaction
+        if source is None or compaction is None:
+            return view
+        tool = state.config.tools.get('read_artifact')
+        if state.artifact_projector is None and type(tool) is ReadArtifactTool:
+            if tool.reader.writer is not compaction.writer:
+                raise SourceValidationError('Artifact projector does not match source invocation')
+            state.artifact_projector = ArtifactProjector(tool.reader)
+        projector = state.artifact_projector
+        if projector is None:
+            if any(isinstance(node, SourceNode) and node.artifact is not None for node in view.nodes):
+                raise SourceValidationError('Artifact projection lacks admitted verifier')
+            return view
+        if source.has_pending_requests:
+            raise SourceValidationError('Cannot offload with an outstanding request ticket')
+        notes = source.validate_view(view)
+        active, epoch = source.transcript, source.projection_epoch
+        if compaction.raw_messages != active.messages():
+            raise SourceValidationError('Artifact projection differs from runner transcript')
+        enabled = (type(tool) is ReadArtifactTool and tool.reader is projector.reader and any(
+            definition.get('type') == 'function'
+            and definition.get('function', {}).get('name') == 'read_artifact'
+            for definition in tool_definitions or []))
+        updated = projector.prepare(active, enabled=enabled)
+        source.validate_transcript(updated)
+        if (source.has_pending_requests or source.projection_epoch != epoch or source.transcript != active
+                or compaction.raw_messages != active.messages()):
+            raise SourceValidationError('Source projection changed during artifact publication')
+        if updated != active:
+            source.replace_projection(updated)
+            compaction.raw_messages[:] = updated.messages()
+            state.usage = None
+            state.conversation.replace_transcript(compaction.raw_messages)
+        return updated.with_runtime(*notes)
 
     @staticmethod
     def capture_source_compaction(state: ModelRequestState, view: SourceTranscript, *,
@@ -843,9 +885,12 @@ class ContextGovernor:
             elif source_view is not None:
                 raise SourceValidationError('Source view requires an active source ledger')
             if source_view is not None:
+                source_view = self.project_source_artifacts(state, source_view, tool_definitions=tool_definitions)
                 source_view = await self.compact_source_request(state, source_view, tool_definitions=tool_definitions)
                 messages = source_view.messages()
             prepared = self.ensure_request_fits(state.config, deepcopy(messages), tool_definitions=tool_definitions)
+            if state.source_compaction is not None:
+                state.source_compaction.writer.owner.validate_dispatch()
             state.source_view = deepcopy(source_view)
             state.messages = deepcopy(prepared)
             state.tool_definitions = deepcopy(tool_definitions)
