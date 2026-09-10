@@ -1,17 +1,19 @@
 """Tests for FallbackProvider."""
 
+from types import SimpleNamespace
+
 import pytest
 
-from nanobot.providers import fallback_provider as fallback_module
+from nanobot.providers import legacy_fallback_provider as fallback_module
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
-from nanobot.providers.fallback_provider import FallbackProvider
+from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
 
 
 class ScriptedProvider(LLMProvider):
     """A provider that returns pre-scripted responses, tracking calls."""
 
     def __init__(self, responses: list[LLMResponse]) -> None:
-        super().__init__()
+        super().__init__(provider_name="fixture")
         self._responses = list(responses)
         self.calls = 0
         self.last_model: str | None = None
@@ -32,7 +34,22 @@ class ScriptedProvider(LLMProvider):
         return self._responses.pop(0)
 
     def get_default_model(self) -> str:
-        return "scripted-model"
+        return getattr(self, "configured_model", "scripted-model")
+
+
+def make_legacy_fallback(candidates):
+    """Express staging candidates through the migrated preset/factory boundary."""
+    if not candidates:
+        raise ValueError("at least one provider")
+    for leaf, model in candidates:
+        leaf.configured_model = model
+    primary = candidates[0][0]
+    if len(candidates) == 1:
+        return primary
+    presets = [SimpleNamespace(model=model, context_window_tokens=8192)
+               for _, model in candidates[1:]]
+    return LegacyFallbackProvider(primary, presets,
+        lambda preset: candidates[presets.index(preset) + 1][0])
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +63,7 @@ async def test_primary_succeeds_no_fallback() -> None:
     primary = ScriptedProvider([LLMResponse(content="ok")])
     fallback = ScriptedProvider([LLMResponse(content="fallback")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
 
@@ -66,7 +83,7 @@ async def test_fallback_on_quota_exhaustion() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="fallback ok")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
 
@@ -84,7 +101,7 @@ async def test_fallback_on_402_payment_required() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="ok")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
 
@@ -101,7 +118,7 @@ async def test_fallback_on_insufficient_quota() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="ok")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
 
@@ -120,7 +137,7 @@ async def test_fallback_on_rate_limit() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="ok")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
 
@@ -137,7 +154,7 @@ async def test_no_fallback_on_non_quota_error() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="fallback")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
 
@@ -157,7 +174,7 @@ async def test_all_providers_exhausted() -> None:
         LLMResponse(content="Error: quota exceeded on fallback", finish_reason="error"),
     ])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
 
@@ -180,7 +197,7 @@ async def test_model_override_per_provider() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="ok")])
 
-    provider = FallbackProvider([
+    provider = make_legacy_fallback([
         (primary, "qwen/qwen3-235b-a22b:free"),
         (fallback, "gemini-2.5-flash"),
     ])
@@ -196,7 +213,7 @@ async def test_explicit_model_overrides_provider_model() -> None:
     """An explicit model= kwarg overrides the per-provider model."""
     primary = ScriptedProvider([LLMResponse(content="ok")])
 
-    provider = FallbackProvider([(primary, "default-model")])
+    provider = make_legacy_fallback([(primary, "default-model")])
 
     await provider.chat_with_retry(
         messages=[{"role": "user", "content": "hi"}],
@@ -214,7 +231,7 @@ async def test_explicit_model_only_applies_to_primary_provider() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="ok")])
 
-    provider = FallbackProvider([(primary, "primary-default"), (fallback, "fallback-model")])
+    provider = make_legacy_fallback([(primary, "primary-default"), (fallback, "fallback-model")])
 
     await provider.chat_with_retry(
         messages=[{"role": "user", "content": "hi"}],
@@ -238,7 +255,7 @@ async def test_streaming_fallback_on_quota_exhaustion() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="streamed ok")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_stream_with_retry(
         messages=[{"role": "user", "content": "hi"}],
@@ -261,7 +278,7 @@ async def test_streaming_fallback_on_rate_limit() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="streamed ok")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_stream_with_retry(
         messages=[{"role": "user", "content": "hi"}],
@@ -280,7 +297,7 @@ async def test_streaming_no_fallback_on_non_quota_error() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="fallback")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_stream_with_retry(
         messages=[{"role": "user", "content": "hi"}],
@@ -298,7 +315,7 @@ async def test_streaming_explicit_model_only_applies_to_primary_provider() -> No
     ])
     fallback = ScriptedProvider([LLMResponse(content="streamed ok")])
 
-    provider = FallbackProvider([(primary, "primary-default"), (fallback, "fallback-model")])
+    provider = make_legacy_fallback([(primary, "primary-default"), (fallback, "fallback-model")])
 
     await provider.chat_stream_with_retry(
         messages=[{"role": "user", "content": "hi"}],
@@ -320,7 +337,7 @@ async def test_generation_settings_propagation() -> None:
     primary = ScriptedProvider([LLMResponse(content="ok")])
     fallback = ScriptedProvider([LLMResponse(content="ok")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
     gen = GenerationSettings(temperature=0.2, max_tokens=512, reasoning_effort="high")
     provider.generation = gen
 
@@ -341,7 +358,7 @@ async def test_single_provider_no_fallback_available() -> None:
         LLMResponse(content="Error: out of quota", finish_reason="error"),
     ])
 
-    provider = FallbackProvider([(primary, "model-a")])
+    provider = make_legacy_fallback([(primary, "model-a")])
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
 
@@ -360,7 +377,7 @@ async def test_three_provider_chain() -> None:
     ])
     p3 = ScriptedProvider([LLMResponse(content="third time's the charm")])
 
-    provider = FallbackProvider([
+    provider = make_legacy_fallback([
         (p1, "model-1"), (p2, "model-2"), (p3, "model-3"),
     ])
 
@@ -372,10 +389,10 @@ async def test_three_provider_chain() -> None:
     assert p3.calls == 1
 
 
-def test_empty_provider_list_raises() -> None:
-    """FallbackProvider requires at least one provider."""
-    with pytest.raises(ValueError, match="at least one provider"):
-        FallbackProvider([])
+def test_empty_fallback_candidates_raise() -> None:
+    """A single provider uses a leaf; the legacy adapter requires fallbacks."""
+    with pytest.raises(ValueError, match="at least one fallback candidate"):
+        LegacyFallbackProvider(ScriptedProvider([]), [], lambda preset: ScriptedProvider([]))
 
 
 @pytest.mark.asyncio
@@ -384,7 +401,7 @@ async def test_get_default_model() -> None:
     primary = ScriptedProvider([])
     fallback = ScriptedProvider([])
 
-    provider = FallbackProvider([(primary, "primary-model"), (fallback, "fallback-model")])
+    provider = make_legacy_fallback([(primary, "primary-model"), (fallback, "fallback-model")])
 
     assert provider.get_default_model() == "primary-model"
 
@@ -408,7 +425,7 @@ async def test_billing_address_message_does_not_trigger_fallback() -> None:
     ])
     fallback = ScriptedProvider([LLMResponse(content="fallback")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
 
@@ -422,7 +439,7 @@ class StreamingScriptedProvider(LLMProvider):
     """A provider whose chat_stream_with_retry delivers content then errors."""
 
     def __init__(self, delta_text: str, error_response: LLMResponse) -> None:
-        super().__init__()
+        super().__init__(provider_name="fixture")
         self._delta_text = delta_text
         self._error_response = error_response
         self.stream_calls = 0
@@ -437,7 +454,7 @@ class StreamingScriptedProvider(LLMProvider):
         return self._error_response
 
     def get_default_model(self) -> str:
-        return "streaming-scripted"
+        return getattr(self, "configured_model", "streaming-scripted")
 
 
 @pytest.mark.asyncio
@@ -453,7 +470,7 @@ async def test_streaming_does_not_fall_back_after_partial_delivery() -> None:
     )
     fallback = ScriptedProvider([LLMResponse(content="fallback content")])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     deltas: list[str] = []
 
@@ -474,7 +491,7 @@ async def test_streaming_does_not_fall_back_after_partial_delivery() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Provider-level 12h quota cooldown
+# Provider-level five-minute quota cooldown
 # ---------------------------------------------------------------------------
 
 
@@ -496,14 +513,14 @@ async def test_provider_level_cooldown_skips_exhausted_primary(monkeypatch: pyte
         LLMResponse(content="fallback ok 2"),
     ])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     first = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
     assert first.content == "fallback ok 1"
     assert primary.calls == 1
     assert fallback.calls == 1
 
-    # Move clock forward but stay inside the 12h window.
+    # Move clock forward but stay inside the five-minute window.
     clock["now"] += 60.0
     second = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
     assert second.content == "fallback ok 2"
@@ -514,7 +531,7 @@ async def test_provider_level_cooldown_skips_exhausted_primary(monkeypatch: pyte
 
 @pytest.mark.asyncio
 async def test_provider_cooldown_expires_and_probes_primary(monkeypatch: pytest.MonkeyPatch) -> None:
-    """After the 12h cooldown window expires, primary is probed again, and
+    """After the five-minute cooldown window expires, primary is probed again, and
     on success its cooldown is cleared."""
     clock = {"now": 1000.0}
     monkeypatch.setattr(fallback_module.time, "monotonic", lambda: clock["now"])
@@ -527,20 +544,20 @@ async def test_provider_cooldown_expires_and_probes_primary(monkeypatch: pytest.
         LLMResponse(content="fallback ok"),
     ])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     first = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
     assert first.content == "fallback ok"
     assert primary.calls == 1
-    assert provider._provider_retry_after[0] > 0.0
+    assert provider._cooldowns[0] == clock["now"] + 300.0
 
-    # Jump past the 12h cooldown window.
-    clock["now"] += FallbackProvider._PROVIDER_QUOTA_COOLDOWN_S + 1.0
+    # Jump past the five-minute cooldown window.
+    clock["now"] += 300.0 + 1.0
     second = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
     assert second.content == "primary back online"
     assert primary.calls == 2
     # Success on the probe must clear the cooldown.
-    assert provider._provider_retry_after[0] == 0.0
+    assert provider._cooldowns[0] == 0.0
 
 
 @pytest.mark.asyncio
@@ -558,18 +575,18 @@ async def test_all_providers_cooling_still_attempts_probe(monkeypatch: pytest.Mo
         LLMResponse(content="Error: out of quota on fallback", finish_reason="error"),
     ])
 
-    provider = FallbackProvider([(primary, "model-a"), (fallback, "model-b")])
+    provider = make_legacy_fallback([(primary, "model-a"), (fallback, "model-b")])
 
     # First call: both providers quota-exhaust — both get cooldown.
     first = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
     assert first.finish_reason == "error"
-    assert provider._provider_retry_after[0] > 0.0
-    assert provider._provider_retry_after[1] > 0.0
+    assert provider._cooldowns[0] == clock["now"] + 300.0
+    assert provider._cooldowns[1] == clock["now"] + 300.0
 
     # Advance past both cooldowns. The second call should probe primary first
     # (it has earlier expiry — both set at the same clock value so ties go by
     # list order) and succeed.
-    clock["now"] += FallbackProvider._PROVIDER_QUOTA_COOLDOWN_S + 1.0
+    clock["now"] += 300.0 + 1.0
     second = await provider.chat_with_retry(messages=[{"role": "user", "content": "hi"}])
     assert second.content == "primary recovered on probe"
     assert primary.calls == 2
