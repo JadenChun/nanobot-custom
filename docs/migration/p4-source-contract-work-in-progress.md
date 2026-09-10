@@ -654,3 +654,44 @@ this publication method. Their usage/call accounting, cancellation handling and
 actual-engine pressure/retry acceptance are the next integration. Production
 activation, offloading, provider-state enablement and whole-migration acceptance
 remain guarded and incomplete.
+
+### Automatic source pressure compaction
+
+The existing governor now invokes source compaction at 90% of available input
+capacity, targets 60%, and retains the hard request guard. It sizes auxiliary
+output against the rebuilt policy/tools/pin/runtime/suffix payload, capped at 2,048
+tokens. Exact summary-message construction is shared with the bounded
+Consolidator operation so auxiliary preflight measures the actual payload.
+
+Before spending auxiliary calls, the governor checks every indivisible closed
+group in the intended prefix for feasibility. It then chooses the largest fitting
+closed disjoint chunk, folds the preceding summary, checks each folded payload,
+and makes at most four sequential calls per attempt. A fitting partial projection
+may publish after that cap; 60% is a soft target, while the hard budget must pass.
+No eligible evidence leaves the prior view subject to the hard guard. Invalid
+summaries, cancellation, infeasible chunks, oversized rebuilt requests, and stale
+CAS do not publish a candidate or initiate a main transport from this method.
+
+Each attempt retains content-free scope, boundary, before/after estimates, calls,
+known usage, explicit unknown-usage status, latency and outcome. Debug telemetry
+contains those metrics only. Root checkpoint usage is null if any auxiliary call
+has unknown usage; known partial counts remain in attempt metrics. Summary calls
+continue through the provider observer. These metrics are not yet integrated into
+all outer run-result/UI cost displays, which remain a reporting qualification gap.
+
+Tests exercise disjoint multi-call summaries, root/local publication, the four-call
+cap with an oversized remainder, mixed known/unknown usage, repeated compaction in
+one invocation, invalid output, cancellation, metadata drift, oversized fixed
+requests, and a fitting early group followed by an impossible group with zero
+auxiliary calls. An actual-engine test verifies pressure-triggered generation,
+root publication, unchanged canonical prefixes, exact current-user retention, and
+restart reuse with no extra summary call. Independent review found and corrected
+the advance feasibility gap and accepted the slice after 44 pressure/engine tests.
+The subsequent unknown-usage/repeated-compaction regressions pass in the 10-test
+focused pressure suite. The combined selection passes 537 tests with the same two
+guarded plugin fixtures deselected; scoped Ruff and diff checks pass.
+
+Production activation remains guarded. Actual-engine local/retry pressure stress,
+transport-finalized budgeting, factual summary quality/performance qualification,
+outer usage reporting, offloading, provider-state coordination, idle/command and
+source-injection parity, and remaining whole-migration acceptance are unfinished.

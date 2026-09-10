@@ -11,9 +11,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
@@ -199,6 +200,19 @@ class ContextCompactionState:
 
 
 @dataclass(slots=True)
+class SourceCompactionMetrics:
+    scope: str
+    before_tokens: int
+    boundary: int = 0
+    after_tokens: int | None = None
+    calls: int = 0
+    usage: LLMUsage | None = None
+    usage_unknown: bool = False
+    status: str = 'started'
+    latency_ms: int = 0
+
+
+@dataclass(slots=True)
 class SourceCompactionState:
     """Invocation-owned publication state; local scopes never write root metadata."""
 
@@ -208,6 +222,7 @@ class SourceCompactionState:
     stream_id: str | None
     local_boundary: int = 0
     local_checkpoint: CheckpointNode | None = None
+    attempts: list[SourceCompactionMetrics] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -322,6 +337,120 @@ class ContextGovernor:
         state.usage = None
         state.conversation.replace_transcript(compaction.raw_messages)
         return view
+
+    async def compact_source_request(self, state: ModelRequestState, view: SourceTranscript, *,
+                                     tool_definitions: list[dict[str, Any]] | None) -> SourceTranscript:
+        """Summarize eligible closed source chunks at 90% pressure, targeting 60%."""
+        from nanobot.agent.memory import Consolidator
+
+        compaction = state.source_compaction
+        budget = self.input_budget(state.config)
+        if compaction is None or not state.config.context_window_tokens or budget <= 0:
+            return view
+        estimated, _ = estimate_prompt_tokens_chain(state.config.provider, state.config.model,
+                                                     view.messages(), tool_definitions)
+        if estimated < budget * 0.9:
+            return view
+        attempt = self.capture_source_compaction(state, view, tool_definitions=tool_definitions)
+        candidate = attempt.candidate
+        if not candidate.boundaries:
+            return view  # The caller still enforces the hard limit before transport.
+        final_boundary = candidate.boundaries[-1]
+        if not candidate.evidence(final_boundary):
+            return view
+        target = int(budget * 0.6)
+        preview = candidate.rebuild(final_boundary, CheckpointNode('preview', 'x')).with_runtime(*attempt.request_notes)
+        fixed_tokens, _ = estimate_prompt_tokens_chain(state.config.provider, state.config.model,
+                                                        preview.messages(), tool_definitions)
+        if fixed_tokens >= budget:
+            self.ensure_request_fits(state.config, preview.messages(), tool_definitions=tool_definitions)
+            raise SourceValidationError('No room for a bounded source summary')
+        allowance = min(2048, max(1, (target if fixed_tokens < target else budget) - fixed_tokens))
+        # Reject impossible indivisible groups across the intended prefix before
+        # spending any auxiliary calls on an earlier fitting group. Folded
+        # payloads are still checked exactly before every actual call.
+        group_start = candidate.previous_boundary
+        for boundary in candidate.boundaries:
+            rows = [node.message for node in candidate.evidence(boundary, after=group_start)]
+            if not rows:
+                continue
+            payload = Consolidator.source_summary_messages(rows, None)
+            tokens, _ = estimate_prompt_tokens_chain(compaction.runtime.provider,
+                compaction.runtime.model, payload, None)
+            if tokens + allowance + SNIP_SAFETY_BUFFER > compaction.runtime.context_window_tokens:
+                raise SourceValidationError('Indivisible source group exceeds auxiliary budget')
+            group_start = boundary
+        metrics = SourceCompactionMetrics('root' if candidate.stream_id is None else 'local', estimated)
+        compaction.attempts.append(metrics)
+        started = monotonic()
+        compaction_id = uuid4().hex
+        cursor = candidate.previous_boundary
+        summary = candidate.previous_checkpoint.summary if candidate.previous_checkpoint is not None else None
+        try:
+            await state.events.emit(ContextCompactionEvent(compaction_id=compaction_id, phase='started'))
+            for _ in range(4):
+                chosen = None
+                evidence = None
+                # Search exact closed chunks, without truncating an indivisible
+                # tool group or folding covered pin text into evidence again.
+                for boundary in reversed(candidate.boundaries):
+                    if boundary <= cursor:
+                        continue
+                    rows = [node.message for node in candidate.evidence(boundary, after=cursor)]
+                    if not rows:
+                        continue
+                    payload = Consolidator.source_summary_messages(rows, summary)
+                    tokens, _ = estimate_prompt_tokens_chain(compaction.runtime.provider,
+                        compaction.runtime.model, payload, None)
+                    if tokens + allowance + SNIP_SAFETY_BUFFER <= compaction.runtime.context_window_tokens:
+                        chosen, evidence = boundary, rows
+                        break
+                if chosen is None or evidence is None:
+                    raise SourceValidationError('Eligible source chunk exceeds auxiliary budget')
+                compaction.writer.owner.validate_dispatch()
+                try:
+                    result = await Consolidator.summarize_source_chunk(evidence, summary,
+                        runtime=compaction.runtime, max_output_tokens=allowance)
+                except BaseException:
+                    metrics.calls += 1
+                    metrics.usage_unknown = True
+                    raise
+                metrics.calls += result.calls
+                if result.calls and result.usage is None:
+                    metrics.usage_unknown = True
+                if result.usage is not None:
+                    metrics.usage = result.usage if metrics.usage is None else metrics.usage + result.usage
+                if result.summary is None or result.status != 'complete':
+                    raise SourceValidationError('Bounded source summary failed: ' + result.status)
+                summary, cursor = result.summary, chosen
+                metrics.boundary = cursor
+                rebuilt = candidate.rebuild(cursor, CheckpointNode('preview', summary)).with_runtime(*attempt.request_notes)
+                metrics.after_tokens, _ = estimate_prompt_tokens_chain(state.config.provider,
+                    state.config.model, rebuilt.messages(), tool_definitions)
+                if metrics.after_tokens <= target or cursor == final_boundary:
+                    break
+            if summary is None or cursor == candidate.previous_boundary:
+                raise SourceValidationError('No source compaction progress')
+            usage = None if metrics.usage_unknown or metrics.usage is None else {
+                key: value for key, value in metrics.usage.to_dict().items() if type(value) is int
+            }
+            published = self.publish_source_compaction(state, attempt, boundary=cursor,
+                                                      summary=summary, auxiliary_usage=usage)
+            metrics.status = 'succeeded'
+        except BaseException as exc:
+            metrics.status = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'
+            await state.events.emit(ContextCompactionEvent(compaction_id=compaction_id,
+                phase='cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'))
+            raise
+        finally:
+            metrics.latency_ms = max(0, int((monotonic() - started) * 1000))
+            logger.debug('Source compaction scope={} status={} boundary={} before_tokens={} '
+                'after_tokens={} calls={} known_tokens={} usage_unknown={} latency_ms={}',
+                metrics.scope, metrics.status, metrics.boundary, metrics.before_tokens,
+                metrics.after_tokens, metrics.calls, metrics.usage.total_tokens if metrics.usage else None,
+                metrics.usage_unknown, metrics.latency_ms)
+        await state.events.emit(ContextCompactionEvent(compaction_id=compaction_id, phase='succeeded'))
+        return published
 
     @staticmethod
     def _merge_message_content(left: Any, right: Any) -> str | list[dict[str, Any]]:
@@ -713,6 +842,9 @@ class ContextGovernor:
                     raise SourceValidationError('Model request differs from bound source projection')
             elif source_view is not None:
                 raise SourceValidationError('Source view requires an active source ledger')
+            if source_view is not None:
+                source_view = await self.compact_source_request(state, source_view, tool_definitions=tool_definitions)
+                messages = source_view.messages()
             prepared = self.ensure_request_fits(state.config, deepcopy(messages), tool_definitions=tool_definitions)
             state.source_view = deepcopy(source_view)
             state.messages = deepcopy(prepared)

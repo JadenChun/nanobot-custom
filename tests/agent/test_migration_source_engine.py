@@ -681,3 +681,63 @@ async def test_source_compaction_scope_and_live_transcript_follow_admission(engi
         assert scopes[0][1] != scopes[1][1]
     finally:
         await loop.aclose()
+
+
+async def test_real_pressure_compaction_publishes_checkpoint_and_reuses_after_restart(engine_config, monkeypatch):
+    from nanobot.providers.base import LLMUsage
+
+    class PressureProvider(ScriptedProvider):
+        def estimate_prompt_tokens(self, messages, tools, model):
+            auxiliary = messages[0]['content'].startswith('Summarize historical evidence')
+            return ((100 if auxiliary else 5000) + str(messages).count('old_fact'), 'fixture')
+
+    engine_config.agents.defaults.context_window_tokens = 12000
+    engine_config.agents.defaults.max_tokens = 256
+    provider = PressureProvider([
+        LLMResponse(content='old_fact ' * 5000),
+        LLMResponse(content='retained historical facts', usage=LLMUsage(
+            input_tokens=50, output_tokens=4, total_tokens=54, reported_tokens=54)),
+        LLMResponse(content='new answer'),
+    ])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop)
+    states = []
+    prepare = loop.runner.context_governor.prepare_request
+
+    async def observe(state, messages, **kwargs):
+        states.append(state)
+        result = await prepare(state, messages, **kwargs)
+        assert state.source_compaction.raw_messages == state.source.transcript.messages()
+        return result
+
+    monkeypatch.setattr(loop.runner.context_governor, 'prepare_request', observe)
+    try:
+        first = await loop.execute_turn(TurnRequest(content='old objective', session_key='cli:source'))
+        assert first.error is None, first.error
+        prefix = backend.source.load_source_snapshot('cli:source').events
+        second = await loop.execute_turn(TurnRequest(content='current objective', session_key='cli:source'))
+        assert second.error is None, second.error
+        assert second.content == 'new answer'
+        assert len(provider.calls) == 3
+        assert 'old_fact' in str(provider.calls[1][0])  # Auxiliary canonical evidence.
+        assert 'old_fact' not in str(provider.calls[2][0])
+        assert [row['content'] for row in provider.calls[2][0] if row['role'] == 'user'] == ['current objective']
+        assert 'retained historical facts' not in provider.calls[2][0][0]['content']
+        saved = backend.source.load_source_snapshot('cli:source')
+        assert saved.events[:len(prefix)] == prefix and len(saved.events) == 4
+        assert saved.checkpoint['summary'] == 'retained historical facts'
+        assert saved.checkpoint['auxiliary_usage']['total_tokens'] == 54
+        assert states[-1].source_compaction.attempts[-1].calls == 1
+        assert not states[-1].source.has_pending_requests
+    finally:
+        await loop.aclose()
+    restarted_provider = PressureProvider([LLMResponse(content='resumed')])
+    restarted = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=restarted_provider)
+    try:
+        result = await restarted.execute_turn(TurnRequest(content='next objective', session_key='cli:source'))
+        assert result.error is None, result.error
+        assert result.content == 'resumed' and len(restarted_provider.calls) == 1
+        rows = restarted_provider.calls[0][0]
+        assert 'retained historical facts' in str(rows) and 'old_fact' not in str(rows)
+    finally:
+        await restarted.aclose()
