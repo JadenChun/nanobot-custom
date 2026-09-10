@@ -585,3 +585,73 @@ async def test_real_source_turn_reuses_scoped_checkpoint_after_restart(engine_co
         assert len(provider.calls) == 2  # Reuse performs no auxiliary model request.
     finally:
         await loop.aclose()
+
+
+@pytest.mark.parametrize('replace_at', [0, 1, 2])
+async def test_source_tickets_follow_governor_resulting_view(engine_config, monkeypatch, replace_at):
+    from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode
+    from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
+
+    def malformed(text):
+        return LLMResponse(content=text, finish_reason='tool_calls',
+            tool_calls=[ToolCallRequest(id='bad', name='', arguments={})])
+
+    provider = ScriptedProvider([malformed('first'), malformed('second'), LLMResponse(content='done')])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop)
+    prepare = loop.runner.context_governor.prepare_request
+    issued = []
+    issue = SourceRequestLedger.issue
+    calls = 0
+    observed_state = []
+    resulting_views = []
+
+    def observe_ticket(ledger, view):
+        ticket = issue(ledger, view)
+        issued.append(ticket)
+        return ticket
+
+    async def replace_projection(state, messages, **kwargs):
+        nonlocal calls
+        view = kwargs['source_view']
+        notes = state.source.validate_view(view)
+        # A synthetic publication isolates the runner/governor view handoff.
+        # Durable checkpoint generation/CAS is tested by its own integration.
+        if calls == replace_at:
+            active = state.source.transcript
+            nodes = list(active.nodes)
+            insertion = next(i for i, node in enumerate(nodes) if isinstance(node, SourceNode))
+            nodes.insert(insertion, CheckpointNode('replacement', 'historical facts'))
+            state.source.replace_projection(SourceTranscript(tuple(nodes)))
+            if kwargs['transcript'] is not None:
+                kwargs['transcript'][:] = state.source.transcript.messages()
+            view = state.source.transcript.with_runtime(*notes)
+            messages = view.messages()
+            kwargs['source_view'] = view
+        calls += 1
+        observed_state.append(state)
+        result = await prepare(state, messages, **kwargs)
+        assert state.source_view == view
+        resulting_views.append(view)
+        assert all(isinstance(node, RuntimeNode) for node in notes)
+        return result
+
+    monkeypatch.setattr(SourceRequestLedger, 'issue', observe_ticket)
+    monkeypatch.setattr(loop.runner.context_governor, 'prepare_request', replace_projection)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='request', session_key='cli:source'))
+        assert result.error is None, result.error
+        assert result.content == 'done'
+        assert calls == len(issued) == len(provider.calls) == 3
+        assert [ticket.checkpoint_id for ticket in issued] == [
+            None if index < replace_at else 'replacement' for index in range(3)]
+        state = observed_state[-1]
+        assert not state.source._pending
+        assert sum(isinstance(node, RuntimeNode) for node in state.source.transcript.nodes) == 1
+        assert sum(isinstance(node, RuntimeNode) for node in state.source_view.nodes) == 3
+        assert [view.messages() for view in resulting_views] == [call[0] for call in provider.calls]
+        events = backend.source.load_source_snapshot('cli:source').events
+        assert [event['content'] for event in events] == ['request', 'first', 'second', 'done']
+        assert state.source.eligible_ids == {events[0]['_event_id']}
+    finally:
+        await loop.aclose()

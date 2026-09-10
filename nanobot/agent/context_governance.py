@@ -37,6 +37,7 @@ from nanobot.runtime_context import (
     reattach_runtime_context,
 )
 from nanobot.session.history_visibility import is_hidden_history_message
+from nanobot.session.source import SourceValidationError
 from nanobot.session.summary import (
     SUMMARY_CONTINUATION_TEXT,
     SessionSummaryCheckpoint,
@@ -589,10 +590,19 @@ class ContextGovernor:
         *,
         tool_definitions: list[dict[str, Any]] | None,
         transcript: list[dict[str, Any]] | None = None,
+        source_view: SourceTranscript | None = None,
     ) -> tuple[list[dict[str, Any]], ProviderCallContext | None]:
         """Prepare, compact or fit, and record the exact provider payload."""
         if state.config.preserve_source:
+            if state.source is not None:
+                source_view = source_view or state.source.transcript
+                state.source.validate_view(source_view)
+                if source_view.messages() != messages:
+                    raise SourceValidationError('Model request differs from bound source projection')
+            elif source_view is not None:
+                raise SourceValidationError('Source view requires an active source ledger')
             prepared = self.ensure_request_fits(state.config, deepcopy(messages), tool_definitions=tool_definitions)
+            state.source_view = deepcopy(source_view)
             state.messages = deepcopy(prepared)
             state.tool_definitions = deepcopy(tool_definitions)
             # Source checkpoints have not yet been wired into provider state.

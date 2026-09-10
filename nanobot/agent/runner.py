@@ -1056,10 +1056,11 @@ class AgentRunner:
             messages,
             tool_definitions=tool_definitions,
             transcript=transcript,
+            source_view=source_view,
         )
+        source_view = self._source_view(request_state, messages, request_state.source_view)
 
         ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
-        request_state.source_view = source_view
         kwargs = self._build_request_kwargs(
             spec,
             messages,
@@ -1450,9 +1451,10 @@ class AgentRunner:
             messages,
             tool_definitions=None,
             transcript=transcript,
+            source_view=source_view,
         )
+        source_view = self._source_view(request_state, messages, request_state.source_view)
         ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
-        request_state.source_view = source_view
         kwargs = self._build_request_kwargs(
             spec,
             messages,

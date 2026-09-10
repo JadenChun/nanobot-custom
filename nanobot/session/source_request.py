@@ -91,15 +91,23 @@ class SourceRequestLedger:
         self._transcript = SourceTranscript((*self._transcript.nodes, node))
         return deepcopy(node)
 
-    def issue(self, view: SourceTranscript) -> SourceRequestTicket:
-        """Capture the exact validated view; extensions may contain runtime nodes only."""
+    def validate_view(self, view: SourceTranscript) -> tuple[RuntimeNode, ...]:
+        """Validate without issuing/acknowledging; return detached request-only notes."""
         self._validate(view)
         # Equality detects unauthorized edits; identities come from explicit
         # nodes, never from matching message content or transcript positions.
         if view.nodes[:len(self._transcript.nodes)] != self._transcript.nodes:
             raise SourceValidationError('Request view changed the active projection')
-        if any(not isinstance(node, RuntimeNode) for node in view.nodes[len(self._transcript.nodes):]):
-            raise SourceValidationError('Request extensions must be runtime instructions')
+        extensions = []
+        for node in view.nodes[len(self._transcript.nodes):]:
+            if not isinstance(node, RuntimeNode):
+                raise SourceValidationError('Request extensions must be runtime instructions')
+            extensions.append(deepcopy(node))
+        return tuple(extensions)
+
+    def issue(self, view: SourceTranscript) -> SourceRequestTicket:
+        """Capture the exact validated view; extensions may contain runtime nodes only."""
+        self.validate_view(view)
         ticket = SourceRequestTicket(
             uuid.uuid4().hex,
             tuple(node.event_id for node in view.nodes if isinstance(node, SourceNode)),

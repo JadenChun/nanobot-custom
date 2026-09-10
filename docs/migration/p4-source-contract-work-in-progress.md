@@ -597,3 +597,27 @@ Validation after the review correction: 505 combined session/migration/runner/
 summary tests pass, with the same two guarded plugin fixtures deselected. Scoped
 Ruff and diff checks pass. This is candidate-selection acceptance only, not
 pressure-compaction or whole-migration acceptance.
+
+### Governor resulting-view handoff
+
+The source request ledger now validates a request view without issuing a ticket or
+advancing eligibility and returns detached request-only runtime extensions. The
+source governor accepts that typed view, checks its exact rendered payload and
+active projection, and publishes the resulting view alongside prepared messages.
+Both runner transport paths issue tickets from that resulting view. Recursive
+malformed retries and the no-tools fallback therefore inherit a replacement
+projection rather than the pre-governor view.
+
+Synthetic governor-publication tests run through the real engine and replace the
+view independently at the initial, malformed retry, and no-tools request. They
+verify checkpoint identities on every ticket, exact provider payload/view parity,
+request-only retry notes, no acknowledgment of malformed output, and unchanged
+canonical response recording. They isolate the handoff contract and do not claim
+summary generation or durable publication is integrated.
+
+Independent review accepted this slice and ran 43 engine/ledger tests. The broader
+session/migration/runner/summary selection passes 509 tests with the same two
+guarded plugin fixtures deselected. Both legacy context-governance tests pass;
+scoped Ruff and diff checks pass. Pressure-triggered auxiliary generation, raw-list
+publication, strict checkpoint CAS orchestration, and all remaining migration
+acceptance work remain required. Production activation remains guarded.

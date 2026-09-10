@@ -99,3 +99,18 @@ def test_initial_eligibility_requires_explicit_source_node():
         SourceRequestLedger(SourceTranscript((source('a'),)), initial_eligible_ids=frozenset({'b'}))
     with pytest.raises(SourceValidationError):
         SourceRequestLedger(SourceTranscript((source('a'), source('a'))), initial_eligible_ids=frozenset())
+
+
+def test_view_validation_detaches_retry_notes_without_issuing_or_acknowledging():
+    state = ledger()
+    before = state.transcript
+    note = RuntimeNode('retry', {'role': 'user', 'content': 'retry only'})
+    notes = state.validate_view(before.with_runtime(note))
+    assert notes == (note,)
+    assert state.transcript == before and state.eligible_ids == {'history'}
+    assert state._pending == {}
+    notes[0].message['content'] = 'mutated'
+    assert note.message['content'] == 'retry only'
+    with pytest.raises(SourceValidationError):
+        state.validate_view(SourceTranscript((*before.nodes, source('foreign'))))
+    assert state._pending == {}
