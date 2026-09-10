@@ -62,6 +62,7 @@ from nanobot.utils.runtime import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.session.source_request import SourceTranscript
     from nanobot.session.turn_writer import SourceTurnWriter
 
 ContinuationCallback = Callable[[], str | None]
@@ -125,6 +126,8 @@ class AgentRunSpec:
     events: EventSink = NO_EVENTS
     tool_result_callback: ToolResultCallback | None = None
     source_writer: SourceTurnWriter | None = None
+    source_transcript: SourceTranscript | None = None
+    source_initial_eligible_ids: frozenset[str] = frozenset()
 
 
 @dataclass(slots=True)
@@ -387,6 +390,10 @@ class AgentRunner:
         spec: AgentRunSpec,
     ) -> tuple[list[dict[str, Any]], ContextCompactionState | None]:
         """Build the initial transcript and its optional compaction state."""
+        if spec.source_transcript is not None:
+            if spec.source_writer is None or spec.initial_messages is not None:
+                raise ValueError("Source transcript requires writer and no unbound initial messages")
+            return spec.source_transcript.messages(), None
         transcript_input = spec.transcript_input
         if transcript_input is not None:
             if spec.initial_messages is not None:

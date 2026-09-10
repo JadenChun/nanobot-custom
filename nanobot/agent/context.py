@@ -3,6 +3,7 @@
 import base64
 import mimetypes
 import platform
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
@@ -28,6 +29,8 @@ from nanobot.runtime_context import (
 from nanobot.security.workspace_access import WorkspaceScopeResolver
 from nanobot.session.keys import last_channel_from_metadata
 from nanobot.session.manager import Session
+from nanobot.session.source_projection import RuntimeNode, SourceNode
+from nanobot.session.source_request import RequestNode, SourceTranscript
 from nanobot.session.summary import SessionSummary
 from nanobot.utils.helpers import detect_image_mime, load_bundled_template
 from nanobot.utils.prompt_templates import render_template
@@ -334,6 +337,25 @@ class ContextBuilder:
         )
         messages.append(current)
         return messages
+
+    def build_source_transcript(
+        self, transcript: TranscriptInput, *, history: SourceTranscript,
+        input_event_id: str | None, channel: str | None = None,
+        workspace: Path | None = None, include_memory: bool = True,
+    ) -> SourceTranscript:
+        """Bind source identities at construction, never by message offsets."""
+        nodes: list[RequestNode] = [RuntimeNode(uuid.uuid4().hex, {
+            'role': 'system', 'content': self.build_system_prompt(
+                channel=channel, session_summary=None, workspace=workspace or self.workspace,
+                include_memory=include_memory),
+        }), *history.nodes]
+        if transcript.current_message is not None:
+            current = self.build_current_message(
+                transcript.current_message, media=list(transcript.media) if transcript.media else None,
+                current_role=transcript.current_role, runtime_context_blocks=transcript.runtime_context_blocks)
+            nodes.append(SourceNode(input_event_id, current) if input_event_id is not None
+                         else RuntimeNode(uuid.uuid4().hex, current))
+        return SourceTranscript(tuple(nodes))
 
     def build_current_message(
         self,

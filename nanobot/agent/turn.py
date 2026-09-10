@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 if TYPE_CHECKING:
     from nanobot.providers.base import LLMUsage
     from nanobot.session.execution_owner import ExecutionOwner
+    from nanobot.session.source_request import SourceTranscript
     from nanobot.session.turn_writer import SourceTurnWriter
 
 __all__ = [
@@ -366,6 +367,8 @@ class TurnContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     execution_owner: ExecutionOwner | None = field(default=None, repr=False)
     source_writer: SourceTurnWriter | None = field(default=None, repr=False)
+    source_history: SourceTranscript | None = field(default=None, repr=False)
+    source_input_event_id: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.request is not None:

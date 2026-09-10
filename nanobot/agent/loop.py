@@ -136,6 +136,8 @@ from nanobot.session.recovery import (
     restore_pending_interruption,
     restore_runtime_checkpoint,
 )
+from nanobot.session.source_projection import SourceNode, source_nodes
+from nanobot.session.source_request import SourceTranscript
 from nanobot.session.summary import (
     SessionSummary,
     SessionSummaryCheckpoint,
@@ -837,6 +839,7 @@ class AgentLoop:
                 entry = writer.append_message({**source_extra, "role": "user", "content": original,
                     **({"media": retained_media} if retained_media else {}), **automation,
                     **({"_command": True} if kwargs.get("_command") else {})})
+                trace_owner.run_context.source_input_event_id = entry["_event_id"]
                 self._capture_trace_row(trace_owner, entry, is_input=True)
                 return True
             session.add_message("user", text, **extra)
@@ -1316,8 +1319,21 @@ class AgentLoop:
                 ephemeral=ephemeral,
                 run_extra_hooks_for_ephemeral=run_extra_hooks_for_ephemeral,
             ))
+            source_transcript = None
+            if source_writer is not None:
+                if run_context.source_history is None:
+                    raise ValueError("Source run requires explicitly bound history")
+                source_transcript = self.context.build_source_transcript(
+                    transcript_input, history=run_context.source_history,
+                    input_event_id=run_context.source_input_event_id,
+                    channel=request_ctx.channel, workspace=effective_scope.project_path,
+                    include_memory=session.policy.persist if session is not None else True)
             result = await self.runner.run(AgentRunSpec(
                 initial_messages=None,
+                source_transcript=source_transcript,
+                source_initial_eligible_ids=frozenset(
+                    node.event_id for node in run_context.source_history.nodes if isinstance(node, SourceNode)
+                ) if run_context.source_history is not None else frozenset(),
                 tools=effective_tools,
                 tool_policy=tool_policy,
                 turn_context=run_context,
@@ -2329,7 +2345,9 @@ class AgentLoop:
         ctx.runtime = runtime
         if ctx.on_runtime_admitted is not None:
             await ctx.on_runtime_admitted(runtime)
-        ctx.history = [] if ctx.fresh_history else writer.project_history()[0]
+        nodes = () if ctx.fresh_history else source_nodes(writer.owner.read_snapshot().events)
+        ctx.run_context.source_history = SourceTranscript(nodes)
+        ctx.history = ctx.run_context.source_history.messages()
         ctx.pending_summary = None
         ctx.provider_state = None
         await ctx.delivery.runtime_admitted(runtime)

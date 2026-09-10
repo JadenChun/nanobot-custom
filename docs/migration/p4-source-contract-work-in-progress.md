@@ -436,3 +436,25 @@ discard the failed ticket and acknowledge only their validated replacement, neve
 a mutable shared last-ticket slot. Only then can the governor select eligible
 closed prefixes, run bounded summaries, and publish checkpoints after rebuilt
 request validation and strict source CAS. Production activation remains guarded.
+
+### Initial source transcript integration
+
+Canonical source admission now retains history nodes before writing the current
+input, and stores the current user's actual writer-returned event ID on the trusted
+run context. `ContextBuilder.build_source_transcript` constructs the system runtime
+node, explicit source history, and authorized current-user node directly. A
+synthetic unpersisted continuation is a runtime node. `AgentRunSpec` carries this
+typed transcript and explicit initially eligible history IDs; the source runner
+renders it instead of reconstructing identity from the legacy message builder.
+Delegation binds its separately persisted assignment event to its own source node.
+Fresh history includes only the current invocation's input. Checkpoint reuse is
+still disabled in this initial integration.
+
+Evidence: 318 session/source-engine/summary tests pass. Independent review ran all
+19 real source-engine tests and accepted initial binding, including distinct IDs
+for identical inputs and fresh scope. Ruff/diff checks pass. The broader migration
+and runner-tool selection has 181 passes and the same two activation-guard failures
+in entry-point plugin fixtures; neither fixture reached the changed source path.
+Response/tool/runtime append bindings, ticket issuance/acknowledgment, and pressure
+compaction remain required. This step changes initial construction only and does
+not enable migration runtime activation.

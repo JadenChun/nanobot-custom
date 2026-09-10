@@ -303,3 +303,33 @@ async def test_source_metadata_finalization_preserves_concurrent_title(engine_co
         assert backend.source.load_source_snapshot('cli:source').header['metadata']['title'] == 'concurrent title'
     finally:
         await loop.aclose()
+
+
+async def test_source_initial_transcript_binds_actual_events_and_fresh_scope(engine_config, monkeypatch):
+    from nanobot.session.source_projection import RuntimeNode, SourceNode
+
+    provider = ScriptedProvider([LLMResponse(content='first'), LLMResponse(content='second'),
+                                 LLMResponse(content='fresh')])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop)
+    captured = []
+    run = loop.runner.run
+
+    async def observe(spec):
+        captured.append(spec.source_transcript)
+        return await run(spec)
+
+    monkeypatch.setattr(loop.runner, 'run', observe)
+    try:
+        for mode in (HistoryMode.SESSION, HistoryMode.SESSION, HistoryMode.FRESH):
+            result = await loop.execute_turn(TurnRequest(content='same', session_key='cli:source', history_mode=mode))
+            assert result.error is None
+        events = backend.source.load_source_snapshot('cli:source').events
+        first, second, fresh = captured
+        assert isinstance(first.nodes[0], RuntimeNode)
+        assert [node.event_id for node in first.nodes if isinstance(node, SourceNode)] == [events[0]['_event_id']]
+        assert [node.event_id for node in second.nodes if isinstance(node, SourceNode)] == [row['_event_id'] for row in events[:3]]
+        assert [node.event_id for node in fresh.nodes if isinstance(node, SourceNode)] == [events[4]['_event_id']]
+        assert first.nodes[-1].event_id != second.nodes[-1].event_id
+    finally:
+        await loop.aclose()

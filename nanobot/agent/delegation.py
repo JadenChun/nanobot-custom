@@ -50,6 +50,8 @@ from nanobot.config.schema import (
 )
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 from nanobot.providers.base import LLMProvider
+from nanobot.session.source_projection import RuntimeNode, SourceNode
+from nanobot.session.source_request import SourceTranscript
 from nanobot.utils.llm_runtime import LLMRuntime
 
 if TYPE_CHECKING:
@@ -440,10 +442,16 @@ class ForegroundAgentManager:
                 max_tokens=max_output_tokens, reasoning_effort=reasoning_effort)
         source_writer = (turn_context.source_writer.child_stream()
                          if turn_context is not None and turn_context.source_writer is not None else None)
+        source_transcript = None
         if source_writer is not None:
-            source_writer.append_message({"role": "user", "content": assignment})
+            assignment_event = source_writer.append_message({"role": "user", "content": assignment})
+            source_transcript = SourceTranscript((
+                RuntimeNode(uuid.uuid4().hex, {"role": "system", "content": prompt}),
+                SourceNode(assignment_event['_event_id'], {"role": "user", "content": assignment}),
+            ))
         result = await (runner or self.runner).run(AgentRunSpec(
-            initial_messages=[
+            source_transcript=source_transcript,
+            initial_messages=None if source_transcript is not None else [
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": assignment},
             ],
