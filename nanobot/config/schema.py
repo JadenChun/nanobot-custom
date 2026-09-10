@@ -242,7 +242,11 @@ class AgentDefaults(Base):
             data["context_window_tokens"] = total
             data.pop("contextWindowTokens", None)
         elif legacy_input is not None:
-            data.setdefault("context_window_tokens", legacy_input)
+            # Staging gave maxInputTokens precedence over contextWindowTokens.
+            # Remove the camel-case alias before supplying the canonical field,
+            # otherwise Pydantic would prefer the stale alias over this value.
+            data.pop("contextWindowTokens", None)
+            data["context_window_tokens"] = legacy_input
         if "context_path" in data or "contextPath" in data:
             path = data.pop("context_path", data.pop("contextPath", None))
             if path:

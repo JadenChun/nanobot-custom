@@ -18,6 +18,8 @@ def _fake_resolve(host: str, results: list[str]):
 
 
 def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch) -> None:
+    # Temporary-config integration only; production activation stays guarded.
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
     from nanobot.channels.plugin import load_channel_package
 
     config_path = tmp_path / "config.json"

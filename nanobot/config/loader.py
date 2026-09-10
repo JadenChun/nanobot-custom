@@ -155,6 +155,9 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
     data = config.model_dump(mode="json", by_alias=True)
+    defaults = data.get("agents", {}).get("defaults", {})
+    if defaults.get("contextPaths") == []:
+        defaults.pop("contextPaths")
     # OAuth credentials live in dedicated token stores. Persist only the
     # non-credential request settings consumed by these provider backends.
     for alias, provider in (

@@ -386,3 +386,24 @@ Broader configuration qualification remains red: `tests/config` has 113 passes a
 9 failures (legacy token object/save expectations, empty legacy context paths,
 timezone detection, and guard-blocked onboarding). Those require reconciliation
 before overall migration success. Source governor integration remains pending.
+
+### Configuration qualification follow-up
+
+The nine configuration failures above are now reconciled. A real normalization
+defect was corrected: scalar `maxTokens` plus legacy `maxInputTokens` must retain
+staging's precedence over `contextWindowTokens`; leaving the camel-case alias in
+the input caused Pydantic to choose the wrong capacity. The conflicting-values
+test now verifies 100000 input / 2222 output through save and reload. Empty legacy
+`contextPaths` are omitted on save, as in staging; nonempty settings remain intact.
+
+Legacy token tests now assert the accepted upstream scalar-output and separate
+context-window representation. Missing timezone remains UTC/manual as required
+by the foundation contract; explicit auto mode still detects the backend zone.
+Onboarding tests exercise temporary config/workspace paths with scoped test-only
+activation overrides and the current channel-plugin discovery boundary. Production
+guard code and activation sites remain unchanged.
+
+`tests/config` passes all 122 tests without deselection. Scoped Ruff/diff checks
+pass; read-only review found no regression. This closes the previously listed
+configuration-test failures, not the outstanding source governor, startup rollout,
+or overall migration acceptance gates.

@@ -21,12 +21,12 @@ def test_load_config_migrates_legacy_int_max_tokens(tmp_path) -> None:
 
     config = load_config(config_path)
 
-    assert config.agents.defaults.max_tokens.input == 120000
-    assert config.agents.defaults.max_tokens.output == 1234
+    assert config.agents.defaults.context_window_tokens == 120000
+    assert config.agents.defaults.max_tokens == 1234
     assert not hasattr(config.agents.defaults, "memory_window")
 
 
-def test_save_config_writes_only_max_tokens_object(tmp_path) -> None:
+def test_save_config_writes_upstream_token_fields_losslessly(tmp_path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
         json.dumps(
@@ -49,10 +49,13 @@ def test_save_config_writes_only_max_tokens_object(tmp_path) -> None:
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     defaults = saved["agents"]["defaults"]
 
-    assert defaults["maxTokens"] == {"input": 100000, "output": 2222}
-    assert "contextWindowTokens" not in defaults
+    assert defaults["maxTokens"] == 2222
+    assert defaults["contextWindowTokens"] == 100000
     assert "maxInputTokens" not in defaults
     assert "memoryWindow" not in defaults
+    reloaded = load_config(config_path)
+    assert reloaded.agents.defaults.max_tokens == 2222
+    assert reloaded.agents.defaults.context_window_tokens == 100000
 
 
 def test_load_config_maps_context_window_tokens_to_max_tokens_input(tmp_path) -> None:
@@ -72,11 +75,14 @@ def test_load_config_maps_context_window_tokens_to_max_tokens_input(tmp_path) ->
     )
 
     config = load_config(config_path)
-    assert config.agents.defaults.max_tokens.input == 77777
-    assert config.agents.defaults.max_tokens.output == 3333
+    assert config.agents.defaults.context_window_tokens == 77777
+    assert config.agents.defaults.max_tokens == 3333
 
 
 def test_onboard_does_not_crash_with_legacy_memory_window(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("nanobot.cli.commands._onboard_plugins", lambda _path: None)
+    # Temporary-config integration only; production activation stays guarded.
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
     config_path = tmp_path / "config.json"
     workspace = tmp_path / "workspace"
     config_path.write_text(
@@ -97,6 +103,7 @@ def test_onboard_does_not_crash_with_legacy_memory_window(tmp_path, monkeypatch)
     monkeypatch.setattr("nanobot.cli.commands.get_workspace_path", lambda _workspace=None: workspace)
 
     from typer.testing import CliRunner
+
     from nanobot.cli.commands import app
     runner = CliRunner()
     result = runner.invoke(app, ["onboard"], input="n\n")
@@ -189,7 +196,9 @@ def test_save_config_omits_empty_legacy_context_paths(tmp_path) -> None:
 
 
 def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch) -> None:
-    from types import SimpleNamespace
+    # Temporary-config integration only; production activation stays guarded.
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    from nanobot.channels.plugin import load_channel_package
 
     config_path = tmp_path / "config.json"
     workspace = tmp_path / "workspace"
@@ -212,21 +221,12 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
     monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
     monkeypatch.setattr("nanobot.cli.commands.get_workspace_path", lambda _workspace=None: workspace)
     monkeypatch.setattr(
-        "nanobot.channels.registry.discover_all",
-        lambda: {
-            "qq": SimpleNamespace(
-                default_config=lambda: {
-                    "enabled": False,
-                    "appId": "",
-                    "secret": "",
-                    "allowFrom": [],
-                    "msgFormat": "plain",
-                }
-            )
-        },
+        "nanobot.channels.registry.discover_plugins",
+        lambda: {"qq": load_channel_package("qq")},
     )
 
     from typer.testing import CliRunner
+
     from nanobot.cli.commands import app
     runner = CliRunner()
     result = runner.invoke(app, ["onboard"], input="n\n")

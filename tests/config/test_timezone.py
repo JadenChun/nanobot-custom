@@ -7,7 +7,7 @@ from nanobot.config.schema import Config
 from nanobot.config.timezone import detect_system_timezone
 
 
-def test_new_config_detects_backend_timezone(monkeypatch) -> None:
+def test_new_config_preserves_staging_utc_default(monkeypatch) -> None:
     monkeypatch.setattr(
         "nanobot.config.timezone.get_localzone_name",
         lambda: "Asia/Shanghai",
@@ -15,8 +15,8 @@ def test_new_config_detects_backend_timezone(monkeypatch) -> None:
 
     config = Config()
 
-    assert config.agents.defaults.timezone == "Asia/Shanghai"
-    assert config.agents.defaults.timezone_mode == "auto"
+    assert config.agents.defaults.timezone == "UTC"
+    assert config.agents.defaults.timezone_mode == "manual"
 
 
 def test_legacy_config_preserves_explicit_timezone(tmp_path, monkeypatch) -> None:
@@ -76,6 +76,8 @@ def test_manual_timezone_serializes_explicit_provenance(tmp_path) -> None:
 
 
 def test_onboard_refresh_materializes_manual_timezone_mode(tmp_path, monkeypatch) -> None:
+    # Temporary-config integration only; production activation stays guarded.
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
     config_path = tmp_path / "config.json"
     workspace = tmp_path / "workspace"
     config_path.write_text(
