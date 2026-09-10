@@ -398,3 +398,58 @@ async def test_repeated_provider_call_ids_keep_exact_tool_replay_bindings(engine
         assert captured[1][1] == frozenset()  # Wiring alone never acknowledges a request.
     finally:
         await loop.aclose()
+
+
+@pytest.mark.parametrize('mode', ['length', 'continuation'])
+async def test_source_runtime_continuations_preserve_replay_provenance(engine_config, monkeypatch, mode):
+    from nanobot.session.source_projection import RuntimeNode, SourceNode
+
+    provider = ScriptedProvider([LLMResponse(content='segment', finish_reason='length' if mode == 'length' else 'stop'),
+                                 LLMResponse(content='complete')])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop)
+    captured = []
+    prepare = loop.runner.context_governor.prepare_request
+    run = loop.runner.run
+
+    async def observe(state, messages, **kwargs):
+        assert state.source.transcript.messages() == messages
+        captured.append(state.source.transcript)
+        return await prepare(state, messages, **kwargs)
+
+    async def configure(spec):
+        if mode == 'continuation':
+            notes = iter(['finish the objective', None])
+            spec.continuation_callback = lambda: next(notes)
+        return await run(spec)
+
+    monkeypatch.setattr(loop.runner.context_governor, 'prepare_request', observe)
+    monkeypatch.setattr(loop.runner, 'run', configure)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='objective', session_key='cli:source'))
+        assert result.error is None
+        events = backend.source.load_source_snapshot('cli:source').events
+        assert len(captured) == 2
+        nodes = captured[1].nodes
+        assert [node.event_id for node in nodes if isinstance(node, SourceNode)] == [row['_event_id'] for row in events[:2]]
+        assert isinstance(nodes[-1], RuntimeNode)
+        assert [row['content'] for row in events] == ['objective', 'segment', 'complete']
+    finally:
+        await loop.aclose()
+
+
+@pytest.mark.parametrize('mode', ['error', 'max_iterations'])
+async def test_legacy_terminal_replay_keeps_existing_replacement_behavior(mode):
+    from agent.runner_helpers import make_run_spec
+    from nanobot.agent.runner import AgentRunner
+
+    provider = ScriptedProvider([LLMResponse(content='failure', finish_reason='error')])
+    result = await AgentRunner().run(make_run_spec(provider,
+        initial_messages=[{'role': 'user', 'content': 'input'}, {'role': 'assistant', 'content': 'existing'}],
+        tools=ToolRegistry(), model='fixture', max_iterations=1 if mode == 'error' else 0,
+        max_tool_result_chars=100, finalize_on_max_iterations=False))
+    assert len(result.messages) == 2
+    if mode == 'error':
+        assert result.messages[-1]['content'] == 'existing'
+    else:
+        assert result.messages[-1]['content'] == result.final_content

@@ -493,3 +493,22 @@ runner/summary selection passes 482 tests, with the same two guarded plugin
 fixtures deselected. Ruff/diff checks pass. Other assistant/runtime replay append
 paths and request-ticket issuance/acknowledgment are still pending, so this ledger
 is not yet used to reduce context or publish checkpoints. Activation remains guarded.
+
+### Assistant and runtime replay bindings
+
+Source ledger replay now binds ordinary assistant replies, length-recovery
+segments, synthetic error/empty terminal events, and max-iteration finalization
+to their exact recorded IDs. Length and caller-requested continuation instructions
+are detached runtime nodes. Continuation replay binds the preceding assistant
+without writing it again. Typed source-mode real user injections reject missing
+durable bindings; their persistence adapter remains required before enabling that
+path. Legacy terminal replacement/deduplication helpers remain unchanged for
+non-source runs, following a review correction and dedicated regressions.
+
+Actual-engine length and continuation tests verify the ledger renders the second
+request exactly while runtime instructions stay out of source. Independent review
+accepted the source changes and verified both legacy terminal regressions. The
+combined session/migration/runner/summary selection passes 486 tests with the same
+two guarded plugin fixtures deselected; Ruff/diff checks pass. Request-only retry
+views, ticket acknowledgment, checkpoint publication, and compaction remain
+unfinished. The production activation guard is unchanged.

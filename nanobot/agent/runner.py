@@ -171,6 +171,18 @@ class AgentRunner:
         self.context_governor = ContextGovernor()
 
     @staticmethod
+    def _append_bound_message(messages: list[dict[str, Any]], message: dict[str, Any],
+                              source: SourceRequestLedger | None,
+                              event_id: str | None = None) -> None:
+        """Append explicit replay provenance without recording source again."""
+        if source is not None:
+            if event_id is None:
+                source.append_runtime(message)
+            else:
+                source.append_source(event_id, message)
+        messages.append(message)
+
+    @staticmethod
     def _append_injected_messages(
         messages: list[dict[str, Any]],
         injections: list[dict[str, Any]],
@@ -190,6 +202,8 @@ class AgentRunner:
         iteration: int | None = None,
         allow_continuation: bool = False,
         wait_at_terminal: bool = False,
+        source: SourceRequestLedger | None = None,
+        assistant_event_id: str | None = None,
     ) -> tuple[bool, int]:
         """Drain pending injections. Returns (should_continue, updated_cycles).
 
@@ -216,10 +230,12 @@ class AgentRunner:
             real_injection = bool(injections)
         if not injections:
             return False, injection_cycles
+        if real_injection and source is not None:
+            raise SourceValidationError('Source user injection requires a durable event binding')
         if real_injection:
             injection_cycles += 1
         if assistant_message is not None:
-            messages.append(assistant_message)
+            self._append_bound_message(messages, assistant_message, source, assistant_event_id)
             if iteration is not None:
                 checkpoint: dict[str, Any] = {
                     "phase": "final_response",
@@ -237,7 +253,11 @@ class AgentRunner:
                     spec,
                     checkpoint,
                 )
-        self._append_injected_messages(messages, injections)
+        if source is None:
+            self._append_injected_messages(messages, injections)
+        else:
+            for message in injections:
+                self._append_bound_message(messages, message, source)
         if real_injection:
             logger.info(
                 "Injected {} follow-up message(s) {} ({}/{})",
@@ -648,7 +668,7 @@ class AgentRunner:
                 length_recovery_parts.clear()
                 # Checkpoint 1: drain injections after tools, before next LLM call
                 _drained, injection_cycles = await self._try_drain_injections(
-                    spec, messages, None, injection_cycles,
+                    spec, messages, None, injection_cycles, source=request_state.source,
                     phase="after tool execution",
                 )
                 if _drained:
@@ -722,15 +742,15 @@ class AgentRunner:
                     if hook.wants_streaming():
                         context.stream_continues_current_message = True
                         await hook.on_stream_end(context, resuming=True)
-                    messages.append(conversation_state.project_response_message(
+                    self._append_bound_message(messages, conversation_state.project_response_message(
                         build_assistant_message(
                             clean,
                             reasoning_content=response.reasoning_content,
                             thinking_blocks=response.thinking_blocks,
                         ),
                         response,
-                    ))
-                    messages.append(build_length_recovery_message(clean or ""))
+                    ), request_state.source, recorded_response.source_event_id)
+                    self._append_bound_message(messages, build_length_recovery_message(clean or ""), request_state.source)
                     await hook.after_iteration(context)
                     continue
 
@@ -768,6 +788,7 @@ class AgentRunner:
             # so streaming channels don't prematurely finalize the card.
             should_continue, injection_cycles = await self._try_drain_injections(
                 spec, messages, assistant_message, injection_cycles,
+                source=request_state.source, assistant_event_id=recorded_response.source_event_id,
                 conversation_state=conversation_state,
                 phase="after final response",
                 iteration=iteration,
@@ -798,15 +819,19 @@ class AgentRunner:
                     final_content = clean or spec.error_message or _DEFAULT_ERROR_MESSAGE
                 stop_reason = "error"
                 error = final_content
-                if spec.source_writer is not None:
-                    spec.source_writer.append_message(build_assistant_message(_PERSISTED_MODEL_ERROR_PLACEHOLDER))
-                self._append_model_error_placeholder(messages)
+                placeholder = build_assistant_message(_PERSISTED_MODEL_ERROR_PLACEHOLDER)
+                entry = spec.source_writer.append_message(placeholder) if spec.source_writer is not None else None
+                if request_state.source is None:
+                    self._append_model_error_placeholder(messages)
+                else:
+                    self._append_bound_message(messages, placeholder, request_state.source,
+                        entry['_event_id'] if entry is not None else None)
                 context.final_content = final_content
                 context.error = error
                 context.stop_reason = stop_reason
                 await hook.after_iteration(context)
                 should_continue, injection_cycles = await self._try_drain_injections(
-                    spec, messages, None, injection_cycles,
+                    spec, messages, None, injection_cycles, source=request_state.source,
                     phase="after LLM error",
                 )
                 if should_continue:
@@ -819,15 +844,19 @@ class AgentRunner:
                 final_content = EMPTY_FINAL_RESPONSE_MESSAGE
                 stop_reason = "empty_final_response"
                 error = final_content
-                if spec.source_writer is not None:
-                    spec.source_writer.append_message(build_assistant_message(final_content))
-                self._append_final_message(messages, final_content)
+                placeholder = build_assistant_message(final_content)
+                entry = spec.source_writer.append_message(placeholder) if spec.source_writer is not None else None
+                if request_state.source is None:
+                    self._append_final_message(messages, final_content)
+                else:
+                    self._append_bound_message(messages, placeholder, request_state.source,
+                        entry['_event_id'] if entry is not None else None)
                 context.final_content = final_content
                 context.error = error
                 context.stop_reason = stop_reason
                 await hook.after_iteration(context)
                 should_continue, injection_cycles = await self._try_drain_injections(
-                    spec, messages, None, injection_cycles,
+                    spec, messages, None, injection_cycles, source=request_state.source,
                     phase="after empty response",
                 )
                 if should_continue:
@@ -836,7 +865,7 @@ class AgentRunner:
                     continue
                 break
 
-            messages.append(
+            self._append_bound_message(messages,
                 assistant_message
                 or conversation_state.project_response_message(
                     build_assistant_message(
@@ -845,7 +874,7 @@ class AgentRunner:
                         thinking_blocks=response.thinking_blocks,
                     ),
                     response,
-                )
+                ), request_state.source, recorded_response.source_event_id,
             )
             await self._emit_checkpoint(
                 spec,
@@ -878,14 +907,15 @@ class AgentRunner:
             # We include them before the no-tools finalization pass so the
             # final response can account for every known follow-up.
             drained_after_max_iterations, injection_cycles = await self._try_drain_injections(
-                spec, messages, None, injection_cycles,
+                spec, messages, None, injection_cycles, source=request_state.source,
                 phase="after max_iterations",
             )
             if drained_after_max_iterations:
                 had_injections = True
             terminal_content = None
+            terminal_event_id = None
             if spec.finalize_on_max_iterations:
-                terminal_content, usage = await self._try_finalize_after_max_iterations(
+                terminal_content, usage, terminal_event_id = await self._try_finalize_after_max_iterations(
                     spec,
                     hook,
                     messages,
@@ -904,9 +934,13 @@ class AgentRunner:
                 pending_stream_content = terminal_tail
             else:
                 final_content = terminal_content
+            terminal_message = build_assistant_message(terminal_content)
             if spec.source_writer is not None and synthetic_terminal:
-                spec.source_writer.append_message(build_assistant_message(terminal_content))
-            self._append_final_message(messages, terminal_content)
+                terminal_event_id = spec.source_writer.append_message(terminal_message)['_event_id']
+            if request_state.source is None:
+                self._append_final_message(messages, terminal_content)
+            else:
+                self._append_bound_message(messages, terminal_message, request_state.source, terminal_event_id)
 
         return AgentRunResult(
             final_content=final_content,
@@ -1296,7 +1330,7 @@ class AgentRunner:
         *,
         request_state: ModelRequestState,
         round_usages: list[LLMUsage],
-    ) -> tuple[str | None, LLMUsage | None]:
+    ) -> tuple[str | None, LLMUsage | None, str | None]:
         compaction = request_state.compaction
         request_messages = (
             compaction.request_messages(messages)
@@ -1318,7 +1352,7 @@ class AgentRunner:
                 "Budget-exhausted finalization failed for {}; using fallback",
                 spec.session_key or "default",
             )
-            return None, usage
+            return None, usage, None
 
         response = recorded.response
         raw_usage = self._record_request_usage(spec, request_state, response)
@@ -1332,7 +1366,7 @@ class AgentRunner:
                 len(response.tool_calls),
                 spec.session_key or "default",
             )
-            return None, usage
+            return None, usage, None
 
         context = AgentHookContext(
             iteration=spec.max_iterations,
@@ -1343,8 +1377,8 @@ class AgentRunner:
         )
         clean = hook.finalize_content(context, response.content)
         if is_blank_text(clean):
-            return None, usage
-        return clean, usage
+            return None, usage, None
+        return clean, usage, recorded.source_event_id
 
     async def _request_no_tools(
         self,
