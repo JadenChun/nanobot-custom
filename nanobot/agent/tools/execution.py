@@ -21,6 +21,7 @@ from nanobot.utils.runtime import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
 
 
@@ -36,6 +37,7 @@ class KnownToolResult:
     event: dict[str, str]
     dispatched: bool
     producer_receipt: FilesystemReadReceipt | None = None
+    retrieval_receipt: ArtifactRetrievalReceipt | None = None
 
 
 ToolResultCallback = Callable[[KnownToolResult], Awaitable[None]]
@@ -44,10 +46,11 @@ ToolResultCallback = Callable[[KnownToolResult], Awaitable[None]]
 async def _record_result(callback: ToolResultCallback | None, ordinal: int,
                          call: ToolCallRequest, raw: Any, result: Any,
                          event: dict[str, str], *, dispatched: bool,
-                         producer_receipt: FilesystemReadReceipt | None = None) -> None:
+                         producer_receipt: FilesystemReadReceipt | None = None,
+                         retrieval_receipt: ArtifactRetrievalReceipt | None = None) -> None:
     if callback is not None:
         await callback(KnownToolResult(ordinal, call.id, call.name, deepcopy(raw),
-                                       deepcopy(result), deepcopy(event), dispatched, producer_receipt))
+                                       deepcopy(result), deepcopy(event), dispatched, producer_receipt, retrieval_receipt))
 
 _RETRY_HINT = "\n\n[Analyze the error above and try a different approach.]"
 # SSRF is a hard security block at the tool boundary, but the agent turn
@@ -305,7 +308,8 @@ async def _execute_tool_call(
     event = {"name": tool_call.name, "status": "ok", "detail": detail}
     await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
                          result, event, dispatched=True,
-                         producer_receipt=outcome.producer_receipt if outcome else None)
+                         producer_receipt=outcome.producer_receipt if outcome else None,
+                         retrieval_receipt=outcome.retrieval_receipt if outcome else None)
     await hook.after_execute_tool(context, tool_call, tool, params, result)
     return result, event
 

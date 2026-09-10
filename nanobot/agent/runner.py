@@ -9,7 +9,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -67,6 +67,8 @@ from nanobot.utils.runtime import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.source_request import SourceTranscript
     from nanobot.session.turn_writer import SourceTurnWriter
 
@@ -142,6 +144,7 @@ class AgentRunSpec:
     source_transcript: SourceTranscript | None = None
     source_initial_eligible_ids: frozenset[str] = frozenset()
     source_isolated: bool = False
+    artifact_read_allowed: bool = False
 
 
 @dataclass(slots=True)
@@ -171,7 +174,9 @@ class AgentRunResult:
 class AgentRunner:
     """Run a tool-capable LLM loop without product-layer concerns."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, artifact_reader_factory: Callable[
+            [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None] | None = None) -> None:
+        self.artifact_reader_factory = artifact_reader_factory
         self.context_governor = ContextGovernor()
 
     @staticmethod
@@ -362,6 +367,23 @@ class AgentRunner:
         if (spec.turn_context is not None and spec.turn_context.execution_owner is not None
                 and spec.tool_result_callback is None and spec.source_writer is None):
             raise ValueError("Execution ownership requires durable tool-result recording")
+        # Never inherit an invocation-bound reader from a parent registry.
+        if self.artifact_reader_factory is not None or 'read_artifact' in spec.tools.tool_names:
+            from nanobot.agent.tools.artifact import ReadArtifactTool
+            from nanobot.agent.tools.filesystem import ReadFileTool
+
+            tools = spec.tools.filtered([name for name in spec.tools.tool_names if name != 'read_artifact'])
+            read_file = tools.get('read_file')
+            if (spec.artifact_read_allowed and self.artifact_reader_factory is not None and spec.source_writer is not None
+                    and type(read_file) is ReadFileTool):
+                isolated = spec.source_isolated or spec.source_writer.parent_stream_id is not None
+                reader = self.artifact_reader_factory(spec.source_writer, isolated, read_file)
+                if reader is not None:
+                    if reader.writer is not spec.source_writer or reader.mode != (
+                            'isolated_stream' if isolated else 'root_history') or reader.read_file is not read_file:
+                        raise ValueError('Artifact reader does not match admitted invocation')
+                    tools.register(ReadArtifactTool(reader))
+            spec = replace(spec, tools=tools)
         hook = spec.hook or AgentHook()
         messages, compaction = self._initial_transcript_and_compaction(spec)
         context = AgentRunHookContext(messages=deepcopy(messages))

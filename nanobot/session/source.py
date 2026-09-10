@@ -61,7 +61,7 @@ def new_source_event(payload: dict[str, Any], *, run_id: str) -> dict[str, Any]:
         raise SourceValidationError("Invalid source event representation")
     canonical_events([payload])
     event = deepcopy(payload)
-    for key in ("_event_id", "_run_id", "_execution_id", "_execution_ids", "_source_origin"):
+    for key in ("_event_id", "_run_id", "_execution_id", "_execution_ids", "_source_origin", "_artifact_read"):
         event.pop(key, None)
     event.update(_event_id=secrets.token_hex(16), _run_id=run_id)
     canonical_events([event])

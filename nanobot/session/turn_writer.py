@@ -67,19 +67,22 @@ class SourceTurnWriter:
         return deepcopy([e for e in self._writes.committed if e.get('_stream_id') == self.stream_id])
 
     def _append(self, payload: dict[str, Any], *, execution_ids: list[str] | None = None,
-                execution_id: str | None = None, source_origin: dict[str, Any] | None = None) -> dict[str, Any]:
+                execution_id: str | None = None, source_origin: dict[str, Any] | None = None,
+                artifact_read: dict[str, Any] | None = None) -> dict[str, Any]:
         if self._writes.failed:
             raise SourceValidationError('Source turn recording failed')
         try:
             self.owner.validate_dispatch()
             clean = deepcopy(payload)
-            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id', '_source_origin'):
+            for key in ('reasoning_content', 'thinking_blocks', '_meta', '_stream_id', '_parent_stream_id', '_source_origin', '_artifact_read'):
                 clean.pop(key, None)
             if 'content' in clean:
                 clean['content'] = _persisted_content(clean['content'])
             event = new_source_event(clean, run_id=self.run_id)
             if source_origin is not None:
                 event['_source_origin'] = deepcopy(source_origin)
+            if artifact_read is not None:
+                event['_artifact_read'] = deepcopy(artifact_read)
             event['_stream_id'] = self.stream_id
             if self.parent_stream_id is not None:
                 event['_parent_stream_id'] = self.parent_stream_id
@@ -142,10 +145,24 @@ class SourceTurnWriter:
                         origin = receipt.to_dict()
                     else:
                         logger.debug('Ignoring unmatched filesystem producer receipt')
-                committed = self._append({'role': 'tool' , 'tool_call_id': value.tool_call_id, 'name': value.name,
+                retrieval = None
+                if value.retrieval_receipt is not None:
+                    from nanobot.agent.tools.artifact import (
+                        ArtifactRetrievalReceipt,
+                        parse_retrieval_receipt,
+                    )
+
+                    candidate = value.retrieval_receipt
+                    if (type(candidate) is ArtifactRetrievalReceipt and value.dispatched
+                            and value.event.get('status') == 'ok' and candidate.matches(raw)):
+                        try:
+                            retrieval = parse_retrieval_receipt(candidate.to_dict()).to_dict()
+                        except ValueError:
+                            logger.debug('Ignoring invalid artifact retrieval receipt')
+                committed = self._append({'role': 'tool'  , 'tool_call_id': value.tool_call_id, 'name': value.name,
                               'content': raw, '_dispatched': value.dispatched,
                               '_outcome_status': value.event.get('status', '')}, execution_id=ids[index],
-                              source_origin=origin)
+                              source_origin=origin, artifact_read=retrieval)
                 completed.add(index)
                 return committed['_event_id']
             except BaseException:

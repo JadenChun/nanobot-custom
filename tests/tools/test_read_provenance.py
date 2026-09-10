@@ -176,3 +176,40 @@ async def test_legacy_upgrade_cannot_retroactively_authenticate_read(tmp_path):
         expected_incarnation=session.incarnation)
     assert snapshot.events[1]['content'] == result.content
     assert '_source_origin' not in snapshot.events[1]
+
+
+@pytest.mark.parametrize('change', ['removed', 'protected', 'root', 'precedence'])
+async def test_current_policy_rejects_revoked_or_rebound_receipt(tmp_path, change):
+    from nanobot.agent.tools.read_provenance import revalidate_read_receipt
+
+    workspace = tmp_path / 'workspace'
+    context = workspace / 'context'
+    context.mkdir(parents=True)
+    (context / 'file').write_text('historical evidence')
+    repo = ManagedContextRepo(context, 'context-id', True)
+    manager = ContextRepoManager([repo])
+    policy = ResourceAccessPolicy(workspace=workspace, context_manager=manager)
+    tool = ReadFileTool(workspace=workspace, resource_policy=policy)
+    outcome = await read(tool, path=str(context / 'file'))
+    receipt = outcome.producer_receipt
+    if change == 'removed':
+        manager.repos.clear()
+    elif change == 'protected':
+        repo.manifest['protected'] = ['file']
+    elif change == 'root':
+        repo.path = tmp_path / 'different'
+    else:
+        repo.manifest['targetRepos'] = {'new': {'path': str(context), 'read': ['**']}}
+    with pytest.raises(ValueError):
+        revalidate_read_receipt(receipt, workspace=workspace, policy=policy, resolve_read=tool._resolve_read)
+
+
+async def test_current_workspace_cannot_rebase_receipt(tmp_path):
+    from nanobot.agent.tools.read_provenance import revalidate_read_receipt
+
+    (tmp_path / 'file').write_text('evidence')
+    tool = ReadFileTool(workspace=tmp_path)
+    outcome = await read(tool, path='file')
+    with pytest.raises(ValueError):
+        revalidate_read_receipt(outcome.producer_receipt, workspace=tmp_path / 'other', policy=None,
+                                resolve_read=tool._resolve_read)

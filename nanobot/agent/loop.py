@@ -1328,7 +1328,11 @@ class AgentLoop:
                     input_event_id=run_context.source_input_event_id,
                     channel=request_ctx.channel, workspace=effective_scope.project_path,
                     include_memory=session.policy.persist if session is not None else True)
+            run_context.artifact_read_allowed = (
+                session is not None and 'read_artifact' not in session.policy.disabled_tools
+                and 'read_file' in effective_tools.tool_names)
             result = await self.runner.run(AgentRunSpec(
+                artifact_read_allowed=run_context.artifact_read_allowed,
                 initial_messages=None,
                 source_transcript=source_transcript,
                 source_isolated=fresh_history,
@@ -2187,7 +2191,10 @@ class AgentLoop:
 
         writer = ctx.run_context.source_writer if ctx.run_context is not None else None
         if writer is not None:
+            admitted = ctx.session or self.sessions.get_cached(ctx.session_key)
             ctx.session = writer.owner.read_snapshot().to_session()
+            if admitted is not None:
+                ctx.session.policy = admitted.policy
             ctx.source_metadata_base = deepcopy(ctx.session.metadata)
         if ctx.session is None:
             if msg.require_existing_session:

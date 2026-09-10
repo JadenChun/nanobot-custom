@@ -874,3 +874,76 @@ async def test_read_receipts_distinguish_repeated_provider_call_ids(engine_confi
             assert receipt.source_access.relative_path == name and receipt.matches(event['content'])
     finally:
         await loop.aclose()
+
+
+@pytest.mark.parametrize('fresh,disabled', [(False, False), (True, False), (False, True)])
+async def test_engine_reads_attested_artifact_after_restart_only_with_history_access(engine_config, tmp_path, fresh, disabled):
+    import hashlib
+
+    from session.test_artifact import fixture
+
+    from nanobot.agent.runner import AgentRunner
+    from nanobot.session.artifact import parse_artifact_descriptor
+    from nanobot.session.artifact_reader import ArtifactReader
+    from nanobot.session.artifact_store import PrivateArtifactStore
+    from nanobot.session.source_store import SourceSessionStore
+
+    (engine_config.workspace_path / 'file').write_text('historical artifact evidence')
+    first = ScriptedProvider([LLMResponse(content=None, tool_calls=[
+        ToolCallRequest(id='r', name='read_file', arguments={'path': 'file'})]), LLMResponse(content='done')])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=first)
+    upgrade(loop)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='read file', session_key='cli:source'))
+        assert result.error is None
+    finally:
+        await loop.aclose()
+    reference = 'artifact:' + 'b' * 32
+    second = ScriptedProvider([LLMResponse(content=None, tool_calls=[
+        ToolCallRequest(id='retrieve', name='read_artifact', arguments={'reference': reference})]),
+        LLMResponse(content='retrieved')])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=second)
+    def factory(writer, isolated, read_file):
+        snapshot = writer.owner.read_snapshot()
+        event = next(row for row in snapshot.events if row.get('_source_origin'))
+        raw, _ = fixture()
+        content = event['content'].encode()
+        raw.update(workspace_id=writer.store._backend.sessions_dir.name,
+            session_key=writer.owner.key, incarnation=snapshot.state.incarnation,
+            generation=snapshot.state.generation, event_id=event['_event_id'],
+            execution_id=event['_execution_id'], stream_id=event['_stream_id'], run_id=event['_run_id'],
+            byte_length=len(content), sha256=hashlib.sha256(content).hexdigest(),
+            source_access=event['_source_origin']['source_access'])
+        descriptor = parse_artifact_descriptor(raw)
+        store = PrivateArtifactStore(tmp_path.resolve() / 'private-artifacts',
+            workspace_id=descriptor.workspace_id, session_key=descriptor.session_key,
+            incarnation=descriptor.incarnation, generation=descriptor.generation)
+        source = SourceSessionStore(writer.store._backend, artifact_store=store)
+        with store.transaction() as blobs:
+            blobs.put(descriptor, content)
+            source.commit_artifact_descriptor(descriptor.session_key, snapshot.state,
+                                              descriptor, owner=writer.owner, blobs=blobs)
+        return ArtifactReader(writer, 'isolated_stream' if isolated else 'root_history', store, read_file)
+    if disabled:
+        session = loop.sessions.get_or_create('cli:source')
+        from dataclasses import replace
+        session.policy = replace(session.policy, disabled_tools=frozenset({'read_artifact'}))
+    loop.runner = AgentRunner(artifact_reader_factory=factory)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='retrieve reference', session_key='cli:source',
+            history_mode=HistoryMode.FRESH if fresh else HistoryMode.SESSION))
+        events = loop.sessions._jsonl_store.source.load_source_snapshot('cli:source').events
+        event = next(row for row in reversed(events) if row.get('name') == 'read_artifact')
+        if fresh or disabled:
+            assert '_artifact_read' not in event
+            assert 'historical artifact evidence' not in event['content']
+            assert ('not found' in event['content'].lower() or 'unknown' in event['content'].lower()) if disabled else 'unavailable' in event['content']
+        else:
+            assert result.error is None, result.error
+            assert 'historical artifact evidence' in event['content']
+            assert event['_artifact_read']['reference'] == reference
+        assert 'read_artifact' not in loop.tools.tool_names
+        assert '_artifact_read' not in str(second.calls[-1][0])
+        assert str(tmp_path / 'private-artifacts') not in str(second.calls)
+    finally:
+        await loop.aclose()

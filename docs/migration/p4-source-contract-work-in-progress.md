@@ -781,3 +781,19 @@ review accepted this correction. See the offloading contract for qualified-read
 limits and unsupported adapters. Retrieval authorization, grants, runtime artifact
 publication and projection integration remain unfinished; the migration guard is
 unchanged.
+
+### Scoped artifact retrieval
+
+An explicitly supplied runner factory now provides per-invocation artifact reads
+with current policy, source membership, producer evidence, stream and private blob
+integrity checks. Historical roots survive restart; fresh and child streams cannot
+read root history or sibling evidence implicitly. Reads use bounded UTF-8 ranges
+and a complete 16384-byte JSON output cap. Trusted retrieval markers remain private
+canonical metadata for future recursion exclusion. Source restoration preserves
+admitted session policy, including explicit tool disables. Combined validation:
+603 passed, two existing guarded plugin fixtures deselected; scoped lint/diff pass.
+Runtime config/default factory, grants, rematerialization, offloading, summary
+reference dependencies and whole-migration acceptance remain pending.
+Read-only review accepted the correction bundle and independently passed 32
+focused artifact/retrieval tests. This accepts the explicit-factory retrieval
+package only; the production migration guard remains enabled.

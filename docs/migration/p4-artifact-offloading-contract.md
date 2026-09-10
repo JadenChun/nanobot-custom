@@ -217,3 +217,52 @@ Validation for producer integration: 556 combined session/filesystem/source-engi
 tests and 10 runner tool-execution tests passed with network denied. Two existing
 guarded plugin fixtures were deselected; these are not waived for overall migration
 acceptance. Scoped Ruff and diff checks passed.
+
+## Invocation-bound retrieval implementation evidence
+
+`ArtifactReader` and explicitly constructed `ReadArtifactTool` now read only
+published, producer-attested text under a live dispatch owner, configured private
+blob transaction and source transaction. Historical root access selects root
+source events in the same session generation; fresh/child readers select their
+own stream. Root access does not expose child-private evidence. Explicit
+cross-stream grants remain unimplemented.
+
+Every read reconstructs the recorded policy namespace, requires the same root
+binding and current managed repository identity, and passes the candidate through
+the invocation's built-in file-read policy. Removed/rebound repositories, changed
+root classification, protected paths and switched workspaces cannot fall back to
+ordinary workspace access. Historical original-file edits do not invalidate stored
+evidence. The private blob root is checked against current project, backend,
+static/read-only roots, media and exact read-file allowlists on construction and
+retrieval. Blob integrity and namespace reachability are verified before return.
+
+Byte ranges accept exact nonnegative integer offsets and 4–16384-byte limits.
+Leading UTF-8 continuation bytes are skipped and incomplete trailing characters
+remain for the next page. The tool further caps its complete escaped JSON envelope
+at 16384 UTF-8 bytes and returns the actual next offset/eof. Missing/corrupt blobs
+produce a bounded unavailable error; no source file reread or tool redispatch occurs.
+Rematerialization remains a future integration.
+
+A separate validated retrieval receipt travels through the trusted built-in
+registry boundary and canonical callback into reserved `_artifact_read` metadata.
+Generic events and legacy upgrades strip that marker; malformed receipts leave
+inline content intact without a marker. This provides the offloader's future
+recursion exclusion, but the offloader is not wired yet.
+
+The runner's optional artifact-reader factory defaults to absent. When supplied,
+it constructs an invocation-specific effective registry before budgeting, removes
+inherited reader instances, and requires explicit admitted retrieval permission
+plus the concrete file-read capability. Root session tool disables propagate into
+this admission; child admission inherits that permission and its own capability.
+Source restoration now retains admitted/cached SessionPolicy instead of replacing
+it with defaults when loading canonical source. No default config, automatic
+reference emission or production activation is introduced.
+
+Actual-engine tests qualify root restart retrieval, fresh-history denial and
+explicit tool disabling using a descriptor published from an actual earlier
+qualified read. Focused tests cover stream isolation, UTF-8/escaped pagination,
+policy revocation/rebinding, missing/corrupt bytes, unregistered owners, reset,
+namespace replacement, forged markers and current private-root exclusion. Final
+combined validation passed 603 tests with network denied; two existing guarded
+plugin fixtures remain deselected and are not waived for overall acceptance.
+Scoped Ruff and diff checks passed.

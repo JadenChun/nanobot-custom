@@ -108,6 +108,7 @@ def _upgrade_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for event in upgraded:
         # Legacy metadata cannot retroactively authenticate a producing read.
         event.pop("_source_origin", None)
+        event.pop("_artifact_read", None)
         if "_event_id" not in event:
             event["_event_id"] = uuid.uuid4().hex
         if "tool_calls" in event:

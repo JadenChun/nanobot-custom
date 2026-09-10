@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 if TYPE_CHECKING:
+    from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.providers.base import LLMUsage
     from nanobot.session.execution_owner import ExecutionOwner
@@ -368,6 +369,7 @@ class TurnContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     execution_owner: ExecutionOwner | None = field(default=None, repr=False)
     source_writer: SourceTurnWriter | None = field(default=None, repr=False)
+    artifact_read_allowed: bool = False
     source_history: SourceTranscript | None = field(default=None, repr=False)
     source_input_event_id: str | None = field(default=None, repr=False)
 
@@ -735,6 +737,7 @@ class ToolOutcome:
     stop_reason: str | None = None
     policy_metadata: Mapping[str, Any] = field(default_factory=dict)
     producer_receipt: FilesystemReadReceipt | None = None
+    retrieval_receipt: ArtifactRetrievalReceipt | None = None
 
     @property
     def result(self) -> Any:

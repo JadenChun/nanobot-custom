@@ -210,6 +210,14 @@ class ToolRegistry:
                     or not receipt.matches(outcome.content)):
                 outcome = ToolOutcome(outcome.content, outcome.stop_reason, outcome.policy_metadata)
 
+        if outcome.retrieval_receipt is not None:
+            from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt, ReadArtifactTool
+
+            receipt = outcome.retrieval_receipt
+            if (type(tool) is not ReadArtifactTool or type(receipt) is not ArtifactRetrievalReceipt
+                    or not receipt.matches(outcome.content)):
+                outcome = ToolOutcome(outcome.content, outcome.stop_reason, outcome.policy_metadata,
+                                      producer_receipt=outcome.producer_receipt)
         if is_tool_error_result(outcome.content) or (
             isinstance(outcome.content, str) and not isinstance(outcome.content, ToolResult)
             and outcome.content.startswith("Error")

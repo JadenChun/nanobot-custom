@@ -449,7 +449,10 @@ class ForegroundAgentManager:
                 RuntimeNode(uuid.uuid4().hex, {"role": "system", "content": prompt}),
                 SourceNode(assignment_event['_event_id'], {"role": "user", "content": assignment}),
             ))
+        artifact_read_allowed = bool(turn_context is not None and turn_context.artifact_read_allowed
+                                     and 'read_file' in tools.tool_names)
         result = await (runner or self.runner).run(AgentRunSpec(
+            artifact_read_allowed=artifact_read_allowed,
             source_transcript=source_transcript,
             initial_messages=None if source_transcript is not None else [
                 {"role": "system", "content": prompt},
@@ -466,7 +469,7 @@ class ForegroundAgentManager:
             fail_on_tool_error=True,
             tool_policy=(
                 DelegatedReadOnlyPolicy(
-                    allowed_tools=tools.tool_names,
+                    allowed_tools=[*tools.tool_names, *(["read_artifact"] if artifact_read_allowed else [])],
                     role=role,
                 )
                 if role in DELEGATED_READ_ONLY_ROLES

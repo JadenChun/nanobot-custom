@@ -152,3 +152,35 @@ def qualified_text_bytes(path: Path, *, max_bytes: int
         for fd in reversed(fds):
             os.close(fd)
 
+
+
+def revalidate_read_receipt(receipt: FilesystemReadReceipt, *, workspace: Path | None,
+                            policy: ResourceAccessPolicy | None,
+                            resolve_read: Callable[[str], Path]) -> None:
+    """Reconstruct only the recorded namespace, then apply current tool policy."""
+    from nanobot.session.artifact import ArtifactValidationError
+
+    receipt = parse_read_receipt(receipt.to_dict())
+    origin = receipt.source_access
+    roots = []
+    if origin.access_class == 'workspace':
+        if workspace is not None:
+            roots = [workspace.expanduser().resolve()]
+    elif policy is not None:
+        manager = policy.context_manager
+        if origin.access_class == 'context_repository':
+            roots = [repo.path.resolve() for repo in manager.repos if repo.name == origin.repository]
+        else:
+            roots = [target.path.resolve() for target in manager.target_repos()
+                     if target.path is not None and json.dumps(
+                         [target.context_repo_name, target.name], separators=(',', ':')) == origin.repository]
+    if len(roots) != 1 or root_binding(roots[0]) != receipt.root_binding:
+        raise ArtifactValidationError('Artifact source namespace is unavailable')
+    candidate = roots[0].joinpath(*origin.relative_path.split('/'))
+    try:
+        resolved = resolve_read(str(candidate))
+        current = locate_read(resolved, workspace, policy)
+    except (OSError, ValueError, RuntimeError):
+        raise ArtifactValidationError('Artifact source access is unavailable') from None
+    if current != (origin, receipt.root_binding):
+        raise ArtifactValidationError('Artifact source access changed')
