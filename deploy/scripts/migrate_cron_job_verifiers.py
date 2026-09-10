@@ -30,6 +30,10 @@ POST-DELIVERY HOOK: ``tools/mark_delivery_status.py`` maps the client-delivery
 ACK outcome (``{ack_status}``) to the marketing record's ``delivery_status``.
 It carries the marketing business logic; Nanobot only invokes it.
 
+GENERATION PILLAR: the Daily Content Idea prompt gets an idempotent, sentinel-
+delimited instruction to source its pillar from ``tools/next_daily_pillar.py``
+(the delivered-only resolver) instead of inferring it from idea history.
+
 Dry-run by default.  Pass ``--apply`` to write (a ``.bak`` backup is made).
 """
 
@@ -58,6 +62,19 @@ POST_DELIVERY_BY_JOB: dict[str, list[str]] = {
         "--date", "{date}", "--ack", "{ack_status}", "--json",
     ],
 }
+
+#: Sentinel for idempotent insertion of the authoritative pillar instruction.
+PILLAR_SENTINEL = "AUTHORITATIVE ASSIGNED PILLAR (deterministic)"
+PILLAR_INSTRUCTION = f"""{PILLAR_SENTINEL}
+FIRST, before any ideation, run exactly:
+python3 tools/next_daily_pillar.py --json
+Use the returned assigned_pillar as this run's pillar. Do NOT infer the pillar from idea history, memory notes, or your own reading of previous runs: only a successfully verified and delivered idea consumes a rotation slot, and that resolver is the single source of truth. If it conflicts with anything below, the resolver wins.
+END AUTHORITATIVE ASSIGNED PILLAR
+
+"""
+
+#: Jobs whose generation prompt must source the pillar from the resolver.
+PILLAR_INSTRUCTION_BY_JOB = {"Daily Content Idea"}
 
 VERIFIERS_BY_JOB: dict[str, list[dict]] = {
     "Daily trend research": [
@@ -160,6 +177,22 @@ def migrate(data: dict, *, apply: bool) -> list[dict]:
                 if apply:
                     payload["post_delivery_command"] = after_cmd
 
+        if name in PILLAR_INSTRUCTION_BY_JOB:
+            message = str(payload.get("message") or "")
+            if PILLAR_SENTINEL not in message:
+                anchor = "PILLAR ROTATION (exact):"
+                if anchor in message:
+                    updated = message.replace(
+                        anchor, PILLAR_INSTRUCTION + anchor, 1
+                    )
+                else:
+                    updated = PILLAR_INSTRUCTION + message
+                change["pillar_instruction"] = "insert"
+                if apply:
+                    payload["message"] = updated
+            else:
+                pass
+
         if len(change) > 2:
             changes.append(change)
     return changes
@@ -188,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"      verifiers: {c.get('verifier_names_before')} -> {c['verifier_names_after']}")
             if "post_delivery_command_after" in c:
                 print(f"      post_delivery_command -> {c['post_delivery_command_after']}")
+            if "pillar_instruction" in c:
+                print(f"      pillar_instruction: {c['pillar_instruction']}")
     return 0
 
 
