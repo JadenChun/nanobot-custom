@@ -23,16 +23,25 @@ client delivery.  Templates: ``{date}`` (run date, job tz), ``{repo_root}``
 
 COMPOSITE DAILY IDEA VERIFIER: ``tools/verify_daily_content_idea.py`` resolves
 the rotation-assigned pillar itself from the delivered-only history (marketing
-context) and checks BOTH the pillar fit and the Telegram client contract.  The
-pillar is NEVER computed by Nanobot and never injected as a constant.
+context - a normal Rev3 idea that is BOTH delivered AND verification-pass), then
+checks the pillar fit and the Telegram client contract.  It records the verdict
+as ``verification_status`` on the EXACT idea record (never inferred later), and
+stamps the run-state handshake carrying that exact ``idea_id``.  The pillar is
+NEVER computed by Nanobot and never injected as a constant.
 
 POST-DELIVERY HOOK: ``tools/mark_delivery_status.py`` maps the client-delivery
-ACK outcome (``{ack_status}``) to the marketing record's ``delivery_status``.
-It carries the marketing business logic; Nanobot only invokes it.
+ACK outcome (``{ack_status}``) to the marketing record's TRANSPORT
+``delivery_status``, addressing the exact record via the run-state handshake
+(falling back to an unambiguous date match, refusing on ambiguity).  It carries
+the marketing business logic; Nanobot only invokes it.  A failed recording after
+a successful delivery raises one owner alert and never a resend.
 
 GENERATION PILLAR: the Daily Content Idea prompt gets an idempotent, sentinel-
 delimited instruction to source its pillar from ``tools/next_daily_pillar.py``
-(the delivered-only resolver) instead of inferring it from idea history.
+(the delivered-only resolver) instead of inferring it from idea history, and to
+record through ``tools/record_daily_idea.py`` so the record id is pinned to the
+scheduled date (making date -> record exactly 1:1 and same-day reruns
+idempotent).
 
 Dry-run by default.  Pass ``--apply`` to write (a ``.bak`` backup is made).
 """
@@ -75,6 +84,11 @@ END AUTHORITATIVE ASSIGNED PILLAR
 
 #: Jobs whose generation prompt must source the pillar from the resolver.
 PILLAR_INSTRUCTION_BY_JOB = {"Daily Content Idea"}
+
+#: The Daily Idea must be recorded through the deterministic-id wrapper so a
+#: same-day retry/rerun updates one record instead of creating a second one.
+RECORD_TOOL_OLD = "tools/record_idea.py"
+RECORD_TOOL_NEW = "tools/record_daily_idea.py"
 
 VERIFIERS_BY_JOB: dict[str, list[dict]] = {
     "Daily trend research": [
@@ -179,19 +193,25 @@ def migrate(data: dict, *, apply: bool) -> list[dict]:
 
         if name in PILLAR_INSTRUCTION_BY_JOB:
             message = str(payload.get("message") or "")
-            if PILLAR_SENTINEL not in message:
+            updated = message
+
+            # Pin the record id to the scheduled date so a same-day retry/rerun
+            # UPDATES the same record instead of creating a second one, which is
+            # what makes an exact date -> record correlation safe.
+            if RECORD_TOOL_OLD in updated and RECORD_TOOL_NEW not in updated:
+                updated = updated.replace(RECORD_TOOL_OLD, RECORD_TOOL_NEW)
+                change["record_tool"] = f"{RECORD_TOOL_OLD} -> {RECORD_TOOL_NEW}"
+
+            if PILLAR_SENTINEL not in updated:
                 anchor = "PILLAR ROTATION (exact):"
-                if anchor in message:
-                    updated = message.replace(
-                        anchor, PILLAR_INSTRUCTION + anchor, 1
-                    )
+                if anchor in updated:
+                    updated = updated.replace(anchor, PILLAR_INSTRUCTION + anchor, 1)
                 else:
-                    updated = PILLAR_INSTRUCTION + message
+                    updated = PILLAR_INSTRUCTION + updated
                 change["pillar_instruction"] = "insert"
-                if apply:
-                    payload["message"] = updated
-            else:
-                pass
+
+            if apply and updated != message:
+                payload["message"] = updated
 
         if len(change) > 2:
             changes.append(change)
@@ -221,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"      verifiers: {c.get('verifier_names_before')} -> {c['verifier_names_after']}")
             if "post_delivery_command_after" in c:
                 print(f"      post_delivery_command -> {c['post_delivery_command_after']}")
+            if "record_tool" in c:
+                print(f"      record_tool: {c['record_tool']}")
             if "pillar_instruction" in c:
                 print(f"      pillar_instruction: {c['pillar_instruction']}")
     return 0

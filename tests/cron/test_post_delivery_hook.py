@@ -260,3 +260,111 @@ def test_legacy_job_without_post_delivery_command_loads(tmp_path):
     loaded = CronService(store_path).get_job(job.id)
     assert loaded is not None
     assert loaded.payload.post_delivery_command is None
+
+# --------------------------------------------------------------------------
+# Owner alerting when bookkeeping fails (the client message is already sent)
+# --------------------------------------------------------------------------
+
+_FAILER = "import sys; sys.exit(3)"
+
+
+def _owner_msgs(chan):
+    return [content for chat, content in chan.sent if chat == OWNER]
+
+
+def _group_msgs(chan):
+    return [content for chat, content in chan.sent if chat == GROUP]
+
+
+@pytest.mark.asyncio
+async def test_hook_failure_after_success_alerts_owner_once(tmp_path):
+    """ACK success + recording failure: delivered, owner alerted exactly once."""
+    bus = MessageBus(outbound_ack_timeout=5.0)
+    mgr = ChannelManager(Config(), bus)
+    chan = RecordingChannel({}, bus)
+    mgr.channels["telegram"] = chan
+    job = _job(post_delivery_command=[sys.executable, "-c", _FAILER, "{ack_status}"])
+
+    await _run(bus, mgr, job, _Agent(_resp("PASS")))
+
+    # The client message is still delivered - bookkeeping never undoes it.
+    assert len(_group_msgs(chan)) == 1
+    owners = _owner_msgs(chan)
+    assert len(owners) == 1
+    assert "recording failed" in owners[0]
+    assert "Rotation state may require attention" in owners[0]
+
+
+@pytest.mark.asyncio
+async def test_hook_success_does_not_alert_owner(tmp_path):
+    rec = tmp_path / "ack.jsonl"
+    bus = MessageBus(outbound_ack_timeout=5.0)
+    mgr = ChannelManager(Config(), bus)
+    chan = RecordingChannel({}, bus)
+    mgr.channels["telegram"] = chan
+
+    await _run(bus, mgr, _job(rec), _Agent(_resp("PASS")))
+
+    assert len(_group_msgs(chan)) == 1
+    assert _owner_msgs(chan) == []
+
+
+@pytest.mark.asyncio
+async def test_hook_failure_after_failed_ack_does_not_double_alert(tmp_path):
+    """A failed delivery already alerted; the recording failure must not add one."""
+    bus = MessageBus(outbound_ack_timeout=5.0)
+    mgr = ChannelManager(Config(), bus)
+    chan = RecordingChannel({}, bus, fail_chats={GROUP})
+    mgr.channels["telegram"] = chan
+    job = _job(post_delivery_command=[sys.executable, "-c", _FAILER, "{ack_status}"])
+
+    await _run(bus, mgr, job, _Agent(_resp("PASS")))
+
+    assert _group_msgs(chan) == []
+    assert len(_owner_msgs(chan)) == 1
+
+
+@pytest.mark.asyncio
+async def test_hook_failure_after_blocked_does_not_double_alert(tmp_path):
+    bus = MessageBus(outbound_ack_timeout=5.0)
+    mgr = ChannelManager(Config(), bus)
+    chan = RecordingChannel({}, bus)
+    mgr.channels["telegram"] = chan
+    job = _job(post_delivery_command=[sys.executable, "-c", _FAILER, "{ack_status}"])
+
+    await _run(bus, mgr, job, _Agent(_resp("FAIL")))
+
+    assert _group_msgs(chan) == []
+    assert len(_owner_msgs(chan)) == 1
+
+
+@pytest.mark.asyncio
+async def test_hook_failure_with_dead_owner_channel_does_not_recurse(tmp_path):
+    """If the owner alert itself cannot be sent, nothing recurses."""
+    bus = MessageBus(outbound_ack_timeout=5.0)
+    mgr = ChannelManager(Config(), bus)
+    chan = RecordingChannel({}, bus, fail_chats={OWNER})
+    mgr.channels["telegram"] = chan
+    job = _job(post_delivery_command=[sys.executable, "-c", _FAILER, "{ack_status}"])
+
+    await _run(bus, mgr, job, _Agent(_resp("PASS")))
+
+    assert len(_group_msgs(chan)) == 1
+    assert _owner_msgs(chan) == []
+
+
+@pytest.mark.asyncio
+async def test_hook_failure_alert_is_sent_to_the_configured_owner(tmp_path):
+    bus = MessageBus(outbound_ack_timeout=5.0)
+    mgr = ChannelManager(Config(), bus)
+    chan = RecordingChannel({}, bus)
+    mgr.channels["telegram"] = chan
+    job = _job(
+        alert_to="9999",
+        post_delivery_command=[sys.executable, "-c", _FAILER, "{ack_status}"],
+    )
+
+    await _run(bus, mgr, job, _Agent(_resp("PASS")))
+
+    assert [chat for chat, _ in chan.sent if chat == "9999"]
+    assert [content for chat, content in chan.sent if chat == "9999"][0].count("recording failed") == 1

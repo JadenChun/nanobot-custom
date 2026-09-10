@@ -698,8 +698,15 @@ async def _run_cron_job(agent, bus, job) -> str | None:
         """Report the client-delivery outcome to the marketing context.
 
         Nanobot deliberately owns no delivery-status semantics: the marketing
-        helper maps the ACK outcome to its own stored delivery status.  Best
-        effort - a bookkeeping failure must never affect delivery or alerts.
+        helper maps the ACK outcome to its own stored delivery status.
+
+        The client message is ALREADY delivered by this point, so a bookkeeping
+        failure must never be treated as a transport failure and must never
+        trigger a resend.  It is not silent either: a failed recording after a
+        SUCCESSFUL delivery is the one case the owner would otherwise never hear
+        about (rotation state may be stale), so it raises exactly one owner
+        alert.  The alert is run-level de-duplicated, and a non-success ACK has
+        already produced its own alert, so no second/recursive alert is sent.
         """
         command = job.payload.post_delivery_command
         if not command:
@@ -714,15 +721,29 @@ async def _run_cron_job(agent, bus, job) -> str | None:
                 repo_root=os.getcwd(),
             )
         except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Post-delivery hook raised for {}: {}", job.name, exc)
+            outcome = {"status": "failed", "error": str(exc)[:300]}
+
+        if outcome["status"] == "ok":
+            logger.info(
+                "Post-delivery hook for {}: ack_status={} recorded",
+                job.name,
+                ack_status,
+            )
             return
-        logger.info(
-            "Post-delivery hook for {}: ack_status={} result={} {}",
+
+        logger.error(
+            "Post-delivery hook FAILED for {}: ack_status={} status={} error={}",
             job.name,
             ack_status,
             outcome["status"],
             outcome["error"],
         )
+        if ack_status == "success":
+            await _owner_alert(
+                "Delivery Recorded, State Update Failed",
+                "Delivery succeeded, but delivery-state recording failed. "
+                "Rotation state may require attention.",
+            )
 
     async def _owner_alert(failure_stage: str, reason: str) -> None:
         """Send at most one owner alert for this run (local run-level dedup)."""
