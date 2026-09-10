@@ -1,5 +1,6 @@
 """Event types for the message bus."""
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -25,6 +26,19 @@ class InboundMessage:
 
 
 @dataclass
+class DeliveryResult:
+    """Terminal downstream result for one outbound message.
+
+    Transport acknowledgement only: ``success=True`` means the channel accepted
+    the message (e.g. Telegram's ``send_message`` returned).  It is NOT proof
+    the recipient read it.
+    """
+
+    success: bool
+    error: str | None = None
+
+
+@dataclass
 class OutboundMessage:
     """Message to send to a chat channel."""
 
@@ -34,5 +48,10 @@ class OutboundMessage:
     reply_to: str | None = None
     media: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Internal, non-serialized delivery acknowledgement.  Deliberately NOT in
+    # metadata (which may be copied/logged/serialized).  ``None`` = fire-and-forget.
+    delivery_ack: "asyncio.Future[DeliveryResult] | None" = field(
+        default=None, repr=False, compare=False
+    )
 
 

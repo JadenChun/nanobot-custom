@@ -7,7 +7,7 @@ from typing import Any
 
 from loguru import logger
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import DeliveryResult, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Config
@@ -135,11 +135,13 @@ class ChannelManager:
 
                 if msg.metadata.get("_progress"):
                     if msg.metadata.get("_tool_hint") and not self.config.channels.send_tool_hints:
+                        self._resolve_ack(msg, DeliveryResult(success=True))
                         continue
                     if (
                         not msg.metadata.get("_tool_hint")
                         and self.config.channels.task_update_mode != "verbose"
                     ):
+                        self._resolve_ack(msg, DeliveryResult(success=True))
                         continue
 
                 # Coalesce consecutive _stream_delta messages for the same (channel, chat_id)
@@ -153,11 +155,25 @@ class ChannelManager:
                     await self._send_with_retry(channel, msg)
                 else:
                     logger.warning("Unknown channel: {}", msg.channel)
+                    self._resolve_ack(
+                        msg,
+                        DeliveryResult(
+                            success=False, error=f"unknown channel: {msg.channel}"
+                        ),
+                    )
 
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
+
+    @staticmethod
+    def _resolve_ack(msg: OutboundMessage, result: DeliveryResult) -> None:
+        """Resolve a message's delivery acknowledgement exactly once."""
+        ack = getattr(msg, "delivery_ack", None)
+        if ack is None or ack.done():
+            return
+        ack.set_result(result)
 
     @staticmethod
     async def _send_once(channel: BaseChannel, msg: OutboundMessage) -> None:
@@ -227,6 +243,7 @@ class ChannelManager:
         for attempt in range(max_attempts):
             try:
                 await self._send_once(channel, msg)
+                self._resolve_ack(msg, DeliveryResult(success=True))
                 return  # Send succeeded
             except asyncio.CancelledError:
                 raise  # Propagate cancellation for graceful shutdown
@@ -235,6 +252,13 @@ class ChannelManager:
                     logger.error(
                         "Failed to send to {} after {} attempts: {} - {}",
                         msg.channel, max_attempts, type(e).__name__, e
+                    )
+                    self._resolve_ack(
+                        msg,
+                        DeliveryResult(
+                            success=False,
+                            error=f"{type(e).__name__}: {e}",
+                        ),
                     )
                     return
                 delay = _SEND_RETRY_DELAYS[min(attempt, len(_SEND_RETRY_DELAYS) - 1)]
