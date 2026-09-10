@@ -475,3 +475,21 @@ The combined session/migration/runner/summary selection passes 481 tests with th
 two previously documented activation-guard plugin fixtures deselected. Ruff/diff
 checks pass. Replay-node binding, ticket issuance/acknowledgment, checkpoint reuse,
 and pressure compaction remain unfinished; production activation remains guarded.
+
+### Tool replay bindings in runner request state
+
+The runner now creates an invocation-local source request ledger from the admitted
+typed transcript and explicit eligible history IDs. Tool intent replay uses the
+recorded assistant event ID. The mandatory result callback captures each result's
+durable ID by batch ordinal; subsequent tool-message replay binds that exact ID.
+Repeated provider call IDs cannot collapse two results, child writers retain their
+own callbacks, and missing bindings fail closed. Execution callbacks continue to
+return no value. These bindings do not acknowledge requests by themselves.
+
+An actual-engine repeated-call-ID test verifies distinct source result identities
+in the second request ledger. Independent review ran 32 engine/writer tests and
+accepted callback ordering and identity handling. The combined session/migration/
+runner/summary selection passes 482 tests, with the same two guarded plugin
+fixtures deselected. Ruff/diff checks pass. Other assistant/runtime replay append
+paths and request-ticket issuance/acknowledgment are still pending, so this ledger
+is not yet used to reduce context or publish checkpoints. Activation remains guarded.

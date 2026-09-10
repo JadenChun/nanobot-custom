@@ -26,7 +26,7 @@ from nanobot.agent.context_governance import (
 )
 from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from nanobot.agent.policy import ToolPolicy
-from nanobot.agent.tools.execution import ToolResultCallback, execute_tool_calls
+from nanobot.agent.tools.execution import KnownToolResult, ToolResultCallback, execute_tool_calls
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.events import NO_EVENTS, EventSink
@@ -43,6 +43,8 @@ from nanobot.providers.base import (
     ProviderConversationState,
 )
 from nanobot.providers.conversation_state import ProviderConversationStateController
+from nanobot.session.source import SourceValidationError
+from nanobot.session.source_request import SourceRequestLedger
 from nanobot.session.summary import SessionSummaryCheckpoint
 from nanobot.utils.helpers import (
     build_assistant_message,
@@ -469,6 +471,9 @@ class AgentRunner:
             config=governance_config,
             conversation=conversation_state,
             compaction=compaction,
+            source=SourceRequestLedger(spec.source_transcript,
+                initial_eligible_ids=spec.source_initial_eligible_ids)
+                if spec.source_transcript is not None else None,
             events=spec.events,
         )
 
@@ -536,6 +541,10 @@ class AgentRunner:
                     response,
                 )
                 messages.append(assistant_message)
+                if request_state.source is not None:
+                    if recorded_response.source_event_id is None:
+                        raise SourceValidationError('Tool intent has no durable source identity')
+                    request_state.source.append_source(recorded_response.source_event_id, assistant_message)
                 await self._emit_checkpoint(
                     spec,
                     {
@@ -550,6 +559,13 @@ class AgentRunner:
 
                 await hook.before_execute_tools(context)
 
+                result_ids: dict[int, str] = {}
+                source_writer = spec.source_writer
+
+                async def record_result(value: KnownToolResult) -> None:
+                    assert source_writer is not None
+                    result_ids[value.ordinal] = await source_writer.record_tool_result_event(value)
+
                 results, new_events = await execute_tool_calls(
                     spec.tools,
                     response.tool_calls,
@@ -562,7 +578,7 @@ class AgentRunner:
                     messages=messages,
                     turn_context=spec.turn_context,
                     fail_on_tool_error=spec.fail_on_tool_error,
-                    tool_result_callback=(spec.source_writer.record_tool_result if spec.source_writer is not None
+                    tool_result_callback=(record_result if source_writer is not None
                                           else spec.tool_result_callback),
                 )
                 terminal = next((r for r in results if isinstance(r, ToolOutcome)
@@ -577,7 +593,7 @@ class AgentRunner:
                 context.tool_results = list(results)
                 context.tool_events = list(new_events)
                 completed_tool_results: list[dict[str, Any]] = []
-                for tool_call, result in zip(response.tool_calls, results):
+                for ordinal, (tool_call, result) in enumerate(zip(response.tool_calls, results)):
                     tool_message = {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -590,6 +606,11 @@ class AgentRunner:
                         ),
                     }
                     messages.append(tool_message)
+                    if request_state.source is not None:
+                        identity = result_ids.get(ordinal)
+                        if identity is None:
+                            raise SourceValidationError('Tool result has no durable source identity')
+                        request_state.source.append_source(identity, tool_message)
                     completed_tool_results.append(tool_message)
                 checkpoint_model_messages = (
                     self.context_governor.prepare_messages_for_model(

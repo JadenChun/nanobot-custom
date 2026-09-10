@@ -363,3 +363,38 @@ async def test_malformed_retry_chain_returns_final_recorded_identity(engine_conf
         assert not validate_execution_links(events)
     finally:
         await loop.aclose()
+
+
+async def test_repeated_provider_call_ids_keep_exact_tool_replay_bindings(engine_config, monkeypatch):
+    from nanobot.session.source_projection import SourceNode
+
+    (engine_config.workspace_path / 'same.txt').write_text('same result')
+    provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(id='same', name='read_file',
+            arguments={'path': 'same.txt'}) for _ in range(2)]),
+        LLMResponse(content='done'),
+    ])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop)
+    captured = []
+    prepare = loop.runner.context_governor.prepare_request
+
+    async def observe(state, messages, **kwargs):
+        if state.source is not None:
+            captured.append((state.source.transcript, state.source.eligible_ids))
+        return await prepare(state, messages, **kwargs)
+
+    monkeypatch.setattr(loop.runner.context_governor, 'prepare_request', observe)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='read twice', session_key='cli:source'))
+        assert result.error is None
+        events = backend.source.load_source_snapshot('cli:source').events
+        assert len(captured) == 2
+        nodes = [node for node in captured[1][0].nodes if isinstance(node, SourceNode)]
+        assert [node.event_id for node in nodes] == [row['_event_id'] for row in events[:-1]]
+        tool_nodes = [node for node in nodes if node.message['role'] == 'tool']
+        assert len(tool_nodes) == 2 and tool_nodes[0].event_id != tool_nodes[1].event_id
+        assert [node.message['tool_call_id'] for node in tool_nodes] == ['same', 'same']
+        assert captured[1][1] == frozenset()  # Wiring alone never acknowledges a request.
+    finally:
+        await loop.aclose()
