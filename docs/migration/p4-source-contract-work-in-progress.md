@@ -721,3 +721,13 @@ Production activation and full migration acceptance remain incomplete.
 The narrow review recheck accepted the strengthened assertions. Token pressure
 uses a deterministic synthetic estimator; these cases do not establish local
 crash/restart behavior or production summary quality.
+
+### Artifact descriptor and source-binding foundation
+
+The first offloading slice adds strict typed artifact descriptors and opaque
+reference parsing, with exact canonical text/execution binding. It neither stores
+blobs nor grants retrieval access. [The offloading contract](p4-artifact-offloading-contract.md)
+records the fields, reviewed source-intent correction, 60 passing artifact cases
+and 360 passing session tests. Private storage/publication and all authorization/
+projection integrations remain next; source inline retention and the production
+migration guard are unchanged.

@@ -109,3 +109,25 @@ replacement races; crash points before/after descriptor publication; missing/cor
 blob recovery; bounded retrieval and recursion exemption; pressure summaries using
 references; explicit grants; restart and rollback. Telemetry contains IDs, sizes,
 status and latency, never result text, previews, source paths or prompts.
+
+## Descriptor implementation evidence
+
+`nanobot/session/artifact.py` now implements strict version-1 text descriptors,
+filesystem-origin locator shapes, opaque reference parsing, and canonical source
+binding. It verifies the exact workspace/session/incarnation/generation, event,
+execution, run and stream, actual assistant call/result stream provenance, scalar
+or text-block selection, UTF-8 byte length and SHA-256. Repeated provider call IDs
+do not collapse distinct execution/event bindings. Parsed locators are recorded
+policy inputs, not trusted grants; this module performs no file access, descriptor
+publication, policy authorization or reference projection.
+
+The codec rejects extra/missing fields, unsupported MIME/version/provenance classes,
+noncanonical relative locators, invalid opaque IDs, malformed timestamps/counters
+and mismatched source content. Independent review corrected intent lookup to ignore
+non-call rows carrying unrelated `_execution_ids`; regressions cover both forged
+lists and null fields. The review recheck independently passed 60 artifact tests.
+All 360 session tests pass with network denied; scoped Ruff and diff checks pass.
+
+Immutable blob storage, owned source-header publication, provenance adapters,
+retrieval policy/grants, governor/checkpoint references and integrated offloading
+acceptance remain unimplemented. This evidence does not authorize activation.
