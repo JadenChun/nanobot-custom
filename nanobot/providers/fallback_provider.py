@@ -198,6 +198,10 @@ class FallbackProvider(LLMProvider):
             return True
         return False
 
+    async def chat_once(self, **kwargs: Any) -> LLMResponse:
+        """Keep bounded auxiliary work on its captured primary model."""
+        return await self._primary.chat_once(**kwargs)
+
     async def chat(self, **kwargs: Any) -> LLMResponse:
         if not self._has_fallbacks:
             return await self._primary.chat(**kwargs)

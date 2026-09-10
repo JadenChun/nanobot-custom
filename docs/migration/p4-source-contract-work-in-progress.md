@@ -324,3 +324,31 @@ reload. Read-only review accepted the foundation (12 tests before the two final
 storage/corruption additions). Isolated writer-test collection still encounters the
 existing missing `ExecToolConfig` startup import; combined session/source-engine
 collection passes. This broader import/ABI qualification remains unresolved.
+
+### Bounded source-summary operation
+
+`Consolidator.summarize_source_chunk` supplies one storage-free auxiliary operation
+for governor-selected evidence. It encodes evidence as data, excludes system-role
+inputs, caps summary output at 2048 tokens, checks input plus output reserve plus
+1024 tokens of safety headroom, and bounds execution to at most 60 seconds.
+It rejects empty, errored, truncated, oversized, or tool-bearing responses without
+raw fallback. Cancellation propagates. Typed results retain usage or unknown usage,
+captured provider/model, status, and call count. No archive or receipt method runs.
+
+`LLMProvider.chat_once` retains observation but bypasses framework retry/recovery.
+Fallback wrappers retain the captured primary; key pools make one paced credential
+attempt without rotating. Summary reasoning is explicitly disabled to prevent
+Anthropic from enlarging the reserved output budget. Transport-internal retries
+remain governed by the transport and bounded by the enclosing timeout.
+
+Evidence: 309 combined session/source-engine/summary tests passed; 13 summary tests
+also passed independent review after bounds corrections. Ruff/diff checks passed.
+A broader pool/fallback/observer selection produced 81 passes and 24 failures:
+the legacy `test_fallback_provider.py` fixture omits the now-required provider_name
+constructor argument. These tests still require ABI reconciliation, not waiver.
+
+This auxiliary operation remains unwired: the governor still must select exact
+closed chunks, limit an attempt to four calls, aggregate all auxiliary usage,
+validate the finalized rebuilt main request, and publish under strict source CAS.
+Provider-specific finalized-request budget validation also remains an integration
+gate. The runtime activation guard remains unchanged.

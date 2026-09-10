@@ -1270,6 +1270,14 @@ class LLMProvider(ABC):
                         found = True
         return found
 
+    async def chat_once(self, **kwargs: Any) -> LLMResponse:
+        """One observed provider call, without the framework retry/recovery loop.
+
+        The caller owns timeout and budget validation. Provider transports may
+        have their own retry policy; this method never repeats the request.
+        """
+        return await self._safe_chat(**kwargs)
+
     async def _safe_chat(self, **kwargs: Any) -> LLMResponse:
         """Call chat() and convert unexpected exceptions to error responses."""
         started_at_ms = time.time_ns() // 1_000_000

@@ -167,6 +167,19 @@ class PooledProvider(LLMProvider):
         stopped[0] = "exhausted"
         return response
 
+    async def chat_once(self, **kwargs: Any) -> LLMResponse:
+        """One paced credential attempt; do not rotate and repeat a summary."""
+        slot = self._pool.request_order()[0]
+        await self._pool.admit()
+        response = await self._leaves[slot].chat_once(**kwargs)
+        if response.finish_reason != 'error':
+            self._pool.succeeded(slot)
+        else:
+            cooldown = _rotation_cooldown(response)
+            if cooldown is not None:
+                self._pool.failed(slot, cooldown)
+        return response
+
     async def chat(self, **kwargs: Any) -> LLMResponse:
         return await self._attempt(kwargs, stream=False, observed=False, stopped=[False])
 
