@@ -136,7 +136,7 @@ from nanobot.session.recovery import (
     restore_pending_interruption,
     restore_runtime_checkpoint,
 )
-from nanobot.session.source_projection import SourceNode, source_nodes
+from nanobot.session.source_projection import SourceNode, project_source, source_nodes
 from nanobot.session.source_request import SourceTranscript
 from nanobot.session.summary import (
     SessionSummary,
@@ -2355,6 +2355,21 @@ class AgentLoop:
         ctx.runtime_context_blocks = await self._resolve_runtime_context_for_turn(ctx)
         ctx.input_persisted_early = self._persist_user_message_early(
             ctx.msg, session, run_id=ctx.run_context.run_id, trace_owner=ctx)
+        # Select the checkpoint projection after recording the current input so
+        # pinning refers to the newest actual user, not the previous turn's user.
+        if not ctx.fresh_history:
+            projection = project_source(writer.owner.read_snapshot())
+            history_nodes = []
+            if projection.checkpoint is not None:
+                history_nodes.append(projection.checkpoint)
+            if projection.pinned is not None:
+                history_nodes.append(projection.pinned)
+            history_nodes.extend(projection.nodes)
+            ctx.run_context.source_history = SourceTranscript(tuple(
+                node for node in history_nodes
+                if not isinstance(node, SourceNode) or node.event_id != ctx.run_context.source_input_event_id
+            ))
+            ctx.history = ctx.run_context.source_history.messages()
         ctx.transcript_input = self._build_transcript_input(ctx)
 
     async def _build_turn(self, ctx: TurnContext) -> None:

@@ -537,3 +537,20 @@ engine/request-ledger cases before the final cancellation/hook additions. The
 combined selection passes 490 tests with the same two guarded plugin fixtures
 deselected. Ruff/diff checks pass. Checkpoint reuse/publication, pressure compaction,
 offloading, and remaining migration acceptance work are still unfinished.
+
+### Scoped checkpoint reuse across turns
+
+Root source turns now select the validated checkpoint projection after persisting
+current input. The current input is excluded from history by its durable event ID
+and added once by the context builder; the previous user is no longer replayed as
+the pinned instruction. Compatible summaries remain historical assistant data.
+Incompatible checkpoint scopes fall back to canonical source, and fresh turns
+bypass root checkpoints. No auxiliary request or source rewrite occurs on reuse.
+
+Actual-engine restart tests exercise compatible/incompatible scope, current-user
+uniqueness, fresh isolation, and unchanged source prefixes. Independent review
+accepted the slice and ran all 31 engine tests. The combined session/migration/
+runner/summary selection passes 492 tests with the same two guarded plugin
+fixtures deselected. Ruff and diff checks pass. Automatic pressure compaction,
+checkpoint publication from the governor, offloading, and whole-migration
+acceptance remain pending; production activation remains guarded.

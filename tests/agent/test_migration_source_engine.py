@@ -533,3 +533,55 @@ async def test_cancelled_source_request_discards_ticket(engine_config, monkeypat
         assert not ledgers[0].eligible_ids and not ledgers[0]._pending
     finally:
         await loop.aclose()
+
+
+@pytest.mark.parametrize('scope', ['root', 'incompatible'])
+async def test_real_source_turn_reuses_scoped_checkpoint_after_restart(engine_config, scope):
+    from datetime import datetime, timezone
+
+    from nanobot.session.source import prefix_digest
+
+    first_provider = ScriptedProvider([LLMResponse(content='old evidence')])
+    first = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=first_provider)
+    backend = upgrade(first)
+    try:
+        result = await first.execute_turn(TurnRequest(content='old private detail', session_key='cli:source'))
+        assert result.error is None
+    finally:
+        await first.aclose()
+    snapshot = backend.source.load_source_snapshot('cli:source')
+    proposal = {
+        'schema_version': 1, 'digest_version': 1, 'summary_format_version': 1,
+        'session_generation': snapshot.state.generation, 'source_revision': snapshot.state.revision,
+        'checkpoint_id': 'fixture-checkpoint', 'parent_checkpoint_id': snapshot.state.checkpoint_id,
+        'producing_model': 'fixture', 'producing_provider': 'fixture',
+        'digest_algorithm': 'sha256', 'created_at': datetime.now(timezone.utc).isoformat(),
+        'summary': 'retained historical facts', 'artifact_references': [], 'boundary': len(snapshot.events),
+        'boundary_event_id': snapshot.events[-1]['_event_id'],
+        'prefix_digest': prefix_digest(snapshot.events, len(snapshot.events)), 'auxiliary_usage': None,
+        'projection_scope': scope, 'projection_version': 1,
+    }
+    backend.source.commit_context_checkpoint('cli:source', snapshot.state, proposal)
+    provider = ScriptedProvider([LLMResponse(content='new answer'), LLMResponse(content='fresh answer')])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='new instruction', session_key='cli:source'))
+        assert result.error is None
+        rows = provider.calls[0][0]
+        if scope == 'root':
+            assert 'retained historical facts' in str(rows)
+            assert 'old private detail' not in str(rows)
+            assert 'retained historical facts' not in rows[0]['content']
+            assert [row['content'] for row in rows if row['role'] == 'user'] == ['new instruction']
+        else:
+            assert 'retained historical facts' not in str(rows)
+            assert 'old private detail' in str(rows)
+        result = await loop.execute_turn(TurnRequest(content='fresh instruction', session_key='cli:source',
+                                                    history_mode=HistoryMode.FRESH))
+        assert result.error is None
+        assert 'retained historical facts' not in str(provider.calls[1][0])
+        assert 'old private detail' not in str(provider.calls[1][0])
+        assert backend.source.load_source_snapshot('cli:source').events[:len(snapshot.events)] == snapshot.events
+        assert len(provider.calls) == 2  # Reuse performs no auxiliary model request.
+    finally:
+        await loop.aclose()
