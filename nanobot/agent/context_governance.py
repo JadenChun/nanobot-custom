@@ -38,6 +38,7 @@ from nanobot.runtime_context import (
     reattach_runtime_context,
 )
 from nanobot.session.artifact_projection import ArtifactProjector
+from nanobot.session.checkpoint_admission import CheckpointAdmission
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.source import SourceValidationError, prefix_digest
 from nanobot.session.source_compaction import SourceCompactionCandidate
@@ -221,6 +222,7 @@ class SourceCompactionState:
     runtime: LLMRuntime
     raw_messages: list[dict[str, Any]]
     stream_id: str | None
+    admission: CheckpointAdmission = field(default_factory=CheckpointAdmission)
     local_boundary: int = 0
     local_checkpoint: CheckpointNode | None = None
     attempts: list[SourceCompactionMetrics] = field(default_factory=list)
@@ -254,6 +256,58 @@ class ModelRequestState:
 
 class ContextGovernor:
     """Own model-request context while preserving persisted history."""
+
+    @staticmethod
+    def admit_source_checkpoint(state: ModelRequestState, view: SourceTranscript, *,
+                                tool_definitions: list[dict[str, Any]] | None) -> SourceTranscript:
+        from nanobot.agent.tools.artifact import ReadArtifactTool
+
+        source, compaction = state.source, state.source_compaction
+        if source is None or compaction is None:
+            return view
+        if source.has_pending_requests:
+            raise SourceValidationError('Cannot admit checkpoint with pending requests')
+        notes = source.validate_view(view)
+        active, epoch = source.transcript, source.projection_epoch
+        if compaction.raw_messages != active.messages():
+            raise SourceValidationError('Checkpoint admission differs from runner transcript')
+        admission = compaction.admission
+        tool = state.config.tools.get('read_artifact')
+        if type(tool) is ReadArtifactTool:
+            if tool.reader.writer is not compaction.writer:
+                raise SourceValidationError('Checkpoint verifier differs from source invocation')
+            if admission.reader is None:
+                admission.reader = tool.reader
+        enabled = (type(tool) is ReadArtifactTool and tool.reader is admission.reader and any(
+            definition.get('type') == 'function'
+            and definition.get('function', {}).get('name') == 'read_artifact'
+            for definition in tool_definitions or []))
+        snapshot = compaction.writer.owner.read_snapshot()
+        updated = active
+        if not admission.initialized:
+            if compaction.stream_id is None:
+                updated = admission.select(snapshot, active)
+            else:
+                admission.initialized = True
+        checkpoint = admission.checkpoint if compaction.stream_id is None else compaction.local_checkpoint
+        if checkpoint is not None and checkpoint.artifact_references:
+            if not admission.validate_dependencies(snapshot, updated, enabled=enabled, checkpoint=checkpoint):
+                updated = source.recovery_transcript
+                admission.reject()
+                compaction.local_boundary, compaction.local_checkpoint = 0, None
+        source.validate_transcript(updated)
+        if (source.has_pending_requests or source.projection_epoch != epoch or source.transcript != active
+                or compaction.raw_messages != active.messages()):
+            raise SourceValidationError('Source projection changed during checkpoint admission')
+        if updated != active:
+            source.replace_projection(updated)
+            compaction.raw_messages[:] = updated.messages()
+            state.usage = None
+            state.messages = None
+            state.source_view = None
+            state.tool_definitions = None
+            state.conversation.replace_transcript(compaction.raw_messages)
+        return updated.with_runtime(*notes)
 
     @staticmethod
     def project_source_artifacts(state: ModelRequestState, view: SourceTranscript, *,
@@ -307,7 +361,8 @@ class ContextGovernor:
             raise SourceValidationError('Runner transcript differs from active source projection')
         candidate = SourceCompactionCandidate.capture(compaction.writer.owner.read_snapshot(), active,
             eligible_ids=source.eligible_ids, stream_id=compaction.stream_id,
-            local_boundary=compaction.local_boundary, local_checkpoint=compaction.local_checkpoint)
+            local_boundary=compaction.local_boundary, local_checkpoint=compaction.local_checkpoint,
+            accepted_boundary=compaction.admission.boundary, accepted_checkpoint=compaction.admission.checkpoint)
         return SourceCompactionAttempt(candidate, source.projection_epoch, notes, deepcopy(tool_definitions))
 
     def publish_source_compaction(self, state: ModelRequestState, attempt: SourceCompactionAttempt, *,
@@ -371,6 +426,10 @@ class ContextGovernor:
                 raise SourceValidationError('Local source changed during compaction')
         source.replace_projection(active)
         compaction.raw_messages[:] = active.messages()
+        compaction.admission.initialized = True
+        if candidate.stream_id is None:
+            compaction.admission.boundary, compaction.admission.checkpoint = boundary, checkpoint
+            compaction.admission.fingerprint = writer.owner.read_snapshot().state.checkpoint_fingerprint
         if candidate.stream_id is not None:
             compaction.local_boundary, compaction.local_checkpoint = boundary, checkpoint
         state.source_view = view
@@ -885,6 +944,7 @@ class ContextGovernor:
             elif source_view is not None:
                 raise SourceValidationError('Source view requires an active source ledger')
             if source_view is not None:
+                source_view = self.admit_source_checkpoint(state, source_view, tool_definitions=tool_definitions)
                 source_view = self.project_source_artifacts(state, source_view, tool_definitions=tool_definitions)
                 source_view = await self.compact_source_request(state, source_view, tool_definitions=tool_definitions)
                 messages = source_view.messages()

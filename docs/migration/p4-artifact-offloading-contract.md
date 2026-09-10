@@ -299,7 +299,47 @@ without publication churn.
 Pressure summaries still use canonical disjoint inline evidence, never generated
 reference/preview nodes. Oversized indivisible canonical groups retain the existing
 auxiliary-budget rejection. Evidence with trusted `_artifact_read` metadata is
-rejected for summary publication until dependency support exists. Checkpoint
-`artifact_references` remains empty-only. Reference-aware summary dependency
+rejected for summary publication until dependency support exists. Generic checkpoint publication remains empty-reference-only. Version-2 dependency
+loading and invocation admission are described below. Reference-aware summary dependency
 publication, validation and rollback remain a required subsequent package; this
 main-request integration does not claim to implement them.
+
+
+## Checkpoint dependency admission and recovery (Package A)
+
+The source loader accepts structurally valid schema-v2 checkpoints with sorted,
+unique opaque artifact references, without opening blobs or granting access.
+Schema-v1 checkpoints remain empty-reference-only. Generic checkpoint publication
+rejects nonempty dependencies until Package B supplies a trusted publication path.
+
+The loop assembles full visible source history, preserving the authorized current
+user expansion. The runner registers its invocation reader before selecting a root
+checkpoint and before exposing messages to run hooks. Fresh and child invocations
+never select root checkpoints. An invocation without an admitted reader skips a
+dependent checkpoint and retains full source.
+
+The ledger retains a detached recovery transcript and mirrors subsequent source
+and runtime appends into it. Projection changes never overwrite that baseline or
+advance eligibility. Each request validates checkpoint dependencies and active
+artifact bindings against current manifests, source provenance, scope and policy.
+Missing/corrupt bytes or removal of the actual retrieval schema permit expansion
+only after independent source authorization. Missing manifests, revoked access,
+scope denial and ownership loss abort instead of widening access through inline
+fallback.
+
+Recovery checks ledger epoch, exact active transcript/raw-list equality and absence
+of outstanding tickets. It synchronously replaces the detached projection and raw
+list, clears request/usage/provider caches, resets the accepted boundary, and retains
+request-only retry instructions once. Physical checkpoint metadata stays unchanged
+for strict CAS; rejected checkpoint fingerprints remain invocation-local. Subsequent
+compaction captures explicit accepted state and cannot rediscover a rejected disk
+checkpoint. The final request budget still applies to expanded source.
+
+Verification covers dependency admission, missing/corrupt bytes, no-tools recovery,
+revocation, manifest loss, stream denial, exact recovery ordering/expansion,
+unacknowledged eligibility and pending-ticket protection. Independent review passed
+with 116 focused tests. The network-denied broader regression suite passed
+657 tests with two existing guarded plugin fixtures deselected; those exclusions
+remain outstanding for overall acceptance. Scoped Ruff and diff checks passed. Dependency-bearing summary generation remains explicitly blocked until
+Package B; verified projected auxiliary evidence remains Package C. The production
+migration guard remains enabled.

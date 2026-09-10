@@ -27,6 +27,9 @@ def snapshot(events, checkpoint=None):
 def capture(events, *, nodes=None, eligible=None, checkpoint=None, **kwargs):
     if nodes is None:
         nodes = source_nodes(events, stream_id=kwargs.get('stream_id'))
+    if checkpoint is not None and kwargs.get('stream_id') is None:
+        kwargs.setdefault('accepted_boundary', checkpoint['boundary'])
+        kwargs.setdefault('accepted_checkpoint', CheckpointNode(checkpoint['checkpoint_id'], checkpoint['summary']))
     return SourceCompactionCandidate.capture(snapshot(events, checkpoint), SourceTranscript(tuple(nodes)),
         eligible_ids=frozenset(eligible if eligible is not None else (e['_event_id'] for e in events)), **kwargs)
 

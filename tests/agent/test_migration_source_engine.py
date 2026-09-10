@@ -632,6 +632,7 @@ async def test_source_tickets_follow_governor_resulting_view(engine_config, monk
             insertion = next(i for i, node in enumerate(nodes) if isinstance(node, SourceNode))
             nodes.insert(insertion, CheckpointNode('replacement', 'historical facts'))
             state.source.replace_projection(SourceTranscript(tuple(nodes)))
+            state.source_compaction.raw_messages[:] = state.source.transcript.messages()
             if kwargs['transcript'] is not None:
                 kwargs['transcript'][:] = state.source.transcript.messages()
             view = state.source.transcript.with_runtime(*notes)

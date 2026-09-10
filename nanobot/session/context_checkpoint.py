@@ -50,8 +50,11 @@ def validate_context_checkpoint(
         or any(type(value) is not int or value < 0 for value in usage.values())
     ):
         raise SourceValidationError("Invalid context checkpoint auxiliary usage")
+    version = candidate.get('schema_version')
+    if type(version) is not int or version not in (1, 2):
+        raise SourceValidationError('Invalid context checkpoint version')
     for name, expected in (
-        ("schema_version", 1), ("digest_version", 1), ("summary_format_version", 1),
+        ("schema_version", version), ("digest_version", 1), ("summary_format_version", 1),
         ("session_generation", generation), ("source_revision", source_revision),
     ):
         value = candidate.get(name)
@@ -76,8 +79,18 @@ def validate_context_checkpoint(
     summary = candidate.get("summary")
     if not isinstance(summary, str) or not summary.strip() or len(summary) > MAX_SUMMARY_CHARS:
         raise SourceValidationError("Invalid context checkpoint summary")
-    if candidate.get("artifact_references") != []:
-        raise SourceValidationError("Context checkpoint artifacts require authorization")
+    references = candidate.get('artifact_references')
+    if version == 1 and references != []:
+        raise SourceValidationError('Version-1 context checkpoint cannot carry artifacts')
+    if not isinstance(references, list) or any(not isinstance(value, str) for value in references):
+        raise SourceValidationError('Invalid context checkpoint artifact references')
+    if references != sorted(set(references)):
+        raise SourceValidationError('Context checkpoint references must be sorted and unique')
+    if references:
+        from nanobot.session.artifact import parse_artifact_reference
+
+        for reference in references:
+            parse_artifact_reference(reference)
     boundary = candidate.get("boundary")
     digest = prefix_digest(events, boundary)
     if (

@@ -86,3 +86,17 @@ def test_malformed_candidate_root_is_content_free(candidate):
     events, _ = fixture()
     with pytest.raises(SourceValidationError, match="^Invalid context checkpoint schema$"):
         validate(events, candidate)
+
+
+def test_v2_dependencies_are_structural_and_require_canonical_references():
+    events, candidate = fixture()
+    candidate['schema_version'] = 2
+    candidate['artifact_references'] = ['artifact:' + 'a' * 32, 'artifact:' + 'b' * 32]
+    assert validate(events, candidate)['artifact_references'] == candidate['artifact_references']
+    for references in (list(reversed(candidate['artifact_references'])),
+                       ['artifact:' + 'a' * 32] * 2, ['artifact:../path'], [None], None):
+        malformed = {**candidate, 'artifact_references': references}
+        with pytest.raises(SourceValidationError):
+            validate(events, malformed)
+    with pytest.raises(SourceValidationError):
+        validate(events, {**candidate, 'schema_version': 1})

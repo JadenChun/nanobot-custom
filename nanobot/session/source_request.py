@@ -53,6 +53,7 @@ class SourceRequestLedger:
         if not initial_eligible_ids <= represented:
             raise SourceValidationError('Initial eligibility requires represented source nodes')
         self._transcript = deepcopy(transcript)
+        self._recovery = deepcopy(transcript)
         self._initial = frozenset(initial_eligible_ids)
         self._acknowledged: set[str] = set()
         self._epoch = 0
@@ -85,6 +86,14 @@ class SourceRequestLedger:
                 runtime_ids.add(node.node_id)
             elif isinstance(node, CheckpointNode):
                 checkpoints += 1
+                from nanobot.session.artifact import parse_artifact_reference
+
+                if (type(node.artifact_references) is not tuple
+                        or any(not isinstance(value, str) for value in node.artifact_references)
+                        or node.artifact_references != tuple(sorted(set(node.artifact_references)))):
+                    raise SourceValidationError('Invalid checkpoint request dependencies')
+                for reference in node.artifact_references:
+                    parse_artifact_reference(reference)
                 if not node.checkpoint_id or not node.summary.strip() or checkpoints > 1:
                     raise SourceValidationError('Invalid request checkpoint')
             else:
@@ -93,6 +102,16 @@ class SourceRequestLedger:
     @property
     def transcript(self) -> SourceTranscript:
         return deepcopy(self._transcript)
+
+    @property
+    def recovery_transcript(self) -> SourceTranscript:
+        """Full invocation baseline, never overwritten by projection changes."""
+        return deepcopy(self._recovery)
+
+    def restore_recovery(self) -> None:
+        if self.has_pending_requests:
+            raise SourceValidationError('Cannot restore a pending source request')
+        self.replace_projection(self._recovery)
 
     @property
     def projection_epoch(self) -> int:
@@ -109,11 +128,15 @@ class SourceRequestLedger:
     def append_source(self, event_id: str, message: dict[str, Any]) -> None:
         candidate = SourceTranscript((*self._transcript.nodes, SourceNode(event_id, deepcopy(message))))
         self.validate_transcript(candidate)
+        recovery = SourceTranscript((*self._recovery.nodes, SourceNode(event_id, deepcopy(message))))
+        self.validate_transcript(recovery)
         self._transcript = candidate
+        self._recovery = recovery
 
     def append_runtime(self, message: dict[str, Any]) -> RuntimeNode:
         node = RuntimeNode(uuid.uuid4().hex, deepcopy(message))
         self._transcript = SourceTranscript((*self._transcript.nodes, node))
+        self._recovery = SourceTranscript((*self._recovery.nodes, deepcopy(node)))
         return deepcopy(node)
 
     def validate_view(self, view: SourceTranscript) -> tuple[RuntimeNode, ...]:

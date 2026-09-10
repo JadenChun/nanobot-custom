@@ -339,6 +339,10 @@ class SourceSessionStore:
     def commit_context_checkpoint(self, key: str, expected: SourceState, candidate: dict[str, Any], *, owner: ExecutionOwner | None = None) -> SourceSnapshot:
         from nanobot.session.execution_owner import execution_transaction
 
+        # Nonempty dependencies need a separate attested publication path.
+        # Structural version-2 loading alone must not enable generic writes.
+        if not isinstance(candidate, dict) or candidate.get('artifact_references') != []:
+            raise SourceValidationError('Checkpoint artifact publication requires dependency validation')
         with execution_transaction(self._backend, key, owner):
             header, events = self._current_unlocked(key, expected)
             validated = validate_context_checkpoint(

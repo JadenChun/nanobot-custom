@@ -463,3 +463,28 @@ def test_invalid_source_input_raises_typed_validation_error(backend, payload):
     snapshot = upgrade(backend, seed(backend))
     with pytest.raises(SourceValidationError):
         backend.source.append_source_events(snapshot.state.session_key, snapshot.state, [payload])
+
+
+def test_dependent_checkpoint_load_is_structural_but_generic_publication_is_disabled(backend):
+    from nanobot.session.source_projection import project_source
+
+    snapshot = upgrade(backend, seed(backend))
+    proposal = {**candidate(snapshot), 'schema_version': 2,
+                'artifact_references': ['artifact:' + 'a' * 32],
+                'projection_scope': 'root', 'projection_version': 1}
+    path = backend.get_session_path(snapshot.state.session_key)
+    before = path.read_bytes()
+    with pytest.raises(SourceValidationError, match='dependency validation'):
+        backend.source.commit_context_checkpoint(snapshot.state.session_key, snapshot.state, proposal)
+    assert path.read_bytes() == before
+    # Simulate a later trusted publisher without granting read-time blob access.
+    lines = path.read_text().splitlines()
+    header = json.loads(lines[0])
+    header['metadata']['context_checkpoint'] = proposal
+    header['revision'] += 1
+    path.write_text('\n'.join([json.dumps(header), *lines[1:]]) + '\n')
+    persisted = path.read_bytes()
+    loaded = backend.source.load_source_snapshot(snapshot.state.session_key)
+    assert loaded.checkpoint == proposal
+    assert project_source(loaded).checkpoint is None
+    assert path.read_bytes() == persisted

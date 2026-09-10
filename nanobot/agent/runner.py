@@ -392,8 +392,13 @@ class AgentRunner:
         )
 
         try:
+            request_state = self._make_request_state(spec, messages, compaction)
+            if request_state.source is not None:
+                self.context_governor.admit_source_checkpoint(request_state, request_state.source.transcript,
+                    tool_definitions=spec.tools.get_definitions())
+                context.messages = deepcopy(messages)
             await hook.before_run(context)
-            result = await self._run_core(spec, hook, messages, compaction)
+            result = await self._run_core(spec, hook, messages, request_state)
         except asyncio.CancelledError as exc:
             if spec.source_writer is not None:
                 spec.source_writer.fail()
@@ -469,12 +474,46 @@ class AgentRunner:
             raise ValueError("consolidate_history requires transcript_input")
         return list(spec.initial_messages), None
 
+    def _make_request_state(self, spec: AgentRunSpec, messages: list[dict[str, Any]],
+                            compaction: ContextCompactionState | None) -> ModelRequestState:
+        conversation_state = ProviderConversationStateController(
+            provider=spec.runtime.provider,
+            model=spec.runtime.model,
+            messages=messages,
+            state=spec.provider_state,
+            session_id=spec.session_key,
+        )
+        governance_config = ContextGovernanceConfig(
+            provider=spec.runtime.provider,
+            model=spec.runtime.model,
+            tools=spec.tools,
+            workspace=spec.workspace,
+            session_key=spec.session_key,
+            max_tool_result_chars=spec.max_tool_result_chars,
+            context_window_tokens=spec.runtime.context_window_tokens,
+            max_tokens=spec.runtime.generation.max_tokens,
+            preserve_source=spec.source_writer is not None,
+        )
+        return ModelRequestState(
+            config=governance_config,
+            conversation=conversation_state,
+            compaction=compaction,
+            source_compaction=SourceCompactionState(spec.source_writer, spec.runtime, messages,
+                spec.source_writer.stream_id if spec.source_isolated or spec.source_writer.parent_stream_id is not None else None)
+                if spec.source_writer is not None else None,
+            source=SourceRequestLedger(spec.source_transcript,
+                initial_eligible_ids=spec.source_initial_eligible_ids)
+                if spec.source_transcript is not None else None,
+            events=spec.events,
+        )
+
+
     async def _run_core(
         self,
         spec: AgentRunSpec,
         hook: AgentHook,
         messages: list[dict[str, Any]],
-        compaction: ContextCompactionState | None,
+        request_state: ModelRequestState,
     ) -> AgentRunResult:
         final_content: str | None = None
         tools_used: list[str] = []
@@ -495,36 +534,8 @@ class AgentRunner:
         had_injections = False
         injection_cycles = 0
         pending_stream_content: str | None = None
-        conversation_state = ProviderConversationStateController(
-            provider=spec.runtime.provider,
-            model=spec.runtime.model,
-            messages=messages,
-            state=spec.provider_state,
-            session_id=spec.session_key,
-        )
-        governance_config = ContextGovernanceConfig(
-            provider=spec.runtime.provider,
-            model=spec.runtime.model,
-            tools=spec.tools,
-            workspace=spec.workspace,
-            session_key=spec.session_key,
-            max_tool_result_chars=spec.max_tool_result_chars,
-            context_window_tokens=spec.runtime.context_window_tokens,
-            max_tokens=spec.runtime.generation.max_tokens,
-            preserve_source=spec.source_writer is not None,
-        )
-        request_state = ModelRequestState(
-            config=governance_config,
-            conversation=conversation_state,
-            compaction=compaction,
-            source_compaction=SourceCompactionState(spec.source_writer, spec.runtime, messages,
-                spec.source_writer.stream_id if spec.source_isolated or spec.source_writer.parent_stream_id is not None else None)
-                if spec.source_writer is not None else None,
-            source=SourceRequestLedger(spec.source_transcript,
-                initial_eligible_ids=spec.source_initial_eligible_ids)
-                if spec.source_transcript is not None else None,
-            events=spec.events,
-        )
+        conversation_state = request_state.conversation
+        governance_config = request_state.config
 
         for iteration in range(spec.max_iterations):
             context = AgentHookContext(

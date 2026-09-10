@@ -16,7 +16,6 @@ from nanobot.session.source_projection import (
     CheckpointNode,
     SourceNode,
     eligible_boundaries,
-    project_source,
     source_nodes,
 )
 from nanobot.session.source_request import SourceTranscript
@@ -37,24 +36,29 @@ class SourceCompactionCandidate:
     def capture(cls, snapshot: SourceSnapshot, transcript: SourceTranscript, *,
                 eligible_ids: frozenset[str], stream_id: str | None = None,
                 local_boundary: int = 0,
-                local_checkpoint: CheckpointNode | None = None) -> SourceCompactionCandidate:
+                local_checkpoint: CheckpointNode | None = None,
+                accepted_boundary: int = 0,
+                accepted_checkpoint: CheckpointNode | None = None) -> SourceCompactionCandidate:
         """Capture one exact source revision, with global or stream-local closure.
 
         Local state is invocation-owned and must never become a durable root
-        boundary. Root state always derives from the validated stored projection.
+        boundary. Root state is explicitly admitted by the current invocation.
         """
         snapshot, transcript = deepcopy(snapshot), deepcopy(transcript)
         if stream_id is None:
             if local_boundary != 0 or local_checkpoint is not None:
                 raise SourceValidationError('Root compaction cannot use local checkpoint state')
-            projection = project_source(snapshot)
-            previous_boundary, previous_checkpoint = projection.boundary, projection.checkpoint
+            previous_boundary, previous_checkpoint = accepted_boundary, deepcopy(accepted_checkpoint)
         else:
             if not stream_id:
                 raise SourceValidationError('Local compaction requires a stream identity')
             previous_boundary, previous_checkpoint = local_boundary, deepcopy(local_checkpoint)
             if bool(previous_boundary) != (previous_checkpoint is not None):
                 raise SourceValidationError('Local boundary and checkpoint must advance together')
+        if bool(previous_boundary) != (previous_checkpoint is not None):
+            raise SourceValidationError('Boundary and checkpoint must advance together')
+        if type(previous_boundary) is not int or previous_boundary < 0:
+            raise SourceValidationError('Invalid accepted compaction boundary')
         represented_checkpoints = tuple(node for node in transcript.nodes if isinstance(node, CheckpointNode))
         expected = (previous_checkpoint,) if previous_checkpoint is not None else ()
         if represented_checkpoints != expected:
@@ -87,6 +91,8 @@ class SourceCompactionCandidate:
     def evidence(self, boundary: int, *, after: int | None = None) -> tuple[SourceNode, ...]:
         """Return canonical disjoint evidence; never use expanded request text."""
         self._require_boundary(boundary)
+        if self.previous_checkpoint is not None and self.previous_checkpoint.artifact_references:
+            raise SourceValidationError('Artifact checkpoint summary dependencies are not implemented')
         start = self.previous_boundary if after is None else after
         if start != self.previous_boundary and start not in self.boundaries:
             raise SourceValidationError('Evidence must start at a closed eligible boundary')
