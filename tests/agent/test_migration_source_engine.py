@@ -741,3 +741,100 @@ async def test_real_pressure_compaction_publishes_checkpoint_and_reuses_after_re
         assert 'retained historical facts' in str(rows) and 'old_fact' not in str(rows)
     finally:
         await restarted.aclose()
+
+
+@pytest.mark.parametrize('mode', ['fresh', 'child'])
+async def test_real_local_pressure_compaction_preserves_root_and_continues_length_recovery(engine_config, monkeypatch, mode):
+    from copy import deepcopy
+
+    from nanobot.agent.context_governance import ContextGovernor
+    from nanobot.utils.runtime import build_length_recovery_message
+
+    class LocalPressureProvider(ScriptedProvider):
+        async def chat(self, messages, **kwargs):
+            return await super().chat(deepcopy(messages), **kwargs)
+
+        def estimate_prompt_tokens(self, messages, tools, model):
+            auxiliary = messages[0]['content'].startswith('Summarize historical evidence')
+            text = str(messages) if auxiliary else str([
+                row for row in messages if row['role'] == 'assistant'])
+            return ((100 if auxiliary else 1000) + 8000 * text.count('first_segment')
+                    + 1000 * text.count('second_segment'), 'fixture')
+
+    engine_config.agents.defaults.context_window_tokens = 12000
+    engine_config.agents.defaults.max_tokens = 256
+    responses = [LLMResponse(content='root original')]
+    if mode == 'child':
+        responses.append(LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id='plan', name='plan_task', arguments={'objective': 'study locally'})]))
+    responses.extend([
+        LLMResponse(content='first_segment', finish_reason='length'),
+        LLMResponse(content='second_segment', finish_reason='length'),
+        LLMResponse(content='local historical facts'),
+        LLMResponse(content='local done'),
+    ])
+    if mode == 'child':
+        responses.append(LLMResponse(content='parent done'))
+    provider = LocalPressureProvider(responses)
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop)
+    local_states = []
+    local_requests = []
+    prepare = ContextGovernor.prepare_request
+
+    async def observe(governor, state, messages, **kwargs):
+        result = await prepare(governor, state, messages, **kwargs)
+        if state.source_compaction.stream_id is not None:
+            local_states.append(state)
+            local_requests.append(deepcopy(result[0]))
+            assert state.source_compaction.raw_messages == state.source.transcript.messages()
+        return result
+
+    monkeypatch.setattr(ContextGovernor, 'prepare_request', observe)
+    try:
+        seed = await loop.execute_turn(TurnRequest(content='root private', session_key='cli:source'))
+        assert seed.error is None, seed.error
+        before = backend.source.load_source_snapshot('cli:source')
+        result = await loop.execute_turn(TurnRequest(content='study locally', session_key='cli:source',
+            history_mode=HistoryMode.FRESH if mode == 'fresh' else HistoryMode.SESSION))
+        assert result.error is None, result.error
+        assert result.content.endswith('local done' if mode == 'fresh' else 'parent done')
+        assert not provider.responses
+        assert len(local_states) == 3
+        local_indices = (1, 2, 4) if mode == 'fresh' else (2, 3, 5)
+        assert local_requests == [provider.calls[index][0] for index in local_indices]
+        assert all('root private' not in str(rows) and 'root original' not in str(rows)
+                   for rows in local_requests)
+        assert local_requests[-1].count(build_length_recovery_message('first_segment')) == 1
+        assert local_requests[-1].count(build_length_recovery_message('second_segment')) == 1
+        state = local_states[-1]
+        assert len(state.source_compaction.attempts) == 1
+        assert state.source_compaction.attempts[0].calls == 1
+        assert state.source_compaction.local_checkpoint.summary == 'local historical facts'
+        assert not state.source.has_pending_requests
+        assert not any(row.get('role') == 'assistant' and row.get('content') == 'first_segment'
+                       for row in state.messages)
+        assert 'second_segment' in str(state.messages)
+        assert 'local historical facts' in str(state.messages)
+        assert 'root private' not in str(state.messages)
+        after = backend.source.load_source_snapshot('cli:source')
+        assert after.checkpoint == before.checkpoint
+        assert after.events[:len(before.events)] == before.events
+        for segment in ('first_segment', 'second_segment'):
+            persisted = [row for row in after.events if row.get('content') == segment]
+            assert len(persisted) == 1
+            assert persisted[0]['_stream_id'] == state.source_compaction.stream_id
+        if mode == 'child':
+            intents = [row for row in after.events if any(
+                call.get('id') == 'plan' for call in row.get('tool_calls', []))]
+            results = [row for row in after.events if row.get('tool_call_id') == 'plan']
+            assert len(intents) == len(results) == 1
+            assert results[0]['_execution_id'] == intents[0]['_execution_ids'][0]
+        assert not validate_execution_links(after.events)
+        summaries = [call[0] for call in provider.calls if call[0][0]['content'].startswith('Summarize historical evidence')]
+        assert len(summaries) == 1
+        assert 'root private' not in str(summaries[0])
+        assert 'first_segment' in str(summaries[0])
+        assert 'second_segment' not in str(summaries[0])
+    finally:
+        await loop.aclose()

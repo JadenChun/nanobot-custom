@@ -695,3 +695,29 @@ Production activation remains guarded. Actual-engine local/retry pressure stress
 transport-finalized budgeting, factual summary quality/performance qualification,
 outer usage reporting, offloading, provider-state coordination, idle/command and
 source-injection parity, and remaining whole-migration acceptance are unfinished.
+
+### Actual-engine fresh and delegated pressure qualification
+
+Fresh and delegated planner runs now have actual-engine pressure tests spanning
+two length-limited responses, local summarization, and successful continued
+generation. They snapshot the provider requests and compare each local payload
+with its governed view. Every local request excludes seeded root history, and the
+post-compaction request retains both exact length-recovery instructions once.
+Canonical segments remain once each in the correct stream; delegated intent/result
+identities match and executions close. Root checkpoint metadata and existing source
+prefixes remain unchanged. These tests qualify existing production code; they add
+no new runtime behavior.
+
+Independent review identified initially weak runtime/history assertions; the
+strengthened request snapshots, exact instructions, source counts and execution
+binding assertions address them. All 38 source-engine tests pass. The broader
+selection passed 539 tests with the same two guarded plugin fixtures deselected
+before the assertion strengthening; scoped Ruff and diff checks pass.
+
+The next offloading packages and their unresolved integration gates are recorded
+in [the artifact offloading contract](p4-artifact-offloading-contract.md). Artifact
+storage/retrieval/projection is not implemented by this qualification slice.
+Production activation and full migration acceptance remain incomplete.
+The narrow review recheck accepted the strengthened assertions. Token pressure
+uses a deterministic synthetic estimator; these cases do not establish local
+crash/restart behavior or production summary quality.
