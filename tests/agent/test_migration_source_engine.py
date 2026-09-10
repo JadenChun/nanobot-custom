@@ -395,7 +395,7 @@ async def test_repeated_provider_call_ids_keep_exact_tool_replay_bindings(engine
         tool_nodes = [node for node in nodes if node.message['role'] == 'tool']
         assert len(tool_nodes) == 2 and tool_nodes[0].event_id != tool_nodes[1].event_id
         assert [node.message['tool_call_id'] for node in tool_nodes] == ['same', 'same']
-        assert captured[1][1] == frozenset()  # Wiring alone never acknowledges a request.
+        assert captured[1][1] == {events[0]['_event_id']}  # New tool evidence is still pending.
     finally:
         await loop.aclose()
 
@@ -453,3 +453,83 @@ async def test_legacy_terminal_replay_keeps_existing_replacement_behavior(mode):
         assert result.messages[-1]['content'] == 'existing'
     else:
         assert result.messages[-1]['content'] == result.final_content
+
+
+@pytest.mark.parametrize('failure', ['error', 'malformed'])
+async def test_only_validated_source_request_input_is_acknowledged(engine_config, monkeypatch, failure):
+    responses = [LLMResponse(content='failed', finish_reason='error')] if failure == 'error' else [
+        LLMResponse(content='invalid attempt', finish_reason='tool_calls',
+                    tool_calls=[ToolCallRequest(id='bad', name='', arguments={})]),
+        LLMResponse(content='recovered'),
+    ]
+    provider = ScriptedProvider(responses)
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend = upgrade(loop)
+    snapshots, ledgers = [], []
+    prepare = loop.runner.context_governor.prepare_request
+
+    async def observe(state, messages, **kwargs):
+        snapshots.append(state.source.eligible_ids)
+        ledgers.append(state.source)
+        return await prepare(state, messages, **kwargs)
+
+    monkeypatch.setattr(loop.runner.context_governor, 'prepare_request', observe)
+    try:
+        await loop.execute_turn(TurnRequest(content='request', session_key='cli:source'))
+        events = backend.source.load_source_snapshot('cli:source').events
+        assert all(not eligible for eligible in snapshots)
+        expected = frozenset() if failure == 'error' else {events[0]['_event_id']}
+        assert ledgers[-1].eligible_ids == expected
+        assert not ledgers[-1]._pending
+    finally:
+        await loop.aclose()
+
+
+async def test_unbound_source_hook_mutation_stops_before_transport(engine_config, monkeypatch):
+    from nanobot.agent.hook import AgentHook
+
+    class MutatingHook(AgentHook):
+        async def before_iteration(self, context):
+            context.messages.append({'role': 'user', 'content': 'unbound instruction'})
+
+    provider = ScriptedProvider([])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    upgrade(loop)
+    run = loop.runner.run
+
+    async def configure(spec):
+        spec.hook = MutatingHook()
+        return await run(spec)
+
+    monkeypatch.setattr(loop.runner, 'run', configure)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='request', session_key='cli:source'))
+        assert result.error and 'bound source projection' in result.error
+        assert provider.calls == []
+    finally:
+        await loop.aclose()
+
+
+async def test_cancelled_source_request_discards_ticket(engine_config, monkeypatch):
+    import asyncio
+
+    class CancelledProvider(ScriptedProvider):
+        async def chat(self, *args, **kwargs):
+            raise asyncio.CancelledError()
+
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=CancelledProvider([]))
+    upgrade(loop)
+    ledgers = []
+    prepare = loop.runner.context_governor.prepare_request
+
+    async def observe(state, messages, **kwargs):
+        ledgers.append(state.source)
+        return await prepare(state, messages, **kwargs)
+
+    monkeypatch.setattr(loop.runner.context_governor, 'prepare_request', observe)
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await loop.execute_turn(TurnRequest(content='request', session_key='cli:source'))
+        assert not ledgers[0].eligible_ids and not ledgers[0]._pending
+    finally:
+        await loop.aclose()

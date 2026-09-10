@@ -53,7 +53,7 @@ from nanobot.utils.runtime import ensure_nonempty_tool_result
 if TYPE_CHECKING:
     from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.providers.base import LLMProvider
-    from nanobot.session.source_request import SourceRequestLedger
+    from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
 
 TranscriptBuilder = Callable[[TranscriptInput], list[dict[str, Any]]]
 HistoryConsolidator = Callable[
@@ -202,6 +202,7 @@ class ModelRequestState:
     tool_definitions: list[dict[str, Any]] | None = None
     compaction: ContextCompactionState | None = None
     source: SourceRequestLedger | None = None
+    source_view: SourceTranscript | None = None
     provider_compaction_applied: bool = False
     events: EventSink = NO_EVENTS
 

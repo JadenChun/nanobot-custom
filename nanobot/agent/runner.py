@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import os
 import time
+import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -44,7 +45,8 @@ from nanobot.providers.base import (
 )
 from nanobot.providers.conversation_state import ProviderConversationStateController
 from nanobot.session.source import SourceValidationError
-from nanobot.session.source_request import SourceRequestLedger
+from nanobot.session.source_projection import RuntimeNode
+from nanobot.session.source_request import SourceRequestLedger, SourceRequestTicket
 from nanobot.session.summary import SessionSummaryCheckpoint
 from nanobot.utils.helpers import (
     build_assistant_message,
@@ -998,6 +1000,42 @@ class AgentRunner:
         kwargs["reasoning_effort"] = generation.reasoning_effort
         return kwargs
 
+    @staticmethod
+    def _source_view(state: ModelRequestState, messages: list[dict[str, Any]],
+                     view: SourceTranscript | None) -> SourceTranscript | None:
+        if state.source is None:
+            return None
+        view = view or state.source.transcript
+        if view.messages() != messages:
+            raise SourceValidationError('Model request differs from bound source projection')
+        return view
+
+    @staticmethod
+    def _settle_source_ticket(state: ModelRequestState, ticket: SourceRequestTicket | None,
+                              response: LLMResponse, *, malformed: bool = False,
+                              no_tools: bool = False) -> None:
+        if ticket is None or state.source is None:
+            return
+        valid = response.finish_reason in {'stop', 'length', 'tool_calls', 'function_call'}
+        if malformed or (no_tools and response.has_tool_calls):
+            valid = False
+        if valid:
+            state.source.acknowledge(ticket)
+        else:
+            state.source.discard(ticket)
+
+    def _record_and_settle(self, spec: AgentRunSpec, state: ModelRequestState,
+                           ticket: SourceRequestTicket | None, response: LLMResponse,
+                           *, malformed: bool = False, no_tools: bool = False) -> RecordedResponse:
+        try:
+            recorded = RecordedResponse(response, self._record_source_response(spec, response))
+        except BaseException:
+            if ticket is not None and state.source is not None:
+                state.source.discard(ticket)
+            raise
+        self._settle_source_ticket(state, ticket, response, malformed=malformed, no_tools=no_tools)
+        return recorded
+
     async def _request_model(
         self,
         spec: AgentRunSpec,
@@ -1007,8 +1045,10 @@ class AgentRunner:
         *,
         request_state: ModelRequestState,
         malformed_retry: bool = False,
+        source_view: SourceTranscript | None = None,
         transcript: list[dict[str, Any]] | None,
     ) -> tuple[RecordedResponse, LLMUsage]:
+        source_view = self._source_view(request_state, messages, source_view)
         timeout_s = self._resolve_llm_timeout_s(spec)
         tool_definitions = spec.tools.get_definitions()
         messages, provider_context = await self.context_governor.prepare_request(
@@ -1018,6 +1058,8 @@ class AgentRunner:
             transcript=transcript,
         )
 
+        ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
+        request_state.source_view = source_view
         kwargs = self._build_request_kwargs(
             spec,
             messages,
@@ -1149,6 +1191,8 @@ class AgentRunner:
                 else await asyncio.wait_for(coro, timeout=outer_timeout_s)
             )
         except asyncio.CancelledError:
+            if ticket is not None and request_state.source is not None:
+                request_state.source.discard(ticket)
             _pause_generation()
             await _close_native_reasoning()
             raise
@@ -1165,8 +1209,12 @@ class AgentRunner:
                     finish_reason="error",
                     error_kind="timeout",
                 )
+        except Exception:
+            if ticket is not None and request_state.source is not None:
+                request_state.source.discard(ticket)
+            raise
         dropped, all_dropped, original_finish_reason = self._drop_malformed_tool_calls(response)
-        recorded = RecordedResponse(response, self._record_source_response(spec, response))
+        recorded = self._record_and_settle(spec, request_state, ticket, response, malformed=dropped > 0)
         _pause_generation()
         await _close_native_reasoning()
         if first_output_at is not None:
@@ -1200,13 +1248,14 @@ class AgentRunner:
                 "Retrying LLM request after all {} malformed tool call(s) were dropped",
                 dropped,
             )
-            retry_messages = self._malformed_tool_call_retry_messages(
-                messages, response.content,
-            )
+            note = self._malformed_tool_call_retry_note(response.content)
+            retry_messages = [*messages, note]
+            retry_view = source_view.with_runtime(RuntimeNode(uuid.uuid4().hex, note)) if source_view is not None else None
             retry_response, retry_usage = await self._request_model(
                 spec, retry_messages, hook, context,
                 request_state=request_state,
                 malformed_retry=True,
+                source_view=retry_view,
                 transcript=None,
             )
             return retry_response, round_usage + retry_usage
@@ -1218,13 +1267,13 @@ class AgentRunner:
             logger.warning(
                 "Malformed tool calls persisted after retry; falling back to no-tools request",
             )
-            fallback_messages = self._malformed_tool_call_retry_messages(
-                messages, response.content,
-            )
+            note = self._malformed_tool_call_retry_note(response.content)
+            fallback_messages = [*messages, note]
+            fallback_view = source_view.with_runtime(RuntimeNode(uuid.uuid4().hex, note)) if source_view is not None else None
             fallback_response = await self._request_no_tools(
                 spec,
                 fallback_messages,
-                request_state=request_state,
+                request_state=request_state, source_view=fallback_view,
             )
             fallback_usage = self._record_request_usage(
                 spec,
@@ -1273,11 +1322,7 @@ class AgentRunner:
         return (dropped, not valid, original_finish_reason)
 
     @staticmethod
-    def _malformed_tool_call_retry_messages(
-        messages: list[dict[str, Any]],
-        assistant_text: str | None,
-    ) -> list[dict[str, Any]]:
-        retry_messages = list(messages)
+    def _malformed_tool_call_retry_note(assistant_text: str | None) -> dict[str, Any]:
         note = (
             "The previous model response attempted to call tools, but every tool call "
             "was malformed: the tool_use blocks had missing or non-string tool names. "
@@ -1290,8 +1335,12 @@ class AgentRunner:
                 f"\n\nPrevious assistant text before the malformed calls:\n"
                 f"{assistant_text}"
             )
-        retry_messages.append({"role": "user", "content": note})
-        return retry_messages
+        return {"role": "user", "content": note}
+
+    @staticmethod
+    def _malformed_tool_call_retry_messages(messages: list[dict[str, Any]],
+                                            assistant_text: str | None) -> list[dict[str, Any]]:
+        return [*messages, AgentRunner._malformed_tool_call_retry_note(assistant_text)]
 
     async def _request_finalization_retry(
         self,
@@ -1301,11 +1350,14 @@ class AgentRunner:
         request_state: ModelRequestState,
         transcript: list[dict[str, Any]],
     ) -> RecordedResponse:
-        retry_messages = self._finalization_retry_messages(messages)
+        note = build_finalization_retry_message()
+        retry_messages = [*messages, note]
+        base_view = request_state.source_view
+        view = base_view.with_runtime(RuntimeNode(uuid.uuid4().hex, note)) if base_view is not None else None
         response = await self._request_no_tools(
             spec,
             retry_messages,
-            request_state=request_state,
+            request_state=request_state, source_view=view,
             transcript=transcript,
         )
         request_state.conversation.observe_response(
@@ -1337,12 +1389,15 @@ class AgentRunner:
             if compaction is not None
             else messages
         )
-        retry_messages = self._budget_exhausted_finalization_messages(request_messages)
+        note = build_budget_exhausted_finalization_message()
+        retry_messages = [*request_messages, note]
+        base_view = request_state.source.transcript if request_state.source is not None else None
+        view = base_view.with_runtime(RuntimeNode(uuid.uuid4().hex, note)) if base_view is not None else None
         try:
             recorded = await self._request_no_tools(
                 spec,
                 retry_messages,
-                request_state=request_state,
+                request_state=request_state, source_view=view,
                 transcript=messages if compaction is not None else None,
             )
         except Exception:
@@ -1387,13 +1442,17 @@ class AgentRunner:
         *,
         request_state: ModelRequestState,
         transcript: list[dict[str, Any]] | None = None,
+        source_view: SourceTranscript | None = None,
     ) -> RecordedResponse:
+        source_view = self._source_view(request_state, messages, source_view)
         messages, provider_context = await self.context_governor.prepare_request(
             request_state,
             messages,
             tool_definitions=None,
             transcript=transcript,
         )
+        ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
+        request_state.source_view = source_view
         kwargs = self._build_request_kwargs(
             spec,
             messages,
@@ -1416,7 +1475,11 @@ class AgentRunner:
                 finish_reason="error",
                 error_kind="timeout",
             )
-        recorded = RecordedResponse(response, self._record_source_response(spec, response))
+        except BaseException:
+            if ticket is not None and request_state.source is not None:
+                request_state.source.discard(ticket)
+            raise
+        recorded = self._record_and_settle(spec, request_state, ticket, response, no_tools=True)
         await self.context_governor.summarize_provider_compaction(
             request_state,
             response,

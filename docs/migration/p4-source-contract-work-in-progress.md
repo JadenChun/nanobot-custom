@@ -512,3 +512,28 @@ combined session/migration/runner/summary selection passes 486 tests with the sa
 two guarded plugin fixtures deselected; Ruff/diff checks pass. Request-only retry
 views, ticket acknowledgment, checkpoint publication, and compaction remain
 unfinished. The production activation guard is unchanged.
+
+### Validated source request acknowledgment
+
+Source requests now verify their rendered explicit view before transport, issue a
+local ticket after budget validation, and acknowledge it only after mandatory
+response recording and a recognized successful finish. Malformed calls invalidate
+their attempt even when normalization changes the finish status; no-tools requests
+cannot acknowledge tool-bearing responses. Transport cancellation/errors and
+mandatory recording failures discard their tickets. Newly returned assistant/tool
+evidence remains pending until actually represented in a later successful request.
+
+Malformed, finalization, and iteration-budget retry instructions are explicit
+request-only runtime nodes. Recursive requests carry their own views and tickets;
+the stored last view is only a projection input, never a shared mutable last-ticket
+slot. Unbound hook edits fail before transport. Source preparation still preserves
+the whole request: compaction integration must issue the ticket from the governor's
+resulting projection once that projection can change.
+
+Actual-engine tests cover pending tool evidence, failed/malformed attempts,
+unbound hook mutation, cancellation cleanup, and continuation/retry paths.
+The focused engine/writer suite passes 40 tests; independent review ran 35
+engine/request-ledger cases before the final cancellation/hook additions. The
+combined selection passes 490 tests with the same two guarded plugin fixtures
+deselected. Ruff/diff checks pass. Checkpoint reuse/publication, pressure compaction,
+offloading, and remaining migration acceptance work are still unfinished.
