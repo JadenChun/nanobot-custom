@@ -46,6 +46,11 @@ def test_rebuild_retains_runtime_and_expanded_pin_but_summarizes_canonical_evide
     candidate = capture(events, nodes=nodes, eligible=[e['_event_id'] for e in events[:4]])
     assert candidate.boundaries == (1, 2, 3, 4)
     assert [n.message['content'] for n in candidate.evidence(4)] == ['old', 'facts', 'current', 'progress']
+    summary_evidence = candidate.summary_evidence(4)
+    assert [node.message['content'] for node in summary_evidence.nodes] == [
+        'old', 'facts', 'current', 'progress',
+    ]
+    assert summary_evidence.projections == ()
     rebuilt = candidate.rebuild(4, CheckpointNode('next', 'summary'))
     assert rebuilt.nodes == (policy, CheckpointNode('next', 'summary'), nodes[3], note, nodes[-1])
     assert nodes == original

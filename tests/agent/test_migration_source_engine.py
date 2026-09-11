@@ -1040,7 +1040,7 @@ async def test_engine_retrieval_pressure_checkpoint_restarts_with_admission(engi
     from nanobot.session.artifact_store import PrivateArtifactStore
     from nanobot.session.source_store import SourceSessionStore
 
-    covered_result = 'covered retrieval result content for engine restart'
+    covered_result = 'covered retrieval result content for engine restart ' * 800
     checkpoint_summary = 'checkpoint summary for engine restart admission'
     (engine_config.workspace_path / 'file').write_text(covered_result)
     key = 'cli:source'
@@ -1107,6 +1107,8 @@ async def test_engine_retrieval_pressure_checkpoint_restarts_with_admission(engi
         assert result.error is None, result.error
         assert any(row.get('_artifact_read', {}).get('reference') == reference
                    for row in backend.source.load_source_snapshot(key).events)
+        assert any('Tool output stored as ' + reference in str(messages)
+                   for messages, _, _ in retrieval_provider.calls)
     finally:
         await retrieval.aclose()
 

@@ -226,6 +226,7 @@ class SourceCompactionState:
     admission: CheckpointAdmission = field(default_factory=CheckpointAdmission)
     local_boundary: int = 0
     local_checkpoint: CheckpointNode | None = None
+    artifact_projection_unavailable: bool = False
     attempts: list[SourceCompactionMetrics] = field(default_factory=list)
 
 
@@ -334,6 +335,9 @@ class ContextGovernor:
         active, epoch = source.transcript, source.projection_epoch
         if compaction.raw_messages != active.messages():
             raise SourceValidationError('Artifact projection differs from runner transcript')
+        had_projected = any(
+            isinstance(node, SourceNode) and node.artifact is not None for node in active.nodes
+        )
         enabled = (type(tool) is ReadArtifactTool and tool.reader is projector.reader and any(
             definition.get('type') == 'function'
             and definition.get('function', {}).get('name') == 'read_artifact'
@@ -342,6 +346,9 @@ class ContextGovernor:
                 isinstance(node, SourceNode) and node.artifact is not None for node in active.nodes):
             return active.with_runtime(*notes)
         updated = projector.prepare(active, enabled=enabled)
+        compaction.artifact_projection_unavailable = had_projected and not any(
+            isinstance(node, SourceNode) and node.artifact is not None for node in updated.nodes
+        )
         source.validate_transcript(updated)
         if (source.has_pending_requests or source.projection_epoch != epoch or source.transcript != active
                 or compaction.raw_messages != active.messages()):
@@ -467,7 +474,8 @@ class ContextGovernor:
             references = derive_summary_references(proof, candidate.snapshot)
         elif ((candidate.previous_checkpoint is not None
                and candidate.previous_checkpoint.artifact_references)
-              or candidate.summary_evidence(boundary).retrievals):
+              or candidate.summary_evidence(boundary).retrievals
+              or candidate.summary_evidence(boundary).projections):
             raise SourceValidationError('Dependent source compaction requires a complete proof')
         checkpoint = CheckpointNode(uuid4().hex, summary, references)
         active = candidate.rebuild(boundary, checkpoint)
@@ -567,6 +575,8 @@ class ContextGovernor:
         budget = self.input_budget(state.config)
         if compaction is None or not state.config.context_window_tokens or budget <= 0:
             return view
+        if compaction.artifact_projection_unavailable:
+            return view
         estimated, _ = estimate_prompt_tokens_chain(state.config.provider, state.config.model,
                                                      view.messages(), tool_definitions)
         if estimated < budget * 0.9:
@@ -581,6 +591,7 @@ class ContextGovernor:
             return view
         dependencies_present = bool(
             final_evidence.retrievals
+            or final_evidence.projections
             or candidate.previous_checkpoint is not None and candidate.previous_checkpoint.artifact_references
         )
         if dependencies_present and not self._has_active_retrieval_schema(state, attempt):

@@ -107,14 +107,14 @@ class SourceCompactionCandidate:
         return source_nodes(evidence, stream_id=self.stream_id)
 
     def summary_evidence(self, boundary: int, *, after: int | None = None) -> SummaryEvidence:
-        """Capture canonical evidence for a future dependency-aware publication.
-
-        This is deliberately separate from :meth:`evidence`: existing governor
-        compaction remains unable to consume artifact retrievals until its later
-        integration package explicitly constructs and publishes a proof.
-        """
+        """Capture canonical or verified projected evidence for one summary fold."""
         from nanobot.agent.tools.artifact import parse_retrieval_receipt
-        from nanobot.session.checkpoint_dependencies import RetrievalDependency, SummaryEvidence
+        from nanobot.session.artifact_projection import validate_artifact_projection
+        from nanobot.session.checkpoint_dependencies import (
+            ProjectedArtifactDependency,
+            RetrievalDependency,
+            SummaryEvidence,
+        )
 
         self._require_boundary(boundary)
         start = self.previous_boundary if after is None else after
@@ -123,13 +123,24 @@ class SourceCompactionCandidate:
         if start >= boundary:
             raise SourceValidationError('Evidence chunk must advance its boundary')
         events = self._events()[start:boundary]
-        nodes = source_nodes(events, stream_id=self.stream_id)
+        canonical_nodes = source_nodes(events, stream_id=self.stream_id)
         active = {node.event_id: node for node in self.transcript.nodes if isinstance(node, SourceNode)}
-        if any(active.get(node.event_id) is not None and active[node.event_id].artifact is not None
-               for node in nodes):
-            raise SourceValidationError('projected source nodes are not supported summary evidence')
+        nodes: list[SourceNode] = []
+        projections: list[ProjectedArtifactDependency] = []
+        for canonical in canonical_nodes:
+            node = active.get(canonical.event_id)
+            if node is None:
+                raise SourceValidationError('Summary evidence omits canonical source')
+            if node.artifact is None:
+                # Request-only expansions never enter the proof. The legacy
+                # canonical node remains the only summary input in this case.
+                nodes.append(canonical)
+                continue
+            validate_artifact_projection(node, canonical, self.snapshot)
+            projections.append(ProjectedArtifactDependency(node.event_id, node.artifact))
+            nodes.append(node)
         # Visibility is established before inspecting reserved retrieval metadata.
-        visible = {node.event_id for node in nodes}
+        visible = {node.event_id for node in canonical_nodes}
         retrievals: list[RetrievalDependency] = []
         for event in events:
             if event['_event_id'] not in visible or '_artifact_read' not in event:
@@ -142,7 +153,7 @@ class SourceCompactionCandidate:
             if not isinstance(execution_id, str) or not execution_id:
                 raise SourceValidationError('Invalid canonical artifact retrieval execution')
             retrievals.append(RetrievalDependency(event['_event_id'], execution_id, receipt))
-        return SummaryEvidence(start, boundary, tuple(nodes), tuple(retrievals))
+        return SummaryEvidence(start, boundary, tuple(nodes), tuple(retrievals), tuple(projections))
 
     def _require_boundary(self, boundary: int) -> None:
         if type(boundary) is not int or boundary not in self.boundaries:

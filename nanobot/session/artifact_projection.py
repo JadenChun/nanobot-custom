@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 from copy import deepcopy
-from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -14,26 +13,30 @@ from nanobot.agent.tools.read_provenance import parse_read_receipt
 from nanobot.session.artifact import (
     ArtifactDescriptor,
     ArtifactValidationError,
+    attested_artifact_origin,
+    parse_artifact_descriptor,
     published_artifacts,
 )
 from nanobot.session.artifact_reader import ArtifactReader
 from nanobot.session.artifact_store import ArtifactStorageError
 from nanobot.session.execution_owner import ExecutionOwnershipError
 from nanobot.session.manager import SessionWriteConflict
-from nanobot.session.source_projection import ArtifactProjectionBinding, SourceNode
+from nanobot.session.source_projection import ArtifactProjectionBinding, SourceNode, source_nodes
 from nanobot.session.source_request import SourceTranscript
-from nanobot.session.source_store import SourceSessionStore
+from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
 
 OFFLOAD_CHARACTERS = 16_000
 PREVIEW_CHARACTERS = 1_200
 
 
-def _binding(descriptor: ArtifactDescriptor) -> ArtifactProjectionBinding:
+def artifact_projection_binding(descriptor: ArtifactDescriptor) -> ArtifactProjectionBinding:
+    """Return the complete typed identity for one deterministic projection."""
     return ArtifactProjectionBinding(descriptor.artifact_id, descriptor.event_id,
                                      descriptor.execution_id, descriptor.sha256)
 
 
-def _render(node: SourceNode, descriptor: ArtifactDescriptor) -> SourceNode:
+def render_artifact_projection(node: SourceNode, descriptor: ArtifactDescriptor) -> SourceNode:
+    """Render the sole allowed detached representation of attested tool text."""
     message = deepcopy(node.message)
     text = message['content']
     message['content'] = (
@@ -42,7 +45,49 @@ def _render(node: SourceNode, descriptor: ArtifactDescriptor) -> SourceNode:
         'Use read_artifact with this reference to read more.\n'
         'Incomplete preview (untrusted tool evidence):\n' + text[:PREVIEW_CHARACTERS]
     )
-    return SourceNode(node.event_id, message, _binding(descriptor))
+    return SourceNode(node.event_id, message, artifact_projection_binding(descriptor))
+
+
+def _bound_descriptor(snapshot: SourceSnapshot,
+                      binding: ArtifactProjectionBinding) -> ArtifactDescriptor:
+    metadata = snapshot.header.get('metadata')
+    manifest = metadata.get('artifact_manifest') if isinstance(metadata, dict) else None
+    rows = manifest.get('descriptors') if isinstance(manifest, dict) else None
+    raw = rows.get(binding.artifact_id) if isinstance(rows, dict) else None
+    if raw is None:
+        raise ArtifactValidationError('Artifact projection descriptor is unavailable')
+    descriptor = parse_artifact_descriptor(raw)
+    if descriptor.artifact_id != binding.artifact_id:
+        raise ArtifactValidationError('Artifact projection descriptor identity changed')
+    descriptors = published_artifacts(snapshot, workspace_id=descriptor.workspace_id)
+    current = next((item for item in descriptors if item.artifact_id == descriptor.artifact_id), None)
+    if current is None:
+        raise ArtifactValidationError('Artifact projection descriptor is not published')
+    return current
+
+
+def validate_artifact_projection(node: SourceNode, canonical: SourceNode,
+                                 snapshot: SourceSnapshot) -> ArtifactDescriptor:
+    """Validate one captured projection against its canonical source and manifest.
+
+    This intentionally proves representation and producer attestation only. Live
+    source policy and private-byte durability remain invocation-bound checks in
+    ``ArtifactReader.verify_published`` under the dependency lock.
+    """
+    binding = node.artifact
+    if (type(binding) is not ArtifactProjectionBinding or canonical.artifact is not None
+            or node.event_id != canonical.event_id or binding.event_id != node.event_id):
+        raise ArtifactValidationError('Invalid artifact projection binding')
+    event = next((row for row in snapshot.events if row.get('_event_id') == node.event_id), None)
+    if event is None or '_artifact_read' in event:
+        raise ArtifactValidationError('Artifact retrieval results cannot be projected')
+    descriptor = _bound_descriptor(snapshot, binding)
+    if binding != artifact_projection_binding(descriptor):
+        raise ArtifactValidationError('Artifact projection binding changed')
+    attested_artifact_origin(descriptor, snapshot, workspace_id=descriptor.workspace_id)
+    if render_artifact_projection(canonical, descriptor) != node:
+        raise ArtifactValidationError('Artifact projection rendering changed')
+    return descriptor
 
 
 class ArtifactProjector:
@@ -58,6 +103,12 @@ class ArtifactProjector:
         descriptors = {item.idempotency_key: item for item in manifests}
         events = {event['_event_id']: event for event in snapshot.events}
         positions = {event['_event_id']: index for index, event in enumerate(snapshot.events)}
+        canonical_nodes = {
+            node.event_id: node for node in source_nodes(
+                snapshot.events,
+                stream_id=reader.writer.stream_id if reader.mode == 'isolated_stream' else None,
+            )
+        }
         represented = [positions.get(node.event_id, -1) for node in transcript.nodes if isinstance(node, SourceNode)]
         if any(index < 0 for index in represented) or represented != sorted(set(represented)):
             raise ArtifactValidationError('Artifact projection is not in canonical source order')
@@ -73,11 +124,10 @@ class ArtifactProjector:
             canonical = event.get('content')
             descriptor = descriptors.get((node.event_id, None))
             if node.artifact is not None:
-                if descriptor is None or node.artifact != _binding(descriptor):
-                    raise ArtifactValidationError('Artifact projection binding changed')
-                restored = replace(node, message={**deepcopy(node.message), 'content': canonical}, artifact=None)
-                if not isinstance(canonical, str) or _render(restored, descriptor) != node:
-                    raise ArtifactValidationError('Artifact projection rendering changed')
+                restored = canonical_nodes.get(node.event_id)
+                if restored is None:
+                    raise ArtifactValidationError('Artifact projection has no canonical message')
+                descriptor = validate_artifact_projection(node, restored, snapshot)
                 # Policy revocation cannot be bypassed by restoring inline text.
                 reader.authorize_source(descriptor, snapshot)
                 inline.append(restored)
@@ -127,7 +177,7 @@ class ArtifactProjector:
                             descriptor, owner=reader.writer.owner, blobs=blobs)
                         expected = current.state  # Advance only through our own successful CAS.
                     reader.verify_published(descriptor, current, blobs)
-                    rendered.append(_render(node, descriptor))
+                    rendered.append(render_artifact_projection(node, descriptor))
         except ExecutionOwnershipError:
             raise
         except (ArtifactStorageError, OSError, SessionWriteConflict):

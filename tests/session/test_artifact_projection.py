@@ -135,6 +135,10 @@ async def test_summary_evidence_is_canonical_not_generated_reference(tmp_path):
         evidence = candidate.evidence(candidate.boundaries[-1])
         assert evidence == original.nodes
         assert 'Incomplete preview' not in str(evidence)
+        summary_evidence = candidate.summary_evidence(candidate.boundaries[-1])
+        assert summary_evidence.nodes == projected.nodes
+        assert len(summary_evidence.projections) == 1
+        assert 'Incomplete preview' in str(summary_evidence.nodes)
         modified = deepcopy(snapshot)
         modified.events[-1]['_artifact_read'] = {'reference': 'artifact:' + 'b' * 32}
         candidate = SourceCompactionCandidate.capture(modified, projected,
@@ -142,6 +146,54 @@ async def test_summary_evidence_is_canonical_not_generated_reference(tmp_path):
         from nanobot.session.source import SourceValidationError
         with pytest.raises(SourceValidationError, match='dependencies'):
             candidate.evidence(candidate.boundaries[-1])
+
+
+@pytest.mark.parametrize('tamper', ['binding', 'rendering', 'manifest', 'recursive', 'unsupported'])
+async def test_summary_evidence_rejects_forged_projected_source(tmp_path, tamper):
+    async with setup_read(tmp_path, 'evidence' * 6000) as (writer, tool, store, _, _):
+        projected = ArtifactProjector(ArtifactReader(writer, 'root_history', store, tool)).prepare(
+            active(writer), enabled=True,
+        )
+        snapshot = deepcopy(writer.owner.read_snapshot())
+        nodes = list(projected.nodes)
+        if tamper == 'binding':
+            binding = nodes[-1].artifact
+            nodes[-1] = SourceNode(nodes[-1].event_id, nodes[-1].message,
+                                   type(binding)(binding.artifact_id, binding.event_id,
+                                                 binding.execution_id, '0' * 64))
+        elif tamper == 'rendering':
+            nodes[-1] = SourceNode(nodes[-1].event_id,
+                                   {**nodes[-1].message, 'content': 'forged preview'}, nodes[-1].artifact)
+        elif tamper == 'manifest':
+            snapshot.header['metadata'].pop('artifact_manifest')
+        elif tamper == 'recursive':
+            snapshot.events[-1]['_artifact_read'] = {'reference': 'artifact:' + 'b' * 32}
+        else:
+            snapshot.events[-1].pop('_source_origin')
+        candidate = SourceCompactionCandidate.capture(
+            snapshot, SourceTranscript(tuple(nodes)),
+            eligible_ids=frozenset(node.event_id for node in nodes),
+        )
+        with pytest.raises(ArtifactValidationError):
+            candidate.summary_evidence(candidate.boundaries[-1])
+
+
+async def test_hidden_child_projection_is_excluded_from_root_summary_evidence(tmp_path):
+    async with setup_read(tmp_path, 'child projected evidence ' * 2000, child=True) as (
+            writer, tool, store, _, _):
+        reader = ArtifactReader(writer, 'isolated_stream', store, tool)
+        child = ArtifactProjector(reader).prepare(
+            SourceTranscript(source_nodes(writer.owner.read_snapshot().events, stream_id=writer.stream_id)),
+            enabled=True,
+        )
+        assert any(node.artifact is not None for node in child.nodes)
+        snapshot = writer.owner.read_snapshot()
+        root = SourceCompactionCandidate.capture(
+            snapshot, SourceTranscript(source_nodes(snapshot.events)),
+            eligible_ids=frozenset(event['_event_id'] for event in snapshot.events),
+        )
+        evidence = root.summary_evidence(root.boundaries[-1])
+        assert evidence.nodes == () and evidence.projections == ()
 
 
 def test_literal_artifact_text_does_not_create_typed_binding():

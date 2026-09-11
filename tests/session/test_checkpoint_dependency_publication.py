@@ -1,5 +1,6 @@
 """Trusted schema-v2 checkpoint publication is a separate, locked store path."""
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -8,6 +9,7 @@ from nanobot.agent.tools.artifact import ReadArtifactTool
 from nanobot.agent.tools.execution import KnownToolResult
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.session.artifact import ArtifactValidationError
+from nanobot.session.artifact_projection import ArtifactProjector
 from nanobot.session.artifact_reader import ArtifactReader
 from nanobot.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
 from nanobot.session.checkpoint_dependencies import ConsumedSummaryChunk, SummaryDependencyProof
@@ -61,6 +63,35 @@ async def publication_inputs(tmp_path):
         yield writer, reader, store, candidate, proof, proposal
 
 
+async def projected_publication_inputs(tmp_path):
+    async with setup_read(tmp_path, 'projected evidence ' * 2000) as (writer, tool, store, descriptor, _):
+        writer.store = SourceSessionStore(writer.store._backend, artifact_store=store)
+        reader = ArtifactReader(writer, 'root_history', store, tool)
+        projected = ArtifactProjector(reader).prepare(
+            SourceTranscript(source_nodes(writer.owner.read_snapshot().events)), enabled=True,
+        )
+        snapshot = writer.owner.read_snapshot()
+        candidate = SourceCompactionCandidate.capture(
+            snapshot, projected, eligible_ids=frozenset(node.event_id for node in projected.nodes),
+        )
+        evidence = candidate.summary_evidence(candidate.boundaries[-1])
+        summary = 'Summary which consumed the trusted projected source output.'
+        proof = SummaryDependencyProof(candidate, (ConsumedSummaryChunk(evidence, None, summary),))
+        proposal = {
+            'schema_version': 2, 'digest_version': 1, 'summary_format_version': 1,
+            'session_generation': snapshot.state.generation, 'source_revision': snapshot.state.revision,
+            'checkpoint_id': 'projected-dependent-checkpoint',
+            'parent_checkpoint_id': snapshot.state.checkpoint_id,
+            'producing_model': 'model', 'producing_provider': 'provider', 'digest_algorithm': 'sha256',
+            'created_at': datetime.now(timezone.utc).isoformat(), 'summary': summary,
+            'artifact_references': [descriptor.reference], 'boundary': evidence.boundary,
+            'boundary_event_id': snapshot.events[evidence.boundary - 1]['_event_id'],
+            'prefix_digest': prefix_digest(snapshot.events, evidence.boundary), 'auxiliary_usage': None,
+            'projection_scope': 'root', 'projection_version': 1,
+        }
+        yield writer, reader, store, candidate, proof, proposal
+
+
 async def test_commits_exact_schema_v2_dependency_proof_once(tmp_path):
     async for writer, reader, store, candidate, proof, proposal in publication_inputs(tmp_path):
         with store.transaction() as blobs:
@@ -71,6 +102,40 @@ async def test_commits_exact_schema_v2_dependency_proof_once(tmp_path):
         assert committed.state.revision == candidate.snapshot.state.revision + 1
         assert committed.events == candidate.snapshot.events
         assert committed.checkpoint == proposal
+
+
+async def test_commits_exact_schema_v2_projected_dependency_proof_once(tmp_path):
+    async for writer, reader, store, candidate, proof, proposal in projected_publication_inputs(tmp_path):
+        with store.transaction() as blobs:
+            committed = writer.store.commit_dependent_context_checkpoint(
+                writer.owner.key, candidate.snapshot.state, proposal, proof,
+                owner=writer.owner, reader=reader, blobs=blobs,
+            )
+        assert committed.state.revision == candidate.snapshot.state.revision + 1
+        assert committed.events == candidate.snapshot.events
+        assert committed.checkpoint == proposal
+
+
+@pytest.mark.parametrize('failure', ['forged', 'revoked', 'corrupt'])
+async def test_projected_dependency_failure_never_writes(tmp_path, failure):
+    async for writer, reader, store, candidate, proof, proposal in projected_publication_inputs(tmp_path):
+        before = writer.store._backend.get_session_path(writer.owner.key).read_bytes()
+        if failure == 'forged':
+            chunk = proof.chunks[0]
+            proof = SummaryDependencyProof(candidate, (
+                replace(chunk, evidence=replace(chunk.evidence, projections=())),
+            ))
+        elif failure == 'revoked':
+            reader.read_file._workspace = tmp_path / 'revoked'
+        else:
+            next(store.root.rglob('*.blob')).write_bytes(b'corrupt')
+        with store.transaction() as blobs:
+            with pytest.raises((ArtifactValidationError, ArtifactStorageError, SourceValidationError)):
+                writer.store.commit_dependent_context_checkpoint(
+                    writer.owner.key, candidate.snapshot.state, proposal, proof,
+                    owner=writer.owner, reader=reader, blobs=blobs,
+                )
+        assert writer.store._backend.get_session_path(writer.owner.key).read_bytes() == before
 
 
 async def test_rejects_nonexact_references_without_writing(tmp_path):

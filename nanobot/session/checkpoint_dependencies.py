@@ -25,7 +25,12 @@ from nanobot.session.source import (
     validate_event_ids,
     validate_execution_links,
 )
-from nanobot.session.source_projection import CheckpointNode, SourceNode
+from nanobot.session.source_projection import (
+    ArtifactProjectionBinding,
+    CheckpointNode,
+    SourceNode,
+    source_nodes,
+)
 from nanobot.session.source_store import SourceSnapshot
 
 if TYPE_CHECKING:
@@ -44,6 +49,14 @@ class RetrievalDependency:
 
 
 @dataclass(frozen=True)
+class ProjectedArtifactDependency:
+    """One deterministic detached source representation consumed by a summary."""
+
+    event_id: str
+    binding: ArtifactProjectionBinding
+
+
+@dataclass(frozen=True)
 class SummaryEvidence:
     """One closed source interval supplied to an auxiliary summary call."""
 
@@ -51,6 +64,7 @@ class SummaryEvidence:
     boundary: int
     nodes: tuple[SourceNode, ...]
     retrievals: tuple[RetrievalDependency, ...]
+    projections: tuple[ProjectedArtifactDependency, ...]
 
 
 @dataclass(frozen=True)
@@ -194,6 +208,23 @@ def _manifest_descriptors(snapshot: SourceSnapshot) -> dict[str, ArtifactDescrip
     return {item.reference: item for item in published_artifacts(snapshot, workspace_id=workspace_id)}
 
 
+def _validate_projection(snapshot: SourceSnapshot, candidate: SourceCompactionCandidate,
+                         evidence: SummaryEvidence,
+                         dependency: ProjectedArtifactDependency) -> ArtifactDescriptor:
+    from nanobot.session.artifact_projection import validate_artifact_projection
+
+    if (type(dependency) is not ProjectedArtifactDependency
+            or type(dependency.binding) is not ArtifactProjectionBinding
+            or dependency.binding.event_id != dependency.event_id):
+        raise SourceValidationError('Invalid projected artifact dependency')
+    node = next((item for item in evidence.nodes if item.event_id == dependency.event_id), None)
+    canonical = next((item for item in source_nodes(snapshot.events, stream_id=candidate.stream_id)
+                      if item.event_id == dependency.event_id), None)
+    if node is None or canonical is None or node.artifact != dependency.binding:
+        raise SourceValidationError('Projected artifact dependency is not consumed source evidence')
+    return validate_artifact_projection(node, canonical, snapshot)
+
+
 def _validated_proof(proof: SummaryDependencyProof, snapshot: SourceSnapshot) -> _ValidatedProof:
     candidate = _require_candidate(proof, snapshot)
     if not isinstance(proof.chunks, tuple) or not proof.chunks:
@@ -207,6 +238,7 @@ def _validated_proof(proof: SummaryDependencyProof, snapshot: SourceSnapshot) ->
             raise SourceValidationError('Invalid consumed summary proof record')
         evidence = chunk.evidence
         if (type(evidence.after) is not int or type(evidence.boundary) is not int
+                or not isinstance(evidence.projections, tuple)
                 or evidence.after != cursor or evidence.boundary <= cursor):
             raise SourceValidationError('Summary dependency evidence is not contiguous')
         if chunk.previous_summary != previous_summary:
@@ -220,6 +252,8 @@ def _validated_proof(proof: SummaryDependencyProof, snapshot: SourceSnapshot) ->
             payload = _validate_retrieval(snapshot, retrieval)
             references.add(payload.reference)
             retrievals.append(payload)
+        for projection in evidence.projections:
+            references.add(_validate_projection(snapshot, candidate, evidence, projection).reference)
         cursor = evidence.boundary
         previous_summary = chunk.summary
     if references:

@@ -1,10 +1,11 @@
 # P4 tool-output offloading implementation contract
 
-Status: partially implemented; model-facing offloading remains pending. This contract refines the accepted
+Status: partially implemented; model-facing offloading and dependency-aware source
+summaries are implemented, while runtime activation remains pending. This contract refines the accepted
 [context design](../context-management-migration-design.md); it does not authorize
-runtime activation or change migration completion scope. Source pressure compaction
-is implemented separately. Descriptor/blob/publication and filesystem producer
-evidence foundations exist; retrieval and artifact-backed projections remain pending.
+runtime activation or change migration completion scope. Source pressure compaction,
+scoped retrieval, and artifact-backed request and summary projections are implemented.
+General producer adapters and the remaining operational integration stay pending.
 
 ## Required resulting behavior
 
@@ -294,15 +295,16 @@ cannot bypass those failures. The complete request still passes the final budget
 guard. Restart reconstructs references from canonical source and verified manifests
 without publication churn.
 
-### Enforced summary limitation
+### Summary evidence boundary
 
-Pressure summaries still use canonical disjoint inline evidence, never generated
-reference/preview nodes. Oversized indivisible canonical groups retain the existing
-auxiliary-budget rejection. Evidence with trusted `_artifact_read` metadata is
-rejected for summary publication until dependency support exists. Generic checkpoint publication remains empty-reference-only. Version-2 dependency
-loading and invocation admission are described below. Reference-aware summary dependency
-publication, validation and rollback remain a required subsequent package; this
-main-request integration does not claim to implement them.
+Legacy evidence remains canonical and never treats references, previews, strings,
+or unbound request expansions as source authority. Dependency-aware pressure
+summaries may consume a typed projected source node only after reconstructing its
+canonical source node and requiring the exact published descriptor, source binding,
+attested producer receipt, typed binding, and deterministic reference rendering.
+Retrieval results remain canonical inline. Generic checkpoint publication remains
+empty-reference-only; version-2 dependency loading and invocation admission are
+described below.
 
 
 ## Checkpoint dependency admission and recovery (Package A)
@@ -340,9 +342,8 @@ revocation, manifest loss, stream denial, exact recovery ordering/expansion,
 unacknowledged eligibility and pending-ticket protection. Independent review passed
 with 116 focused tests. The network-denied broader regression suite passed
 657 tests with two existing guarded plugin fixtures deselected; those exclusions
-remain outstanding for overall acceptance. Scoped Ruff and diff checks passed. Dependency-bearing summary generation remains explicitly blocked until
-Package B; verified projected auxiliary evidence remains Package C. The production
-migration guard remains enabled.
+remain outstanding for overall acceptance. Scoped Ruff and diff checks passed. The
+production migration guard remains enabled.
 
 ## Dependency-aware source pressure compaction (Package B)
 
@@ -354,13 +355,14 @@ message list; the governor estimates that object and
 rebinding tools, conversation state, normalization, or retries. The compatibility
 wrapper still builds and preflights dependency-free callers' payloads.
 
-References come only from prior accepted checkpoint references and canonical,
-successfully dispatched `read_artifact` receipts in consumed evidence. The proof
-reconstructs and sorts that complete set, so later summaries retain prior references
-even if model text does not mention them. Typed projected source nodes remain
-ineligible as auxiliary evidence; strings, prompts, tool arguments, previews,
-hidden child records, malformed receipts, unselected chunks, and failed calls do
-not establish dependencies.
+At Package B acceptance, references came only from prior accepted checkpoint
+references and canonical, successfully dispatched `read_artifact` receipts in
+consumed evidence. The proof reconstructed and sorted that complete set, so later
+summaries retained prior references even if model text did not mention them. Typed
+projected source nodes remained ineligible until Package C added the separately
+verified path below. Strings, prompts, tool arguments, previews, hidden child
+records, malformed receipts, unselected chunks, and failed calls still do not
+establish dependencies.
 
 Immediately before every auxiliary transport the governor validates dispatch
 ownership and the exact captured ledger projection. For a fold with dependencies,
@@ -400,7 +402,41 @@ covering checkpoint, source-compaction, summary, projection, and integration tes
 passed 104 tests. The required network-denied session and agent regression command
 passed 685 tests with the two existing guarded plugin fixtures deselected.
 
-Package C remains outstanding: projected auxiliary substitution is disabled. General
-producer adapters, cross-stream grants and handoff, artifact rematerialization,
-default artifact configuration/private-root factories, migration-guard removal, and
-runtime activation remain outstanding as well.
+## Dependency-aware projected source summaries (Package C)
+
+The artifact projector now exposes the deterministic binding and rendering used by
+both main-request preparation and summary validation. A projected summary node is
+accepted only when its canonical source event, descriptor manifest membership,
+descriptor/source binding, attested producer receipt, typed binding, and rendered
+message all match exactly. Missing manifests, altered bindings or previews,
+unsupported producer evidence, recursive retrieval results, hidden children, and
+unbound expansions do not establish projected dependencies.
+
+`SummaryEvidence` records only the projected bindings in each consumed closed
+interval. Proof reconstruction carries references from those consumed bindings,
+canonical retrieval receipts, and any prior accepted checkpoint; it never infers a
+reference from model text, an artifact string, a preview, or an unconsumed suffix.
+Preflight and publication retain Package B's current-reader, policy, durable-byte,
+lock-order, and captured-CAS validation. Auxiliary summary work never publishes
+descriptors or blobs.
+
+A projected dependency requires the active `read_artifact` schema and reader. If a
+previously projected node must be restored inline because that schema is absent or
+the artifact has become unavailable, pressure compaction is skipped for that
+request and the final request-budget guard evaluates canonical source. A proofless
+publication cannot downgrade projected evidence to schema v1. Root and local
+dependency checkpoints remain schema v2 only when the full proof validates.
+
+Focused verification covers deterministic projected evidence, forged bindings and
+renders, missing manifests, recursive and unsupported evidence, canonical legacy
+evidence, unbound expansions, proof-reference derivation, unconsumed suffixes,
+schema/reader loss, corrupt/revoked/CAS failures, no auxiliary artifact writes,
+and the actual-engine large-read projection through restart admission and
+retrieval. General producer adapters, cross-stream grants and handoff, artifact
+rematerialization, default artifact configuration/private-root factories,
+migration-guard removal, and runtime activation remain outstanding.
+
+The combined focused checkpoint, projection, compaction, and engine suite passes
+166 tests. The broader network-denied session and governance suite passes 658 tests
+with three migration-guard-only fixtures explicitly deselected while the production
+guard remains closed. Scoped Ruff and diff checks pass.

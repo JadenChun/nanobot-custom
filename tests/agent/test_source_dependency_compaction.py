@@ -21,6 +21,7 @@ from nanobot.agent.turn import TurnContext
 from nanobot.providers.base import LLMResponse, LLMUsage
 from nanobot.providers.conversation_state import ProviderConversationStateController
 from nanobot.session.artifact import ArtifactValidationError
+from nanobot.session.artifact_projection import ArtifactProjector
 from nanobot.session.artifact_reader import ArtifactReader
 from nanobot.session.artifact_store import PrivateArtifactStore
 from nanobot.session.checkpoint_admission import CheckpointAdmission
@@ -184,6 +185,141 @@ async def test_no_retrieval_schema_retains_canonical_source_without_dependent_pu
         assert descriptor.reference in str(state.source.transcript.messages())
         assert state.source.transcript.messages() == state.source_compaction.raw_messages
         assert not state.source.has_pending_requests
+
+
+async def test_projected_source_summary_requires_retrieval_schema_without_compaction_writes(tmp_path):
+    async with setup_read(tmp_path, 'projected evidence ' * 2000) as (writer, tool, store, descriptor, _):
+        reader = ArtifactReader(writer, 'root_history', store, tool)
+        state = _state(writer, reader)
+        projected = ArtifactProjector(reader).prepare(state.source.transcript, enabled=True)
+        state.source.replace_projection(projected)
+        state.source_compaction.raw_messages[:] = projected.messages()
+        state.conversation.replace_transcript(state.source_compaction.raw_messages)
+        before = writer.owner.read_snapshot()
+
+        retained = await ContextGovernor().compact_source_request(
+            state, projected, tool_definitions=None,
+        )
+
+        assert retained == projected
+        assert state.config.provider.calls == []
+        assert writer.owner.read_snapshot() == before
+        assert state.source.transcript == projected
+
+
+@pytest.mark.parametrize('failure', ['no_schema', 'corrupt'])
+async def test_projected_dependency_loss_restores_inline_without_auxiliary_compaction(tmp_path, failure):
+    async with setup_read(tmp_path, 'projected evidence ' * 2000) as (writer, tool, store, _, _):
+        reader = ArtifactReader(writer, 'root_history', store, tool)
+        state = _state(writer, reader)
+        projected = ArtifactProjector(reader).prepare(state.source.transcript, enabled=True)
+        state.source.replace_projection(projected)
+        state.source_compaction.raw_messages[:] = projected.messages()
+        state.conversation.replace_transcript(state.source_compaction.raw_messages)
+        before = writer.owner.read_snapshot()
+        definitions = None
+        if failure == 'corrupt':
+            next(store.root.rglob('*.blob')).write_bytes(b'corrupt')
+            definitions = state.config.tools.get_definitions()
+
+        with pytest.raises(ContextWindowExceededError):
+            await _prepare(state, definitions)
+
+        assert state.config.provider.calls == []
+        assert writer.owner.read_snapshot().checkpoint == before.checkpoint
+        assert state.source_compaction.artifact_projection_unavailable
+        assert 'Tool output stored as' not in str(state.source.transcript.messages())
+
+
+async def test_projected_source_summary_publishes_v2_without_artifact_publication(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    from nanobot.session.source_store import SourceSessionStore
+
+    async with setup_read(tmp_path, 'projected evidence ' * 2000) as (writer, tool, store, descriptor, _):
+        reader = ArtifactReader(writer, 'root_history', store, tool)
+        state = _state(writer, reader)
+        projected = ArtifactProjector(reader).prepare(state.source.transcript, enabled=True)
+        state.source.replace_projection(projected)
+        state.source_compaction.raw_messages[:] = projected.messages()
+        state.conversation.replace_transcript(state.source_compaction.raw_messages)
+        publish_descriptor = Mock(side_effect=AssertionError('auxiliary compaction must not publish artifacts'))
+        monkeypatch.setattr(SourceSessionStore, 'commit_artifact_descriptor', publish_descriptor)
+
+        await _prepare(state, state.config.tools.get_definitions())
+
+        checkpoint = writer.owner.read_snapshot().checkpoint
+        assert checkpoint['schema_version'] == 2
+        assert checkpoint['artifact_references'] == [descriptor.reference]
+        assert publish_descriptor.call_count == 0
+        auxiliary_payload = str(state.config.provider.calls[0][0])
+        assert 'Tool output stored as ' + descriptor.reference in auxiliary_payload
+        assert len(auxiliary_payload) < 4_000
+
+
+async def test_proofless_publication_cannot_downgrade_projected_evidence_to_schema_v1(tmp_path):
+    async with setup_read(tmp_path, 'projected evidence ' * 2000) as (writer, tool, store, _, _):
+        reader = ArtifactReader(writer, 'root_history', store, tool)
+        state = _state(writer, reader)
+        projected = ArtifactProjector(reader).prepare(state.source.transcript, enabled=True)
+        state.source.replace_projection(projected)
+        state.source_compaction.raw_messages[:] = projected.messages()
+        attempt = ContextGovernor().capture_source_compaction(
+            state, projected, tool_definitions=state.config.tools.get_definitions(),
+        )
+        before = writer.owner.read_snapshot()
+        with pytest.raises(SourceValidationError, match='complete proof'):
+            ContextGovernor().publish_source_compaction(
+                state, attempt, boundary=attempt.candidate.boundaries[-1],
+                summary='forged projected v1 summary', auxiliary_usage=None,
+            )
+        assert writer.owner.read_snapshot() == before
+
+
+async def test_projected_dependency_cas_change_after_summary_never_publishes_projection(tmp_path):
+    from nanobot.session.manager import SessionWriteConflict
+
+    async with setup_read(tmp_path, 'projected evidence ' * 2000) as (writer, tool, store, _, _):
+        reader = ArtifactReader(writer, 'root_history', store, tool)
+        state = _state(writer, reader)
+        projected = ArtifactProjector(reader).prepare(state.source.transcript, enabled=True)
+        state.source.replace_projection(projected)
+        state.source_compaction.raw_messages[:] = projected.messages()
+        state.conversation.replace_transcript(state.source_compaction.raw_messages)
+        original_chat = state.config.provider.chat
+
+        async def mutate_after_transport(*args, **kwargs):
+            response = await original_chat(*args, **kwargs)
+            writer.store.update_metadata(writer.owner.key, {'title': 'concurrent title'})
+            return response
+
+        state.config.provider.chat = mutate_after_transport
+        before = writer.owner.read_snapshot()
+        with pytest.raises(SessionWriteConflict):
+            await _prepare(state, state.config.tools.get_definitions())
+        after = writer.owner.read_snapshot()
+        assert len(state.config.provider.calls) == 1
+        assert after.events == before.events and after.checkpoint == before.checkpoint
+        assert state.source.transcript == projected
+
+
+async def test_isolated_projected_summary_keeps_root_checkpoint_and_stream_scope(tmp_path):
+    async with setup_read(tmp_path, 'projected evidence ' * 2000, child=True) as (
+            writer, tool, store, descriptor, _):
+        reader = ArtifactReader(writer, 'isolated_stream', store, tool)
+        state = _state(writer, reader, local=True)
+        projected = ArtifactProjector(reader).prepare(state.source.transcript, enabled=True)
+        state.source.replace_projection(projected)
+        state.source_compaction.raw_messages[:] = projected.messages()
+        state.conversation.replace_transcript(state.source_compaction.raw_messages)
+        before = writer.owner.read_snapshot()
+
+        await _prepare(state, state.config.tools.get_definitions())
+
+        after = writer.owner.read_snapshot()
+        assert after == before
+        assert state.source_compaction.local_checkpoint is not None
+        assert state.source_compaction.local_checkpoint.artifact_references == (descriptor.reference,)
 
 
 async def test_revoked_dependency_preflight_never_transports_or_publishes(tmp_path):

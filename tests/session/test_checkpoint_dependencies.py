@@ -9,6 +9,7 @@ import pytest
 from nanobot.agent.tools.artifact import ReadArtifactTool
 from nanobot.agent.tools.execution import KnownToolResult
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.session.artifact_projection import ArtifactProjector
 from nanobot.session.artifact_reader import ArtifactReader
 from nanobot.session.checkpoint_dependencies import (
     ConsumedSummaryChunk,
@@ -58,6 +59,49 @@ async def test_derives_only_consumed_validated_retrieval_receipts(tmp_path):
         # The legacy evidence accessor remains blocked while B3 is disabled.
         with pytest.raises(SourceValidationError, match='dependencies'):
             candidate.evidence(candidate.boundaries[-1])
+
+
+async def test_derives_only_consumed_verified_projected_bindings(tmp_path):
+    async with setup_read(tmp_path, 'evidence' * 6000) as (writer, tool, store, descriptor, _):
+        reader = ArtifactReader(writer, 'root_history', store, tool)
+        projected = ArtifactProjector(reader).prepare(
+            SourceTranscript(source_nodes(writer.owner.read_snapshot().events)), enabled=True,
+        )
+        snapshot = writer.owner.read_snapshot()
+        candidate = SourceCompactionCandidate.capture(
+            snapshot, projected, eligible_ids=frozenset(node.event_id for node in projected.nodes),
+        )
+        evidence = candidate.summary_evidence(candidate.boundaries[-1])
+        assert len(evidence.projections) == 1
+        proof = SummaryDependencyProof(candidate, (
+            ConsumedSummaryChunk(evidence, None, 'Summary of the projected canonical read.'),
+        ))
+        assert derive_summary_references(proof, snapshot) == (descriptor.reference,)
+
+
+async def test_unconsumed_suffix_cannot_affect_proof_reconstruction(tmp_path):
+    async with setup_read(tmp_path, 'evidence' * 6000) as (writer, tool, store, descriptor, _):
+        reader = ArtifactReader(writer, 'root_history', store, tool)
+        projected = ArtifactProjector(reader).prepare(
+            SourceTranscript(source_nodes(writer.owner.read_snapshot().events)), enabled=True,
+        )
+        suffix = new_source_event({'role': 'user', 'content': 'unconsumed suffix'}, run_id='next')
+        suffix['_stream_id'] = 'root'
+        snapshot = replace(writer.owner.read_snapshot(), events=[
+            *writer.owner.read_snapshot().events, suffix,
+        ])
+        suffix_node = source_nodes(snapshot.events)[-1]
+        transcript = SourceTranscript((*projected.nodes, SourceNode(
+            suffix_node.event_id, suffix_node.message, object(),
+        )))
+        candidate = SourceCompactionCandidate.capture(
+            snapshot, transcript, eligible_ids=frozenset(node.event_id for node in transcript.nodes),
+        )
+        evidence = candidate.summary_evidence(candidate.boundaries[0])
+        proof = SummaryDependencyProof(candidate, (
+            ConsumedSummaryChunk(evidence, None, 'Summary before the unconsumed suffix.'),
+        ))
+        assert derive_summary_references(proof, snapshot) == (descriptor.reference,)
 
 
 async def test_forged_or_unconsumed_receipt_cannot_establish_a_dependency(tmp_path):
@@ -143,7 +187,7 @@ def test_hidden_child_marker_is_filtered_before_receipt_parsing():
     assert tuple(node.event_id for node in evidence.nodes) == (root['_event_id'],)
 
 
-def test_projected_nodes_are_not_supported_summary_evidence():
+def test_untyped_projected_nodes_are_not_summary_evidence():
     event = new_source_event({'role': 'user', 'content': 'visible'}, run_id='run')
     event['_stream_id'] = 'root'
     snapshot = SourceSnapshot(
@@ -154,5 +198,5 @@ def test_projected_nodes_are_not_supported_summary_evidence():
     candidate = SourceCompactionCandidate.capture(
         snapshot, SourceTranscript((projected,)), eligible_ids=frozenset({original.event_id}),
     )
-    with pytest.raises(SourceValidationError, match='projected'):
+    with pytest.raises(SourceValidationError, match='projection binding'):
         candidate.summary_evidence(candidate.boundaries[-1])
