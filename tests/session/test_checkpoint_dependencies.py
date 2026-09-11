@@ -1,0 +1,158 @@
+"""Consumed canonical summary evidence is the only dependency proof input."""
+
+import hashlib
+import json
+from dataclasses import replace
+
+import pytest
+
+from nanobot.agent.tools.artifact import ReadArtifactTool
+from nanobot.agent.tools.execution import KnownToolResult
+from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.session.artifact_reader import ArtifactReader
+from nanobot.session.checkpoint_dependencies import (
+    ConsumedSummaryChunk,
+    RetrievalDependency,
+    SummaryDependencyProof,
+    derive_summary_references,
+)
+from nanobot.session.source import SourceValidationError, new_source_event
+from nanobot.session.source_compaction import SourceCompactionCandidate
+from nanobot.session.source_projection import CheckpointNode, SourceNode, source_nodes
+from nanobot.session.source_request import SourceTranscript
+from nanobot.session.source_store import SourceSnapshot, SourceState
+from session.test_artifact_reader import setup_read
+
+
+async def retrieval_candidate(tmp_path):
+    async with setup_read(tmp_path) as (writer, tool, store, descriptor, _):
+        reader = ArtifactReader(writer, 'root_history', store, tool)
+        artifact_tool = ReadArtifactTool(reader)
+        outcome = await ToolRegistry.execute_prepared(
+            artifact_tool, {'reference': descriptor.reference}, object()
+        )
+        writer.begin_tool_batch({'role': 'assistant', 'content': '', 'tool_calls': [{
+            'id': 'artifact', 'type': 'function',
+            'function': {'name': 'read_artifact', 'arguments': '{}'},
+        }]})
+        await writer.record_tool_result(KnownToolResult(
+            0, 'artifact', 'read_artifact', outcome, outcome.content, {'status': 'ok'}, True,
+            retrieval_receipt=outcome.retrieval_receipt,
+        ))
+        snapshot = writer.owner.read_snapshot()
+        transcript = SourceTranscript(source_nodes(snapshot.events))
+        candidate = SourceCompactionCandidate.capture(
+            snapshot, transcript, eligible_ids=frozenset(node.event_id for node in transcript.nodes),
+        )
+        yield candidate, descriptor
+
+
+async def test_derives_only_consumed_validated_retrieval_receipts(tmp_path):
+    async for candidate, descriptor in retrieval_candidate(tmp_path):
+        evidence = candidate.summary_evidence(candidate.boundaries[-1])
+        assert len(evidence.retrievals) == 1
+        proof = SummaryDependencyProof(candidate, (
+            ConsumedSummaryChunk(evidence, None, 'Summary of the canonical read.'),
+        ))
+        assert derive_summary_references(proof, candidate.snapshot) == (descriptor.reference,)
+        # The legacy evidence accessor remains blocked while B3 is disabled.
+        with pytest.raises(SourceValidationError, match='dependencies'):
+            candidate.evidence(candidate.boundaries[-1])
+
+
+async def test_forged_or_unconsumed_receipt_cannot_establish_a_dependency(tmp_path):
+    async for candidate, _ in retrieval_candidate(tmp_path):
+        evidence = candidate.summary_evidence(candidate.boundaries[-1])
+        retrieval = evidence.retrievals[0]
+        forged = RetrievalDependency(retrieval.event_id, retrieval.execution_id,
+            replace(retrieval.receipt, sha256='0' * 64))
+        proof = SummaryDependencyProof(candidate, (
+            ConsumedSummaryChunk(replace(evidence, retrievals=(forged,)), None, 'Summary.'),
+        ))
+        with pytest.raises(SourceValidationError):
+            derive_summary_references(proof, candidate.snapshot)
+
+
+async def test_retrieval_payload_must_be_canonical_and_within_descriptor_bounds(tmp_path):
+    async for candidate, _ in retrieval_candidate(tmp_path):
+        event = next(row for row in candidate.snapshot.events if '_artifact_read' in row)
+        payload = json.loads(event['content'])
+        payload['eof'] = False
+        event['content'] = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+        event['_artifact_read']['sha256'] = hashlib.sha256(event['content'].encode()).hexdigest()
+        evidence = candidate.summary_evidence(candidate.boundaries[-1])
+        proof = SummaryDependencyProof(candidate, (
+            ConsumedSummaryChunk(evidence, None, 'Summary of the canonical read.'),
+        ))
+        with pytest.raises(SourceValidationError, match='descriptor bounds'):
+            derive_summary_references(proof, candidate.snapshot)
+
+
+async def test_prior_references_require_the_exact_accepted_summary_fold(tmp_path):
+    async for original, descriptor in retrieval_candidate(tmp_path):
+        prior = CheckpointNode('prior-checkpoint', 'Previously accepted summary.', (descriptor.reference,))
+        followup = new_source_event({'role': 'user', 'content': 'New visible input.'}, run_id='next')
+        followup['_stream_id'] = 'root'
+        events = [*original.snapshot.events, followup]
+        stored = {
+            'checkpoint_id': prior.checkpoint_id, 'summary': prior.summary,
+            'artifact_references': list(prior.artifact_references), 'boundary': len(original.snapshot.events),
+        }
+        snapshot = replace(
+            original.snapshot,
+            state=replace(original.snapshot.state, checkpoint_id=prior.checkpoint_id),
+            events=events,
+            checkpoint=stored,
+        )
+        transcript = SourceTranscript((prior, *source_nodes(events[len(original.snapshot.events):])))
+        candidate = SourceCompactionCandidate.capture(
+            snapshot, transcript, eligible_ids=frozenset({followup['_event_id']}),
+            accepted_boundary=stored['boundary'], accepted_checkpoint=prior,
+        )
+        evidence = candidate.summary_evidence(candidate.boundaries[-1])
+        proof = SummaryDependencyProof(candidate, (
+            ConsumedSummaryChunk(evidence, prior.summary, 'Folded follow-up summary.'),
+        ))
+        assert derive_summary_references(proof, snapshot) == (descriptor.reference,)
+        with pytest.raises(SourceValidationError, match='fold chain'):
+            derive_summary_references(SummaryDependencyProof(candidate, (
+                ConsumedSummaryChunk(evidence, None, 'Folded follow-up summary.'),
+            )), snapshot)
+
+
+def test_hidden_child_marker_is_filtered_before_receipt_parsing():
+    root = new_source_event({'role': 'user', 'content': 'visible'}, run_id='run')
+    root['_stream_id'] = 'root'
+    call = {'id': 'artifact', 'type': 'function',
+            'function': {'name': 'read_artifact', 'arguments': '{}'}}
+    intent = new_source_event({'role': 'assistant', 'content': '', 'tool_calls': [call]}, run_id='run')
+    intent.update(_stream_id='child', _parent_stream_id='root', _execution_ids=['execution'])
+    child = new_source_event({'role': 'tool', 'tool_call_id': 'artifact', 'name': 'read_artifact',
+                              'content': 'hidden', '_dispatched': True, '_outcome_status': 'ok'}, run_id='run')
+    child.update(_stream_id='child', _parent_stream_id='root', _execution_id='execution',
+                 _artifact_read={'forged': True})
+    snapshot = SourceSnapshot(
+        SourceState('store', 'key', 'incarnation', 1, 0, None, 'fingerprint'), {}, [root, intent, child], None,
+    )
+    transcript = SourceTranscript(source_nodes(snapshot.events))
+    candidate = SourceCompactionCandidate.capture(
+        snapshot, transcript, eligible_ids=frozenset(node.event_id for node in transcript.nodes),
+    )
+    evidence = candidate.summary_evidence(candidate.boundaries[-1])
+    assert evidence.retrievals == ()
+    assert tuple(node.event_id for node in evidence.nodes) == (root['_event_id'],)
+
+
+def test_projected_nodes_are_not_supported_summary_evidence():
+    event = new_source_event({'role': 'user', 'content': 'visible'}, run_id='run')
+    event['_stream_id'] = 'root'
+    snapshot = SourceSnapshot(
+        SourceState('store', 'key', 'incarnation', 1, 0, None, 'fingerprint'), {}, [event], None,
+    )
+    original = source_nodes(snapshot.events)[0]
+    projected = SourceNode(original.event_id, original.message, object())
+    candidate = SourceCompactionCandidate.capture(
+        snapshot, SourceTranscript((projected,)), eligible_ids=frozenset({original.event_id}),
+    )
+    with pytest.raises(SourceValidationError, match='projected'):
+        candidate.summary_evidence(candidate.boundaries[-1])

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nanobot.session.source import SourceValidationError
 from nanobot.session.source_projection import (
@@ -20,6 +20,9 @@ from nanobot.session.source_projection import (
 )
 from nanobot.session.source_request import SourceTranscript
 from nanobot.session.source_store import SourceSnapshot
+
+if TYPE_CHECKING:
+    from nanobot.session.checkpoint_dependencies import SummaryEvidence
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,44 @@ class SourceCompactionCandidate:
         if any('_artifact_read' in event for event in evidence):
             raise SourceValidationError('Artifact retrieval summary dependencies are not implemented')
         return source_nodes(evidence, stream_id=self.stream_id)
+
+    def summary_evidence(self, boundary: int, *, after: int | None = None) -> SummaryEvidence:
+        """Capture canonical evidence for a future dependency-aware publication.
+
+        This is deliberately separate from :meth:`evidence`: existing governor
+        compaction remains unable to consume artifact retrievals until its later
+        integration package explicitly constructs and publishes a proof.
+        """
+        from nanobot.agent.tools.artifact import parse_retrieval_receipt
+        from nanobot.session.checkpoint_dependencies import RetrievalDependency, SummaryEvidence
+
+        self._require_boundary(boundary)
+        start = self.previous_boundary if after is None else after
+        if start != self.previous_boundary and start not in self.boundaries:
+            raise SourceValidationError('Evidence must start at a closed eligible boundary')
+        if start >= boundary:
+            raise SourceValidationError('Evidence chunk must advance its boundary')
+        events = self._events()[start:boundary]
+        nodes = source_nodes(events, stream_id=self.stream_id)
+        active = {node.event_id: node for node in self.transcript.nodes if isinstance(node, SourceNode)}
+        if any(active.get(node.event_id) is not None and active[node.event_id].artifact is not None
+               for node in nodes):
+            raise SourceValidationError('projected source nodes are not supported summary evidence')
+        # Visibility is established before inspecting reserved retrieval metadata.
+        visible = {node.event_id for node in nodes}
+        retrievals: list[RetrievalDependency] = []
+        for event in events:
+            if event['_event_id'] not in visible or '_artifact_read' not in event:
+                continue
+            try:
+                receipt = parse_retrieval_receipt(event['_artifact_read'])
+            except (TypeError, ValueError, AttributeError):
+                raise SourceValidationError('Invalid canonical artifact retrieval receipt') from None
+            execution_id = event.get('_execution_id')
+            if not isinstance(execution_id, str) or not execution_id:
+                raise SourceValidationError('Invalid canonical artifact retrieval execution')
+            retrievals.append(RetrievalDependency(event['_event_id'], execution_id, receipt))
+        return SummaryEvidence(start, boundary, tuple(nodes), tuple(retrievals))
 
     def _require_boundary(self, boundary: int) -> None:
         if type(boundary) is not int or boundary not in self.boundaries:

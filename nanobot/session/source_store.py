@@ -29,7 +29,9 @@ from nanobot.session.source import (
 
 if TYPE_CHECKING:
     from nanobot.session.artifact import ArtifactDescriptor
+    from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.artifact_store import ArtifactBlobTransaction, PrivateArtifactStore
+    from nanobot.session.checkpoint_dependencies import SummaryDependencyProof
     from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.manager import JsonlSessionStore, Session
 
@@ -351,6 +353,62 @@ class SourceSessionStore:
             )
             header["metadata"]["context_checkpoint"] = validated
             header["revision"] += 1
+            return self._write(header, events)
+
+    def commit_dependent_context_checkpoint(self, key: str, expected: SourceState,
+                                            candidate: dict[str, Any], proof: SummaryDependencyProof, *,
+                                            owner: ExecutionOwner, reader: ArtifactReader,
+                                            blobs: ArtifactBlobTransaction) -> SourceSnapshot:
+        """Atomically publish one fully attested, nonempty schema-v2 checkpoint.
+
+        Callers must already retain the exact configured artifact transaction.
+        Taking the execution/session transaction only after that transaction
+        preserves the global blob-before-source lock order and intentionally
+        leaves CAS conflicts to the caller without reloading or retrying.
+        """
+        from nanobot.session.artifact_reader import ArtifactReader
+        from nanobot.session.artifact_store import ArtifactBlobTransaction
+        from nanobot.session.checkpoint_dependencies import (
+            _validated_proof,
+            validate_summary_dependencies,
+        )
+        from nanobot.session.execution_owner import (
+            ExecutionOwner,
+            ExecutionOwnershipError,
+            execution_transaction,
+        )
+
+        if (type(owner) is not ExecutionOwner or type(reader) is not ArtifactReader
+                or type(blobs) is not ArtifactBlobTransaction or reader.writer.store is not self
+                or reader.writer.owner is not owner or self._artifact_store is None
+                or reader.store is not self._artifact_store or blobs._store is not self._artifact_store
+                or owner.key != key):
+            raise ExecutionOwnershipError()
+        # Reject before taking a source lock when the caller did not retain an
+        # active configured artifact transaction. `assert_reachable` also
+        # checks its private lock and namespace identities.
+        blobs.assert_reachable()
+        owner.validate_dispatch()
+        with execution_transaction(self._backend, key, owner):
+            header, events = self._current_unlocked(key, expected)
+            snapshot = self._snapshot(header, events)
+            verified = _validated_proof(proof, snapshot)
+            if (not isinstance(candidate, dict) or candidate.get('schema_version') != 2
+                    or not verified.references or candidate.get('artifact_references') != list(verified.references)
+                    or candidate.get('boundary') != verified.boundary
+                    or candidate.get('summary') != verified.summary):
+                raise SourceValidationError('Dependent checkpoint does not exactly match its proof')
+            validated = validate_context_checkpoint(
+                candidate, events, generation=expected.generation,
+                source_revision=expected.revision, parent_checkpoint_id=expected.checkpoint_id,
+            )
+            references = validate_summary_dependencies(proof, snapshot, reader, blobs)
+            if tuple(validated['artifact_references']) != references:
+                raise SourceValidationError('Dependent checkpoint references changed during validation')
+            blobs.assert_reachable()
+            owner.validate_dispatch()
+            header['metadata']['context_checkpoint'] = validated
+            header['revision'] += 1
             return self._write(header, events)
 
     def commit_artifact_descriptor(self, key: str, expected: SourceState, descriptor: ArtifactDescriptor, *,
