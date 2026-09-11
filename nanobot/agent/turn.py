@@ -20,6 +20,8 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.providers.base import LLMUsage
+    from nanobot.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
+    from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.source_request import SourceTranscript
     from nanobot.session.turn_writer import SourceTurnWriter
@@ -370,6 +372,9 @@ class TurnContext:
     execution_owner: ExecutionOwner | None = field(default=None, repr=False)
     source_writer: SourceTurnWriter | None = field(default=None, repr=False)
     artifact_read_allowed: bool = False
+    artifact_reader: ArtifactReader | None = field(default=None, repr=False)
+    artifact_grants: ArtifactGrantSet | None = field(default=None, repr=False)
+    artifact_handoff_notices: list[str] = field(default_factory=list, repr=False)
     source_history: SourceTranscript | None = field(default=None, repr=False)
     source_input_event_id: str | None = field(default=None, repr=False)
 
@@ -738,6 +743,7 @@ class ToolOutcome:
     policy_metadata: Mapping[str, Any] = field(default_factory=dict)
     producer_receipt: FilesystemReadReceipt | None = None
     retrieval_receipt: ArtifactRetrievalReceipt | None = None
+    handoff_receipt: ArtifactHandoffReceipt | None = field(default=None, repr=False, compare=False)
 
     @property
     def result(self) -> Any:

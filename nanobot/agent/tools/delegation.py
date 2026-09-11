@@ -20,6 +20,14 @@ class _ForegroundTool(Tool):
         return False
 
 
+_ARTIFACT_REFERENCES = {
+    "type": "array",
+    "items": {"type": "string", "pattern": "^artifact:[0-9a-f]{32}$"},
+    "maxItems": 16,
+    "uniqueItems": True,
+}
+
+
 class PlanTaskTool(_ForegroundTool):
     name = "plan_task"
     description = (
@@ -35,6 +43,7 @@ class PlanTaskTool(_ForegroundTool):
                 "type": "string",
                 "description": "Plain-text evidence already gathered; keep raw values and references.",
             },
+            "artifact_references": _ARTIFACT_REFERENCES,
         },
         "required": ["objective"],
         "additionalProperties": False,
@@ -45,12 +54,14 @@ class PlanTaskTool(_ForegroundTool):
         objective: str,
         context: str = "",
         turn_context: TurnContext | None = None,
+        artifact_references: list[str] | None = None,
         **_: Any,
     ) -> str:
         return await self._manager.run_plan(
             objective=objective,
             context=context,
             turn_context=turn_context,
+            artifact_references=artifact_references,
         )
 
     async def execute_with_context(self, turn_context: TurnContext, **kwargs: Any) -> Any:
@@ -78,6 +89,7 @@ class DelegateTaskTool(_ForegroundTool):
                 "items": {"type": "string", "minLength": 1},
                 "minItems": 1,
             },
+            "artifact_references": _ARTIFACT_REFERENCES,
         },
         "required": ["contract", "write_scope"],
         "additionalProperties": False,
@@ -88,12 +100,14 @@ class DelegateTaskTool(_ForegroundTool):
         contract: str,
         write_scope: list[str],
         turn_context: TurnContext | None = None,
+        artifact_references: list[str] | None = None,
         **_: Any,
     ) -> str:
         return await self._manager.run_worker(
             contract=contract,
             write_scope=write_scope,
             turn_context=turn_context,
+            artifact_references=artifact_references,
         )
 
     async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> Any:
@@ -117,6 +131,7 @@ class ReviewWorkTool(_ForegroundTool):
                 "type": "array",
                 "items": {"type": "string"},
             },
+            "artifact_references": _ARTIFACT_REFERENCES,
         },
         "required": ["goal", "acceptance_criteria"],
         "additionalProperties": False,
@@ -129,6 +144,7 @@ class ReviewWorkTool(_ForegroundTool):
         evidence: str = "",
         relevant_paths: list[str] | None = None,
         turn_context: TurnContext | None = None,
+        artifact_references: list[str] | None = None,
         **_: Any,
     ) -> str:
         return await self._manager.run_review(
@@ -137,6 +153,7 @@ class ReviewWorkTool(_ForegroundTool):
             evidence=evidence,
             relevant_paths=relevant_paths,
             turn_context=turn_context,
+            artifact_references=artifact_references,
         )
 
     async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> Any:

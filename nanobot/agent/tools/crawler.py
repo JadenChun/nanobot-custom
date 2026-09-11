@@ -40,18 +40,29 @@ class CrawlResearchTool(Tool):
                     "type": "string",
                     "description": "Bounded crawl objective, URLs, evidence fields, and limits.",
                 },
+                "artifact_references": {
+                    "type": "array",
+                    "items": {"type": "string", "pattern": "^artifact:[0-9a-f]{32}$"},
+                    "maxItems": 16,
+                    "uniqueItems": True,
+                },
             },
             "required": ["task"],
             "additionalProperties": False,
         }
 
-    async def execute(self, task: str, **_: Any) -> str | ToolOutcome:
-        return await self._manager.run_crawler(task=task)
+    async def execute(
+        self, task: str, artifact_references: list[str] | None = None, **_: Any
+    ) -> str | ToolOutcome:
+        return await self._manager.run_crawler(
+            task=task, artifact_references=artifact_references
+        )
 
     async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> Any:
         return await self._manager.run_crawler(
             task=kwargs.get("task", ""),
             turn_context=context,
+            artifact_references=kwargs.get("artifact_references"),
         )
 
 

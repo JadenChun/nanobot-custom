@@ -72,6 +72,7 @@ from nanobot.utils.runtime import (
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.source_request import SourceTranscript
     from nanobot.session.turn_writer import SourceTurnWriter
@@ -150,6 +151,11 @@ class AgentRunSpec:
     source_isolated: bool = False
     artifact_read_allowed: bool = False
     conversation_binding: ConversationRequestBinding | None = field(default=None, repr=False)
+    artifact_grants: ArtifactGrantSet | None = field(default=None, repr=False)
+    artifact_reader_factory: Callable[
+        [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None
+    ] | None = field(default=None, repr=False)
+    artifact_handoff_collector: object | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)
@@ -178,6 +184,7 @@ class AgentRunResult:
     # exact candidate before committing it; direct runner callers never adopt
     # it implicitly.
     provider_state_settlement: ProviderStateSettlement | None = field(default=None, repr=False)
+    artifact_handoff_receipt: ArtifactHandoffReceipt | None = field(default=None, repr=False)
 
 
 class AgentRunner:
@@ -370,35 +377,67 @@ class AgentRunner:
         return True
 
     async def run(self, spec: AgentRunSpec) -> AgentRunResult:
-        if (spec.source_writer is not None and (spec.turn_context is None
-                or spec.turn_context.execution_owner is not spec.source_writer.owner)):
-            raise ValueError("Source recording requires the same dispatch owner")
-        if (spec.turn_context is not None and spec.turn_context.execution_owner is not None
-                and spec.tool_result_callback is None and spec.source_writer is None):
-            raise ValueError("Execution ownership requires durable tool-result recording")
-        # Never inherit an invocation-bound reader from a parent registry.
-        if self.artifact_reader_factory is not None or 'read_artifact' in spec.tools.tool_names:
-            from nanobot.agent.tools.artifact import ReadArtifactTool
-            from nanobot.agent.tools.filesystem import ReadFileTool
-
-            tools = spec.tools.filtered([name for name in spec.tools.tool_names if name != 'read_artifact'])
-            read_file = tools.get('read_file')
-            if (spec.artifact_read_allowed and self.artifact_reader_factory is not None and spec.source_writer is not None
-                    and type(read_file) is ReadFileTool):
-                isolated = spec.source_isolated or spec.source_writer.parent_stream_id is not None
-                reader = self.artifact_reader_factory(spec.source_writer, isolated, read_file)
-                if reader is not None:
-                    if reader.writer is not spec.source_writer or reader.mode != (
-                            'isolated_stream' if isolated else 'root_history') or reader.read_file is not read_file:
-                        raise ValueError('Artifact reader does not match admitted invocation')
-                    tools.register(ReadArtifactTool(reader))
-            spec = replace(spec, tools=tools)
-        hook = spec.hook or AgentHook()
-        messages, compaction = self._initial_transcript_and_compaction(spec)
-        context = AgentRunHookContext(messages=deepcopy(messages))
-        llm_usage_source_token = bind_llm_usage_source(
-            spec.llm_usage_source or source_from_session_key(spec.session_key)
+        child_artifact_grants = (
+            spec.artifact_grants
+            if spec.source_writer is not None and spec.source_writer.parent_stream_id is not None
+            else None
         )
+        try:
+            if (spec.source_writer is not None and (spec.turn_context is None
+                    or spec.turn_context.execution_owner is not spec.source_writer.owner)):
+                raise ValueError("Source recording requires the same dispatch owner")
+            if (spec.turn_context is not None and spec.turn_context.execution_owner is not None
+                    and spec.tool_result_callback is None and spec.source_writer is None):
+                raise ValueError("Execution ownership requires durable tool-result recording")
+            # Never inherit an invocation-bound reader from a parent registry.
+            artifact_reader_factory = spec.artifact_reader_factory or self.artifact_reader_factory
+            if artifact_reader_factory is not None or 'read_artifact' in spec.tools.tool_names:
+                from nanobot.agent.tools.artifact import ReadArtifactTool
+                from nanobot.agent.tools.filesystem import ReadFileTool
+
+                tools = spec.tools.filtered([name for name in spec.tools.tool_names if name != 'read_artifact'])
+                read_file = tools.get('read_file')
+                if (spec.artifact_read_allowed and artifact_reader_factory is not None and spec.source_writer is not None
+                        and type(read_file) is ReadFileTool):
+                    from nanobot.agent.tools.artifact_handoff import ArtifactHandoffTool
+                    from nanobot.session.artifact_grants import (
+                        ArtifactGrantSet,
+                        ArtifactHandoffCollector,
+                    )
+
+                    isolated = spec.source_isolated or spec.source_writer.parent_stream_id is not None
+                    reader = artifact_reader_factory(spec.source_writer, isolated, read_file)
+                    if reader is not None:
+                        if reader.writer is not spec.source_writer or reader.mode != (
+                                'isolated_stream' if isolated else 'root_history') or reader.read_file is not read_file:
+                            raise ValueError('Artifact reader does not match admitted invocation')
+                        grants = spec.artifact_grants or ArtifactGrantSet.for_reader(reader)
+                        reader = replace(reader, grants=grants)
+                        tools.register(ReadArtifactTool(reader))
+                        if spec.source_writer.parent_stream_id is not None:
+                            child_artifact_grants = grants
+                            collector = ArtifactHandoffCollector(reader)
+                            tools.register(ArtifactHandoffTool(collector))
+                        else:
+                            collector = None
+                        if spec.turn_context is not None:
+                            spec.turn_context.artifact_reader = reader
+                            spec.turn_context.artifact_grants = grants
+                    else:
+                        collector = None
+                else:
+                    collector = None
+                spec = replace(spec, tools=tools, artifact_handoff_collector=collector)
+            hook = spec.hook or AgentHook()
+            messages, compaction = self._initial_transcript_and_compaction(spec)
+            context = AgentRunHookContext(messages=deepcopy(messages))
+            llm_usage_source_token = bind_llm_usage_source(
+                spec.llm_usage_source or source_from_session_key(spec.session_key)
+            )
+        except BaseException:
+            if child_artifact_grants is not None:
+                child_artifact_grants.close()
+            raise
 
         try:
             request_state = self._make_request_state(spec, messages, compaction)
@@ -458,7 +497,11 @@ class AgentRunner:
                             context.stop_reason or "run exception",
                         )
             finally:
-                reset_llm_usage_source(llm_usage_source_token)
+                try:
+                    reset_llm_usage_source(llm_usage_source_token)
+                finally:
+                    if child_artifact_grants is not None:
+                        child_artifact_grants.close()
 
     @staticmethod
     def _initial_transcript_and_compaction(
@@ -639,7 +682,27 @@ class AgentRunner:
 
                 async def record_result(value: KnownToolResult) -> None:
                     assert source_writer is not None
-                    result_ids[value.ordinal] = await source_writer.record_tool_result_event(value)
+                    event_id = await source_writer.record_tool_result_event(value)
+                    result_ids[value.ordinal] = event_id
+                    collector = spec.artifact_handoff_collector
+                    if value.handoff_receipt is not None:
+                        from nanobot.session.artifact_grants import (
+                            ArtifactGrantSet,
+                            ArtifactHandoffCollector,
+                        )
+
+                        if isinstance(collector, ArtifactHandoffCollector):
+                            collector.record(value.handoff_receipt, event_id)
+                        elif spec.turn_context is not None and isinstance(
+                            spec.turn_context.artifact_grants, ArtifactGrantSet
+                        ):
+                            references = spec.turn_context.artifact_grants.accept_handoff(
+                                value.handoff_receipt,
+                                parent_result_event_id=event_id,
+                            )
+                            spec.turn_context.artifact_handoff_notices.extend(references)
+                        else:
+                            raise SourceValidationError('Artifact handoff has no parent grant authority')
 
                 results, new_events = await execute_tool_calls(
                     spec.tools,
@@ -687,6 +750,17 @@ class AgentRunner:
                             raise SourceValidationError('Tool result has no durable source identity')
                         request_state.source.append_source(identity, tool_message)
                     completed_tool_results.append(tool_message)
+                if spec.turn_context is not None and spec.turn_context.artifact_handoff_notices:
+                    references = tuple(spec.turn_context.artifact_handoff_notices)
+                    spec.turn_context.artifact_handoff_notices.clear()
+                    notice = {
+                        "role": "system",
+                        "content": (
+                            "Verified child artifact handoff is available for this invocation only:\n"
+                            + "\n".join(references)
+                        ),
+                    }
+                    self._append_bound_message(messages, notice, request_state.source, None)
                 checkpoint_model_messages = (
                     self.context_governor.prepare_messages_for_model(
                         governance_config,
@@ -954,6 +1028,8 @@ class AgentRunner:
                 ).strip()
             else:
                 final_content = clean
+            if response.finish_reason != "stop":
+                stop_reason = response.finish_reason or "error"
             context.final_content = final_content
             context.stop_reason = stop_reason
             await hook.after_iteration(context)
@@ -1006,6 +1082,15 @@ class AgentRunner:
             else:
                 self._append_bound_message(messages, terminal_message, request_state.source, terminal_event_id)
 
+        artifact_handoff_receipt = None
+        if spec.artifact_handoff_collector is not None:
+            from nanobot.session.artifact_grants import ArtifactHandoffCollector
+
+            collector = spec.artifact_handoff_collector
+            if not isinstance(collector, ArtifactHandoffCollector):
+                raise SourceValidationError('Invalid artifact handoff collector')
+            artifact_handoff_receipt = collector.finalize(stop_reason=stop_reason)
+
         return AgentRunResult(
             final_content=final_content,
             messages=messages,
@@ -1024,6 +1109,7 @@ class AgentRunner:
             # only an explicit settlement staged for this terminal response.
             provider_state=None,
             provider_state_settlement=provider_state_settlement,
+            artifact_handoff_receipt=artifact_handoff_receipt,
             summary_checkpoint=(
                 request_state.compaction.summary_checkpoint
                 if request_state.compaction is not None

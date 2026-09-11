@@ -218,6 +218,16 @@ class ToolRegistry:
                     or not receipt.matches(outcome.content)):
                 outcome = ToolOutcome(outcome.content, outcome.stop_reason, outcome.policy_metadata,
                                       producer_receipt=outcome.producer_receipt)
+        if outcome.handoff_receipt is not None:
+            receipt = outcome.handoff_receipt
+            if not ToolRegistry._accepts_handoff_receipt(tool, receipt, context):
+                outcome = ToolOutcome(
+                    outcome.content,
+                    outcome.stop_reason,
+                    outcome.policy_metadata,
+                    producer_receipt=outcome.producer_receipt,
+                    retrieval_receipt=outcome.retrieval_receipt,
+                )
         if is_tool_error_result(outcome.content) or (
             isinstance(outcome.content, str) and not isinstance(outcome.content, ToolResult)
             and outcome.content.startswith("Error")
@@ -225,6 +235,31 @@ class ToolRegistry:
             return ToolOutcome(content=outcome.content, stop_reason=outcome.stop_reason or "tool_error",
                                policy_metadata=outcome.policy_metadata)
         return outcome
+
+    @staticmethod
+    def _accepts_handoff_receipt(tool: Tool, receipt: object, context: Any) -> bool:
+        """Retain receipts only from the child selector or concrete foreground wrappers."""
+        from nanobot.agent.tools.artifact_handoff import ArtifactHandoffTool
+
+        if type(tool) is ArtifactHandoffTool:
+            return tool.accepts_receipt(receipt)
+
+        from nanobot.agent.tools.delegation import (
+            DelegateTaskTool,
+            PlanTaskTool,
+            ReviewWorkTool,
+        )
+        from nanobot.agent.tools.explore import ExploreTool
+        from nanobot.agent.turn import TurnContext
+        from nanobot.session.artifact_grants import ArtifactHandoffReceipt
+
+        return (
+            type(tool) in {DelegateTaskTool, ExploreTool, PlanTaskTool, ReviewWorkTool}
+            and isinstance(context, TurnContext)
+            and context.source_writer is not None
+            and isinstance(receipt, ArtifactHandoffReceipt)
+            and receipt.targets_parent_writer(context.source_writer)
+        )
 
     async def execute(self, name: str, params: Any, context: Any = None, *, execution_context: Any = None) -> Any:
         """Preserve contextual outcomes and upstream preparation/legacy errors."""

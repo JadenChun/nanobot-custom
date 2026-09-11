@@ -58,6 +58,20 @@ class SourceTurnWriter:
         """Stop every stream after a mandatory runner or recording failure."""
         self._writes.failed = True
 
+    @property
+    def failed(self) -> bool:
+        """Whether this shared source invocation has been revoked or failed."""
+        return self._writes.failed
+
+    def stream_events(self) -> list[dict[str, Any]]:
+        """Return the current stream's durable events under the admitted owner."""
+        self.owner.validate_dispatch()
+        return [
+            deepcopy(event)
+            for event in self.owner.read_snapshot().events
+            if event.get('_stream_id') == self.stream_id
+        ]
+
     def child_stream(self) -> SourceTurnWriter:
         return SourceTurnWriter(self.store, self.owner, run_id=self.run_id,
                                 parent_stream_id=self.stream_id, writes=self._writes)

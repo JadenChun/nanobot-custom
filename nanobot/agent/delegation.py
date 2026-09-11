@@ -56,6 +56,7 @@ from nanobot.utils.llm_runtime import LLMRuntime
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.shell import ExecToolConfig
+    from nanobot.session.turn_writer import SourceTurnWriter
 
 # Legacy explore/crawler tools call the manager directly.  Keep their bridge
 # task-local so concurrent canonical turns cannot share routing or budgets.
@@ -415,6 +416,7 @@ class ForegroundAgentManager:
         max_output_tokens: int | None = None,
         reasoning_effort: str | None = None,
         turn_context: TurnContext | None = None,
+        artifact_references: list[str] | None = None,
     ) -> AgentRunResult:
         call_id = str(uuid.uuid4())[:8]
         logger.info("Foreground {} [{}] started", role, call_id)
@@ -442,6 +444,40 @@ class ForegroundAgentManager:
                 max_tokens=max_output_tokens, reasoning_effort=reasoning_effort)
         source_writer = (turn_context.source_writer.child_stream()
                          if turn_context is not None and turn_context.source_writer is not None else None)
+        child_grants = None
+        child_context = turn_context
+        child_reader_factory = None
+        if source_writer is not None:
+            parent_reader = turn_context.artifact_reader if turn_context is not None else None
+            if artifact_references:
+                from nanobot.session.artifact_grants import ArtifactGrantSet
+
+                if parent_reader is None:
+                    raise ValueError("Artifact references require an admitted parent artifact reader")
+                child_grants = ArtifactGrantSet.issue_downward(
+                    parent_reader, source_writer, artifact_references
+                )
+            if parent_reader is not None:
+                from nanobot.session.artifact_reader import ArtifactReader
+
+                def child_reader_factory(
+                    writer: SourceTurnWriter,
+                    isolated: bool,
+                    read_file: ReadFileTool,
+                ) -> ArtifactReader | None:
+                    if not isolated:
+                        return None
+                    return ArtifactReader(writer, "isolated_stream", parent_reader.store, read_file)
+            if turn_context is not None:
+                child_context = replace(
+                    turn_context,
+                    source_writer=source_writer,
+                    artifact_reader=None,
+                    artifact_grants=child_grants,
+                    artifact_handoff_notices=[],
+                )
+        elif artifact_references:
+            raise ValueError("Artifact references require a canonical delegated source stream")
         source_transcript = None
         if source_writer is not None:
             assignment_event = source_writer.append_message({"role": "user", "content": assignment})
@@ -462,8 +498,10 @@ class ForegroundAgentManager:
             runtime=runtime,
             max_iterations=max_iterations,
             max_tool_result_chars=16000,
-            turn_context=turn_context,
+            turn_context=child_context,
             source_writer=source_writer,
+            artifact_grants=child_grants,
+            artifact_reader_factory=child_reader_factory,
             hook=_DelegationHook(role, call_id),
             concurrent_tools=role in {"planner", "reviewer", "explorer"},
             fail_on_tool_error=True,
@@ -514,6 +552,8 @@ class ForegroundAgentManager:
                 stop_reason=result.stop_reason,
                 policy_metadata=dict(result.policy_metadata),
             )
+        if turn_context is not None and result.artifact_handoff_receipt is not None:
+            return ToolOutcome(content=content, handoff_receipt=result.artifact_handoff_receipt)
         return content
 
     async def run_plan(
@@ -522,6 +562,7 @@ class ForegroundAgentManager:
         objective: str,
         context: str = "",
         turn_context: TurnContext | None = None,
+        artifact_references: list[str] | None = None,
     ) -> str | ToolOutcome:
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("planner", turn_context):
@@ -543,6 +584,7 @@ Do not include internal system state or pretend unverified assumptions are facts
             tools=self._tools_for_role("planner"),
             max_iterations=12,
             turn_context=turn_context,
+            artifact_references=artifact_references,
         )
         return self._role_result(result, "planner", turn_context)
 
@@ -552,6 +594,7 @@ Do not include internal system state or pretend unverified assumptions are facts
         contract: str,
         write_scope: list[str],
         turn_context: TurnContext | None = None,
+        artifact_references: list[str] | None = None,
     ) -> str | ToolOutcome:
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("worker", turn_context):
@@ -585,6 +628,7 @@ evidence, exact files modified, exact tests and outcomes, assumptions, and remai
             tools=self._worker_tools(call_id, scopes),
             max_iterations=30,
             turn_context=turn_context,
+            artifact_references=artifact_references,
         )
         return self._role_result(result, "worker", turn_context)
 
@@ -596,6 +640,7 @@ evidence, exact files modified, exact tests and outcomes, assumptions, and remai
         evidence: str = "",
         relevant_paths: list[str] | None = None,
         turn_context: TurnContext | None = None,
+        artifact_references: list[str] | None = None,
     ) -> str | ToolOutcome:
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("reviewer", turn_context):
@@ -622,6 +667,7 @@ system prompts or internal harness state."""
             tools=self._tools_for_role("reviewer"),
             max_iterations=15,
             turn_context=turn_context,
+            artifact_references=artifact_references,
         )
         return self._role_result(result, "reviewer", turn_context)
 
@@ -632,6 +678,7 @@ system prompts or internal harness state."""
         thoroughness: str,
         max_iterations: int,
         turn_context: TurnContext | None = None,
+        artifact_references: list[str] | None = None,
     ) -> dict[str, Any] | ToolOutcome:
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("explorer", turn_context):
@@ -665,6 +712,7 @@ End with exactly:
                 tools=self._tools_for_role("explorer"),
                 max_iterations=max_iterations,
                 turn_context=turn_context,
+                artifact_references=artifact_references,
             )
         nested = self._role_result(result, "explorer", turn_context)
         if isinstance(nested, ToolOutcome):
@@ -705,7 +753,13 @@ End with exactly:
         *,
         task: str,
         turn_context: TurnContext | None = None,
+        artifact_references: list[str] | None = None,
     ) -> str | ToolOutcome:
+        if artifact_references:
+            return ToolOutcome(
+                content="Error: crawl_research does not accept artifact references",
+                stop_reason="tool_error",
+            )
         turn_context = turn_context or current_turn_context()
         if error := self._consume_call("crawler", turn_context):
             return error

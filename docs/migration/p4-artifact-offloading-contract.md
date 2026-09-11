@@ -440,3 +440,37 @@ The combined focused checkpoint, projection, compaction, and engine suite passes
 166 tests. The broader network-denied session and governance suite passes 658 tests
 with three migration-guard-only fixtures explicitly deselected while the production
 guard remains closed. Scoped Ruff and diff checks pass.
+
+## Invocation-only cross-stream grants and foreground handoff (P4-E)
+
+`ArtifactGrantSet` is a process-local, nonserializable authority bound to one
+admitted reader, private store, execution owner, and invocation stream. A parent
+may issue at most 16 unique opaque references only to a direct child stream. The
+issuer verifies native descriptor membership, current policy, durable bytes, and
+the blob-then-execution/source lock order before minting a grant. Issuance changes
+neither source events nor reserved source metadata. Received grants are exact
+descriptor bindings; a child cannot regrant borrowed parent evidence.
+
+`ArtifactReader` continues to admit native root or own-stream evidence first.
+For every non-native read it requires an active matching grant, then repeats the
+same descriptor, source-policy, manifest, generation, namespace, and blob checks.
+Writer failure, closed grants, changed direct-stream relation, source reset,
+revocation, missing publication, or blob corruption all deny retrieval.
+
+Child runs receive an internal `handoff_artifact` selector only when an admitted
+reader is registered for their direct child stream. It selects only child-produced
+artifacts and creates a sealed receipt after a durable child tool-result event and
+a successful child assistant terminal event. A concrete foreground delegation,
+planning, review, or exploration wrapper may forward that receipt only to its
+direct parent stream. The parent records its outer tool result before adopting the
+receipt; adoption revalidates the child evidence and mints an upward grant. The
+parent gets a runtime-only notice containing the available opaque references, so
+source events and metadata retain no grant or handoff authority.
+
+Focused coverage verifies direct parent-to-child reads, sibling and transitive
+denial, bounded and unique inputs, source-write invariants, receipt
+nonserializability, failed and unrecorded handoffs, borrowed-artifact rejection,
+one-shot upward adoption, concrete-wrapper forwarding, durable outer-result
+ordering, and runtime-only parent notices. General producer adapters, artifact
+rematerialization, default private-store configuration, migration-guard removal,
+and runtime activation remain pending.

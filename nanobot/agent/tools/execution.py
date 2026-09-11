@@ -23,6 +23,7 @@ from nanobot.utils.runtime import (
 if TYPE_CHECKING:
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+    from nanobot.session.artifact_grants import ArtifactHandoffReceipt
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,19 +39,36 @@ class KnownToolResult:
     dispatched: bool
     producer_receipt: FilesystemReadReceipt | None = None
     retrieval_receipt: ArtifactRetrievalReceipt | None = None
+    handoff_receipt: ArtifactHandoffReceipt | None = None
 
 
 ToolResultCallback = Callable[[KnownToolResult], Awaitable[None]]
+
+
+def _copy_recorded_value(value: Any) -> Any:
+    """Copy model-visible payloads without copying process-local authorities."""
+    if isinstance(value, ToolOutcome):
+        return ToolOutcome(
+            content=deepcopy(value.content),
+            stop_reason=value.stop_reason,
+            policy_metadata=deepcopy(value.policy_metadata),
+            producer_receipt=value.producer_receipt,
+            retrieval_receipt=value.retrieval_receipt,
+            handoff_receipt=value.handoff_receipt,
+        )
+    return deepcopy(value)
 
 
 async def _record_result(callback: ToolResultCallback | None, ordinal: int,
                          call: ToolCallRequest, raw: Any, result: Any,
                          event: dict[str, str], *, dispatched: bool,
                          producer_receipt: FilesystemReadReceipt | None = None,
-                         retrieval_receipt: ArtifactRetrievalReceipt | None = None) -> None:
+                         retrieval_receipt: ArtifactRetrievalReceipt | None = None,
+    handoff_receipt: ArtifactHandoffReceipt | None = None) -> None:
     if callback is not None:
-        await callback(KnownToolResult(ordinal, call.id, call.name, deepcopy(raw),
-                                       deepcopy(result), deepcopy(event), dispatched, producer_receipt, retrieval_receipt))
+        await callback(KnownToolResult(ordinal, call.id, call.name, _copy_recorded_value(raw),
+                                       _copy_recorded_value(result), deepcopy(event), dispatched, producer_receipt,
+                                       retrieval_receipt, handoff_receipt))
 
 _RETRY_HINT = "\n\n[Analyze the error above and try a different approach.]"
 # SSRF is a hard security block at the tool boundary, but the agent turn
@@ -309,7 +327,8 @@ async def _execute_tool_call(
     await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
                          result, event, dispatched=True,
                          producer_receipt=outcome.producer_receipt if outcome else None,
-                         retrieval_receipt=outcome.retrieval_receipt if outcome else None)
+                         retrieval_receipt=outcome.retrieval_receipt if outcome else None,
+                         handoff_receipt=outcome.handoff_receipt if outcome else None)
     await hook.after_execute_tool(context, tool_call, tool, params, result)
     return result, event
 
