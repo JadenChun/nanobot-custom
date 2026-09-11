@@ -12,9 +12,11 @@ from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, cast
 
 from nanobot.providers.base import (
+    FinalizedRequestBudgetExceeded,
     LLMProvider,
     LLMResponse,
     LLMUsage,
+    ProviderCallContext,
     ToolCallRequest,
     parse_tool_arguments,
     resolve_stream_idle_timeout_s,
@@ -735,16 +737,23 @@ class BedrockProvider(LLMProvider):
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
         try:
             kwargs = self._build_kwargs(
                 messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice
+            )
+            self.validate_finalized_request(
+                kwargs, transport="bedrock_converse", model=str(kwargs.get("modelId") or ""),
+                provider_context=provider_context,
             )
             response = cast(
                 dict[str, Any],
                 await asyncio.to_thread(self._client.converse, **kwargs),
             )
             return self._parse_response(response)
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as e:
             return self._handle_error(e)
 
@@ -760,6 +769,7 @@ class BedrockProvider(LLMProvider):
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
         on_thinking_delta: Callable[[str], Awaitable[None]] | None = None,
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
         _ = on_thinking_delta, on_tool_call_delta
         idle_timeout_s = resolve_stream_idle_timeout_s()
@@ -772,6 +782,10 @@ class BedrockProvider(LLMProvider):
         try:
             kwargs = self._build_kwargs(
                 messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice
+            )
+            self.validate_finalized_request(
+                kwargs, transport="bedrock_converse_stream", model=str(kwargs.get("modelId") or ""),
+                provider_context=provider_context,
             )
             response = cast(
                 dict[str, Any],
@@ -811,8 +825,20 @@ class BedrockProvider(LLMProvider):
                 finish_reason="error",
                 error_kind="timeout",
             )
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as e:
             return self._handle_error(e)
+
+    async def chat_with_context(
+        self, *, provider_context: ProviderCallContext, **kwargs: Any,
+    ) -> LLMResponse:
+        return await self.chat(**kwargs, provider_context=provider_context)
+
+    async def chat_stream_with_context(
+        self, *, provider_context: ProviderCallContext, **kwargs: Any,
+    ) -> LLMResponse:
+        return await self.chat_stream(**kwargs, provider_context=provider_context)
 
     def get_default_model(self) -> str:
         return self.default_model

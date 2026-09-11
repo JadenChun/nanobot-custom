@@ -19,6 +19,7 @@ from oauth_cli_kit.storage import FileTokenStorage
 
 from nanobot import __version__
 from nanobot.providers.base import (
+    FinalizedRequestBudgetExceeded,
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
@@ -158,6 +159,11 @@ class OpenAICodexProvider(LLMProvider):
                 emit_deltas: bool,
             ) -> LLMResponse:
                 wire_body = _without_response_item_ids(request_body)
+                self.validate_finalized_request(
+                    wire_body, transport="openai_codex_responses",
+                    model=str(wire_body.get("model") or ""), provider_context=provider_context,
+                    completion_reserve_tokens=max_tokens,
+                )
                 return await _request_codex(
                     DEFAULT_CODEX_URL,
                     headers,
@@ -211,6 +217,8 @@ class OpenAICodexProvider(LLMProvider):
                         output_items=compact_items,
                     )
                     native_compaction_applied = True
+                except FinalizedRequestBudgetExceeded:
+                    raise
                 except Exception as compact_error:
                     if is_compaction_compatibility_error(compact_error):
                         self._native_compaction_available = False
@@ -231,6 +239,8 @@ class OpenAICodexProvider(LLMProvider):
                 result.provider_compaction_state = native_compaction_state
                 result.provider_compaction_scope = "prior_context"
             return result
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as e:
             response = _codex_error_response(e)
             exc_type = "CodexHTTPError" if isinstance(e, _CodexHTTPError) else type(e).__name__

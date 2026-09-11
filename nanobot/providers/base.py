@@ -20,6 +20,13 @@ import json_repair
 from loguru import logger
 
 from nanobot.events import NO_EVENTS, EventSink, RetryStatusEvent, RetryWaitEvent
+from nanobot.providers.request_budget import (
+    FinalizedRequestBudgetExceeded,
+    ProviderRequestLimits,
+    TransportIdentity,
+    TransportMeasurement,
+    validate_finalized_request,
+)
 from nanobot.utils.helpers import sanitize_surrogates_deep
 
 if TYPE_CHECKING:
@@ -271,6 +278,9 @@ class ProviderCallContext:
     """
 
     conversation_state: ProviderConversationState | None = field(default=None, repr=False)
+    # Hard final-transport limits are independent of this provider-native
+    # compaction hint.  They are opt-in until the runtime wires them in.
+    request_limits: ProviderRequestLimits | None = field(default=None, repr=False)
     context_window_tokens: int | None = None
     session_id: str | None = field(default=None, repr=False)
     events: EventSink = field(default=NO_EVENTS, repr=False, compare=False)
@@ -821,6 +831,50 @@ class LLMProvider(ABC):
         """Whether requests may include provider-native context compaction."""
         return False
 
+    def validate_finalized_request(
+        self,
+        body: dict[str, Any],
+        *,
+        transport: str,
+        model: str | None,
+        provider_context: ProviderCallContext | None = None,
+        completion_reserve_tokens: int | None = None,
+    ) -> TransportMeasurement | None:
+        """Validate one concrete SDK/HTTP body immediately before dispatch.
+
+        No hard limit preserves the legacy direct-call surface.  A supplied
+        limit rejects an unknown/opaque body rather than allowing a transport
+        whose size cannot be established locally.
+        """
+        if provider_context is None or provider_context.request_limits is None:
+            return None
+        selected_model = model or self.get_default_model()
+        limits = provider_context.request_limits
+        # Registry metadata is optional and deliberately only narrows a
+        # caller-supplied hard budget. Unknown/dynamic models retain the
+        # configured bound rather than receiving an invented capacity.
+        try:
+            from nanobot.providers.registry import find_by_name
+
+            spec = find_by_name(self.provider_name)
+            if spec is not None:
+                candidate = next((
+                    item.context_window for item in spec.builtin_models
+                    if item.context_window is not None
+                    and (item.id == selected_model or selected_model.endswith(f"/{item.id}"))
+                ), None)
+                if candidate is not None:
+                    limits = limits.for_model_window(candidate)
+        except Exception:
+            # A registry lookup must never loosen or disable a supplied limit.
+            pass
+        return validate_finalized_request(
+            TransportIdentity(self.provider_name, transport, selected_model),
+            body,
+            limits,
+            completion_reserve_tokens=completion_reserve_tokens,
+        )
+
     @staticmethod
     def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Sanitize message content: fix empty blocks, strip internal _meta fields.
@@ -1304,6 +1358,8 @@ class LLMProvider(ABC):
                 stream=False,
             )
             raise
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as exc:
             response = self._error_response_from_exception(exc)
         return self._observe_llm_call(
@@ -1445,6 +1501,8 @@ class LLMProvider(ABC):
                 started_at_ns=started_at_ns,
                 stream=True,
             )
+            raise
+        except FinalizedRequestBudgetExceeded:
             raise
         except Exception as exc:
             response = self._error_response_from_exception(exc)
@@ -1802,6 +1860,7 @@ class LLMProvider(ABC):
                         # Provider-owned payloads may retain earlier input_image items.
                         # Rebuild from the stripped public transcript for this retry.
                         stripped_context = ProviderCallContext(
+                            request_limits=provider_context.request_limits,
                             context_window_tokens=(
                                 provider_context.context_window_tokens
                             ),

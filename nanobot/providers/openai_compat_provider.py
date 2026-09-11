@@ -25,6 +25,7 @@ from loguru import logger
 from pydantic.alias_generators import to_snake
 
 from nanobot.providers.base import (
+    FinalizedRequestBudgetExceeded,
     LLMProvider,
     LLMResponse,
     LLMUsage,
@@ -1349,9 +1350,14 @@ class OpenAICompatProvider(LLMProvider):
         self,
         client: Any,
         body: dict[str, Any],
+        provider_context: ProviderCallContext | None = None,
     ) -> Any:
         """Retry Responses once without server compaction on compatibility errors."""
         try:
+            self.validate_finalized_request(
+                body, transport="openai_responses", model=str(body.get("model") or ""),
+                provider_context=provider_context,
+            )
             return await client.responses.create(**body)
         except Exception as exc:
             if (
@@ -1365,6 +1371,10 @@ class OpenAICompatProvider(LLMProvider):
                 "Responses server compaction unsupported; disabled for this provider instance "
                 "(status={})",
                 getattr(exc, "status_code", None),
+            )
+            self.validate_finalized_request(
+                body, transport="openai_responses", model=str(body.get("model") or ""),
+                provider_context=provider_context,
             )
             return await client.responses.create(**body)
 
@@ -1952,6 +1962,7 @@ class OpenAICompatProvider(LLMProvider):
                     responses_raw = await self._create_response_with_compaction_fallback(
                         client,
                         body,
+                        provider_context,
                     )
                     result = parse_response_output(
                         responses_raw,
@@ -1961,6 +1972,8 @@ class OpenAICompatProvider(LLMProvider):
                     )
                     self._record_responses_success(model, reasoning_effort)
                     return result
+                except FinalizedRequestBudgetExceeded:
+                    raise
                 except Exception as responses_error:
                     if self._spec and self._spec.name == "github_copilot":
                         # Copilot gateway exposes GPT-5/o-series only via /responses;
@@ -1977,11 +1990,17 @@ class OpenAICompatProvider(LLMProvider):
                 messages, tools, model, max_tokens, temperature,
                 reasoning_effort, tool_choice,
             )
+            self.validate_finalized_request(
+                kwargs, transport="openai_chat_completions",
+                model=str(kwargs.get("model") or ""), provider_context=provider_context,
+            )
             chat_raw = cast(
                 Any,
                 await client.chat.completions.create(**kwargs),
             )
             return self._parse(chat_raw)
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as e:
             return self._handle_error(e, spec=self._spec, api_base=self.api_base)
 
@@ -2020,6 +2039,7 @@ class OpenAICompatProvider(LLMProvider):
                     responses_stream = await self._create_response_with_compaction_fallback(
                         client,
                         body,
+                        provider_context,
                     )
 
                     async def _timed_stream() -> AsyncIterator[Any]:
@@ -2076,6 +2096,8 @@ class OpenAICompatProvider(LLMProvider):
                         if result.provider_compaction_applied:
                             result.provider_compaction_scope = "current_request"
                     return result
+                except FinalizedRequestBudgetExceeded:
+                    raise
                 except Exception as responses_error:
                     if delivered[0]:
                         raise
@@ -2102,6 +2124,10 @@ class OpenAICompatProvider(LLMProvider):
                 kwargs.setdefault("extra_body", {})["tool_stream"] = True
             kwargs["stream"] = True
             kwargs["stream_options"] = {"include_usage": True}
+            self.validate_finalized_request(
+                kwargs, transport="openai_chat_completions_stream",
+                model=str(kwargs.get("model") or ""), provider_context=provider_context,
+            )
             chat_stream = cast(
                 Any,
                 await client.chat.completions.create(**kwargs),
@@ -2171,6 +2197,8 @@ class OpenAICompatProvider(LLMProvider):
                 finish_reason="error",
                 error_kind="timeout",
             )
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as e:
             return self._handle_error(e, spec=self._spec, api_base=self.api_base)
 

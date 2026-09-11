@@ -15,9 +15,11 @@ from typing import Any, cast
 from loguru import logger
 
 from nanobot.providers.base import (
+    FinalizedRequestBudgetExceeded,
     LLMProvider,
     LLMResponse,
     LLMUsage,
+    ProviderCallContext,
     ToolCallRequest,
     resolve_stream_idle_timeout_s,
     tool_arguments_object_for_replay,
@@ -731,6 +733,16 @@ class AnthropicProvider(LLMProvider):
         on substring so a future SDK message tweak doesn't break detection."""
         return isinstance(e, ValueError) and "streaming is required" in str(e).lower()
 
+    async def chat_with_context(
+        self, *, provider_context: ProviderCallContext, **kwargs: Any,
+    ) -> LLMResponse:
+        return await self.chat(**kwargs, provider_context=provider_context)
+
+    async def chat_stream_with_context(
+        self, *, provider_context: ProviderCallContext, **kwargs: Any,
+    ) -> LLMResponse:
+        return await self.chat_stream(**kwargs, provider_context=provider_context)
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -740,14 +752,21 @@ class AnthropicProvider(LLMProvider):
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
         kwargs = self._build_kwargs(
             messages, tools, model, max_tokens, temperature,
             reasoning_effort, tool_choice,
         )
         try:
+            self.validate_finalized_request(
+                kwargs, transport="anthropic_messages", model=str(kwargs.get("model") or ""),
+                provider_context=provider_context,
+            )
             response = cast(Any, await self._client.messages.create(**kwargs))
             return self._parse_response(response)
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as e:
             if self._is_streaming_required_error(e):
                 # Anthropic SDK refuses non-stream calls when max_tokens (plus
@@ -763,6 +782,7 @@ class AnthropicProvider(LLMProvider):
                     temperature=temperature,
                     reasoning_effort=reasoning_effort,
                     tool_choice=tool_choice,
+                    provider_context=provider_context,
                 )
             return self._handle_error(e)
 
@@ -778,6 +798,7 @@ class AnthropicProvider(LLMProvider):
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
         on_thinking_delta: Callable[[str], Awaitable[None]] | None = None,
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
         kwargs = self._build_kwargs(
             messages, tools, model, max_tokens, temperature,
@@ -785,6 +806,10 @@ class AnthropicProvider(LLMProvider):
         )
         idle_timeout_s = resolve_stream_idle_timeout_s()
         try:
+            self.validate_finalized_request(
+                kwargs, transport="anthropic_messages_stream", model=str(kwargs.get("model") or ""),
+                provider_context=provider_context,
+            )
             async with self._client.messages.stream(**kwargs) as stream:
                 # Idle timeout must track *any* SSE chunk (thinking_delta,
                 # tool JSON deltas, etc.), not only text_stream tokens.
@@ -858,6 +883,8 @@ class AnthropicProvider(LLMProvider):
                 finish_reason="error",
                 error_kind="timeout",
             )
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as e:
             return self._handle_error(e)
 

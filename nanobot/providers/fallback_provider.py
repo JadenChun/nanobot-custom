@@ -14,6 +14,7 @@ from loguru import logger
 
 from nanobot.events import RetryStatusEvent
 from nanobot.providers.base import (
+    FinalizedRequestBudgetExceeded,
     GenerationSettings,
     LLMCallObserver,
     LLMProvider,
@@ -182,8 +183,12 @@ class FallbackProvider(LLMProvider):
         )
         if not self._primary.supports_native_compaction(model):
             context_window_tokens = None
+        request_limits = provider_context.request_limits
+        if request_limits is not None and self._primary_context_window_tokens is not None:
+            request_limits = request_limits.for_model_window(self._primary_context_window_tokens)
         return ProviderCallContext(
             conversation_state=provider_context.conversation_state,
+            request_limits=request_limits,
             context_window_tokens=context_window_tokens,
             session_id=provider_context.session_id,
             events=provider_context.events,
@@ -515,8 +520,12 @@ class FallbackProvider(LLMProvider):
                     if fallback_provider.supports_native_compaction(fallback_model)
                     else None
                 )
+                request_limits = provider_context.request_limits
+                if request_limits is not None and fallback.context_window_tokens is not None:
+                    request_limits = request_limits.for_model_window(fallback.context_window_tokens)
                 fallback_kwargs["provider_context"] = ProviderCallContext(
                     conversation_state=state,
+                    request_limits=request_limits,
                     context_window_tokens=context_window_tokens,
                     session_id=provider_context.session_id,
                     events=provider_context.events,
@@ -591,6 +600,8 @@ class FallbackProvider(LLMProvider):
         try:
             return await call(provider, kwargs), None
         except asyncio.CancelledError:
+            raise
+        except FinalizedRequestBudgetExceeded:
             raise
         except Exception as exc:
             response = LLMProvider._error_response_from_exception(exc)

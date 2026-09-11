@@ -27,6 +27,7 @@ from loguru import logger
 from openai import AsyncOpenAI
 
 from nanobot.providers.base import (
+    FinalizedRequestBudgetExceeded,
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
@@ -248,9 +249,14 @@ class AzureOpenAIProvider(LLMProvider):
     async def _create_response_with_compaction_fallback(
         self,
         body: dict[str, Any],
+        provider_context: ProviderCallContext | None = None,
     ) -> Any:
         """Retry once without server compaction when Azure rejects the option."""
         try:
+            self.validate_finalized_request(
+                body, transport="azure_openai_responses", model=str(body.get("model") or ""),
+                provider_context=provider_context,
+            )
             return cast(Any, await self._client.responses.create(**body))
         except Exception as exc:
             if (
@@ -264,6 +270,10 @@ class AzureOpenAIProvider(LLMProvider):
                 "Azure Responses server compaction unsupported; disabled for this provider "
                 "instance (status={})",
                 getattr(exc, "status_code", None),
+            )
+            self.validate_finalized_request(
+                body, transport="azure_openai_responses", model=str(body.get("model") or ""),
+                provider_context=provider_context,
             )
             return cast(Any, await self._client.responses.create(**body))
 
@@ -353,13 +363,15 @@ class AzureOpenAIProvider(LLMProvider):
             provider_context,
         )
         try:
-            response = await self._create_response_with_compaction_fallback(body)
+            response = await self._create_response_with_compaction_fallback(body, provider_context)
             return parse_response_output(
                 response,
                 state_provider=self._responses_state_provider(),
                 state_model=str(body["model"]),
                 state_input_items=cast(list[dict[str, Any]], body["input"]),
             )
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as e:
             return self._handle_error(e)
 
@@ -386,7 +398,7 @@ class AzureOpenAIProvider(LLMProvider):
         body["stream"] = True
 
         try:
-            stream = await self._create_response_with_compaction_fallback(body)
+            stream = await self._create_response_with_compaction_fallback(body, provider_context)
             capture = ResponsesStreamCapture()
             content, tool_calls, finish_reason, usage, reasoning_content = (
                 await consume_sdk_stream(
@@ -422,6 +434,8 @@ class AzureOpenAIProvider(LLMProvider):
                 if result.provider_compaction_applied:
                     result.provider_compaction_scope = "current_request"
             return result
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as e:
             return self._handle_error(e)
 

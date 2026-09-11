@@ -16,9 +16,11 @@ from loguru import logger
 
 from nanobot import __version__
 from nanobot.providers.base import (
+    FinalizedRequestBudgetExceeded,
     LLMProvider,
     LLMResponse,
     LLMUsage,
+    ProviderCallContext,
     ToolCallRequest,
     resolve_stream_idle_timeout_s,
 )
@@ -109,6 +111,7 @@ class XAIGrokProvider(LLMProvider):
         on_thinking_delta: Callable[[str], Awaitable[None]] | None = None,
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         on_stream_recover: Callable[[], Awaitable[None]] | None = None,
+        provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
         wire_model = _strip_model_prefix(model or self.default_model)
         system_prompt, input_items = convert_messages(messages)
@@ -171,6 +174,10 @@ class XAIGrokProvider(LLMProvider):
             retry_usage: LLMUsage | None = None
             while True:
                 try:
+                    self.validate_finalized_request(
+                        body, transport="xai_grok_responses", model=wire_model,
+                        provider_context=provider_context, completion_reserve_tokens=max_tokens,
+                    )
                     result = await _request_xai(
                         DEFAULT_XAI_GROK_URL,
                         headers,
@@ -218,6 +225,8 @@ class XAIGrokProvider(LLMProvider):
                 usage=usage,
                 reasoning_content=reasoning_content,
             )
+        except FinalizedRequestBudgetExceeded:
+            raise
         except Exception as exc:
             response = _xai_error_response(exc)
             logger.warning(
@@ -242,10 +251,17 @@ class XAIGrokProvider(LLMProvider):
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
         return await self._call_xai(
-            messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice
+            messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice,
+            provider_context=provider_context,
         )
+
+    async def chat_with_context(
+        self, *, provider_context: ProviderCallContext, **kwargs: Any,
+    ) -> LLMResponse:
+        return await self.chat(**kwargs, provider_context=provider_context)
 
     async def chat_stream(
         self,
@@ -260,6 +276,7 @@ class XAIGrokProvider(LLMProvider):
         on_thinking_delta: Callable[[str], Awaitable[None]] | None = None,
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         on_stream_recover: Callable[[], Awaitable[None]] | None = None,
+        provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
         return await self._call_xai(
             messages,
@@ -273,6 +290,35 @@ class XAIGrokProvider(LLMProvider):
             on_thinking_delta,
             on_tool_call_delta,
             on_stream_recover,
+            provider_context,
+        )
+
+    async def chat_stream_with_context(
+        self, *, provider_context: ProviderCallContext, **kwargs: Any,
+    ) -> LLMResponse:
+        return await self.chat_stream(**kwargs, provider_context=provider_context)
+
+    async def _run_chat_with_retry(
+        self,
+        kw: dict[str, Any],
+        original_messages: list[dict[str, Any]],
+        *,
+        stream: bool,
+        retry_mode: str,
+        on_retry_wait: Callable[[str], Awaitable[None]] | None,
+        on_retry_exhausted: Callable[[str], Awaitable[None]] | None,
+        on_retry_status: Callable[[Any], Awaitable[None]] | None,
+        should_retry_guard: Callable[[], bool] | None = None,
+        on_stream_recover: Callable[[], Awaitable[None]] | None = None,
+    ) -> LLMResponse:
+        """Pass xAI's bounded hosted-tool recovery callback to its leaf call."""
+        if stream and on_stream_recover is not None:
+            kw = {**kw, "on_stream_recover": on_stream_recover}
+        return await super()._run_chat_with_retry(
+            kw, original_messages, stream=stream, retry_mode=retry_mode,
+            on_retry_wait=on_retry_wait, on_retry_exhausted=on_retry_exhausted,
+            on_retry_status=on_retry_status, should_retry_guard=should_retry_guard,
+            on_stream_recover=on_stream_recover,
         )
 
     def get_default_model(self) -> str:

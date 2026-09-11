@@ -67,8 +67,12 @@ class LegacyFallbackProvider(FallbackProvider):
         context = local.get('provider_context')
         if isinstance(context, ProviderCallContext):
             capacity = (self._primary_context_window_tokens or context.context_window_tokens) if slot == 0 else self._fallback_presets[slot - 1].context_window_tokens
+            request_limits = context.request_limits
+            if request_limits is not None and capacity is not None:
+                request_limits = request_limits.for_model_window(capacity)
             local['provider_context'] = replace(
                 context, conversation_state=self._state(slot, context.conversation_state, local['model']),
+                request_limits=request_limits,
                 context_window_tokens=capacity if self._candidates[slot].supports_native_compaction(local['model']) else None)
         return local
 
