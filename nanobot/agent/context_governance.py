@@ -29,6 +29,7 @@ from nanobot.providers.base import (
     ProviderConversationState,
 )
 from nanobot.providers.conversation_state import (
+    ConversationRequestBinding,
     ProviderConversationStateController,
     allows_conversation_message_merge,
 )
@@ -255,6 +256,10 @@ class ModelRequestState:
     artifact_projector: ArtifactProjector | None = None
     provider_compaction_applied: bool = False
     events: EventSink = NO_EVENTS
+    # The loop creates this from its admitted session, policy, and execution
+    # fence.  Request preparation fills in the effective tool policy for each
+    # dispatch; callers without that authority intentionally stay stateless.
+    conversation_binding: ConversationRequestBinding | None = None
 
 
 class ContextGovernor:
@@ -1097,6 +1102,7 @@ class ContextGovernor:
         source_view: SourceTranscript | None = None,
     ) -> tuple[list[dict[str, Any]], ProviderCallContext | None]:
         """Prepare, compact or fit, and record the exact provider payload."""
+        binding = self._binding_for_request(state, tool_definitions)
         if state.config.preserve_source:
             if state.source is not None:
                 source_view = source_view or state.source.transcript
@@ -1124,6 +1130,7 @@ class ContextGovernor:
                 context_window_tokens=state.config.context_window_tokens,
                 completion_reserve_tokens=state.config.max_tokens,
                 resume_state=False,
+                binding=None,
             )
             return prepared, replace(
                 provider_context or ProviderCallContext(),
@@ -1142,6 +1149,7 @@ class ContextGovernor:
                 model_messages=model_messages,
                 supplemental_messages=supplemental_messages,
                 tool_definitions=tool_definitions,
+                binding=binding,
             )
         usage_matches_messages = (
             state.messages is not None
@@ -1206,6 +1214,7 @@ class ContextGovernor:
                 model_messages=model_messages,
                 supplemental_messages=supplemental_messages,
                 resume_state=not request_was_fitted,
+                binding=binding,
             )
             if transcript is not None
             else state.conversation.independent_request_context(
@@ -1220,6 +1229,28 @@ class ContextGovernor:
         state.messages = deepcopy(prepared)
         state.tool_definitions = deepcopy(tool_definitions)
         return prepared, provider_context
+
+    @staticmethod
+    def _binding_for_request(
+        state: ModelRequestState,
+        tool_definitions: list[dict[str, Any]] | None,
+    ) -> ConversationRequestBinding | None:
+        """Return one complete binding for both estimate and dispatch.
+
+        A no-tools finalization request has a different capability surface than
+        a normal tool request.  It therefore receives its own value while the
+        rest of the admitted binding remains unchanged.
+        """
+        binding = state.conversation_binding
+        if binding is None:
+            return None
+        effective_tools: list[dict[str, Any]] = deepcopy(tool_definitions or [])
+        tool_choice: dict[str, str] = {
+            "type": "auto" if tool_definitions is not None else "none",
+        }
+        if binding.tools == effective_tools and binding.tool_choice == tool_choice:
+            return binding
+        return replace(binding, tools=effective_tools, tool_choice=tool_choice)
 
     @staticmethod
     def input_budget(config: ContextGovernanceConfig) -> int:

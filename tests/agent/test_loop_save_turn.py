@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -8,9 +9,15 @@ import pytest
 from loguru import logger
 
 from nanobot.agent.context import ContextBuilder, TranscriptInput
-from nanobot.agent.loop import AgentLoop
+from nanobot.agent.loop import AgentLoop, TurnContext, TurnKind
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.context import RequestContext, request_context
+from nanobot.agent.turn import (
+    RunPolicyContext,
+    TurnRequest,
+    TurnSource,
+)
+from nanobot.agent.turn import TurnContext as RunTurnContext
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import (
     GoalStatusEvent,
@@ -20,6 +27,7 @@ from nanobot.bus.outbound_events import (
     TurnEndEvent,
 )
 from nanobot.bus.queue import MessageBus
+from nanobot.context_repo.manager import ContextRepoManager
 from nanobot.cron.session_turns import CRON_HISTORY_META, CRON_TRIGGER_META
 from nanobot.providers.base import (
     GenerationSettings,
@@ -27,6 +35,12 @@ from nanobot.providers.base import (
     LLMResponse,
     LLMUsage,
     ProviderConversationState,
+    ProviderConversationTransportReceipt,
+)
+from nanobot.providers.conversation_state import (
+    ConversationRequestBinding,
+    ProviderConversationStateController,
+    ProviderStateSettlement,
 )
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
@@ -115,6 +129,58 @@ def _provider_state() -> ProviderConversationState:
         version=1,
         payload={"items": []},
     )
+
+
+def _provider_state_settlement() -> tuple[ProviderStateSettlement, ProviderConversationState]:
+    provider = MagicMock(spec=LLMProvider)
+    receipt = ProviderConversationTransportReceipt(
+        provider="fixture",
+        account="account-digest",
+        endpoint="https://example.test/v1",
+        protocol="fixture.responses",
+        model="test-model",
+    )
+    provider.supports_bound_conversation_state.return_value = True
+    provider.can_resume_conversation_state.return_value = True
+    provider.conversation_state_transport_receipt.return_value = receipt
+    messages = [{"role": "user", "content": "persisted request"}]
+    binding = ConversationRequestBinding(
+        session_namespace="cli:private-state",
+        authority_namespace="foreground",
+        execution_owner="main:cli:private-state",
+        session_generation=1,
+        projection_epoch=0,
+        runtime_prefix={"model": "test-model"},
+        policy_prefix={"workspace": "/workspace"},
+        tools=[],
+        tool_choice={"type": "auto"},
+        generation_settings={"max_tokens": 4096},
+    )
+    controller = ProviderConversationStateController(
+        provider=provider,
+        model="test-model",
+        messages=messages,
+    )
+    controller.prepare_request(messages, context_window_tokens=200_000, binding=binding)
+    settlement = controller.observe_response(
+        LLMResponse(
+            content="done",
+            provider_state=ProviderConversationState(
+                kind="openai_responses",
+                provider="openai:test",
+                model="test-model",
+                version=1,
+                payload={"items": [], "context_tokens": 42},
+                transport_receipt=receipt,
+                continuation_metadata_present=True,
+            ),
+        ),
+        messages,
+    )
+    assert settlement is not None
+    candidate = settlement.candidate_for_persistence()
+    assert candidate is not None
+    return settlement, candidate
 
 
 def _runtime_message(content, blocks: list[RuntimeContextBlock]) -> dict:
@@ -1108,9 +1174,71 @@ def test_restore_runtime_checkpoint_dedupes_overlapping_tail() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "substitute",
+    [
+        lambda candidate: replace(candidate, conversation_binding={"version": 2}),
+        lambda candidate: replace(candidate, transport_receipt=None),
+        lambda candidate: replace(
+            candidate,
+            conversation_binding=None,
+            transport_receipt=None,
+            continuation_metadata_present=False,
+        ),
+    ],
+    ids=["binding", "receipt", "continuation-metadata"],
+)
+async def test_persist_turn_discards_settlement_when_save_substitutes_private_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    substitute,
+) -> None:
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    loop = _make_full_loop(tmp_path)
+    settlement, candidate = _provider_state_settlement()
+    session = loop.sessions.get_or_create("cli:private-state")
+    replacement = substitute(candidate)
+    assert replacement == candidate
+    assert replacement.to_private_record() != candidate.to_private_record()
+
+    def save_with_substituted_state(saved_session: Session, *, fsync: bool = False) -> None:
+        assert fsync is True
+        saved_session.provider_state = replacement
+
+    loop.sessions.save = MagicMock(side_effect=save_with_substituted_state)  # type: ignore[method-assign]
+    loop.sessions.invalidate = MagicMock(wraps=loop.sessions.invalidate)  # type: ignore[method-assign]
+    ctx = TurnContext(
+        msg=InboundMessage(channel="cli", sender_id="user", chat_id="private-state", content="request"),
+        session_key=session.key,
+        turn_id="run-private-state",
+        runtime=None,
+        kind=TurnKind.USER,
+        delivery=MagicMock(),
+        session=session,
+        transcript_input=TranscriptInput(history=[], current_message=None),
+        final_content="done",
+        all_messages=[
+            {"role": "user", "content": "persisted request"},
+            {"role": "assistant", "content": "done"},
+        ],
+        provider_state_settlement=settlement,
+    )
+
+    await loop._persist_turn(ctx)
+
+    assert settlement.candidate_for_persistence() is None
+    assert ctx.provider_state_settlement is None
+    assert ctx.provider_state is None
+    assert session.provider_state is None
+    loop.sessions.invalidate.assert_called_once_with(session.key)
+
+
+@pytest.mark.asyncio
 async def test_runtime_checkpoint_keeps_provider_state_out_of_public_metadata(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
     loop = _make_full_loop(tmp_path)
     state = ProviderConversationState(
         kind="openai_responses",
@@ -1142,21 +1270,36 @@ async def test_runtime_checkpoint_keeps_provider_state_out_of_public_metadata(
         ),
         runtime=loop.llm_runtime(),
         session=session,
+        run_context=RunTurnContext(
+            request=TurnRequest(
+                session_key=session.key,
+                source=TurnSource.DIRECT,
+            ),
+            run_id="private-checkpoint-run",
+            session_key=session.key,
+            policy=RunPolicyContext(
+                workspace=tmp_path,
+                context_manager=ContextRepoManager(),
+                approval_granted=False,
+                source=TurnSource.DIRECT,
+            ),
+            lock_owner=f"main:{session.key}",
+        ),
     )
 
-    assert session.provider_state is not None
+    # Runtime checkpoints retain only an already committed state.  This
+    # response candidate is provisional until _persist_turn's fsync save.
+    assert session.provider_state is None
     checkpoint = session.metadata[AgentLoop._RUNTIME_CHECKPOINT_KEY]
     assert "provider_state" not in checkpoint
-    assert checkpoint[AgentLoop._PROVIDER_STATE_CHECKPOINT_VERSION_KEY] == (
-        AgentLoop._PROVIDER_STATE_CHECKPOINT_VERSION
-    )
+    assert AgentLoop._PROVIDER_STATE_CHECKPOINT_VERSION_KEY not in checkpoint
     assert "private-checkpoint-blob" not in json.dumps(session.metadata)
 
     public_payload = loop.sessions.read_session_file(session.key)
     assert public_payload is not None
     assert "private-checkpoint-blob" not in json.dumps(public_payload)
     raw = loop.sessions._get_session_path(session.key).read_text(encoding="utf-8")
-    assert "private-checkpoint-blob" in raw
+    assert "private-checkpoint-blob" not in raw
 
 
 @pytest.mark.asyncio

@@ -131,6 +131,114 @@ def test_controller_replays_only_messages_after_provider_output() -> None:
     assert controller.checkpoint(messages).pending_messages == [tool_message]
 
 
+def test_restored_final_response_deduplicates_early_staged_user_delta() -> None:
+    provider = _provider()
+    binding = _binding()
+    accepted = [{"role": "user", "content": "earlier durable request"}]
+    current_user = {"role": "user", "content": "current durable request"}
+    controller = ProviderConversationStateController(
+        provider=provider,
+        model="gpt-5.6",
+        messages=accepted,
+    )
+    controller.prepare_request(accepted, context_window_tokens=200_000, binding=binding)
+    settlement = controller.observe_response(
+        LLMResponse(
+            content="final response",
+            provider_state=_state("final", pending=[current_user]),
+        ),
+        accepted,
+    )
+    assert settlement is not None
+    assert controller.settle_response(settlement, accepted)
+    persisted = controller.finish(accepted)
+    assert persisted is not None
+
+    restored = ProviderConversationStateController(
+        provider=provider,
+        model="gpt-5.6",
+        messages=accepted,
+        state=persisted,
+    )
+    context = restored.prepare_request(
+        [
+            *accepted,
+            {"role": "assistant", "content": "final response"},
+            current_user,
+        ],
+        context_window_tokens=200_000,
+        binding=binding,
+    )
+
+    assert context is not None
+    assert context.conversation_state is not None
+    assert context.conversation_state.pending_messages == [current_user]
+
+
+def test_restored_tool_checkpoint_keeps_rows_after_early_staged_user_delta() -> None:
+    provider = _provider()
+    binding = _binding()
+    accepted = [{"role": "user", "content": "earlier durable request"}]
+    current_user = {"role": "user", "content": "current durable request"}
+    checkpoint_assistant = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": "call_1", "type": "function"}],
+    }
+    checkpoint_tool = {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": "checkpoint tool result",
+    }
+    controller = ProviderConversationStateController(
+        provider=provider,
+        model="gpt-5.6",
+        messages=accepted,
+    )
+    controller.prepare_request(accepted, context_window_tokens=200_000, binding=binding)
+    settlement = controller.observe_response(
+        LLMResponse(
+            content=None,
+            provider_state=_state("tools", pending=[current_user]),
+        ),
+        accepted,
+    )
+    assert settlement is not None
+    assert controller.settle_response(settlement, accepted)
+    persisted = controller.finish(accepted)
+    assert persisted is not None
+
+    restored = ProviderConversationStateController(
+        provider=provider,
+        model="gpt-5.6",
+        messages=accepted,
+        state=persisted,
+    )
+    context = restored.prepare_request(
+        [
+            *accepted,
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "prior_call", "type": "function"}],
+            },
+            current_user,
+            checkpoint_assistant,
+            checkpoint_tool,
+        ],
+        context_window_tokens=200_000,
+        binding=binding,
+    )
+
+    assert context is not None
+    assert context.conversation_state is not None
+    assert context.conversation_state.pending_messages == [
+        current_user,
+        checkpoint_assistant,
+        checkpoint_tool,
+    ]
+
+
 def test_controller_rejects_candidate_without_the_concrete_transport_receipt() -> None:
     provider = _provider()
     messages = [{"role": "user", "content": "hello"}]

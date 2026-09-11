@@ -98,6 +98,10 @@ from nanobot.cron.session_turns import cron_trigger
 from nanobot.events import NO_EVENTS, AgentEvent, EventSink
 from nanobot.llm_usage.context import source_from_request
 from nanobot.providers.base import LLMProvider, LLMUsage, ProviderConversationState
+from nanobot.providers.conversation_state import (
+    ConversationRequestBinding,
+    ProviderStateSettlement,
+)
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
@@ -188,6 +192,7 @@ class TurnContext:
     history: list[dict[str, Any]] = field(default_factory=list)
     transcript_input: TranscriptInput | None = None
     provider_state: ProviderConversationState | None = field(default=None, repr=False)
+    provider_state_settlement: ProviderStateSettlement | None = field(default=None, repr=False)
     request_context: RequestContext | None = None
     runtime_context_blocks: list[RuntimeContextBlock] = field(default_factory=list)
     attributes: dict[str, Any] = field(default_factory=dict)
@@ -1071,6 +1076,113 @@ class AgentLoop:
         if self._unified_session and session.key == UNIFIED_SESSION_KEY:
             remember_last_channel(session.metadata, msg.channel, msg.chat_id)
 
+    @staticmethod
+    def _conversation_state_binding(
+        *,
+        session: Session | None,
+        runtime: LLMRuntime,
+        run_context: RunTurnContext,
+        workspace: Path | None,
+        tools: ToolRegistry,
+        ephemeral: bool,
+    ) -> ConversationRequestBinding | None:
+        """Build the durable continuation scope from admitted, trusted inputs.
+
+        Opaque provider state is valid only for a persisted ordinary session.
+        This deliberately excludes fresh, source, and ephemeral runs, as well
+        as any admission where the resource-policy or lock fence is incomplete.
+        """
+        if (
+            session is None
+            or ephemeral
+            or run_context.request is None
+            or run_context.request.history_mode is HistoryMode.FRESH
+            or run_context.source_writer is not None
+            or run_context.execution_owner is not None
+            or not session.policy.persist
+            or not isinstance(workspace, Path)
+            or not isinstance(run_context.policy.workspace, Path)
+            or run_context.policy.context_manager is None
+            or not session.key
+            or not session.incarnation
+            or not run_context.lock_owner
+            or type(session.generation) is not int
+            or type(session.last_archived) is not int
+            or not isinstance(runtime.model, str)
+            or type(runtime.context_window_tokens) is not int
+        ):
+            return None
+        context_manager = run_context.policy.context_manager
+        try:
+            read_roots = sorted(
+                str(Path(path).expanduser().resolve(strict=False))
+                for path in context_manager.read_roots()
+            )
+            write_roots = sorted(
+                str(Path(path).expanduser().resolve(strict=False))
+                for path in context_manager.write_roots()
+            )
+            tool_definitions = deepcopy(tools.get_definitions())
+        except Exception:
+            # A complete binding is safer than a best-effort one.  The
+            # controller will use portable replay when a trusted input cannot
+            # be read at admission.
+            return None
+        if not isinstance(tool_definitions, list):
+            return None
+        generation = runtime.generation
+        workspace_path = str(workspace.expanduser().resolve(strict=False))
+        policy_workspace = str(run_context.policy.workspace.expanduser().resolve(strict=False))
+        grant = run_context.policy.approval_grant
+        authority = {
+            "workspace": policy_workspace,
+            "read_roots": read_roots,
+            "write_roots": write_roots,
+            "approval_granted": bool(run_context.policy.approval_granted),
+            "approval_grant": {
+                "granted": bool(grant.granted) if grant is not None else False,
+                "grant_id": grant.grant_id if grant is not None else None,
+                "source": grant.source if grant is not None else None,
+                "scope": grant.scope if grant is not None else None,
+                "expires_at": grant.expires_at if grant is not None else None,
+            },
+            "allow_side_effects": bool(run_context.policy.allow_side_effects),
+            "allow_external": bool(run_context.policy.allow_external),
+            "disabled_tools": sorted(session.policy.disabled_tools),
+            "policy_type": f"{type(run_context.policy).__module__}.{type(run_context.policy).__qualname__}",
+        }
+        runtime_prefix = {
+            "provider": f"{type(runtime.provider).__module__}.{type(runtime.provider).__qualname__}",
+            "model": runtime.model,
+            "model_preset": runtime.model_preset,
+            "context_window_tokens": runtime.context_window_tokens,
+        }
+        return ConversationRequestBinding(
+            session_namespace="\x1f".join((workspace_path, session.key, session.incarnation)),
+            authority_namespace=(
+                f"{type(context_manager).__module__}.{type(context_manager).__qualname__}"
+            ),
+            execution_owner=run_context.lock_owner,
+            session_generation=session.generation,
+            # ``last_archived`` advances only when the replay projection is
+            # replaced.  Ordinary append saves must retain the same scope so
+            # the candidate can cover their next user delta.
+            projection_epoch=session.last_archived,
+            runtime_prefix=runtime_prefix,
+            policy_prefix=authority,
+            tools=tool_definitions,
+            tool_choice={"type": "auto"},
+            generation_settings={
+                "model": runtime.model,
+                "model_preset": runtime.model_preset,
+                "provider": runtime_prefix["provider"],
+                "temperature": generation.temperature,
+                "max_tokens": generation.max_tokens,
+                "reasoning_effort": generation.reasoning_effort,
+                "context_window_tokens": runtime.context_window_tokens,
+            },
+        )
+
     async def _run_agent_loop(
         self,
         transcript_input: TranscriptInput,
@@ -1126,10 +1238,13 @@ class AgentLoop:
                 private_state is None
                 or isinstance(private_state, ProviderConversationState)
             ):
-                session.provider_state = private_state
-                public_payload[self._PROVIDER_STATE_CHECKPOINT_VERSION_KEY] = (
-                    self._PROVIDER_STATE_CHECKPOINT_VERSION
-                )
+                # Checkpoints may retain only a state committed before this
+                # run.  A response candidate has no durable authority until
+                # _persist_turn writes its transcript in the same fsync save.
+                if session.provider_state is not None:
+                    public_payload[self._PROVIDER_STATE_CHECKPOINT_VERSION_KEY] = (
+                        self._PROVIDER_STATE_CHECKPOINT_VERSION
+                    )
             self._set_runtime_checkpoint(session, public_payload)
 
         async def _drain_pending(
@@ -1331,6 +1446,14 @@ class AgentLoop:
             run_context.artifact_read_allowed = (
                 session is not None and 'read_artifact' not in session.policy.disabled_tools
                 and 'read_file' in effective_tools.tool_names)
+            conversation_binding = self._conversation_state_binding(
+                session=session,
+                runtime=runtime,
+                run_context=run_context,
+                workspace=effective_scope.project_path,
+                tools=effective_tools,
+                ephemeral=ephemeral,
+            )
             result = await self.runner.run(AgentRunSpec(
                 artifact_read_allowed=run_context.artifact_read_allowed,
                 initial_messages=None,
@@ -1392,6 +1515,7 @@ class AgentLoop:
                     message_metadata=request_metadata,
                 ),
                 provider_state=provider_state,
+                conversation_binding=conversation_binding,
                 llm_usage_source=source_from_request(
                     active_session_key,
                     channel=request_ctx.channel,
@@ -1407,8 +1531,10 @@ class AgentLoop:
                 reset_workspace_scope(workspace_token)
                 reset_request_context(request_token)
                 reset_file_states(file_state_token)
-        if session is not None and not ephemeral:
-            session.provider_state = None if fresh_history or source_writer is not None else result.provider_state
+        if session is not None and not ephemeral and (fresh_history or source_writer is not None):
+            # Fresh and source executions never own a resumable provider
+            # continuation, including one left over from an earlier mode.
+            session.provider_state = None
         if result.stop_reason == "max_iterations":
             logger.warning("Max iterations ({}) reached", self.max_iterations)
             should_stream = turn_continuation.should_stream_budget_response(
@@ -2521,6 +2647,7 @@ class AgentLoop:
                 events=ctx.events,
             )
         ctx.run_result = result
+        ctx.provider_state_settlement = result.provider_state_settlement
         ctx.final_content = result.final_content
         ctx.all_messages = result.messages
         ctx.summary_checkpoint = None if ctx.fresh_history else result.summary_checkpoint
@@ -2545,10 +2672,19 @@ class AgentLoop:
         ctx.delivery.record_usage(result.round_usages)
         if (ctx.kind is TurnKind.USER and not ctx.fresh_history
                 and (ctx.run_context is None or ctx.run_context.source_writer is None)):
-            await turn_continuation.maybe_continue_turn(ctx)
+            try:
+                await turn_continuation.maybe_continue_turn(ctx)
+            except BaseException:
+                if ctx.provider_state_settlement is not None:
+                    ctx.provider_state_settlement.discard()
+                    ctx.provider_state_settlement = None
+                raise
 
     async def _persist_turn(self, ctx: TurnContext) -> None:
         if ctx.run_context is not None and ctx.run_context.source_writer is not None:
+            if ctx.provider_state_settlement is not None:
+                ctx.provider_state_settlement.discard()
+                ctx.provider_state_settlement = None
             writer = ctx.run_context.source_writer
             updates = {key: value for key, value in ctx.require_session().metadata.items()
                        if key not in ctx.source_metadata_base or value != ctx.source_metadata_base[key]}
@@ -2562,6 +2698,7 @@ class AgentLoop:
                     ctx.msg, ctx.session_key, turn_id=ctx.turn_id, attributes=ctx.attributes)
             return
         session = ctx.require_session()
+        settlement = ctx.provider_state_settlement
         turn_continuation.prepare_save_boundary(ctx)
 
         if (
@@ -2583,26 +2720,66 @@ class AgentLoop:
         ctx.turn_latency_ms = max(0, int((time.time() - latency_started_at) * 1000))
         if ctx.usage is not None and not ctx.ephemeral:
             session.metadata["_last_usage"] = ctx.usage.to_dict()
-        self._save_turn(
-            session, ctx.all_messages, ctx.save_skip,
-            turn_latency_ms=ctx.turn_latency_ms,
-            summary_checkpoint=ctx.summary_checkpoint,
-            input_persisted_early=ctx.input_persisted_early,
-            run_id=ctx.run_context.run_id if ctx.run_context else None,
-            trace_owner=ctx,
-        )
+        # A state from the prior request may not cross the transcript mutation
+        # below.  Only the settlement candidate, obtained after that mutation,
+        # can be written for this completed turn.
+        session.provider_state = None
+        try:
+            transcript_rewritten = self._save_turn(
+                session, ctx.all_messages, ctx.save_skip,
+                turn_latency_ms=ctx.turn_latency_ms,
+                summary_checkpoint=ctx.summary_checkpoint,
+                input_persisted_early=ctx.input_persisted_early,
+                run_id=ctx.run_context.run_id if ctx.run_context else None,
+                trace_owner=ctx,
+            )
+        except BaseException:
+            if settlement is not None:
+                settlement.discard()
+            ctx.provider_state_settlement = None
+            self.sessions.invalidate(session.key)
+            raise
+        candidate = None
         if (
-            not ctx.ephemeral
-            and ctx.provider_compaction_applied
-            and ctx.summary_checkpoint is not None
+            settlement is not None
+            and not ctx.ephemeral
+            and not transcript_rewritten
+            and not ctx.provider_compaction_applied
+            and ctx.summary_checkpoint is None
         ):
-            # The next request must rebuild from the portable checkpoint;
-            # the opaque continuation predates that transcript rewrite.
-            session.provider_state = None
+            candidate = settlement.candidate_for_persistence()
+        if candidate is None and settlement is not None:
+            settlement.discard()
+        if candidate is not None:
+            session.provider_state = candidate
         ctx.delivery.record_latency(ctx.turn_latency_ms)
         self._clear_pending_user_turn(session)
         self._clear_runtime_checkpoint(session)
-        self.sessions.save(session)
+        try:
+            self.sessions.save(session, fsync=candidate is not None)
+        except BaseException:
+            if settlement is not None:
+                settlement.discard()
+            ctx.provider_state_settlement = None
+            session.provider_state = None
+            self.sessions.invalidate(session.key)
+            raise
+        if candidate is not None:
+            persisted = session.provider_state
+            persisted_matches = (
+                isinstance(persisted, ProviderConversationState)
+                and persisted.to_private_record() == candidate.to_private_record()
+            )
+            if not persisted_matches or not settlement.commit_persisted(candidate):
+                # A storage adapter that clears or substitutes the candidate
+                # leaves the in-memory view uncertain.  Do not retry a CAS or
+                # resurrect this handle after a completed atomic save.
+                settlement.discard()
+                session.provider_state = None
+                self.sessions.invalidate(session.key)
+            else:
+                ctx.provider_state = candidate
+        ctx.provider_state_settlement = None
         if not ctx.ephemeral:
             await self.runtime_event_publisher.session_turn_persisted(
                 ctx.msg,
@@ -2699,8 +2876,9 @@ class AgentLoop:
         input_persisted_early: bool = False,
         run_id: str | None = None,
         trace_owner: TurnContext | None = None,
-    ) -> None:
-        """Commit new-turn messages and an optional summary boundary."""
+    ) -> bool:
+        """Commit new-turn messages and report whether model-visible replay changed."""
+        transcript_rewritten = summary_checkpoint is not None
         declared_tool_call_ids = {
             str(tc["id"])
             for m in session.messages
@@ -2762,6 +2940,7 @@ class AgentLoop:
             )
             role, content = entry.get("role"), entry.get("content")
             if role == "assistant" and not content and not entry.get("tool_calls"):
+                transcript_rewritten = True
                 continue  # skip empty assistant messages — they poison session context
             if role == "tool":
                 tool_call_id = entry.get("tool_call_id")
@@ -2777,6 +2956,7 @@ class AgentLoop:
                         tool_call_id_str or "(missing id)",
                         session.key,
                     )
+                    transcript_rewritten = True
                     continue
                 fulfilled_tool_call_ids.add(tool_call_id_str)
                 # Preserve model-visible text for replay; redact only inline images.
@@ -2790,14 +2970,17 @@ class AgentLoop:
                             {"type": "text", "text": "[tool result omitted during persistence]"}
                         ]
                     entry["content"] = filtered
+                    transcript_rewritten |= filtered != content
             elif role == "user":
                 if isinstance(content, list):
                     filtered = self._sanitize_persisted_blocks(
                         cast(list[object], content),
                     )
                     if not filtered:
+                        transcript_rewritten = True
                         continue
                     entry["content"] = filtered
+                    transcript_rewritten |= filtered != content
                 if isinstance(runtime_context_meta, dict):
                     entry[RUNTIME_CONTEXT_HISTORY_META] = runtime_context_meta
             entry.setdefault("timestamp", datetime.now().isoformat())
@@ -2828,6 +3011,7 @@ class AgentLoop:
         if saved_followup_ids:
             acknowledge_pending_followups(session, saved_followup_ids)
         session.updated_at = datetime.now()
+        return transcript_rewritten
 
     def _persist_subagent_followup(
         self, session: Session, msg: InboundMessage, *, run_id: str | None = None,

@@ -19,8 +19,10 @@ from nanobot.providers.base import (
     LLMUsage,
     ProviderCallContext,
     ProviderConversationState,
+    ProviderConversationTransportReceipt,
     ToolCallRequest,
 )
+from nanobot.providers.conversation_state import ConversationRequestBinding
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 
@@ -276,7 +278,7 @@ async def test_runner_preserves_reasoning_fields_and_tool_results():
 
 
 @pytest.mark.asyncio
-async def test_runner_replays_provider_state_without_chat_projection_duplicates():
+async def test_direct_runner_replays_tools_without_publishing_provider_state():
     from nanobot.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
@@ -345,32 +347,90 @@ async def test_runner_replays_provider_state_without_chat_projection_duplicates(
 
     provider_context = captured_second_kwargs["provider_context"]
     assert isinstance(provider_context, ProviderCallContext)
-    assert provider_context.conversation_state is not None
-    assert provider_context.conversation_state.payload == first_state.payload
-    assert provider_context.conversation_state.pending_messages == [{
-        "role": "tool",
-        "tool_call_id": "call_1|fc_1",
-        "name": "list_dir",
-        "content": "tool result",
-    }]
-    assert not any(
-        message.get("role") == "assistant"
-        for message in provider_context.conversation_state.pending_messages
+    assert provider_context.conversation_state is None
+    assert any(
+        message.get("role") == "assistant" and message.get("tool_calls")
+        for message in captured_second_kwargs["messages"]
     )
-    assert result.provider_state is not None
-    assert result.provider_state.payload == second_state.payload
-    assert result.provider_state.pending_messages == []
+    assert any(
+        message.get("role") == "tool" and message.get("content") == "tool result"
+        for message in captured_second_kwargs["messages"]
+    )
+    # A direct runner has no durable session boundary.  It must not publish a
+    # candidate state or a settlement without a complete admitted binding.
+    assert result.provider_state is None
+    assert result.provider_state_settlement is None
     assert checkpoints[0]["phase"] == "awaiting_tools"
     assert "provider_state" not in checkpoints[0]
     assert checkpoints[1]["phase"] == "tools_completed"
-    assert checkpoints[1]["provider_state"].pending_messages == [{
+    assert checkpoints[1]["provider_state"] is None
+    assert checkpoints[1]["completed_tool_results"] == [{
         "role": "tool",
         "tool_call_id": "call_1|fc_1",
         "name": "list_dir",
         "content": "tool result",
     }]
     assert checkpoints[2]["phase"] == "final_response"
-    assert checkpoints[2]["provider_state"].payload == second_state.payload
+    assert checkpoints[2]["provider_state"] is None
+
+
+@pytest.mark.asyncio
+async def test_direct_runner_returns_an_unsettled_bound_response_handle():
+    from nanobot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    receipt = ProviderConversationTransportReceipt(
+        provider="fixture",
+        account="account",
+        endpoint="https://example.test/v1",
+        protocol="fixture.responses",
+        model="gpt-5.6",
+    )
+    provider.can_resume_conversation_state.return_value = True
+    provider.supports_bound_conversation_state.return_value = True
+    provider.conversation_state_transport_receipt.return_value = receipt
+    provider.supports_native_compaction.return_value = False
+    candidate = ProviderConversationState(
+        kind="fixture",
+        provider="fixture",
+        model="gpt-5.6",
+        version=1,
+        payload={"context_tokens": 12},
+        transport_receipt=receipt,
+        continuation_metadata_present=True,
+    )
+    provider.chat_with_retry = AsyncMock(
+        return_value=LLMResponse(content="done", provider_state=candidate)
+    )
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    binding = ConversationRequestBinding(
+        session_namespace="test:session",
+        authority_namespace="test:authority",
+        execution_owner="test:owner",
+        session_generation=1,
+        projection_epoch=0,
+        runtime_prefix={"runtime": "test"},
+        policy_prefix={"policy": "test"},
+        tools=[],
+        tool_choice={"type": "auto"},
+        generation_settings={"model": "gpt-5.6", "max_tokens": 4096},
+    )
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        model="gpt-5.6",
+        max_iterations=1,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        conversation_binding=binding,
+    ))
+
+    assert result.provider_state is None
+    settlement = result.provider_state_settlement
+    assert settlement is not None
+    assert settlement.candidate_for_persistence() is not None
 
 
 @pytest.mark.asyncio
@@ -436,8 +496,8 @@ async def test_runner_preserves_tool_result_before_rejecting_unfit_followup():
         for checkpoint in checkpoints
         if checkpoint["phase"] == "tools_completed"
     )
-    checkpoint_pending = completed_checkpoint["provider_state"].pending_messages
-    assert checkpoint_pending == [{
+    assert completed_checkpoint["provider_state"] is None
+    assert completed_checkpoint["completed_tool_results"] == [{
         "role": "tool",
         "tool_call_id": "call_1",
         "name": "read_file",
@@ -446,7 +506,7 @@ async def test_runner_preserves_tool_result_before_rejecting_unfit_followup():
 
 
 @pytest.mark.asyncio
-async def test_injected_final_response_checkpoint_includes_provider_state():
+async def test_injected_final_response_checkpoint_excludes_provisional_provider_state():
     from nanobot.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
@@ -493,11 +553,11 @@ async def test_injected_final_response_checkpoint_includes_provider_state():
     ))
 
     assert checkpoints[0]["phase"] == "final_response"
-    assert checkpoints[0]["provider_state"].payload == first_state.payload
+    assert checkpoints[0]["provider_state"] is None
 
 
 @pytest.mark.asyncio
-async def test_runner_preserves_last_completed_provider_state_on_model_error():
+async def test_direct_runner_does_not_publish_prior_provider_state_on_model_error():
     from nanobot.agent.runner import AgentRunner
 
     provider = MagicMock(spec=LLMProvider)
@@ -532,11 +592,8 @@ async def test_runner_preserves_last_completed_provider_state_on_model_error():
     ))
 
     assert result.stop_reason == "error"
-    assert result.provider_state is not None
-    assert result.provider_state.payload == state.payload
-    assert result.provider_state.pending_messages[0] == unsaved_input
-    assert result.provider_state.pending_messages[1]["role"] == "assistant"
-    assert "model error" in result.provider_state.pending_messages[1]["content"]
+    assert result.provider_state is None
+    assert result.provider_state_settlement is None
 
 
 @pytest.mark.asyncio

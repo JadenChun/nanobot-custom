@@ -684,7 +684,18 @@ class ProviderConversationStateController:
         if record is None:
             return self._messages_after_boundary(portable_prefix)
         start = cast(int, record["prefix_length"])
-        return deepcopy(portable_prefix[start:])
+        pending = portable_prefix[start:]
+        # ``_PROVIDER_STATE_OUTPUT_META`` prevents this duplicate while the
+        # runner is still alive.  The marker is intentionally not durable, so
+        # a restored transcript starts with the assistant response already
+        # represented by the committed opaque state.  Omit that one response
+        # before sending the newly persisted delta.
+        if pending and pending[0].get("role") == "assistant":
+            pending = pending[1:]
+        staged = self._portable_messages(self._state.pending_messages)
+        if staged and pending[:len(staged)] == staged:
+            pending = pending[len(staged):]
+        return deepcopy(pending)
 
     @staticmethod
     def _portable_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

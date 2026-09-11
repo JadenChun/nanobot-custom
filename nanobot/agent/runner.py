@@ -44,7 +44,11 @@ from nanobot.providers.base import (
     LLMUsage,
     ProviderConversationState,
 )
-from nanobot.providers.conversation_state import ProviderConversationStateController
+from nanobot.providers.conversation_state import (
+    ConversationRequestBinding,
+    ProviderConversationStateController,
+    ProviderStateSettlement,
+)
 from nanobot.session.source import SourceValidationError
 from nanobot.session.source_projection import RuntimeNode
 from nanobot.session.source_request import SourceRequestLedger, SourceRequestTicket
@@ -145,6 +149,7 @@ class AgentRunSpec:
     source_initial_eligible_ids: frozenset[str] = frozenset()
     source_isolated: bool = False
     artifact_read_allowed: bool = False
+    conversation_binding: ConversationRequestBinding | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)
@@ -169,6 +174,10 @@ class AgentRunResult:
     provider_state: ProviderConversationState | None = field(default=None, repr=False)
     summary_checkpoint: SessionSummaryCheckpoint | None = field(default=None, repr=False)
     provider_compaction_applied: bool = field(default=False, repr=False)
+    # A process-local, one-shot authority.  The session owner must persist its
+    # exact candidate before committing it; direct runner callers never adopt
+    # it implicitly.
+    provider_state_settlement: ProviderStateSettlement | None = field(default=None, repr=False)
 
 
 class AgentRunner:
@@ -428,7 +437,12 @@ class AgentRunner:
             context.exception = None
             if context.error is not None:
                 await hook.on_error(context)
-            await hook.after_run(context)
+            try:
+                await hook.after_run(context)
+            except BaseException:
+                if result.provider_state_settlement is not None:
+                    result.provider_state_settlement.discard()
+                raise
             return result
         finally:
             try:
@@ -497,6 +511,7 @@ class AgentRunner:
         return ModelRequestState(
             config=governance_config,
             conversation=conversation_state,
+            conversation_binding=spec.conversation_binding,
             compaction=compaction,
             source_compaction=SourceCompactionState(spec.source_writer, spec.runtime, messages,
                 spec.source_writer.stream_id if spec.source_isolated or spec.source_writer.parent_stream_id is not None else None)
@@ -534,6 +549,7 @@ class AgentRunner:
         had_injections = False
         injection_cycles = 0
         pending_stream_content: str | None = None
+        provider_state_settlement: ProviderStateSettlement | None = None
         conversation_state = request_state.conversation
         governance_config = request_state.config
 
@@ -561,7 +577,6 @@ class AgentRunner:
             response = recorded_response.response
             assert request_state.messages is not None
             messages_for_model = request_state.messages
-            conversation_state.observe_response(response, messages, adopt_candidate_state=spec.source_writer is None)
             if request_state.compaction is not None:
                 request_state.compaction.accept_request(
                     messages_for_model,
@@ -722,6 +737,10 @@ class AgentRunner:
                     response.finish_reason,
                     spec.session_key or "default",
                 )
+                # The opaque response may still contain those ignored calls.
+                # It cannot be replayed unless their matching tool results
+                # were durably recorded.
+                response.provider_state = None
 
             clean = hook.finalize_content(context, response.content)
             if (
@@ -938,6 +957,11 @@ class AgentRunner:
             context.final_content = final_content
             context.stop_reason = stop_reason
             await hook.after_iteration(context)
+            provider_state_settlement = conversation_state.observe_response(
+                response,
+                messages,
+                adopt_candidate_state=spec.source_writer is None,
+            )
             break
         else:
             stop_reason = "max_iterations"
@@ -995,7 +1019,11 @@ class AgentRunner:
             tool_events=tool_events,
             had_injections=had_injections,
             pending_stream_content=pending_stream_content,
-            provider_state=conversation_state.finish(messages),
+            # ``finish`` can manufacture a checkpoint from a previously
+            # committed state.  A runner is not a durable boundary, so expose
+            # only an explicit settlement staged for this terminal response.
+            provider_state=None,
+            provider_state_settlement=provider_state_settlement,
             summary_checkpoint=(
                 request_state.compaction.summary_checkpoint
                 if request_state.compaction is not None
