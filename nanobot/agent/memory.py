@@ -1094,16 +1094,34 @@ class Consolidator:
         if (type(max_output_tokens) is not int or not 0 < max_output_tokens <= 2048
                 or not 0 < timeout_seconds <= 60):
             raise ValueError('Invalid source summary limits')
+        messages = Consolidator.source_summary_messages(source_messages, previous_summary)
+        estimated, _ = estimate_prompt_tokens_chain(runtime.provider, runtime.model, messages, None)
+        if estimated + max_output_tokens + Consolidator._SAFETY_BUFFER > runtime.context_window_tokens:
+            return SourceSummaryResult(None, runtime.provider.provider_name, runtime.model,
+                                       None, 'input_overflow', 0)
+        return await Consolidator.summarize_prepared_source_chunk(
+            messages, runtime=runtime, max_output_tokens=max_output_tokens,
+            timeout_seconds=timeout_seconds,
+        )
+
+    @staticmethod
+    async def summarize_prepared_source_chunk(
+        messages: list[dict[str, Any]],
+        *,
+        runtime: LLMRuntime,
+        max_output_tokens: int = 2048,
+        timeout_seconds: float = 60,
+    ) -> SourceSummaryResult:
+        """Transport one already-built and preflighted auxiliary payload exactly once."""
+        if (type(max_output_tokens) is not int or not 0 < max_output_tokens <= 2048
+                or not 0 < timeout_seconds <= 60):
+            raise ValueError('Invalid source summary limits')
         provider = runtime.provider
 
         def result(status: str, *, summary: str | None = None,
                    usage: LLMUsage | None = None, calls: int = 0) -> SourceSummaryResult:
             return SourceSummaryResult(summary, provider.provider_name, runtime.model, usage, status, calls)
 
-        messages = Consolidator.source_summary_messages(source_messages, previous_summary)
-        estimated, _ = estimate_prompt_tokens_chain(provider, runtime.model, messages, None)
-        if estimated + max_output_tokens + Consolidator._SAFETY_BUFFER > runtime.context_window_tokens:
-            return result('input_overflow')
         try:
             async with asyncio.timeout(timeout_seconds):
                 response = await provider.chat_once(

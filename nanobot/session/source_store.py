@@ -378,8 +378,11 @@ class SourceSessionStore:
             execution_transaction,
         )
 
+        writer_store = reader.writer.store
         if (type(owner) is not ExecutionOwner or type(reader) is not ArtifactReader
-                or type(blobs) is not ArtifactBlobTransaction or reader.writer.store is not self
+                or type(blobs) is not ArtifactBlobTransaction
+                or writer_store._backend is not self._backend
+                or writer_store._store_identity != self._store_identity
                 or reader.writer.owner is not owner or self._artifact_store is None
                 or reader.store is not self._artifact_store or blobs._store is not self._artifact_store
                 or owner.key != key):

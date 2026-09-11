@@ -155,7 +155,10 @@ class SourceCompactionCandidate:
         expanded content is never substituted for canonical summary evidence.
         """
         self._require_boundary(boundary)
-        if not self.evidence(boundary):
+        # ``evidence`` deliberately retains the legacy dependency-free API.
+        # Compaction itself consumes the typed canonical form so a dependent
+        # checkpoint can retain its exact receipt proof through rebuilding.
+        if not self.summary_evidence(boundary).nodes:
             raise SourceValidationError('Compaction requires new visible evidence')
         if not checkpoint.checkpoint_id or not checkpoint.summary.strip():
             raise SourceValidationError('Replacement checkpoint must contain a summary')

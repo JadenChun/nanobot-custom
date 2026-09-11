@@ -1026,3 +1026,135 @@ async def test_engine_offloads_large_reads_and_retrieves_without_recursive_publi
         assert {re.search(r'artifact:[0-9a-f]{32}', row['content'])[0] for row in projected_reads} == set(provider.references)
     finally:
         await restarted.aclose()
+
+
+async def test_engine_retrieval_pressure_checkpoint_restarts_with_admission(engine_config, tmp_path):
+    """A real retrieval receipt survives pressure compaction into the next invocation."""
+    import hashlib
+
+    from session.test_artifact import fixture
+
+    from nanobot.agent.runner import AgentRunner
+    from nanobot.session.artifact import parse_artifact_descriptor
+    from nanobot.session.artifact_reader import ArtifactReader
+    from nanobot.session.artifact_store import PrivateArtifactStore
+    from nanobot.session.source_store import SourceSessionStore
+
+    covered_result = 'covered retrieval result content for engine restart'
+    checkpoint_summary = 'checkpoint summary for engine restart admission'
+    (engine_config.workspace_path / 'file').write_text(covered_result)
+    key = 'cli:source'
+    first_provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id='read', name='read_file', arguments={'path': 'file'},
+        )]),
+        LLMResponse(content='read complete'),
+    ])
+    first = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=first_provider,
+                                  context_window_tokens=64_000)
+    backend = upgrade(first, key)
+    try:
+        result = await first.execute_turn(TurnRequest(content='read file', session_key=key))
+        assert result.error is None, result.error
+    finally:
+        await first.aclose()
+
+    raw, _ = fixture()
+    reference = 'artifact:' + raw['artifact_id']
+
+    def factory(writer, isolated, read_file):
+        snapshot = writer.owner.read_snapshot()
+        event = next(row for row in snapshot.events if row.get('_source_origin'))
+        content = event['content'].encode()
+        descriptor_data = dict(raw)
+        descriptor_data.update(
+            workspace_id=writer.store._backend.sessions_dir.name,
+            session_key=writer.owner.key,
+            incarnation=snapshot.state.incarnation,
+            generation=snapshot.state.generation,
+            event_id=event['_event_id'],
+            execution_id=event['_execution_id'],
+            stream_id=event['_stream_id'],
+            run_id=event['_run_id'],
+            byte_length=len(content),
+            sha256=hashlib.sha256(content).hexdigest(),
+            source_access=event['_source_origin']['source_access'],
+        )
+        descriptor = parse_artifact_descriptor(descriptor_data)
+        store = PrivateArtifactStore(
+            tmp_path.resolve() / 'engine-artifacts', workspace_id=descriptor.workspace_id,
+            session_key=descriptor.session_key, incarnation=descriptor.incarnation,
+            generation=descriptor.generation,
+        )
+        source = SourceSessionStore(writer.store._backend, artifact_store=store)
+        with store.transaction() as blobs:
+            blobs.put(descriptor, content)
+            source.commit_artifact_descriptor(writer.owner.key, snapshot.state, descriptor,
+                                              owner=writer.owner, blobs=blobs)
+        return ArtifactReader(writer, 'isolated_stream' if isolated else 'root_history', store, read_file)
+
+    retrieval_provider = ScriptedProvider([
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id='retrieve', name='read_artifact', arguments={'reference': reference},
+        )]),
+        LLMResponse(content='retrieval complete'),
+    ])
+    retrieval = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=retrieval_provider,
+                                      context_window_tokens=64_000)
+    retrieval.runner = AgentRunner(artifact_reader_factory=factory)
+    try:
+        result = await retrieval.execute_turn(TurnRequest(content='retrieve artifact', session_key=key))
+        assert result.error is None, result.error
+        assert any(row.get('_artifact_read', {}).get('reference') == reference
+                   for row in backend.source.load_source_snapshot(key).events)
+    finally:
+        await retrieval.aclose()
+
+    class PressureProvider(ScriptedProvider):
+        def __init__(self):
+            super().__init__([])
+
+        def estimate_prompt_tokens(self, messages, tools, model):
+            if messages[0]['content'].startswith('Summarize historical evidence'):
+                return 100, 'synthetic'
+            return (6_000 if 'Historical context summary' in str(messages) else 11_000), 'synthetic'
+
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            self.calls.append((messages, tools, model))
+            if messages[0]['content'].startswith('Summarize historical evidence'):
+                return LLMResponse(content=checkpoint_summary)
+            assert reference in str(messages)
+            return LLMResponse(content='pressure complete')
+
+    pressure_provider = PressureProvider()
+    pressure = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=pressure_provider,
+                                     context_window_tokens=12_000)
+    pressure.runner = AgentRunner(artifact_reader_factory=factory)
+    try:
+        result = await pressure.execute_turn(TurnRequest(content='continue', session_key=key))
+        assert result.error is None, result.error
+        checkpoint = backend.source.load_source_snapshot(key).checkpoint
+        assert checkpoint['schema_version'] == 2
+        assert checkpoint['artifact_references'] == [reference]
+    finally:
+        await pressure.aclose()
+
+    class RestartProvider(ScriptedProvider):
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            self.calls.append((messages, tools, model))
+            assert reference in str(messages)
+            return LLMResponse(content='restart complete')
+
+    restart_provider = RestartProvider([LLMResponse(content='unused')])
+    restarted = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=restart_provider,
+                                      context_window_tokens=64_000)
+    restarted.runner = AgentRunner(artifact_reader_factory=factory)
+    try:
+        result = await restarted.execute_turn(TurnRequest(content='restart continue', session_key=key))
+        assert result.error is None and result.content == 'restart complete'
+        payload = str(restart_provider.calls[0][0])
+        assert checkpoint_summary in payload
+        assert covered_result not in payload
+        assert reference in payload
+    finally:
+        await restarted.aclose()

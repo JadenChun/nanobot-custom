@@ -343,3 +343,64 @@ with 116 focused tests. The network-denied broader regression suite passed
 remain outstanding for overall acceptance. Scoped Ruff and diff checks passed. Dependency-bearing summary generation remains explicitly blocked until
 Package B; verified projected auxiliary evidence remains Package C. The production
 migration guard remains enabled.
+
+## Dependency-aware source pressure compaction (Package B)
+
+Pressure compaction now consumes `SummaryEvidence` from canonical, visible source
+intervals and records a contiguous `SummaryDependencyProof` only after each
+auxiliary provider call completes. Each selected fold builds one exact auxiliary
+message list; the governor estimates that object and
+`Consolidator.summarize_prepared_source_chunk` transports the same object without
+rebinding tools, conversation state, normalization, or retries. The compatibility
+wrapper still builds and preflights dependency-free callers' payloads.
+
+References come only from prior accepted checkpoint references and canonical,
+successfully dispatched `read_artifact` receipts in consumed evidence. The proof
+reconstructs and sorts that complete set, so later summaries retain prior references
+even if model text does not mention them. Typed projected source nodes remain
+ineligible as auxiliary evidence; strings, prompts, tool arguments, previews,
+hidden child records, malformed receipts, unselected chunks, and failed calls do
+not establish dependencies.
+
+Immediately before every auxiliary transport the governor validates dispatch
+ownership and the exact captured ledger projection. For a fold with dependencies,
+it additionally opens the configured private blob transaction, then the execution
+and source transaction, and rechecks canonical proof data, current source scope,
+active reader admission, retrieval schema, manifest membership, source policy,
+durable bytes, and namespace reachability before releasing locks for transport.
+Dependency-free folds retain reader-free behavior. If the effective main request
+lacks the exact `read_artifact` schema, dependent compaction is skipped with the
+canonical source intact and the final main-request budget guard decides whether the
+request fits. Revocation, manifest, scope, ownership, receipt, namespace, or blob
+failure aborts before the next auxiliary transport; it never falls back to inline
+publication.
+
+Root publication with references uses schema v2 and the configured
+`SourceSessionStore` bound to the reader's backend and private store. It revalidates
+the full proof while holding blob then execution/source transactions, commits with
+the captured CAS, and updates the ledger, raw payload, provider state, and admission
+fingerprint only from the returned committed snapshot. Empty-reference checkpoints
+remain the generic schema-v1 path. A missing proof cannot downgrade covered
+retrieval evidence or a prior dependent checkpoint to schema v1; source conflicts
+or write failures leave the existing projection unchanged without retrying or
+regenerating a summary.
+
+Isolated fresh and child streams may create local dependency-bearing checkpoints
+after the same proof and current-authorization validation. They never mutate durable
+root checkpoint metadata. Their source comparison is exact for the admitted stream
+while retaining the existing allowance for unrelated root or sibling appends.
+
+Focused verification covers exact prepared payload identity, reader/schema and
+no-transport failure paths, schema-v2 root commits, multi-fold revocation before a
+second provider call, final CAS failure, local proof scope, reference carry-forward
+and deduplication, direct runner admission, and a real migration-engine sequence:
+attested read, actual retrieval receipt, pressure compaction, schema-v2 checkpoint,
+and a new loop invocation that admits it before transport. The focused command
+covering checkpoint, source-compaction, summary, projection, and integration tests
+passed 104 tests. The required network-denied session and agent regression command
+passed 685 tests with the two existing guarded plugin fixtures deselected.
+
+Package C remains outstanding: projected auxiliary substitution is disabled. General
+producer adapters, cross-stream grants and handoff, artifact rematerialization,
+default artifact configuration/private-root factories, migration-guard removal, and
+runtime activation remain outstanding as well.

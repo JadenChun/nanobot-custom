@@ -95,14 +95,12 @@ def _require_candidate(proof: SummaryDependencyProof, snapshot: SourceSnapshot) 
     candidate = proof.candidate
     if type(candidate) is not SourceCompactionCandidate or candidate.snapshot != snapshot:
         raise SourceValidationError('Summary dependency proof source changed')
-    if candidate.stream_id is not None:
-        raise SourceValidationError('Dependent checkpoint proof requires root source evidence')
     if type(candidate.previous_boundary) is not int or candidate.previous_boundary < 0:
         raise SourceValidationError('Invalid summary dependency proof boundary')
     previous = candidate.previous_checkpoint
     if (candidate.previous_boundary == 0) != (previous is None):
         raise SourceValidationError('Invalid accepted summary checkpoint state')
-    if previous is not None:
+    if previous is not None and candidate.stream_id is None:
         if type(previous) is not CheckpointNode or not isinstance(snapshot.checkpoint, dict):
             raise SourceValidationError('Accepted summary checkpoint is unavailable')
         stored = snapshot.checkpoint
@@ -244,36 +242,57 @@ def derive_summary_references(proof: SummaryDependencyProof, snapshot: SourceSna
     return _validated_proof(proof, snapshot).references
 
 
+def _validate_current_scope(candidate: SourceCompactionCandidate,
+                            snapshot: SourceSnapshot) -> None:
+    """Require exact root state or exact admitted-stream history before use."""
+    captured = candidate.snapshot
+    if candidate.stream_id is None:
+        if snapshot != captured:
+            raise ArtifactValidationError('Dependent checkpoint source changed during validation')
+        return
+    before, after = captured.state, snapshot.state
+    if ((before.store_identity, before.session_key, before.incarnation, before.generation)
+            != (after.store_identity, after.session_key, after.incarnation, after.generation)
+            or [event for event in captured.events if event.get('_stream_id') == candidate.stream_id]
+            != [event for event in snapshot.events if event.get('_stream_id') == candidate.stream_id]):
+        raise ArtifactValidationError('Dependent local source changed during validation')
+
+
 def _validate_reader_binding(reader: ArtifactReader, snapshot: SourceSnapshot,
-                             blobs: ArtifactBlobTransaction) -> None:
+                             blobs: ArtifactBlobTransaction,
+                             candidate: SourceCompactionCandidate) -> None:
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.artifact_store import ArtifactBlobTransaction
 
     if type(reader) is not ArtifactReader or type(blobs) is not ArtifactBlobTransaction:
         raise ArtifactValidationError('Dependent checkpoint requires trusted artifact access')
     writer = reader.writer
-    source = writer.store
     store = reader.store
-    if (reader.mode != 'root_history' or writer.parent_stream_id is not None
-            or source._artifact_store is not store or blobs._store is not store
-            or store.workspace_id != source._backend.sessions_dir.name
+    if (blobs._store is not store
+            or store.workspace_id != writer.store._backend.sessions_dir.name
             or store.session_key != snapshot.state.session_key
             or store.incarnation != snapshot.state.incarnation
             or store.generation != snapshot.state.generation
             or writer.owner.key != snapshot.state.session_key
-            or source._store_identity != snapshot.state.store_identity):
+            or writer.store._store_identity != snapshot.state.store_identity):
         raise ArtifactValidationError('Dependent checkpoint artifact access binding changed')
+    if candidate.stream_id is None:
+        if reader.mode != 'root_history' or writer.parent_stream_id is not None:
+            raise ArtifactValidationError('Dependent root checkpoint requires root reader admission')
+    elif (reader.mode != 'isolated_stream' or writer.stream_id != candidate.stream_id):
+        raise ArtifactValidationError('Dependent local checkpoint requires isolated reader admission')
     writer.owner.validate_dispatch()
-    if writer.owner.read_snapshot() != snapshot:
-        raise ArtifactValidationError('Dependent checkpoint source changed during validation')
+    _validate_current_scope(candidate, writer.owner.read_snapshot())
 
 
 def validate_summary_dependencies(proof: SummaryDependencyProof, snapshot: SourceSnapshot,
                                   reader: ArtifactReader, blobs: ArtifactBlobTransaction) -> tuple[str, ...]:
     """Recheck proof claims against current admission, manifests, and durable bytes."""
 
-    references = derive_summary_references(proof, snapshot)
-    _validate_reader_binding(reader, snapshot, blobs)
+    candidate = _require_candidate(proof, proof.candidate.snapshot)
+    references = derive_summary_references(proof, candidate.snapshot)
+    _validate_current_scope(candidate, snapshot)
+    _validate_reader_binding(reader, snapshot, blobs, candidate)
     manifests = {item.reference: item for item in
                  published_artifacts(snapshot, workspace_id=reader.store.workspace_id)}
     for reference in references:

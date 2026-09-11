@@ -61,6 +61,7 @@ from nanobot.utils.runtime import ensure_nonempty_tool_result
 if TYPE_CHECKING:
     from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.providers.base import LLMProvider
+    from nanobot.session.checkpoint_dependencies import SummaryDependencyProof, SummaryEvidence
     from nanobot.session.source_request import SourceRequestLedger
     from nanobot.session.turn_writer import SourceTurnWriter
     from nanobot.utils.llm_runtime import LLMRuntime
@@ -337,6 +338,9 @@ class ContextGovernor:
             definition.get('type') == 'function'
             and definition.get('function', {}).get('name') == 'read_artifact'
             for definition in tool_definitions or []))
+        if not enabled and not any(
+                isinstance(node, SourceNode) and node.artifact is not None for node in active.nodes):
+            return active.with_runtime(*notes)
         updated = projector.prepare(active, enabled=enabled)
         source.validate_transcript(updated)
         if (source.has_pending_requests or source.projection_epoch != epoch or source.transcript != active
@@ -365,9 +369,70 @@ class ContextGovernor:
             accepted_boundary=compaction.admission.boundary, accepted_checkpoint=compaction.admission.checkpoint)
         return SourceCompactionAttempt(candidate, source.projection_epoch, notes, deepcopy(tool_definitions))
 
+    @staticmethod
+    def _dependency_reader(state: ModelRequestState, attempt: SourceCompactionAttempt):
+        """Return the exact reader and retrieval schema carried by the main request."""
+        from nanobot.agent.tools.artifact import ReadArtifactTool
+
+        compaction = state.source_compaction
+        if compaction is None:
+            raise SourceValidationError('Source compaction state is unavailable')
+        tool = state.config.tools.get('read_artifact')
+        if type(tool) is not ReadArtifactTool or tool.reader.writer is not compaction.writer:
+            raise SourceValidationError('Dependent source compaction requires an admitted artifact reader')
+        if not ContextGovernor._has_active_retrieval_schema(state, attempt):
+            raise SourceValidationError('Dependent source compaction requires the active retrieval schema')
+        candidate = attempt.candidate
+        if candidate.stream_id is None:
+            if tool.reader.mode != 'root_history' or compaction.writer.parent_stream_id is not None:
+                raise SourceValidationError('Dependent root compaction requires root reader admission')
+        elif tool.reader.mode != 'isolated_stream' or compaction.writer.stream_id != candidate.stream_id:
+            raise SourceValidationError('Dependent local compaction requires isolated reader admission')
+        return tool.reader
+
+    @staticmethod
+    def _has_active_retrieval_schema(state: ModelRequestState,
+                                     attempt: SourceCompactionAttempt) -> bool:
+        from nanobot.agent.tools.artifact import ReadArtifactTool
+
+        tool = state.config.tools.get('read_artifact')
+        return (type(tool) is ReadArtifactTool and attempt.tool_definitions is not None
+                and any(definition == tool.to_schema() for definition in attempt.tool_definitions))
+
+    @staticmethod
+    def _preflight_summary_dependencies(state: ModelRequestState, attempt: SourceCompactionAttempt,
+                                        proof: SummaryDependencyProof) -> None:
+        """Validate dependencies under the blob lock immediately before transport."""
+        from nanobot.session.checkpoint_dependencies import (
+            derive_summary_references,
+            validate_summary_dependencies,
+        )
+
+        source, compaction = state.source, state.source_compaction
+        if source is None or compaction is None or source.has_pending_requests:
+            raise SourceValidationError('Source projection changed during compaction')
+        if (source.projection_epoch != attempt.projection_epoch
+                or source.transcript != attempt.candidate.transcript
+                or compaction.raw_messages != attempt.candidate.transcript.messages()
+                or compaction.stream_id != attempt.candidate.stream_id):
+            raise SourceValidationError('Source projection changed during compaction')
+        compaction.writer.owner.validate_dispatch()
+        references = derive_summary_references(proof, attempt.candidate.snapshot)
+        if not references:
+            return
+        reader = ContextGovernor._dependency_reader(state, attempt)
+        from nanobot.session.execution_owner import execution_transaction
+
+        with reader.store.transaction() as blobs:
+            with execution_transaction(reader.writer.store._backend, reader.writer.owner.key,
+                                       reader.writer.owner):
+                current = reader.writer.owner.read_snapshot()
+                validate_summary_dependencies(proof, current, reader, blobs)
+
     def publish_source_compaction(self, state: ModelRequestState, attempt: SourceCompactionAttempt, *,
                                   boundary: int, summary: str,
-                                  auxiliary_usage: dict[str, int] | None) -> SourceTranscript:
+                                  auxiliary_usage: dict[str, int] | None,
+                                  proof: SummaryDependencyProof | None = None) -> SourceTranscript:
         """Validate the complete payload, commit under captured CAS, then publish.
 
         There is no await between durable publication and replacing the ledger/raw
@@ -388,7 +453,23 @@ class ContextGovernor:
         if auxiliary_usage is not None and (not auxiliary_usage or any(
                 type(value) is not int or value < 0 for value in auxiliary_usage.values())):
             raise SourceValidationError('Invalid source auxiliary usage')
-        checkpoint = CheckpointNode(uuid4().hex, summary)
+        references: tuple[str, ...] = ()
+        if proof is not None:
+            from nanobot.session.checkpoint_dependencies import (
+                SummaryDependencyProof,
+                derive_summary_references,
+            )
+
+            if (type(proof) is not SummaryDependencyProof or proof.candidate != candidate
+                    or not proof.chunks or proof.chunks[-1].evidence.boundary != boundary
+                    or proof.chunks[-1].summary != summary):
+                raise SourceValidationError('Source compaction proof does not match the final fold')
+            references = derive_summary_references(proof, candidate.snapshot)
+        elif ((candidate.previous_checkpoint is not None
+               and candidate.previous_checkpoint.artifact_references)
+              or candidate.summary_evidence(boundary).retrievals):
+            raise SourceValidationError('Dependent source compaction requires a complete proof')
+        checkpoint = CheckpointNode(uuid4().hex, summary, references)
         active = candidate.rebuild(boundary, checkpoint)
         # Validate local publication before any durable mutation.
         source.validate_transcript(active)
@@ -399,9 +480,10 @@ class ContextGovernor:
         writer = compaction.writer
         writer.owner.validate_dispatch()
         captured = candidate.snapshot
+        committed = None
         if candidate.stream_id is None:
             proposal = {
-                'schema_version': 1, 'digest_version': 1, 'summary_format_version': 1,
+                'schema_version': 2 if references else 1, 'digest_version': 1, 'summary_format_version': 1,
                 'session_generation': captured.state.generation,
                 'source_revision': captured.state.revision,
                 'checkpoint_id': checkpoint.checkpoint_id,
@@ -409,27 +491,60 @@ class ContextGovernor:
                 'producing_model': compaction.runtime.model,
                 'producing_provider': compaction.runtime.provider.provider_name,
                 'digest_algorithm': 'sha256', 'created_at': datetime.now(timezone.utc).isoformat(),
-                'summary': summary, 'artifact_references': [], 'boundary': boundary,
+                'summary': summary, 'artifact_references': list(references), 'boundary': boundary,
                 'boundary_event_id': captured.events[boundary - 1]['_event_id'],
                 'prefix_digest': prefix_digest(captured.events, boundary),
                 'auxiliary_usage': auxiliary_usage,
                 'projection_scope': 'root', 'projection_version': 1,
             }
-            writer.store.commit_context_checkpoint(writer.owner.key, captured.state, proposal, owner=writer.owner)
+            if references:
+                from nanobot.session.source_store import SourceSessionStore
+
+                reader = self._dependency_reader(state, attempt)
+                configured = SourceSessionStore(writer.store._backend, artifact_store=reader.store)
+                with reader.store.transaction() as blobs:
+                    committed = configured.commit_dependent_context_checkpoint(
+                        writer.owner.key, captured.state, proposal, proof,
+                        owner=writer.owner, reader=reader, blobs=blobs,
+                    )
+            else:
+                committed = writer.store.commit_context_checkpoint(
+                    writer.owner.key, captured.state, proposal, owner=writer.owner,
+                )
+        elif references:
+            from nanobot.session.checkpoint_dependencies import validate_summary_dependencies
+            from nanobot.session.execution_owner import execution_transaction
+
+            reader = self._dependency_reader(state, attempt)
+            with reader.store.transaction() as blobs:
+                with execution_transaction(reader.writer.store._backend, reader.writer.owner.key,
+                                           reader.writer.owner):
+                    current = writer.owner.read_snapshot()
+                    before, after = captured.state, current.state
+                    if ((before.store_identity, before.session_key, before.incarnation, before.generation)
+                            != (after.store_identity, after.session_key, after.incarnation, after.generation)
+                            or [event for event in captured.events
+                                if event.get('_stream_id') == candidate.stream_id]
+                            != [event for event in current.events
+                                if event.get('_stream_id') == candidate.stream_id]):
+                        raise SourceValidationError('Local source changed during compaction')
+                    validate_summary_dependencies(proof, current, reader, blobs)
         else:
             current = writer.owner.read_snapshot()
             before, after = captured.state, current.state
             if ((before.store_identity, before.session_key, before.incarnation, before.generation)
                     != (after.store_identity, after.session_key, after.incarnation, after.generation)
-                    or [e for e in captured.events if e.get('_stream_id') == candidate.stream_id]
-                    != [e for e in current.events if e.get('_stream_id') == candidate.stream_id]):
+                    or [event for event in captured.events if event.get('_stream_id') == candidate.stream_id]
+                    != [event for event in current.events if event.get('_stream_id') == candidate.stream_id]):
                 raise SourceValidationError('Local source changed during compaction')
         source.replace_projection(active)
         compaction.raw_messages[:] = active.messages()
         compaction.admission.initialized = True
         if candidate.stream_id is None:
             compaction.admission.boundary, compaction.admission.checkpoint = boundary, checkpoint
-            compaction.admission.fingerprint = writer.owner.read_snapshot().state.checkpoint_fingerprint
+            if committed is None:
+                raise SourceValidationError('Source checkpoint commit did not return a snapshot')
+            compaction.admission.fingerprint = committed.state.checkpoint_fingerprint
         if candidate.stream_id is not None:
             compaction.local_boundary, compaction.local_checkpoint = boundary, checkpoint
         state.source_view = view
@@ -443,6 +558,10 @@ class ContextGovernor:
                                      tool_definitions: list[dict[str, Any]] | None) -> SourceTranscript:
         """Summarize eligible closed source chunks at 90% pressure, targeting 60%."""
         from nanobot.agent.memory import Consolidator
+        from nanobot.session.checkpoint_dependencies import (
+            ConsumedSummaryChunk,
+            SummaryDependencyProof,
+        )
 
         compaction = state.source_compaction
         budget = self.input_budget(state.config)
@@ -457,7 +576,17 @@ class ContextGovernor:
         if not candidate.boundaries:
             return view  # The caller still enforces the hard limit before transport.
         final_boundary = candidate.boundaries[-1]
-        if not candidate.evidence(final_boundary):
+        final_evidence = candidate.summary_evidence(final_boundary)
+        if not final_evidence.nodes:
+            return view
+        dependencies_present = bool(
+            final_evidence.retrievals
+            or candidate.previous_checkpoint is not None and candidate.previous_checkpoint.artifact_references
+        )
+        if dependencies_present and not self._has_active_retrieval_schema(state, attempt):
+            # The active main request cannot resolve a dependency-bearing
+            # checkpoint. Keep canonical source and let the final main budget
+            # guard decide whether the request can proceed.
             return view
         target = int(budget * 0.6)
         preview = candidate.rebuild(final_boundary, CheckpointNode('preview', 'x')).with_runtime(*attempt.request_notes)
@@ -467,15 +596,28 @@ class ContextGovernor:
             self.ensure_request_fits(state.config, preview.messages(), tool_definitions=tool_definitions)
             raise SourceValidationError('No room for a bounded source summary')
         allowance = min(2048, max(1, (target if fixed_tokens < target else budget) - fixed_tokens))
+        prepared_payloads: dict[tuple[int, int, str | None], list[dict[str, Any]]] = {}
+
+        def prepared_payload(evidence: SummaryEvidence,
+                             previous_summary: str | None) -> list[dict[str, Any]]:
+            key = (evidence.after, evidence.boundary, previous_summary)
+            payload = prepared_payloads.get(key)
+            if payload is None:
+                payload = Consolidator.source_summary_messages(
+                    [node.message for node in evidence.nodes], previous_summary,
+                )
+                prepared_payloads[key] = payload
+            return payload
+
         # Reject impossible indivisible groups across the intended prefix before
         # spending any auxiliary calls on an earlier fitting group. Folded
         # payloads are still checked exactly before every actual call.
         group_start = candidate.previous_boundary
         for boundary in candidate.boundaries:
-            rows = [node.message for node in candidate.evidence(boundary, after=group_start)]
-            if not rows:
+            evidence = candidate.summary_evidence(boundary, after=group_start)
+            if not evidence.nodes:
                 continue
-            payload = Consolidator.source_summary_messages(rows, None)
+            payload = prepared_payload(evidence, None)
             tokens, _ = estimate_prompt_tokens_chain(compaction.runtime.provider,
                 compaction.runtime.model, payload, None)
             if tokens + allowance + SNIP_SAFETY_BUFFER > compaction.runtime.context_window_tokens:
@@ -487,30 +629,36 @@ class ContextGovernor:
         compaction_id = uuid4().hex
         cursor = candidate.previous_boundary
         summary = candidate.previous_checkpoint.summary if candidate.previous_checkpoint is not None else None
+        consumed: list[ConsumedSummaryChunk] = []
         try:
             await state.events.emit(ContextCompactionEvent(compaction_id=compaction_id, phase='started'))
             for _ in range(4):
                 chosen = None
                 evidence = None
+                prepared = None
                 # Search exact closed chunks, without truncating an indivisible
                 # tool group or folding covered pin text into evidence again.
                 for boundary in reversed(candidate.boundaries):
                     if boundary <= cursor:
                         continue
-                    rows = [node.message for node in candidate.evidence(boundary, after=cursor)]
-                    if not rows:
+                    selected = candidate.summary_evidence(boundary, after=cursor)
+                    if not selected.nodes:
                         continue
-                    payload = Consolidator.source_summary_messages(rows, summary)
+                    payload = prepared_payload(selected, summary)
                     tokens, _ = estimate_prompt_tokens_chain(compaction.runtime.provider,
                         compaction.runtime.model, payload, None)
                     if tokens + allowance + SNIP_SAFETY_BUFFER <= compaction.runtime.context_window_tokens:
-                        chosen, evidence = boundary, rows
+                        chosen, evidence, prepared = boundary, selected, payload
                         break
-                if chosen is None or evidence is None:
+                if chosen is None or evidence is None or prepared is None:
                     raise SourceValidationError('Eligible source chunk exceeds auxiliary budget')
-                compaction.writer.owner.validate_dispatch()
+                preflight = SummaryDependencyProof(candidate, tuple([
+                    *consumed,
+                    ConsumedSummaryChunk(evidence, summary, 'Preflight dependency validation.'),
+                ]))
+                self._preflight_summary_dependencies(state, attempt, preflight)
                 try:
-                    result = await Consolidator.summarize_source_chunk(evidence, summary,
+                    result = await Consolidator.summarize_prepared_source_chunk(prepared,
                         runtime=compaction.runtime, max_output_tokens=allowance)
                 except BaseException:
                     metrics.calls += 1
@@ -523,6 +671,7 @@ class ContextGovernor:
                     metrics.usage = result.usage if metrics.usage is None else metrics.usage + result.usage
                 if result.summary is None or result.status != 'complete':
                     raise SourceValidationError('Bounded source summary failed: ' + result.status)
+                consumed.append(ConsumedSummaryChunk(evidence, summary, result.summary))
                 summary, cursor = result.summary, chosen
                 metrics.boundary = cursor
                 rebuilt = candidate.rebuild(cursor, CheckpointNode('preview', summary)).with_runtime(*attempt.request_notes)
@@ -536,7 +685,8 @@ class ContextGovernor:
                 key: value for key, value in metrics.usage.to_dict().items() if type(value) is int
             }
             published = self.publish_source_compaction(state, attempt, boundary=cursor,
-                                                      summary=summary, auxiliary_usage=usage)
+                                                      summary=summary, auxiliary_usage=usage,
+                                                      proof=SummaryDependencyProof(candidate, tuple(consumed)))
             metrics.status = 'succeeded'
         except BaseException as exc:
             metrics.status = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'

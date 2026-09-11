@@ -55,6 +55,21 @@ async def test_summary_is_observed_once_and_has_no_store_dependency():
     observer.assert_called_once()
 
 
+async def test_prepared_summary_sends_the_exact_preflighted_payload_unchanged():
+    provider = SummaryProvider(LLMResponse(content='Prepared summary.'))
+    prepared = [
+        {'role': 'system', 'content': 'preflighted instruction'},
+        {'role': 'user', 'content': '{"exact":"canonical evidence"}'},
+    ]
+    result = await Consolidator.summarize_prepared_source_chunk(
+        prepared, runtime=runtime(provider), max_output_tokens=32,
+    )
+    assert result.status == 'complete'
+    assert provider.calls[0][0] is prepared
+    assert provider.calls[0][0] == prepared
+    assert provider.calls[0][1]['tools'] is None
+
+
 @pytest.mark.parametrize('response', [
     LLMResponse(content=''), LLMResponse(content='partial', finish_reason='length'),
     LLMResponse(content='error', finish_reason='error'),
