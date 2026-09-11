@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import re
@@ -941,22 +940,17 @@ class LLMProvider(ABC):
     def conversation_state_transport_receipt(
         self,
         model: str | None = None,
-    ) -> ProviderConversationTransportReceipt:
-        """Return the private concrete-transport identity for continuation.
+    ) -> ProviderConversationTransportReceipt | None:
+        """Return the expected concrete-transport receipt when one is proven.
 
-        Provider implementations with routing that cannot be represented by
-        the configured endpoint override this method.  Hashing the configured
-        credential lets a restored state reject an account rotation without
-        ever recording the credential itself.
+        This base class deliberately makes no claim.  A provider may expose a
+        receipt only when it can bind an opaque continuation to an immutable
+        credential, stable endpoint, concrete protocol, and selected wire
+        model.  In particular, callers must never synthesize an equivalent
+        receipt from a generic provider object after the transport returned.
         """
-        account_material = self.api_key or "<unconfigured>"
-        return ProviderConversationTransportReceipt(
-            provider=self.provider_name,
-            account=hashlib.sha256(account_material.encode("utf-8")).hexdigest(),
-            endpoint=self.api_base or "<default>",
-            protocol=f"{type(self).__module__}.{type(self).__qualname__}",
-            model=model or self.get_default_model(),
-        )
+        _ = model
+        return None
 
     def supports_native_compaction(self, model: str | None = None) -> bool:
         """Whether requests may include provider-native context compaction."""

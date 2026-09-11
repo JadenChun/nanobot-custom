@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
+from hashlib import sha256
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from loguru import logger
 from openai import AsyncOpenAI
@@ -32,6 +34,7 @@ from nanobot.providers.base import (
     LLMResponse,
     ProviderCallContext,
     ProviderConversationState,
+    ProviderConversationTransportReceipt,
 )
 from nanobot.providers.openai_responses import (
     ResponsesStreamCapture,
@@ -48,6 +51,28 @@ from nanobot.providers.openai_responses import (
 )
 
 _AZURE_OPENAI_SCOPE = "https://cognitiveservices.azure.com/.default"
+
+
+def _normalized_azure_responses_endpoint(api_base: str) -> str | None:
+    """Return the normalized actual Responses base used by this client."""
+    try:
+        parsed = urlsplit(api_base.strip())
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    host = parsed.hostname.lower()
+    authority = f"{host}:{port}" if port is not None else host
+    path = parsed.path.rstrip("/")
+    return f"https://{authority}{path}/openai/v1"
 
 
 class _AzureTokenProvider:
@@ -134,6 +159,8 @@ class AzureOpenAIProvider(LLMProvider):
         else:
             self._token_provider = _AzureTokenProvider()
             client_api_key = self._token_provider
+        self._bound_state_credential = api_key if api_key.strip() else None
+        self._bound_state_endpoint = _normalized_azure_responses_endpoint(api_base)
 
         # SDK client targeting the Azure Responses API endpoint
         base_url = f"{api_base.rstrip('/')}/openai/v1/"
@@ -167,9 +194,41 @@ class AzureOpenAIProvider(LLMProvider):
         state: ProviderConversationState,
         model: str | None = None,
     ) -> bool:
-        return responses_state_matches(
+        receipt = self.conversation_state_transport_receipt(model)
+        return (
+            receipt is not None
+            and state.transport_receipt == receipt
+            and responses_state_matches(
             state,
             provider=self._responses_state_provider(),
+            model=model or self.default_model,
+            )
+        )
+
+    def supports_bound_conversation_state(self) -> bool:
+        """Return whether this instance has an immutable static-key transport."""
+        return (
+            self._token_provider is None
+            and self._bound_state_credential is not None
+            and self._bound_state_endpoint is not None
+            and _normalized_azure_responses_endpoint(self.api_base)
+            == self._bound_state_endpoint
+        )
+
+    def conversation_state_transport_receipt(
+        self,
+        model: str | None = None,
+    ) -> ProviderConversationTransportReceipt | None:
+        """Return the static Azure Responses transport receipt, when eligible."""
+        if not self.supports_bound_conversation_state():
+            return None
+        assert self._bound_state_credential is not None
+        assert self._bound_state_endpoint is not None
+        return ProviderConversationTransportReceipt(
+            provider="azure_openai",
+            account=sha256(self._bound_state_credential.encode("utf-8")).hexdigest(),
+            endpoint=self._bound_state_endpoint,
+            protocol="azure_openai.responses.v1",
             model=model or self.default_model,
         )
 
@@ -369,6 +428,9 @@ class AzureOpenAIProvider(LLMProvider):
                 state_provider=self._responses_state_provider(),
                 state_model=str(body["model"]),
                 state_input_items=cast(list[dict[str, Any]], body["input"]),
+                transport_receipt=self.conversation_state_transport_receipt(
+                    str(body["model"])
+                ),
             )
         except FinalizedRequestBudgetExceeded:
             raise
@@ -416,17 +478,22 @@ class AzureOpenAIProvider(LLMProvider):
                 reasoning_content=reasoning_content,
             )
             if capture.completed and is_replayable_finish_reason(finish_reason):
+                transport_receipt = self.conversation_state_transport_receipt(
+                    str(body["model"])
+                )
                 result.provider_state = build_responses_state(
                     provider=self._responses_state_provider(),
                     model=str(body["model"]),
                     input_items=cast(list[dict[str, Any]], body["input"]),
                     output_items=capture.output_items,
                     usage=usage,
+                    transport_receipt=transport_receipt,
                 )
                 result.provider_compaction_state = build_responses_compaction_state(
                     provider=self._responses_state_provider(),
                     model=str(body["model"]),
                     output_items=capture.output_items,
+                    transport_receipt=transport_receipt,
                 )
                 result.provider_compaction_applied = (
                     result.provider_compaction_state is not None

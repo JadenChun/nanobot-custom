@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 from copy import deepcopy
 from dataclasses import replace
 from unittest.mock import MagicMock
@@ -20,6 +21,7 @@ from nanobot.providers.base import (
 from nanobot.providers.conversation_state import (
     ConversationRequestBinding,
     ProviderConversationStateController,
+    ProviderStateSettlement,
     allows_conversation_message_merge,
 )
 
@@ -69,6 +71,14 @@ def _state(label: str, *, pending: list[dict] | None = None) -> ProviderConversa
             "context_tokens": 42,
         },
         pending_messages=pending or [],
+        transport_receipt=ProviderConversationTransportReceipt(
+            provider="fixture",
+            account="account-digest",
+            endpoint="https://example.test/v1",
+            protocol="fixture.responses",
+            model="gpt-5.6",
+        ),
+        continuation_metadata_present=True,
     )
 
 
@@ -119,6 +129,121 @@ def test_controller_replays_only_messages_after_provider_output() -> None:
     assert provider_context.conversation_state.payload == state.payload
     assert provider_context.conversation_state.pending_messages == [tool_message]
     assert controller.checkpoint(messages).pending_messages == [tool_message]
+
+
+def test_controller_rejects_candidate_without_the_concrete_transport_receipt() -> None:
+    provider = _provider()
+    messages = [{"role": "user", "content": "hello"}]
+    controller = ProviderConversationStateController(
+        provider=provider,
+        model="gpt-5.6",
+        messages=messages,
+    )
+    controller.prepare_request(messages, context_window_tokens=200_000, binding=_binding())
+
+    unreceipted = _state("candidate")
+    unreceipted.transport_receipt = None
+    assert controller.observe_response(
+        LLMResponse(content="done", provider_state=unreceipted),
+        messages,
+    ) is None
+
+    controller.prepare_request(messages, context_window_tokens=200_000, binding=_binding())
+    forged = _state("candidate")
+    forged.transport_receipt = ProviderConversationTransportReceipt(
+        provider="fixture",
+        account="other-account-digest",
+        endpoint="https://example.test/v1",
+        protocol="fixture.responses",
+        model="gpt-5.6",
+    )
+    assert controller.observe_response(
+        LLMResponse(content="done", provider_state=forged),
+        messages,
+    ) is None
+
+
+def test_settlement_handle_requires_its_exact_detached_candidate() -> None:
+    provider = _provider()
+    messages = [{"role": "user", "content": "hello"}]
+    controller = ProviderConversationStateController(
+        provider=provider,
+        model="gpt-5.6",
+        messages=messages,
+    )
+    controller.prepare_request(messages, context_window_tokens=200_000, binding=_binding())
+    settlement = controller.observe_response(
+        LLMResponse(content="done", provider_state=_state("candidate")),
+        messages,
+    )
+
+    assert isinstance(settlement, ProviderStateSettlement)
+    candidate = settlement.candidate_for_persistence()
+    assert candidate is not None
+    assert candidate is settlement.candidate_for_persistence()
+    assert not settlement.commit_persisted(candidate.with_pending_messages([]))
+    assert settlement.candidate_for_persistence() is None
+    assert controller.finish(messages) is None
+
+    controller.prepare_request(messages, context_window_tokens=200_000, binding=_binding())
+    settlement = controller.observe_response(
+        LLMResponse(content="done", provider_state=_state("candidate")),
+        messages,
+    )
+    assert isinstance(settlement, ProviderStateSettlement)
+    candidate = settlement.candidate_for_persistence()
+    assert candidate is not None
+    assert settlement.commit_persisted(candidate)
+    assert settlement.candidate_for_persistence() is None
+    assert not settlement.commit_persisted(candidate)
+    assert not settlement.discard()
+
+
+def test_settlement_handle_is_nonserializable_and_late_handles_cannot_commit() -> None:
+    provider = _provider()
+    messages = [{"role": "user", "content": "hello"}]
+    controller = ProviderConversationStateController(
+        provider=provider,
+        model="gpt-5.6",
+        messages=messages,
+    )
+    controller.prepare_request(messages, context_window_tokens=200_000, binding=_binding())
+    settlement = controller.observe_response(
+        LLMResponse(content="done", provider_state=_state("candidate")),
+        messages,
+    )
+    assert isinstance(settlement, ProviderStateSettlement)
+    with pytest.raises(TypeError, match="ProviderStateSettlement"):
+        pickle.dumps(settlement)
+
+    candidate = settlement.candidate_for_persistence()
+    assert candidate is not None
+    controller.prepare_request(messages, context_window_tokens=200_000, binding=_binding())
+    assert not settlement.commit_persisted(candidate)
+    assert controller.finish(messages) is None
+
+
+def test_settlement_rejects_a_mutated_exact_candidate() -> None:
+    provider = _provider()
+    messages = [{"role": "user", "content": "hello"}]
+    controller = ProviderConversationStateController(
+        provider=provider,
+        model="gpt-5.6",
+        messages=messages,
+    )
+    controller.prepare_request(messages, context_window_tokens=200_000, binding=_binding())
+    settlement = controller.observe_response(
+        LLMResponse(content="done", provider_state=_state("candidate")),
+        messages,
+    )
+
+    assert isinstance(settlement, ProviderStateSettlement)
+    candidate = settlement.candidate_for_persistence()
+    assert candidate is not None
+    candidate.payload["items"][0]["encrypted_content"] = "mutated"
+    assert not settlement.commit_persisted(candidate)
+    assert settlement.candidate_for_persistence() is None
+    assert controller.finish(messages) is None
 
 
 def test_controller_rejects_same_length_edit_to_accepted_prefix() -> None:
@@ -692,6 +817,8 @@ def test_controller_estimates_active_state_plus_pending_delta(monkeypatch) -> No
             "context_tokens": 450,
         },
         pending_messages=[current_message],
+        transport_receipt=provider.conversation_state_transport_receipt.return_value,
+        continuation_metadata_present=True,
     )
     controller = ProviderConversationStateController(
         provider=provider,

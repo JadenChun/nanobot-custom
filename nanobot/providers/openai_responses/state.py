@@ -7,7 +7,11 @@ from typing import Any, cast
 
 from loguru import logger
 
-from nanobot.providers.base import LLMUsage, ProviderConversationState
+from nanobot.providers.base import (
+    LLMUsage,
+    ProviderConversationState,
+    ProviderConversationTransportReceipt,
+)
 from nanobot.providers.openai_responses.converters import convert_messages
 
 RESPONSES_STATE_KIND = "openai_responses"
@@ -85,6 +89,7 @@ def build_responses_state(
     input_items: list[dict[str, Any]],
     output_items: list[dict[str, Any]],
     usage: LLMUsage | None = None,
+    transport_receipt: ProviderConversationTransportReceipt | None = None,
 ) -> ProviderConversationState:
     """Create the canonical next state from request input and every output item."""
     unpruned_items = [*input_items, *output_items]
@@ -105,6 +110,8 @@ def build_responses_state(
         model=model,
         version=RESPONSES_STATE_VERSION,
         payload=payload,
+        transport_receipt=transport_receipt,
+        continuation_metadata_present=transport_receipt is not None,
     )
 
 
@@ -113,6 +120,7 @@ def build_responses_compaction_state(
     provider: str,
     model: str,
     output_items: list[dict[str, Any]],
+    transport_receipt: ProviderConversationTransportReceipt | None = None,
 ) -> ProviderConversationState | None:
     """Return the state at the latest native compaction output boundary."""
     latest = None
@@ -127,6 +135,8 @@ def build_responses_compaction_state(
         model=model,
         version=RESPONSES_STATE_VERSION,
         payload={_ITEMS_KEY: [deepcopy(output_items[latest])]},
+        transport_receipt=transport_receipt,
+        continuation_metadata_present=transport_receipt is not None,
     )
 
 

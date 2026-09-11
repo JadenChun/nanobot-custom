@@ -10,7 +10,13 @@ from typing import Any, AsyncGenerator, cast
 import httpx
 from loguru import logger
 
-from nanobot.providers.base import LLMResponse, LLMUsage, ToolCallRequest, parse_tool_arguments
+from nanobot.providers.base import (
+    LLMResponse,
+    LLMUsage,
+    ProviderConversationTransportReceipt,
+    ToolCallRequest,
+    parse_tool_arguments,
+)
 from nanobot.providers.openai_responses.state import (
     build_responses_compaction_state,
     build_responses_state,
@@ -593,6 +599,7 @@ def parse_response_output(
     state_provider: str | None = None,
     state_model: str | None = None,
     state_input_items: list[dict[str, Any]] | None = None,
+    transport_receipt: ProviderConversationTransportReceipt | None = None,
 ) -> LLMResponse:
     """Parse an SDK ``Response`` object into an ``LLMResponse``."""
     response_object = _response_object(response) or {}
@@ -657,11 +664,13 @@ def parse_response_output(
             input_items=state_input_items,
             output_items=output,
             usage=usage,
+            transport_receipt=transport_receipt,
         )
         result.provider_compaction_state = build_responses_compaction_state(
             provider=state_provider,
             model=state_model,
             output_items=output,
+            transport_receipt=transport_receipt,
         )
         result.provider_compaction_applied = result.provider_compaction_state is not None
         if result.provider_compaction_applied:

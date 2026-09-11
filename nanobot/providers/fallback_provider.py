@@ -171,6 +171,25 @@ class FallbackProvider(LLMProvider):
     def supports_native_compaction(self, model: str | None = None) -> bool:
         return self._primary.supports_native_compaction(model)
 
+    @staticmethod
+    def _strip_bound_continuation(response: LLMResponse) -> LLMResponse:
+        """Prevent a routing wrapper from exposing a leaf-bound receipt."""
+        states = {}
+        for field in ("provider_state", "provider_compaction_state"):
+            state = getattr(response, field)
+            if state is not None and (
+                state.conversation_binding is not None
+                or state.transport_receipt is not None
+                or state.continuation_metadata_present
+            ):
+                states[field] = replace(
+                    state,
+                    conversation_binding=None,
+                    transport_receipt=None,
+                    continuation_metadata_present=False,
+                )
+        return replace(response, **states) if states else response
+
     def _primary_call_context(
         self,
         provider_context: ProviderCallContext,
@@ -205,14 +224,15 @@ class FallbackProvider(LLMProvider):
 
     async def chat_once(self, **kwargs: Any) -> LLMResponse:
         """Keep bounded auxiliary work on its captured primary model."""
-        return await self._primary.chat_once(**kwargs)
+        return self._strip_bound_continuation(await self._primary.chat_once(**kwargs))
 
-    async def chat(self, **kwargs: Any) -> LLMResponse:
+    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
+        kwargs["messages"] = messages
         if not self._has_fallbacks:
-            return await self._primary.chat(**kwargs)
-        return await self._try_with_fallback(
+            return self._strip_bound_continuation(await self._primary.chat(**kwargs))
+        return self._strip_bound_continuation(await self._try_with_fallback(
             lambda p, kw: p.chat(**kw), kwargs, has_streamed=None
-        )
+        ))
 
     async def _run_chat_with_retry(
         self,
@@ -243,8 +263,10 @@ class FallbackProvider(LLMProvider):
                 "on_retry_status": on_retry_status,
             })
             if stream:
-                return await self._primary.chat_stream_with_retry(**call_kwargs)
-            return await self._primary.chat_with_retry(**call_kwargs)
+                return self._strip_bound_continuation(
+                    await self._primary.chat_stream_with_retry(**call_kwargs)
+                )
+            return self._strip_bound_continuation(await self._primary.chat_with_retry(**call_kwargs))
 
         has_streamed: list[bool] | None = None
         recover_stream = on_stream_recover
@@ -261,7 +283,7 @@ class FallbackProvider(LLMProvider):
                 return await provider.chat_stream_with_retry(**provider_kwargs)
             return await provider.chat_with_retry(**provider_kwargs)
 
-        return await self._retry_with_fallback(
+        return self._strip_bound_continuation(await self._retry_with_fallback(
             _call_provider,
             call_kwargs,
             original_messages,
@@ -272,7 +294,7 @@ class FallbackProvider(LLMProvider):
             has_streamed=has_streamed,
             on_stream_recover=recover_stream,
             persistent_retry_guard=should_retry_guard,
-        )
+        ))
 
     async def chat_with_context(
         self,
@@ -286,26 +308,29 @@ class FallbackProvider(LLMProvider):
             kwargs.get("model"),
         )
         if not self._has_fallbacks:
-            return await self._primary.chat_with_context(**call_kwargs)
-        return await self._try_with_fallback(
+            return self._strip_bound_continuation(
+                await self._primary.chat_with_context(**call_kwargs)
+            )
+        return self._strip_bound_continuation(await self._try_with_fallback(
             lambda p, kw: p.chat_with_context(**kw),
             call_kwargs,
             has_streamed=None,
-        )
+        ))
 
-    async def chat_stream(self, **kwargs: Any) -> LLMResponse:
+    async def chat_stream(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
+        kwargs["messages"] = messages
         on_stream_recover = kwargs.pop("on_stream_recover", None)
         if not self._has_fallbacks:
-            return await self._primary.chat_stream(**kwargs)
+            return self._strip_bound_continuation(await self._primary.chat_stream(**kwargs))
 
         has_streamed: list[bool] = [False]
         track_stream_delivery(kwargs, has_streamed)
-        return await self._try_with_fallback(
+        return self._strip_bound_continuation(await self._try_with_fallback(
             lambda p, kw: p.chat_stream(**kw),
             kwargs,
             has_streamed=has_streamed,
             on_stream_recover=on_stream_recover,
-        )
+        ))
 
     async def _retry_with_fallback(
         self,
@@ -378,8 +403,8 @@ class FallbackProvider(LLMProvider):
             return response
 
         if retry_mode != "persistent":
-            return await _call_chain(**kwargs)
-        return await self._run_with_retry(
+            return self._strip_bound_continuation(await _call_chain(**kwargs))
+        return self._strip_bound_continuation(await self._run_with_retry(
             _call_chain,
             dict(kwargs),
             original_messages,
@@ -389,7 +414,7 @@ class FallbackProvider(LLMProvider):
             on_retry_status=on_retry_status,
             should_retry_guard=persistent_retry_guard,
             on_stream_recover=on_stream_recover,
-        )
+        ))
 
     async def chat_stream_with_context(
         self,
@@ -404,16 +429,18 @@ class FallbackProvider(LLMProvider):
             kwargs.get("model"),
         )
         if not self._has_fallbacks:
-            return await self._primary.chat_stream_with_context(**call_kwargs)
+            return self._strip_bound_continuation(
+                await self._primary.chat_stream_with_context(**call_kwargs)
+            )
 
         has_streamed: list[bool] = [False]
         track_stream_delivery(call_kwargs, has_streamed)
-        return await self._try_with_fallback(
+        return self._strip_bound_continuation(await self._try_with_fallback(
             lambda p, kw: p.chat_stream_with_context(**kw),
             call_kwargs,
             has_streamed=has_streamed,
             on_stream_recover=on_stream_recover,
-        )
+        ))
 
     async def _try_with_fallback(
         self,

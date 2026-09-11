@@ -115,6 +115,22 @@ class PooledProvider(LLMProvider):
     def can_resume_conversation_state(self, state: ProviderConversationState, model=None) -> bool:
         return any(self._leaf_state(slot, state, model) is not None for slot in range(len(self._leaves)))
 
+    def _tag_response(self, slot: int, response: LLMResponse) -> LLMResponse:
+        """Keep pool ownership while removing leaf-bound continuation metadata."""
+        states = {}
+        for field in ('provider_state', 'provider_compaction_state'):
+            state = getattr(response, field)
+            if state is not None:
+                states[field] = replace(
+                    state,
+                    payload={**deepcopy(state.payload), _OWNER: self._owners[slot]},
+                    pending_messages=deepcopy(state.pending_messages),
+                    conversation_binding=None,
+                    transport_receipt=None,
+                    continuation_metadata_present=False,
+                )
+        return replace(response, **states) if states else response
+
     async def _attempt(self, kwargs, *, stream, observed, stopped, attempts=None):
         order = self._pool.request_order()
         call_kwargs = dict(kwargs)
@@ -146,14 +162,7 @@ class PooledProvider(LLMProvider):
                 call = (leaf.chat_stream_with_context if contextual else leaf.chat_stream) if stream else (
                     leaf.chat_with_context if contextual else leaf.chat)
                 response = await call(**local)
-            states = {}
-            for field in ('provider_state', 'provider_compaction_state'):
-                state = getattr(response, field)
-                if state is not None:
-                    states[field] = replace(state, payload={**deepcopy(state.payload), _OWNER: self._owners[slot]},
-                                            pending_messages=deepcopy(state.pending_messages))
-            if states:
-                response = replace(response, **states)
+            response = self._tag_response(slot, response)
             if response.finish_reason != 'error':
                 self._pool.succeeded(slot)
                 return response
@@ -165,7 +174,7 @@ class PooledProvider(LLMProvider):
                 return response
             self._pool.failed(slot, cooldown)
         stopped[0] = "exhausted"
-        return response
+        return self._tag_response(slot, response)
 
     async def chat_once(self, **kwargs: Any) -> LLMResponse:
         """One paced credential attempt; do not rotate and repeat a summary."""
@@ -178,15 +187,17 @@ class PooledProvider(LLMProvider):
             cooldown = _rotation_cooldown(response)
             if cooldown is not None:
                 self._pool.failed(slot, cooldown)
-        return response
+        return self._tag_response(slot, response)
 
-    async def chat(self, **kwargs: Any) -> LLMResponse:
+    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
+        kwargs["messages"] = messages
         return await self._attempt(kwargs, stream=False, observed=False, stopped=[False])
 
     async def chat_with_context(self, *, provider_context, **kwargs):
         return await self.chat(provider_context=provider_context, **kwargs)
 
-    async def chat_stream(self, **kwargs: Any) -> LLMResponse:
+    async def chat_stream(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
+        kwargs["messages"] = messages
         return await self._attempt(kwargs, stream=True, observed=False, stopped=[False])
 
     async def chat_stream_with_context(self, *, provider_context, **kwargs):

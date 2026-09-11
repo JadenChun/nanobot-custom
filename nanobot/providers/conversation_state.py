@@ -23,6 +23,7 @@ from nanobot.utils.helpers import estimate_prompt_tokens_chain
 _PROVIDER_STATE_OUTPUT_META = "provider_state_output"
 _PROVIDER_STATE_BOUNDARY_META = "provider_state_boundary"
 _BINDING_VERSION = 1
+_SETTLEMENT_CAPABILITY = object()
 
 
 def allows_conversation_message_merge(message: dict[str, Any]) -> bool:
@@ -75,6 +76,60 @@ def _canonical_json(value: object) -> bytes | None:
 def _digest(value: object) -> str | None:
     canonical = _canonical_json(value)
     return sha256(canonical).hexdigest() if canonical is not None else None
+
+
+class ProviderStateSettlement:
+    """One-shot authority to adopt one detached provider-state candidate.
+
+    The handle is intentionally process-local.  Its candidate is returned only
+    for the caller to persist at its durable boundary; the controller adopts it
+    only when that exact, unchanged object is committed through this handle.
+    """
+
+    __slots__ = ("_candidate", "_candidate_digest", "_controller", "_settled", "_token")
+
+    def __init__(
+        self,
+        capability: object,
+        controller: "ProviderConversationStateController",
+        token: int,
+        candidate: ProviderConversationState,
+    ) -> None:
+        if capability is not _SETTLEMENT_CAPABILITY:
+            raise TypeError("ProviderStateSettlement is controller-owned")
+        self._controller = controller
+        self._token = token
+        self._candidate = candidate
+        self._candidate_digest = _digest(candidate.to_private_record())
+        self._settled = False
+
+    def __reduce__(self) -> object:
+        raise TypeError("ProviderStateSettlement cannot be serialized")
+
+    def __reduce_ex__(self, protocol: int) -> object:
+        _ = protocol
+        raise TypeError("ProviderStateSettlement cannot be serialized")
+
+    def candidate_for_persistence(self) -> ProviderConversationState | None:
+        """Return the exact detached candidate while this handle remains live."""
+        if self._settled or not self._controller._settlement_is_current(self):
+            return None
+        return self._candidate
+
+    def commit_persisted(self, candidate: ProviderConversationState) -> bool:
+        """Adopt the candidate after its caller-owned durable commit succeeds."""
+        if self._settled:
+            return False
+        return self._controller._commit_settlement(self, candidate)
+
+    def discard(self) -> bool:
+        """Permanently reject this candidate without changing a newer one."""
+        if self._settled:
+            return False
+        return self._controller._discard_settlement(self)
+
+    def _close(self) -> None:
+        self._settled = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +268,7 @@ class ProviderConversationStateController:
         self._provisional_state: ProviderConversationState | None = None
         self._provisional_prefix: list[dict[str, Any]] | None = None
         self._provisional_invocation = 0
+        self._provisional_settlement: ProviderStateSettlement | None = None
 
     def independent_request_context(
         self,
@@ -309,16 +365,14 @@ class ProviderConversationStateController:
         # Starting another transport attempt abandons any prior response whose
         # caller did not durably settle it. This makes late callbacks unable to
         # revive an ambiguous provider handle.
-        abandoned_provisional = self._provisional_state is not None
+        abandoned_provisional = self._provisional_settlement is not None
         if abandoned_provisional:
             # The prior state only covered the request before the unrecorded
             # response. Reusing it would omit that response's assistant tool
             # call while replaying its tool result.
             self._state = None
             self._accepted_prefix = None
-            self._provisional_state = None
-            self._provisional_prefix = None
-            self._provisional_invocation += 1
+            self._clear_provisional_settlement()
         independent_context = self.independent_request_context(
             context_window_tokens=context_window_tokens,
             completion_reserve_tokens=completion_reserve_tokens,
@@ -348,9 +402,7 @@ class ProviderConversationStateController:
             # stage that candidate without reviving the discarded handle.
             self._state = None
             self._accepted_prefix = None
-            self._provisional_state = None
-            self._provisional_prefix = None
-            self._provisional_invocation += 1
+            self._clear_provisional_settlement()
             return independent_context
         if (
             self._active_binding is None
@@ -397,14 +449,13 @@ class ProviderConversationStateController:
         messages: list[dict[str, Any]],
         *,
         adopt_candidate_state: bool = True,
-    ) -> int | None:
+    ) -> ProviderStateSettlement | None:
         """Stage a response candidate without making it reusable.
 
-        The returned invocation token is single-use. A late or duplicate
-        settlement cannot revive a candidate that was invalidated or replaced.
+        The returned settlement is single-use. A late or duplicate settlement
+        cannot revive a candidate that was invalidated or replaced.
         """
-        self._provisional_state = None
-        self._provisional_prefix = None
+        self._clear_provisional_settlement()
         candidate = response.provider_state if adopt_candidate_state else None
         candidate_is_replayable = response.finish_reason in {
             "stop",
@@ -426,44 +477,47 @@ class ProviderConversationStateController:
             and receipt is not None
             and self._supports_bound_conversation_state()
             and self._provider.can_resume_conversation_state(candidate, self._model)
+            and candidate.transport_receipt == receipt
         ):
             self._provisional_invocation += 1
-            self._provisional_state = self._state_with_metadata(candidate, record, receipt)
+            self._provisional_state = self._state_with_metadata(candidate, record)
             self._provisional_prefix = deepcopy(prefix)
             self._request_messages = []
-            return self._provisional_invocation
+            settlement = ProviderStateSettlement(
+                _SETTLEMENT_CAPABILITY,
+                self,
+                self._provisional_invocation,
+                self._provisional_state,
+            )
+            self._provisional_settlement = settlement
+            return settlement
         self.invalidate()
         self._boundary = len(messages)
         return None
 
     def settle_response(
         self,
-        invocation: int,
+        settlement: ProviderStateSettlement,
         messages: list[dict[str, Any]] | None = None,
     ) -> bool:
-        """Adopt the current candidate after its mandatory record commits."""
-        if (
-            invocation != self._provisional_invocation
-            or self._provisional_state is None
-            or self._provisional_prefix is None
-        ):
+        """Compatibility adapter for a completed settlement boundary."""
+        if not isinstance(settlement, ProviderStateSettlement):
             return False
-        self._state = self._provisional_state
-        self._accepted_prefix = deepcopy(self._provisional_prefix)
-        self._boundary = len(self._accepted_prefix)
-        self._provisional_state = None
-        self._provisional_prefix = None
-        self._request_messages = []
+        candidate = settlement.candidate_for_persistence()
+        if candidate is None or not settlement.commit_persisted(candidate):
+            return False
         if messages is not None:
             self._seal_boundary(messages)
         return True
 
-    def discard_response(self, invocation: int | None = None) -> bool:
+    def discard_response(self, settlement: ProviderStateSettlement | None = None) -> bool:
         """Discard an uncertain candidate and invalidate its prior handle."""
-        if invocation is not None and invocation != self._provisional_invocation:
+        if settlement is None:
+            self.invalidate()
+            return True
+        if not isinstance(settlement, ProviderStateSettlement):
             return False
-        self.invalidate()
-        return True
+        return settlement.discard()
 
     def invalidate(self) -> None:
         """Drop live, staged, and cached state after an unsafe transition."""
@@ -473,9 +527,7 @@ class ProviderConversationStateController:
         self._active_portable_prefix = None
         self._active_binding = None
         self._active_receipt = None
-        self._provisional_state = None
-        self._provisional_prefix = None
-        self._provisional_invocation += 1
+        self._clear_provisional_settlement()
 
     @staticmethod
     def project_response_message(
@@ -522,13 +574,61 @@ class ProviderConversationStateController:
         here ensures a tool-loop follow-up cannot consume a response that has
         not yet been recorded.
         """
-        if self._provisional_state is not None:
-            return self._provisional_state.with_pending_messages([
-                *self._provisional_state.pending_messages,
-                *self._messages_after_boundary(messages),
-            ])
+        if self._provisional_settlement is not None:
+            return None
         self._state = self.checkpoint(messages)
         return self._state
+
+    def _settlement_is_current(self, settlement: ProviderStateSettlement) -> bool:
+        """Return whether *settlement* is the sole live candidate authority."""
+        return (
+            self._provisional_settlement is settlement
+            and self._provisional_state is settlement._candidate
+            and self._provisional_prefix is not None
+            and self._provisional_invocation == settlement._token
+        )
+
+    def _commit_settlement(
+        self,
+        settlement: ProviderStateSettlement,
+        candidate: ProviderConversationState,
+    ) -> bool:
+        """Adopt one exact, unchanged candidate through its live settlement."""
+        if not self._settlement_is_current(settlement):
+            settlement._close()
+            return False
+        if (
+            not isinstance(candidate, ProviderConversationState)
+            or candidate is not settlement._candidate
+            or settlement._candidate_digest is None
+            or _digest(candidate.to_private_record()) != settlement._candidate_digest
+        ):
+            self.invalidate()
+            return False
+        assert self._provisional_prefix is not None
+        self._state = candidate
+        self._accepted_prefix = deepcopy(self._provisional_prefix)
+        self._boundary = len(self._accepted_prefix)
+        self._request_messages = []
+        self._clear_provisional_settlement()
+        return True
+
+    def _discard_settlement(self, settlement: ProviderStateSettlement) -> bool:
+        """Invalidate only the active candidate associated with *settlement*."""
+        if not self._settlement_is_current(settlement):
+            settlement._close()
+            return False
+        self.invalidate()
+        return True
+
+    def _clear_provisional_settlement(self) -> None:
+        """Close and forget the active settlement without retaining its state."""
+        if self._provisional_settlement is not None:
+            self._provisional_settlement._close()
+        self._provisional_settlement = None
+        self._provisional_state = None
+        self._provisional_prefix = None
+        self._provisional_invocation += 1
 
     def _supports_bound_conversation_state(self) -> bool:
         try:
@@ -543,21 +643,7 @@ class ProviderConversationStateController:
             value = None
         if isinstance(value, ProviderConversationTransportReceipt):
             return value
-        # A third-party legacy provider can opt into state before it implements
-        # the receipt method. Bind that state to this process object only: a
-        # restored session gets a different opaque account value and therefore
-        # rebuilds from portable history. First-party providers use the typed
-        # base implementation above instead.
-        provider_type = type(self._provider)
-        runtime_identity = f"{provider_type.__module__}.{provider_type.__qualname__}:{id(self._provider)}"
-        model = self._model if isinstance(self._model, str) and self._model else "<unknown>"
-        return ProviderConversationTransportReceipt(
-            provider=runtime_identity,
-            account=sha256(runtime_identity.encode("utf-8")).hexdigest(),
-            endpoint="<legacy-runtime>",
-            protocol=runtime_identity,
-            model=model,
-        )
+        return None
 
     @staticmethod
     def _state_has_known_context(state: ProviderConversationState) -> bool:
@@ -635,7 +721,6 @@ class ProviderConversationStateController:
     def _state_with_metadata(
         state: ProviderConversationState,
         binding: dict[str, Any],
-        receipt: ProviderConversationTransportReceipt,
     ) -> ProviderConversationState:
         return ProviderConversationState(
             kind=state.kind,
@@ -645,7 +730,7 @@ class ProviderConversationStateController:
             payload=deepcopy(state.payload),
             pending_messages=deepcopy(state.pending_messages),
             conversation_binding=deepcopy(binding),
-            transport_receipt=receipt,
+            transport_receipt=state.transport_receipt,
             continuation_metadata_present=True,
         )
 

@@ -19,7 +19,7 @@ from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from ipaddress import ip_address
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from loguru import logger
 from pydantic.alias_generators import to_snake
@@ -31,6 +31,7 @@ from nanobot.providers.base import (
     LLMUsage,
     ProviderCallContext,
     ProviderConversationState,
+    ProviderConversationTransportReceipt,
     ToolCallRequest,
     parse_tool_arguments,
     resolve_stream_idle_timeout_s,
@@ -404,6 +405,30 @@ def _is_direct_openai_base(api_base: str | None) -> bool:
     return "api.openai.com" in normalized and "openrouter" not in normalized
 
 
+def _normalized_direct_openai_responses_endpoint(api_base: str | None) -> str | None:
+    """Return the sole direct OpenAI Responses base eligible for binding."""
+    if api_base is None:
+        return "https://api.openai.com/v1"
+    try:
+        parsed = urlsplit(api_base.strip())
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.hostname is None
+        or parsed.hostname.lower() != "api.openai.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or port is not None
+        or parsed.path.rstrip("/") not in {"", "/v1"}
+    ):
+        return None
+    return "https://api.openai.com/v1"
+
+
 def _responses_circuit_key(
     model: str | None,
     default_model: str,
@@ -530,11 +555,11 @@ class OpenAICompatProvider(LLMProvider):
             raise ValueError("Provider timeout must be finite and positive")
         self._configured_timeout = max(5.0, timeout) if timeout is not None else None
         self.default_model = default_model
-        self.extra_headers = extra_headers or {}
+        self.extra_headers = dict(extra_headers) if extra_headers is not None else {}
         self._spec = spec
         self._extra_body = dict(extra_body or {})
         self._api_type = api_type if spec and spec.name == "openai" else "auto"
-        self._extra_query = extra_query or {}
+        self._extra_query = dict(extra_query) if extra_query is not None else {}
         self._proxy = proxy or None
         self._native_compaction_available = True
 
@@ -543,9 +568,25 @@ class OpenAICompatProvider(LLMProvider):
         self._default_headers = {"x-session-affinity": uuid.uuid4().hex}
         if _uses_openrouter_attribution(spec, effective_base):
             self._default_headers.update(_DEFAULT_OPENROUTER_HEADERS)
-        if extra_headers:
-            self._default_headers.update(extra_headers)
+        if self.extra_headers:
+            self._default_headers.update(self.extra_headers)
         self._api_key_for_client = api_key or "no-key"
+        self._bound_state_credential = api_key if isinstance(api_key, str) and api_key.strip() else None
+        self._bound_state_endpoint = _normalized_direct_openai_responses_endpoint(
+            effective_base
+        )
+        self._bound_state_wire_headers = dict(self._default_headers)
+        self._bound_state_wire_query = dict(self._extra_query)
+        self._bound_state_construction_eligible = (
+            spec is not None
+            and spec.name == "openai"
+            and api_type == "responses"
+            and self._bound_state_credential is not None
+            and self._bound_state_endpoint is not None
+            and extra_headers is None
+            and extra_query is None
+            and not self._extra_body
+        )
         self._is_local = _is_local_endpoint(spec, effective_base)
 
         # Lazy-init: the OpenAI client and its httpx transport are expensive
@@ -1157,9 +1198,45 @@ class OpenAICompatProvider(LLMProvider):
         state: ProviderConversationState,
         model: str | None = None,
     ) -> bool:
-        return responses_state_matches(
+        receipt = self.conversation_state_transport_receipt(model)
+        return (
+            receipt is not None
+            and state.transport_receipt == receipt
+            and responses_state_matches(
             state,
             provider=self._responses_state_provider(),
+            model=self._responses_state_model(model),
+            )
+        )
+
+    def supports_bound_conversation_state(self) -> bool:
+        """Return whether a fixed direct OpenAI Responses transport is in use."""
+        return (
+            self._bound_state_construction_eligible
+            and self._spec is not None
+            and self._spec.name == "openai"
+            and self._api_type == "responses"
+            and _normalized_direct_openai_responses_endpoint(self._effective_base)
+            == self._bound_state_endpoint
+            and self._default_headers == self._bound_state_wire_headers
+            and self._extra_query == self._bound_state_wire_query
+            and not self._extra_body
+        )
+
+    def conversation_state_transport_receipt(
+        self,
+        model: str | None = None,
+    ) -> ProviderConversationTransportReceipt | None:
+        """Return the immutable direct Responses transport receipt, when eligible."""
+        if not self.supports_bound_conversation_state():
+            return None
+        assert self._bound_state_credential is not None
+        assert self._bound_state_endpoint is not None
+        return ProviderConversationTransportReceipt(
+            provider="openai",
+            account=hashlib.sha256(self._bound_state_credential.encode("utf-8")).hexdigest(),
+            endpoint=self._bound_state_endpoint,
+            protocol="openai.responses.v1",
             model=self._responses_state_model(model),
         )
 
@@ -1969,6 +2046,9 @@ class OpenAICompatProvider(LLMProvider):
                         state_provider=self._responses_state_provider(),
                         state_model=str(body["model"]),
                         state_input_items=cast(list[dict[str, Any]], body["input"]),
+                        transport_receipt=self.conversation_state_transport_receipt(
+                            str(body["model"])
+                        ),
                     )
                     self._record_responses_success(model, reasoning_effort)
                     return result
@@ -2076,18 +2156,23 @@ class OpenAICompatProvider(LLMProvider):
                         reasoning_content=reasoning_content,
                     )
                     if capture.completed and is_replayable_finish_reason(finish_reason):
+                        transport_receipt = self.conversation_state_transport_receipt(
+                            str(body["model"])
+                        )
                         result.provider_state = build_responses_state(
                             provider=self._responses_state_provider(),
                             model=str(body["model"]),
                             input_items=cast(list[dict[str, Any]], body["input"]),
                             output_items=capture.output_items,
                             usage=usage,
+                            transport_receipt=transport_receipt,
                         )
                         result.provider_compaction_state = (
                             build_responses_compaction_state(
                                 provider=self._responses_state_provider(),
                                 model=str(body["model"]),
                                 output_items=capture.output_items,
+                                transport_receipt=transport_receipt,
                             )
                         )
                         result.provider_compaction_applied = (

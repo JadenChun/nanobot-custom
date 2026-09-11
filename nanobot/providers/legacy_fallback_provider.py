@@ -81,8 +81,14 @@ class LegacyFallbackProvider(FallbackProvider):
         for field in ('provider_state', 'provider_compaction_state'):
             state = getattr(response, field)
             if state is not None:
-                states[field] = replace(state, payload={**deepcopy(state.payload), _OWNER: self._owners[slot]},
-                                        pending_messages=deepcopy(state.pending_messages))
+                states[field] = replace(
+                    state,
+                    payload={**deepcopy(state.payload), _OWNER: self._owners[slot]},
+                    pending_messages=deepcopy(state.pending_messages),
+                    conversation_binding=None,
+                    transport_receipt=None,
+                    continuation_metadata_present=False,
+                )
         return replace(response, **states) if states else response
 
     async def chat(self, **kwargs):
