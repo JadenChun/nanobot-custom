@@ -337,6 +337,25 @@ def test_independent_request_exposes_context_without_capability_check() -> None:
     provider.supports_native_compaction.assert_not_called()
 
 
+def test_independent_request_derives_hard_limits_from_runtime_capacity() -> None:
+    provider = _provider(compact=False)
+    controller = ProviderConversationStateController(
+        provider=provider,
+        model="gpt-5.6",
+        messages=[{"role": "user", "content": "hello"}],
+    )
+
+    provider_context = controller.independent_request_context(
+        context_window_tokens=200_000,
+        completion_reserve_tokens=4_096,
+    )
+
+    assert provider_context is not None
+    assert provider_context.request_limits is not None
+    assert provider_context.request_limits.total_tokens == 200_000
+    assert provider_context.request_limits.completion_reserve_tokens == 4_096
+
+
 def test_independent_request_exposes_session_id_without_token_budget() -> None:
     provider = _provider(compact=False)
     messages = [{"role": "user", "content": "hello"}]

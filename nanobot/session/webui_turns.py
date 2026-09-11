@@ -37,8 +37,9 @@ from nanobot.bus.runtime_events import (
     UserInputAccepted,
 )
 from nanobot.llm_usage.context import llm_usage_source
-from nanobot.providers.base import LLMProvider, LLMUsage
+from nanobot.providers.base import LLMProvider, LLMUsage, ProviderCallContext
 from nanobot.providers.fallback_provider import FallbackModelObserver
+from nanobot.providers.request_budget import derive_provider_request_limits
 from nanobot.runtime_context import public_history_message
 from nanobot.session.goal_state import goal_state_ws_blob
 from nanobot.session.history_visibility import is_hidden_history_message
@@ -201,6 +202,7 @@ async def maybe_generate_webui_title(
     provider: LLMProvider,
     model: str,
     target_session_key: str | None = None,
+    runtime: LLMRuntime | None = None,
 ) -> bool:
     """Generate and persist a short title for WebUI-owned sessions.
 
@@ -254,9 +256,31 @@ async def maybe_generate_webui_title(
     if assistant_text:
         prompt += f"\nAssistant: {truncate_text(assistant_text, 1_000)}"
 
+    call_provider = runtime.provider if runtime is not None else provider
+    call_model = runtime.model if runtime is not None else model
+    provider_context: ProviderCallContext | None = None
+    if runtime is not None:
+        provider_context = ProviderCallContext(
+            request_limits=derive_provider_request_limits(
+                runtime.context_window_tokens,
+                TITLE_GENERATION_MAX_TOKENS,
+            ),
+            context_window_tokens=runtime.context_window_tokens,
+        )
+
     try:
         with llm_usage_source("system"):
-            response = await provider.chat_with_retry(
+            request_kwargs: dict[str, Any] = {
+                "tools": None,
+                "model": call_model,
+                "max_tokens": TITLE_GENERATION_MAX_TOKENS,
+                "temperature": 0.2,
+                "reasoning_effort": TITLE_GENERATION_REASONING_EFFORT,
+                "retry_mode": "standard",
+            }
+            if provider_context is not None:
+                request_kwargs["provider_context"] = provider_context
+            response = await call_provider.chat_with_retry(
                 [
                     {
                         "role": "system",
@@ -267,12 +291,7 @@ async def maybe_generate_webui_title(
                     },
                     {"role": "user", "content": prompt},
                 ],
-                tools=None,
-                model=model,
-                max_tokens=TITLE_GENERATION_MAX_TOKENS,
-                temperature=0.2,
-                reasoning_effort=TITLE_GENERATION_REASONING_EFFORT,
-                retry_mode="standard",
+                **request_kwargs,
             )
     except Exception:
         logger.debug("Failed to generate webui session title for {}", session_key, exc_info=True)
@@ -300,6 +319,7 @@ async def maybe_generate_webui_title_after_turn(
     session_key: str,
     provider: LLMProvider,
     model: str,
+    runtime: LLMRuntime | None = None,
 ) -> bool:
     if channel != "websocket" or metadata.get(WEBUI_SESSION_METADATA_KEY) is not True:
         return False
@@ -312,6 +332,7 @@ async def maybe_generate_webui_title_after_turn(
         target_session_key=(
             origin_session_key if origin_session_key != session_key else None
         ),
+        runtime=runtime,
     )
 
 
@@ -811,6 +832,7 @@ class WebuiTurnCoordinator:
                 session_key=event.context.session_key,
                 provider=title_llm.provider,
                 model=title_llm.model,
+                runtime=title_llm,
             )
             if generated:
                 await self._publish_session_metadata_updated(

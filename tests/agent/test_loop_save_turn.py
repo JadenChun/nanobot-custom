@@ -21,8 +21,15 @@ from nanobot.bus.outbound_events import (
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.cron.session_turns import CRON_HISTORY_META, CRON_TRIGGER_META
-from nanobot.providers.base import LLMProvider, LLMResponse, LLMUsage, ProviderConversationState
+from nanobot.providers.base import (
+    GenerationSettings,
+    LLMProvider,
+    LLMResponse,
+    LLMUsage,
+    ProviderConversationState,
+)
 from nanobot.providers.factory import ProviderSnapshot
+from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     RUNTIME_CONTEXT_MESSAGE_META,
@@ -37,7 +44,7 @@ from nanobot.session.keys import (
     LAST_CHANNEL_METADATA_KEY,
     UNIFIED_SESSION_KEY,
 )
-from nanobot.session.manager import Session
+from nanobot.session.manager import Session, SessionManager
 from nanobot.session.recovery import (
     PENDING_FOLLOWUP_ID_KEY,
     PENDING_FOLLOWUPS_KEY,
@@ -65,6 +72,7 @@ from nanobot.session.webui_turns import (
     maybe_generate_webui_title_after_turn,
 )
 from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
+from nanobot.utils.llm_runtime import LLMRuntime
 
 
 def _agent_run_result(
@@ -359,6 +367,95 @@ async def test_generate_webui_title_only_for_marked_webui_sessions(tmp_path: Pat
         loop.provider.chat_with_retry.await_args.kwargs["reasoning_effort"]
         == TITLE_GENERATION_REASONING_EFFORT
     )
+
+
+@pytest.mark.asyncio
+async def test_generate_webui_title_carries_runtime_hard_limits_to_provider_leaf(
+    tmp_path: Path,
+) -> None:
+    class TitleProvider(LLMProvider):
+        def __init__(self) -> None:
+            super().__init__(provider_name="title-fixture")
+            self.contexts = []
+
+        def get_default_model(self) -> str:
+            return "title-model"
+
+        async def chat(self, **_kwargs) -> LLMResponse:
+            raise AssertionError("title request must retain provider context")
+
+        async def chat_with_context(self, *, provider_context, **_kwargs) -> LLMResponse:
+            self.contexts.append(provider_context)
+            return LLMResponse(content="Runtime title")
+
+    provider = TitleProvider()
+    runtime = LLMRuntime(
+        provider,
+        "title-model",
+        GenerationSettings(max_tokens=4_096),
+        8_192,
+    )
+    sessions = SessionManager(tmp_path)
+    session = sessions.get_or_create("websocket:runtime-title")
+    session.metadata[WEBUI_SESSION_METADATA_KEY] = True
+    session.add_message("user", "Give this chat a title")
+    sessions.save(session)
+
+    generated = await maybe_generate_webui_title(
+        sessions=sessions,
+        session_key=session.key,
+        provider=provider,
+        model=runtime.model,
+        runtime=runtime,
+    )
+
+    assert generated is True
+    assert len(provider.contexts) == 1
+    context = provider.contexts[0]
+    assert context.conversation_state is None
+    assert context.request_limits is not None
+    assert context.request_limits.total_tokens == 8_192
+    assert context.request_limits.completion_reserve_tokens == TITLE_GENERATION_MAX_TOKENS
+
+
+@pytest.mark.asyncio
+async def test_generate_webui_title_does_not_persist_on_final_budget_rejection(tmp_path: Path) -> None:
+    class RejectingTitleProvider(LLMProvider):
+        def __init__(self) -> None:
+            super().__init__(provider_name="title-fixture")
+
+        def get_default_model(self) -> str:
+            return "title-model"
+
+        async def chat(self, **_kwargs) -> LLMResponse:
+            raise AssertionError("title request must retain provider context")
+
+        async def chat_with_context(self, **_kwargs) -> LLMResponse:
+            raise FinalizedRequestBudgetExceeded()
+
+    provider = RejectingTitleProvider()
+    runtime = LLMRuntime(
+        provider,
+        "title-model",
+        GenerationSettings(max_tokens=4_096),
+        8_192,
+    )
+    sessions = SessionManager(tmp_path)
+    session = sessions.get_or_create("websocket:rejected-title")
+    session.metadata[WEBUI_SESSION_METADATA_KEY] = True
+    session.add_message("user", "This title must not persist")
+    sessions.save(session)
+
+    generated = await maybe_generate_webui_title(
+        sessions=sessions,
+        session_key=session.key,
+        provider=provider,
+        model=runtime.model,
+        runtime=runtime,
+    )
+
+    assert generated is False
+    assert WEBUI_TITLE_METADATA_KEY not in session.metadata
 
 
 @pytest.mark.asyncio

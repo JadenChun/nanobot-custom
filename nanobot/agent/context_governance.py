@@ -32,6 +32,7 @@ from nanobot.providers.conversation_state import (
     ProviderConversationStateController,
     allows_conversation_message_merge,
 )
+from nanobot.providers.request_budget import DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
     detach_runtime_context,
@@ -76,7 +77,7 @@ ProviderCompactionConsolidator = Callable[
     Awaitable[str | None],
 ]
 
-SNIP_SAFETY_BUFFER = 1024
+SNIP_SAFETY_BUFFER = DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER
 # read_file has its own bound; exempt it to avoid persist->read->persist loops.
 TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS = frozenset({"read_file"})
 BACKFILL_CONTENT = "[Tool result unavailable — call was interrupted or lost]"
@@ -1115,9 +1116,19 @@ class ContextGovernor:
             state.source_view = deepcopy(source_view)
             state.messages = deepcopy(prepared)
             state.tool_definitions = deepcopy(tool_definitions)
-            # Source checkpoints have not yet been wired into provider state.
-            # Keep every request portable and omit native compaction hints.
-            return prepared, ProviderCallContext(events=state.events)
+            # Source checkpoints remain portable: never resume opaque provider
+            # state, but preserve the same hard final-transport limits as a
+            # normal runtime request.
+            provider_context = state.conversation.prepare_request(
+                messages,
+                context_window_tokens=state.config.context_window_tokens,
+                completion_reserve_tokens=state.config.max_tokens,
+                resume_state=False,
+            )
+            return prepared, replace(
+                provider_context or ProviderCallContext(),
+                events=state.events,
+            )
         prepared = self.prepare_messages_for_model(state.config, messages)
         model_messages: list[dict[str, Any]] | None = prepared
         supplemental_messages: list[dict[str, Any]] | None = None
@@ -1191,6 +1202,7 @@ class ContextGovernor:
             state.conversation.prepare_request(
                 transcript,
                 context_window_tokens=state.config.context_window_tokens,
+                completion_reserve_tokens=state.config.max_tokens,
                 model_messages=model_messages,
                 supplemental_messages=supplemental_messages,
                 resume_state=not request_was_fitted,
@@ -1198,6 +1210,7 @@ class ContextGovernor:
             if transcript is not None
             else state.conversation.independent_request_context(
                 context_window_tokens=state.config.context_window_tokens,
+                completion_reserve_tokens=state.config.max_tokens,
             )
         )
         if state.events.publish is not None:

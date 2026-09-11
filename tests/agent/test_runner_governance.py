@@ -15,7 +15,9 @@ from nanobot.agent.context_governance import (
     ContextWindowExceededError,
     ModelRequestState,
 )
+from nanobot.agent.hook import AgentHook
 from nanobot.agent.runner import AgentRunner, AgentRunSpec
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.schema import AgentDefaults
 from nanobot.events import ContextCompactionEvent, EventSink
 from nanobot.providers.base import (
@@ -126,8 +128,53 @@ async def test_runner_propagates_context_governance_failure():
             max_iterations=1,
             max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         ))
-
     provider.chat_with_retry.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_runner_main_requests_carry_hard_finalized_limits(streaming: bool):
+    class StreamingHook(AgentHook):
+        def wants_streaming(self) -> bool:
+            return streaming
+
+    provider = MagicMock()
+    provider.estimate_prompt_tokens.return_value = (1, "test-counter")
+    calls = []
+
+    async def chat_with_retry(**kwargs):
+        calls.append(kwargs)
+        return LLMResponse(content="done")
+
+    async def chat_stream_with_retry(**kwargs):
+        calls.append(kwargs)
+        callback = kwargs.get("on_content_delta")
+        if callback is not None:
+            await callback("done")
+        return LLMResponse(content="done")
+
+    provider.chat_with_retry = chat_with_retry
+    provider.chat_stream_with_retry = chat_stream_with_retry
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        model="test-model",
+        context_window_tokens=1_624,
+        max_tokens=100,
+        max_iterations=1,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        hook=StreamingHook(),
+    ))
+
+    assert result.final_content == "done"
+    context = calls[0]["provider_context"]
+    assert context.request_limits is not None
+    assert context.request_limits.total_tokens == 1_624
+    assert context.request_limits.completion_reserve_tokens == 100
 
 
 @pytest.mark.asyncio
@@ -741,8 +788,9 @@ async def test_runner_fits_each_malformed_retry_with_its_actual_tools(monkeypatc
     estimated_tools: list[object] = []
     definitions = [{"type": "function", "function": {"name": "read_file"}}]
 
-    async def chat_with_retry(*, messages, tools=None, **_kwargs):
-        calls.append({"messages": [dict(message) for message in messages], "tools": tools})
+    async def chat_with_retry(*, messages, tools=None, **kwargs):
+        calls.append({"messages": [dict(message) for message in messages], "tools": tools,
+                      "provider_context": kwargs["provider_context"]})
         if len(calls) < 3:
             return LLMResponse(
                 content="bad tool request",
@@ -807,8 +855,9 @@ async def test_runner_fits_empty_response_finalization_before_dispatch(monkeypat
     provider = MagicMock(spec=LLMProvider)
     calls: list[dict] = []
 
-    async def chat_with_retry(*, messages, tools=None, **_kwargs):
-        calls.append({"messages": [dict(message) for message in messages], "tools": tools})
+    async def chat_with_retry(*, messages, tools=None, **kwargs):
+        calls.append({"messages": [dict(message) for message in messages], "tools": tools,
+                      "provider_context": kwargs["provider_context"]})
         if len(calls) < 3:
             return LLMResponse(
                 content=None,
@@ -850,6 +899,7 @@ async def test_runner_fits_empty_response_finalization_before_dispatch(monkeypat
 
     assert len(calls) == 3
     assert calls[-1]["tools"] is None
+    assert all(call["provider_context"].request_limits is not None for call in calls)
     assert all(message.get("content") != "do task" for message in calls[-1]["messages"])
     assert result.final_content == "finalized"
 
@@ -862,8 +912,9 @@ async def test_runner_fits_max_iteration_finalization_before_dispatch(monkeypatc
     calls: list[dict] = []
     oversized_result = "oversized-current-tool-result"
 
-    async def chat_with_retry(*, messages, tools=None, **_kwargs):
-        calls.append({"messages": [dict(message) for message in messages], "tools": tools})
+    async def chat_with_retry(*, messages, tools=None, **kwargs):
+        calls.append({"messages": [dict(message) for message in messages], "tools": tools,
+                      "provider_context": kwargs["provider_context"]})
         if len(calls) == 1:
             return LLMResponse(
                 content="working",
@@ -908,6 +959,7 @@ async def test_runner_fits_max_iteration_finalization_before_dispatch(monkeypatc
 
     assert len(calls) == 2
     assert calls[-1]["tools"] is None
+    assert all(call["provider_context"].request_limits is not None for call in calls)
     assert all(
         message.get("content") != oversized_result
         for message in calls[-1]["messages"]
@@ -1004,6 +1056,44 @@ async def test_changed_messages_use_local_estimate_after_reported_usage(monkeypa
 
     assert messages == []
     estimate.assert_called_once()
+
+
+async def test_source_governance_uses_stateless_context_with_hard_limits():
+    provider = MagicMock(spec=LLMProvider)
+    tools = ToolRegistry()
+    messages = [{"role": "user", "content": "source evidence"}]
+    state = ModelRequestState(
+        config=ContextGovernanceConfig(
+            provider=provider,
+            model="local-model",
+            tools=tools,
+            workspace=None,
+            session_key="source:fixture",
+            max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+            context_window_tokens=1_624,
+            max_tokens=100,
+            preserve_source=True,
+        ),
+        conversation=ProviderConversationStateController(
+            provider=provider,
+            model="local-model",
+            messages=messages,
+            session_id="source:fixture",
+        ),
+    )
+
+    prepared, provider_context = await ContextGovernor().prepare_request(
+        state,
+        messages,
+        tool_definitions=[],
+    )
+
+    assert prepared == messages
+    assert provider_context is not None
+    assert provider_context.conversation_state is None
+    assert provider_context.request_limits is not None
+    assert provider_context.request_limits.total_tokens == 1_624
+    assert provider_context.request_limits.completion_reserve_tokens == 100
 
 
 def test_resumed_provider_context_avoids_full_transcript_estimate(monkeypatch):

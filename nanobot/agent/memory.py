@@ -25,6 +25,11 @@ from loguru import logger
 from nanobot.events import NO_EVENTS, ContextCompactionEvent, EventSink
 from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import LLMUsage, ProviderCallContext, ProviderConversationState
+from nanobot.providers.request_budget import (
+    DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER,
+    FinalizedRequestBudgetExceeded,
+    derive_provider_request_limits,
+)
 from nanobot.runtime_context import public_history_messages
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.summary import is_summary_checkpoint, session_summary_from_metadata
@@ -853,7 +858,14 @@ class MemoryArchiver:
             archive_count=len(source_messages),
         )
         prompt_message = {"role": "user", "content": prompt}
-        provider_context = None
+        provider_context = ProviderCallContext(
+            request_limits=derive_provider_request_limits(
+                runtime.context_window_tokens,
+                runtime.generation.max_tokens,
+            ),
+            context_window_tokens=runtime.context_window_tokens,
+            session_id=session_key,
+        )
         call_tools = request_tools
         if provider_state is not None:
             if not runtime.provider.can_resume_conversation_state(
@@ -861,6 +873,45 @@ class MemoryArchiver:
                 runtime.model,
             ):
                 return raw_fallback()
+            context_tokens = provider_state.payload.get("context_tokens")
+            if (
+                isinstance(context_tokens, bool)
+                or not isinstance(context_tokens, int)
+                or context_tokens < 0
+            ):
+                # An opaque continuation without a bounded server-held context
+                # must be rebuilt as a portable request before dispatch.
+                provider_state = None
+            else:
+                pending_messages = [
+                    *provider_state.pending_messages,
+                    *[
+                        dict(message)
+                        for message in history
+                        if message.get("role") in {"system", "developer"}
+                    ],
+                    prompt_message,
+                ]
+                pending_tokens, _ = estimate_prompt_tokens_chain(
+                    runtime.provider,
+                    runtime.model,
+                    pending_messages,
+                    [],
+                )
+                limits = provider_context.request_limits
+                input_limit = (
+                    limits.effective_total_tokens
+                    - max(limits.completion_reserve_tokens or 0, runtime.generation.max_tokens)
+                    - limits.safety_buffer_tokens
+                    if limits is not None
+                    else None
+                )
+                if input_limit is None or context_tokens + pending_tokens > input_limit:
+                    logger.warning(
+                        "Memory archive continuation does not fit its local context budget"
+                    )
+                    return None
+        if provider_state is not None:
             instruction_messages: list[dict[str, Any]] = []
             for message in history:
                 if message.get("role") not in {"system", "developer"}:
@@ -872,6 +923,7 @@ class MemoryArchiver:
                     *provider_state.pending_messages,
                     prompt_message,
                 ]),
+                request_limits=provider_context.request_limits,
                 context_window_tokens=runtime.context_window_tokens,
                 session_id=session_key,
             )
@@ -881,7 +933,7 @@ class MemoryArchiver:
                 *[dict(message) for message in history],
                 prompt_message,
             ]
-        if input_token_budget is not None and provider_context is None:
+        if input_token_budget is not None and provider_state is None:
             estimated, source = estimate_prompt_tokens_chain(
                 runtime.provider,
                 runtime.model,
@@ -890,13 +942,13 @@ class MemoryArchiver:
             )
             if input_token_budget <= 0 or estimated > input_token_budget:
                 logger.debug(
-                    "Memory archive input does not fit for {}: {}/{} via {}; raw-dumping",
+                    "Memory archive input does not fit for {}: {}/{} via {}; skipping archive",
                     session_key,
                     estimated,
                     input_token_budget,
                     source,
                 )
-                return raw_fallback()
+                return None
 
         try:
             with llm_usage_source("dream"):
@@ -909,6 +961,9 @@ class MemoryArchiver:
                     reasoning_effort=runtime.generation.reasoning_effort,
                     provider_context=provider_context,
                 )
+        except FinalizedRequestBudgetExceeded:
+            logger.warning("Memory archive finalized request exceeded its local budget")
+            return None
         except Exception:
             logger.warning("Memory archive provider call failed, raw-dumping to history")
             return raw_fallback()
@@ -956,15 +1011,10 @@ class MemoryArchiver:
 
         if input_token_budget <= 0:
             logger.debug(
-                "Memory archive has no safe input budget for {}; raw-dumping",
+                "Memory archive has no safe input budget for {}; skipping archive",
                 session.key,
             )
-            return self._raw_checkpoint(
-                messages,
-                session_key=session.key,
-                previous_summary=previous_summary,
-                max_tokens=runtime.generation.max_tokens,
-            )
+            return None
         prefix = Session(
             key=session.key,
             messages=list(session.messages[:archive_end]),
@@ -977,15 +1027,10 @@ class MemoryArchiver:
         ).get_history()
         if not archive_history or history[-len(archive_history):] != archive_history:
             logger.debug(
-                "Memory archive cannot replay the full chunk for {}; raw-dumping",
+                "Memory archive cannot replay the full chunk for {}; skipping archive",
                 session.key,
             )
-            return self._raw_checkpoint(
-                messages,
-                session_key=session.key,
-                previous_summary=previous_summary,
-                max_tokens=runtime.generation.max_tokens,
-            )
+            return None
         channel = session.key.split(":", 1)[0] if ":" in session.key else None
         workspace: Path | None = None
         if self._resolve_prompt_context is not None:
@@ -1024,7 +1069,7 @@ class SourceSummaryResult:
 class Consolidator:
     """Coordinate session Memory checkpoints through ``MemoryArchiver``."""
 
-    _SAFETY_BUFFER = 1024  # extra headroom for tokenizer estimation drift
+    _SAFETY_BUFFER = DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER
 
     def __init__(
         self,
@@ -1117,6 +1162,13 @@ class Consolidator:
                 or not 0 < timeout_seconds <= 60):
             raise ValueError('Invalid source summary limits')
         provider = runtime.provider
+        provider_context = ProviderCallContext(
+            request_limits=derive_provider_request_limits(
+                runtime.context_window_tokens,
+                max_output_tokens,
+            ),
+            context_window_tokens=runtime.context_window_tokens,
+        )
 
         def result(status: str, *, summary: str | None = None,
                    usage: LLMUsage | None = None, calls: int = 0) -> SourceSummaryResult:
@@ -1128,7 +1180,10 @@ class Consolidator:
                     messages=messages, tools=None, model=runtime.model,
                     max_tokens=max_output_tokens, temperature=runtime.generation.temperature,
                     reasoning_effort='none',
+                    provider_context=provider_context,
                 )
+        except FinalizedRequestBudgetExceeded:
+            return result('input_overflow')
         except TimeoutError:
             return result('timeout', calls=1)
         summary = response.content

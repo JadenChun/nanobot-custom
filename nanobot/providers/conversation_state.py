@@ -11,6 +11,7 @@ from nanobot.providers.base import (
     ProviderCallContext,
     ProviderConversationState,
 )
+from nanobot.providers.request_budget import derive_provider_request_limits
 from nanobot.utils.helpers import estimate_prompt_tokens_chain
 
 _PROVIDER_STATE_OUTPUT_META = "provider_state_output"
@@ -61,11 +62,17 @@ class ProviderConversationStateController:
         self,
         *,
         context_window_tokens: int | None,
+        completion_reserve_tokens: int | None = None,
     ) -> ProviderCallContext | None:
         """Return typed provider context for a request that does not resume state."""
-        if context_window_tokens is None and self._session_id is None:
+        request_limits = derive_provider_request_limits(
+            context_window_tokens,
+            completion_reserve_tokens,
+        )
+        if context_window_tokens is None and self._session_id is None and request_limits is None:
             return None
         return ProviderCallContext(
+            request_limits=request_limits,
             context_window_tokens=context_window_tokens,
             session_id=self._session_id,
         )
@@ -112,6 +119,7 @@ class ProviderConversationStateController:
         messages: list[dict[str, Any]],
         *,
         context_window_tokens: int | None,
+        completion_reserve_tokens: int | None = None,
         model_messages: list[dict[str, Any]] | None = None,
         supplemental_messages: list[dict[str, Any]] | None = None,
         resume_state: bool = True,
@@ -123,6 +131,7 @@ class ProviderConversationStateController:
         """
         independent_context = self.independent_request_context(
             context_window_tokens=context_window_tokens,
+            completion_reserve_tokens=completion_reserve_tokens,
         )
         if not resume_state:
             self._state = None
@@ -159,6 +168,11 @@ class ProviderConversationStateController:
         ])
         return ProviderCallContext(
             conversation_state=request_state,
+            request_limits=(
+                independent_context.request_limits
+                if independent_context is not None
+                else None
+            ),
             context_window_tokens=(
                 independent_context.context_window_tokens
                 if independent_context is not None

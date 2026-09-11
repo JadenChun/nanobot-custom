@@ -1,6 +1,7 @@
 import pytest
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
 from nanobot.utils.evaluator import (
     EVALUATOR_PROMPT_MAX_CHARS,
     default_evaluator_prompt,
@@ -8,6 +9,7 @@ from nanobot.utils.evaluator import (
     evaluator_prompt_file,
     resolve_evaluator_prompt,
 )
+from nanobot.utils.llm_runtime import LLMRuntime
 
 
 class DummyProvider(LLMProvider):
@@ -141,3 +143,76 @@ async def test_fail_closed_on_no_tool_call() -> None:
         evaluator_prompt=_EVAL_PROMPT, default_notify=False,
     )
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_evaluator_carries_runtime_hard_limits_to_provider_leaf() -> None:
+    class EvaluatorProvider(LLMProvider):
+        def __init__(self) -> None:
+            super().__init__(provider_name="evaluator-fixture")
+            self.contexts = []
+
+        def get_default_model(self) -> str:
+            return "evaluator-model"
+
+        async def chat(self, **_kwargs) -> LLMResponse:
+            raise AssertionError("evaluator request must retain provider context")
+
+        async def chat_with_context(self, *, provider_context, **_kwargs) -> LLMResponse:
+            self.contexts.append(provider_context)
+            return _eval_tool_call(False)
+
+    provider = EvaluatorProvider()
+    runtime = LLMRuntime(
+        provider,
+        "evaluator-model",
+        GenerationSettings(max_tokens=128),
+        8_192,
+    )
+
+    result = await evaluate_response(
+        "routine", "check status", provider, runtime.model,
+        evaluator_prompt=_EVAL_PROMPT,
+        runtime=runtime,
+    )
+
+    assert result is False
+    assert len(provider.contexts) == 1
+    context = provider.contexts[0]
+    assert context.conversation_state is None
+    assert context.request_limits is not None
+    assert context.request_limits.total_tokens == 8_192
+    assert context.request_limits.completion_reserve_tokens == 4_096
+
+
+@pytest.mark.asyncio
+async def test_evaluator_final_budget_rejection_fails_closed_without_notification() -> None:
+    class RejectingEvaluatorProvider(LLMProvider):
+        def __init__(self) -> None:
+            super().__init__(provider_name="evaluator-fixture")
+
+        def get_default_model(self) -> str:
+            return "evaluator-model"
+
+        async def chat(self, **_kwargs) -> LLMResponse:
+            raise AssertionError("evaluator request must retain provider context")
+
+        async def chat_with_context(self, **_kwargs) -> LLMResponse:
+            raise FinalizedRequestBudgetExceeded()
+
+    provider = RejectingEvaluatorProvider()
+    runtime = LLMRuntime(
+        provider,
+        "evaluator-model",
+        GenerationSettings(max_tokens=128),
+        8_192,
+    )
+
+    should_notify = await evaluate_response(
+        "deliverable", "check status", provider, runtime.model,
+        evaluator_prompt=_EVAL_PROMPT,
+        default_notify=False,
+        runtime=runtime,
+    )
+
+    assert should_notify is False

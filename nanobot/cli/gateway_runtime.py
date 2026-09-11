@@ -678,6 +678,7 @@ def _run_gateway(
                     model=agent.model,
                     evaluator_prompt=evaluator_prompt,
                     default_notify=False,
+                    runtime=agent.llm_runtime(),
                 )
 
             if should_notify:

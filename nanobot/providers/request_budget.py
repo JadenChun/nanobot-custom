@@ -64,6 +64,26 @@ class ProviderRequestLimits:
         return replace(self, model_context_window_tokens=min(current, window) if current else window)
 
 
+def derive_provider_request_limits(
+    total_tokens: int | None,
+    completion_reserve_tokens: int | None,
+) -> ProviderRequestLimits | None:
+    """Build runtime hard limits when a concrete total context capacity is known."""
+    if (
+        isinstance(total_tokens, bool)
+        or not isinstance(total_tokens, int)
+        or total_tokens <= 0
+        or isinstance(completion_reserve_tokens, bool)
+        or not isinstance(completion_reserve_tokens, int)
+        or completion_reserve_tokens < 0
+    ):
+        return None
+    return ProviderRequestLimits(
+        total_tokens=total_tokens,
+        completion_reserve_tokens=completion_reserve_tokens,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class TransportIdentity:
     """The provider protocol and selected model used for one concrete body."""

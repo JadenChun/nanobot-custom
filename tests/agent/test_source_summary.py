@@ -13,6 +13,7 @@ from nanobot.providers.base import (
     LLMUsage,
     ToolCallRequest,
 )
+from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
 from nanobot.utils.llm_runtime import LLMRuntime
 
 
@@ -21,6 +22,7 @@ class SummaryProvider(LLMProvider):
         super().__init__(provider_name='fixture')
         self.response = response
         self.calls = []
+        self.contexts = []
 
     def get_default_model(self):
         return 'fixture'
@@ -32,6 +34,10 @@ class SummaryProvider(LLMProvider):
         if self.response == 'wait':
             await asyncio.Event().wait()
         return self.response
+
+    async def chat_with_context(self, *, provider_context, **kwargs):
+        self.contexts.append(provider_context)
+        return await self.chat(**kwargs)
 
 
 def runtime(provider, window=8192):
@@ -49,7 +55,10 @@ async def test_summary_is_observed_once_and_has_no_store_dependency():
     assert result.provider == 'fixture' and result.model == 'fixture'
     assert len(provider.calls) == 1
     messages, kwargs = provider.calls[0]
-    assert kwargs['tools'] is None and 'provider_context' not in kwargs
+    assert kwargs['tools'] is None
+    assert provider.contexts[0].conversation_state is None
+    assert provider.contexts[0].request_limits.total_tokens == 8192
+    assert provider.contexts[0].request_limits.completion_reserve_tokens == 2048
     assert 'prior facts' in messages[1]['content'] and 'objective' in messages[1]['content']
     assert source == [{'role': 'user', 'content': 'objective'}]
     observer.assert_called_once()
@@ -68,6 +77,7 @@ async def test_prepared_summary_sends_the_exact_preflighted_payload_unchanged():
     assert provider.calls[0][0] is prepared
     assert provider.calls[0][0] == prepared
     assert provider.calls[0][1]['tools'] is None
+    assert provider.contexts[0].request_limits.total_tokens == 8192
 
 
 @pytest.mark.parametrize('response', [
@@ -90,6 +100,18 @@ async def test_auxiliary_overflow_causes_zero_transport():
         None, runtime=runtime(provider, window=512))
     assert result.status == 'input_overflow' and result.calls == 0
     assert provider.calls == []
+
+
+async def test_finalized_auxiliary_budget_rejection_has_no_summary_candidate():
+    provider = SummaryProvider(FinalizedRequestBudgetExceeded())
+
+    result = await Consolidator.summarize_prepared_source_chunk(
+        [{'role': 'user', 'content': 'preflighted'}], runtime=runtime(provider),
+    )
+
+    assert result.status == 'input_overflow'
+    assert result.summary is None
+    assert result.calls == 0
 
 
 async def test_timeout_is_bounded_and_does_not_retry():

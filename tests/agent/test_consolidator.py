@@ -24,7 +24,7 @@ from nanobot.runtime_context import (
 )
 from nanobot.session.keys import UNIFIED_SESSION_KEY, remember_last_channel
 from nanobot.session.manager import Session
-from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
+from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT, is_summary_checkpoint
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.prompt_templates import render_template
 
@@ -170,7 +170,8 @@ class TestTurnTranscriptSummary:
             {"role": "system", "content": "stable system"},
             {"role": "user", "content": "raw history must not be replayed"},
         ]
-        state = _provider_state()
+        state = replace(_provider_state(), payload={"items": [], "context_tokens": 0})
+        runtime = replace(runtime, context_window_tokens=4_096)
         mock_provider.can_resume_conversation_state.return_value = True
         mock_provider.chat_with_retry.return_value = LLMResponse(
             content="replacement checkpoint",
@@ -1253,7 +1254,7 @@ class TestCompactIdleSession:
         assert sessions.get_or_create("cli:empty-summary").last_archived == 2
 
     @pytest.mark.asyncio
-    async def test_oversized_prefix_raw_archives_without_flattened_llm_retry(
+    async def test_oversized_prefix_fails_without_archive_or_session_progress(
         self,
         real_consolidator,
         mock_provider,
@@ -1265,19 +1266,24 @@ class TestCompactIdleSession:
         session = sessions.get_or_create("sdk:oversized")
         session.add_message("user", "x" * 100_000)
         sessions.save(session)
+        original_messages = list(session.messages)
+        original_metadata = dict(session.metadata)
+        original_revision = session.revision
 
         result = await real_consolidator.compact_idle_session(
             "sdk:oversized",
             runtime=runtime,
         )
 
-        assert result is not None
-        assert "[RAW]" in result
+        assert result is None
         mock_provider.chat_with_retry.assert_not_awaited()
-        entries = store.read_unprocessed_history(since_cursor=0)
-        assert len(entries) == 1
-        assert entries[0]["content"].startswith("[RAW] ")
-        assert sessions.get_or_create("sdk:oversized").last_archived == 1
+        assert not store.history_file.exists()
+        reloaded = sessions.get_or_create("sdk:oversized")
+        assert reloaded.last_archived == 0
+        assert reloaded.messages == original_messages
+        assert reloaded.metadata == original_metadata
+        assert reloaded.revision == original_revision
+        assert not any(is_summary_checkpoint(message) for message in reloaded.messages)
 
     @pytest.mark.asyncio
     async def test_archive_context_contains_only_model_visible_messages(

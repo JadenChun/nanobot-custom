@@ -1205,6 +1205,9 @@ class TestToolEventProgress:
 
         assert captured["provider"] is provider
         assert captured["model"] == "test-model"
+        title_runtime = captured["runtime"]
+        assert getattr(title_runtime, "provider") is provider
+        assert getattr(title_runtime, "model") == "test-model"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("metadata", [{}, {"webui": False}])

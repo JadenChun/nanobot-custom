@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from nanobot.providers.base import ProviderCallContext
+from nanobot.providers.request_budget import derive_provider_request_limits
+from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.prompt_templates import render_template
 from nanobot.utils.workspace_prompts import (
     WORKSPACE_PROMPT_MAX_CHARS,
@@ -24,6 +27,7 @@ if TYPE_CHECKING:
 
 # Cap for a workspace-local heartbeat evaluator prompt override.
 EVALUATOR_PROMPT_MAX_CHARS = WORKSPACE_PROMPT_MAX_CHARS
+EVALUATOR_MAX_TOKENS = 4096
 
 
 def evaluator_prompt_file(workspace: Path) -> Path:
@@ -88,6 +92,7 @@ async def evaluate_response(
     model: str,
     evaluator_prompt: str,
     default_notify: bool = False,
+    runtime: LLMRuntime | None = None,
 ) -> bool:
     """Decide whether a heartbeat result should be delivered to the user.
 
@@ -95,8 +100,28 @@ async def evaluate_response(
     ``False`` to fail closed.
     """
 
+    call_provider = runtime.provider if runtime is not None else provider
+    call_model = runtime.model if runtime is not None else model
+    provider_context: ProviderCallContext | None = None
+    if runtime is not None:
+        provider_context = ProviderCallContext(
+            request_limits=derive_provider_request_limits(
+                runtime.context_window_tokens,
+                EVALUATOR_MAX_TOKENS,
+            ),
+            context_window_tokens=runtime.context_window_tokens,
+        )
+
     try:
-        llm_response = await provider.chat_with_retry(
+        request_kwargs: dict[str, object] = {
+            "tools": _EVALUATE_TOOL,
+            "model": call_model,
+            "max_tokens": EVALUATOR_MAX_TOKENS,
+            "temperature": 0.0,
+        }
+        if provider_context is not None:
+            request_kwargs["provider_context"] = provider_context
+        llm_response = await call_provider.chat_with_retry(
             messages=[
                 {"role": "system", "content": evaluator_prompt},
                 {"role": "user", "content": render_template(
@@ -106,10 +131,7 @@ async def evaluate_response(
                     response=response,
                 )},
             ],
-            tools=_EVALUATE_TOOL,
-            model=model,
-            max_tokens=4096,
-            temperature=0.0,
+            **request_kwargs,
         )
 
         if not llm_response.should_execute_tools:
