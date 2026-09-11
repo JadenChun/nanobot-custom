@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -198,6 +199,25 @@ class ProviderConversationState:
     version: int
     payload: dict[str, Any] = field(default_factory=dict, repr=False)
     pending_messages: list[dict[str, Any]] = field(default_factory=list, repr=False)
+    # These fields are private session-sidecar data.  They are intentionally
+    # not part of ``payload`` because providers own that opaque protocol data.
+    conversation_binding: dict[str, Any] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    transport_receipt: ProviderConversationTransportReceipt | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    # Preserves an explicitly empty metadata shape so it cannot be rewritten
+    # as an older sidecar representation on a later save.
+    continuation_metadata_present: bool = field(
+        default=False,
+        repr=False,
+        compare=False,
+    )
 
     def with_pending_messages(
         self,
@@ -211,11 +231,14 @@ class ProviderConversationState:
             version=self.version,
             payload=self.payload,
             pending_messages=deepcopy(messages),
+            conversation_binding=deepcopy(self.conversation_binding),
+            transport_receipt=self.transport_receipt,
+            continuation_metadata_present=self.continuation_metadata_present,
         )
 
     def to_private_record(self) -> dict[str, Any]:
         """Serialize for the private session sidecar, never for public history."""
-        return {
+        record: dict[str, Any] = {
             "kind": self.kind,
             "provider": self.provider,
             "model": self.model,
@@ -223,6 +246,18 @@ class ProviderConversationState:
             "payload": deepcopy(self.payload),
             "pending_messages": deepcopy(self.pending_messages),
         }
+        if (
+            self.continuation_metadata_present
+            or self.conversation_binding is not None
+            or self.transport_receipt is not None
+        ):
+            record["conversation_binding"] = deepcopy(self.conversation_binding)
+            record["transport_receipt"] = (
+                self.transport_receipt.to_private_record()
+                if self.transport_receipt is not None
+                else None
+            )
+        return record
 
     @classmethod
     def from_private_record(
@@ -239,6 +274,11 @@ class ProviderConversationState:
         version = data.get("version")
         payload = data.get("payload")
         pending = data.get("pending_messages", [])
+        metadata_present = "conversation_binding" in data or "transport_receipt" in data
+        binding = data.get("conversation_binding")
+        receipt = ProviderConversationTransportReceipt.from_private_record(
+            data.get("transport_receipt"),
+        )
         if (
             not isinstance(kind, str)
             or not kind
@@ -254,6 +294,8 @@ class ProviderConversationState:
                 not isinstance(message, dict)
                 for message in cast(list[object], pending)
             )
+            or (binding is not None and not isinstance(binding, dict))
+            or (data.get("transport_receipt") is not None and receipt is None)
         ):
             return None
         return cls(
@@ -263,7 +305,68 @@ class ProviderConversationState:
             version=version,
             payload=deepcopy(cast(dict[str, Any], payload)),
             pending_messages=deepcopy(cast(list[dict[str, Any]], pending)),
+            conversation_binding=deepcopy(cast(dict[str, Any] | None, binding)),
+            transport_receipt=receipt,
+            continuation_metadata_present=metadata_present,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderConversationTransportReceipt:
+    """Private identity of the concrete transport that accepted a state.
+
+    Values are safe to place in a private session sidecar.  ``account`` is a
+    digest, never an API key or account name.
+    """
+
+    provider: str
+    account: str
+    endpoint: str
+    protocol: str
+    model: str
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("provider", self.provider),
+            ("account", self.account),
+            ("endpoint", self.endpoint),
+            ("protocol", self.protocol),
+            ("model", self.model),
+        ):
+            if not isinstance(value, str) or not value:
+                raise ValueError(f"{name} must be a non-empty string")
+
+    def to_private_record(self) -> dict[str, str]:
+        """Serialize this receipt only in the provider-state sidecar."""
+        return {
+            "provider": self.provider,
+            "account": self.account,
+            "endpoint": self.endpoint,
+            "protocol": self.protocol,
+            "model": self.model,
+        }
+
+    @classmethod
+    def from_private_record(
+        cls,
+        value: object,
+    ) -> ProviderConversationTransportReceipt | None:
+        """Validate an untrusted private-sidecar receipt."""
+        if not isinstance(value, dict):
+            return None
+        data = cast(dict[object, object], value)
+        if set(data) != {"provider", "account", "endpoint", "protocol", "model"}:
+            return None
+        try:
+            return cls(
+                provider=cast(str, data["provider"]),
+                account=cast(str, data["account"]),
+                endpoint=cast(str, data["endpoint"]),
+                protocol=cast(str, data["protocol"]),
+                model=cast(str, data["model"]),
+            )
+        except (KeyError, ValueError):
+            return None
 
 
 @dataclass(frozen=True)
@@ -826,6 +929,34 @@ class LLMProvider(ABC):
     ) -> bool:
         """Whether this provider can safely consume an opaque saved state."""
         return False
+
+    def supports_bound_conversation_state(self) -> bool:
+        """Whether this provider has proved concrete continuation ownership.
+
+        Generic providers and routing wrappers remain stateless until they can
+        bind a returned state to their selected account and transport.
+        """
+        return False
+
+    def conversation_state_transport_receipt(
+        self,
+        model: str | None = None,
+    ) -> ProviderConversationTransportReceipt:
+        """Return the private concrete-transport identity for continuation.
+
+        Provider implementations with routing that cannot be represented by
+        the configured endpoint override this method.  Hashing the configured
+        credential lets a restored state reject an account rotation without
+        ever recording the credential itself.
+        """
+        account_material = self.api_key or "<unconfigured>"
+        return ProviderConversationTransportReceipt(
+            provider=self.provider_name,
+            account=hashlib.sha256(account_material.encode("utf-8")).hexdigest(),
+            endpoint=self.api_base or "<default>",
+            protocol=f"{type(self).__module__}.{type(self).__qualname__}",
+            model=model or self.get_default_model(),
+        )
 
     def supports_native_compaction(self, model: str | None = None) -> bool:
         """Whether requests may include provider-native context compaction."""

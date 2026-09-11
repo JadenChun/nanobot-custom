@@ -887,8 +887,7 @@ class TestFallbackOnPrimaryError:
         assert response.content == "fallback invalid request"
         assert response.preserve_provider_state_on_error is True
         restored = controller.finish(messages)
-        assert restored is not None
-        assert restored.payload == state.payload
+        assert restored is None
 
     @pytest.mark.asyncio
     async def test_reports_only_the_successful_fallback_model(self) -> None:

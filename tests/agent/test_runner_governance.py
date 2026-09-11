@@ -301,7 +301,7 @@ async def test_runner_summarizes_history_and_preserves_current_input(monkeypatch
         {"role": "user", "content": "continue the current task"},
     ]
     assert requests[0][1].conversation_state is None
-    assert result.provider_state == candidate_state
+    assert result.provider_state is None
     assert result.summary_checkpoint is not None
     assert result.summary_checkpoint.summary == "fresh checkpoint"
     assert result.summary_checkpoint.transcript_boundary == 3
@@ -775,8 +775,7 @@ async def test_runner_drops_resumable_provider_state_when_request_is_fitted(monk
     ))
 
     assert captured_contexts[0].conversation_state is None
-    assert result.provider_state is not None
-    assert result.provider_state.payload == candidate.payload
+    assert result.provider_state is None
 
 
 @pytest.mark.asyncio
