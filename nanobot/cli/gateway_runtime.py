@@ -5,7 +5,7 @@ import signal
 from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import typer
 from loguru import logger
@@ -17,6 +17,7 @@ from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.mcp import MCPProvider
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import TurnSource
 from nanobot.cli import terminal as cli_terminal
 from nanobot.cli.runtime_config import _migrate_cron_store
 from nanobot.cli.webui_support import (
@@ -43,9 +44,53 @@ from nanobot.webui.build import BuildMode
 from nanobot.webui.dev import WebUIDevError, WebUIDevServer
 from nanobot.webui.sidebar_state import read_webui_sidebar_state
 
+if TYPE_CHECKING:
+    from nanobot.cron.types import CronJob
+
 __all__ = ["_run_gateway"]
 
 console = Console()
+
+
+class _SystemCronService(Protocol):
+    def get_job(self, job_id: str) -> "CronJob | None": ...
+
+    def register_system_job(self, job: "CronJob") -> "CronJob": ...
+
+    def remove_system_job(
+        self,
+        job_id: str,
+        *,
+        job_instance_id: str | None = None,
+        definition_revision: str | None = None,
+    ) -> bool: ...
+
+
+def _register_system_job_with_current_tokens(
+    cron: _SystemCronService,
+    job: "CronJob",
+) -> "CronJob":
+    """Reconcile a system definition with the exact current CAS tokens."""
+    current = cron.get_job(job.id)
+    if current is not None and current.payload.kind == "system_event":
+        job.job_instance_id = current.job_instance_id
+        job.definition_revision = current.definition_revision
+    return cron.register_system_job(job)
+
+
+def _remove_system_job_with_current_tokens(
+    cron: _SystemCronService,
+    job_id: str,
+) -> bool:
+    """Remove a system definition only after reading its current CAS tokens."""
+    current = cron.get_job(job_id)
+    if current is None:
+        return False
+    return cron.remove_system_job(
+        job_id,
+        job_instance_id=current.job_instance_id,
+        definition_revision=current.definition_revision,
+    )
 
 
 class _MCPReadinessHook(AgentHook):
@@ -657,6 +702,7 @@ def _run_gateway(
                     session_key="heartbeat",
                     channel=channel,
                     chat_id=chat_id,
+                    source=TurnSource.HEARTBEAT,
                     on_progress=_silent,
                 )
             finally:
@@ -825,22 +871,23 @@ def _run_gateway(
     from nanobot.cron.types import CronJob, CronPayload, CronSchedule
     dream_cfg = config.agents.defaults.dream
     if dream_cfg.enabled:
-        cron.register_system_job(CronJob(
+        dream_job = CronJob(
             id="dream",
             name="dream",
             schedule=dream_cfg.build_schedule(config.agents.defaults.timezone),
             payload=CronPayload(kind="system_event"),
-        ))
+        )
+        _register_system_job_with_current_tokens(cron, dream_job)
         console.print(f"[green]✓[/green] Dream: {dream_cfg.describe_schedule()}")
     else:
         console.print("[yellow]○[/yellow] Dream: disabled")
         # Cursor repair must not depend on a healthy cron store.
         _advance_dream_cursor_if_behind(agent.context.memory)
-        cron.remove_system_job("dream")
+        _remove_system_job_with_current_tokens(cron, "dream")
 
     # Register Heartbeat system job (idempotent on restart)
     if hb_cfg.enabled:
-        cron.register_system_job(CronJob(
+        heartbeat_job = CronJob(
             id="heartbeat",
             name="heartbeat",
             schedule=CronSchedule(
@@ -849,9 +896,10 @@ def _run_gateway(
                 tz=config.agents.defaults.timezone,
             ),
             payload=CronPayload(kind="system_event"),
-        ))
+        )
+        _register_system_job_with_current_tokens(cron, heartbeat_job)
     else:
-        cron.remove_system_job("heartbeat")
+        _remove_system_job_with_current_tokens(cron, "heartbeat")
 
     cron_status = cron.status()
     cron_job_count = cast(int, cron_status["jobs"])

@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import TurnSource
 from nanobot.agent.turn_delivery import TurnDeliveryFactory
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
@@ -2132,6 +2133,9 @@ def test_heartbeat_empty_response_is_not_evaluated(
         def admission_diagnostic(self, _job: CronJob) -> None:
             return None
 
+        def get_job(self, _job_id: str) -> None:
+            return None
+
         def register_system_job(self, _job: CronJob) -> None:
             raise _StopGatewayError("stop")
 
@@ -2177,6 +2181,7 @@ def test_heartbeat_empty_response_is_not_evaluated(
     monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _FakeChannelManager)
     monkeypatch.setattr("nanobot.cli.gateway_runtime.read_webui_sidebar_state", lambda: {})
     monkeypatch.setattr("nanobot.cli.gateway_runtime.evaluate_response", _unexpected_evaluator)
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
 
     result = runner.invoke(app, ["gateway", "--config", str(config_file)])
 
@@ -2224,6 +2229,9 @@ def test_heartbeat_evaluator_uses_runtime_and_suppresses_failed_gate_delivery(
         def admission_diagnostic(self, _job: CronJob) -> None:
             return None
 
+        def get_job(self, _job_id: str) -> None:
+            return None
+
         def register_system_job(self, _job: CronJob) -> None:
             raise _StopGatewayError("stop")
 
@@ -2239,6 +2247,7 @@ def test_heartbeat_evaluator_uses_runtime_and_suppresses_failed_gate_delivery(
             self.tools = {}
 
         async def process_direct(self, *_args, **_kwargs):
+            seen["heartbeat_source"] = _kwargs["source"]
             return SimpleNamespace(content="routine heartbeat result")
 
         def llm_runtime(self) -> object:
@@ -2283,6 +2292,7 @@ def test_heartbeat_evaluator_uses_runtime_and_suppresses_failed_gate_delivery(
 
     assert response == "routine heartbeat result"
     assert seen["evaluator_runtime"] is runtime
+    assert seen["heartbeat_source"] is TurnSource.HEARTBEAT
     bus.publish_outbound.assert_not_awaited()
 
 
@@ -3464,6 +3474,9 @@ def test_gateway_local_trigger_queue_submits_agent_turns(
             seen.setdefault("cron_reconciliation", []).append("status")
             return {"jobs": 0}
 
+        def get_job(self, _job_id: str) -> None:
+            return None
+
         def register_system_job(self, _job) -> None:
             return None
 
@@ -3547,7 +3560,7 @@ def test_gateway_local_trigger_queue_submits_agent_turns(
     turn_delivery_factory = agent_kwargs["turn_delivery_factory"]
     assert isinstance(turn_delivery_factory, TurnDeliveryFactory)
     assert turn_delivery_factory.bus is bus
-    assert seen["cron_reconciliation"] == ["remove:dream", "remove:heartbeat", "status"]
+    assert seen["cron_reconciliation"] == ["status"]
     assert isinstance(turn_delivery_factory.route_policy, WebuiTurnRoutePolicy)
     assert turn_delivery_factory.route_policy.sessions is agent.sessions
 
@@ -3769,6 +3782,9 @@ def test_gateway_health_endpoint_binds_and_serves_expected_responses(
 
         def status(self) -> dict[str, int]:
             return {"jobs": 0}
+
+        def get_job(self, _job_id: str) -> None:
+            return None
 
         def register_system_job(self, _job) -> None:
             return None
@@ -4019,6 +4035,9 @@ def test_gateway_post_start_failure_cleans_up_before_exiting_nonzero(
         def status(self) -> dict[str, int]:
             return {"jobs": 0}
 
+        def get_job(self, _job_id: str) -> None:
+            return None
+
         def register_system_job(self, _job) -> None:
             return None
 
@@ -4145,6 +4164,9 @@ def test_gateway_shutdown_event_exits_forever_runtime_tasks(
 
         def status(self) -> dict[str, int]:
             return {"jobs": 0}
+
+        def get_job(self, _job_id: str) -> None:
+            return None
 
         def register_system_job(self, _job) -> None:
             return None

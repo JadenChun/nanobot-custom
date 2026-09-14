@@ -25,6 +25,11 @@ from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
 from nanobot.command.builtin import builtin_command_palette
+from nanobot.cron.definition_store import DefinitionStoreConflictError
+from nanobot.cron.service import (
+    CronDefinitionConflictError,
+    CronDefinitionTokenRequiredError,
+)
 from nanobot.cron.session_turns import is_bound_cron_job
 from nanobot.cron.types import CronJob, CronSchedule
 from nanobot.security.workspace_access import WorkspaceScope
@@ -956,12 +961,70 @@ class GatewayHTTPHandler:
                 }
             )
         if automation_jobs:
+            cron_jobs = [job for job in automation_jobs if not isinstance(job, LocalTrigger)]
+            current_cron_jobs: list[CronJob] = []
+            if self.cron_service is not None:
+                # Revalidate every exact token before the first destructive call. This
+                # prevents a stale later job from deleting a prefix of the cascade.
+                # The phase is not a transaction: another process can still race after
+                # this fence, so each delete keeps its CAS and reports a 409 without
+                # pretending that earlier deletes can be rolled back.
+                for job in cron_jobs:
+                    try:
+                        current = self.cron_service.get_job(job.id)
+                    except (
+                        CronDefinitionTokenRequiredError,
+                        DefinitionStoreConflictError,
+                        CronDefinitionConflictError,
+                    ) as exc:
+                        return _http_error(
+                            409,
+                            f"automation deletion conflict for {job.id}: {exc}. "
+                            "Refresh the session and retry.",
+                        )
+                    if (
+                        current is None
+                        or not job.job_instance_id
+                        or not job.definition_revision
+                        or current.job_instance_id != job.job_instance_id
+                        or current.definition_revision != job.definition_revision
+                    ):
+                        return _http_error(
+                            409,
+                            f"automation deletion conflict for {job.id}: it changed before deletion. "
+                            "Refresh the session and retry.",
+                        )
+                    current_cron_jobs.append(current)
+
+            for job in current_cron_jobs:
+                try:
+                    result = self.cron_service.remove_job(
+                        job.id,
+                        job_instance_id=job.job_instance_id,
+                        definition_revision=job.definition_revision,
+                    )
+                except (
+                    CronDefinitionTokenRequiredError,
+                    DefinitionStoreConflictError,
+                    CronDefinitionConflictError,
+                ) as exc:
+                    return _http_error(
+                        409,
+                        f"automation deletion conflict for {job.id}: {exc}. "
+                        "Refresh the session and retry.",
+                    )
+                if result == "not_found":
+                    return _http_error(
+                        409,
+                        f"automation deletion conflict for {job.id}: it changed before deletion. "
+                        "Refresh the session and retry.",
+                    )
+                if result == "protected":
+                    return _http_error(409, f"automation {job.id} is protected")
+
             for job in automation_jobs:
-                if isinstance(job, LocalTrigger):
-                    if self.local_trigger_store is not None:
-                        self.local_trigger_store.delete(job.id)
-                elif self.cron_service is not None:
-                    self.cron_service.remove_job(job.id)
+                if isinstance(job, LocalTrigger) and self.local_trigger_store is not None:
+                    self.local_trigger_store.delete(job.id)
         draft_deleted = self.workspaces.discard_draft_scope(decoded_key)
         session_deleted = self.session_manager.delete_session(decoded_key)
         transcript_deleted = delete_webui_thread(decoded_key)
@@ -1061,40 +1124,69 @@ class GatewayHTTPHandler:
         if action == "enable" and not is_bound_cron_job(job):
             return _http_error(409, "automation has no linked chat")
 
-        if action == "enable":
-            if self.cron_service.enable_job(job_id, enabled=True) is None:
-                return _http_error(404, "automation not found")
-        elif action == "disable":
-            if self.cron_service.enable_job(job_id, enabled=False) is None:
-                return _http_error(404, "automation not found")
-        elif action == "delete":
-            result = self.cron_service.remove_job(job_id)
-            if result == "not_found":
-                return _http_error(404, "automation not found")
-            if result == "protected":
-                return _http_error(403, "system automation is protected")
-        elif action == "run":
-            if not job.enabled:
-                return _http_error(409, "automation is disabled")
-            task = asyncio.create_task(self.cron_service.run_job(job_id, force=False))
-            task.add_done_callback(self._log_automation_run_result)
-        elif action == "update":
-            values = _automation_values_from_request(request)
-            if values is None:
-                return _http_error(400, "invalid automation update payload")
-            parsed = _parse_automation_update(values, current_job=job)
-            if isinstance(parsed, str):
-                return _http_error(400, parsed)
-            try:
-                result = self.cron_service.update_job(job_id, **parsed)
-            except ValueError as exc:
-                return _http_error(400, str(exc))
-            if result == "not_found":
-                return _http_error(404, "automation not found")
-            if result == "protected":
-                return _http_error(403, "system automation is protected")
-        else:
-            return _http_error(404, "unknown automation action")
+        try:
+            if action == "enable":
+                if self.cron_service.enable_job(
+                    job_id,
+                    enabled=True,
+                    job_instance_id=job.job_instance_id,
+                    definition_revision=job.definition_revision,
+                ) is None:
+                    return _http_error(404, "automation not found")
+            elif action == "disable":
+                if self.cron_service.enable_job(
+                    job_id,
+                    enabled=False,
+                    job_instance_id=job.job_instance_id,
+                    definition_revision=job.definition_revision,
+                ) is None:
+                    return _http_error(404, "automation not found")
+            elif action == "delete":
+                result = self.cron_service.remove_job(
+                    job_id,
+                    job_instance_id=job.job_instance_id,
+                    definition_revision=job.definition_revision,
+                )
+                if result == "not_found":
+                    return _http_error(404, "automation not found")
+                if result == "protected":
+                    return _http_error(403, "system automation is protected")
+            elif action == "run":
+                if not job.enabled:
+                    return _http_error(409, "automation is disabled")
+                task = asyncio.create_task(self.cron_service.run_job(job_id, force=False))
+                task.add_done_callback(self._log_automation_run_result)
+            elif action == "update":
+                values = _automation_values_from_request(request)
+                if values is None:
+                    return _http_error(400, "invalid automation update payload")
+                parsed = _parse_automation_update(values, current_job=job)
+                if isinstance(parsed, str):
+                    return _http_error(400, parsed)
+                try:
+                    result = self.cron_service.update_job(
+                        job_id,
+                        **parsed,
+                        job_instance_id=job.job_instance_id,
+                        definition_revision=job.definition_revision,
+                    )
+                except ValueError as exc:
+                    return _http_error(400, str(exc))
+                if result == "not_found":
+                    return _http_error(404, "automation not found")
+                if result == "protected":
+                    return _http_error(403, "system automation is protected")
+            else:
+                return _http_error(404, "unknown automation action")
+        except (
+            CronDefinitionTokenRequiredError,
+            DefinitionStoreConflictError,
+            CronDefinitionConflictError,
+        ) as exc:
+            return _http_error(
+                409,
+                f"automation definition conflict: {exc}. Refresh and retry.",
+            )
 
         return self._handle_webui_automations(request)
 

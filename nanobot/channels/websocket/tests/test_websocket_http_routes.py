@@ -17,7 +17,7 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.channels.base import BaseChannel
 from nanobot.channels.websocket.runtime import WebSocketChannel, WebSocketConfig
 from nanobot.config.loader import load_config, save_config
-from nanobot.cron.service import CronService
+from nanobot.cron.service import CRON_DEFINITION_ONLY_DIAGNOSTIC, CronService
 from nanobot.cron.types import CronJob, CronPayload, CronSchedule
 from nanobot.optional_features import InstallResult
 from nanobot.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
@@ -2547,7 +2547,7 @@ async def test_webui_automations_route_lists_all_jobs_and_allows_user_actions(
             {"id": incomplete_job.id},
         )
         assert unbound_run.status_code == 409
-        assert "no linked chat" in unbound_run.text
+        assert unbound_run.text == CRON_DEFINITION_ONLY_DIAGNOSTIC
 
         unbound_enable = await _webui_mutate(
             channel,
@@ -2780,11 +2780,12 @@ async def test_session_delete_can_cascade_bound_automations(
         origin_chat_id="doomed",
     )
     cron.add_job(
-        name="Legacy same target",
+        name="Second bound check",
         schedule=CronSchedule(kind="every", every_ms=86_400_000),
-        message="Legacy job remains",
-        channel="websocket",
-        to="doomed",
+        message="Check the repo again",
+        session_key="websocket:doomed",
+        origin_channel="websocket",
+        origin_chat_id="doomed",
     )
     channel = _ch(bus, session_manager=sm, cron_service=cron, port=29916)
     server_task = asyncio.create_task(channel.start())

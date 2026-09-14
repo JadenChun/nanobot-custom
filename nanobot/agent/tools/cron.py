@@ -15,7 +15,12 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
-from nanobot.cron.service import CronService
+from nanobot.cron.definition_store import DefinitionStoreConflictError
+from nanobot.cron.service import (
+    CronDefinitionConflictError,
+    CronDefinitionTokenRequiredError,
+    CronService,
+)
 from nanobot.cron.types import CronJob, CronJobState, CronSchedule
 from nanobot.session.keys import UNIFIED_SESSION_KEY
 
@@ -276,12 +281,28 @@ class CronTool(Tool):
     def _remove_job(self, job_id: str | None) -> str:
         if not job_id:
             return ToolResult.error("Error: job_id is required for remove")
-        result = self._cron.remove_job(job_id)
+        job = self._cron.get_job(job_id)
+        if job is None:
+            return f"Job {job_id} not found"
+        try:
+            result = self._cron.remove_job(
+                job_id,
+                job_instance_id=job.job_instance_id,
+                definition_revision=job.definition_revision,
+            )
+        except (
+            CronDefinitionTokenRequiredError,
+            DefinitionStoreConflictError,
+            CronDefinitionConflictError,
+        ) as exc:
+            return ToolResult.error(
+                f"Error: could not remove job {job_id}: cron definition conflict ({exc}). "
+                "Refresh the job list and retry."
+            )
         if result == "removed":
             return f"Removed job {job_id}"
         if result == "protected":
-            job = self._cron.get_job(job_id)
-            if job and job.name == "dream":
+            if job.name == "dream":
                 return (
                     "Cannot remove job `dream`.\n"
                     "This is a system-managed Dream memory consolidation job for long-term memory.\n"
