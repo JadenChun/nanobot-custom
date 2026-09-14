@@ -10,11 +10,18 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 if TYPE_CHECKING:
     from nanobot.context_repo.policy import ResourceAccessPolicy
     from nanobot.session.artifact import FilesystemArtifactOrigin
+
+
+FilesystemReadProducer = Literal['builtin_read_file_text', 'builtin_grep_file_text']
+_FILESYSTEM_READ_PRODUCERS: Final[frozenset[FilesystemReadProducer]] = frozenset({
+    'builtin_read_file_text',
+    'builtin_grep_file_text',
+})
 
 
 def root_binding(root: Path) -> str:
@@ -29,7 +36,7 @@ class FilesystemReadReceipt:
     byte_length: int
     sha256: str
     schema_version: int = 1
-    producer: str = 'builtin_read_file_text'
+    producer: FilesystemReadProducer = 'builtin_read_file_text'
     block_index: None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,14 +58,16 @@ def parse_read_receipt(raw: object) -> FilesystemReadReceipt:
     if (not isinstance(raw, dict) or set(raw) != {'source_access', 'root_binding', 'byte_length',
             'sha256', 'schema_version', 'producer', 'block_index'}
             or type(raw['schema_version']) is not int or raw['schema_version'] != 1
-            or raw['producer'] != 'builtin_read_file_text' or raw['block_index'] is not None
+            or not isinstance(raw['producer'], str)
+            or raw['producer'] not in _FILESYSTEM_READ_PRODUCERS
+            or raw['block_index'] is not None
             or type(raw['byte_length']) is not int or raw['byte_length'] < 0
             or any(not isinstance(raw[key], str) or len(raw[key]) != 64
                    or any(c not in '0123456789abcdef' for c in raw[key])
                    for key in ('sha256', 'root_binding'))):
         raise ArtifactValidationError('Invalid filesystem producer receipt')
     return FilesystemReadReceipt(_origin(raw['source_access']), raw['root_binding'],
-                                 raw['byte_length'], raw['sha256'])
+                                 raw['byte_length'], raw['sha256'], producer=raw['producer'])
 
 
 def locate_read(path: Path, workspace: Path | None, policy: ResourceAccessPolicy | None

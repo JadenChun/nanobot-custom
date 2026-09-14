@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.context import ContextAware, current_request_context
+from nanobot.agent.tools.producer_adapters import accepted_producer_receipt
 
 if TYPE_CHECKING:
     from nanobot.runtime_context import RuntimeContextProvider
@@ -202,13 +204,11 @@ class ToolRegistry:
                   if context is not None else await tool.execute(**params))
         outcome = result if isinstance(result, ToolOutcome) else ToolOutcome(content=result)
         if outcome.producer_receipt is not None:
-            from nanobot.agent.tools.filesystem import ReadFileTool
-            from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
-
-            receipt = outcome.producer_receipt
-            if (type(tool) is not ReadFileTool or type(receipt) is not FilesystemReadReceipt
-                    or not receipt.matches(outcome.content)):
-                outcome = ToolOutcome(outcome.content, outcome.stop_reason, outcome.policy_metadata)
+            if not accepted_producer_receipt(tool, outcome.content, outcome.producer_receipt):
+                # Strip only untrusted producer authority.  Other independently
+                # validated terminal, retrieval, and handoff behavior must retain
+                # its existing handling below.
+                outcome = replace(outcome, producer_receipt=None)
 
         if outcome.retrieval_receipt is not None:
             from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt, ReadArtifactTool
