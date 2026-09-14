@@ -71,3 +71,41 @@ Structured tool-error compatibility checkpoint: `ToolRegistry` now treats an uns
 Raw-string built-in audit: `agent_browser` (argument validation and process-start failures), `agent_device` (the corresponding device failures), `search_files` (validation, path, and exception failures), and `social_crawl` (crawler policy/transport failures) still return raw `Error:` scalar content. They are deliberately deferred: their public result ABI is scalar or scalar/`ToolOutcome`, and changing each requires its own tool-level migration, compatibility tests, and registration audit. `_FsTool` write-scope and lock helper strings are converted to `PermissionError` and caught as existing structured `ToolResult.error(...)` values, so they are not an additional raw tool ABI. No production registration sweep is claimed by this checkpoint.
 
 Validation: focused network-denied registry, runner, and policy-dispatch fixtures prove that raw `Error`-prefixed success continues to the next model response with no retry hint or terminal reason, while a structured error carries the hint and metadata, stops before a later tool and model call, and retains fail-fast coverage. The migration guard remains closed.
+
+### Telegram headless composition candidate
+
+`tests/channels/test_telegram_headless_composition.py` adds a bounded composition
+check at the transport boundary. A synthetic authorized Telegram update enters
+the real `ChannelManager` and `AgentLoop.run`, reaches `execute_turn` once, and
+uses the actual runner and contextual `message` tool. The fixture keeps the
+Telegram reply, forum thread, sender, and attachment metadata intact through the
+canonical request and fake Bot API call. Result-only mode drops an ordinary
+`ProgressEvent`; a matching explicit attachment send suppresses the duplicate
+final response. A denied sender is rejected before bus admission, provider/tool
+work, or transport output. Authorization evidence records two
+`_is_update_allowed` calls for an accepted queued update: ingress admission and
+dequeue-time policy revalidation. The inherited `BaseChannel` sender check is
+also recorded (three sender-policy calls total on the accepted path); this
+package makes no single-call claim because mutable
+`allowFrom`/`allowChats` policy must be revalidated after queueing. Cancellation
+and structured terminal tool-error cases both enter through the real Telegram
+update, bus, agent loop, and manager dispatcher; the fake Bot API proves that
+cancellation sends nothing and the terminal error sends exactly one result.
+The lifecycle case runs the production Telegram `start()`/`stop()` and manager
+ownership against fake PTB application/updater hooks, verifies initialize/start
+and stop/shutdown ownership, and confirms that Telegram-only headless startup
+does not build WebSocket/GUI services or leave dispatcher, channel, outbound,
+inbound, media-group, and typing tasks behind.
+
+The composition checks run with network, DNS, and process creation denied and
+use no Telegram credentials or API calls. They are candidate P5 evidence for
+transport-to-canonical wiring; startup/release qualification, durable P4 state,
+cron delivery, and live Telegram operations remain outside this package.
+
+Validation: `uv run --offline --python .venv/bin/python -m pytest -q
+tests/channels/test_telegram_headless_composition.py
+tests/channels/test_telegram_migration_authorization.py
+tests/channels/test_telegram_migration_differential.py` passed 96 tests, and
+`uv run --offline --python .venv/bin/python ruff check
+tests/channels/test_telegram_headless_composition.py` passed. No production
+Telegram or manager file changed for this candidate.
