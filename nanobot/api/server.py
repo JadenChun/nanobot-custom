@@ -77,6 +77,68 @@ async def _prepare_agent(app: Any) -> None:
         await prepare()
 
 
+async def _cancel_and_join_owned(task: asyncio.Task[Any]) -> None:
+    """Cancel an owned request task and wait through cancellation-resistant cleanup.
+
+    ``asyncio.wait_for`` cancels the awaitable it receives.  The HTTP adapter
+    keeps an explicit child task instead, so a request cancellation cannot
+    detach the canonical turn while its provider/tool and admission cleanup
+    are still running.  ``shield`` prevents another cancellation of this
+    handler from cancelling the child again; the loop retries the join while
+    preserving the outer cancellation.  Cleanup exceptions are consumed here
+    because timeout/cancellation already determines the adapter outcome.
+    """
+    interrupted = False
+    if not task.done():
+        task.cancel()
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # A cancellation from the child itself also cancels the shield
+            # once the child finishes.  Only treat it as an outer interruption
+            # when the handler is itself cancelling (or the child is still
+            # running and therefore the shield was interrupted by the owner).
+            current = asyncio.current_task()
+            if not task.done() or (current is not None and current.cancelling()):
+                interrupted = True
+            # A second cancellation belongs to the owner, not the child.  The
+            # first cancel already entered provider/tool cleanup; forwarding
+            # repeated cancels would interrupt that cleanup again.
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        except BaseException:
+            # A child can finish with a cleanup error while shield is being
+            # awaited.  Keep the owner outcome (timeout or cancellation) and
+            # consume the child result below instead of leaking this error.
+            continue
+
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except BaseException as exc:
+        logger.warning("API request cleanup failed: {}", type(exc).__name__)
+
+    if interrupted:
+        raise asyncio.CancelledError()
+
+
+async def _run_owned_with_timeout(awaitable: Awaitable[Any], timeout_s: float) -> Any:
+    """Run one preparation-plus-turn child and join it on timeout/cancellation."""
+    task = asyncio.create_task(awaitable)
+    try:
+        # Shield leaves ownership with this adapter when wait_for expires; the
+        # explicit cancellation below is then followed by a complete join.
+        return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        await _cancel_and_join_owned(task)
+        raise
+    except asyncio.CancelledError:
+        await _cancel_and_join_owned(task)
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Response helpers
 # ---------------------------------------------------------------------------
@@ -298,19 +360,23 @@ async def handle_chat_completions(request: web.Request) -> web.Response:
         "API request session_key={} media={} text={} stream={}",
         session_key, len(media_paths), text[:80], stream,
     )
-    # _execute_direct owns canonical admission and its sole session lock. The
-    # timeout therefore includes resource preparation and admission waiting.
+    # _execute_direct owns canonical admission and its sole session lock. Keep
+    # preparation and the admitted call in one owned task: cancelling a child
+    # task through wait_for reaches an active provider/tool and waits for its
+    # cleanup before this adapter reports the existing 504 response.
+    async def _run_admitted_request() -> Any:
+        await _prepare_agent(request.app)
+        return await agent_loop._execute_direct(
+            text,
+            media=media_paths if media_paths else None,
+            session_key=session_key,
+            channel="api",
+            chat_id=API_CHAT_ID,
+            source=TurnSource.API,
+        )
+
     try:
-        async with asyncio.timeout(timeout_s):
-            await _prepare_agent(request.app)
-            response = await agent_loop._execute_direct(
-                text,
-                media=media_paths if media_paths else None,
-                session_key=session_key,
-                channel="api",
-                chat_id=API_CHAT_ID,
-                source=TurnSource.API,
-            )
+        response = await _run_owned_with_timeout(_run_admitted_request(), timeout_s)
         response_text = _response_text(response.content)
         if not response_text or not response_text.strip():
             logger.warning("Empty response for session {}, using fallback", session_key)

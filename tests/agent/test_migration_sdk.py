@@ -1,17 +1,24 @@
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from agent import test_migration_engine as engine_fixtures
+from agent.test_migration_engine import ScriptedProvider
+from nanobot.agent.hook import AgentHook, AgentRunHookContext
 from nanobot.agent.runner import AgentRunResult
+from nanobot.agent.tools.base import Tool
 from nanobot.agent.turn import RunStatus, TraceMode, TurnResult, TurnSource
 from nanobot.bus.events import OutboundMessage
 from nanobot.nanobot import Nanobot
-from nanobot.providers.base import LLMUsage
+from nanobot.providers.base import LLMResponse, LLMUsage, ToolCallRequest
 from nanobot.sdk.types import result_from_turn
 
 from .test_migration_canonical_admission import host
+
+engine_config = engine_fixtures.engine_config
 
 
 def bot_host(tmp_path):
@@ -168,3 +175,90 @@ async def test_stream_iterator_forwards_trace_option_and_explicit_route(tmp_path
     assert request.route.channel == 'telegram' and request.route.chat_id == '42'
     assert request.trace_mode is TraceMode.SANITIZED
     assert events[-1].result.messages == [{'role': 'assistant', 'content': 'answer'}]
+
+
+class _SdkTraceTool(Tool):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    @property
+    def name(self) -> str:
+        return "sdk_trace_tool"
+
+    @property
+    def description(self) -> str:
+        return "Return a safe fixture result while accepting an untrusted token."
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {"token": {"type": "string"}},
+            "required": ["token"],
+        }
+
+    async def execute(self, **kwargs: Any) -> str:
+        self.calls += 1
+        return "safe tool output"
+
+
+class _SdkSecretHook(AgentHook):
+    def __init__(self, secret: str) -> None:
+        super().__init__()
+        self.secret = secret
+
+    async def before_run(self, context: AgentRunHookContext) -> None:
+        context.messages.append({"role": "system", "content": self.secret})
+
+
+async def test_from_config_real_runner_keeps_default_trace_private_and_sanitizes_streamed_opt_in(
+    engine_config,
+    monkeypatch,
+) -> None:
+    """Exercise the public constructor, factory, runner, and trace projection together."""
+    private_token = "sdk-private-tool-argument"
+    hook_secret = "sdk-private-hook-secret"
+    provider = ScriptedProvider([
+        LLMResponse(content="default answer"),
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="sdk-trace-call",
+            name="sdk_trace_tool",
+            arguments={"token": private_token},
+        )]),
+        LLMResponse(content="streamed answer"),
+    ])
+    monkeypatch.setattr("nanobot.config.loader.load_config", lambda _path: engine_config)
+    monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
+
+    bot = Nanobot.from_config(workspace=engine_config.workspace_path)
+    tool = _SdkTraceTool()
+    bot._loop.tools.register(tool)
+    try:
+        default_result = await bot.run("default trace remains private")
+        streamed = await bot.run_streamed(
+            "compose a safe trace",
+            include_messages=True,
+            hooks=[_SdkSecretHook(hook_secret)],
+        )
+        trace_result = await streamed.wait()
+
+        assert default_result.content == "default answer"
+        assert default_result.messages == []
+        assert trace_result.content == "streamed answer"
+        assert tool.calls == 1
+        assert trace_result.messages == [
+            {"role": "user", "content": "compose a safe trace"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "sdk-trace-call", "name": "sdk_trace_tool"},
+            ]},
+            {"role": "tool", "content": "safe tool output", "tool_call_id": "sdk-trace-call", "name": "sdk_trace_tool"},
+            {"role": "assistant", "content": "streamed answer"},
+        ]
+        rendered = repr(trace_result.messages)
+        assert private_token not in rendered
+        assert hook_secret not in rendered
+        assert "arguments" not in rendered
+        assert "system" not in rendered
+        assert "SDKCaptureHook" not in rendered
+    finally:
+        await bot.aclose()
