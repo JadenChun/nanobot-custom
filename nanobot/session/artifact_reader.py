@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import codecs
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Callable, Literal
 
 from nanobot.agent.tools.filesystem import ReadFileTool
 from nanobot.agent.tools.read_provenance import FilesystemReadReceipt, revalidate_read_receipt
@@ -46,6 +46,7 @@ class ArtifactReader:
     store: PrivateArtifactStore
     read_file: ReadFileTool
     grants: ArtifactGrantSet | None = None
+    location_validator: Callable[[], None] | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if (type(self.read_file) is not ReadFileTool
@@ -61,6 +62,8 @@ class ArtifactReader:
             self.grants.bind_reader(self)
 
     def _validate_private_root(self) -> None:
+        if self.location_validator is not None:
+            self.location_validator()
         backend = self.writer.store._backend
         access = current_tool_workspace(self.read_file._workspace,
             restrict_to_workspace=self.read_file._restrict_to_workspace,

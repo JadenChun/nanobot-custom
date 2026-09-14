@@ -41,6 +41,24 @@ def child_put(root, raw, queue):
         queue.put(errors)
 
 
+def child_put_with_namespace_quota(root, raw, content, queue):
+    try:
+        store = PrivateArtifactStore(
+            Path(root),
+            workspace_id=WORKSPACE,
+            session_key='test:artifact',
+            incarnation='incarnation',
+            generation=2,
+            max_blob_bytes=8,
+            max_namespace_bytes=9,
+        )
+        with store.transaction() as transaction:
+            transaction.put(parse_artifact_descriptor(raw), content)
+        queue.put('ok')
+    except Exception as exc:
+        queue.put(type(exc).__name__)
+
+
 @pytest.fixture
 def blob_store(tmp_path):
     return make_store(tmp_path.resolve() / 'artifacts')
@@ -211,6 +229,120 @@ def test_blob_capacity_stops_before_creating_content(tmp_path):
         with pytest.raises(ArtifactStorageError, match='capacity'):
             transaction.put(descriptor(), b'evidence')
     assert not list(store.root.rglob('*.blob'))
+
+
+def test_namespace_quota_counts_distinct_blobs_but_not_identical_reuse(tmp_path):
+    store = PrivateArtifactStore(
+        tmp_path.resolve() / 'artifacts',
+        workspace_id=WORKSPACE,
+        session_key='test:artifact',
+        incarnation='incarnation',
+        generation=2,
+        max_blob_bytes=8,
+        max_namespace_bytes=9,
+    )
+    first = descriptor('first')
+    second = replace(descriptor('other'), artifact_id='c' * 32)
+
+    with store.transaction() as transaction:
+        transaction.put(first, b'first')
+        transaction.put(first, b'first')
+        with pytest.raises(ArtifactStorageError, match='quota'):
+            transaction.put(second, b'other')
+        assert transaction.read_range(first) == b'first'
+    assert not (namespace(store) / (second.artifact_id + '.blob')).exists()
+
+
+def test_namespace_quota_counts_retained_staging_without_deleting_it(tmp_path):
+    store = PrivateArtifactStore(
+        tmp_path.resolve() / 'artifacts',
+        workspace_id=WORKSPACE,
+        session_key='test:artifact',
+        incarnation='incarnation',
+        generation=2,
+        max_blob_bytes=8,
+        max_namespace_bytes=10,
+    )
+    first = descriptor('first')
+    second = replace(descriptor('other'), artifact_id='c' * 32)
+
+    with store.transaction() as transaction:
+        transaction.put(first, b'first')
+        staged = namespace(store) / ('.tmp-' + 'd' * 32)
+        staged.write_bytes(b'stage')
+        staged.chmod(0o600)
+        with pytest.raises(ArtifactStorageError, match='quota'):
+            transaction.put(second, b'other')
+        assert transaction.read_range(first) == b'first'
+        assert staged.read_bytes() == b'stage'
+
+
+def test_lowered_caps_keep_existing_evidence_readable_and_verifiable(tmp_path):
+    root = tmp_path.resolve() / 'artifacts'
+    original = PrivateArtifactStore(
+        root,
+        workspace_id=WORKSPACE,
+        session_key='test:artifact',
+        incarnation='incarnation',
+        generation=2,
+        max_blob_bytes=8,
+        max_namespace_bytes=16,
+    )
+    first = descriptor('first')
+    second = replace(descriptor('other'), artifact_id='c' * 32)
+    with original.transaction() as transaction:
+        transaction.put(first, b'first')
+
+    lowered = PrivateArtifactStore(
+        root,
+        workspace_id=WORKSPACE,
+        session_key='test:artifact',
+        incarnation='incarnation',
+        generation=2,
+        max_blob_bytes=4,
+        max_namespace_bytes=4,
+    )
+    with lowered.transaction() as transaction:
+        assert transaction.read_range(first) == b'first'
+        transaction.verify_durable(first, store=lowered)
+        transaction.put(first, b'first')
+        with pytest.raises(ArtifactStorageError, match='capacity'):
+            transaction.put(second, b'other')
+
+
+def test_concurrent_distinct_blobs_cannot_exceed_namespace_quota(tmp_path):
+    root = tmp_path.resolve() / 'artifacts'
+    first = descriptor('first')
+    second = replace(descriptor('other'), artifact_id='c' * 32)
+    context = multiprocessing.get_context('spawn')
+    queue = context.Queue()
+    processes = [
+        context.Process(target=child_put_with_namespace_quota,
+                        args=(str(root), value.to_dict(), content, queue))
+        for value, content in ((first, b'first'), (second, b'other'))
+    ]
+    try:
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=15)
+            assert not process.is_alive() and process.exitcode == 0
+        assert sorted(queue.get(timeout=2) for _ in processes) == ['ArtifactStorageError', 'ok']
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=2)
+    store = PrivateArtifactStore(
+        root,
+        workspace_id=WORKSPACE,
+        session_key='test:artifact',
+        incarnation='incarnation',
+        generation=2,
+        max_blob_bytes=8,
+        max_namespace_bytes=9,
+    )
+    assert len(list(namespace(store).glob('*.blob'))) == 1
 
 
 def test_two_processes_reuse_one_complete_immutable_blob(blob_store):

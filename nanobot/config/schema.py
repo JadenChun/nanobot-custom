@@ -1,11 +1,21 @@
 """Configuration schema using Pydantic."""
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
-from pydantic import AliasChoices, ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StrictBool,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from nanobot.config.timezone import detect_system_timezone
@@ -593,6 +603,36 @@ class ToolsConfig(Base):
     ssrf_whitelist: list[str] = Field(default_factory=list)  # CIDR ranges to exempt from SSRF blocking (e.g. ["100.64.0.0/10"] for Tailscale)
 
 
+class ArtifactsConfig(Base):
+    """Opt-in private storage for source-bound context artifacts."""
+
+    enabled: StrictBool = False
+    root: str | None = None
+    max_blob_bytes: StrictInt = Field(default=64 * 1024 * 1024, gt=0)
+    max_namespace_bytes: StrictInt = Field(default=1024 * 1024 * 1024, gt=0)
+
+    @field_validator("root")
+    @classmethod
+    def _validate_root(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("artifacts.root must be an absolute path")
+        path = Path(value).expanduser()
+        if not path.is_absolute() or path == Path(path.anchor):
+            raise ValueError("artifacts.root must be an absolute non-root path")
+        # Normalize lexical components without resolving symlinks.  The
+        # factory rejects symlinked roots/components before it opens or creates
+        # private state, so resolving here would hide an unsafe configuration.
+        return os.path.abspath(os.fspath(path))
+
+    @model_validator(mode="after")
+    def _validate_limits(self) -> "ArtifactsConfig":
+        if self.max_namespace_bytes < self.max_blob_bytes:
+            raise ValueError("artifacts.maxNamespaceBytes must be at least artifacts.maxBlobBytes")
+        return self
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -605,6 +645,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    artifacts: ArtifactsConfig = Field(default_factory=ArtifactsConfig)
     model_presets: dict[str, ModelPresetConfig] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("modelPresets", "model_presets"),

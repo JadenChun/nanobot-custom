@@ -158,6 +158,7 @@ from nanobot.utils.runtime import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.agent.tools.filesystem import ReadFileTool
     from nanobot.config.schema import (
         ChannelsConfig,
         Config,
@@ -165,6 +166,7 @@ if TYPE_CHECKING:
         ToolsConfig,
     )
     from nanobot.cron.service import CronService
+    from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.triggers.local_store import LocalTriggerStore
 
 _T = TypeVar("_T")
@@ -387,6 +389,9 @@ class AgentLoop:
         recovery_admission: RecoveryAdmission | None = None,
         fork_dependencies: ForkToolDependencies | None = None,
         _owns_fork_dependencies: bool = False,
+        artifact_reader_factory: Callable[
+            [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None
+        ] | None = None,
     ):
         from nanobot.migration_guard import require_runtime_ready
         require_runtime_ready()
@@ -484,7 +489,8 @@ class AgentLoop:
         self.sessions.set_delete_observer(self._file_state_store.discard)
         self.tools = tool_registry if tool_registry is not None else ToolRegistry()
         self._exec_session_manager = ExecSessionManager()
-        self.runner = AgentRunner()
+        self._artifact_reader_factory = artifact_reader_factory
+        self.runner = AgentRunner(artifact_reader_factory=artifact_reader_factory)
         self.subagents = SubagentManager(
             workspace=workspace,
             bus=bus,
@@ -582,8 +588,8 @@ class AgentLoop:
         if bus is None:
             bus = MessageBus()
         defaults = config.agents.defaults
+        data_dir = config.runtime_data_dir
         if "session_manager" not in extra:
-            data_dir = config.runtime_data_dir
             extra["session_manager"] = SessionManager(
                 config.workspace_path,
                 sessions_root=data_dir / "sessions" if data_dir is not None else None,
@@ -605,6 +611,36 @@ class AgentLoop:
                 config=config,
             )
             extra["_owns_fork_dependencies"] = True
+        if config.artifacts.enabled and extra.get("artifact_reader_factory") is None:
+            from nanobot.config.paths import get_media_dir
+            from nanobot.session.artifact_factory import ConfiguredArtifactReaderFactory
+
+            root = config.artifacts.root
+            if root is None:
+                if data_dir is None:
+                    raise ValueError("Enabled artifacts require a loaded config path or explicit root")
+                root = str(data_dir / "context-artifacts")
+            dependencies = extra["fork_dependencies"]
+            manager = dependencies.resource_policy.context_manager
+            sessions = extra["session_manager"]
+            session_roots: list[Path] = []
+            sessions_dir = getattr(sessions, "sessions_dir", None)
+            if isinstance(sessions_dir, Path):
+                session_roots.extend((sessions_dir, sessions_dir.parent))
+            static_roots = [
+                config.workspace_path,
+                *session_roots,
+                *manager.read_roots(),
+                *manager.write_roots(),
+                *(target.path for target in manager.target_repos()),
+            ]
+            extra["artifact_reader_factory"] = ConfiguredArtifactReaderFactory(
+                root=root,
+                max_blob_bytes=config.artifacts.max_blob_bytes,
+                max_namespace_bytes=config.artifacts.max_namespace_bytes,
+                static_roots=static_roots,
+                media_root=data_dir / "media" if data_dir is not None else get_media_dir(),
+            )
         return cls(
             bus=bus,
             provider=provider,
@@ -1444,7 +1480,11 @@ class AgentLoop:
                     channel=request_ctx.channel, workspace=effective_scope.project_path,
                     include_memory=session.policy.persist if session is not None else True)
             run_context.artifact_read_allowed = (
-                session is not None and 'read_artifact' not in session.policy.disabled_tools
+                (
+                    self._artifact_reader_factory is not None
+                    or self.runner.artifact_reader_factory is not None
+                )
+                and session is not None and 'read_artifact' not in session.policy.disabled_tools
                 and 'read_file' in effective_tools.tool_names)
             conversation_binding = self._conversation_state_binding(
                 session=session,

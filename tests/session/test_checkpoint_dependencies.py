@@ -11,11 +11,13 @@ from nanobot.agent.tools.execution import KnownToolResult
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.session.artifact_projection import ArtifactProjector
 from nanobot.session.artifact_reader import ArtifactReader
+from nanobot.session.artifact_store import PrivateArtifactStore
 from nanobot.session.checkpoint_dependencies import (
     ConsumedSummaryChunk,
     RetrievalDependency,
     SummaryDependencyProof,
     derive_summary_references,
+    validate_summary_dependencies,
 )
 from nanobot.session.source import SourceValidationError, new_source_event
 from nanobot.session.source_compaction import SourceCompactionCandidate
@@ -77,6 +79,35 @@ async def test_derives_only_consumed_verified_projected_bindings(tmp_path):
             ConsumedSummaryChunk(evidence, None, 'Summary of the projected canonical read.'),
         ))
         assert derive_summary_references(proof, snapshot) == (descriptor.reference,)
+
+
+async def test_lowered_blob_cap_keeps_published_evidence_eligible_for_checkpoint_admission(tmp_path):
+    async with setup_read(tmp_path, 'evidence' * 6000) as (writer, tool, store, descriptor, _):
+        state = writer.owner.read_snapshot().state
+        lowered_store = PrivateArtifactStore(
+            store.root,
+            workspace_id=store.workspace_id,
+            session_key=state.session_key,
+            incarnation=state.incarnation,
+            generation=state.generation,
+            max_blob_bytes=4,
+            max_namespace_bytes=4,
+        )
+        reader = ArtifactReader(writer, 'root_history', lowered_store, tool)
+        projected = ArtifactProjector(reader).prepare(
+            SourceTranscript(source_nodes(writer.owner.read_snapshot().events)), enabled=True,
+        )
+        snapshot = writer.owner.read_snapshot()
+        candidate = SourceCompactionCandidate.capture(
+            snapshot, projected, eligible_ids=frozenset(node.event_id for node in projected.nodes),
+        )
+        evidence = candidate.summary_evidence(candidate.boundaries[-1])
+        proof = SummaryDependencyProof(candidate, (
+            ConsumedSummaryChunk(evidence, None, 'Summary of the retained evidence.'),
+        ))
+
+        with lowered_store.transaction() as blobs:
+            assert validate_summary_dependencies(proof, snapshot, reader, blobs) == (descriptor.reference,)
 
 
 async def test_unconsumed_suffix_cannot_affect_proof_reconstruction(tmp_path):

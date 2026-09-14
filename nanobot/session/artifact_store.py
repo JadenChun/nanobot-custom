@@ -15,7 +15,7 @@ import secrets
 import stat
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from nanobot.session.artifact import (
     ArtifactDescriptor,
@@ -26,6 +26,7 @@ from nanobot.session.artifact import (
 
 MAX_RANGE_BYTES = 16_384
 DEFAULT_MAX_BLOB_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_NAMESPACE_BYTES = 1024 * 1024 * 1024
 _CAPABILITY = object()
 
 
@@ -50,7 +51,9 @@ class PrivateArtifactStore:
 
     def __init__(self, root: Path, *, workspace_id: str, session_key: str,
                  incarnation: str, generation: int,
-                 max_blob_bytes: int = DEFAULT_MAX_BLOB_BYTES):
+                 max_blob_bytes: int = DEFAULT_MAX_BLOB_BYTES,
+                 max_namespace_bytes: int = DEFAULT_MAX_NAMESPACE_BYTES,
+                 location_validator: Callable[[], None] | None = None):
         if (os.name != 'posix' or not all(hasattr(os, flag) for flag in ('O_DIRECTORY', 'O_NOFOLLOW'))
                 or not {os.open, os.mkdir, os.stat, os.unlink, os.link} <= os.supports_dir_fd
                 or os.link not in os.supports_follow_symlinks):
@@ -62,12 +65,15 @@ class PrivateArtifactStore:
         if (not isinstance(session_key, str) or not session_key.strip()
                 or not isinstance(incarnation, str) or not incarnation.strip()
                 or type(generation) is not int or generation < 0
-                or type(max_blob_bytes) is not int or max_blob_bytes <= 0):
+                or type(max_blob_bytes) is not int or max_blob_bytes <= 0
+                or type(max_namespace_bytes) is not int or max_namespace_bytes < max_blob_bytes):
             raise ArtifactValidationError('Invalid artifact store namespace or capacity')
         self.root = root
         self.workspace_id, self.session_key = workspace_id, session_key
         self.incarnation, self.generation = incarnation, generation
         self.max_blob_bytes = max_blob_bytes
+        self.max_namespace_bytes = max_namespace_bytes
+        self._location_validator = location_validator
         # Hash only filename components. The persisted workspace UUID remains
         # the workspace identity; full source bindings stay in the descriptor.
         self._parts = (workspace_id, hashlib.sha256(session_key.encode()).hexdigest(),
@@ -82,6 +88,8 @@ class PrivateArtifactStore:
         """Walk from the filesystem anchor without resolving or following links."""
         fd = None
         try:
+            if self._location_validator is not None:
+                self._location_validator()
             fd = os.open(self.root.anchor, _flags())
             parts = self.root.parts[1:]
             for index, part in enumerate(parts):
@@ -203,8 +211,6 @@ class ArtifactBlobTransaction:
         if ((descriptor.workspace_id, descriptor.session_key, descriptor.incarnation, descriptor.generation)
                 != (store.workspace_id, store.session_key, store.incarnation, store.generation)):
             raise ArtifactValidationError('Artifact belongs to another store namespace')
-        if descriptor.byte_length > store.max_blob_bytes:
-            raise ArtifactStorageError('Artifact exceeds configured blob capacity')
         return descriptor
 
     def verify_durable(self, descriptor: ArtifactDescriptor, *, store: PrivateArtifactStore) -> None:
@@ -212,6 +218,27 @@ class ArtifactBlobTransaction:
         if self._store is not store:
             raise ArtifactStorageError('Artifact transaction uses another configured store')
         self._verified_range(descriptor, offset=0, limit=0, durable=True)
+
+    def _namespace_bytes(self) -> int:
+        """Count only trusted blob/staging entries while the store lock is held."""
+        if not self._active:
+            raise ArtifactStorageError('Artifact transaction has ended')
+        total = 0
+        for name in os.listdir(self._fd):
+            info = os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+            if name == '.lock':
+                _private(info, directory=False)
+                continue
+            if re.fullmatch(r'[0-9a-f]{32}\.blob', name):
+                _private(info, directory=False)
+            elif re.fullmatch(r'\.tmp-[0-9a-f]{32}', name):
+                _private(info, directory=False, links=info.st_nlink)
+                if info.st_nlink not in {1, 2}:
+                    raise ArtifactStorageError('Artifact staging entry has unexpected links')
+            else:
+                raise ArtifactStorageError('Artifact namespace has an unexpected entry')
+            total += info.st_size
+        return total
 
     def put(self, descriptor: ArtifactDescriptor, content: bytes) -> None:
         """Install complete immutable bytes, or verify an identical existing blob."""
@@ -230,8 +257,16 @@ class ArtifactBlobTransaction:
             pass
         else:
             self._recover_linked_install(descriptor)
+            # A crashed install may retain the one permitted staging hard link.
+            # Recover it before quota accounting, which intentionally rejects
+            # all remaining staging entries as untrusted retained usage.
+            self._namespace_bytes()
             self._verified_range(descriptor, offset=0, limit=0, durable=True)
             return
+        if descriptor.byte_length > self._store.max_blob_bytes:
+            raise ArtifactStorageError('Artifact exceeds configured blob capacity')
+        if self._namespace_bytes() + len(content) > self._store.max_namespace_bytes:
+            raise ArtifactStorageError('Artifact namespace quota exceeded')
         temporary = '.tmp-' + secrets.token_hex(16)
         fd = None
         try:

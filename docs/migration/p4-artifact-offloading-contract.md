@@ -433,8 +433,8 @@ evidence, unbound expansions, proof-reference derivation, unconsumed suffixes,
 schema/reader loss, corrupt/revoked/CAS failures, no auxiliary artifact writes,
 and the actual-engine large-read projection through restart admission and
 retrieval. General producer adapters, cross-stream grants and handoff, artifact
-rematerialization, default artifact configuration/private-root factories,
-migration-guard removal, and runtime activation remain outstanding.
+rematerialization, migration-guard removal, and runtime activation remain
+outstanding.
 
 The combined focused checkpoint, projection, compaction, and engine suite passes
 166 tests. The broader network-denied session and governance suite passes 658 tests
@@ -472,5 +472,68 @@ denial, bounded and unique inputs, source-write invariants, receipt
 nonserializability, failed and unrecorded handoffs, borrowed-artifact rejection,
 one-shot upward adoption, concrete-wrapper forwarding, durable outer-result
 ordering, and runtime-only parent notices. General producer adapters, artifact
-rematerialization, default private-store configuration, migration-guard removal,
-and runtime activation remain pending.
+rematerialization, migration-guard removal, and runtime activation remain
+pending.
+
+## Private artifact-store configuration (P4-F)
+
+Artifact storage is now an explicit, disabled-by-default top-level setting. A
+legacy configuration that omits `artifacts` remains lossless and does not probe,
+create, or register any artifact capability. This applies equally to CLI,
+headless gateway, and GUI startup paths: `read_artifact` is never a global tool.
+An enabled loop adds it only to an admitted source invocation with the concrete
+`read_file` capability, and a session-level tool disable removes that invocation
+capability.
+
+```json
+{
+  "artifacts": {
+    "enabled": true,
+    "root": "/srv/nanobot/state/context-artifacts",
+    "maxBlobBytes": 67108864,
+    "maxNamespaceBytes": 1073741824
+  }
+}
+```
+
+`enabled` is a strict boolean. `root`, when present, must be an expanded,
+absolute, non-root directory. If it is omitted, the loop captures
+`<the loaded config directory>/context-artifacts` once during construction; a
+later config-path/global-path change cannot relocate that loop's artifact root.
+The standard limits are 64 MiB per blob and 1 GiB per source namespace, and the
+namespace limit must be at least the blob limit.
+
+Before an enabled factory constructs a private store, it rejects roots that
+overlap the workspace, session backend, active project, managed context or target
+repositories, built-in product checkout, media root, readable/writable roots, or
+an exact read-file allowlist. It also rejects symlinked components and any Git or
+worktree ancestor. An unsafe enabled configuration rejects loop startup in CLI,
+headless gateway, and GUI paths; it is never relocated to another directory. The
+factory freezes that approved-location policy and rechecks it before construction
+and every artifact read, verification, write, or publication. A later `.git`
+directory or worktree file therefore fails the affected artifact operation closed
+without weakening the store's directory-relative no-follow operations.
+
+After a safe configuration has started, an operational capacity or disk failure
+retains the validated inline request representation through the existing offload
+fallback when it fits the final request budget. It does not silently select a new
+artifact root. Unsupported filesystem platforms similarly leave the capability
+absent.
+
+Namespace capacity is checked while the existing store transaction lock is held.
+Trusted immutable blobs and retained staging entries count conservatively; an
+identical verified blob does not consume capacity twice. Capacity pressure never
+evicts or deletes bytes. `maxBlobBytes` admits only a new blob installation, while
+descriptor validation, reads, durable verification, checkpoint admission, and
+identical verified reuse remain valid for already published immutable evidence.
+Lowering either quota can prevent new writes while existing evidence remains
+readable, even if existing namespace usage is above the new limit.
+
+Artifact bytes are private runtime state. Operational backups must include the
+configured artifact root together with its bound session state, under the same
+restricted access policy. A session `export()` is a transcript/export boundary;
+it does not copy private blobs or turn artifact references into portable content.
+Until an explicit materialization/export feature is qualified, restore the
+artifact root with its sessions rather than treating ordinary session export as a
+complete artifact backup. The production migration guard remains closed pending
+the remaining migration acceptance gates.

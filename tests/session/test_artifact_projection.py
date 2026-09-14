@@ -48,6 +48,43 @@ async def test_storage_failure_restores_authorized_inline_text(tmp_path, failure
         assert projector.prepare(projected, enabled=True) == original
 
 
+async def test_namespace_quota_failure_retains_authorized_inline_text(tmp_path):
+    import hashlib
+    from dataclasses import replace
+
+    from nanobot.session.artifact_store import PrivateArtifactStore
+
+    async with setup_read(tmp_path, 'evidence' * 6000) as (writer, tool, _store, descriptor, content):
+        backend = writer.store._backend
+        with backend.locked_session_files():
+            header, events = writer.store._read_unlocked(writer.owner.key)
+            header['metadata'].pop('artifact_manifest', None)
+            writer.store._write(header, events)
+        quota_store = PrivateArtifactStore(
+            tmp_path.resolve() / 'quota-artifacts',
+            workspace_id=backend.sessions_dir.name,
+            session_key=descriptor.session_key,
+            incarnation=descriptor.incarnation,
+            generation=descriptor.generation,
+            max_blob_bytes=len(content),
+            max_namespace_bytes=len(content) + 4,
+        )
+        filler = replace(
+            descriptor,
+            artifact_id='c' * 32,
+            byte_length=5,
+            sha256=hashlib.sha256(b'usage').hexdigest(),
+        )
+        with quota_store.transaction() as blobs:
+            blobs.put(filler, b'usage')
+        projector = ArtifactProjector(ArtifactReader(writer, 'root_history', quota_store, tool))
+        original = active(writer)
+
+        assert projector.prepare(original, enabled=True) == original
+        scope = quota_store.root.joinpath(*quota_store._parts)
+        assert {entry.name for entry in scope.iterdir()} == {'.lock', filler.artifact_id + '.blob'}
+
+
 async def test_revocation_cannot_restore_inline_as_an_access_bypass(tmp_path):
     async with setup_read(tmp_path, 'evidence' * 6000) as (writer, tool, store, _, _):
         projector = ArtifactProjector(ArtifactReader(writer, 'root_history', store, tool))
