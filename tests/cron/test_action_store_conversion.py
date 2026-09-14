@@ -175,6 +175,11 @@ def test_conversion_preserves_legacy_content_and_maps_actions_deterministically(
     candidate = replay.candidate
     assert candidate is not None
     assert candidate["runtime_state_policy"] == "snapshot_wins"
+    evidence = candidate["legacy_conversion_evidence"]
+    assert evidence["schema_version"] == 1
+    assert evidence["conversion_identity"] == result.conversion_identity
+    assert evidence["action_backup_digest"] == result.action_backup_digest
+    assert evidence["jobs_backup_digest"] == result.jobs_backup_digest
     canonical_job = candidate["jobs"][0]
     assert canonical_job["schedule"]["tz"] == "Asia/Kuala_Lumpur"
     assert canonical_job["payload"]["additionalDestinations"] == [{"channel": "slack", "to": "C1"}]
@@ -212,6 +217,271 @@ def test_corrupt_jobs_still_converts_actions_and_a_restored_snapshot_can_resume(
     resumed = CronActionStore.convert_legacy(root, namespace=NAMESPACE)
     assert resumed.snapshot_status == "converted"
     assert resumed.snapshot_converted is True
+    assert CronActionStore(root, namespace=NAMESPACE).replay().candidate is not None
+
+
+@pytest.mark.parametrize(
+    ("mutation", "match"),
+    [
+        ("action_reappears", "reappeared"),
+        ("jobs_changes", "changed"),
+        ("jobs_disappears", "disappeared"),
+    ],
+)
+def test_cached_replay_has_no_authority_after_completed_conversion_source_changes(
+    tmp_path: Path, mutation: str, match: str
+) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    store = CronActionStore(root, namespace=NAMESPACE)
+    cached = store.replay()
+    assert cached.candidate is not None
+
+    if mutation == "action_reappears":
+        _write_private(root / "action.jsonl", action_bytes)
+    elif mutation == "jobs_changes":
+        _write_private(root / "jobs.json", b'{"version":1,"jobs":[]}')
+    else:
+        (root / "jobs.json").unlink()
+
+    with pytest.raises(ActionStoreCorruptError, match=match):
+        store.replay()
+
+
+@pytest.mark.parametrize("operation", ["replay", "append", "checkpoint"])
+def test_completed_conversion_evidence_is_checked_by_every_public_operation(
+    tmp_path: Path, operation: str
+) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    store = CronActionStore(root, namespace=NAMESPACE)
+    state = store.replay()
+    _write_private(root / "jobs.json", b'{"version":1,"jobs":[]}')
+
+    with pytest.raises(ActionStoreCorruptError, match="changed"):
+        if operation == "replay":
+            store.replay()
+        elif operation == "append":
+            store.append(action_id="new-action", request={"opaque": operation})
+        else:
+            store.checkpoint(expected_generation=state.generation, candidate={"opaque": operation})
+
+
+@pytest.mark.parametrize("evidence_object", ["backup", "manifest"])
+def test_completed_conversion_rechecks_retained_backup_and_manifest_evidence(
+    tmp_path: Path, evidence_object: str
+) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    result = CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    store = CronActionStore(root, namespace=NAMESPACE)
+    assert store.replay().candidate is not None
+
+    if evidence_object == "backup":
+        assert result.action_backup_digest is not None
+        _write_private(root / "legacy-backups" / f"{result.action_backup_digest}.bin", b"tampered")
+        match = "backup"
+    else:
+        (root / "conversion.json").unlink()
+        match = "manifest"
+
+    with pytest.raises(ActionStoreCorruptError, match=match):
+        store.append(action_id="new-action", request={"opaque": evidence_object})
+
+
+def test_completed_conversion_accepts_a_transformed_candidate_that_carries_its_evidence(tmp_path: Path) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    store = CronActionStore(root, namespace=NAMESPACE)
+    current = store.replay()
+    assert current.candidate is not None
+    evidence = current.candidate["legacy_conversion_evidence"]
+
+    transformed = {
+        "schema_version": 9,
+        "kind": "canonical_cron_candidate",
+        "legacy_conversion_evidence": evidence,
+        "adapter_owned_state": {"preserved": True},
+    }
+    store.checkpoint(expected_generation=current.generation, candidate=transformed)
+
+    assert store.replay().candidate == transformed
+
+
+def test_completed_conversion_checkpoint_rejects_a_candidate_that_drops_its_evidence(tmp_path: Path) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    store = CronActionStore(root, namespace=NAMESPACE)
+    current = store.replay()
+
+    with pytest.raises(ActionStoreCorruptError, match="candidate lacks matching evidence"):
+        store.checkpoint(
+            expected_generation=current.generation,
+            candidate={"schema_version": 9, "kind": "canonical_cron_candidate"},
+        )
+
+
+def test_completed_conversion_reads_the_pre_evidence_raw_candidate_compatibly(tmp_path: Path) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+
+    snapshot = json.loads((root / "snapshot.json").read_text(encoding="utf-8"))
+    snapshot["candidate"].pop("legacy_conversion_evidence")
+    _write_private(root / "snapshot.json", json.dumps(snapshot, separators=(",", ":")).encode())
+
+    candidate = CronActionStore(root, namespace=NAMESPACE).replay().candidate
+    assert candidate is not None
+    assert candidate["kind"] == "legacy_cron_snapshot_candidate"
+
+
+def test_completed_conversion_rejects_candidate_evidence_that_no_longer_matches_the_manifest(tmp_path: Path) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    store = CronActionStore(root, namespace=NAMESPACE)
+    assert store.replay().candidate is not None
+
+    snapshot = json.loads((root / "snapshot.json").read_text(encoding="utf-8"))
+    snapshot["candidate"]["legacy_conversion_evidence"]["conversion_identity"] = "0" * 64
+    _write_private(root / "snapshot.json", json.dumps(snapshot, separators=(",", ":")).encode())
+
+    with pytest.raises(ActionStoreCorruptError, match="candidate evidence"):
+        store.replay()
+
+
+@pytest.mark.parametrize(("target", "status"), [("action", "pending"), ("action", "removing"), ("jobs", "pending")])
+@pytest.mark.parametrize("operation", ["replay", "append", "exact_retry", "checkpoint"])
+def test_public_operations_fence_incomplete_conversion_states(
+    tmp_path: Path, target: str, status: str, operation: str
+) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    store = CronActionStore(root, namespace=NAMESPACE)
+    state = store.replay()
+    assert state.candidate is not None
+    retry = state.candidate["operations"][0]
+    manifest = _manifest(root)
+    manifest[target]["status"] = status
+    _write_private(root / "conversion.json", json.dumps(manifest, separators=(",", ":")).encode())
+
+    with pytest.raises(ActionStoreCorruptError, match="incomplete"):
+        if operation == "replay":
+            store.replay()
+        elif operation == "append":
+            store.append(action_id="new-action", request={"opaque": operation})
+        elif operation == "exact_retry":
+            store.append(action_id=retry["action_id"], request=retry["request"])
+        else:
+            store.checkpoint(expected_generation=state.generation, candidate=state.candidate)
+
+
+def test_completed_conversion_requires_an_untampered_completion_provenance_marker(tmp_path: Path) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    store = CronActionStore(root, namespace=NAMESPACE)
+    assert store.replay().candidate is not None
+
+    marker = json.loads((root / "conversion-complete.json").read_text(encoding="utf-8"))
+    marker["conversion_evidence"]["conversion_identity"] = "0" * 64
+    _write_private(root / "conversion-complete.json", json.dumps(marker, separators=(",", ":")).encode())
+
+    with pytest.raises(ActionStoreCorruptError, match="completion provenance"):
+        store.replay()
+
+
+@pytest.mark.parametrize(("target", "match"), [("marker", "completion provenance"), ("manifest", "incomplete")])
+def test_completed_conversion_fences_safe_file_substitution_of_its_provenance(
+    tmp_path: Path, target: str, match: str
+) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    store = CronActionStore(root, namespace=NAMESPACE)
+    assert store.replay().candidate is not None
+
+    path = root / ("conversion-complete.json" if target == "marker" else "conversion.json")
+    replacement = path.with_name(path.name + ".replacement")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if target == "marker":
+        value["store_namespace"] = "other-store"
+    else:
+        value["jobs"]["status"] = "pending"
+    _write_private(replacement, json.dumps(value, separators=(",", ":")).encode())
+    os.replace(replacement, path)
+
+    with pytest.raises(ActionStoreCorruptError, match=match):
+        store.replay()
+
+
+@pytest.mark.parametrize("mode", ["absent", "unavailable"])
+def test_marker_and_backup_evidence_fence_deleted_manifest_and_recreated_legacy_action(
+    tmp_path: Path, mode: str
+) -> None:
+    action_bytes = _action("add", _job())
+    if mode == "absent":
+        root = _legacy_root(tmp_path)
+    else:
+        root = _legacy_root(tmp_path, actions=action_bytes, jobs=b"{broken jobs")
+    CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    store = CronActionStore(root, namespace=NAMESPACE)
+    assert store.replay().candidate is None
+    (root / "conversion.json").unlink()
+
+    with pytest.raises(ActionStoreCorruptError, match="provenance is missing its manifest"):
+        store.replay()
+
+    _write_private(root / "action.jsonl", action_bytes)
+
+    with pytest.raises(ActionStoreCorruptError, match="reappeared"):
+        store.replay()
+    with pytest.raises(ActionStoreCorruptError, match="reappeared"):
+        CronActionStore(root, namespace=NAMESPACE)
+
+    (root / "conversion-complete.json").unlink()
+    if mode == "unavailable":
+        with pytest.raises(ActionStoreCorruptError, match="provenance|reappeared"):
+            store.append(action_id="new-action", request={"opaque": mode})
+
+
+def test_converter_resumes_a_crash_after_terminal_manifest_before_completion_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    action_bytes = _action("add", _job())
+    jobs_bytes = json.dumps({"version": 1, "jobs": [_job()]}, separators=(",", ":")).encode()
+    root = _legacy_root(tmp_path, actions=action_bytes, jobs=jobs_bytes)
+    store = CronActionStore(root, namespace=NAMESPACE, _allow_legacy_source=True)
+
+    def fail_completion_marker(*args: object, **kwargs: object) -> None:
+        raise ActionStorePersistenceError("injected completion marker failure")
+
+    monkeypatch.setattr(store, "_write_conversion_completion", fail_completion_marker)
+    with pytest.raises(ActionStorePersistenceError, match="completion marker"):
+        store.convert_legacy_sources()
+    assert _manifest(root)["jobs"]["status"] == "converted"
+    assert not (root / "conversion-complete.json").exists()
+    with pytest.raises(ActionStoreCorruptError, match="completion provenance"):
+        CronActionStore(root, namespace=NAMESPACE).replay()
+
+    resumed = CronActionStore.convert_legacy(root, namespace=NAMESPACE)
+    assert resumed.snapshot_status == "converted"
+    assert (root / "conversion-complete.json").exists()
     assert CronActionStore(root, namespace=NAMESPACE).replay().candidate is not None
 
 

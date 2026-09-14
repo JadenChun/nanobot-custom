@@ -43,6 +43,9 @@ _TEMP_ENTRY_RE = re.compile(r"\.(?:snapshot|journal)\.[0-9a-f]{32}\.tmp")
 _LEGACY_CONVERSION_VERSION = 1
 _LEGACY_BACKUP_DIR = "legacy-backups"
 _LEGACY_MANIFEST = "conversion.json"
+_LEGACY_COMPLETION = "conversion-complete.json"
+_LEGACY_CANDIDATE_EVIDENCE_KEY = "legacy_conversion_evidence"
+_LEGACY_CANDIDATE_EVIDENCE_VERSION = 1
 _MISSING = object()
 
 
@@ -467,7 +470,17 @@ class CronActionStore:
             manifest = self._read_conversion_manifest(held)
         except FileNotFoundError:
             manifest = None
+        try:
+            completion = self._read_conversion_completion(held)
+        except FileNotFoundError:
+            completion = None
         if manifest is not None:
+            action = manifest["action"]
+            jobs = manifest["jobs"]
+            if action["status"] not in {"absent", "converted"} or jobs["status"] == "pending":
+                raise ActionStoreCorruptError("legacy conversion is incomplete; only the explicit converter may resume")
+            raise ActionStoreCorruptError("legacy action journal reappeared after conversion; mixed writers are fenced")
+        if completion is not None or self._has_legacy_backup_evidence(held):
             raise ActionStoreCorruptError("legacy action journal reappeared after conversion; mixed writers are fenced")
         raise ActionStoreConversionRequiredError(
             "legacy action.jsonl detected; offline conversion is required before v2 action-store use"
@@ -1210,6 +1223,138 @@ class CronActionStore:
             self._verify_legacy_backup(held, jobs_backup)
         return _copy_json_mapping(value, label="legacy conversion manifest", error=ActionStoreCorruptError)
 
+    def _copy_legacy_conversion_evidence(self, value: object, *, label: str) -> dict[str, Any]:
+        evidence = _copy_json_mapping(value, label=label, error=ActionStoreCorruptError)
+        fields = {
+            "schema_version",
+            "conversion_identity",
+            "identity_action_digest",
+            "identity_jobs_digest",
+            "action_backup_digest",
+            "jobs_backup_digest",
+        }
+        if set(evidence) != fields or type(evidence["schema_version"]) is not int:
+            raise ActionStoreCorruptError(f"{label} has an invalid schema")
+        if evidence["schema_version"] != _LEGACY_CANDIDATE_EVIDENCE_VERSION:
+            raise ActionStoreCorruptError(f"{label} has an invalid version")
+        self._require_digest(evidence["conversion_identity"], label=f"{label} conversion identity")
+        for name in fields - {"schema_version", "conversion_identity"}:
+            self._require_digest(evidence[name], label=f"{label} {name}", nullable=True)
+        return evidence
+
+    def _read_conversion_completion(self, held: _HeldStore) -> dict[str, Any]:
+        data = self._read_private_bytes(held, _LEGACY_COMPLETION, maximum=_MAX_RECORD_BYTES)
+        value = _strict_json_loads(data, label="legacy conversion completion provenance")
+        fields = {
+            "schema_version",
+            "kind",
+            "store_namespace",
+            "action_status",
+            "jobs_status",
+            "conversion_evidence",
+        }
+        if not isinstance(value, dict) or set(value) != fields:
+            raise ActionStoreCorruptError("legacy conversion completion provenance has an invalid schema")
+        if type(value["schema_version"]) is not int or value["schema_version"] != _LEGACY_CONVERSION_VERSION:
+            raise ActionStoreCorruptError("legacy conversion completion provenance has an invalid version")
+        if value["kind"] != "legacy_cron_conversion_completion" or value["store_namespace"] != self.namespace:
+            raise ActionStoreCorruptError("legacy conversion completion provenance belongs to another store")
+        if value["action_status"] not in {"absent", "converted"}:
+            raise ActionStoreCorruptError("legacy conversion completion provenance has an incomplete action status")
+        if value["jobs_status"] not in {"absent", "unavailable", "converted"}:
+            raise ActionStoreCorruptError("legacy conversion completion provenance has an incomplete jobs status")
+        evidence = self._copy_legacy_conversion_evidence(
+            value["conversion_evidence"], label="legacy conversion completion provenance evidence"
+        )
+        result = _copy_json_mapping(value, label="legacy conversion completion provenance", error=ActionStoreCorruptError)
+        result["conversion_evidence"] = evidence
+        return result
+
+    def _completion_provenance(self, manifest: Mapping[str, Any]) -> dict[str, Any]:
+        action = _copy_json_mapping(manifest["action"], label="legacy action manifest", error=ActionStoreCorruptError)
+        jobs = _copy_json_mapping(manifest["jobs"], label="legacy jobs manifest", error=ActionStoreCorruptError)
+        if action["status"] not in {"absent", "converted"} or jobs["status"] not in {
+            "absent", "unavailable", "converted"
+        }:
+            raise ActionStoreCorruptError("legacy conversion is incomplete; completion provenance cannot be written")
+        return {
+            "schema_version": _LEGACY_CONVERSION_VERSION,
+            "kind": "legacy_cron_conversion_completion",
+            "store_namespace": self.namespace,
+            "action_status": action["status"],
+            "jobs_status": jobs["status"],
+            "conversion_evidence": self._legacy_conversion_evidence(manifest),
+        }
+
+    def _write_conversion_completion(
+        self, held: _HeldStore, manifest: Mapping[str, Any], *, current_jobs_digest: str | None
+    ) -> None:
+        """Publish terminal conversion provenance only after re-proving its evidence."""
+        action_bytes = self._read_legacy_source(held, "action.jsonl")
+        if action_bytes is not None:
+            raise ActionStoreCorruptError("legacy action journal reappeared before completion provenance")
+        jobs_bytes = self._read_legacy_source(held, "jobs.json")
+        jobs_digest = None if jobs_bytes is None else self._legacy_digest(jobs_bytes)
+        if jobs_digest != current_jobs_digest:
+            raise ActionStoreCorruptError("legacy jobs snapshot changed before completion provenance")
+        identity = self._verified_conversion_identity(held, manifest, current_jobs_digest=jobs_digest)
+        operations = self._reconstruct_manifest_operations(held, manifest, conversion_identity=identity)
+        self._require_legacy_operation_receipts(held, operations)
+        provenance = self._completion_provenance(manifest)
+        try:
+            existing = self._read_conversion_completion(held)
+        except FileNotFoundError:
+            existing = None
+        if existing is not None:
+            if _canonical_json(existing) != _canonical_json(provenance):
+                raise ActionStoreCorruptError("legacy conversion completion provenance does not match the manifest")
+            return
+        encoded = _canonical_json(provenance).encode("utf-8")
+        if len(encoded) > _MAX_RECORD_BYTES:
+            raise ActionStoreLegacyConversionError("legacy conversion completion provenance exceeds the private record limit")
+        self._replace_file(held, target=_LEGACY_COMPLETION, data=encoded, prefix="conversion-complete")
+
+    def _remove_conversion_completion(self, held: _HeldStore) -> None:
+        """Durably retire prior terminal provenance before explicit recovery resumes."""
+        fd: int | None = None
+        try:
+            fd = os.open(_LEGACY_COMPLETION, os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK, dir_fd=held.root_fd)
+            self._assert_file_binding(held, _LEGACY_COMPLETION, fd)
+            os.unlink(_LEGACY_COMPLETION, dir_fd=held.root_fd)
+            held.assert_bound()
+            os.fsync(held.root_fd)
+            held.assert_bound()
+        except FileNotFoundError:
+            return
+        except CronActionStoreError:
+            raise
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise ActionStoreCorruptError("legacy conversion completion provenance must not be a symlink") from exc
+            raise ActionStorePersistenceError("could not retire legacy conversion completion provenance") from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    def _has_legacy_backup_evidence(self, held: _HeldStore) -> bool:
+        """Detect final content-addressed backups without treating temp files as evidence."""
+        fd: int | None = None
+        try:
+            fd = os.open(_LEGACY_BACKUP_DIR, self._dir_flags(), dir_fd=held.root_fd)
+            self._assert_backup_dir_binding(held, fd)
+            return any(re.fullmatch(r"[0-9a-f]{64}\.bin", name) is not None for name in os.listdir(fd))
+        except FileNotFoundError:
+            return False
+        except CronActionStoreError:
+            raise
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise ActionStoreCorruptError("legacy backup directory must not be a symlink") from exc
+            raise ActionStorePersistenceError("could not inspect legacy conversion backups") from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
+
     def _write_conversion_manifest(self, held: _HeldStore, manifest: Mapping[str, Any]) -> None:
         data = _canonical_json(_copy_json_mapping(manifest, label="legacy conversion manifest")).encode("utf-8")
         if len(data) > _MAX_RECORD_BYTES:
@@ -1591,8 +1736,134 @@ class CronActionStore:
             self._append_journal(held, ActionRequest(receipt, request))
             state = self._read_state(held)
 
+    def _legacy_conversion_evidence(self, manifest: Mapping[str, Any]) -> dict[str, Any]:
+        """Return the small record Package C must carry across candidate changes.
+
+        This record deliberately binds source and backup evidence only.  It
+        neither describes cron operations nor authorizes applying them.
+        """
+        action = _copy_json_mapping(manifest.get("action"), label="legacy action manifest", error=ActionStoreCorruptError)
+        jobs = _copy_json_mapping(manifest.get("jobs"), label="legacy jobs manifest", error=ActionStoreCorruptError)
+        return {
+            "schema_version": _LEGACY_CANDIDATE_EVIDENCE_VERSION,
+            "conversion_identity": manifest["conversion_identity"],
+            "identity_action_digest": manifest["identity_action_digest"],
+            "identity_jobs_digest": manifest["identity_jobs_digest"],
+            "action_backup_digest": action["backup_digest"],
+            "jobs_backup_digest": jobs["backup_digest"],
+        }
+
+    def _require_conversion_candidate_evidence(
+        self, candidate: Mapping[str, Any], expected: Mapping[str, Any]
+    ) -> None:
+        """Verify only the stable conversion seam, leaving candidate semantics opaque."""
+        if _LEGACY_CANDIDATE_EVIDENCE_KEY in candidate:
+            carried = self._copy_legacy_conversion_evidence(
+                candidate[_LEGACY_CANDIDATE_EVIDENCE_KEY],
+                label="legacy conversion candidate evidence",
+            )
+            if _canonical_json(carried) != _canonical_json(expected):
+                raise ActionStoreCorruptError("legacy conversion candidate evidence does not match the manifest")
+            return
+
+        # Package B emitted this representation before the narrow evidence
+        # record existed.  It remains readable only when its two existing
+        # source-proof fields derive the same evidence.  Package C must carry
+        # the record above once it changes the candidate kind or shape.
+        if (
+            candidate.get("kind") == "legacy_cron_snapshot_candidate"
+            and type(candidate.get("schema_version")) is int
+            and candidate["schema_version"] == _LEGACY_CONVERSION_VERSION
+            and candidate.get("conversion_identity") == expected["conversion_identity"]
+            and candidate.get("jobs_source_digest") == expected["jobs_backup_digest"]
+        ):
+            return
+        raise ActionStoreCorruptError("legacy conversion candidate lacks matching evidence")
+
+    def _verify_completed_conversion_evidence(
+        self, held: _HeldStore, replay: ActionStoreReplay
+    ) -> dict[str, Any] | None:
+        """Fence all conversion state from normal action-store operations."""
+        candidate_marks_conversion = replay.candidate is not None and (
+            _LEGACY_CANDIDATE_EVIDENCE_KEY in replay.candidate
+            or replay.candidate.get("kind") == "legacy_cron_snapshot_candidate"
+        )
+        legacy_receipt_evidence = any(
+            action.request.get("kind") == "legacy_cron_action_v1" for action in replay.pending_actions
+        )
+        action_bytes = self._read_legacy_source(held, "action.jsonl")
+        try:
+            completion = self._read_conversion_completion(held)
+        except FileNotFoundError:
+            completion = None
+        try:
+            manifest = self._read_conversion_manifest(held)
+        except FileNotFoundError:
+            if action_bytes is not None:
+                if completion is not None or candidate_marks_conversion or legacy_receipt_evidence or self._has_legacy_backup_evidence(held):
+                    raise ActionStoreCorruptError(
+                        "legacy action journal reappeared after conversion; mixed writers are fenced"
+                    )
+                raise ActionStoreConversionRequiredError(
+                    "legacy action.jsonl detected; offline conversion is required before v2 action-store use"
+                )
+            if completion is not None or candidate_marks_conversion or legacy_receipt_evidence or self._has_legacy_backup_evidence(held):
+                raise ActionStoreCorruptError("legacy conversion provenance is missing its manifest")
+            return None
+
+        action = _copy_json_mapping(manifest["action"], label="legacy action manifest", error=ActionStoreCorruptError)
+        jobs = _copy_json_mapping(manifest["jobs"], label="legacy jobs manifest", error=ActionStoreCorruptError)
+        if action_bytes is not None:
+            if action["status"] not in {"absent", "converted"} or jobs["status"] == "pending":
+                raise ActionStoreCorruptError("legacy conversion is incomplete; only the explicit converter may resume")
+            raise ActionStoreCorruptError("legacy action journal reappeared after conversion; mixed writers are fenced")
+        if action["status"] not in {"absent", "converted"} or jobs["status"] == "pending":
+            raise ActionStoreCorruptError("legacy conversion is incomplete; only the explicit converter may resume")
+        if completion is None:
+            raise ActionStoreCorruptError("legacy conversion completion provenance is missing")
+
+        jobs_bytes = self._read_legacy_source(held, "jobs.json")
+        jobs_digest = None if jobs_bytes is None else self._legacy_digest(jobs_bytes)
+        identity = self._verified_conversion_identity(
+            held, manifest, current_jobs_digest=jobs_digest
+        )
+        operations = self._reconstruct_manifest_operations(held, manifest, conversion_identity=identity)
+        self._require_legacy_operation_receipts(held, operations)
+
+        jobs_status = jobs["status"]
+        if jobs_status == "absent":
+            if jobs_bytes is not None:
+                raise ActionStoreCorruptError("legacy jobs snapshot reappeared after conversion")
+        elif jobs_status in {"unavailable", "converted"}:
+            if jobs_bytes is None:
+                raise ActionStoreCorruptError("legacy jobs snapshot disappeared after conversion")
+            if jobs_digest != jobs["source_digest"]:
+                raise ActionStoreCorruptError("legacy jobs snapshot changed after conversion; mixed writers are fenced")
+        else:  # _read_conversion_manifest already bounds the possible values.
+            raise ActionStoreCorruptError("legacy jobs conversion status is invalid")
+
+        evidence = self._legacy_conversion_evidence(manifest)
+        expected_completion = self._completion_provenance(manifest)
+        if _canonical_json(completion) != _canonical_json(expected_completion):
+            raise ActionStoreCorruptError("legacy conversion completion provenance does not match the manifest")
+        if jobs_status == "converted":
+            if replay.candidate is None:
+                raise ActionStoreCorruptError("legacy converted jobs snapshot is missing its candidate")
+            self._require_conversion_candidate_evidence(replay.candidate, evidence)
+        elif replay.candidate is not None:
+            # A later adapter may checkpoint a representation after an
+            # unavailable/absent source only if it carries the same evidence.
+            self._require_conversion_candidate_evidence(replay.candidate, evidence)
+        return evidence
+
     def _legacy_jobs_candidate(
-        self, *, conversion_identity: str, jobs_digest: str, jobs: CronStore, operations: list[dict[str, Any]]
+        self,
+        *,
+        conversion_identity: str,
+        jobs_digest: str,
+        jobs: CronStore,
+        operations: list[dict[str, Any]],
+        evidence: Mapping[str, Any],
     ) -> dict[str, Any]:
         ids: set[str] = set()
         canonical_jobs: list[dict[str, Any]] = []
@@ -1608,12 +1879,53 @@ class CronActionStore:
                 "kind": "legacy_cron_snapshot_candidate",
                 "conversion_identity": conversion_identity,
                 "jobs_source_digest": jobs_digest,
+                _LEGACY_CANDIDATE_EVIDENCE_KEY: _copy_json_mapping(
+                    evidence,
+                    label="legacy conversion candidate evidence",
+                ),
                 "jobs": canonical_jobs,
                 "operations": operations,
                 "runtime_state_policy": "snapshot_wins",
             },
             label="legacy jobs snapshot candidate",
         )
+
+    def _checkpoint_legacy_snapshot_candidate(self, candidate: Mapping[str, Any]) -> None:
+        """Checkpoint the converter's pending candidate without opening public use.
+
+        The converter is the sole allowed resumer while its manifest is
+        incomplete.  This keeps normal replay/append/checkpoint calls fenced
+        without weakening their public boundary.
+        """
+        canonical_candidate = _copy_json_mapping(candidate, label="legacy jobs snapshot candidate")
+        with self._held_lock() as held:
+            manifest = self._read_conversion_manifest(held)
+            action = manifest["action"]
+            jobs = manifest["jobs"]
+            if action["status"] not in {"absent", "converted"} or jobs["status"] != "pending":
+                raise ActionStoreCorruptError("legacy conversion is not ready for its snapshot checkpoint")
+            state = self._read_state(held)
+            self._verify_journal_durable(held)
+            if state.snapshot is not None:
+                self._verify_snapshot_durable(held)
+            if state.cleanup_required:
+                self._finish_cleanup(held, state)
+                state = self._read_state(held)
+            if state.replay.candidate is not None:
+                if _canonical_json(state.replay.candidate) != _canonical_json(canonical_candidate):
+                    raise ActionStoreConflictError("existing v2 checkpoint conflicts with legacy snapshot conversion")
+                return
+            snapshot_data = self._snapshot_wire(state, canonical_candidate)
+            self._replace_file(held, target="snapshot.json", data=snapshot_data, prefix="snapshot")
+            snapshot = self._read_snapshot(held)
+            if snapshot is None:  # pragma: no cover - defensive after successful replace
+                raise ActionStorePersistenceError("published action snapshot disappeared")
+            self._replace_file(
+                held,
+                target="journal.jsonl",
+                data=self._header_wire(generation=snapshot.journal_generation, base_sequence=snapshot.watermark),
+                prefix="journal",
+            )
 
     def convert_legacy_sources(self) -> LegacyConversionResult:
         """Run the one-way stopped-writer conversion without service wiring."""
@@ -1624,6 +1936,10 @@ class CronActionStore:
                 manifest = self._read_conversion_manifest(held)
             except FileNotFoundError:
                 manifest = None
+            try:
+                completion = self._read_conversion_completion(held)
+            except FileNotFoundError:
+                completion = None
             action_bytes = self._read_legacy_source(held, "action.jsonl")
             action_digest = None if action_bytes is None else self._legacy_digest(action_bytes)
             parsed_actions = [] if action_bytes is None else self._parse_legacy_actions(action_bytes)
@@ -1631,6 +1947,8 @@ class CronActionStore:
             initial_jobs_digest = None if initial_jobs_bytes is None else self._legacy_digest(initial_jobs_bytes)
 
             if manifest is None:
+                if completion is not None:
+                    raise ActionStoreCorruptError("legacy conversion completion provenance is missing its manifest")
                 identity = self._conversion_identity(action_digest, initial_jobs_digest)
                 operations = [] if action_digest is None else self._legacy_operations(
                     parsed_actions, conversion_identity=identity, source_digest=action_digest
@@ -1655,12 +1973,21 @@ class CronActionStore:
                     "jobs": {"status": "pending", "source_digest": None, "backup_digest": None},
                 }
             else:
+                if completion is not None and (
+                    manifest["action"]["status"] not in {"absent", "converted"}
+                    or manifest["jobs"]["status"] not in {"absent", "unavailable", "converted"}
+                ):
+                    raise ActionStoreCorruptError("legacy conversion completion provenance conflicts with an incomplete manifest")
                 identity = self._verified_conversion_identity(
                     held, manifest, current_jobs_digest=initial_jobs_digest
                 )
                 operations = self._reconstruct_manifest_operations(
                     held, manifest, conversion_identity=identity
                 )
+                if completion is not None and _canonical_json(completion) != _canonical_json(
+                    self._completion_provenance(manifest)
+                ):
+                    raise ActionStoreCorruptError("legacy conversion completion provenance does not match the manifest")
                 action_state = manifest["action"]
                 if action_bytes is not None:
                     if action_state["status"] == "converted":
@@ -1716,6 +2043,13 @@ class CronActionStore:
                 raise ActionStoreCorruptError("legacy jobs snapshot reappeared after conversion")
 
             if jobs_bytes is not None and jobs_state["status"] != "converted":
+                if jobs_state["status"] == "unavailable" and jobs_digest != jobs_state["source_digest"]:
+                    # A restored stopped-writer snapshot starts a new explicit
+                    # recovery pass.  Retire the prior terminal provenance
+                    # before marking this manifest pending, so public callers
+                    # remain fenced if recovery is interrupted.
+                    self._remove_conversion_completion(held)
+                    completion = None
                 jobs_state["source_digest"] = jobs_digest
                 jobs_state["backup_digest"] = self._backup_legacy_bytes(held, jobs_bytes)
                 try:
@@ -1726,6 +2060,9 @@ class CronActionStore:
                 except (ActionStoreCorruptError, ActionStoreLegacyConversionError, AttributeError, KeyError, TypeError, ValueError):
                     jobs_state["status"] = "unavailable"
                     self._write_conversion_manifest(held, manifest)
+                    self._write_conversion_completion(
+                        held, manifest, current_jobs_digest=jobs_digest
+                    )
                     return LegacyConversionResult(
                         identity,
                         len(operations),
@@ -1741,9 +2078,11 @@ class CronActionStore:
                     jobs_digest=jobs_digest,
                     jobs=jobs_for_snapshot,
                     operations=operations,
+                    evidence=self._legacy_conversion_evidence(manifest),
                 )
                 self._write_conversion_manifest(held, manifest)
             elif jobs_state["status"] == "converted":
+                self._write_conversion_completion(held, manifest, current_jobs_digest=jobs_digest)
                 return LegacyConversionResult(
                     identity,
                     len(operations),
@@ -1756,6 +2095,7 @@ class CronActionStore:
             elif jobs_bytes is None:
                 jobs_state["status"] = "absent"
                 self._write_conversion_manifest(held, manifest)
+                self._write_conversion_completion(held, manifest, current_jobs_digest=None)
                 return LegacyConversionResult(
                     identity,
                     len(operations),
@@ -1768,12 +2108,7 @@ class CronActionStore:
 
         if snapshot_candidate is None:
             raise ActionStoreLegacyConversionError("legacy jobs snapshot conversion did not produce a candidate")
-        replay = self.replay()
-        if replay.candidate is not None:
-            if _canonical_json(replay.candidate) != _canonical_json(snapshot_candidate):
-                raise ActionStoreConflictError("existing v2 checkpoint conflicts with legacy snapshot conversion")
-        else:
-            self.checkpoint(expected_generation=replay.generation, candidate=snapshot_candidate)
+        self._checkpoint_legacy_snapshot_candidate(snapshot_candidate)
         with self._held_lock() as held:
             manifest = self._read_conversion_manifest(held)
             current_jobs = self._read_legacy_source(held, "jobs.json")
@@ -1788,6 +2123,11 @@ class CronActionStore:
                 raise ActionStoreCorruptError("legacy jobs snapshot changed during checkpoint conversion")
             manifest["jobs"]["status"] = "converted"
             self._write_conversion_manifest(held, manifest)
+            self._write_conversion_completion(
+                held,
+                manifest,
+                current_jobs_digest=self._legacy_digest(current_jobs),
+            )
             return LegacyConversionResult(
                 identity,
                 len(operations),
@@ -1802,6 +2142,7 @@ class CronActionStore:
         """Return a detached generic candidate and its ordered pending actions."""
         with self._held_lock() as held:
             state = self._read_state(held)
+            self._verify_completed_conversion_evidence(held, state.replay)
             self._verify_journal_durable(held)
             if state.snapshot is not None:
                 self._verify_snapshot_durable(held)
@@ -1822,13 +2163,20 @@ class CronActionStore:
             tuple(cls._copy_receipt(receipt) for receipt in replay.receipts),
         )
 
-    def append(self, *, action_id: str, request: Mapping[str, Any]) -> ActionReceipt:
+    def append(
+        self,
+        *,
+        action_id: str,
+        request: Mapping[str, Any],
+        expected_generation: ActionStoreGeneration | None = None,
+    ) -> ActionReceipt:
         """Durably append one opaque request or return its exact old receipt."""
         action_id = self._validate_action_id(action_id)
         canonical_request = _copy_json_mapping(request, label="action request")
         digest = _digest_request(canonical_request)
         with self._held_lock() as held:
             state = self._read_state(held)
+            self._verify_completed_conversion_evidence(held, state.replay)
             self._verify_journal_durable(held)
             if state.cleanup_required:
                 self._finish_cleanup(held, state)
@@ -1845,6 +2193,12 @@ class CronActionStore:
                 else:
                     self._verify_journal_durable(held)
                 return self._copy_receipt(receipt)
+            if expected_generation is not None:
+                if not isinstance(expected_generation, ActionStoreGeneration):
+                    raise ValueError("expected_generation must be an ActionStoreGeneration returned by replay()")
+                expected_generation = self._validate_generation(expected_generation)
+                if state.replay.generation != expected_generation:
+                    raise ActionStoreStaleGenerationError("append generation is stale")
             if len(state.replay.receipts) >= _MAX_RECEIPTS:
                 raise ActionStoreConflictError("action receipt limit exceeded; an offline export is required")
             sequence = state.replay.receipts[-1].sequence + 1 if state.replay.receipts else 1
@@ -1866,6 +2220,7 @@ class CronActionStore:
         canonical_candidate = _copy_json_mapping(candidate, label="checkpoint candidate")
         with self._held_lock() as held:
             state = self._read_state(held)
+            conversion_evidence = self._verify_completed_conversion_evidence(held, state.replay)
             self._verify_journal_durable(held)
             if state.snapshot is not None:
                 self._verify_snapshot_durable(held)
@@ -1894,6 +2249,8 @@ class CronActionStore:
                 state = self._read_state(held)
                 if state.replay.generation != expected_generation:
                     raise ActionStoreStaleGenerationError("checkpoint generation changed during recovery")
+            if conversion_evidence is not None:
+                self._require_conversion_candidate_evidence(canonical_candidate, conversion_evidence)
             snapshot_data = self._snapshot_wire(state, canonical_candidate)
             # This call fsyncs the snapshot file, replaces it, and fsyncs the
             # directory before _replace_file touches journal.jsonl.

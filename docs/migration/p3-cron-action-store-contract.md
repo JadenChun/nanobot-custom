@@ -1,6 +1,6 @@
 # P3 version-2 cron action-store contract
 
-`nanobot.cron.action_store.CronActionStore` is an isolated private POSIX primitive. It is not imported by the cron service and does not execute or deliver cron jobs. Package B adds an explicit, stopped-writer conversion boundary for legacy cron files. Package C will bind the opaque replay candidate to the canonical cron store, Package D will establish occurrence authority, and Package E will add destination receipts and uncertain-send reconciliation. The migration guard remains closed until those packages and their integrated acceptance evidence exist.
+`nanobot.cron.action_store.CronActionStore` is an isolated private POSIX primitive. It is not imported by the cron service and does not execute or deliver cron jobs. Package B adds an explicit, stopped-writer conversion boundary for legacy cron files. Package C1 adds append compare-and-swap and completed-conversion evidence checks; Package C2 will bind the opaque replay candidate to the canonical cron store, Package D will establish occurrence authority, and Package E will add destination receipts and uncertain-send reconciliation. The migration guard remains closed until those packages and their integrated acceptance evidence exist.
 
 ## Public bounded API
 
@@ -8,12 +8,15 @@ Construction requires an absolute, non-root, private directory and a UTF-8 store
 
 ```python
 store = CronActionStore(root, namespace="cron:workspace-a")
-receipt = store.append(action_id="opaque-request-id", request={...})
+state = store.replay()
+receipt = store.append(
+    action_id="opaque-request-id", request={...}, expected_generation=state.generation
+)
 state = store.replay()
 settled = store.checkpoint(expected_generation=state.generation, candidate={...})
 ```
 
-`append` accepts an opaque JSON object only. It returns an `ActionReceipt` containing namespace, action ID, canonical request digest, sequence, and the journal generation that established it. Reusing an action ID is accepted only when the canonical request digest is identical. `replay` returns detached data: the prior opaque candidate (or `None`), ordered pending opaque actions, all retained receipts, and an `ActionStoreGeneration` CAS token. The module never applies `add`, `update`, or `del` semantics. A later adapter derives its candidate from the returned values.
+`append` accepts an opaque JSON object only. It returns an `ActionReceipt` containing namespace, action ID, canonical request digest, sequence, and the journal generation that established it. `expected_generation` is optional. When supplied, a new action is appended only if it exactly equals the current token while the store lock is held; a concurrent append or checkpoint makes it stale. An exact retry for an existing action ID and digest is re-proved and returned before this stale-token check, so a caller can safely retry an acknowledged action with its old token. Reusing an action ID is otherwise accepted only when the canonical request digest is identical. `replay` returns detached data: the prior opaque candidate (or `None`), ordered pending opaque actions, all retained receipts, and an `ActionStoreGeneration` CAS token. The module never applies `add`, `update`, or `del` semantics. A later adapter derives its candidate from the returned values.
 
 `checkpoint` accepts only the exact generation returned by `replay`. The token includes the journal generation, snapshot generation, snapshot watermark, and latest visible action sequence, so an append after replay makes a checkpoint stale. It writes a detached opaque candidate after all actions visible to that generation, then compacts the journal. A stale generation fails. Retrying the same token and canonical candidate after a durability error is safe: a published snapshot records its prior generation and is settled or re-proved. Retrying that token with different candidate content fails as a conflict.
 
@@ -47,7 +50,22 @@ The converter accepts established camelCase and snake_case aliases only for pers
 
 Before an action source is retired or a jobs snapshot is represented in the v2 state, its exact bytes are copied to `legacy-backups/<sha256>.bin`. A backup first uses a unique private staging file, file-fsyncs it, atomically renames it through held descriptor-relative paths, and keeps that descriptor open while proving the final entry before and after the backup-directory fsync. Backup files are private (`0600`), their directory is private (`0700`), and all root, directory, and file bindings are rechecked across the durability boundaries. Interrupted staging files use private `.legacy-backup.*.tmp` names and are ignored as forensic evidence on retry; they can never be mistaken for a final digest backup. `conversion.json` is a private, atomically replaced manifest that records the namespace, conversion identity, original source-digest evidence, generated operations, and separate action/jobs statuses. Before source removal, status transition, or a completed-conversion acknowledgement, the converter also requires a durable v2 receipt for every reconstructed operation: action ID and request digest must match exactly, and the receipts must retain the original contiguous order and journal generation. A missing, conflicting, or sequence-incompatible receipt is corruption; the source remains in place. The action source moves through `pending`, `removing`, and `converted` only as recovery hints, never as authorization, so a failure before or after the unlink is resumable. `jobs.json` is deliberately retained after conversion so a changed digest or a new legacy writer is fenced.
 
-A valid legacy `jobs.json` creates a generic v2 checkpoint candidate containing the canonical jobs and converted operations. This is a representation only: Package C owns applying it to the canonical cron store. If `jobs.json` is corrupt, actions still convert and remain durably replayable, the jobs backup is retained, and the manifest records `unavailable`. Restoring a valid stopped-writer jobs snapshot and explicitly rerunning conversion can then create the candidate. A completed conversion is idempotent; a reappearing `action.jsonl`, changed converted jobs digest, conflicting checkpoint, unsafe backup object, or journal version downgrade is corruption and stops the migration.
+A valid legacy `jobs.json` creates a generic v2 checkpoint candidate containing the canonical jobs and converted operations. This is a representation only: Package C owns applying it to the canonical cron store. Its candidate also carries this exact opaque `legacy_conversion_evidence` object:
+
+```json
+{
+  "schema_version": 1,
+  "conversion_identity": "…",
+  "identity_action_digest": "… or null",
+  "identity_jobs_digest": "… or null",
+  "action_backup_digest": "… or null",
+  "jobs_backup_digest": "… or null"
+}
+```
+
+The object binds only conversion-source and backup evidence; it has no cron-operation semantics. Package C2 may replace the candidate kind and body, but it must carry this object unchanged. The action store accepts the original Package B candidate without that object only when its existing `conversion_identity` and `jobs_source_digest` derive the same evidence; any transformed candidate must carry the object.
+
+Every terminal conversion also has a private, durably replaced `conversion-complete.json` provenance record. It records the namespace, terminal action/jobs statuses, and the same exact `conversion_evidence` object. This marker is required even when no candidate exists, including `absent` and `unavailable` jobs states. A conversion manifest without a matching terminal marker is incomplete; a marker without its matching manifest is corruption. Normal `replay`, `append`, and `checkpoint` calls always fence a manifest, marker, retained backup, legacy receipt, or reappearing `action.jsonl` until the record proves completed conversion. Only the explicit stopped-writer converter may resume that state. A restored valid `jobs.json` begins another explicit recovery pass: the converter retires the prior unavailable marker before publishing a new terminal marker. C2 must preserve candidate evidence, but cannot remove or replace the independent completion provenance. Every public operation re-reads the manifest, completion provenance, immutable backups, retired action source, retained `jobs.json`, reconstructed action receipts, and candidate evidence while holding the store lock. A missing, reappearing, changed, unsafe, or inconsistent object is corruption; a cached replay is never authority. If `jobs.json` is corrupt, actions still convert and remain durably replayable, the jobs backup is retained, and the manifest records `unavailable`. Restoring a valid stopped-writer jobs snapshot and explicitly rerunning conversion can then create the candidate. A completed conversion is idempotent; a reappearing `action.jsonl`, changed converted jobs digest, conflicting checkpoint, unsafe backup object, or journal version downgrade is corruption and stops the migration.
 
 The legacy action and jobs inputs use the action-store's 8 MiB bounded private-read limit. Generated v2 requests, checkpoint candidate, journal, and receipt retention remain subject to the normal v2 limits above. A limit or durability failure returns an error and may be retried after the underlying condition is repaired; it never drops source bytes or idempotency evidence.
 

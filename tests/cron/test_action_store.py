@@ -42,6 +42,31 @@ def _append_in_process(root: str, ready: object, outcomes: object, action_id: st
         outcomes.put((type(exc).__name__, str(exc)))  # type: ignore[union-attr]
 
 
+def _append_with_generation_in_process(
+    root: str,
+    generation: ActionStoreGeneration,
+    ready: object,
+    go: object,
+    outcomes: object,
+    action_id: str,
+) -> None:
+    store = CronActionStore(Path(root), namespace=NAMESPACE)
+    ready.put("read")  # type: ignore[union-attr]
+    go.wait()  # type: ignore[union-attr]
+    try:
+        receipt = store.append(
+            action_id=action_id,
+            request={"operation": "opaque", "worker": action_id},
+            expected_generation=generation,
+        )
+    except ActionStoreStaleGenerationError:
+        outcomes.put("stale")  # type: ignore[union-attr]
+    except Exception as exc:  # pragma: no cover - makes worker failure legible
+        outcomes.put((type(exc).__name__, str(exc)))  # type: ignore[union-attr]
+    else:
+        outcomes.put(("ok", receipt.sequence))  # type: ignore[union-attr]
+
+
 def _checkpoint_in_process(root: str, read_ready: object, go: object, outcomes: object, marker: str) -> None:
     store = CronActionStore(Path(root), namespace=NAMESPACE)
     state = store.replay()
@@ -605,6 +630,82 @@ def test_checkpoint_cas_fences_an_append_after_replay(tmp_path: Path) -> None:
         store.checkpoint(
             expected_generation=ActionStoreGeneration(1, 0, 0, True), candidate={"forged": True}
         )
+
+
+def test_append_generation_cas_serializes_concurrent_new_actions(tmp_path: Path) -> None:
+    root = tmp_path / "private-actions"
+    store = CronActionStore(root, namespace=NAMESPACE)
+    generation = store.replay().generation
+    context = multiprocessing.get_context("spawn")
+    read_ready = context.Queue()
+    go = context.Event()
+    outcomes = context.Queue()
+    workers = [
+        context.Process(
+            target=_append_with_generation_in_process,
+            args=(str(root), generation, read_ready, go, outcomes, action_id),
+        )
+        for action_id in ("first", "second")
+    ]
+    for worker in workers:
+        worker.start()
+    assert [read_ready.get(timeout=5) for _ in workers] == ["read", "read"]
+    go.set()
+    for worker in workers:
+        worker.join(timeout=15)
+        assert worker.exitcode == 0
+
+    results = [outcomes.get(timeout=3) for _ in workers]
+    assert results.count("stale") == 1
+    assert len([result for result in results if isinstance(result, tuple) and result[0] == "ok"]) == 1
+    assert len(store.replay().receipts) == 1
+
+
+def test_append_exact_retry_precedes_stale_generation_rejection(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    generation = store.replay().generation
+    first = store.append(
+        action_id="same-action",
+        request={"operation": "opaque", "value": 1},
+        expected_generation=generation,
+    )
+
+    assert store.append(
+        action_id="same-action",
+        request={"operation": "opaque", "value": 1},
+        expected_generation=generation,
+    ) == first
+    with pytest.raises(ActionStoreStaleGenerationError, match="append generation is stale"):
+        store.append(
+            action_id="new-action",
+            request={"operation": "opaque", "value": 2},
+            expected_generation=generation,
+        )
+
+
+def test_append_and_checkpoint_race_invalidates_the_checkpoint_generation(tmp_path: Path) -> None:
+    root = tmp_path / "private-actions"
+    store = CronActionStore(root, namespace=NAMESPACE)
+    generation = store.replay().generation
+    context = multiprocessing.get_context("spawn")
+    read_ready = context.Queue()
+    go = context.Event()
+    outcomes = context.Queue()
+    worker = context.Process(
+        target=_checkpoint_in_process,
+        args=(str(root), read_ready, go, outcomes, "checkpoint"),
+    )
+    worker.start()
+    assert read_ready.get(timeout=5) == "read"
+    store.append(
+        action_id="new-action",
+        request={"operation": "opaque", "value": 1},
+        expected_generation=generation,
+    )
+    go.set()
+    worker.join(timeout=15)
+    assert worker.exitcode == 0
+    assert outcomes.get(timeout=3) == "lost"
 
 
 def test_two_process_append_and_checkpoint_races_are_serialized(tmp_path: Path) -> None:
