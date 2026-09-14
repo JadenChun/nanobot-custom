@@ -570,3 +570,50 @@ reject copied producer receipts at persistence and attestation. Existing retriev
 projection, dependency-fold revocation, stream-isolation, and explicit grant tests
 continue to exercise the shared attestation path. Artifact configuration remains
 disabled by default and the migration guard remains closed.
+
+## Deferred producer registry disposition (P4-G static audit)
+
+The closed producer registry remains an explicit completion boundary. It admits
+only the exact `ReadFileTool` and `GrepTool` implementations with their matching
+receipts; it has no dynamic producer-registration API. The following is a static
+source and active-factory disposition audit, not behavioral qualification of the
+listed tools. The generic canonical-engine tests below do not invoke any of them.
+
+| Deferred family | Current source/factory disposition | Current adapter status |
+| --- | --- | --- |
+| Filesystem enumeration | `list_dir` is in the active core factory; `find_files` and directory/multi-file `grep` are outside the qualified path | No producer adapter. |
+| Shell and execution sessions | `exec` is in the active core factory; execution-session output is outside it | No producer adapter. |
+| Web, browser, device, and crawler output | `web_search` and `web_fetch` are in the active core factory; other adapters are configuration-dependent | No producer adapter. |
+| Persisted-session readers | `search_sessions` and `read_session` are defined but not in the active core factory | No producer adapter. |
+| Delegation and generated reports | `plan_task`, `delegate_task`, `review_work`, and `explore` are in the active core factory | No producer adapter; governed child-to-parent handoff is separate. |
+| Side-effect acknowledgements | `message`, writes/edits, cron, image generation, and similar action results vary with enabled configuration | No producer adapter. |
+| MCP and plugin tools | MCP wrappers and entry-point plugins are extension paths | No producer adapter. |
+| `read_artifact` | Registered only per admitted invocation, never globally | Retrieval-only tool; it is not a producer adapter. |
+
+`tests/agent/test_deferred_producer_boundaries.py` installs one generic local
+receipt-free tool under an otherwise real canonical engine. It proves that fitting
+mixed UTF-8 output executes once, remains byte-exact in durable canonical source,
+has no `_source_origin`, `_artifact_read`, or descriptor publication, and restarts
+without redispatching the no-longer-registered fixture. It does not establish the
+same behavior for any named family in the table. The test starts without a
+checkpoint and proves only that this fixture does not create one; checkpoint
+preservation across a pre-existing checkpoint remains untested here.
+
+The companion oversized receipt-free case proves controlled failure: after the
+one durable tool execution, it makes no auxiliary summary call and no later main
+provider transport, creates no artifact, and restarts without rerunning the
+fixture. This is evidence for the generic receipt-free boundary, not for the
+specific tools above.
+
+`ReadArtifactTool` has a different contract: a successful actual retrieval is
+expected to persist `_artifact_read` and must not receive `_source_origin` or
+republish itself. Existing concrete coverage is in
+`tests/session/test_artifact_reader.py::test_tool_returns_trusted_inline_retrieval_marker`
+and `tests/agent/test_migration_source_engine.py::test_engine_offloads_large_reads_and_retrieves_without_recursive_publication`.
+No additional real `ReadArtifactTool` wiring is added in this generic boundary
+test.
+
+This controlled failure is a safety qualification only. It does not complete
+general tool-output offloading, long-running context success, producer-adapter
+coverage, artifact rematerialization, or any remaining migration gate; it does
+not widen the accepted producer set or amend this contract's scope.
