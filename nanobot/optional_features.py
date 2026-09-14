@@ -52,6 +52,10 @@ _INSTALL_TIMEOUT_SECONDS = 300
 _LOG_OUTPUT_LIMIT = 4000
 _HIDDEN_OPTIONAL_FEATURES = {"documents", "pdf"}
 _BUNDLED_FEATURE_ALIASES = {"documents", "pdf"}
+CHANNEL_DEPENDENCY_PREINSTALL_GUIDANCE = (
+    "Channel dependencies are missing. Preinstall them during the build with "
+    "python -m scripts.install_channel_dependencies --all-channels before starting nanobot."
+)
 
 
 def load_pyproject(path: Path) -> dict[str, Any]:
@@ -741,7 +745,12 @@ def ensure_enabled_channel_dependencies(
     *,
     runner: Any = run_install_command,
 ) -> dict[str, str]:
-    """Install requirements declared by enabled channel manifests.
+    """Install requirements for an explicit build/install action.
+
+    This helper is intentionally reserved for the repository dependency
+    installer and explicit plugin-enable actions. Gateway construction must
+    call :func:`check_enabled_channel_dependencies` instead so startup never
+    mutates the Python environment.
 
     Returns user-safe errors keyed by channel name. Detailed installer output
     remains in gateway logs.
@@ -759,6 +768,29 @@ def ensure_enabled_channel_dependencies(
             continue
         failures[name] = "Channel dependencies could not be installed. Check gateway logs."
         logger.error("Could not prepare dependencies for enabled channel '{}'", name)
+    return failures
+
+
+def check_enabled_channel_dependencies(
+    enabled_names: set[str],
+    plugins: dict[str, Any],
+) -> dict[str, str]:
+    """Check enabled channel requirements without changing the environment.
+
+    Startup is deliberately read-only with respect to optional dependencies:
+    package metadata is inspected locally and missing requirements are reported
+    to the channel manager. Installation belongs to an explicit build or
+    plugin-enable command, never to gateway construction.
+    """
+    failures: dict[str, str] = {}
+    for name in sorted(enabled_names):
+        plugin = plugins.get(name)
+        if plugin is None:
+            continue
+        dependencies = list(plugin.dependencies)
+        if dependencies and not extra_installed(name, dependencies):
+            failures[name] = CHANNEL_DEPENDENCY_PREINSTALL_GUIDANCE
+            logger.error("Enabled channel '{}' has missing preinstalled dependencies", name)
     return failures
 
 

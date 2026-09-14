@@ -268,7 +268,7 @@ def test_channels_config_getattr_returns_extra():
 def test_channels_config_keeps_shared_delivery_defaults():
     cfg = ChannelsConfig()
     assert cfg.send_progress is True
-    assert cfg.send_tool_hints is True
+    assert cfg.send_tool_hints is False
     assert cfg.extract_document_text is True
 
     opted_out = ChannelsConfig.model_validate({
@@ -911,28 +911,23 @@ def test_manager_loads_plugin_from_dict_config(monkeypatch):
     assert isinstance(mgr.channels["fakeplugin"], _FakePlugin)
 
 
-def test_manager_installs_manifest_dependencies_before_loading_enabled_channel(monkeypatch):
-    from nanobot.optional_features import InstallResult
-
+def test_manager_does_not_install_manifest_dependencies_at_startup(monkeypatch):
     plugin = _channel_plugin(
         _FakePlugin,
         dependencies=("fake-sdk>=1",),
     )
     _stub_channel_registry(monkeypatch, plugin)
-    installed = False
     installs: list[tuple[str, list[str]]] = []
 
-    def extra_installed(_name: str, _dependencies: list[str] | None) -> bool:
-        return installed
-
-    def install_extra(name: str, dependencies: list[str], *, runner):
-        nonlocal installed
-        installs.append((name, dependencies))
-        installed = True
-        return InstallResult(True, name, ["pip"])
-
-    monkeypatch.setattr("nanobot.optional_features.extra_installed", extra_installed)
-    monkeypatch.setattr("nanobot.optional_features.install_extra", install_extra)
+    monkeypatch.setattr(
+        "nanobot.optional_features.extra_installed",
+        lambda _name, _dependencies: False,
+    )
+    monkeypatch.setattr(
+        "nanobot.optional_features.install_extra",
+        lambda *args, **kwargs: installs.append((args[0], list(args[1])))
+        or pytest.fail("gateway startup must not install channel dependencies"),
+    )
     config = Config.model_validate({
         "channels": {
             "websocket": {"enabled": False},
@@ -942,13 +937,16 @@ def test_manager_installs_manifest_dependencies_before_loading_enabled_channel(m
 
     manager = ChannelManager(config, MessageBus())
 
-    assert installs == [("fakeplugin", ["fake-sdk>=1"])]
-    assert "fakeplugin" in manager.channels
+    assert installs == []
+    assert manager.channels == {}
+    assert manager.get_status()["fakeplugin"]["state"] == "failed"
+    assert manager.get_status()["fakeplugin"]["error"] == (
+        "Channel dependencies are missing. Preinstall them during the build with "
+        "python -m scripts.install_channel_dependencies --all-channels before starting nanobot."
+    )
 
 
-def test_manager_reports_dependency_install_failure_as_runtime_failure(monkeypatch):
-    from nanobot.optional_features import InstallResult
-
+def test_manager_dependency_check_is_stable_and_does_not_run_subprocess(monkeypatch):
     plugin = _channel_plugin(
         _FakePlugin,
         dependencies=("fake-sdk>=1",),
@@ -959,8 +957,8 @@ def test_manager_reports_dependency_install_failure_as_runtime_failure(monkeypat
         lambda _name, _dependencies: False,
     )
     monkeypatch.setattr(
-        "nanobot.optional_features.install_extra",
-        lambda name, _dependencies, *, runner: InstallResult(False, name, ["pip"]),
+        "nanobot.optional_features.subprocess.run",
+        lambda *args, **kwargs: pytest.fail("gateway startup must not run subprocess"),
     )
     config = Config.model_validate({
         "channels": {
@@ -978,11 +976,14 @@ def test_manager_reports_dependency_install_failure_as_runtime_failure(monkeypat
         "state": "failed",
         "owner": "fakeplugin",
         "instance_id": "default",
-        "error": "Channel dependencies could not be installed. Check gateway logs.",
+        "error": (
+            "Channel dependencies are missing. Preinstall them during the build with "
+            "python -m scripts.install_channel_dependencies --all-channels before starting nanobot."
+        ),
     }
 
 
-def test_manager_loads_websocket_from_default_config():
+def test_manager_keeps_websocket_disabled_when_config_is_legacy_or_omitted():
     from nanobot.channels.manager import ChannelManager
 
     class _FakeWebSocket(_FakePlugin):
@@ -1001,9 +1002,8 @@ def test_manager_loads_websocket_from_default_config():
     with patch("nanobot.channels.registry.discover_plugins", return_value={"websocket": plugin}):
         mgr = ChannelManager(Config(), MessageBus(), webui_static_dist=False)
 
-    assert "websocket" in mgr.channels
-    assert mgr.channels["websocket"].config["enabled"] is True
-    assert mgr.channels["websocket"].config["host"] == "127.0.0.1"
+    assert "websocket" not in mgr.channels
+    assert mgr.get_status() == {}
 
 
 def test_manager_respects_explicitly_disabled_websocket_config():

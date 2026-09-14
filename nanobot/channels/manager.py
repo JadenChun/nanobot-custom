@@ -236,7 +236,7 @@ class ChannelManager:
     def _init_channels(self) -> None:
         """Initialize enabled runtimes from dependency-free channel descriptors."""
         from nanobot.channels.registry import discover_plugins
-        from nanobot.optional_features import ensure_enabled_channel_dependencies
+        from nanobot.optional_features import check_enabled_channel_dependencies
 
         plugins = discover_plugins()
         default_sections: dict[str, Any] = {}
@@ -278,7 +278,7 @@ class ChannelManager:
             activations[name] = (plugin, runtime_specs)
             enabled_names.add(name)
 
-        dependency_errors = ensure_enabled_channel_dependencies(enabled_names, plugins)
+        dependency_errors = check_enabled_channel_dependencies(enabled_names, plugins)
         for name, error in dependency_errors.items():
             self._mark_channel_error(name, error)
 
