@@ -5,7 +5,9 @@ summaries are implemented, while runtime activation remains pending. This contra
 [context design](../context-management-migration-design.md); it does not authorize
 runtime activation or change migration completion scope. Source pressure compaction,
 scoped retrieval, and artifact-backed request and summary projections are implemented.
-General producer adapters and the remaining operational integration stay pending.
+The reviewed producer set is limited to qualified built-in `read_file` and
+single-file `grep` text output; other producer adapters and the remaining
+operational integration stay pending.
 
 ## Required resulting behavior
 
@@ -32,9 +34,10 @@ read access to the artifact root. An opaque ID is a lookup key, not a capability
    byte length, digest, timestamp and trusted source-access label. Use random IDs
    and `(event_id, block_selector)` idempotency with digest verification.
 2. **Trusted provenance and retrieval.** Capture provenance at the tool execution
-   boundary, not from result text or a shared accumulated touched-path set. Start
-   with filesystem reads while implementing explicit adapters for other producing
-   tools. Register bounded artifact reads through normal capabilities and dispatch.
+   boundary, not from result text or a shared accumulated touched-path set. The
+   reviewed filesystem producers are `read_file` and qualified explicit
+   single-file `grep`; each producer must map to its exact canonical tool name.
+   Register bounded artifact reads through normal capabilities and dispatch.
    Unknown-origin results remain inline until their adapter exists; this is a
    staged implementation boundary, not completion of general tool offloading.
 3. **Projection and summary integration.** Offload after canonical result recording
@@ -537,3 +540,33 @@ Until an explicit materialization/export feature is qualified, restore the
 artifact root with its sessions rather than treating ordinary session export as a
 complete artifact backup. The production migration guard remains closed pending
 the remaining migration acceptance gates.
+
+## Canonical grep producer binding (P4-G)
+
+`builtin_read_file_text` is accepted only for a canonical `read_file` result and
+`builtin_grep_file_text` only for a canonical `grep` result. The source writer
+checks that binding before persisting `_source_origin`. Artifact attestation then
+locates the exact assistant tool call at the descriptor's trusted execution-ID
+position and requires the persisted tool event name and receipt producer to agree
+with that call. A copied read receipt on `grep`, a copied grep receipt on
+`read_file`, a generic event, or an adjacent call with the same provider call ID
+therefore cannot publish, project, or retrieve an artifact.
+
+Single-file grep qualification covers the exact formatted UTF-8 output, including
+no-match, pagination and result notes. It does not make recursive directory grep,
+documents, binary files, oversized files, shell output, web output, plugins, or
+third-party tools eligible for offloading. Those results remain canonical inline
+until a separately reviewed concrete producer adapter and receipt-to-tool binding
+are added. No tool metadata, subclass, registry entry, or configuration can widen
+this producer set.
+
+The real-engine integration sequence uses an enabled configured private store and
+an actual single-file grep result over 16,000 characters. It verifies canonical
+grep receipt persistence, bounded reference projection and `read_artifact`
+retrieval, schema-v2 dependency compaction, restart checkpoint admission, stable
+canonical grep bytes and descriptor count, summary/reference-only restart payloads,
+and later byte-exact scoped retrieval. The focused writer/artifact tests also
+reject copied producer receipts at persistence and attestation. Existing retrieval,
+projection, dependency-fold revocation, stream-isolation, and explicit grant tests
+continue to exercise the shared attestation path. Artifact configuration remains
+disabled by default and the migration guard remains closed.

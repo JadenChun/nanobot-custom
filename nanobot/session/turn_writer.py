@@ -149,13 +149,18 @@ class SourceTurnWriter:
                 canonical_events([{'content': raw}])
                 origin = None
                 if value.producer_receipt is not None:
-                    from nanobot.agent.tools.read_provenance import parse_read_receipt
+                    from nanobot.agent.tools.read_provenance import (
+                        canonical_tool_name_for_producer,
+                        parse_read_receipt,
+                    )
 
                     try:
                         receipt = parse_read_receipt(value.producer_receipt.to_dict())
                     except (ValueError, AttributeError, TypeError):
                         receipt = None
-                    if receipt is not None and value.dispatched and value.event.get('status') == 'ok' and receipt.matches(raw):
+                    if (receipt is not None and value.dispatched and value.event.get('status') == 'ok'
+                            and canonical_tool_name_for_producer(receipt.producer) == value.name
+                            and receipt.matches(raw)):
                         origin = receipt.to_dict()
                     else:
                         logger.debug('Ignoring unmatched filesystem producer receipt')

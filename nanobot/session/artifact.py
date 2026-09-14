@@ -225,6 +225,30 @@ def published_artifacts(snapshot: SourceSnapshot, *, workspace_id: str) -> tuple
     return tuple(descriptors)
 
 
+def _declared_tool_name(snapshot: SourceSnapshot, execution_id: str) -> str:
+    """Find the declared call at this exact trusted execution position."""
+    for event in snapshot.events:
+        if event.get('role') != 'assistant' or 'tool_calls' not in event:
+            continue
+        execution_ids = event.get('_execution_ids')
+        if not isinstance(execution_ids, list):
+            continue
+        try:
+            index = execution_ids.index(execution_id)
+        except ValueError:
+            continue
+        calls = event.get('tool_calls')
+        if not isinstance(calls, list) or index >= len(calls):
+            break
+        call = calls[index]
+        function = call.get('function') if isinstance(call, dict) else None
+        name = function.get('name') if isinstance(function, dict) else None
+        if isinstance(name, str) and name:
+            return name
+        break
+    raise ArtifactValidationError('Artifact lacks matching producer evidence')
+
+
 def attested_artifact_origin(descriptor: ArtifactDescriptor, snapshot: SourceSnapshot, *,
                              workspace_id: str) -> FilesystemReadReceipt:
     """Require producer evidence in addition to source text; still not a read grant.
@@ -232,12 +256,18 @@ def attested_artifact_origin(descriptor: ArtifactDescriptor, snapshot: SourceSna
     The returned receipt's root binding must match current policy during retrieval.
     Legacy inline events without producer receipts cannot be retroactively attested.
     """
-    from nanobot.agent.tools.read_provenance import parse_read_receipt
+    from nanobot.agent.tools.read_provenance import (
+        canonical_tool_name_for_producer,
+        parse_read_receipt,
+    )
 
     text = bound_artifact_text(descriptor, snapshot, workspace_id=workspace_id).decode('utf-8')
     event = next(row for row in snapshot.events if row['_event_id'] == descriptor.event_id)
     receipt = parse_read_receipt(event.get('_source_origin'))
-    if (event.get('_dispatched') is not True or event.get('_outcome_status') != 'ok'
+    declared_name = _declared_tool_name(snapshot, descriptor.execution_id)
+    if (event.get('name') != declared_name
+            or canonical_tool_name_for_producer(receipt.producer) != declared_name
+            or event.get('_dispatched') is not True or event.get('_outcome_status') != 'ok'
             or descriptor.block_index is not None or receipt.source_access != descriptor.source_access
             or not receipt.matches(text)):
         raise ArtifactValidationError('Artifact lacks matching producer evidence')

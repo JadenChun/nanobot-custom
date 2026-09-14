@@ -222,3 +222,80 @@ def test_attestation_requires_receipt_and_cannot_relabel_origin():
     source.events[1]['_source_origin']['sha256'] = '0' * 64
     with pytest.raises(ArtifactValidationError):
         attested_artifact_origin(descriptor, source, workspace_id=WORKSPACE)
+
+
+@pytest.mark.parametrize(
+    ('declared_name', 'event_name', 'producer', 'accepted'),
+    [
+        ('read_file', 'read_file', 'builtin_read_file_text', True),
+        ('grep', 'grep', 'builtin_grep_file_text', True),
+        ('read_file', 'read_file', 'builtin_grep_file_text', False),
+        ('grep', 'grep', 'builtin_read_file_text', False),
+        ('read_file', 'grep', 'builtin_read_file_text', False),
+    ],
+)
+def test_attestation_binds_receipt_producer_to_its_exact_assistant_tool_call(
+    declared_name, event_name, producer, accepted,
+):
+    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+    from nanobot.session.artifact import attested_artifact_origin
+
+    raw, source = fixture()
+    descriptor = parse_artifact_descriptor(raw)
+    source.events[0]['tool_calls'][0]['function']['name'] = declared_name
+    source.events[1].update(
+        name=event_name,
+        _source_origin=FilesystemReadReceipt(
+            descriptor.source_access,
+            'a' * 64,
+            descriptor.byte_length,
+            descriptor.sha256,
+            producer=producer,
+        ).to_dict(),
+        _dispatched=True,
+        _outcome_status='ok',
+    )
+
+    if accepted:
+        assert attested_artifact_origin(descriptor, source, workspace_id=WORKSPACE).producer == producer
+    else:
+        with pytest.raises(ArtifactValidationError, match='producer evidence'):
+            attested_artifact_origin(descriptor, source, workspace_id=WORKSPACE)
+
+
+@pytest.mark.parametrize(
+    ('producer', 'accepted'),
+    [
+        ('builtin_grep_file_text', True),
+        ('builtin_read_file_text', False),
+    ],
+)
+def test_attestation_uses_exact_execution_position_for_repeated_provider_call_ids(producer, accepted):
+    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+    from nanobot.session.artifact import attested_artifact_origin
+
+    raw, source = fixture()
+    raw.update(event_id=source.events[2]['_event_id'], execution_id='execution-two')
+    descriptor = parse_artifact_descriptor(raw)
+    # Both calls retain provider ID "same". Their trusted execution IDs select
+    # different positions, whose canonical tool names deliberately differ.
+    source.events[0]['tool_calls'][0]['function']['name'] = 'read_file'
+    source.events[0]['tool_calls'][1]['function']['name'] = 'grep'
+    source.events[2].update(
+        name='grep',
+        _source_origin=FilesystemReadReceipt(
+            descriptor.source_access,
+            'a' * 64,
+            descriptor.byte_length,
+            descriptor.sha256,
+            producer=producer,
+        ).to_dict(),
+        _dispatched=True,
+        _outcome_status='ok',
+    )
+
+    if accepted:
+        assert attested_artifact_origin(descriptor, source, workspace_id=WORKSPACE).producer == producer
+    else:
+        with pytest.raises(ArtifactValidationError, match='producer evidence'):
+            attested_artifact_origin(descriptor, source, workspace_id=WORKSPACE)

@@ -1028,6 +1028,161 @@ async def test_engine_offloads_large_reads_and_retrieves_without_recursive_publi
         await restarted.aclose()
 
 
+async def test_engine_offloads_attested_single_file_grep_with_configured_store(engine_config):
+    import hashlib
+    import json
+    import re
+    from copy import deepcopy
+
+    from nanobot.agent.tools.read_provenance import parse_read_receipt
+    from nanobot.agent.tools.search import GrepTool
+    from nanobot.session.artifact import published_artifacts
+    from nanobot.session.source import prefix_digest
+
+    engine_config.artifacts.enabled = True
+    grep_source = ''.join(f'needle {index:03d} ' + 'x' * 900 + '\n' for index in range(30))
+    (engine_config.workspace_path / 'evidence.txt').write_text(grep_source)
+    key = 'cli:grep-artifact'
+
+    class GrepProvider(ScriptedProvider):
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            self.calls.append((deepcopy(messages), deepcopy(tools), model))
+            if len(self.calls) == 1:
+                return LLMResponse(content=None, tool_calls=[ToolCallRequest(
+                    id='grep', name='grep', arguments={
+                        'pattern': 'needle', 'path': 'evidence.txt', 'fixed_strings': True,
+                        'context_before': 0, 'context_after': 0, 'head_limit': 100,
+                    },
+                )])
+            if len(self.calls) == 2:
+                result = next(row for row in messages if row.get('name') == 'grep')
+                assert len(result['content']) < 1_600
+                self.reference = re.search(r'artifact:[0-9a-f]{32}', result['content'])[0]
+                return LLMResponse(content=None, tool_calls=[ToolCallRequest(
+                    id='artifact', name='read_artifact', arguments={
+                        'reference': self.reference, 'max_bytes': 16_384,
+                    },
+                )])
+            assert len(self.calls) == 3
+            payload = json.loads(next(row for row in messages if row.get('name') == 'read_artifact')['content'])
+            assert len(json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()) <= 16_384
+            self.retrieved = payload
+            return LLMResponse(content='grep complete')
+
+    provider = GrepProvider([])
+    registry = ToolRegistry()
+    registry.register(GrepTool(workspace=engine_config.workspace_path,
+                               allowed_dir=engine_config.workspace_path))
+    loop = AgentLoop.from_config(engine_config, tool_registry=registry, provider=provider)
+    backend = upgrade(loop, key)
+    try:
+        result = await loop.execute_turn(TurnRequest(content='grep and retrieve', session_key=key))
+        assert result.error is None, result.error
+        snapshot = backend.source.load_source_snapshot(key)
+        grep_event = next(row for row in snapshot.events if row.get('name') == 'grep')
+        receipt = parse_read_receipt(grep_event['_source_origin'])
+        descriptors = published_artifacts(snapshot, workspace_id=backend.sessions_dir.name)
+        assert len(grep_event['content']) > 16_000
+        assert receipt.producer == 'builtin_grep_file_text'
+        assert receipt.matches(grep_event['content'])
+        assert len(descriptors) == 1 and descriptors[0].reference == provider.reference
+        assert provider.retrieved['text'].encode() == grep_event['content'].encode()[
+            provider.retrieved['start_offset']:provider.retrieved['next_offset']
+        ]
+    finally:
+        await loop.aclose()
+
+    before_pressure = backend.source.load_source_snapshot(key)
+    canonical_grep = next(row for row in before_pressure.events if row.get('name') == 'grep')
+    canonical_grep_digest = hashlib.sha256(canonical_grep['content'].encode()).hexdigest()
+    source_digest = prefix_digest(before_pressure.events, len(before_pressure.events))
+    descriptor_count = len(published_artifacts(before_pressure, workspace_id=backend.sessions_dir.name))
+    checkpoint_summary = 'grep checkpoint summary with durable reference'
+    # Retrieval revalidates the recorded namespace and policy, not mutable
+    # historical source text. The immutable blob must remain available here.
+    (engine_config.workspace_path / 'evidence.txt').write_text('changed after grep publication')
+
+    class PressureProvider(ScriptedProvider):
+        def estimate_prompt_tokens(self, messages, tools, model):
+            if messages[0]['content'].startswith('Summarize historical evidence'):
+                return 100, 'synthetic'
+            return (6_000 if 'Historical context summary' in str(messages) else 11_000), 'synthetic'
+
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            self.calls.append((deepcopy(messages), deepcopy(tools), model))
+            if messages[0]['content'].startswith('Summarize historical evidence'):
+                payload = str(messages)
+                assert provider.reference in payload
+                assert canonical_grep['content'] not in payload
+                assert 'Tool output stored as ' + provider.reference in payload
+                return LLMResponse(content=checkpoint_summary)
+            return LLMResponse(content='pressure complete')
+
+    pressure_provider = PressureProvider([])
+    pressure = AgentLoop.from_config(
+        engine_config,
+        tool_registry=ToolRegistry(),
+        provider=pressure_provider,
+        context_window_tokens=12_000,
+    )
+    try:
+        result = await pressure.execute_turn(TurnRequest(content='compact grep history', session_key=key))
+        assert result.error is None, result.error
+        compacted = backend.source.load_source_snapshot(key)
+        assert compacted.checkpoint['schema_version'] == 2
+        assert compacted.checkpoint['artifact_references'] == [provider.reference]
+        assert len(published_artifacts(compacted, workspace_id=backend.sessions_dir.name)) == descriptor_count
+        assert prefix_digest(compacted.events, len(before_pressure.events)) == source_digest
+        assert hashlib.sha256(
+            next(row for row in compacted.events if row.get('name') == 'grep')['content'].encode()
+        ).hexdigest() == canonical_grep_digest
+    finally:
+        await pressure.aclose()
+
+    class RestartProvider(ScriptedProvider):
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            self.calls.append((deepcopy(messages), deepcopy(tools), model))
+            if len(self.calls) == 1:
+                payload = str(messages)
+                assert checkpoint_summary in payload
+                assert provider.reference in payload
+                assert canonical_grep['content'] not in payload
+                return LLMResponse(content=None, tool_calls=[ToolCallRequest(
+                    id='later-artifact', name='read_artifact', arguments={
+                        'reference': provider.reference, 'max_bytes': 16_384,
+                    },
+                )])
+            assert len(self.calls) == 2
+            self.retrieved = json.loads(next(
+                row for row in messages if row.get('name') == 'read_artifact'
+            )['content'])
+            return LLMResponse(content='restart complete')
+
+    restarted_provider = RestartProvider([])
+    restarted = AgentLoop.from_config(
+        engine_config,
+        tool_registry=ToolRegistry(),
+        provider=restarted_provider,
+        context_window_tokens=64_000,
+    )
+    try:
+        result = await restarted.execute_turn(TurnRequest(content='resume grep history', session_key=key))
+        assert result.error is None and result.content == 'restart complete'
+        assert restarted_provider.retrieved['text'].encode() == canonical_grep['content'].encode()[
+            restarted_provider.retrieved['start_offset']:restarted_provider.retrieved['next_offset']
+        ]
+        restarted_snapshot = backend.source.load_source_snapshot(key)
+        assert len(published_artifacts(restarted_snapshot, workspace_id=backend.sessions_dir.name)) == descriptor_count
+        assert prefix_digest(restarted_snapshot.events, len(compacted.events)) == prefix_digest(
+            compacted.events, len(compacted.events),
+        )
+        assert hashlib.sha256(
+            next(row for row in restarted_snapshot.events if row.get('name') == 'grep')['content'].encode()
+        ).hexdigest() == canonical_grep_digest
+    finally:
+        await restarted.aclose()
+
+
 async def test_engine_retrieval_pressure_checkpoint_restarts_with_admission(engine_config, tmp_path):
     """A real retrieval receipt survives pressure compaction into the next invocation."""
     import hashlib

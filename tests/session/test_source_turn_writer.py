@@ -198,3 +198,49 @@ async def test_writer_strips_forged_origin_and_preserves_changed_inline_result(s
         event = owner.read_snapshot().events[-1]
         assert event['content'] == 'changed' and '_source_origin' not in event
         await writer.record_tool_result(result(1))
+
+
+@pytest.mark.parametrize(
+    ('tool_name', 'producer'),
+    [
+        ('read_file', 'builtin_grep_file_text'),
+        ('grep', 'builtin_read_file_text'),
+    ],
+)
+async def test_writer_rejects_receipts_copied_between_canonical_producers(
+    store, tool_name, producer,
+):
+    import hashlib
+
+    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+    from nanobot.session.artifact import parse_artifact_descriptor
+    from session.test_artifact import fixture
+
+    raw, _ = fixture()
+    descriptor = parse_artifact_descriptor(raw)
+    content = 'canonical tool output'
+    receipt = FilesystemReadReceipt(
+        descriptor.source_access,
+        'a' * 64,
+        len(content.encode()),
+        hashlib.sha256(content.encode()).hexdigest(),
+        producer=producer,
+    )
+    payload = {
+        'role': 'assistant',
+        'content': '',
+        'tool_calls': [{
+            'id': 'call',
+            'type': 'function',
+            'function': {'name': tool_name, 'arguments': '{}'},
+        }],
+    }
+    async with acquire_execution(store, 'test:writer', run_id='run') as owner:
+        writer = SourceTurnWriter(store.source, owner, run_id='run')
+        writer.begin_tool_batch(payload)
+        await writer.record_tool_result(KnownToolResult(
+            0, 'call', tool_name, content, content, {'status': 'ok'}, True, receipt,
+        ))
+        event = owner.read_snapshot().events[-1]
+        assert event['content'] == content
+        assert '_source_origin' not in event

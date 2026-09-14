@@ -6,10 +6,11 @@ import hashlib
 import json
 import os
 import stat
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal
 
 if TYPE_CHECKING:
@@ -22,6 +23,15 @@ _FILESYSTEM_READ_PRODUCERS: Final[frozenset[FilesystemReadProducer]] = frozenset
     'builtin_read_file_text',
     'builtin_grep_file_text',
 })
+_CANONICAL_PRODUCER_TO_TOOL_NAME: Final[Mapping[FilesystemReadProducer, str]] = MappingProxyType({
+    'builtin_read_file_text': 'read_file',
+    'builtin_grep_file_text': 'grep',
+})
+
+
+def canonical_tool_name_for_producer(producer: FilesystemReadProducer) -> str:
+    """Return the only canonical tool name allowed for producer evidence."""
+    return _CANONICAL_PRODUCER_TO_TOOL_NAME[producer]
 
 
 def root_binding(root: Path) -> str:
