@@ -154,10 +154,17 @@ class CronJobState:
 
     @classmethod
     def from_store_dict(cls, data: dict[str, Any]) -> CronJobState:
-        history = cast(
-            list[object],
-            get_camel_snake(data, "runHistory", "run_history", []) or [],
-        )
+        history = get_camel_snake(data, "runHistory", "run_history", []) or []
+        if not isinstance(history, list):
+            raise ValueError("cron run history must be a list")
+        parsed_history: list[CronRunRecord] = []
+        for record in history:
+            if isinstance(record, CronRunRecord):
+                parsed_history.append(record)
+            elif isinstance(record, dict):
+                parsed_history.append(CronRunRecord.from_store_dict(record))
+            else:
+                raise ValueError("cron run history contains an invalid record")
         return cls(
             next_run_at_ms=_store_int(
                 get_camel_snake(data, "nextRunAtMs", "next_run_at_ms"), None
@@ -168,13 +175,7 @@ class CronJobState:
             last_status=get_camel_snake(data, "lastStatus", "last_status"),
             last_error=get_camel_snake(data, "lastError", "last_error"),
             last_run_status=get_camel_snake(data, "lastRunStatus", "last_run_status"),
-            run_history=[
-                record
-                if isinstance(record, CronRunRecord)
-                else CronRunRecord.from_store_dict(cast(dict[str, Any], record))
-                for record in history
-                if isinstance(record, (dict, CronRunRecord))
-            ],
+            run_history=parsed_history,
         )
 
 
@@ -190,6 +191,11 @@ class CronJob:
     created_at_ms: int = 0
     updated_at_ms: int = 0
     delete_after_run: bool = False
+    # Conversion-only stable identities. They are optional until the stopped
+    # writer converter has established them; ordinary service construction is
+    # deliberately unchanged in this package.
+    job_instance_id: str | None = None
+    definition_revision: str | None = None
 
     @classmethod
     def from_dict(cls, kwargs: dict[str, Any]) -> CronJob:
@@ -223,7 +229,65 @@ class CronJob:
             delete_after_run=bool(
                 get_camel_snake(data, "deleteAfterRun", "delete_after_run", False)
             ),
+            job_instance_id=get_camel_snake(data, "jobInstanceId", "job_instance_id"),
+            definition_revision=get_camel_snake(data, "definitionRevision", "definition_revision"),
         )
+
+    def to_store_dict(self) -> dict[str, Any]:
+        """Return a detached canonical jobs.json-compatible representation."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "enabled": self.enabled,
+            "schedule": {
+                "kind": self.schedule.kind,
+                "atMs": self.schedule.at_ms,
+                "everyMs": self.schedule.every_ms,
+                "expr": self.schedule.expr,
+                "tz": self.schedule.tz,
+            },
+            "payload": {
+                "kind": self.payload.kind,
+                "message": self.payload.message,
+                "deliver": self.payload.deliver,
+                "channel": self.payload.channel,
+                "to": self.payload.to,
+                "additionalDestinations": [
+                    {"channel": destination.channel, "to": destination.to}
+                    for destination in self.payload.additional_destinations
+                ],
+                "channelMeta": dict(self.payload.channel_meta),
+                "sessionKey": self.payload.session_key,
+                "executionMode": self.payload.execution_mode,
+                "originChannel": self.payload.origin_channel,
+                "originChatId": self.payload.origin_chat_id,
+                "originMetadata": dict(self.payload.origin_metadata),
+            },
+            "state": {
+                "nextRunAtMs": self.state.next_run_at_ms,
+                "lastRunAtMs": self.state.last_run_at_ms,
+                "lastStatus": self.state.last_status,
+                "lastError": self.state.last_error,
+                "lastRunStatus": self.state.last_run_status,
+                "runHistory": [
+                    {
+                        "runAtMs": record.run_at_ms,
+                        "status": record.status,
+                        "durationMs": record.duration_ms,
+                        "error": record.error,
+                        "runId": record.run_id,
+                        "runStatus": record.run_status,
+                        "occurrenceId": record.occurrence_id,
+                    }
+                    for record in self.state.run_history
+                ],
+            },
+            "createdAtMs": self.created_at_ms,
+            "updatedAtMs": self.updated_at_ms,
+            "deleteAfterRun": self.delete_after_run,
+            "jobInstanceId": self.job_instance_id,
+            "definitionRevision": self.definition_revision,
+        }
 
 
 @dataclass
@@ -231,3 +295,19 @@ class CronStore:
     """Persistent store for cron jobs."""
     version: int = 1
     jobs: list[CronJob] = field(default_factory=list)
+
+    @classmethod
+    def from_store_dict(cls, data: dict[str, Any]) -> CronStore:
+        """Decode a detached jobs.json object without service-side mutation."""
+        if not isinstance(data, dict) or "jobs" not in data or not isinstance(data["jobs"], list):
+            raise ValueError("legacy jobs store must be an object with a jobs list")
+        version = _store_int(data.get("version", 1))
+        jobs: list[CronJob] = []
+        for item in data["jobs"]:
+            if not isinstance(item, dict):
+                raise ValueError("legacy jobs store contains an invalid job")
+            jobs.append(CronJob.from_store_dict(item))
+        return cls(version=version, jobs=jobs)
+
+    def to_store_dict(self) -> dict[str, Any]:
+        return {"version": self.version, "jobs": [job.to_store_dict() for job in self.jobs]}

@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Generator, Mapping
 
+from nanobot.cron.types import CronJob, CronStore
+
 try:  # Keep this module importable on Windows; construction fails closed.
     import fcntl as _fcntl
 except ImportError:  # pragma: no cover - covered through the platform gate
@@ -38,6 +40,10 @@ _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
 _O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
 _ACTION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,511}")
 _TEMP_ENTRY_RE = re.compile(r"\.(?:snapshot|journal)\.[0-9a-f]{32}\.tmp")
+_LEGACY_CONVERSION_VERSION = 1
+_LEGACY_BACKUP_DIR = "legacy-backups"
+_LEGACY_MANIFEST = "conversion.json"
+_MISSING = object()
 
 
 class CronActionStoreError(RuntimeError):
@@ -62,6 +68,10 @@ class ActionStoreStaleGenerationError(CronActionStoreError):
 
 class ActionStoreConversionRequiredError(CronActionStoreError):
     """A pre-v2 action journal was found and must be converted offline."""
+
+
+class ActionStoreLegacyConversionError(CronActionStoreError):
+    """A stopped-writer legacy source is malformed or unsafe to convert."""
 
 
 @dataclass(frozen=True)
@@ -108,6 +118,19 @@ class ActionStoreReplay:
     candidate: dict[str, Any] | None
     pending_actions: tuple[ActionRequest, ...]
     receipts: tuple[ActionReceipt, ...]
+
+
+@dataclass(frozen=True)
+class LegacyConversionResult:
+    """Detached result from the stopped-writer legacy conversion boundary."""
+
+    conversion_identity: str
+    action_count: int
+    journal_converted: bool
+    snapshot_converted: bool
+    snapshot_status: str
+    action_backup_digest: str | None
+    jobs_backup_digest: str | None
 
 
 @dataclass(frozen=True)
@@ -220,7 +243,7 @@ class CronActionStore:
     conversion-required error rather than being interpreted.
     """
 
-    def __init__(self, root: Path, *, namespace: str):
+    def __init__(self, root: Path, *, namespace: str, _allow_legacy_source: bool = False):
         self._require_qualified_platform()
         root = Path(root)
         if not root.is_absolute() or root == Path(root.anchor) or ".." in root.parts:
@@ -232,7 +255,8 @@ class CronActionStore:
         with self._root_fd(create=True) as root_fd:
             self._root_identity = _inode(os.fstat(root_fd))
         with self._held_lock() as held:
-            self._detect_legacy(held)
+            if not _allow_legacy_source:
+                self._detect_legacy(held)
             try:
                 self._read_journal(held)
             except FileNotFoundError:
@@ -439,6 +463,12 @@ class CronActionStore:
             raise ActionStorePersistenceError("could not inspect legacy action journal") from exc
         if stat.S_ISLNK(legacy.st_mode):
             raise ActionStoreCorruptError("legacy action journal must not be a symlink")
+        try:
+            manifest = self._read_conversion_manifest(held)
+        except FileNotFoundError:
+            manifest = None
+        if manifest is not None:
+            raise ActionStoreCorruptError("legacy action journal reappeared after conversion; mixed writers are fenced")
         raise ActionStoreConversionRequiredError(
             "legacy action.jsonl detected; offline conversion is required before v2 action-store use"
         )
@@ -924,6 +954,849 @@ class CronActionStore:
             data=self._header_wire(generation=state.snapshot.journal_generation, base_sequence=state.snapshot.watermark),
             prefix="journal",
         )
+
+    # The following stopped-writer boundary is deliberately here, rather than
+    # in CronService.  It must establish source/backups/receipts before later
+    # packages give any converted action job semantics or execution authority.
+    @classmethod
+    def convert_legacy(cls, root: Path, *, namespace: str) -> LegacyConversionResult:
+        """Convert stopped legacy ``action.jsonl``/``jobs.json`` sources.
+
+        This is an explicit, local migration operation.  It is not called by
+        startup and it never writes service state or enables execution.
+        """
+        store = cls(root, namespace=namespace, _allow_legacy_source=True)
+        return store.convert_legacy_sources()
+
+    @staticmethod
+    def _legacy_digest(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()
+
+    def _conversion_identity(self, action_digest: str | None, jobs_digest: str | None) -> str:
+        action_token = action_digest if action_digest is not None else "no-legacy-actions"
+        jobs_token = jobs_digest if jobs_digest is not None else "no-legacy-jobs"
+        return hashlib.sha256(
+            b"nanobot-cron-legacy-conversion-v1\0"
+            + self.namespace.encode("utf-8")
+            + b"\0"
+            + action_token.encode("ascii")
+            + b"\0"
+            + jobs_token.encode("ascii")
+        ).hexdigest()
+
+    @staticmethod
+    def _digest_value(value: object) -> str:
+        return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _require_digest(value: object, *, label: str, nullable: bool = False) -> str | None:
+        if nullable and value is None:
+            return None
+        if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ActionStoreCorruptError(f"{label} must be a SHA-256 digest")
+        return value
+
+    def _read_legacy_source(self, held: _HeldStore, name: str) -> bytes | None:
+        try:
+            return self._read_private_bytes(held, name, maximum=_MAX_JOURNAL_BYTES)
+        except FileNotFoundError:
+            return None
+
+    @contextmanager
+    def _legacy_backup_fd(self, held: _HeldStore) -> Generator[int, None, None]:
+        fd: int | None = None
+        created = False
+        try:
+            try:
+                fd = os.open(_LEGACY_BACKUP_DIR, self._dir_flags(), dir_fd=held.root_fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(_LEGACY_BACKUP_DIR, 0o700, dir_fd=held.root_fd)
+                except FileExistsError:
+                    pass
+                else:
+                    created = True
+                fd = os.open(_LEGACY_BACKUP_DIR, self._dir_flags(), dir_fd=held.root_fd)
+            self._assert_backup_dir_binding(held, fd)
+            if created:
+                os.fchmod(fd, 0o700)
+                self._assert_backup_dir_binding(held, fd)
+                os.fsync(fd)
+                self._assert_backup_dir_binding(held, fd)
+                os.fsync(held.root_fd)
+                self._assert_backup_dir_binding(held, fd)
+            yield fd
+        except CronActionStoreError:
+            raise
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise ActionStoreCorruptError("legacy backup directory must not be a symlink") from exc
+            raise ActionStorePersistenceError("could not establish legacy backup directory") from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    def _assert_backup_dir_binding(self, held: _HeldStore, backup_fd: int) -> os.stat_result:
+        """Bind the held backup directory to the configured root entry."""
+        held.assert_bound()
+        info = os.fstat(backup_fd)
+        entry = os.stat(_LEGACY_BACKUP_DIR, dir_fd=held.root_fd, follow_symlinks=False)
+        _private(info, directory=True)
+        _private(entry, directory=True)
+        if _inode(info) != _inode(entry):
+            raise ActionStoreCorruptError("legacy backup directory binding changed")
+        return info
+
+    def _assert_backup_file_binding(
+        self, held: _HeldStore, backup_fd: int, name: str, fd: int
+    ) -> os.stat_result:
+        """Bind a backup descriptor to its entry and enclosing held directory."""
+        self._assert_backup_dir_binding(held, backup_fd)
+        info = os.fstat(fd)
+        entry = os.stat(name, dir_fd=backup_fd, follow_symlinks=False)
+        _private(info, directory=False)
+        _private(entry, directory=False)
+        if _inode(info) != _inode(entry):
+            raise ActionStoreCorruptError("legacy backup file binding changed")
+        return info
+
+    def _backup_legacy_bytes(self, held: _HeldStore, data: bytes) -> str:
+        """Publish a content-addressed backup without ever writing its final name in place."""
+        digest = self._legacy_digest(data)
+        name = digest + ".bin"
+        with self._legacy_backup_fd(held) as backup_fd:
+            try:
+                os.stat(name, dir_fd=backup_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                raise ActionStorePersistenceError("could not inspect legacy conversion backup") from exc
+            else:
+                existing = self._verify_legacy_backup(held, digest)
+                if existing != data:
+                    raise ActionStoreCorruptError("content-addressed legacy backup conflicts with source bytes")
+                return digest
+
+            fd: int | None = None
+            temporary = f".legacy-backup.{uuid.uuid4().hex}.tmp"
+            try:
+                fd = os.open(
+                    temporary,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_NONBLOCK,
+                    0o600,
+                    dir_fd=backup_fd,
+                )
+                os.fchmod(fd, 0o600)
+                self._assert_backup_file_binding(held, backup_fd, temporary, fd)
+                self._write_all(fd, data)
+                self._assert_backup_file_binding(held, backup_fd, temporary, fd)
+                os.fsync(fd)
+                self._assert_backup_file_binding(held, backup_fd, temporary, fd)
+                self._assert_backup_dir_binding(held, backup_fd)
+                os.rename(temporary, name, src_dir_fd=backup_fd, dst_dir_fd=backup_fd)
+                # Keep the fsynced staging descriptor open so a same-owner
+                # replacement at the final name is never acknowledged.
+                self._assert_backup_file_binding(held, backup_fd, name, fd)
+                os.fsync(backup_fd)
+                self._assert_backup_file_binding(held, backup_fd, name, fd)
+                return digest
+            except CronActionStoreError:
+                raise
+            except OSError as exc:
+                raise ActionStorePersistenceError("could not durably preserve legacy source bytes") from exc
+            finally:
+                if fd is not None:
+                    os.close(fd)
+
+    def _verify_legacy_backup(self, held: _HeldStore, digest: str) -> bytes:
+        """Read, fsync, and bind a recorded immutable backup before trusting it."""
+        name = digest + ".bin"
+        with self._legacy_backup_fd(held) as backup_fd:
+            fd: int | None = None
+            try:
+                try:
+                    fd = os.open(name, os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK, dir_fd=backup_fd)
+                except FileNotFoundError as exc:
+                    raise ActionStoreCorruptError("legacy conversion backup disappeared") from exc
+                info = self._assert_backup_file_binding(held, backup_fd, name, fd)
+                if info.st_size > _MAX_JOURNAL_BYTES:
+                    raise ActionStoreCorruptError("legacy conversion backup has an unsafe binding or size")
+                chunks: list[bytes] = []
+                remaining = info.st_size
+                while remaining:
+                    chunk = os.read(fd, remaining)
+                    if not chunk:
+                        raise ActionStoreCorruptError("legacy conversion backup was truncated during read")
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                after = self._assert_backup_file_binding(held, backup_fd, name, fd)
+                if _inode(after) != _inode(info) or after.st_size != info.st_size:
+                    raise ActionStoreCorruptError("legacy conversion backup binding changed during read")
+                data = b"".join(chunks)
+                if self._legacy_digest(data) != digest:
+                    raise ActionStoreCorruptError("legacy conversion backup digest does not match its name")
+                os.fsync(fd)
+                self._assert_backup_file_binding(held, backup_fd, name, fd)
+                os.fsync(backup_fd)
+                self._assert_backup_file_binding(held, backup_fd, name, fd)
+                return data
+            except CronActionStoreError:
+                raise
+            except OSError as exc:
+                if exc.errno == errno.ELOOP:
+                    raise ActionStoreCorruptError("legacy conversion backup must not be a symlink") from exc
+                raise ActionStorePersistenceError("could not read legacy conversion backup") from exc
+            finally:
+                if fd is not None:
+                    os.close(fd)
+
+    def _read_conversion_manifest(self, held: _HeldStore) -> dict[str, Any]:
+        data = self._read_private_bytes(held, _LEGACY_MANIFEST, maximum=_MAX_RECORD_BYTES)
+        value = _strict_json_loads(data, label="legacy conversion manifest")
+        fields = {
+            "schema_version", "kind", "store_namespace", "conversion_identity", "identity_action_digest",
+            "identity_jobs_digest", "action", "jobs",
+        }
+        if not isinstance(value, dict) or set(value) != fields:
+            raise ActionStoreCorruptError("legacy conversion manifest has an invalid schema")
+        if type(value["schema_version"]) is not int or value["schema_version"] != _LEGACY_CONVERSION_VERSION:
+            raise ActionStoreCorruptError("legacy conversion manifest has an invalid version")
+        if value["kind"] != "legacy_cron_conversion" or value["store_namespace"] != self.namespace:
+            raise ActionStoreCorruptError("legacy conversion manifest belongs to another store")
+        self._require_digest(value["conversion_identity"], label="conversion identity")
+        self._require_digest(value["identity_action_digest"], label="identity action source", nullable=True)
+        self._require_digest(value["identity_jobs_digest"], label="identity jobs source", nullable=True)
+        action = value["action"]
+        jobs = value["jobs"]
+        action_fields = {"status", "source_digest", "backup_digest", "operations"}
+        jobs_fields = {"status", "source_digest", "backup_digest"}
+        if not isinstance(action, dict) or set(action) != action_fields or not isinstance(jobs, dict) or set(jobs) != jobs_fields:
+            raise ActionStoreCorruptError("legacy conversion manifest has invalid source state")
+        if action["status"] not in {"absent", "pending", "removing", "converted"}:
+            raise ActionStoreCorruptError("legacy action conversion status is invalid")
+        if jobs["status"] not in {"absent", "unavailable", "pending", "converted"}:
+            raise ActionStoreCorruptError("legacy jobs conversion status is invalid")
+        action_source = self._require_digest(action["source_digest"], label="legacy action source", nullable=True)
+        action_backup = self._require_digest(action["backup_digest"], label="legacy action backup", nullable=True)
+        jobs_source = self._require_digest(jobs["source_digest"], label="legacy jobs source", nullable=True)
+        jobs_backup = self._require_digest(jobs["backup_digest"], label="legacy jobs backup", nullable=True)
+        if not isinstance(action["operations"], list):
+            raise ActionStoreCorruptError("legacy action operations are invalid")
+        if action["status"] == "absent" and (
+            action["source_digest"] is not None or action_backup is not None or action["operations"]
+        ):
+            raise ActionStoreCorruptError("legacy absent action state contains source data")
+        if action["status"] in {"pending", "removing", "converted"} and (
+            action["source_digest"] is None or action_backup is None
+        ):
+            raise ActionStoreCorruptError("legacy action conversion state lacks an immutable backup")
+        if action_backup is not None and action_backup != action_source:
+            raise ActionStoreCorruptError("legacy action source and backup digests do not agree")
+        if jobs["status"] == "absent" and (jobs["source_digest"] is not None or jobs_backup is not None):
+            raise ActionStoreCorruptError("legacy absent jobs state contains source data")
+        if jobs["status"] in {"unavailable", "converted"} and (
+            jobs["source_digest"] is None or jobs_backup is None
+        ):
+            raise ActionStoreCorruptError("legacy jobs conversion state lacks an immutable backup")
+        if jobs_backup is not None and jobs_backup != jobs_source:
+            raise ActionStoreCorruptError("legacy jobs source and backup digests do not agree")
+        if jobs["status"] == "pending" and jobs["source_digest"] is None and jobs_backup is not None:
+            raise ActionStoreCorruptError("legacy pending jobs state has an orphan backup")
+        if jobs["status"] == "pending" and jobs["source_digest"] is not None and jobs_backup is None:
+            raise ActionStoreCorruptError("legacy pending jobs state lacks an immutable backup")
+        if action_backup is not None:
+            self._verify_legacy_backup(held, action_backup)
+        if jobs_backup is not None:
+            self._verify_legacy_backup(held, jobs_backup)
+        return _copy_json_mapping(value, label="legacy conversion manifest", error=ActionStoreCorruptError)
+
+    def _write_conversion_manifest(self, held: _HeldStore, manifest: Mapping[str, Any]) -> None:
+        data = _canonical_json(_copy_json_mapping(manifest, label="legacy conversion manifest")).encode("utf-8")
+        if len(data) > _MAX_RECORD_BYTES:
+            raise ActionStoreLegacyConversionError("legacy conversion manifest exceeds the private record limit")
+        self._replace_file(held, target=_LEGACY_MANIFEST, data=data, prefix="conversion")
+
+    def _parse_legacy_actions(self, data: bytes) -> list[tuple[str, dict[str, Any], int]]:
+        if data and not data.endswith(b"\n"):
+            raise ActionStoreLegacyConversionError("legacy action journal must be newline terminated")
+        parsed: list[tuple[str, dict[str, Any], int]] = []
+        for ordinal, line in enumerate(data.splitlines(), start=1):
+            if not line:
+                raise ActionStoreLegacyConversionError("legacy action journal contains an empty line")
+            try:
+                value = _strict_json_loads(line, label="legacy action")
+            except ActionStoreCorruptError as exc:
+                raise ActionStoreLegacyConversionError("legacy action journal is malformed") from exc
+            if not isinstance(value, dict) or set(value) != {"action", "params"}:
+                raise ActionStoreLegacyConversionError("legacy action has an invalid schema")
+            operation = value["action"]
+            if operation not in {"add", "update", "del"} or not isinstance(value["params"], dict):
+                raise ActionStoreLegacyConversionError("legacy action is not an accepted add/update/del operation")
+            parsed.append((operation, _copy_json_mapping(value["params"], label="legacy action params"), ordinal))
+        return parsed
+
+    @staticmethod
+    def _legacy_field(data: Mapping[str, Any], camel: str, snake: str, *, default: object = _MISSING) -> object:
+        has_camel = camel in data
+        has_snake = snake in data
+        if has_camel and has_snake:
+            raise ActionStoreLegacyConversionError(f"legacy cron record has both {camel} and {snake}")
+        if has_camel:
+            return data[camel]
+        if has_snake:
+            return data[snake]
+        if default is _MISSING:
+            raise ActionStoreLegacyConversionError(f"legacy cron record is missing {camel}")
+        return default
+
+    @staticmethod
+    def _legacy_known_fields(data: Mapping[str, Any], fields: set[str], *, label: str) -> None:
+        unknown = set(data) - fields
+        if unknown:
+            raise ActionStoreLegacyConversionError(f"{label} has unknown fields")
+
+    @staticmethod
+    def _legacy_int(value: object, *, label: str, nullable: bool = False, minimum: int = 0) -> int | None:
+        if nullable and value is None:
+            return None
+        if type(value) is not int or value < minimum:
+            raise ActionStoreLegacyConversionError(f"{label} must be an exact integer")
+        return value
+
+    @staticmethod
+    def _legacy_bool(value: object, *, label: str) -> bool:
+        if type(value) is not bool:
+            raise ActionStoreLegacyConversionError(f"{label} must be a boolean")
+        return value
+
+    @staticmethod
+    def _legacy_string(value: object, *, label: str, nullable: bool = False, empty: bool = False) -> str | None:
+        if nullable and value is None:
+            return None
+        if not isinstance(value, str) or (not empty and not value):
+            raise ActionStoreLegacyConversionError(f"{label} must be a non-empty string")
+        return value
+
+    @staticmethod
+    def _legacy_mapping(value: object, *, label: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ActionStoreLegacyConversionError(f"{label} must be an object")
+        return value
+
+    def _validate_legacy_schedule(self, value: object) -> None:
+        data = self._legacy_mapping(value, label="legacy cron schedule")
+        self._legacy_known_fields(data, {"kind", "atMs", "at_ms", "everyMs", "every_ms", "expr", "tz"}, label="legacy cron schedule")
+        kind = data.get("kind")
+        if kind not in {"at", "every", "cron"}:
+            raise ActionStoreLegacyConversionError("legacy cron schedule has an unknown kind")
+        at_ms = self._legacy_field(data, "atMs", "at_ms", default=None)
+        every_ms = self._legacy_field(data, "everyMs", "every_ms", default=None)
+        self._legacy_int(at_ms, label="legacy cron atMs", nullable=True)
+        self._legacy_int(every_ms, label="legacy cron everyMs", nullable=True, minimum=1)
+        expr = data.get("expr")
+        tz = data.get("tz")
+        self._legacy_string(expr, label="legacy cron expr", nullable=True)
+        self._legacy_string(tz, label="legacy cron timezone", nullable=True)
+        if kind == "at" and at_ms is None:
+            raise ActionStoreLegacyConversionError("legacy at schedule is missing atMs")
+        if kind == "every" and every_ms is None:
+            raise ActionStoreLegacyConversionError("legacy every schedule is missing everyMs")
+        if kind == "cron" and not isinstance(expr, str):
+            raise ActionStoreLegacyConversionError("legacy cron schedule is missing expr")
+
+    def _validate_legacy_payload(self, value: object) -> None:
+        data = self._legacy_mapping(value, label="legacy cron payload")
+        self._legacy_known_fields(
+            data,
+            {
+                "kind", "message", "deliver", "channel", "to", "additionalDestinations", "additional_destinations",
+                "channelMeta", "channel_meta", "sessionKey", "session_key", "executionMode", "execution_mode",
+                "originChannel", "origin_channel", "originChatId", "origin_chat_id", "originMetadata", "origin_metadata",
+            },
+            label="legacy cron payload",
+        )
+        kind = data.get("kind", "agent_turn")
+        if kind not in {"agent_turn", "system_event"}:
+            raise ActionStoreLegacyConversionError("legacy cron payload has an unknown kind")
+        self._legacy_string(data.get("message", ""), label="legacy cron message", empty=True)
+        self._legacy_bool(data.get("deliver", False), label="legacy cron delivery flag")
+        for field in ("channel", "to"):
+            self._legacy_string(data.get(field), label=f"legacy cron {field}", nullable=True)
+        destinations = self._legacy_field(data, "additionalDestinations", "additional_destinations", default=[])
+        if not isinstance(destinations, list):
+            raise ActionStoreLegacyConversionError("legacy cron destinations must be a list")
+        for destination in destinations:
+            item = self._legacy_mapping(destination, label="legacy cron destination")
+            self._legacy_known_fields(item, {"channel", "to"}, label="legacy cron destination")
+            self._legacy_string(item.get("channel"), label="legacy cron destination channel")
+            self._legacy_string(item.get("to"), label="legacy cron destination to")
+        for camel, snake, label in (
+            ("channelMeta", "channel_meta", "legacy cron channel metadata"),
+            ("originMetadata", "origin_metadata", "legacy cron origin metadata"),
+        ):
+            metadata = self._legacy_field(data, camel, snake, default={})
+            self._legacy_mapping(metadata, label=label)
+        for camel, snake, label in (
+            ("sessionKey", "session_key", "legacy cron session key"),
+            ("originChannel", "origin_channel", "legacy cron origin channel"),
+            ("originChatId", "origin_chat_id", "legacy cron origin chat id"),
+        ):
+            self._legacy_string(self._legacy_field(data, camel, snake, default=None), label=label, nullable=True)
+        mode = self._legacy_field(data, "executionMode", "execution_mode", default="session_bound")
+        if mode not in {"session_bound", "legacy_fresh"}:
+            raise ActionStoreLegacyConversionError("legacy cron execution mode is invalid")
+
+    def _validate_legacy_state(self, value: object) -> None:
+        data = self._legacy_mapping(value, label="legacy cron state")
+        self._legacy_known_fields(
+            data,
+            {"nextRunAtMs", "next_run_at_ms", "lastRunAtMs", "last_run_at_ms", "lastStatus", "last_status", "lastError", "last_error", "lastRunStatus", "last_run_status", "runHistory", "run_history"},
+            label="legacy cron state",
+        )
+        for camel, snake, label in (
+            ("nextRunAtMs", "next_run_at_ms", "legacy cron next run"),
+            ("lastRunAtMs", "last_run_at_ms", "legacy cron last run"),
+        ):
+            self._legacy_int(self._legacy_field(data, camel, snake, default=None), label=label, nullable=True)
+        last_status = self._legacy_field(data, "lastStatus", "last_status", default=None)
+        if last_status is not None and last_status not in {"ok", "error", "skipped"}:
+            raise ActionStoreLegacyConversionError("legacy cron last status is invalid")
+        last_run_status = self._legacy_field(data, "lastRunStatus", "last_run_status", default=None)
+        if last_run_status is not None and last_run_status not in {
+            "completed", "succeeded", "failed", "pending", "running", "cancelled", "skipped", "error"
+        }:
+            raise ActionStoreLegacyConversionError("legacy cron last run status is invalid")
+        self._legacy_string(self._legacy_field(data, "lastError", "last_error", default=None), label="legacy cron last error", nullable=True, empty=True)
+        history = self._legacy_field(data, "runHistory", "run_history", default=[])
+        if not isinstance(history, list):
+            raise ActionStoreLegacyConversionError("legacy cron run history must be a list")
+        for record in history:
+            item = self._legacy_mapping(record, label="legacy cron run history record")
+            self._legacy_known_fields(
+                item,
+                {"runAtMs", "run_at_ms", "status", "durationMs", "duration_ms", "error", "runId", "run_id", "runStatus", "run_status", "occurrenceId", "occurrence_id"},
+                label="legacy cron run history record",
+            )
+            self._legacy_int(self._legacy_field(item, "runAtMs", "run_at_ms"), label="legacy cron run timestamp")
+            if item.get("status") not in {"ok", "error", "skipped"}:
+                raise ActionStoreLegacyConversionError("legacy cron run status is invalid")
+            self._legacy_int(self._legacy_field(item, "durationMs", "duration_ms", default=0), label="legacy cron run duration")
+            self._legacy_string(item.get("error"), label="legacy cron run error", nullable=True, empty=True)
+            self._legacy_string(self._legacy_field(item, "runId", "run_id", default=None), label="legacy cron run id", nullable=True)
+            run_status = self._legacy_field(item, "runStatus", "run_status", default=None)
+            if run_status is not None and run_status not in {"completed", "succeeded", "failed", "pending", "running", "cancelled", "skipped", "error"}:
+                raise ActionStoreLegacyConversionError("legacy cron run outcome is invalid")
+            self._legacy_string(self._legacy_field(item, "occurrenceId", "occurrence_id", default=None), label="legacy cron occurrence id", nullable=True)
+
+    def _strict_legacy_job(self, value: object) -> CronJob:
+        data = self._legacy_mapping(value, label="legacy cron job")
+        self._legacy_known_fields(
+            data,
+            {"id", "name", "enabled", "schedule", "payload", "state", "createdAtMs", "created_at_ms", "updatedAtMs", "updated_at_ms", "deleteAfterRun", "delete_after_run", "jobInstanceId", "job_instance_id", "definitionRevision", "definition_revision"},
+            label="legacy cron job",
+        )
+        self._legacy_string(data.get("id"), label="legacy cron job id")
+        self._legacy_string(data.get("name"), label="legacy cron job name")
+        self._legacy_bool(data.get("enabled", True), label="legacy cron enabled")
+        self._validate_legacy_schedule(data.get("schedule"))
+        payload = data.get("payload", {})
+        state = data.get("state", {})
+        self._validate_legacy_payload(payload)
+        self._validate_legacy_state(state)
+        for camel, snake, label in (
+            ("createdAtMs", "created_at_ms", "legacy cron creation timestamp"),
+            ("updatedAtMs", "updated_at_ms", "legacy cron update timestamp"),
+        ):
+            self._legacy_int(self._legacy_field(data, camel, snake, default=0), label=label)
+        self._legacy_bool(self._legacy_field(data, "deleteAfterRun", "delete_after_run", default=False), label="legacy cron delete-after-run")
+        self._legacy_string(self._legacy_field(data, "jobInstanceId", "job_instance_id", default=None), label="legacy cron job instance id", nullable=True)
+        self._legacy_string(self._legacy_field(data, "definitionRevision", "definition_revision", default=None), label="legacy cron definition revision", nullable=True)
+        try:
+            return CronJob.from_store_dict(_copy_json_mapping(data, label="legacy cron job"))
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise ActionStoreLegacyConversionError("legacy cron job cannot be decoded") from exc
+
+    def _strict_legacy_store(self, value: object) -> CronStore:
+        data = self._legacy_mapping(value, label="legacy jobs snapshot")
+        self._legacy_known_fields(data, {"version", "jobs"}, label="legacy jobs snapshot")
+        self._legacy_int(data.get("version", 1), label="legacy jobs version", minimum=1)
+        jobs = data.get("jobs")
+        if not isinstance(jobs, list):
+            raise ActionStoreLegacyConversionError("legacy jobs snapshot must contain a jobs list")
+        return CronStore(version=data.get("version", 1), jobs=[self._strict_legacy_job(job) for job in jobs])
+
+    def _canonical_legacy_job(self, params: Mapping[str, Any], conversion_identity: str) -> dict[str, Any]:
+        try:
+            job = self._strict_legacy_job(params)
+        except ActionStoreLegacyConversionError:
+            raise
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise ActionStoreLegacyConversionError("legacy add/update does not contain a valid cron job") from exc
+        if not isinstance(job.id, str) or not job.id:
+            raise ActionStoreLegacyConversionError("legacy cron job has an invalid id")
+        canonical = job.to_store_dict()
+        instance = hashlib.sha256(
+            b"nanobot-cron-job-instance-v1\0" + conversion_identity.encode("ascii") + b"\0" + job.id.encode("utf-8")
+        ).hexdigest()
+        canonical["jobInstanceId"] = instance
+        definition = {
+            key: value
+            for key, value in canonical.items()
+            if key not in {"state", "createdAtMs", "updatedAtMs", "definitionRevision"}
+        }
+        canonical["definitionRevision"] = self._digest_value(definition)
+        return _copy_json_mapping(canonical, label="canonical legacy cron job")
+
+    def _legacy_operations(
+        self, parsed: list[tuple[str, dict[str, Any], int]], *, conversion_identity: str, source_digest: str
+    ) -> list[dict[str, Any]]:
+        operations: list[dict[str, Any]] = []
+        for operation, params, ordinal in parsed:
+            action_id = hashlib.sha256(
+                b"nanobot-cron-legacy-action-v1\0"
+                + conversion_identity.encode("ascii")
+                + b"\0"
+                + source_digest.encode("ascii")
+                + b"\0"
+                + str(ordinal).encode("ascii")
+            ).hexdigest()
+            source = {
+                "conversion_identity": conversion_identity,
+                "source_digest": source_digest,
+                "line_ordinal": ordinal,
+            }
+            if operation in {"add", "update"}:
+                job = self._canonical_legacy_job(params, conversion_identity)
+                request: dict[str, Any] = {
+                    "kind": "legacy_cron_action_v1",
+                    "operation": "upsert",
+                    "legacy_operation": operation,
+                    "job_id": job["id"],
+                    "job": job,
+                    # Legacy update records often copied stale runtime history.
+                    # Package C must merge definition changes without allowing
+                    # that copy to overwrite the newer jobs snapshot runtime.
+                    "runtime_state_policy": "snapshot_wins",
+                    "source": source,
+                }
+            else:
+                job_id = params.get("job_id")
+                if not isinstance(job_id, str) or not job_id or set(params) != {"job_id"}:
+                    raise ActionStoreLegacyConversionError("legacy del must contain only a non-empty job_id")
+                request = {
+                    "kind": "legacy_cron_action_v1",
+                    "operation": "delete",
+                    "legacy_operation": operation,
+                    "job_id": job_id,
+                    "source": source,
+                }
+            operations.append({"action_id": action_id, "request": _copy_json_mapping(request, label="legacy request")})
+        return operations
+
+    def _verified_conversion_identity(
+        self, held: _HeldStore, manifest: Mapping[str, Any], *, current_jobs_digest: str | None
+    ) -> str:
+        """Recompute the identity from immutable sources, never manifest authority."""
+        action = _copy_json_mapping(manifest.get("action"), label="legacy action manifest", error=ActionStoreCorruptError)
+        jobs = _copy_json_mapping(manifest.get("jobs"), label="legacy jobs manifest", error=ActionStoreCorruptError)
+        action_digest = manifest.get("identity_action_digest")
+        if action_digest is not None:
+            if action.get("source_digest") != action_digest or not isinstance(action_digest, str) or self._legacy_digest(self._verify_legacy_backup(held, action_digest)) != action_digest:
+                raise ActionStoreCorruptError("legacy action backup cannot establish conversion identity")
+        jobs_digest = manifest.get("identity_jobs_digest")
+        if jobs_digest is not None:
+            if not isinstance(jobs_digest, str):
+                raise ActionStoreCorruptError("legacy jobs source cannot establish conversion identity")
+            if jobs.get("source_digest") == jobs_digest:
+                if self._legacy_digest(self._verify_legacy_backup(held, jobs_digest)) != jobs_digest:
+                    raise ActionStoreCorruptError("legacy jobs backup cannot establish conversion identity")
+            elif jobs.get("source_digest") is None:
+                if current_jobs_digest != jobs_digest:
+                    raise ActionStoreCorruptError("legacy jobs source changed before identity backup")
+            elif self._legacy_digest(self._verify_legacy_backup(held, jobs_digest)) != jobs_digest:
+                raise ActionStoreCorruptError("legacy original jobs backup cannot establish conversion identity")
+        identity = self._conversion_identity(action_digest, jobs_digest)
+        if manifest.get("conversion_identity") != identity:
+            raise ActionStoreCorruptError("legacy conversion identity does not match verified source digests")
+        return identity
+
+    def _reconstruct_manifest_operations(
+        self, held: _HeldStore, manifest: Mapping[str, Any], *, conversion_identity: str
+    ) -> list[dict[str, Any]]:
+        """Derive actions from immutable bytes; the manifest is evidence, never authority."""
+        action = _copy_json_mapping(manifest.get("action"), label="legacy action manifest", error=ActionStoreCorruptError)
+        source_digest = action.get("source_digest")
+        backup_digest = action.get("backup_digest")
+        if source_digest is None:
+            expected: list[dict[str, Any]] = []
+        else:
+            if not isinstance(source_digest, str) or backup_digest != source_digest:
+                raise ActionStoreCorruptError("legacy action manifest does not bind its backup")
+            data = self._verify_legacy_backup(held, source_digest)
+            if self._legacy_digest(data) != source_digest:
+                raise ActionStoreCorruptError("legacy action backup digest changed during reconstruction")
+            try:
+                parsed = self._parse_legacy_actions(data)
+                expected = self._legacy_operations(
+                    parsed,
+                    conversion_identity=conversion_identity,
+                    source_digest=source_digest,
+                )
+            except (KeyError, TypeError, ValueError, ActionStoreLegacyConversionError) as exc:
+                raise ActionStoreCorruptError("legacy action backup cannot reconstruct conversion operations") from exc
+        if _canonical_json(action.get("operations")) != _canonical_json(expected):
+            raise ActionStoreCorruptError("legacy conversion manifest operations do not match the immutable backup")
+        return expected
+
+    def _require_legacy_operation_receipts(self, held: _HeldStore, operations: list[dict[str, Any]]) -> None:
+        """Require durable, ordered v2 evidence before a legacy source can retire."""
+        state = self._read_state(held)
+        self._verify_journal_durable(held)
+        if state.snapshot is not None:
+            self._verify_snapshot_durable(held)
+        by_id = {receipt.action_id: receipt for receipt in state.replay.receipts}
+        prior_sequence: int | None = None
+        generation: int | None = None
+        for operation in operations:
+            action_id = self._validate_action_id(operation.get("action_id"))
+            request = _copy_json_mapping(operation.get("request"), label="reconstructed legacy action")
+            receipt = by_id.get(action_id)
+            if receipt is None:
+                raise ActionStoreCorruptError("legacy conversion is missing a durable action receipt")
+            if receipt.request_digest != _digest_request(request) or receipt.store_namespace != self.namespace:
+                raise ActionStoreCorruptError("legacy conversion action receipt conflicts with reconstructed request")
+            if prior_sequence is not None and receipt.sequence != prior_sequence + 1:
+                raise ActionStoreCorruptError("legacy conversion action receipts are not sequence-compatible")
+            if generation is not None and receipt.journal_generation != generation:
+                raise ActionStoreCorruptError("legacy conversion action receipts span journal generations")
+            prior_sequence = receipt.sequence
+            generation = receipt.journal_generation
+
+    def _append_legacy_operations(self, held: _HeldStore, operations: list[dict[str, Any]]) -> None:
+        state = self._read_state(held)
+        if state.cleanup_required:
+            self._finish_cleanup(held, state)
+            state = self._read_state(held)
+        for operation in operations:
+            action_id = self._validate_action_id(operation.get("action_id"))
+            request = _copy_json_mapping(operation.get("request"), label="legacy converted request")
+            digest = _digest_request(request)
+            existing = next((item for item in state.replay.receipts if item.action_id == action_id), None)
+            if existing is not None:
+                if existing.request_digest != digest:
+                    raise ActionStoreConflictError("legacy action id conflicts with an existing canonical request")
+                continue
+            sequence = state.replay.receipts[-1].sequence + 1 if state.replay.receipts else 1
+            receipt = ActionReceipt(self.namespace, action_id, digest, sequence, state.journal.generation)
+            self._append_journal(held, ActionRequest(receipt, request))
+            state = self._read_state(held)
+
+    def _legacy_jobs_candidate(
+        self, *, conversion_identity: str, jobs_digest: str, jobs: CronStore, operations: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        ids: set[str] = set()
+        canonical_jobs: list[dict[str, Any]] = []
+        for job in jobs.jobs:
+            canonical = self._canonical_legacy_job(job.to_store_dict(), conversion_identity)
+            if canonical["id"] in ids:
+                raise ActionStoreLegacyConversionError("legacy jobs snapshot has duplicate job ids")
+            ids.add(canonical["id"])
+            canonical_jobs.append(canonical)
+        return _copy_json_mapping(
+            {
+                "schema_version": 1,
+                "kind": "legacy_cron_snapshot_candidate",
+                "conversion_identity": conversion_identity,
+                "jobs_source_digest": jobs_digest,
+                "jobs": canonical_jobs,
+                "operations": operations,
+                "runtime_state_policy": "snapshot_wins",
+            },
+            label="legacy jobs snapshot candidate",
+        )
+
+    def convert_legacy_sources(self) -> LegacyConversionResult:
+        """Run the one-way stopped-writer conversion without service wiring."""
+        jobs_for_snapshot: CronStore | None = None
+        snapshot_candidate: dict[str, Any] | None = None
+        with self._held_lock() as held:
+            try:
+                manifest = self._read_conversion_manifest(held)
+            except FileNotFoundError:
+                manifest = None
+            action_bytes = self._read_legacy_source(held, "action.jsonl")
+            action_digest = None if action_bytes is None else self._legacy_digest(action_bytes)
+            parsed_actions = [] if action_bytes is None else self._parse_legacy_actions(action_bytes)
+            initial_jobs_bytes = self._read_legacy_source(held, "jobs.json")
+            initial_jobs_digest = None if initial_jobs_bytes is None else self._legacy_digest(initial_jobs_bytes)
+
+            if manifest is None:
+                identity = self._conversion_identity(action_digest, initial_jobs_digest)
+                operations = [] if action_digest is None else self._legacy_operations(
+                    parsed_actions, conversion_identity=identity, source_digest=action_digest
+                )
+                manifest = {
+                    "schema_version": _LEGACY_CONVERSION_VERSION,
+                    "kind": "legacy_cron_conversion",
+                    "store_namespace": self.namespace,
+                    "conversion_identity": identity,
+                    "identity_action_digest": action_digest,
+                    "identity_jobs_digest": initial_jobs_digest,
+                    "action": {
+                        "status": "absent" if action_digest is None else "pending",
+                        "source_digest": action_digest,
+                        "backup_digest": None,
+                        "operations": operations,
+                    },
+                    # ``pending`` means that this is the first conversion
+                    # pass and jobs.json has not yet been inspected.  It is
+                    # distinct from ``absent``, which fences a jobs.json
+                    # created after an already-completed conversion.
+                    "jobs": {"status": "pending", "source_digest": None, "backup_digest": None},
+                }
+            else:
+                identity = self._verified_conversion_identity(
+                    held, manifest, current_jobs_digest=initial_jobs_digest
+                )
+                operations = self._reconstruct_manifest_operations(
+                    held, manifest, conversion_identity=identity
+                )
+                action_state = manifest["action"]
+                if action_bytes is not None:
+                    if action_state["status"] == "converted":
+                        raise ActionStoreCorruptError("legacy action journal reappeared after conversion")
+                    if action_digest != action_state["source_digest"]:
+                        raise ActionStoreCorruptError("legacy action journal changed while conversion was pending")
+                elif action_state["status"] == "pending":
+                    raise ActionStoreCorruptError("legacy action journal disappeared while conversion was pending")
+
+            action_state = manifest["action"]
+            if action_bytes is not None and action_state["status"] == "pending":
+                action_state["backup_digest"] = self._backup_legacy_bytes(held, action_bytes)
+                self._write_conversion_manifest(held, manifest)
+                self._append_legacy_operations(held, operations)
+                self._require_legacy_operation_receipts(held, operations)
+                # Re-read the source through the held descriptor before its
+                # destructive transition; a stopped writer is required.
+                current = self._read_legacy_source(held, "action.jsonl")
+                if current != action_bytes:
+                    raise ActionStoreCorruptError("legacy action journal changed during conversion")
+                # Make source retirement resumable.  A failure after the
+                # unlink but before the manifest update must not look like a
+                # disappearing mixed writer on retry, while a source that
+                # reappears after a completed retirement remains corruption.
+                action_state["status"] = "removing"
+                self._write_conversion_manifest(held, manifest)
+
+            if action_state["status"] == "removing":
+                self._require_legacy_operation_receipts(held, operations)
+                if action_bytes is not None:
+                    current = self._read_legacy_source(held, "action.jsonl")
+                    if current != action_bytes:
+                        raise ActionStoreCorruptError("legacy action journal changed during conversion")
+                    os.unlink("action.jsonl", dir_fd=held.root_fd)
+                    held.assert_bound()
+                    os.fsync(held.root_fd)
+                    held.assert_bound()
+                action_state["status"] = "converted"
+                self._write_conversion_manifest(held, manifest)
+
+            if action_state["status"] == "converted":
+                self._require_legacy_operation_receipts(held, operations)
+
+            jobs_bytes = self._read_legacy_source(held, "jobs.json")
+            jobs_state = manifest["jobs"]
+            jobs_digest = None if jobs_bytes is None else self._legacy_digest(jobs_bytes)
+            if manifest["jobs"]["source_digest"] is None and jobs_digest != initial_jobs_digest:
+                raise ActionStoreCorruptError("legacy jobs snapshot changed during conversion preflight")
+            if jobs_state["status"] in {"converted", "pending", "absent"} and jobs_state["source_digest"] is not None:
+                if jobs_digest != jobs_state["source_digest"]:
+                    raise ActionStoreCorruptError("legacy jobs snapshot changed after conversion; mixed writers are fenced")
+            if jobs_bytes is not None and jobs_state["status"] == "absent":
+                raise ActionStoreCorruptError("legacy jobs snapshot reappeared after conversion")
+
+            if jobs_bytes is not None and jobs_state["status"] != "converted":
+                jobs_state["source_digest"] = jobs_digest
+                jobs_state["backup_digest"] = self._backup_legacy_bytes(held, jobs_bytes)
+                try:
+                    raw_jobs = _strict_json_loads(jobs_bytes, label="legacy jobs snapshot")
+                    if not isinstance(raw_jobs, dict):
+                        raise ValueError("jobs snapshot must be an object")
+                    jobs_for_snapshot = self._strict_legacy_store(raw_jobs)
+                except (ActionStoreCorruptError, ActionStoreLegacyConversionError, AttributeError, KeyError, TypeError, ValueError):
+                    jobs_state["status"] = "unavailable"
+                    self._write_conversion_manifest(held, manifest)
+                    return LegacyConversionResult(
+                        identity,
+                        len(operations),
+                        action_state["status"] in {"absent", "converted"},
+                        False,
+                        "unavailable",
+                        action_state["backup_digest"],
+                        jobs_state["backup_digest"],
+                    )
+                jobs_state["status"] = "pending"
+                snapshot_candidate = self._legacy_jobs_candidate(
+                    conversion_identity=identity,
+                    jobs_digest=jobs_digest,
+                    jobs=jobs_for_snapshot,
+                    operations=operations,
+                )
+                self._write_conversion_manifest(held, manifest)
+            elif jobs_state["status"] == "converted":
+                return LegacyConversionResult(
+                    identity,
+                    len(operations),
+                    action_state["status"] in {"absent", "converted"},
+                    True,
+                    "converted",
+                    action_state["backup_digest"],
+                    jobs_state["backup_digest"],
+                )
+            elif jobs_bytes is None:
+                jobs_state["status"] = "absent"
+                self._write_conversion_manifest(held, manifest)
+                return LegacyConversionResult(
+                    identity,
+                    len(operations),
+                    action_state["status"] in {"absent", "converted"},
+                    False,
+                    "absent",
+                    action_state["backup_digest"],
+                    jobs_state["backup_digest"],
+                )
+
+        if snapshot_candidate is None:
+            raise ActionStoreLegacyConversionError("legacy jobs snapshot conversion did not produce a candidate")
+        replay = self.replay()
+        if replay.candidate is not None:
+            if _canonical_json(replay.candidate) != _canonical_json(snapshot_candidate):
+                raise ActionStoreConflictError("existing v2 checkpoint conflicts with legacy snapshot conversion")
+        else:
+            self.checkpoint(expected_generation=replay.generation, candidate=snapshot_candidate)
+        with self._held_lock() as held:
+            manifest = self._read_conversion_manifest(held)
+            current_jobs = self._read_legacy_source(held, "jobs.json")
+            identity = self._verified_conversion_identity(
+                held,
+                manifest,
+                current_jobs_digest=self._legacy_digest(current_jobs) if current_jobs is not None else None,
+            )
+            operations = self._reconstruct_manifest_operations(held, manifest, conversion_identity=identity)
+            self._require_legacy_operation_receipts(held, operations)
+            if current_jobs is None or self._legacy_digest(current_jobs) != manifest["jobs"]["source_digest"]:
+                raise ActionStoreCorruptError("legacy jobs snapshot changed during checkpoint conversion")
+            manifest["jobs"]["status"] = "converted"
+            self._write_conversion_manifest(held, manifest)
+            return LegacyConversionResult(
+                identity,
+                len(operations),
+                manifest["action"]["status"] in {"absent", "converted"},
+                True,
+                "converted",
+                manifest["action"]["backup_digest"],
+                manifest["jobs"]["backup_digest"],
+            )
 
     def replay(self) -> ActionStoreReplay:
         """Return a detached generic candidate and its ordered pending actions."""
