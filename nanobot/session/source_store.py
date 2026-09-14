@@ -12,12 +12,23 @@ import stat
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from nanobot.session.context_checkpoint import validate_context_checkpoint
+from nanobot.session.idle_compaction import (
+    LAST_USER_ACTIVITY_AT_KEY,
+    USER_ACTIVITY_REVISION_KEY,
+    IdleCaptureConflictError,
+    IdleCaptureToken,
+    IdleCheckpointAdmission,
+    capture_idle_token,
+    checkpoint_candidate_fingerprint,
+    read_user_activity,
+    validate_idle_capture,
+)
 from nanobot.session.persistence_metadata import LEGACY_RECOVERY_KEYS, accepted_metadata_updates
 from nanobot.session.source import (
     SourceValidationError,
@@ -246,6 +257,89 @@ class SourceSessionStore:
         with self._backend.locked_session_files():
             return self._snapshot(*self._read_unlocked(key))
 
+    def _runtime_checkpoint_present(self, key: str) -> bool:
+        path = self._backend.get_runtime_checkpoint_path(key)
+        return path.exists() or path.is_symlink()
+
+    def capture_idle_compaction(self, key: str) -> IdleCaptureToken | None:
+        """Capture dormant idle state without taking an execution lock.
+
+        Callers compute any summary after this method returns.  A later
+        integration-owned publisher must revalidate the returned token while
+        retaining its existing checkpoint transaction.
+        """
+
+        with self._backend.locked_session_files():
+            header, events = self._read_unlocked(key)
+            return capture_idle_token(
+                self._snapshot(header, events),
+                runtime_checkpoint_present=self._runtime_checkpoint_present(key),
+            )
+
+    def record_user_activity(self, key: str, expected: SourceState, *,
+                             accepted_foreground_user: bool) -> SourceSnapshot:
+        """Atomically record one already accepted foreground user admission.
+
+        The integration owner must invoke this immediately after it admits a
+        foreground user turn and before it begins that turn's execution.  This
+        dormant store primitive deliberately does not infer admission from a
+        source event, so assistant/tool persistence cannot advance activity.
+        """
+
+        from nanobot.session.execution_owner import execution_transaction
+
+        if accepted_foreground_user is not True:
+            raise SourceValidationError("Foreground user admission is required")
+        with execution_transaction(self._backend, key):
+            header, events = self._current_unlocked(key, expected)
+            activity = read_user_activity(header["metadata"])
+            header["metadata"][USER_ACTIVITY_REVISION_KEY] = (
+                (activity.revision if activity is not None else 0) + 1
+            )
+            header["metadata"][LAST_USER_ACTIVITY_AT_KEY] = datetime.now(timezone.utc).isoformat()
+            header["revision"] += 1
+            return self._write(header, events)
+
+    def validate_idle_checkpoint_admission(self, key: str, token: IdleCaptureToken,
+                                           candidate: dict[str, Any]) -> IdleCheckpointAdmission:
+        """Validate a prospective idle checkpoint without mutating storage.
+
+        Dependency-bearing schema-v2 checkpoints intentionally fail closed.
+        Their existing proof publisher requires an active execution owner,
+        while idle admission requires none.  The integration owner must expose
+        a publisher that reuses that proof path and revalidates this token in
+        the same source transaction before idle checkpoint writes can exist.
+        """
+
+        from nanobot.session.manager import SessionWriteConflict
+
+        with self._backend.locked_session_files():
+            try:
+                header, events = self._read_unlocked(key)
+                snapshot = self._snapshot(header, events)
+                validate_idle_capture(
+                    token,
+                    snapshot,
+                    runtime_checkpoint_present=self._runtime_checkpoint_present(key),
+                )
+            except IdleCaptureConflictError:
+                raise SessionWriteConflict() from None
+            validated = validate_context_checkpoint(
+                candidate,
+                events,
+                generation=snapshot.state.generation,
+                source_revision=snapshot.state.revision,
+                parent_checkpoint_id=snapshot.state.checkpoint_id,
+            )
+            if validated["artifact_references"]:
+                raise SourceValidationError(
+                    "Idle checkpoint requires the integration-owned dependency publisher"
+                )
+            return IdleCheckpointAdmission(
+                capture=token,
+                candidate_fingerprint=checkpoint_candidate_fingerprint(validated),
+            )
+
     def _check(self, header: dict[str, Any], expected: SourceState) -> None:
         from nanobot.session.manager import SessionWriteConflict
 
@@ -466,7 +560,11 @@ class SourceSessionStore:
             header["generation"] += 1
             header["last_archived"] = header["last_consolidated"] = 0
             header["updated_at"] = datetime.now().isoformat()
-            for name in {"context_checkpoint", "artifact_manifest", "_last_summary", "execution_lease", "execution_recovery_required", *LEGACY_RECOVERY_KEYS}:
+            for name in {
+                "context_checkpoint", "artifact_manifest", "_last_summary", "execution_lease",
+                "execution_recovery_required", USER_ACTIVITY_REVISION_KEY,
+                LAST_USER_ACTIVITY_AT_KEY, *LEGACY_RECOVERY_KEYS,
+            }:
                 header["metadata"].pop(name, None)
             result = self._write(header, replacement_events)
             if owner is not None:
