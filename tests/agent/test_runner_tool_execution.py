@@ -16,6 +16,7 @@ from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.execution import execute_tool_calls
 from nanobot.agent.tools.loader import ToolLoader
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.providers.openai_compat_provider import OpenAICompatProvider
@@ -101,6 +102,47 @@ class _StructuredSuccessPluginTool(Tool):
         return ToolResult("Error: generated report successfully")
 
 
+class _RawErrorPrefixTool(Tool):
+    @property
+    def name(self) -> str:
+        return "raw_error_prefix"
+
+    @property
+    def description(self) -> str:
+        return "successful unstructured output beginning with Error"
+
+    @property
+    def parameters(self) -> dict:
+        return {"type": "object", "properties": {}, "required": []}
+
+    async def execute(self, **kwargs):
+        return "Error: generated report successfully"
+
+
+class _StructuredErrorTool(Tool):
+    def __init__(self, calls: list[str]) -> None:
+        self.calls = calls
+
+    @property
+    def name(self) -> str:
+        return "structured_error"
+
+    @property
+    def description(self) -> str:
+        return "structured terminal tool failure"
+
+    @property
+    def parameters(self) -> dict:
+        return {"type": "object", "properties": {}, "required": []}
+
+    async def execute(self, **kwargs):
+        self.calls.append(self.name)
+        return ToolOutcome(
+            ToolResult.error("Error: structured failure"),
+            policy_metadata={"source": "fixture"},
+        )
+
+
 async def _run_optional_tool_response(response: LLMResponse):
     provider = MagicMock()
     calls = {"n": 0}
@@ -137,11 +179,12 @@ def _load_entry_point_plugin(tool_cls: type[Tool], tmp_path) -> ToolRegistry:
     mock_ep.load.return_value = tool_cls
 
     registry = ToolRegistry()
-    with patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]):
-        ToolLoader(test_classes=[]).load(
-            ToolContext(config=None, workspace=str(tmp_path)),
-            registry,
-        )
+    with (
+        patch("nanobot.migration_guard.require_runtime_ready"),
+        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
+        patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]),
+    ):
+        ToolLoader(test_classes=[]).load(ToolContext(config=None, workspace=str(tmp_path)), registry)
     return registry
 
 
@@ -483,6 +526,90 @@ async def test_runner_preserves_structured_plugin_success_that_starts_with_error
             "detail": "Error: generated report successfully",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_runner_continues_after_unstructured_success_that_starts_with_error():
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content="working",
+            tool_calls=[ToolCallRequest(id="call_1", name="raw_error_prefix", arguments={})],
+            usage=None,
+        ),
+        LLMResponse(content="final response", tool_calls=[], usage=None),
+    ])
+    tools = ToolRegistry()
+    tools.register(_RawErrorPrefixTool())
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "produce a report"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=2,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+        turn_context=TurnContext(run_id="raw-success-run"),
+    ))
+
+    assert result.stop_reason == "completed"
+    assert result.final_content == "final response"
+    assert provider.chat_with_retry.await_count == 2
+    assert result.tool_events == [
+        {
+            "name": "raw_error_prefix",
+            "status": "ok",
+            "detail": "Error: generated report successfully",
+        }
+    ]
+    tool_message = _tool_message(result, "call_1")
+    assert tool_message["content"] == "Error: generated report successfully"
+    assert "Analyze the error above" not in tool_message["content"]
+
+
+@pytest.mark.asyncio
+async def test_runner_stops_after_structured_tool_error_before_later_tool_or_model_call():
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
+        content="working",
+        tool_calls=[
+            ToolCallRequest(id="call_1", name="structured_error", arguments={}),
+            ToolCallRequest(id="call_2", name="later_tool", arguments={}),
+        ],
+        usage=None,
+    ))
+    calls: list[str] = []
+    tools = ToolRegistry()
+    tools.register(_StructuredErrorTool(calls))
+    tools.register(_DelayTool(
+        "later_tool",
+        delay=0,
+        read_only=True,
+        shared_events=calls,
+    ))
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "do work"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=2,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+        turn_context=TurnContext(run_id="structured-error-run"),
+    ))
+
+    assert result.stop_reason == "tool_error"
+    assert result.policy_metadata == {"source": "fixture"}
+    assert provider.chat_with_retry.await_count == 1
+    assert calls == ["structured_error"]
+    assert result.tool_events == [
+        {"name": "structured_error", "status": "error", "detail": "Error: structured failure"},
+        {"name": "later_tool", "status": "skipped", "detail": "tool batch stopped"},
+    ]
+    assert "Analyze the error above" in _tool_message(result, "call_1")["content"]
+    assert "Skipped" in _tool_message(result, "call_2")["content"]
 
 
 @pytest.mark.asyncio

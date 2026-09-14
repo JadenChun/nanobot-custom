@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 from unittest.mock import AsyncMock
 
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.filesystem import ReadFileTool
+from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import ToolOutcome, TurnContext
+from nanobot.session.artifact import FilesystemArtifactOrigin
 
 
 class _FakeTool(Tool):
@@ -267,6 +271,49 @@ async def test_registry_preserves_successful_exec_output_that_starts_with_error(
     result = await registry.execute("exec", {})
 
     assert result == output
+
+
+async def test_contextual_registry_treats_unstructured_error_prefix_as_success() -> None:
+    registry = ToolRegistry()
+    output = "Error: generated report successfully"
+    tool = _FakeTool("report")
+    tool.execute = AsyncMock(return_value=ToolOutcome(
+        content=output,
+        policy_metadata={"source": "fixture"},
+    ))
+    registry.register(tool)
+
+    result = await registry.execute("report", {}, context=TurnContext(run_id="report-run"))
+
+    assert isinstance(result, ToolOutcome)
+    assert result.content == output
+    assert result.stop_reason is None
+    assert result.policy_metadata == {"source": "fixture"}
+
+
+async def test_registry_keeps_valid_producer_receipt_for_unstructured_error_prefix(tmp_path) -> None:
+    output = "Error: generated report successfully"
+    encoded = output.encode("utf-8")
+    receipt = FilesystemReadReceipt(
+        FilesystemArtifactOrigin("filesystem", "workspace", None, "report.txt"),
+        "a" * 64,
+        len(encoded),
+        hashlib.sha256(encoded).hexdigest(),
+    )
+    original = ToolOutcome(
+        content=output,
+        policy_metadata={"source": "fixture"},
+        producer_receipt=receipt,
+    )
+    tool = ReadFileTool(workspace=tmp_path)
+    tool.execute = AsyncMock(return_value=original)
+
+    result = await ToolRegistry.execute_prepared(tool, {})
+
+    assert result.content == output
+    assert result.stop_reason is None
+    assert result.policy_metadata == {"source": "fixture"}
+    assert result.producer_receipt == receipt
 
 
 async def test_registry_uses_structured_tool_result_for_errors() -> None:

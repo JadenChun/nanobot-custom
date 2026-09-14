@@ -63,7 +63,7 @@ async def test_real_runner_stops_before_later_tools_and_model_calls(mode):
 
 
 @pytest.mark.parametrize("outcome", [ToolOutcome("failed", "tool_error", {"reason": "fixture"}),
-                                    "Error: failed", ToolResult.error("failed")])
+                                    ToolResult.error("Error: failed")])
 async def test_tool_errors_preserve_fail_fast_semantics(outcome):
     calls = []
     tools = ToolRegistry()

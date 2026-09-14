@@ -74,7 +74,16 @@ class ToolLoader:
             eps = entry_points(group="nanobot.tools")
         except Exception:
             return plugins
-        for ep in eps:
+        entries = list(eps)
+        entry_names: set[str] = set()
+        for ep in entries:
+            if not isinstance(ep.name, str) or not ep.name:
+                raise ValueError("Tool plugin entry point has an invalid name")
+            if ep.name in entry_names:
+                raise ValueError(f"Duplicate tool plugin entry point: {ep.name}")
+            entry_names.add(ep.name)
+        entries.sort(key=lambda entry: entry.name)
+        for ep in entries:
             try:
                 cls = ep.load()
                 if (
@@ -89,6 +98,25 @@ class ToolLoader:
         self._plugins = plugins
         return plugins
 
+    def _construct_plugins(self, ctx: ToolContext) -> list[Tool]:
+        """Create enabled core-scope entry-point tools behind the compatibility adapter."""
+        tools: list[Tool] = []
+        for entry_name, cls in sorted(self._discover_plugins().items()):
+            scopes = getattr(cls, "_scopes", {"core"})
+            if not isinstance(scopes, set) or not all(isinstance(scope, str) for scope in scopes):
+                raise ValueError(f"Tool plugin '{entry_name}' has invalid scope metadata")
+            if "core" not in scopes or not cls.enabled(ctx):
+                continue
+            tool = cls.create(ctx)
+            if not isinstance(tool, Tool):
+                raise TypeError(f"Tool plugin '{entry_name}' did not create a Tool")
+            if not isinstance(tool.name, str) or not tool.name:
+                raise ValueError(f"Tool plugin '{entry_name}' has an invalid tool name")
+            if ToolRegistry._schema_name(tool.to_schema()) != tool.name:
+                raise ValueError(f"Tool plugin '{entry_name}' schema name does not match its tool name")
+            tools.append(_LegacyErrorPrefixTool(tool))
+        return tools
+
     def load(self, ctx: ToolContext, registry: ToolRegistry, *, scope: str = "core") -> list[str]:
         from nanobot.migration_guard import require_runtime_ready
         require_runtime_ready()
@@ -96,10 +124,10 @@ class ToolLoader:
 
         if scope != "core":
             raise ValueError(f"Unsupported runtime tool scope: {scope}")
-        tools = construct_core_tools(ctx)
+        tools = [*construct_core_tools(ctx), *self._construct_plugins(ctx)]
         names = [tool.name for tool in tools]
         if len(names) != len(set(names)) or any(registry.has(name) for name in names):
-            raise ValueError("Duplicate tool registration in foreground factory manifest")
+            raise ValueError("Duplicate tool registration in foreground manifest")
         for tool in tools:
             registry.register(tool)
         return names
@@ -112,10 +140,11 @@ class _LegacyErrorPrefixTool(Tool):
 
     def __init__(self, wrapped: Tool) -> None:
         self._wrapped = wrapped
+        self._name = wrapped.name
 
     @property
     def name(self) -> str:
-        return self._wrapped.name
+        return self._name
 
     @property
     def description(self) -> str:
@@ -156,10 +185,19 @@ class _LegacyErrorPrefixTool(Tool):
         return self._wrapped.validate_params(params)
 
     def to_schema(self) -> dict[str, Any]:
-        return self._wrapped.to_schema()
+        schema = self._wrapped.to_schema()
+        if ToolRegistry._schema_name(schema) != self._name:
+            raise ValueError("Tool plugin schema name does not match its registered name")
+        return schema
 
     async def execute(self, **kwargs: Any) -> Any:
-        result = await self._wrapped.execute(**kwargs)
+        return self._adapt_legacy_error(await self._wrapped.execute(**kwargs))
+
+    async def execute_with_context(self, context: Any, **kwargs: Any) -> Any:
+        return self._adapt_legacy_error(await self._wrapped.execute_with_context(context, **kwargs))
+
+    @staticmethod
+    def _adapt_legacy_error(result: Any) -> Any:
         if (
             isinstance(result, str)
             and not isinstance(result, ToolResult)

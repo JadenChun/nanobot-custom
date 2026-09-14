@@ -228,10 +228,11 @@ class ToolRegistry:
                     producer_receipt=outcome.producer_receipt,
                     retrieval_receipt=outcome.retrieval_receipt,
                 )
-        if is_tool_error_result(outcome.content) or (
-            isinstance(outcome.content, str) and not isinstance(outcome.content, ToolResult)
-            and outcome.content.startswith("Error")
-        ):
+        # Tool output is opaque text.  In particular, command-like tools can
+        # successfully report a payload that starts with ``Error``.  Only the
+        # structured result marker (or an explicit ToolOutcome stop state
+        # supplied by the tool) establishes terminal semantics.
+        if is_tool_error_result(outcome.content):
             return ToolOutcome(content=outcome.content, stop_reason=outcome.stop_reason or "tool_error",
                                policy_metadata=outcome.policy_metadata)
         return outcome
