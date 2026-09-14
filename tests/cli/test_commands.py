@@ -3915,7 +3915,7 @@ def test_gateway_health_endpoint_binds_and_serves_expected_responses(
         assert timed_out_writer.output == b""
 
 
-def test_gateway_agent_task_owns_initial_mcp_provider_close(
+def test_gateway_post_start_failure_cleans_up_before_exiting_nonzero(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
@@ -3923,6 +3923,19 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
     config = Config()
     config.gateway.port = 18791
     seen: dict[str, object] = {}
+
+    class _FakeMemory:
+        def get_latest_cursor(self) -> int:
+            return 0
+
+        def get_last_dream_cursor(self) -> int:
+            return 0
+
+        def set_last_dream_cursor(self, _cursor: int) -> None:
+            return None
+
+    class _FakeContext:
+        memory = _FakeMemory()
 
     class _FakeSessionManager:
         def flush_all(self) -> int:
@@ -3939,6 +3952,7 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
             self.provider = object()
             self.sessions = _FakeSessionManager()
             self.runtime_resolver = MagicMock()
+            self.context = _FakeContext()
 
         def llm_runtime(self) -> None:
             return None
@@ -4008,6 +4022,9 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
         def register_system_job(self, _job) -> None:
             return None
 
+        def remove_system_job(self, _job_id: str) -> bool:
+            return False
+
     class _FakeServer:
         async def __aenter__(self):
             return self
@@ -4032,11 +4049,14 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
     monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _FakeChannelManager)
     monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCronService)
     monkeypatch.setattr("asyncio.start_server", _fake_start_server)
+    # Synthetic lifecycle coverage is allowed to pass the closed migration guard;
+    # production startup remains guarded until migration acceptance completes.
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
 
     result = runner.invoke(app, ["gateway", "--config", str(config_file)])
 
-    assert result.exit_code == 0
-    assert seen["agent_stopped"] is True
+    assert result.exit_code == 1
+    assert seen.get("agent_stopped") is True, result.exception
     assert seen["inflight_turns_preserved"] is True
     assert seen["agent_closed"] is True
     assert seen["agent_task_cleaned_up"] is True
@@ -4052,6 +4072,10 @@ def test_gateway_agent_task_owns_initial_mcp_provider_close(
     assert len(hooks) == 1
     hook = hooks[0]
     assert isinstance(hook, cli_gateway_runtime._MCPReadinessHook)
+    from nanobot.gateway import GatewayInstance
+
+    instance = GatewayInstance.resolve(config_path=config_file)
+    assert not instance.paths.state_path.exists()
 
 
 def test_gateway_shutdown_event_exits_forever_runtime_tasks(

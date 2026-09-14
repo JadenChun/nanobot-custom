@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import typer
-from loguru import logger
 from rich.console import Console
 
+from nanobot.cli.log_control import replace_cli_console_sink
 from nanobot.config.schema import Config
 from nanobot.gateway import (
     GatewayAlreadyRunningError,
@@ -65,8 +65,7 @@ def create_gateway_app(
     def configure_logging(verbose: bool) -> None:
         if not verbose:
             return
-        logger.remove(log_handler_id)
-        logger.add(
+        replace_cli_console_sink(
             sys.stderr,
             format=(
                 "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
@@ -109,6 +108,7 @@ def create_gateway_app(
         verbose: bool,
         workspace: str | None,
         config: str | None,
+        log_file: str | None = None,
         loaded_config: Config | None = None,
     ) -> GatewayStartOptions:
         cfg = loaded_config or load_runtime_config(config, workspace)
@@ -118,6 +118,7 @@ def create_gateway_app(
         ).start_options(
             port=port if port is not None else cfg.gateway.port,
             verbose=verbose,
+            log_file=log_file,
         )
 
     def print_status(status: GatewayStatus) -> None:
@@ -165,9 +166,6 @@ def create_gateway_app(
         require_runtime_ready()
         if ctx.invoked_subcommand is not None:
             return
-        if log_file:
-            from nanobot.cli.log_control import add_compatibility_log_file
-            add_compatibility_log_file(log_file)
         if foreground and background:
             console.print("[red]Error: --foreground and --background cannot be used together.[/red]")
             raise typer.Exit(1)
@@ -184,6 +182,7 @@ def create_gateway_app(
                     verbose=verbose,
                     workspace=workspace,
                     config=config,
+                    log_file=log_file,
                     loaded_config=cfg,
                 )
             )
@@ -242,23 +241,39 @@ def create_gateway_app(
             raise typer.Exit(1)
 
         configure_logging(verbose)
-        cfg = load_runtime_config(config, workspace)
-        instance = instance_for_selectors(workspace=workspace, config=config)
-        unconfigured_provider_error = None
-        if validate_startup_config is not None:
-            unconfigured_provider_error = validate_startup_config(cfg)
+        from nanobot.cli.log_control import (
+            add_compatibility_log_file,
+            clear_compatibility_log_file,
+        )
+
+        clear_compatibility_log_file()
+        if log_file:
+            add_compatibility_log_file(log_file)
+            console.print(f"[dim]Logging to {log_file}[/dim]")
         try:
+            cfg = load_runtime_config(config, workspace)
+            instance = instance_for_selectors(workspace=workspace, config=config)
+            unconfigured_provider_error = None
+            if validate_startup_config is not None:
+                unconfigured_provider_error = validate_startup_config(cfg)
+            run_gateway_kwargs: dict[str, Any] = {
+                "port": port,
+                "webui_bundle_mode": interactive_build_mode(),
+                "unconfigured_provider_error": unconfigured_provider_error,
+                "gateway_instance": instance,
+            }
+            if log_file:
+                run_gateway_kwargs["log_file"] = log_file
             run_gateway(
                 cfg,
-                port=port,
-                webui_bundle_mode=interactive_build_mode(),
-                unconfigured_provider_error=unconfigured_provider_error,
-                gateway_instance=instance,
+                **run_gateway_kwargs,
             )
         except GatewayAlreadyRunningError as exc:
             console.print("[yellow]Gateway is already running.[/yellow]")
             print_status(exc.status)
             raise typer.Exit(1) from None
+        finally:
+            clear_compatibility_log_file()
 
     @gateway_app.command("status")
     def gateway_status(  # pyright: ignore[reportUnusedFunction]
@@ -309,6 +324,7 @@ def create_gateway_app(
         workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
         config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+        log_file: str | None = typer.Option(None, "--log-file", help="Log file, rotated at 20 MB with 7-day retention"),
         timeout: int = typer.Option(20, "--timeout", help="Restart timeout in seconds"),
     ) -> None:
         """Restart the background gateway."""
@@ -324,6 +340,7 @@ def create_gateway_app(
                 verbose=verbose,
                 workspace=workspace,
                 config=config,
+                log_file=log_file,
                 loaded_config=cfg,
             ),
             timeout_s=timeout,
@@ -360,6 +377,7 @@ def create_gateway_app(
         workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
         config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+        log_file: str | None = typer.Option(None, "--log-file", help="Log file, rotated at 20 MB with 7-day retention"),
         name: str = typer.Option("nanobot-gateway", "--name", help="Service name"),
         manager: ServiceManagerKind = typer.Option("auto", "--manager", help="auto, systemd, or launchd"),
         enable: bool = typer.Option(True, "--enable/--no-enable", help="Enable the service after writing it"),
@@ -368,7 +386,13 @@ def create_gateway_app(
     ) -> None:
         """Install a systemd user service or macOS LaunchAgent for the gateway."""
         options = GatewayServiceOptions(
-            start=start_options(port=port, verbose=verbose, workspace=workspace, config=config),
+            start=start_options(
+                port=port,
+                verbose=verbose,
+                workspace=workspace,
+                config=config,
+                log_file=log_file,
+            ),
             name=name,
             manager=manager,
             enable=enable,

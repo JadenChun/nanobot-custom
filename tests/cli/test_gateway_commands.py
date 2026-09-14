@@ -21,6 +21,12 @@ from nanobot.gateway.service import GatewayServiceOptions, GatewayServiceResult
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _allow_synthetic_gateway_command_runtime(monkeypatch) -> None:
+    """Exercise command wiring without weakening the production migration guard."""
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+
+
 def test_default_config_has_the_same_gateway_identity_when_explicit(
     monkeypatch,
     tmp_path: Path,

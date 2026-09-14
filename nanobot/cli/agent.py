@@ -12,7 +12,10 @@ import typer
 from rich.console import Console
 
 from nanobot import __logo__
-from nanobot.cli.log_control import _set_nanobot_logs
+from nanobot.cli.log_control import (
+    clear_compatibility_log_file,
+    configure_agent_runtime_logs,
+)
 from nanobot.cli.runtime_config import (
     _load_runtime_config,
     _migrate_cron_store,
@@ -65,6 +68,11 @@ def agent(
         False,
         "--logs/--no-logs",
         help="Show nanobot runtime logs during chat",
+    ),
+    log_file: str | None = typer.Option(
+        None,
+        "--log-file",
+        help="Write runtime logs to this file (rotated at 20 MB, 7 days kept)",
     ),
     classic: bool = typer.Option(
         True,
@@ -167,7 +175,11 @@ def agent(
     tools = ToolRegistry()
     mcp_provider = MCPProvider.from_config(runtime_config, tools)
 
-    _set_nanobot_logs(logs)
+    configure_agent_runtime_logs(show_console=logs, log_file=log_file)
+    if logs:
+        console.print("[dim]Runtime logs enabled (--logs). Use --no-logs to hide internal logs.[/dim]")
+    if log_file:
+        console.print(f"[dim]Logging to {log_file}[/dim]")
 
     try:
         agent_loop = agent_loop_class.from_config(
@@ -180,8 +192,12 @@ def agent(
             tool_registry=tools,
         )
     except ValueError as exc:
+        clear_compatibility_log_file()
         _print_agent_start_error(exc)
         raise typer.Exit(1) from exc
+    except BaseException:
+        clear_compatibility_log_file()
+        raise
     restart_notice = consume_restart_notice_from_env()
     if restart_notice and should_show_cli_restart_notice(restart_notice, session_id):
         cli_terminal._print_agent_response(
@@ -266,7 +282,10 @@ def agent(
             finally:
                 await _close_runtime()
 
-        asyncio.run(run_once())
+        try:
+            asyncio.run(run_once())
+        finally:
+            clear_compatibility_log_file()
     else:
         # Interactive mode — route through bus like other channels
         from nanobot.bus.events import InboundMessage
@@ -442,4 +461,7 @@ def agent(
                 await asyncio.gather(bus_task, outbound_task, return_exceptions=True)
                 await _close_runtime()
 
-        asyncio.run(run_interactive())
+        try:
+            asyncio.run(run_interactive())
+        finally:
+            clear_compatibility_log_file()

@@ -33,7 +33,12 @@ from nanobot.process_runtime import (
     process_is_running,
 )
 
-GatewayStartOptions = ProcessStartOptions
+
+@dataclass(frozen=True)
+class GatewayStartOptions(ProcessStartOptions):
+    """Gateway process options, including the compatibility log destination."""
+
+    log_file: str | None = None
 
 GatewayLaunchMode = Literal["foreground", "background", "unknown"]
 GatewayLifetime = Literal["explicit", "on_demand"]
@@ -104,7 +109,7 @@ class GatewayAlreadyRunningError(RuntimeError):
         self.status = status
 
 
-def build_gateway_command(python_executable: str, options: GatewayStartOptions) -> list[str]:
+def build_gateway_command(python_executable: str, options: ProcessStartOptions) -> list[str]:
     """Build a foreground gateway command for process supervisors."""
     command = [
         python_executable,
@@ -121,6 +126,9 @@ def build_gateway_command(python_executable: str, options: GatewayStartOptions) 
         command.extend(["--workspace", options.workspace])
     if options.config_path:
         command.extend(["--config", options.config_path])
+    log_file = getattr(options, "log_file", None)
+    if isinstance(log_file, str) and log_file:
+        command.extend(["--log-file", log_file])
     return command
 
 
@@ -188,6 +196,7 @@ class GatewayInstance:
         *,
         port: int,
         verbose: bool = False,
+        log_file: str | None = None,
     ) -> GatewayStartOptions:
         return GatewayStartOptions(
             port=port,
@@ -196,6 +205,7 @@ class GatewayInstance:
             config_path=(
                 None if self.config_path == _default_config_path() else str(self.config_path)
             ),
+            log_file=log_file,
         )
 
 
@@ -451,7 +461,7 @@ class GatewayClientLease:
                 self._register(state)
                 return
 
-    def ensure_on_demand_gateway(self, options: GatewayStartOptions) -> RuntimeResult:
+    def ensure_on_demand_gateway(self, options: ProcessStartOptions) -> RuntimeResult:
         """Atomically reuse a gateway or start one owned by local client leases."""
         if not self._acquired:
             raise RuntimeError("gateway client lease must be acquired before startup")

@@ -58,7 +58,7 @@ def test_legacy_console_entrypoint_still_sets_subcommand_identity(
     assert commands == [["webui"]]
 
 
-def test_legacy_console_entrypoint_routes_bare_command_to_agent(
+def test_bare_console_command_preserves_help_without_launching_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     identities: list[list[str]] = []
@@ -73,7 +73,8 @@ def test_legacy_console_entrypoint_routes_bare_command_to_agent(
 
     assert result.exit_code == 0
     assert identities == [["agent"]]
-    assert launches == [([], "nanobot")]
+    assert launches == []
+    assert "Usage:" in result.stdout
 
 
 def test_named_executable_creates_stable_role_symlink(

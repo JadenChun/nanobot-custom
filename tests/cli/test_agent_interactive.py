@@ -105,7 +105,13 @@ def test_interactive_agent_routes_a_complete_user_turn(
     monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: config)
     monkeypatch.setattr("nanobot.cli.agent.sync_workspace_templates", lambda *_args: None)
     monkeypatch.setattr("nanobot.cli.agent.is_default_workspace", lambda *_args: False)
-    monkeypatch.setattr("nanobot.cli.agent._set_nanobot_logs", lambda *_args: None)
+    monkeypatch.setattr(
+        "nanobot.cli.agent.configure_agent_runtime_logs",
+        lambda **_kwargs: None,
+    )
+    # This is an isolated classic-agent interaction test; production entry
+    # points remain closed by the migration guard.
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
     monkeypatch.setattr("nanobot.cli.agent._model_display", lambda *_args: ("test-model", ""))
     monkeypatch.setattr("nanobot.cli.agent.consume_restart_notice_from_env", lambda: None)
     monkeypatch.setattr("nanobot.cli.agent.AgentLoop", _AgentLoop)

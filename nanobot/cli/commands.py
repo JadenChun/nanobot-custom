@@ -25,6 +25,8 @@ import typer  # noqa: E402
 from loguru import logger  # noqa: E402
 from typer.core import TyperGroup  # noqa: E402
 
+from nanobot.cli.log_control import register_cli_console_sink  # noqa: E402
+
 # Remove default handler and re-add with unified nanobot format
 logger.remove()
 _log_handler_id = logger.add(
@@ -39,6 +41,7 @@ _log_handler_id = logger.add(
     colorize=None,
     filter=lambda record: record["extra"].setdefault("channel", "-") or True,
 )
+register_cli_console_sink(_log_handler_id)
 
 
 from rich.console import Console  # noqa: E402

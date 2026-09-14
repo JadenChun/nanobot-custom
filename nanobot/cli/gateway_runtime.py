@@ -351,6 +351,7 @@ def _run_gateway(
     unconfigured_provider_error: str | None = None,
     webui_dev_server: WebUIDevServer | None = None,
     gateway_instance: GatewayInstance | None = None,
+    log_file: str | None = None,
 ) -> None:
     """Shared gateway runtime; ``open_browser_url`` opens a tab once channels are up."""
     from nanobot.migration_guard import require_runtime_ready
@@ -455,7 +456,7 @@ def _run_gateway(
     )
     config_path = str(instance.config_path)
     gateway_runtime = GatewayRuntime(paths=instance.paths)
-    gateway_start_options = instance.start_options(port=port)
+    gateway_start_options = instance.start_options(port=port, log_file=log_file)
 
     # Preserve existing single-workspace installs, but keep custom workspaces clean.
     if is_default_workspace(config.workspace_path):
@@ -899,11 +900,11 @@ def _run_gateway(
         except Exception as e:
             console.print(f"[yellow]Could not open browser ({e}); visit {display_url}[/yellow]")
 
-    async def run() -> None:
+    async def run() -> bool:
         tasks: list[asyncio.Task[Any]] = []
         shutdown_task: asyncio.Task[Any] | None = None
         runtime_tasks: asyncio.Future[list[Any]] | None = None
-        startup_complete = False
+        unexpected_failure = False
         shutdown_event = asyncio.Event()
         cli_terminal._ensure_interactive_tty_mode()
         restore_shutdown_handlers = _install_gateway_shutdown_handlers(
@@ -974,7 +975,6 @@ def _run_gateway(
                     name="nanobot-webui-dev-server",
                 ))
             runtime_tasks = asyncio.gather(*tasks)
-            startup_complete = True
             shutdown_task = asyncio.create_task(
                 shutdown_event.wait(),
                 name="nanobot-gateway-shutdown",
@@ -991,15 +991,14 @@ def _run_gateway(
             console.print("\nShutting down...")
         except WebUIDevError:
             raise
+        except typer.Exit:
+            raise
         except Exception:
             import traceback
 
             console.print("\n[red]Error: Gateway crashed unexpectedly[/red]")
             console.print(traceback.format_exc())
-            if not startup_complete:
-                # Do not report a successful gateway command when startup
-                # failed before any runtime task or listener was created.
-                raise typer.Exit(1)
+            unexpected_failure = True
         finally:
             try:
                 if shutdown_task and not shutdown_task.done():
@@ -1030,11 +1029,15 @@ def _run_gateway(
                     logger.info("Shutdown: flushed {} session(s) to disk", flushed)
             finally:
                 restore_shutdown_handlers()
+        return unexpected_failure
 
+    unexpected_failure = False
     with (
         gateway_runtime.foreground_instance(gateway_start_options),
         webui_turn_coordinator.connected(),
     ):
         if health_server_enabled:
             gateway_runtime.publish_health_host(config.gateway.host)
-        asyncio.run(run())
+        unexpected_failure = asyncio.run(run())
+    if unexpected_failure:
+        raise typer.Exit(1)
