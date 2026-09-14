@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 
+from nanobot.agent.turn import TurnResult, TurnSource
 from nanobot.api.server import (
     _FileSizeExceeded,
     _parse_json_content,
@@ -31,7 +32,7 @@ AUTH_HEADERS = {"Authorization": f"Bearer {API_KEY}"}
 
 def _make_mock_agent(response_text: str = "mock response") -> MagicMock:
     agent = MagicMock()
-    agent.process_direct = AsyncMock(return_value=response_text)
+    agent._execute_direct = AsyncMock(return_value=TurnResult(content=response_text))
     agent.aclose = AsyncMock()
     return agent
 
@@ -208,7 +209,7 @@ def test_parse_json_content_rejects_oversized_base64_file(tmp_path) -> None:
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
 @pytest.mark.asyncio
 async def test_multipart_upload_saves_file(aiohttp_client, mock_agent, tmp_path) -> None:
-    """Multipart upload saves file to media dir and passes path to process_direct."""
+    """Multipart upload saves file and passes its path to the canonical adapter."""
     import os
     original_cwd = os.getcwd()
     os.chdir(tmp_path)
@@ -226,9 +227,11 @@ async def test_multipart_upload_saves_file(aiohttp_client, mock_agent, tmp_path)
             data={"message": "analyze this", "files": data},
         )
         assert resp.status == 200
-        call_kwargs = mock_agent.process_direct.call_args.kwargs
-        assert call_kwargs["content"] == "analyze this"
+        call_args = mock_agent._execute_direct.call_args
+        assert call_args.args == ("analyze this",)
+        call_kwargs = call_args.kwargs
         assert len(call_kwargs.get("media") or []) == 1
+        assert call_kwargs["source"] is TurnSource.API
     finally:
         os.chdir(original_cwd)
 
@@ -307,8 +310,8 @@ async def test_multipart_defaults_text_when_missing(aiohttp_client, mock_agent, 
             data={"files": data},
         )
         assert resp.status == 200
-        call_kwargs = mock_agent.process_direct.call_args.kwargs
-        assert call_kwargs["content"] == "请分析上传的文件"
+        call_args = mock_agent._execute_direct.call_args
+        assert call_args.args == ("请分析上传的文件",)
     finally:
         os.chdir(original_cwd)
 
@@ -334,7 +337,7 @@ async def test_multipart_with_session_id(aiohttp_client, mock_agent, tmp_path) -
             data={"message": "hello", "session_id": "my-session", "files": data},
         )
         assert resp.status == 200
-        call_kwargs = mock_agent.process_direct.call_args.kwargs
+        call_kwargs = mock_agent._execute_direct.call_args.kwargs
         assert call_kwargs["session_key"] == "api:my-session"
     finally:
         os.chdir(original_cwd)
@@ -358,8 +361,9 @@ async def test_plain_text_backward_compat(aiohttp_client, mock_agent) -> None:
     assert resp.status == 200
     body = await resp.json()
     assert body["choices"][0]["message"]["content"] == "mock response"
-    call_kwargs = mock_agent.process_direct.call_args.kwargs
-    assert call_kwargs["content"] == "hello world"
+    call_args = mock_agent._execute_direct.call_args
+    assert call_args.args == ("hello world",)
+    call_kwargs = call_args.kwargs
     assert call_kwargs.get("media") is None
 
 
@@ -394,8 +398,9 @@ async def test_json_base64_image_upload(aiohttp_client, mock_agent, tmp_path) ->
             },
         )
         assert resp.status == 200
-        call_kwargs = mock_agent.process_direct.call_args.kwargs
-        assert call_kwargs["content"] == "what is this"
+        call_args = mock_agent._execute_direct.call_args
+        assert call_args.args == ("what is this",)
+        call_kwargs = call_args.kwargs
         assert len(call_kwargs.get("media", [])) == 1
     finally:
         os.chdir(original_cwd)
@@ -432,8 +437,9 @@ async def test_docx_upload_passes_media_path(aiohttp_client, tmp_path) -> None:
 
         resp = await client.post("/v1/chat/completions", headers=AUTH_HEADERS, data=data)
         assert resp.status == 200
-        call_kwargs = agent.process_direct.call_args.kwargs
-        assert call_kwargs["content"] == "summarize the report"
+        call_args = agent._execute_direct.call_args
+        assert call_args.args == ("summarize the report",)
+        call_kwargs = call_args.kwargs
         media = call_kwargs.get("media", [])
         assert len(media) == 1
         assert "report.docx" in media[0]
