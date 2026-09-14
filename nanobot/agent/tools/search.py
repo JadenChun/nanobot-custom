@@ -6,24 +6,37 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import hashlib
 import heapq
 import os
 import re
 import threading
 import time
 from collections import deque
-from contextlib import suppress
+from collections.abc import Callable
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, Iterator, TypeVar
+from typing import TYPE_CHECKING, Any, Iterable, Iterator, TypeVar
 
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.filesystem import ListDirTool, _FsTool
+from nanobot.agent.tools.read_provenance import (
+    FilesystemReadReceipt,
+    locate_read,
+    parse_read_receipt,
+    qualified_text_bytes,
+)
+from nanobot.agent.turn import ToolOutcome
+from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.utils.document import (
     LocatedDocumentLine,
     PdfPageRangeError,
     open_document_line_source,
 )
+
+if TYPE_CHECKING:
+    from nanobot.session.artifact import FilesystemArtifactOrigin
 
 _DEFAULT_HEAD_LIMIT = 250
 _DEFAULT_FILE_HEAD_LIMIT = 200
@@ -689,6 +702,52 @@ class GrepTool(_SearchTool):
         offset: int = 0,
         **kwargs: Any,
     ) -> str:
+        result = await self._execute(
+            pattern,
+            path,
+            glob,
+            type,
+            pages,
+            case_insensitive,
+            fixed_strings,
+            output_mode,
+            context_before,
+            context_after,
+            max_matches,
+            max_results,
+            head_limit,
+            offset,
+            **kwargs,
+        )
+        if isinstance(result, ToolOutcome):
+            raise RuntimeError("Uncontextual grep execution returned producer authority")
+        return result
+
+    async def execute_with_context(self, context: Any, **kwargs: Any) -> str | ToolOutcome:
+        """Issue provenance only at the contextual execution boundary."""
+        return await self._execute(_attest=True, **kwargs)
+
+    async def _execute(
+        self,
+        pattern: str,
+        path: str = ".",
+        glob: str | None = None,
+        type: str | None = None,
+        pages: str | None = None,
+        case_insensitive: bool = False,
+        fixed_strings: bool = False,
+        output_mode: str = "content",
+        context_before: int = 5,
+        context_after: int = 5,
+        max_matches: int | None = None,
+        max_results: int | None = None,
+        head_limit: int | None = None,
+        offset: int = 0,
+        *,
+        _attest: bool = False,
+        **kwargs: Any,
+    ) -> str | ToolOutcome:
+        stack = ExitStack()
         try:
             target = self._resolve(path or ".")
             if not target.exists():
@@ -727,6 +786,32 @@ class GrepTool(_SearchTool):
             max_file_bytes = (
                 self._MAX_EXPLICIT_FILE_BYTES if target.is_file() else self._MAX_FILE_BYTES
             )
+            qualified: tuple[bytes, Callable[[], None]] | None = None
+            receipt_locator: tuple[FilesystemArtifactOrigin, str] | None = None
+            receipt_eligible = False
+            if (
+                _attest
+                and output_mode in {"content", "count", "files_with_matches"}
+                and target.is_file()
+                and target.suffix.lower() not in _DOCUMENT_EXTENSIONS
+            ):
+                access = current_tool_workspace(
+                    self._workspace,
+                    restrict_to_workspace=self._restrict_to_workspace,
+                    sandbox_restricts_workspace=self._sandbox_restricts_workspace,
+                )
+                receipt_locator = locate_read(target, access.project_path, self._resource_policy)
+                if receipt_locator is not None:
+                    try:
+                        can_qualify = target.stat().st_size <= max_file_bytes
+                    except OSError:
+                        can_qualify = False
+                    if can_qualify:
+                        qualified = stack.enter_context(qualified_text_bytes(
+                            target,
+                            max_bytes=max_file_bytes,
+                        ))
+                        receipt_eligible = qualified is not None
 
             for file_path in self._iter_files(target):
                 rel_path = file_path.relative_to(root).as_posix()
@@ -764,14 +849,21 @@ class GrepTool(_SearchTool):
                                 f"{source.continuation})"
                             )
                     else:
-                        with file_path.open("rb") as file:
-                            raw = file.read(max_file_bytes + 1)
+                        if qualified is not None and file_path == target:
+                            raw = qualified[0]
+                        else:
+                            with file_path.open("rb") as file:
+                                raw = file.read(max_file_bytes + 1)
                         if _is_binary(raw):
+                            if file_path == target:
+                                receipt_eligible = False
                             skipped_binary += 1
                             continue
                         try:
                             content = raw.decode("utf-8")
                         except UnicodeDecodeError:
+                            if file_path == target:
+                                receipt_eligible = False
                             skipped_binary += 1
                             continue
                         source_lines = (
@@ -905,8 +997,25 @@ class GrepTool(_SearchTool):
                 )
             if notes:
                 result += "\n\n" + "\n".join(notes)
+            if receipt_eligible and qualified is not None and receipt_locator is not None:
+                qualified[1]()
+                encoded = result.encode("utf-8")
+                receipt = FilesystemReadReceipt(
+                    receipt_locator[0],
+                    receipt_locator[1],
+                    len(encoded),
+                    hashlib.sha256(encoded).hexdigest(),
+                    producer="builtin_grep_file_text",
+                )
+                try:
+                    receipt = parse_read_receipt(receipt.to_dict())
+                except ValueError:
+                    return result
+                return ToolOutcome(content=result, producer_receipt=receipt)
             return result
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
             return ToolResult.error(f"Error searching files: {e}")
+        finally:
+            stack.close()

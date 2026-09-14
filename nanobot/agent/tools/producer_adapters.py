@@ -19,6 +19,7 @@ from nanobot.agent.tools.read_provenance import (
     FilesystemReadReceipt,
     parse_read_receipt,
 )
+from nanobot.agent.tools.search import GrepTool
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +52,7 @@ class _ProducerAdapter:
 # or runtime flag can add an entry.
 _PRODUCER_ADAPTERS: Final = MappingProxyType({
     ReadFileTool: _ProducerAdapter("builtin_read_file_text", FilesystemReadReceipt),
+    GrepTool: _ProducerAdapter("builtin_grep_file_text", FilesystemReadReceipt),
 })
 
 
