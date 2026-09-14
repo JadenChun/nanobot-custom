@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Protocol, TypeVar, cast
 
 from loguru import logger
 
@@ -173,6 +173,22 @@ _T = TypeVar("_T")
 _SUBAGENT_PROVIDER_TASK_META = "subagent_provider_task_id"
 _SUBAGENT_TERMINAL_WAIT_SECONDS = 300.0
 _BUS_CLEANUP_TIMEOUT_SECONDS = 5.0
+_FOREGROUND_IDLE_SOURCES = frozenset({
+    TurnSource.DIRECT,
+    TurnSource.GATEWAY,
+    TurnSource.SDK,
+    TurnSource.API,
+})
+_ACTIVITY_ADMITTED_ATTRIBUTE = "_nanobot_activity_admitted"
+
+
+class ForegroundIdleIntegration(Protocol):
+    """Complete, explicitly injected seam for foreground idle cancellation."""
+
+    enabled: bool
+
+    async def foreground_admitted(self, session_key: str) -> None:
+        """Cancel/discard idle work after durable activity is committed."""
 
 
 class TurnKind(Enum):
@@ -265,6 +281,52 @@ class _AdmittedTurnIO:
     message: InboundMessage | None = None
 
 
+@dataclass
+class _ActivityAdmissionRequest:
+    message: InboundMessage
+    result: asyncio.Future[_ForegroundActivityResult]
+
+
+@dataclass(frozen=True)
+class _ForegroundActivityResult:
+    activity_committed: bool = False
+    callback_succeeded: bool = False
+    callback_error: BaseException | None = None
+
+
+@dataclass
+class _SourceActivityAdmission:
+    queue: asyncio.Queue[_ActivityAdmissionRequest | None]
+    task: asyncio.Task[None]
+    closed: bool = False
+
+    async def submit(self, message: InboundMessage) -> _ForegroundActivityResult:
+        """Admit one queued message and wait for its durable side effect."""
+
+        if self.closed:
+            return _ForegroundActivityResult()
+        result = asyncio.get_running_loop().create_future()
+        self.queue.put_nowait(_ActivityAdmissionRequest(message, result))
+        return await asyncio.shield(result)
+
+    async def close(self) -> None:
+        """Drain admitted work and stop the owner-registered worker."""
+
+        if self.closed:
+            return
+        self.closed = True
+        self.queue.put_nowait(None)
+        interrupted = False
+        while not self.task.done():
+            try:
+                await asyncio.shield(self.task)
+            except asyncio.CancelledError:
+                interrupted = True
+        self.task.result()
+        if interrupted:
+            raise asyncio.CancelledError
+
+
 @dataclass(frozen=True)
 class _TurnExecutionOptions:
     """Trusted adapter options; never reconstructed from inbound metadata."""
@@ -279,6 +341,8 @@ class _TurnExecutionOptions:
     on_admission_end: Callable[[str], Awaitable[None]] | None = None
     admission_scope: Callable[[str], AbstractAsyncContextManager[_AdmittedTurnIO]] | None = None
     inbound: InboundMessage | None = None
+    trusted_foreground_activity: bool = False
+    activity_already_recorded: bool = False
 
 
 class AgentLoop:
@@ -392,6 +456,7 @@ class AgentLoop:
         artifact_reader_factory: Callable[
             [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None
         ] | None = None,
+        idle_integration: ForegroundIdleIntegration | None = None,
     ):
         from nanobot.migration_guard import require_runtime_ready
         require_runtime_ready()
@@ -411,6 +476,9 @@ class AgentLoop:
         self.channels_config = channels_config
         self.restart_mode = restart_mode
         self._runtime_model_publisher = runtime_model_publisher
+        # No production factory supplies this seam yet.  Keep it inert unless
+        # callers inject both an explicit enabled integration and its callback.
+        self._idle_integration = idle_integration
         self.workspace = workspace
         initial_model = model or provider.get_default_model()
         self.max_iterations = (
@@ -516,6 +584,12 @@ class AgentLoop:
         # When a session has an active task, new messages for that session
         # are routed here instead of creating a new task.
         self._pending_queues: dict[str, asyncio.Queue[InboundMessage]] = {}
+        self._source_activity_admissions: dict[str, _SourceActivityAdmission] = {}
+        # Keep the message object alive while a source cleanup republishes it;
+        # object identity is the internal handoff proof for one already-admitted
+        # pending message and cannot be forged through inbound metadata.
+        self._admitted_activity_messages: dict[int, InboundMessage] = {}
+        self._activity_admission_token = object()
         self._pending_republish: dict[str, list[InboundMessage]] = {}
         self._bus_cleanup_tasks: dict[str, set[asyncio.Future[Any]]] = {}
         self._preserve_inflight_turns_on_shutdown = False
@@ -1089,6 +1163,163 @@ class AgentLoop:
         return self.turn_delivery_factory.session_events(
             session_key, session.metadata,
         )
+
+    def _configured_idle_integration(self) -> ForegroundIdleIntegration | None:
+        """Return only a complete, explicitly enabled idle integration.
+
+        The dormant coordinator is intentionally not constructed here.  This
+        adapter accepts a caller-owned coordinator (or equivalent) only when
+        it exposes the complete enabled flag and foreground notification
+        callback.  Missing or partial wiring remains a no-op.
+        """
+
+        integration = getattr(self, "_idle_integration", None)
+        if integration is None:
+            return None
+        try:
+            enabled = getattr(integration, "enabled", None)
+            if enabled is None:
+                policy = getattr(integration, "policy", None)
+                if policy is None:
+                    policy = getattr(integration, "_policy", None)
+                enabled = getattr(policy, "enabled", False)
+            callback = getattr(integration, "foreground_admitted", None)
+        except Exception:
+            return None
+        if enabled is not True or not callable(callback):
+            return None
+        return cast(ForegroundIdleIntegration, integration)
+
+    @staticmethod
+    def _inbound_turn_source(msg: InboundMessage) -> TurnSource:
+        """Classify trusted bus provenance without treating system input as gateway input."""
+
+        if cron_trigger(msg.metadata):
+            return TurnSource.CRON
+        if msg.channel == "system" or not msg.is_user_input:
+            return TurnSource.SYSTEM_COMPAT
+        return TurnSource.GATEWAY
+
+    @staticmethod
+    def _trusted_foreground_inbound(msg: InboundMessage) -> bool:
+        """Accept foreground activity only from trusted external user ingress."""
+
+        return (
+            msg.channel != "system"
+            and msg.input_role != "system"
+            and msg.is_user_input
+            and not cron_trigger(msg.metadata)
+            and RECOVERY_INBOUND_METADATA_KEY not in msg.metadata
+            and msg.sender_id != "subagent"
+            and not msg.sender_id.startswith("system:")
+        )
+
+    async def _record_foreground_activity(
+        self,
+        context: RunTurnContext,
+        session_key: str,
+        *,
+        source: TurnSource,
+        sender_id: str,
+        trusted: bool,
+    ) -> _ForegroundActivityResult:
+        """Persist accepted foreground activity before any turn work starts."""
+
+        if (
+            not trusted
+            or source not in _FOREGROUND_IDLE_SOURCES
+            or sender_id == "subagent"
+        ):
+            return _ForegroundActivityResult()
+        integration = self._configured_idle_integration()
+        if integration is None:
+            return _ForegroundActivityResult()
+        owner = context.execution_owner
+        writer = context.source_writer
+        # Activity belongs to the strict source substrate.  A legacy session
+        # has no current ExecutionOwner and therefore fails closed without a
+        # write or callback.
+        if owner is None or writer is None:
+            return _ForegroundActivityResult()
+        owner.validate_dispatch()
+        expected = owner.read_snapshot().state
+        writer.store.record_user_activity(
+            session_key,
+            expected,
+            accepted_foreground_user=True,
+            owner=owner,
+        )
+        # The source replacement above fsyncs before returning.  Only then may
+        # the coordinator cancel/discard dormant work; callback failures
+        # propagate and prevent the turn from reaching BUILD/RUN.
+        try:
+            await integration.foreground_admitted(session_key)
+        except BaseException as exc:
+            return _ForegroundActivityResult(
+                activity_committed=True,
+                callback_error=exc,
+            )
+        return _ForegroundActivityResult(
+            activity_committed=True,
+            callback_succeeded=True,
+        )
+
+    def _remember_admitted_activity_message(self, msg: InboundMessage) -> None:
+        """Retain one internal identity marker until republished dispatch starts."""
+
+        admitted_messages = getattr(self, "_admitted_activity_messages", None)
+        if admitted_messages is None:
+            admitted_messages = self._admitted_activity_messages = {}
+        token = getattr(self, "_activity_admission_token", None)
+        if token is not None:
+            setattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE, token)
+        admitted_messages[id(msg)] = msg
+
+    def _take_admitted_activity_message(self, msg: InboundMessage) -> bool:
+        """Consume an identity marker without trusting serialized metadata."""
+
+        admitted_messages = getattr(self, "_admitted_activity_messages", {})
+        already_recorded = admitted_messages.pop(id(msg), None) is msg
+        token = getattr(self, "_activity_admission_token", None)
+        if not already_recorded and token is not None:
+            already_recorded = (
+                getattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE, None) is token
+            )
+        if already_recorded:
+            with suppress(AttributeError):
+                delattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE)
+        return already_recorded
+
+    def _discard_admitted_activity_message(self, msg: InboundMessage) -> None:
+        """Drop the map entry while retaining the in-memory retry marker."""
+
+        admitted_messages = getattr(self, "_admitted_activity_messages", {})
+        admitted_messages.pop(id(msg), None)
+
+    def _clear_admitted_activity_messages(self) -> None:
+        """Release markers when the loop shuts down without a republished turn."""
+
+        admitted_messages = getattr(self, "_admitted_activity_messages", {})
+        pending_republish = getattr(self, "_pending_republish", {})
+        messages = list(admitted_messages.values())
+        for pending_items in pending_republish.values():
+            messages.extend(pending_items)
+        for msg in messages:
+            with suppress(AttributeError):
+                delattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE)
+        admitted_messages.clear()
+
+    async def _admit_pending_activity(self, key: str, msg: InboundMessage) -> bool:
+        """Use the active source owner to admit one queued user message."""
+
+        admissions = getattr(self, "_source_activity_admissions", {})
+        admission = admissions.get(key)
+        if admission is None:
+            return False
+        result = await admission.submit(msg)
+        if result.callback_error is not None:
+            raise result.callback_error
+        return result.callback_succeeded
 
     def _remember_session_route(
         self,
@@ -1717,6 +1948,24 @@ class AgentLoop:
                         )
                         msg = pending_msg
                     else:
+                        try:
+                            await self._admit_pending_activity(effective_key, pending_msg)
+                        except asyncio.CancelledError:
+                            if task_is_cancelling():
+                                raise
+                            logger.warning(
+                                "Pending activity admission was cancelled for {}",
+                                effective_key,
+                            )
+                        except Exception:
+                            # Keep the pending message durable and queued.  The
+                            # source cleanup republishes it for a fresh owner,
+                            # where the normal admission path can retry the
+                            # callback before model work begins.
+                            logger.exception(
+                                "Pending activity admission failed for {}",
+                                effective_key,
+                            )
                         logger.info(
                             "Routed follow-up message to pending queue for session {}",
                             effective_key,
@@ -1794,6 +2043,8 @@ class AgentLoop:
                     self.bus.publish_inbound_nowait(item)
                 except Exception:
                     self._pending_republish[key] = items[index:]
+                    for pending_item in items[index:]:
+                        self._discard_admitted_activity_message(pending_item)
                     logger.warning('Retained unpublished pending input for {}', key)
                     break
             try:
@@ -1874,6 +2125,7 @@ class AgentLoop:
 
     async def _dispatch(self, msg: InboundMessage) -> None:
         """Adapt trusted bus ingress to canonical admission without another lock."""
+        activity_already_recorded = self._take_admitted_activity_message(msg)
         registration_key = self._effective_session_key(msg)
         msg = dataclasses.replace(msg, session_key_override=registration_key)
         recovery = self._recovery_admission
@@ -1888,13 +2140,14 @@ class AgentLoop:
                 if not await recovery.admit(msg):
                     return
             request = TurnRequest(content=msg.content, session_key=registration_key,
-                source=(TurnSource.CRON if cron_trigger(msg.metadata) else
-                        TurnSource.GATEWAY if msg.is_user_input else TurnSource.SYSTEM_COMPAT),
+                source=self._inbound_turn_source(msg),
                 route=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id,
                                      message_id=msg.metadata.get('message_id')),
                 sender_id=msg.sender_id, media=tuple(msg.media), metadata=dict(msg.metadata))
             await self.execute_turn(request, _options=_TurnExecutionOptions(
-                inbound=msg, admission_scope=partial(self._bus_turn_scope, msg), raise_errors=True))
+                inbound=msg, admission_scope=partial(self._bus_turn_scope, msg), raise_errors=True,
+                trusted_foreground_activity=self._trusted_foreground_inbound(msg),
+                activity_already_recorded=activity_already_recorded))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1939,6 +2192,7 @@ class AgentLoop:
             errors.append(exc)
         finally:
             self._background_tasks.clear()
+        self._clear_admitted_activity_messages()
 
         owned_foreground = getattr(self, "_owned_foreground_manager", None)
         self._owned_foreground_manager = None
@@ -2019,9 +2273,41 @@ class AgentLoop:
                 raise RuntimeError("Source session requires recovery before execution")
             context.execution_owner = owner
             context.source_writer = SourceTurnWriter(backend.source, owner, run_id=context.run_id)
+            activity_queue: asyncio.Queue[_ActivityAdmissionRequest | None] = asyncio.Queue()
+
+            async def admit_pending_activity() -> None:
+                while True:
+                    item = await activity_queue.get()
+                    if item is None:
+                        return
+                    try:
+                        outcome = await self._record_foreground_activity(
+                            context,
+                            key,
+                            source=self._inbound_turn_source(item.message),
+                            sender_id=item.message.sender_id,
+                            trusted=self._trusted_foreground_inbound(item.message),
+                        )
+                    except BaseException as exc:
+                        outcome = _ForegroundActivityResult(callback_error=exc)
+                    if outcome.activity_committed:
+                        # Mark from the owner-registered worker itself so
+                        # cancellation of the submitting bus task cannot
+                        # lose the duplicate-suppression proof.
+                        self._remember_admitted_activity_message(item.message)
+                    if not item.result.done():
+                        item.result.set_result(outcome)
+
+            activity_task = asyncio.create_task(admit_pending_activity())
+            owner.track_task(activity_task)
+            activity_admission = _SourceActivityAdmission(activity_queue, activity_task)
+            self._source_activity_admissions[key] = activity_admission
             try:
                 yield
             finally:
+                if self._source_activity_admissions.get(key) is activity_admission:
+                    self._source_activity_admissions.pop(key, None)
+                await activity_admission.close()
                 self.sessions.invalidate(key)
 
     async def execute_turn(self, request: TurnRequest, *, _tools: ToolRegistry | None = None,
@@ -2049,6 +2335,11 @@ class AgentLoop:
             delivery=DeliveryState(primary=target), lock_owner=f'main:{key}',
             metadata=dict(request.metadata),
         )
+        context.trusted_foreground_activity = (
+            options.trusted_foreground_activity
+            and request.source in _FOREGROUND_IDLE_SOURCES
+            and request.sender_id != "subagent"
+        )
         record = RunRecord(run_id=run_id, source=request.source,
             session_ref=SessionRunRef(session_key=key, run_id=run_id),
             visible_session_key=(request.scheduled_link.visible_session_key
@@ -2074,6 +2365,16 @@ class AgentLoop:
                                 content=text, stop_reason='cancelled' if action == 'negative' else 'approval_stale',
                                 outbound=OutboundMessage(channel=target.channel, chat_id=target.chat_id or '', content=text))
                         else:
+                            if not options.activity_already_recorded:
+                                activity = await self._record_foreground_activity(
+                                    context,
+                                    key,
+                                    source=request.source,
+                                    sender_id=request.sender_id,
+                                    trusted=context.trusted_foreground_activity,
+                                )
+                                if activity.callback_error is not None:
+                                    raise activity.callback_error
                             content = request.content
                             if action == 'affirmative' and snapshot.pending is not None:
                                 context.policy.approval_granted = True
@@ -3122,6 +3423,8 @@ class AgentLoop:
         runtime: LLMRuntime | None = None,
         on_runtime_admitted: Callable[[LLMRuntime], Awaitable[None]] | None = None,
         attributes: Mapping[str, Any] | None = None,
+        *,
+        source: TurnSource = TurnSource.DIRECT,
     ) -> OutboundMessage | None:
         """Process an external message directly and return the outbound payload."""
         result = await self._execute_direct(
@@ -3132,6 +3435,7 @@ class AgentLoop:
             hooks=hooks, hook_factories=hook_factories, tools=tools,
             persist_user_message=persist_user_message, runtime=runtime,
             on_runtime_admitted=on_runtime_admitted, attributes=attributes,
+            source=source,
         )
         return result.outbound
 
@@ -3183,7 +3487,12 @@ class AgentLoop:
             run_extra_hooks_for_ephemeral=_run_extra_hooks_for_ephemeral,
             hook_factories=tuple(hook_factories or ()), runtime=runtime,
             on_runtime_admitted=on_runtime_admitted, attributes=dict(attributes or {}),
-            raise_errors=True, on_admission_end=admission_ended)
+            raise_errors=True, on_admission_end=admission_ended,
+            trusted_foreground_activity=(
+                source in _FOREGROUND_IDLE_SOURCES
+                and sender_id != "subagent"
+                and not sender_id.startswith("system:")
+            ))
         result = await self.execute_turn(request, _tools=tools, _options=options)
         return result
 

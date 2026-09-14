@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
 from nanobot.session.idle_compaction import IdleCaptureToken
 from nanobot.session.manager import JsonlSessionStore, Session, SessionWriteConflict
 from nanobot.session.source import SourceValidationError, new_source_event, prefix_digest
@@ -278,3 +279,43 @@ def test_idle_admission_is_non_mutating_and_dependency_bearing_candidate_fails_c
             candidate(admitted, references=["artifact:" + "a" * 32]),
         )
     assert path.read_bytes() == before
+
+
+async def test_activity_update_reuses_current_execution_owner(backend):
+    initial = seed(backend)
+    key = initial.state.session_key
+    async with acquire_execution(backend, key, run_id="foreground") as owner:
+        before = owner.read_snapshot()
+        committed = backend.source.record_user_activity(
+            key,
+            before.state,
+            accepted_foreground_user=True,
+            owner=owner,
+        )
+        assert committed.header["metadata"]["user_activity_revision"] == 1
+        owner.validate_dispatch()
+    loaded = backend.source.load_source_snapshot(key)
+    assert loaded.header["metadata"]["user_activity_revision"] == 1
+    assert loaded.state.revision == initial.state.revision + 3
+
+
+async def test_activity_update_rejects_stale_or_foreign_owner(backend, tmp_path):
+    initial = seed(backend)
+    key = initial.state.session_key
+    async with acquire_execution(backend, key, run_id="foreground") as owner:
+        expected = owner.read_snapshot().state
+    with pytest.raises(ExecutionOwnershipError):
+        backend.source.record_user_activity(
+            key, expected, accepted_foreground_user=True, owner=owner,
+        )
+
+    other = JsonlSessionStore(tmp_path / "other-workspace", sessions_root=tmp_path / "other-private")
+    seed(other, key=key)
+    async with acquire_execution(other, key, run_id="foreign") as foreign:
+        with pytest.raises(ExecutionOwnershipError):
+            backend.source.record_user_activity(
+                key,
+                initial.state,
+                accepted_foreground_user=True,
+                owner=foreign,
+            )

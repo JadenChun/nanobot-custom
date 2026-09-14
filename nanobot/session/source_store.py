@@ -277,20 +277,26 @@ class SourceSessionStore:
             )
 
     def record_user_activity(self, key: str, expected: SourceState, *,
-                             accepted_foreground_user: bool) -> SourceSnapshot:
+                             accepted_foreground_user: bool,
+                             owner: ExecutionOwner | None = None) -> SourceSnapshot:
         """Atomically record one already accepted foreground user admission.
 
         The integration owner must invoke this immediately after it admits a
-        foreground user turn and before it begins that turn's execution.  This
-        dormant store primitive deliberately does not infer admission from a
-        source event, so assistant/tool persistence cannot advance activity.
+        foreground user turn and before it begins that turn's execution.  When
+        a turn already owns the session, pass that exact ``owner`` so this
+        update joins its existing execution transaction rather than opening a
+        second ownerless transaction.  This dormant store primitive
+        deliberately does not infer admission from a source event, so
+        assistant/tool persistence cannot advance activity.
         """
 
         from nanobot.session.execution_owner import execution_transaction
 
         if accepted_foreground_user is not True:
             raise SourceValidationError("Foreground user admission is required")
-        with execution_transaction(self._backend, key):
+        if owner is not None:
+            owner.validate_dispatch()
+        with execution_transaction(self._backend, key, owner):
             header, events = self._current_unlocked(key, expected)
             activity = read_user_activity(header["metadata"])
             header["metadata"][USER_ACTIVITY_REVISION_KEY] = (

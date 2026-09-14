@@ -816,3 +816,35 @@ existing guarded plugin fixtures remain deselected, not waived. Scoped Ruff and
 diff checks passed. Read-only review independently passed 98 focused tests and
 accepted this bounded package. A final canonical-order regression also passes.
 The production migration guard remains enabled.
+
+### Dormant foreground idle activity admission
+
+The source store now accepts an optional current `ExecutionOwner` when recording
+one already admitted foreground-user activity update. The owner-aware path
+reuses the turn's existing execution transaction, advances the typed activity
+revision and timestamp durably, and rejects stale or foreign owners. Ownerless
+callers remain available for the dormant store fixture path; a governed turn
+never opens a second ownerless transaction while it owns the session.
+
+`AgentLoop` has an explicitly injected, disabled-by-default seam for a complete
+idle integration. For `DIRECT`, `GATEWAY`, `SDK`, and `API` user turns, source
+activity is durable before `foreground_admitted(session_key)` is awaited. A
+callback failure or cancellation prevents model/tool stages. `CRON`,
+`HEARTBEAT`, `SYSTEM_COMPAT`, subagent activity, and partial or disabled
+integrations produce no activity write or callback. A foreground follow-up
+accepted while a source turn owns the session is admitted by an
+owner-registered worker before first-turn cleanup. The source runner clears its
+pending queue, so cleanup republishes that accepted message for a second
+canonical turn; the internal message-identity marker suppresses a duplicate
+activity write and callback when that turn starts. Durable activity commit and
+callback success are tracked separately: a callback failure or cancellation
+still retains the marker, while the current turn stops before model work. The
+marker is consumed on dispatch and cleared on cancellation, enqueue failure,
+cleanup failure, and shutdown.
+
+This package adds no scanner, summarizer, provider call, checkpoint publisher,
+configuration default, guard change, or legacy `AutoCompact` behavior. Focused
+network-denied validation covers owner reuse/fencing, source filtering,
+durability-before-callback ordering, callback failure/cancellation, disabled
+wiring, and serialized follow-up admission. The production migration guard
+and idle scheduler remain dormant.
