@@ -38,6 +38,18 @@ from nanobot.cron.definition_store import (
     CronDefinitionStoreReplay,
     DefinitionStoreConflictError,
 )
+from nanobot.cron.delivery_runtime import (
+    CRON_DELIVERY_RUNTIME_UNAVAILABLE_DIAGNOSTIC,
+    CronDeliveryRuntime,
+    CronDeliveryRuntimeUnavailableError,
+    Sender,
+    SenderResult,
+)
+from nanobot.cron.delivery_store import (
+    CronDeliveryOutboxStore,
+    DeliveryClaim,
+    DeliveryOutboxRecord,
+)
 from nanobot.cron.occurrence import (
     CronOccurrenceRuntime,
     CronOccurrenceRuntimeUnavailableError,
@@ -220,6 +232,8 @@ class CronService:
         namespace: str | None = None,
         occurrence_store: CronOccurrenceStore | None = None,
         completion_projector: CronCompletionProjector | None = None,
+        delivery_store: CronDeliveryOutboxStore | None = None,
+        delivery_runtime: CronDeliveryRuntime | None = None,
     ):
         """Create a service over the C2 definition authority.
 
@@ -229,6 +243,11 @@ class CronService:
         the path itself is never opened.  Conversion is intentionally absent
         from construction and must have completed through the stopped-writer
         converter before converted definitions are visible.
+
+        Delivery is likewise absent unless an explicit E3 runtime or outbox
+        store is injected with the service's exact occurrence authority and
+        namespace.  Ordinary management construction never creates a delivery
+        path or sender.
         """
         path = Path(store_path).expanduser()
         if not path.is_absolute():
@@ -260,6 +279,26 @@ class CronService:
             and occurrence_store.namespace != definition_store.action_store.namespace
         ):
             raise ValueError("definition and occurrence stores must share one namespace")
+        if delivery_store is not None and not isinstance(delivery_store, CronDeliveryOutboxStore):
+            raise TypeError("delivery_store must be a CronDeliveryOutboxStore")
+        if delivery_runtime is not None and not isinstance(delivery_runtime, CronDeliveryRuntime):
+            raise TypeError("delivery_runtime must be a CronDeliveryRuntime")
+        if delivery_runtime is not None and delivery_store is not None:
+            if delivery_runtime.outbox_store is not delivery_store:
+                raise ValueError("delivery runtime and delivery store must use one authority")
+        if delivery_runtime is None and delivery_store is not None:
+            if occurrence_store is None:
+                raise ValueError("delivery_store injection requires an explicit occurrence_store")
+            delivery_runtime = CronDeliveryRuntime(delivery_store, occurrence_store=occurrence_store)
+        if delivery_runtime is not None:
+            if delivery_runtime.outbox_store.namespace != definition_store.action_store.namespace:
+                raise ValueError("definition and delivery stores must share one namespace")
+            if occurrence_store is None:
+                raise ValueError("delivery runtime injection requires an explicit occurrence_store")
+            if delivery_runtime.occurrence_store is not occurrence_store:
+                raise ValueError("delivery runtime must use the service occurrence authority")
+            if delivery_runtime.occurrence_store.namespace != delivery_runtime.outbox_store.namespace:
+                raise ValueError("delivery and occurrence stores must share one namespace")
 
         self.store_path = path
         self.definition_store = definition_store
@@ -270,6 +309,8 @@ class CronService:
             else CronOccurrenceRuntime(definition_store, occurrence_store)
         )
         self.completion_projector = completion_projector
+        self.delivery_runtime = delivery_runtime
+        self.delivery_store = None if delivery_runtime is None else delivery_runtime.outbox_store
         self.on_job = on_job
         self.max_sleep_ms = max_sleep_ms
         self._store: CronStore | None = None
@@ -418,6 +459,73 @@ class CronService:
         if self.occurrence_runtime is None:
             raise CronOccurrenceRuntimeUnavailableError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
         return self.occurrence_runtime.reconciliation_required()
+
+    def _require_delivery_runtime(self) -> CronDeliveryRuntime:
+        """Return the explicitly injected E3 substrate or fail closed."""
+        if self.delivery_runtime is None:
+            raise CronDeliveryRuntimeUnavailableError(
+                CRON_DELIVERY_RUNTIME_UNAVAILABLE_DIAGNOSTIC
+            )
+        return self.delivery_runtime
+
+    def prepare_completed_delivery(self, occurrence_id: str) -> DeliveryOutboxRecord:
+        """Delegate E3 preparation through the exact injected E1 authority."""
+        return self._require_delivery_runtime().prepare_completed(occurrence_id)
+
+    def list_deliveries(self) -> list[DeliveryOutboxRecord]:
+        """List detached E2 outbox records through an explicit E3 injection."""
+        return self._require_delivery_runtime().list()
+
+    def get_delivery(self, outbox_id: str) -> DeliveryOutboxRecord:
+        """Read one detached E2 outbox record through E3."""
+        return self._require_delivery_runtime().get(outbox_id)
+
+    def delivery_status(self, outbox_id: str) -> str:
+        """Return one durable aggregate delivery status."""
+        return self._require_delivery_runtime().status(outbox_id)
+
+    def claim_delivery(
+        self,
+        outbox_id: str,
+        destination_id: str,
+        expected_revision: int,
+        owner: str | None = None,
+    ) -> DeliveryClaim:
+        """Reserve one pending destination through the E2 claim authority."""
+        return self._require_delivery_runtime().claim(
+            outbox_id,
+            destination_id,
+            expected_revision,
+            owner=owner,
+        )
+
+    async def dispatch_delivery(
+        self,
+        claim: DeliveryClaim,
+        sender: Sender | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> SenderResult:
+        """Dispatch one issued claim through the explicitly supplied sender."""
+        return await self._require_delivery_runtime().dispatch(
+            claim,
+            sender=sender,
+            timeout=timeout,
+        )
+
+    def delivery_reconciliation_required(self) -> list[DeliveryOutboxRecord]:
+        """Expose E2 in-flight/uncertain records without auto-retry."""
+        return self._require_delivery_runtime().reconciliation_required()
+
+    # Explicit aliases keep service call sites descriptive without creating a
+    # second delivery authority or any ordinary-construction side effect.
+    prepare_delivery = prepare_completed_delivery
+    prepare_completed = prepare_completed_delivery
+    list_delivery = list_deliveries
+    status_delivery = delivery_status
+    get_delivery_status = delivery_status
+    reconcile_deliveries = delivery_reconciliation_required
+    reconciliation_required = delivery_reconciliation_required
 
     def _should_persist_store(self) -> bool:
         """Compatibility answer; runtime snapshots are not service-owned."""

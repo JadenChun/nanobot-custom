@@ -218,13 +218,75 @@ acknowledgement lost after publication is retried only by reproving the exact
 record and transition, while an in-flight destination remains subject to
 explicit reconciliation.
 
-## Remaining E3 gates
+## Package E3 dormant delivery runtime
 
-Package E3 must separately define the stopped-writer/runtime admission fence,
-construct the sender request from this immutable record, and establish the
-process or turn lifecycle fence required before invoking any external sender.
-It must map channel acknowledgements to the strict settlement outcomes and
-provide an operator-controlled uncertain-send reconciliation path with
-evidence. It also owns any scheduler, service, bus, CLI, channel, provider,
-or migration-guard wiring. E2 supplies none of those authorities and remains
-safe to construct while those gates are absent.
+Package E3 provides the dormant runtime substrate for one explicit,
+process/store-scoped `DeliveryClaim`. `CronDeliveryRuntime` accepts only a
+`CronDeliveryOutboxStore` and, when preparation delegation is needed, the
+explicit matching `CronOccurrenceStore`. Their namespaces must be identical;
+the runtime never constructs either authority implicitly. `CronService` may
+receive that runtime or outbox store only through explicit injection with the
+same occurrence authority and namespace. A management-only service therefore
+does not create an outbox, occurrence ledger, sender, or delivery directory.
+
+The sender boundary is intentionally small and typed:
+
+```python
+@runtime_checkable
+class Sender(Protocol):
+    async def send(self, request: DispatchRequest) -> SenderResult: ...
+```
+
+`DispatchRequest` is frozen and detached. It carries the exact outbox,
+destination, attempt, action, and request digest identities, the exact
+channel and target strings, and an ordered tuple of text-only messages with
+empty media. `ConfirmedDelivered` requires a nonempty finite JSON receipt;
+`ConfirmedNotSent`, `PermanentNotSent`, and `UnknownOutcome` each carry a
+bounded reason code. Unknown or malformed sender returns are rejected.
+
+`dispatch()` first asks E2 to durably mark the issued claim as `sending`.
+Only that successful acknowledgement permits request construction and the
+single `sender.send()` call. The outbox lock is not held while the sender is
+awaited, so a sender can independently read the outbox. Results settle as
+`confirmed_delivered`, `confirmed_not_sent`, `permanent_not_sent`, or
+`unknown`, producing the corresponding E2 destination state. Timeout,
+cancellation, sender exception, invalid result, and partial-bundle signals
+settle `unknown` before the condition is propagated. Sender invocation
+ownership is retained on the exact outbox store, so concurrent dispatches
+through separate runtime adapters share one task and an already-dispatched
+claim cannot start a second sender. A timeout or caller cancellation is
+recorded independently of sender behavior: a sender that suppresses
+cancellation and returns a success result is still settled as `unknown`.
+Cleanup joins the sender task through repeated cancellation before the caller
+receives its timeout or cancellation. A settlement failure never retries the
+sender: the runtime raises a settlement error retaining the original
+classification, and the destination remains available through
+reconciliation-required state. A claim that never reaches durable `sending`,
+or a stale, copied, reconstructed, or foreign claim, never reaches the
+sender. A partial bundle makes the whole destination uncertain; a later retry
+is possible only through explicit operator reconciliation and does not replay
+the bundle automatically. Same-task or inherited-child-task reentrancy and
+malformed result variants fail closed and are durably classified as unknown.
+If unknown settlement
+itself fails during caller cancellation, cancellation remains the public
+result while the retained invocation records the settlement failure for
+reconciliation.
+
+The invocation registry is bound to the exact in-memory outbox store object
+and process ID. Shallow store copies and fork-inherited registries therefore
+get isolated registries, while E2's exact-store and process claim checks reject
+inherited claims before a copied or forked adapter can invoke a sender.
+
+These APIs expose preparation, detached reads and status, claims, dispatch,
+and reconciliation-required inspection only. There is no scheduler, timer,
+channel/provider factory, bus, CLI, tool, or real sender wiring in E3.
+
+## Remaining E3 activation gates
+
+This package accepts the fake-sender dormant substrate and its deterministic
+durability tests. Production activation still requires the stopped-writer and
+process/turn lifecycle fence, real transport and operator reconciliation
+evidence, channel/provider ownership, media and result-mode support, and an
+explicit migration-guard decision. Those gates remain closed; E3 does not
+arm scheduling, invoke a channel, publish to a bus, or make external delivery
+available merely by being importable or injected for tests.
