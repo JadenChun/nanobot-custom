@@ -100,6 +100,50 @@ class ModelRuntimeResolver:
         """Resolve a factory snapshot without changing the selected default."""
         return runtime_from_provider_snapshot(snapshot)
 
+    def resolve_qualified_preset(
+        self,
+        name: str,
+        snapshot: ProviderSnapshot,
+    ) -> LLMRuntime:
+        """Resolve an already-qualified preset snapshot without refreshing state.
+
+        This narrow path is for dormant integrations that receive a provider
+        snapshot from their owning admission layer.  It does not consult the
+        catalog loader, provider loader, mutable preset cache, or default
+        selection.  The caller remains responsible for proving that ``name``
+        exists in the authoritative catalog; a snapshot whose explicit preset
+        disagrees with ``name`` is rejected rather than silently corrected.
+        """
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("model_preset must be a non-empty string")
+        if type(snapshot) is not ProviderSnapshot:
+            raise TypeError("snapshot must be a ProviderSnapshot")
+        qualified = snapshot.model_preset
+        if qualified is not None and qualified != name:
+            raise KeyError(f"qualified snapshot preset {qualified!r} does not match {name!r}")
+        return self.resolve_snapshot(replace(snapshot, model_preset=name))
+
+    def resolve_preset_read_only(
+        self,
+        name: str,
+        *,
+        snapshot: ProviderSnapshot,
+        recover_removed: bool = False,
+    ) -> LLMRuntime:
+        """Resolve an already-qualified preset without refresh or caching.
+
+        ``snapshot`` must be supplied by an already-admitted caller.  This
+        method never invokes a provider snapshot loader or factory.  Removed
+        presets fail closed, matching ``recover_removed=False`` semantics. It
+        is not wired into foreground production admission.
+        """
+        if self._preset_catalog_refresh_required:
+            raise RuntimeError("preset catalog requires refresh; read-only resolution is unavailable")
+        if recover_removed:
+            raise ValueError("read-only preset resolution requires recover_removed=False")
+        normalized = preset_helpers.normalize_preset_name(name, self._model_presets)
+        return self.resolve_qualified_preset(normalized, snapshot)
+
     def adopt_snapshot(
         self,
         snapshot: ProviderSnapshot,

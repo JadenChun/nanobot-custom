@@ -901,3 +901,59 @@ loader perform no scanner, provider, task, summarizer, or checkpoint work, and
 the production migration guard and runtime activation remain unchanged.
 Numeric and model-selection choices are I4 activation gates, not I3 runtime
 behavior.
+
+### Dormant pure idle runtime binding authority (I3b)
+
+`nanobot.agent.idle_runtime` now provides a process-local, nonserializable
+`IdleRuntimeBinding` and `IdleRuntimeBindingRegistry`. A binding is issued only
+from a session key after synchronously loading a sealed `SourceSnapshot` from
+the exact injected `SourceSessionStore`; caller-supplied or tampered detached
+snapshots are not authority. The registry retains at most one current binding
+per session plus an active publication callback reference. Its source
+session/incarnation/generation/root identity, authoritative
+session-selected preset, foreground and explicitly supplied auxiliary
+`LLMRuntime` values, versioned summary/projection limits, I3 limits, workspace
+and artifact namespace, `IdlePolicyBinding`, runtime/config epochs, and keyed
+fingerprints are immutable authority state. Fingerprints are opaque and are
+computed in memory with a per-process key, so provider signatures, credentials,
+headers, request settings, endpoints, proxies, bodies, and queries are never
+persisted, logged, or exposed by binding representations. Public
+observability contains only state, opaque counters, and epoch values.
+
+Preset admission reads selection only from the freshly loaded source metadata.
+It uses an explicit prequalified runtime/snapshot mapping or a narrow adapter
+that receives an already supplied `ProviderSnapshot`; ordinary resolver calls,
+arbitrary callables, metadata fallback, save, catalog refresh, provider
+construction, and provider calls are unavailable. Runtime fingerprints contain
+only explicit immutable `LLMRuntime` fields and a required captured
+`provider_signature`; provider object mutation is irrelevant until a refreshed
+runtime/signature and epoch are supplied. Source, config, workspace/artifact,
+policy, summary-limit, and epoch changes invalidate the binding. Registry-issued
+object identity and process ID reject copied,
+reconstructed, foreign, and cross-process bindings; cross-process authority
+is explicitly absent. Calls from other threads or event loops are rejected.
+
+Construction creates no tasks and no scanner, summarizer, or compute callback.
+`start()` remains dormant. An injected coordinator may receive the caller's
+already-durable I1 `foreground_admitted` notification. The registry's shared,
+cancellation-safe `aclose()` fully joins coordinator cleanup, while injected
+runtimes are not released. A single event-loop/thread gate covers issue,
+revalidation, replacement, invalidation, close, and `publish_if_current`; the
+last method reloads authority and invokes only a synchronous callback without
+holding network or storage locks beyond the authoritative snapshot read.
+
+I3b is dormant and has no production wiring. Scanner/summarizer publication
+work remains gated by I3c and I3d, and any runtime activation remains an I4
+gate.
+
+Issue-time binding overrides are rejected; foreground and auxiliary runtimes,
+summary/projection limits, I3 limits, workspace/artifact namespace, and policy
+are registry-owned inputs updated only through the registry authority APIs.
+The event-loop gate rejects nested synchronous authority mutation, including a
+qualified preset adapter attempting a runtime replacement while admission is
+resolving. Close creates one shared shutdown operation before waiting for the
+publication gate, so queued and repeatedly cancelled callers still stop
+admission, join coordinator cleanup exactly once, and propagate cancellation
+only after cleanup completes. Snapshot-signature material has bounded total,
+string, and byte encodings; oversized secret or configuration material fails
+closed without being included in errors or observability.
