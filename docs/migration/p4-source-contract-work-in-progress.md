@@ -957,3 +957,92 @@ admission, join coordinator cleanup exactly once, and propagate cancellation
 only after cleanup completes. Snapshot-signature material has bounded total,
 string, and byte encodings; oversized secret or configuration material fails
 closed without being included in errors or observability.
+
+### Dormant stateless idle summary adapter (I3c)
+
+`nanobot.agent.idle_summary` now supplies the pure, single-attempt summary
+adapter for a future coordinator. `IdleSummaryLimits` has no spend-bearing
+defaults: every call, aggregate-token, wall-time, input, output, chunk, and
+safety-buffer value is explicit and strictly typed. Construction requires an
+injected local finalized-request measurer and a registry-issued sealed
+capability that identifies one concrete provider/transport/model. The seal
+proves only one invocation of the injected `attempt_once` adapter for each
+request-owned reservation; it does not qualify SDK-internal retries,
+fallbacks, output-limit enforcement, or final transport behavior. The adapter
+does not construct providers, consult a factory, use
+conversation state, expose tools, rotate credentials, retry, or recover media.
+
+Each invocation accepts only the exact I2 `IdleCheckpointCapture`, the exact
+I3b `IdleRuntimeBinding`, and a monotonic deadline. I3c computes only from the
+detached I2 capture and performs no direct or ad-hoc filesystem, source,
+checkpoint, or artifact reads or writes. Its current-authority checks go
+through the I3b registry; that registry revalidates by reloading authoritative
+source state and may retire stale authority. The adapter checks source store,
+session, incarnation, generation, runtime, policy, and auxiliary provider/model
+identity before source evidence reaches the capability. It reconstructs a
+root-history `SourceCompactionCandidate` from the detached snapshot, excludes
+child streams, retains the newest user-led turn, and admits only closed
+execution boundaries. Capture source revision, checkpoint identity, and
+checkpoint fingerprint must match the detached snapshot and the fresh runtime
+binding exactly. Invalid/pending/recovery checkpoints, no-progress captures,
+and impossible indivisible groups fail before transport dispatch. Every
+adjacent closed group is preflighted with the injected finalized-request
+measurer before the first provider dispatch; dependent groups authorize their
+exact references before measurement. A cumulative boundary may still search a
+smaller closed boundary when its atomic groups fit.
+
+The adapter freezes the provider, transport, model, context-window, and runtime
+fingerprint identity shared by the qualified measurer and sealed transport at
+construction. Immediately before and after each evidence-bearing measurement
+callback it revalidates the live measurer and complete sealed transport against
+that frozen identity; identity mutation fails before reservation or raw
+dispatch. Synchronous mutate-and-restore behavior within one callback is not
+detectable here and remains an I4 measurer-qualification responsibility.
+
+The request payload is the existing canonical
+`Consolidator.source_summary_messages` format. Successful calls fold the prior
+checkpoint summary and disjoint contiguous evidence intervals, returning only
+an in-memory final proposal with the exact `SummaryDependencyProof`, measured
+request receipts, provider/model provenance, and `IdleAuxiliaryUsage`. Every
+prospective dependent fold derives references before measurement and requires
+a narrow verifier result bound to the same capture, binding, policy
+fingerprint, and artifact namespace; the I2 dependency capability is never
+used as a reader. Dependency-free folds do not require that verifier.
+
+Finalized request input plus the reserved output cap and safety buffer must fit
+the capability's model window, the per-request limits, and the aggregate
+reservation. Calls and chunks are bounded independently. Unknown, negative,
+boolean, contradictory, over-reserved, malformed, truncated, empty,
+error-bearing, or tool-bearing receipts produce no proposal, and their
+reservation is still accounted for without retry or refund. A timeout or
+caller cancellation cancels and fully joins the one attempt; a late result is
+discarded. Cleanup may extend beyond the wall deadline until the owned
+callback settles, so I4 must prove a finite cleanup bound. The injected raw
+transport and dependency verifier must be qualified to release retained
+request references after settlement. No source, checkpoint, activity, cursor,
+artifact, provider, or coordinator state is written by this module.
+
+Request reservations carry only weak, request-owned single-use identity, so
+copied/reused reservations fail closed without retaining full prompt payloads
+or blocking identity reuse after collection. Admission validates the current
+binding and claims the request before dispatch accounting increments; the raw
+adapter is invoked immediately after that claim. Accessor failures from usage
+or response content become terminal accounted invalid results while system
+exceptions propagate. Reservation and dispatch counters remain visible after
+cancellation. Accounting sink observations are marked nonterminal until the
+operation returns a terminal result; terminal exactness requires every
+dispatched attempt to have an independently valid usage receipt and no
+unaccounted reservation.
+
+I3c remains dormant: it adds no scanner, scheduler, factory wiring, production
+provider construction, publisher integration, configuration default, or
+migration-guard change, and it constructs no production transport capability.
+The numeric limits, selected model/preset, injected provider transport, SDK
+retry/fallback/output-limit qualification, final transport qualification, and
+dependency verifier remain explicit I4 activation gates. Focused
+network-denied tests cover candidate closure and newest-turn selection, exact
+multi-chunk proof chains, dependency preflight, all budget reservation
+boundaries, receipt and hidden-attempt rejection, timeout and cancellation
+joining, exact source/checkpoint binding, atomic-group preflight, weak
+reservation identity, accessor failures, pre-admission invalidation, and zero
+writes.
