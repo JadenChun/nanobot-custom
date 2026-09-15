@@ -61,3 +61,170 @@ record/directory reproof, record replacement, in-place mutation, root swaps,
 claimed-state rejection, and corrupt-record rejection. Package D and the
 existing C1–C3 ledger suites continue to provide regression coverage for
 identity, admission, projection, reconciliation, and execution fences.
+
+## Package E2 durable outbox authority
+
+`nanobot.cron.delivery_store.CronDeliveryOutboxStore` is the dormant E2
+authority for one completed occurrence. It records delivery work and the
+durable per-destination fence; it never invokes a sender, channel, provider,
+message bus, service, tool, CLI, or scheduler. The migration guard remains
+closed while this store is unconnected to runtime dispatch.
+
+The preferred preparation call is:
+
+```python
+outbox = CronDeliveryOutboxStore(root / "outbox", namespace=namespace)
+record = outbox.prepare_completed(occurrence_store, occurrence_id)
+```
+
+Preparation calls `get_completed_durable()` immediately before candidate
+derivation and before taking the outbox lock, so the ledger and outbox locks
+are never nested. A detached `OccurrenceRecord` is never accepted as
+preparation authority: every call must supply the authoritative
+`CronOccurrenceStore` and `occurrence_id`. A claimed, incomplete, corrupt,
+replaced, or unavailable occurrence cannot create an outbox. The completion
+and provenance used by E2 come only from that fresh durable read; no run
+projection, definition store, or current definition is consulted. If
+completion has no `provenance` key, E2 retains that absence and exposes
+provenance as unavailable rather than inventing an empty value.
+
+Completion must carry an explicit, strict text-only envelope under
+`completion["delivery"]`:
+
+```json
+{
+  "version": 1,
+  "deliver": true,
+  "messages": [{"content": "text", "media": []}]
+}
+```
+
+The envelope has exactly those fields. Every message has exactly `content`
+and `media`; content is a string and media is an empty list. A missing
+envelope, unknown field, non-finite value, non-text message, or non-empty media
+is unsupported. `deliver: false`, an empty message list, or a policy with no
+usable destinations still creates a durable outbox record with a `no_work`
+aggregate view. A destination policy is frozen from the occurrence: the
+primary pair comes first, an absent or false primary channel uses `cli`, and
+additional destinations follow. Pairs are deduplicated by exact channel and
+target strings in first-seen order; no trimming, case folding, or other
+normalization occurs. Later definition edits therefore cannot change a
+prepared outbox.
+
+The outbox ID, destination IDs, attempt action IDs, and request digests are
+deterministic SHA-256 values over their versioned canonical JSON domains. The
+record retains the complete immutable occurrence input, ordered destination
+history, ordered attempt history, and exact transition history. Every mutation
+increments the exact integer `record_revision` and appends one contiguous
+transition entry carrying the affected destination, attempt, operation,
+outcome, receipt, and reconciliation evidence. The parser replays that
+history and rejects a revision or attempt history that cannot be derived from
+it. Aggregate status is derived as `no_work`,
+`pending`, `partial`, `delivered`, `failed`, or
+`reconciliation-required`. Claimed, sending, and uncertain destinations are
+always reconciliation-required; the store never applies a timeout, lease, or
+automatic retry.
+
+## E2 transition and reconciliation contract
+
+`claim_destination(outbox_id, destination_id, expected_revision, owner=None)`
+accepts only a pending destination. It durably appends the next contiguous
+attempt and increments `record_revision` before returning a sealed
+process-local `DeliveryClaim`. The claim is bound to the issuing store
+object, process ID, destination, owner, and attempt. Copies, reconstructed
+claims, foreign stores, forked processes, stale revisions, and consumed
+claims have no authority. An exact reservation retry in the same process
+returns the original claim after reproving the durable record. Another process
+which sees a claimed destination receives a reconciliation-required or stale
+revision error and never executes it.
+
+`mark_sending(claim)` durably changes the retained attempt to `sending` and
+keeps the same capability for settlement. `settle(claim, result)` consumes
+that capability. A strict receipt is required for `confirmed_delivered`,
+which produces `delivered`; `confirmed_not_sent` produces `pending` so a
+future revision may explicitly claim a new attempt; `permanent_not_sent`
+produces `failed`; and `unknown` produces `uncertain` with reconciliation
+required. A live claim is fenced by its exact destination, attempt, owner,
+action, request digest, and current attempt state; an unrelated destination
+revision does not invalidate it. If persistence of the sending fence fails,
+the claim is invalidated and no send authority is returned. A settled claim
+never grants reinvocation.
+
+`resolve_after_reconciliation` is a trusted store-only transition and does
+not perform the external fence. It requires the exact predecessor outbox,
+destination, attempt, and owner, the expected revision, the stable attempt
+`action_id`, its canonical request digest, a bounded `evidence_ref`, and a
+bounded `predecessor_fenced_ref`. An exact action retry reproves the durable
+record before stale-revision checking; reuse with a conflicting digest or
+other request fields is rejected. A claimed predecessor may resolve only to
+`confirmed_not_sent` after the fence. Sending or uncertain predecessors may
+resolve to `confirmed_delivered`, `confirmed_not_sent`,
+`confirmed_compensated`, or `abandon`. Those outcomes retain the resolution
+receipt and evidence and lead to delivered, pending, pending, or failed
+respectively. Only `confirmed_not_sent` and `confirmed_compensated` permit a
+successor attempt; delivered and permanent failure histories reject later
+attempts. A stale prior settlement is rejected. Attempts, transition
+evidence, and resolution receipts are retained without pruning, and the parser
+requires every retained receipt and evidence field to agree with its
+corresponding transition.
+
+## E2 strict wire and filesystem boundary
+
+Each final record is one strict UTF-8 JSON object named by its outbox digest.
+The exact top-level fields are `schema_version`, `kind`,
+`store_namespace`, `outbox_id`, `immutable_input`, `destinations`,
+`record_revision`, `transition_history`, and `integrity`. Immutable input preserves completion,
+delivery, occurrence identity, generation, owner, job snapshot, destination
+policy, and an explicit provenance-availability bit. Destination and attempt
+objects use exact schemas, contiguous histories, deterministic IDs/digests,
+and state-derived aggregate invariants. Duplicate JSON keys, unknown fields,
+non-finite values, booleans in integer fields, malformed hashes, impossible
+state combinations, mismatched integrity, and namespace or identity conflicts
+fail closed.
+
+The encoded record is capped at 1 MiB; no outbox has more than 256
+destinations or more than 256 retained attempts for one destination; and
+owners, action IDs, request digests, destination identifiers, and evidence
+references are capped at 512 UTF-8 bytes where applicable. The outbox root is
+created and retained as mode `0700`; lock, record, and staging files are
+single-link regular files with mode `0600`. Reads reject oversized data before
+allocation and recheck descriptor metadata after reading. Mutations use
+held no-follow descriptor chains, descriptor-relative exclusive create or
+atomic replacement, file fsync, directory fsync, and root/lock/record/staging
+inode, metadata, and content reproof across every acknowledgement boundary.
+Mutations retain the predecessor record descriptor, inode, metadata, and
+content signature through staging and reprove it before replacement, so an
+identical private replacement fails closed. The intended staging signature and
+content are captured before file fsync and compared after file fsync, rename,
+and directory fsync; an in-place mutation at any point is never
+acknowledged. Symlinks, hardlinks, permission weakening, root or lock swaps,
+record replacement, and unsafe staging entries fail closed. Windows import
+succeeds, but construction raises a clear unsupported-platform persistence
+error when the required POSIX primitives are unavailable.
+
+E2 acceptance evidence covers deterministic destination ordering and IDs,
+false delivery and zero-work records, immutable old policy, provenance
+absence, idempotent preparation and post-rename durability reproof, two
+process reservation and process-local capability fences, all store-only
+transitions and aggregate states, reconciliation retry/conflict/stale-owner
+checks, strict schemas and limits, and root/lock/staging/record filesystem
+attacks, including pre-publication settlement failure, reconciliation, and
+lost-ack retries. No E2 test grants or invokes real delivery authority.
+
+If a settlement or replacement fails before publication, the issued capability
+is consumed and no sender authority is returned. A later authoritative read
+sees either the unchanged predecessor or the durably published successor; an
+acknowledgement lost after publication is retried only by reproving the exact
+record and transition, while an in-flight destination remains subject to
+explicit reconciliation.
+
+## Remaining E3 gates
+
+Package E3 must separately define the stopped-writer/runtime admission fence,
+construct the sender request from this immutable record, and establish the
+process or turn lifecycle fence required before invoking any external sender.
+It must map channel acknowledgements to the strict settlement outcomes and
+provide an operator-controlled uncertain-send reconciliation path with
+evidence. It also owns any scheduler, service, bus, CLI, channel, provider,
+or migration-guard wiring. E2 supplies none of those authorities and remains
+safe to construct while those gates are absent.
