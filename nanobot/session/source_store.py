@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from nanobot.session.artifact_store import ArtifactBlobTransaction, PrivateArtifactStore
     from nanobot.session.checkpoint_dependencies import SummaryDependencyProof
     from nanobot.session.execution_owner import ExecutionOwner
+    from nanobot.session.idle_checkpoint import IdleCheckpointCapture, IdlePolicyBinding
     from nanobot.session.manager import JsonlSessionStore, Session
 
 
@@ -275,6 +276,62 @@ class SourceSessionStore:
                 self._snapshot(header, events),
                 runtime_checkpoint_present=self._runtime_checkpoint_present(key),
             )
+
+    def capture_idle_checkpoint(
+        self,
+        key: str,
+        *,
+        runtime_fingerprint: str,
+        policy_fingerprint: str,
+        policy: IdlePolicyBinding | None = None,
+    ) -> IdleCheckpointCapture | None:
+        """Capture the dormant integration-owned idle checkpoint substrate.
+
+        This is an explicit, unwired seam. The integration module owns the
+        opaque capability and detached snapshot; the ordinary foreground store
+        path continues to use :meth:`capture_idle_compaction` unchanged.
+        """
+
+        from nanobot.session.idle_checkpoint import capture_idle_checkpoint
+
+        return capture_idle_checkpoint(
+            self,
+            key,
+            runtime_fingerprint=runtime_fingerprint,
+            policy_fingerprint=policy_fingerprint,
+            policy=policy,
+        )
+
+    def publish_idle_checkpoint(
+        self,
+        key: str,
+        capture: IdleCheckpointCapture,
+        candidate: dict[str, Any],
+        *,
+        runtime_fingerprint: str,
+        policy_fingerprint: str,
+        policy: IdlePolicyBinding | None = None,
+        proof: SummaryDependencyProof | None = None,
+    ) -> SourceSnapshot:
+        """Attempt one dormant idle checkpoint publication without an owner.
+
+        The integration module acquires artifact storage before the nonblocking
+        execution/session transaction and performs all exact revalidation. No
+        foreground ``ExecutionOwner`` is created by this store delegate.
+        """
+
+        from nanobot.session.idle_checkpoint import publish_idle_checkpoint
+
+        return publish_idle_checkpoint(
+            self,
+            key,
+            capture,
+            candidate,
+            runtime_fingerprint=runtime_fingerprint,
+            policy_fingerprint=policy_fingerprint,
+            policy=policy,
+            proof=proof,
+        )
 
     def record_user_activity(self, key: str, expected: SourceState, *,
                              accepted_foreground_user: bool,

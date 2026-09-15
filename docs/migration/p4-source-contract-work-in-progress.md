@@ -848,3 +848,37 @@ network-denied validation covers owner reuse/fencing, source filtering,
 durability-before-callback ordering, callback failure/cancellation, disabled
 wiring, and serialized follow-up admission. The production migration guard
 and idle scheduler remain dormant.
+
+### Dormant dependency-aware idle checkpoint substrate (I2)
+
+The new `nanobot.session.idle_checkpoint` module adds an explicit integration
+seam for idle checkpoint capture and one-shot publication. Capture returns the
+existing typed `IdleCaptureToken`, a detached `SourceSnapshot`, and caller-
+supplied runtime/policy fingerprints. When a configured artifact store and
+current policy binding are supplied, it also seals a nonserializable
+`IdleDependencyAccess` to the exact source store, session/incarnation/generation,
+capture identity, and the descriptors already published from root-history
+events. The capability exposes no reader, grant set, tool, arbitrary path, or
+blob read method.
+
+Publication computes and validates the candidate/proof outside storage locks,
+then acquires the configured artifact transaction before the nonblocking
+ownerless execution/session transaction. It revalidates the idle token,
+activity and pending/recovery state, exact schema/proposal/proof, source and
+checkpoint identity, current policy receipt, artifact namespace, and durable
+blob immediately before one atomic schema-v2 write. Dependency-free candidates
+use schema v1 (or a dependency-free schema-v2 proposal); dependency-bearing
+candidates require an exact root-history proof and schema v2. A stale,
+foreign, revoked, corrupted, active-owner, recovery, or pending state fails
+closed without retry, rebase, owner fabrication, or source write. The shared
+receipt/blob verifier is also used by `ArtifactReader` after its existing
+owner, invocation, stream, and private-root checks, so this extraction does
+not widen ordinary artifact reads.
+
+The source-store additions are delegates only. No scanner, factory, provider,
+summarizer, configuration default, migration-guard change, or runtime activation
+was added. Focused network-denied tests cover detached/nonserializable capture,
+exact dependency references, forged/stale proof and capture rejection, policy
+and blob failure, active-owner/recovery nonblocking behavior, activity-byte
+preservation, and no-write failure paths. Broader session/artifact validation
+and independent review remain required before any future wiring or enablement.

@@ -8,6 +8,7 @@ an advisory store lock; callers acquire source-session transactions after it.
 from __future__ import annotations
 
 import codecs
+import errno
 import hashlib
 import os
 import re
@@ -32,6 +33,10 @@ _CAPABILITY = object()
 
 class ArtifactStorageError(OSError):
     """Content-free storage failure; no reference may be published on failure."""
+
+
+class ArtifactStorageBusyError(ArtifactStorageError):
+    """The private artifact lock is held by another transaction."""
 
 
 def _private(info: os.stat_result, *, directory: bool, links: int = 1) -> None:
@@ -107,6 +112,8 @@ class PrivateArtifactStore:
             if self._root_identity is not None and self._root_identity != (info.st_dev, info.st_ino):
                 raise ArtifactStorageError('Artifact root identity changed')
             yield fd
+        except ArtifactStorageBusyError:
+            raise
         except OSError:
             raise ArtifactStorageError('Private artifact root is unavailable') from None
         finally:
@@ -114,10 +121,17 @@ class PrivateArtifactStore:
                 os.close(fd)
 
     @contextmanager
-    def transaction(self) -> Iterator[ArtifactBlobTransaction]:
-        """Hold store lock before any caller's source-session CAS transaction."""
+    def transaction(self, *, blocking: bool = True) -> Iterator[ArtifactBlobTransaction]:
+        """Hold the store lock before a caller's source-session CAS transaction.
+
+        Existing callers wait for the lock by default. A caller that is
+        already a best-effort admission path can pass ``blocking=False`` to
+        fail immediately when another process owns the private namespace.
+        """
         import fcntl
 
+        if type(blocking) is not bool:
+            raise ArtifactStorageError('Artifact transaction blocking mode must be boolean')
         opened = []
         lock_fd = None
         transaction = None
@@ -152,9 +166,17 @@ class PrivateArtifactStore:
                 _private(os.fstat(lock_fd), directory=False)
                 os.fsync(lock_fd)
                 os.fsync(parent)
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+                lock_mode = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
+                try:
+                    fcntl.flock(lock_fd, lock_mode)
+                except OSError as exc:
+                    if not blocking and exc.errno in (errno.EACCES, errno.EAGAIN):
+                        raise ArtifactStorageBusyError('Private artifact transaction is busy') from None
+                    raise
                 transaction = ArtifactBlobTransaction(_CAPABILITY, self, parent, lock_fd)
                 yield transaction
+        except ArtifactStorageBusyError:
+            raise
         except OSError:
             raise ArtifactStorageError('Private artifact transaction failed') from None
         finally:

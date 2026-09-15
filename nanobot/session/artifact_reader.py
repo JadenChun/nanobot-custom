@@ -23,6 +23,7 @@ from nanobot.session.artifact_store import (
     ArtifactBlobTransaction,
     PrivateArtifactStore,
 )
+from nanobot.session.artifact_verification import verify_published_artifact
 from nanobot.session.execution_owner import execution_transaction
 
 if TYPE_CHECKING:
@@ -131,23 +132,23 @@ class ArtifactReader:
             raise ArtifactValidationError('Artifact source admission changed')
         if require_native and not self._native_permitted(descriptor, snapshot):
             raise ArtifactValidationError('Artifact is outside the admitted stream')
-        receipt = attested_artifact_origin(descriptor, snapshot, workspace_id=self.store.workspace_id)
         access = current_tool_workspace(
             self.read_file._workspace,
             restrict_to_workspace=self.read_file._restrict_to_workspace,
             sandbox_restricts_workspace=self.read_file._sandbox_restricts_workspace,
         )
-        revalidate_read_receipt(
-            receipt,
+        # Owner, invocation stream, and private-root checks above remain
+        # invocation-local. The shared helper only attests source receipts,
+        # current policy, manifest membership, and durable blob integrity.
+        return verify_published_artifact(
+            descriptor,
+            snapshot,
+            blobs,
+            store=self.store,
             workspace=access.project_path,
             policy=self.read_file._resource_policy,
             resolve_read=self.read_file._resolve_read,
         )
-        if descriptor not in published_artifacts(snapshot, workspace_id=self.store.workspace_id):
-            raise ArtifactValidationError('Artifact is not published')
-        blobs.verify_durable(descriptor, store=self.store)
-        blobs.assert_reachable()
-        return receipt
 
     def authorize_source(self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot) -> FilesystemReadReceipt:
         """Validate producer/scope/policy before publication or inline fallback."""
