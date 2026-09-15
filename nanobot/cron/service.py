@@ -3,8 +3,9 @@
 ``CronActionStore`` and ``CronDefinitionStore`` are the only definition
 authority in this module.  The legacy ``jobs.json`` and ``action.jsonl``
 paths are retained as constructor compatibility metadata, but are never read
-or written by the service.  Runtime state, history, occurrence claims,
-completion projection, and delivery belong to later migration packages.
+or written by the service.  Package D provides occurrence admission and
+completion projection as a dormant substrate; scheduling, execution, runtime
+state mutation, and delivery remain fenced for later packages.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from types import EllipsisType
-from typing import Any, Callable, Coroutine, Literal
+from typing import Any, Callable, Coroutine, Literal, Mapping
 
 from loguru import logger
 
@@ -26,12 +27,25 @@ from nanobot.cron.action_store import (
     ActionStoreStaleGenerationError,
     CronActionStore,
 )
+from nanobot.cron.completion import (
+    CronCompletionProjection,
+    CronCompletionProjector,
+)
 from nanobot.cron.definition_store import (
     CronDefinition,
     CronDefinitionAction,
     CronDefinitionStore,
     CronDefinitionStoreReplay,
     DefinitionStoreConflictError,
+)
+from nanobot.cron.occurrence import (
+    CronOccurrenceRuntime,
+    CronOccurrenceRuntimeUnavailableError,
+)
+from nanobot.cron.occurrence_store import (
+    CronOccurrenceStore,
+    OccurrenceClaim,
+    OccurrenceRecord,
 )
 from nanobot.cron.types import (
     CronJob,
@@ -204,6 +218,8 @@ class CronService:
         definition_store: CronDefinitionStore | None = None,
         action_store: CronActionStore | None = None,
         namespace: str | None = None,
+        occurrence_store: CronOccurrenceStore | None = None,
+        completion_projector: CronCompletionProjector | None = None,
     ):
         """Create a service over the C2 definition authority.
 
@@ -228,8 +244,32 @@ class CronService:
         elif not isinstance(definition_store, CronDefinitionStore):
             raise TypeError("definition_store must be a CronDefinitionStore")
 
+        if occurrence_store is not None and not isinstance(occurrence_store, CronOccurrenceStore):
+            raise TypeError("occurrence_store must be a CronOccurrenceStore")
+        if completion_projector is not None and not isinstance(completion_projector, CronCompletionProjector):
+            raise TypeError("completion_projector must be a CronCompletionProjector")
+        if occurrence_store is None and completion_projector is not None:
+            raise ValueError("completion_projector requires an explicitly configured occurrence_store")
+        if (
+            completion_projector is not None
+            and completion_projector.occurrence_store is not occurrence_store
+        ):
+            raise ValueError("completion projector must use the service occurrence store")
+        if (
+            occurrence_store is not None
+            and occurrence_store.namespace != definition_store.action_store.namespace
+        ):
+            raise ValueError("definition and occurrence stores must share one namespace")
+
         self.store_path = path
         self.definition_store = definition_store
+        self.occurrence_store = occurrence_store
+        self.occurrence_runtime = (
+            None
+            if occurrence_store is None
+            else CronOccurrenceRuntime(definition_store, occurrence_store)
+        )
+        self.completion_projector = completion_projector
         self.on_job = on_job
         self.max_sleep_ms = max_sleep_ms
         self._store: CronStore | None = None
@@ -245,6 +285,139 @@ class CronService:
     def action_store(self) -> CronActionStore:
         """Return the injected C1/C2 durability authority."""
         return self.definition_store.action_store
+
+    def claim_occurrence(
+        self,
+        job_id: str,
+        scheduled_fire_time_ms: int,
+        *,
+        source: Literal["timer", "manual", "system"] = "timer",
+        owner: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> OccurrenceClaim:
+        """Admit a definition-bound occurrence without starting execution.
+
+        This substrate method deliberately stops at the durable claim.  The
+        timer, manual runner, system callback, and delivery path remain behind
+        the migration fence below.
+        """
+        if self.occurrence_runtime is None:
+            raise CronOccurrenceRuntimeUnavailableError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
+        return self.occurrence_runtime.claim(
+            job_id=job_id,
+            scheduled_fire_time_ms=scheduled_fire_time_ms,
+            source=source,
+            owner=owner,
+            expected_job_instance_id=expected_job_instance_id,
+            expected_definition_revision=expected_definition_revision,
+        )
+
+    def claim_scheduled_occurrence(
+        self,
+        job_id: str,
+        scheduled_fire_time_ms: int,
+        *,
+        owner: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> OccurrenceClaim:
+        return self.claim_occurrence(
+            job_id,
+            scheduled_fire_time_ms,
+            source="timer",
+            owner=owner,
+            expected_job_instance_id=expected_job_instance_id,
+            expected_definition_revision=expected_definition_revision,
+        )
+
+    claim_timer_occurrence = claim_scheduled_occurrence
+
+    def claim_manual_occurrence(
+        self,
+        job_id: str,
+        scheduled_fire_time_ms: int,
+        *,
+        owner: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> OccurrenceClaim:
+        return self.claim_occurrence(
+            job_id,
+            scheduled_fire_time_ms,
+            source="manual",
+            owner=owner,
+            expected_job_instance_id=expected_job_instance_id,
+            expected_definition_revision=expected_definition_revision,
+        )
+
+    def claim_system_occurrence(
+        self,
+        job_id: str,
+        scheduled_fire_time_ms: int,
+        *,
+        owner: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> OccurrenceClaim:
+        return self.claim_occurrence(
+            job_id,
+            scheduled_fire_time_ms,
+            source="system",
+            owner=owner,
+            expected_job_instance_id=expected_job_instance_id,
+            expected_definition_revision=expected_definition_revision,
+        )
+
+    def complete_occurrence(
+        self,
+        claim: OccurrenceClaim,
+        completion: Mapping[str, Any] | None = None,
+        *,
+        status: str | None = None,
+        result: Any = None,
+        error: str | None | object = None,
+        run_id: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
+    ) -> CronCompletionProjection:
+        """Persist a canonical completion and fenced history projection."""
+        # The projector distinguishes omitted values with a private sentinel;
+        # service compatibility keeps this public wrapper simple and only
+        # supplies result/error when callers explicitly provide them.
+        kwargs: dict[str, Any] = {
+            "status": status,
+            "run_id": run_id,
+            "provenance": provenance,
+        }
+        if result is not None:
+            kwargs["result"] = result
+        if error is not None:
+            kwargs["error"] = error
+        if self.completion_projector is None:
+            raise CronOccurrenceRuntimeUnavailableError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
+        return self.completion_projector.complete(claim, completion, **kwargs)
+
+    def project_occurrence_completion(
+        self,
+        claim_or_occurrence_id: OccurrenceClaim | str,
+        *,
+        run_id: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
+    ) -> CronCompletionProjection:
+        """Reproject a durable completion after a process or write failure."""
+        if self.completion_projector is None:
+            raise CronOccurrenceRuntimeUnavailableError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
+        return self.completion_projector.project_completed(
+            claim_or_occurrence_id,
+            run_id=run_id,
+            provenance=provenance,
+        )
+
+    def occurrence_reconciliation_required(self) -> list[OccurrenceRecord]:
+        """Expose explicit crash states without treating them as success."""
+        if self.occurrence_runtime is None:
+            raise CronOccurrenceRuntimeUnavailableError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
+        return self.occurrence_runtime.reconciliation_required()
 
     def _should_persist_store(self) -> bool:
         """Compatibility answer; runtime snapshots are not service-owned."""
@@ -321,7 +494,7 @@ class CronService:
         self._store_dirty = False
 
     def write_run_record(self, _run_id: str, _record: dict[str, Any]) -> None:
-        """Fence completion projection until a later runtime package owns it."""
+        """Fence the unbound legacy writer; D uses completion projector instead."""
         raise CronJobSkippedError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
 
     async def start(self) -> None:

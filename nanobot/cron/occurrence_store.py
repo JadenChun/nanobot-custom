@@ -98,6 +98,11 @@ class OccurrenceClaim:
     job_snapshot: dict[str, Any]
     destination_policy: dict[str, Any]
 
+    @property
+    def run_id(self) -> str:
+        """Return the stable run identity for this occurrence generation."""
+        return f"cron-occurrence-{self.occurrence_id}-{self.generation}"
+
 
 @dataclass(frozen=True)
 class OccurrenceRecord:
@@ -656,6 +661,18 @@ class CronOccurrenceStore:
         if _canonical_json(record.destination_policy) != _canonical_json(dict(destination_policy)):
             raise OccurrenceConflictError("occurrence identity conflicts with its admitted destination policy")
 
+    def _issued_claim_for_record(self, record: OccurrenceRecord) -> OccurrenceClaim | None:
+        """Return the process-local capability for an exact retry, if present."""
+        for issued, process_id in self._issued_claims.values():
+            if (
+                process_id == os.getpid()
+                and issued.occurrence_id == record.occurrence_id
+                and issued.owner == record.owner
+                and issued.generation == record.generation
+            ):
+                return issued
+        return None
+
     def _issue_claim(self, record: OccurrenceRecord) -> OccurrenceClaim:
         claim = OccurrenceClaim(
             record.occurrence_id,
@@ -728,6 +745,14 @@ class CronOccurrenceStore:
             self._assert_frozen_inputs(existing, snapshot, policy)
             if existing.state == "completed":
                 raise OccurrenceAlreadyCompletedError("occurrence already has a durable canonical completion")
+            retry = self._issued_claim_for_record(existing)
+            if retry is not None and retry.owner == owner:
+                # A caller which lost the acknowledgement after exclusive
+                # creation may retry the exact identity in the same process.
+                # Returning the originally issued object preserves the
+                # process-local capability without allowing another owner to
+                # execute the occurrence.
+                return retry
             raise OccurrenceReconciliationRequiredError(
                 "occurrence already has a durable claim; reconcile it before any retry"
             )

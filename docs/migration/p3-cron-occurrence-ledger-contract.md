@@ -2,9 +2,11 @@
 
 `nanobot.cron.occurrence_store.CronOccurrenceStore` is an isolated, private
 ledger for synthetic scheduled fires. It is not wired to cron dispatch while
-the migration guard and cron admission fence remain in place. Manual/forced
-runs have no ledger API in this package; they require their own identity and
-reconciliation contract before admission.
+the migration guard and cron admission fence remain in place. The low-level
+store intentionally exposes only the scheduled-claim primitive; Package D's
+`CronOccurrenceRuntime` supplies the shared identity and reconciliation seam
+for timer, manual, and system attempts. It still does not execute any of
+those sources.
 
 Each occurrence ID is a SHA-256 digest of the schema tag and these typed
 values: store namespace, job ID, job revision, and scheduled fire time in
@@ -28,7 +30,10 @@ claimed --explicit reconciled reclaim--> claimed(owner', generation + 1)
 Only the exact claim object issued by the same store instance and process for
 the current owner and generation can complete the record. Reconstructed and
 fork-inherited claims are rejected. Completion is accepted again solely when
-its canonical JSON content is identical; that retry rereads, verifies, and
+its canonical JSON content is identical. An exact retry of an outstanding
+claim in that same process returns the originally issued capability; an
+independent process still receives a reconciliation-required error. A
+completion retry rereads, verifies, and
 fsyncs both the record and held directory before it returns. This lets a retry
 establish durability after a post-rename directory-fsync error. A stale owner
 cannot complete a successor generation.
