@@ -124,14 +124,42 @@ class OccurrenceRecord:
 
 
 @dataclass(frozen=True)
+class _RootBinding:
+    """Held no-follow descriptor chain for the configured root pathname."""
+
+    store: CronOccurrenceStore
+    fds: tuple[int, ...]
+    parts: tuple[str, ...]
+    identities: tuple[tuple[int, int], ...]
+
+    @property
+    def root_fd(self) -> int:
+        return self.fds[-1]
+
+    def assert_bound(self) -> None:
+        self.store._assert_path_binding(self)
+
+    def close(self) -> None:
+        for fd in reversed(self.fds):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+@dataclass(frozen=True)
 class _HeldLedger:
     """Directory and lock descriptors that remain bound for one operation."""
 
     store: CronOccurrenceStore
-    root_fd: int
+    root_binding: _RootBinding
     lock_fd: int
     root_identity: tuple[int, int]
     lock_identity: tuple[int, int]
+
+    @property
+    def root_fd(self) -> int:
+        return self.root_binding.root_fd
 
     def assert_bound(self) -> None:
         self.store._assert_binding(self)
@@ -255,67 +283,94 @@ class CronOccurrenceStore:
     def _dir_flags() -> int:
         return os.O_RDONLY | _O_DIRECTORY | _O_NOFOLLOW | _O_NONBLOCK
 
+    def _open_root_binding(self, *, create: bool = False) -> _RootBinding:
+        """Open the configured root and retain every no-follow path descriptor."""
+        fds: list[int] = []
+        try:
+            try:
+                current_fd = os.open(self.root.anchor, self._dir_flags())
+                fds.append(current_fd)
+                for part in self.root.parts[1:]:
+                    child: int | None = None
+                    created = False
+                    try:
+                        try:
+                            child = os.open(part, self._dir_flags(), dir_fd=current_fd)
+                        except FileNotFoundError:
+                            if not create:
+                                raise OccurrencePersistenceError("private occurrence root is unavailable") from None
+                            try:
+                                os.mkdir(part, 0o700, dir_fd=current_fd)
+                            except FileExistsError:
+                                pass
+                            else:
+                                created = True
+                            child = os.open(part, self._dir_flags(), dir_fd=current_fd)
+                        child_info = os.fstat(child)
+                        parent_binding = os.stat(part, dir_fd=current_fd, follow_symlinks=False)
+                        if not stat.S_ISDIR(child_info.st_mode) or _inode(parent_binding) != _inode(child_info):
+                            raise OccurrenceCorruptError("occurrence root component binding changed")
+                        # Constructor admission must prove every visible component
+                        # and its parent entry durable, including pre-existing
+                        # components. Otherwise a failed parent fsync can be
+                        # silently bypassed by a later constructor.
+                        if create:
+                            if created:
+                                os.fchmod(child, 0o700)
+                            os.fsync(child)
+                            os.fsync(current_fd)
+                            rebound = os.stat(part, dir_fd=current_fd, follow_symlinks=False)
+                            if _inode(rebound) != _inode(child_info):
+                                raise OccurrenceCorruptError("occurrence root component binding changed")
+                        elif created:
+                            os.fchmod(child, 0o700)
+                        fds.append(child)
+                        current_fd = child
+                        child = None
+                    finally:
+                        if child is not None:
+                            try:
+                                os.close(child)
+                            except OSError:
+                                pass
+                info = os.fstat(current_fd)
+                _private(info, directory=True)
+                if self._root_identity is not None and _inode(info) != self._root_identity:
+                    raise OccurrenceCorruptError("occurrence root binding changed")
+                return _RootBinding(
+                    self,
+                    tuple(fds),
+                    tuple(self.root.parts[1:]),
+                    tuple(_inode(os.fstat(fd)) for fd in fds),
+                )
+            except OccurrenceStoreError:
+                raise
+            except OSError as exc:
+                if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                    raise OccurrenceCorruptError("occurrence root must be a private directory, never a link") from exc
+                raise OccurrencePersistenceError("private occurrence root is unavailable") from exc
+        except BaseException:
+            for fd in reversed(fds):
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise
+
+    @contextmanager
+    def _root_binding(self, *, create: bool = False) -> Generator[_RootBinding, None, None]:
+        """Hold the configured root descriptor chain for one operation."""
+        binding = self._open_root_binding(create=create)
+        try:
+            yield binding
+        finally:
+            binding.close()
+
     @contextmanager
     def _root_fd(self, *, create: bool = False) -> Generator[int, None, None]:
-        """Open the configured root from its anchor without path re-resolution."""
-        fd: int | None = None
-        try:
-            fd = os.open(self.root.anchor, self._dir_flags())
-            for part in self.root.parts[1:]:
-                created = False
-                child: int | None = None
-                try:
-                    child = os.open(part, self._dir_flags(), dir_fd=fd)
-                except FileNotFoundError:
-                    if not create:
-                        raise OccurrencePersistenceError("private occurrence root is unavailable") from None
-                    try:
-                        os.mkdir(part, 0o700, dir_fd=fd)
-                    except FileExistsError:
-                        pass
-                    else:
-                        created = True
-                    child = os.open(part, self._dir_flags(), dir_fd=fd)
-                try:
-                    if created:
-                        os.fchmod(child, 0o700)
-                    child_info = os.fstat(child)
-                    parent_binding = os.stat(part, dir_fd=fd, follow_symlinks=False)
-                    if not stat.S_ISDIR(child_info.st_mode) or _inode(parent_binding) != _inode(child_info):
-                        raise OccurrenceCorruptError("occurrence root component binding changed")
-                    # Constructor admission must prove every visible component
-                    # and its parent entry durable, including pre-existing
-                    # components. Otherwise a failed parent fsync can be
-                    # silently bypassed by a later constructor.
-                    if create:
-                        os.fsync(child)
-                        os.fsync(fd)
-                        rebound = os.stat(part, dir_fd=fd, follow_symlinks=False)
-                        if _inode(rebound) != _inode(child_info):
-                            raise OccurrenceCorruptError("occurrence root component binding changed")
-                    os.close(fd)
-                    fd = child
-                    child = None
-                finally:
-                    if child is not None:
-                        try:
-                            os.close(child)
-                        except OSError:
-                            pass
-            info = os.fstat(fd)
-            _private(info, directory=True)
-            if self._root_identity is not None and _inode(info) != self._root_identity:
-                raise OccurrenceCorruptError("occurrence root binding changed")
-            yield fd
-        except OccurrenceStoreError:
-            raise
-        except OSError as exc:
-            if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
-                raise OccurrenceCorruptError("occurrence root must be a private directory, never a link") from exc
-            raise OccurrencePersistenceError("private occurrence root is unavailable") from exc
-        finally:
-            if fd is not None:
-                os.close(fd)
+        """Open the configured root through held no-follow descriptors."""
+        with self._root_binding(create=create) as binding:
+            yield binding.root_fd
 
     def _open_lock(self, root_fd: int) -> int:
         flags = os.O_RDWR | _O_NOFOLLOW | _O_NONBLOCK
@@ -358,7 +413,38 @@ class CronOccurrenceStore:
                 raise OccurrenceCorruptError("occurrence lock must not be a symlink") from exc
             raise OccurrencePersistenceError("could not acquire occurrence ledger lock") from exc
 
+    def _assert_path_binding(self, binding: _RootBinding) -> None:
+        try:
+            if len(binding.fds) != len(self.root.parts) or len(binding.parts) != len(self.root.parts) - 1:
+                raise OccurrenceCorruptError("occurrence root path binding changed")
+            for fd, expected in zip(binding.fds, binding.identities):
+                if _inode(os.fstat(fd)) != expected:
+                    raise OccurrenceCorruptError("occurrence root path binding changed")
+            for parent_fd, child_fd, part, expected in zip(
+                binding.fds,
+                binding.fds[1:],
+                binding.parts,
+                binding.identities[1:],
+            ):
+                child_info = os.fstat(child_fd)
+                if not stat.S_ISDIR(child_info.st_mode) or _inode(child_info) != expected:
+                    raise OccurrenceCorruptError("occurrence root path binding changed")
+                entry = os.stat(part, dir_fd=parent_fd, follow_symlinks=False)
+                if _inode(entry) != expected:
+                    raise OccurrenceCorruptError("occurrence root path binding changed")
+            root_info = os.fstat(binding.root_fd)
+            _private(root_info, directory=True)
+            if _inode(root_info) != binding.identities[-1] or (
+                self._root_identity is not None and _inode(root_info) != self._root_identity
+            ):
+                raise OccurrenceCorruptError("occurrence root binding changed")
+        except OSError as exc:
+            if exc.errno in {errno.ELOOP, errno.ENOTDIR, errno.ENOENT}:
+                raise OccurrenceCorruptError("occurrence root path binding changed") from exc
+            raise OccurrenceCorruptError("occurrence root path binding could not be verified") from exc
+
     def _assert_binding(self, held: _HeldLedger) -> None:
+        held.root_binding.assert_bound()
         root_info = os.fstat(held.root_fd)
         _private(root_info, directory=True)
         if _inode(root_info) != held.root_identity or _inode(root_info) != self._root_identity:
@@ -376,13 +462,20 @@ class CronOccurrenceStore:
 
     @contextmanager
     def _held_lock(self) -> Generator[_HeldLedger, None, None]:
-        with self._root_fd() as root_fd:
+        with self._root_binding() as root_binding:
+            root_fd = root_binding.root_fd
             lock_fd = self._open_lock(root_fd)
             try:
                 lock_identity = _inode(os.fstat(lock_fd))
                 if self._lock_identity is None:
                     self._lock_identity = lock_identity
-                held = _HeldLedger(self, root_fd, lock_fd, _inode(os.fstat(root_fd)), lock_identity)
+                held = _HeldLedger(
+                    self,
+                    root_binding,
+                    lock_fd,
+                    _inode(os.fstat(root_fd)),
+                    lock_identity,
+                )
                 held.assert_bound()
                 yield held
                 held.assert_bound()
@@ -394,7 +487,7 @@ class CronOccurrenceStore:
 
     @staticmethod
     def _record_name(occurrence_id: str) -> str:
-        if not _OCCURRENCE_ID_RE.fullmatch(occurrence_id):
+        if not isinstance(occurrence_id, str) or _OCCURRENCE_ID_RE.fullmatch(occurrence_id) is None:
             raise ValueError("occurrence_id must be a SHA-256 hexadecimal digest")
         return occurrence_id + ".json"
 
@@ -407,6 +500,41 @@ class CronOccurrenceStore:
         if len(data) > _MAX_RECORD_BYTES:
             raise OccurrenceConflictError("encoded record exceeds the private ledger size limit")
 
+    @staticmethod
+    def _record_signature(info: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+        """Return metadata whose change invalidates a durable record read."""
+        return (
+            info.st_mode,
+            info.st_uid,
+            info.st_gid,
+            info.st_nlink,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+
+    def _assert_record_binding(
+        self,
+        held: _HeldLedger,
+        name: str,
+        fd: int,
+        *,
+        expected_inode: tuple[int, int],
+        expected_signature: tuple[int, int, int, int, int, int, int],
+    ) -> os.stat_result:
+        descriptor = os.fstat(fd)
+        _private(descriptor, directory=False)
+        entry = os.stat(name, dir_fd=held.root_fd, follow_symlinks=False)
+        _private(entry, directory=False)
+        if (
+            _inode(descriptor) != expected_inode
+            or _inode(entry) != expected_inode
+            or self._record_signature(descriptor) != expected_signature
+            or self._record_signature(entry) != expected_signature
+        ):
+            raise OccurrenceCorruptError("occurrence record binding changed")
+        return descriptor
+
     def _read_record(
         self, held: _HeldLedger, occurrence_id: str, *, durable: bool = False
     ) -> OccurrenceRecord:
@@ -418,7 +546,10 @@ class CronOccurrenceStore:
             before = os.fstat(fd)
             _private(before, directory=False)
             entry = os.stat(name, dir_fd=held.root_fd, follow_symlinks=False)
-            if _inode(entry) != _inode(before):
+            _private(entry, directory=False)
+            before_inode = _inode(before)
+            before_signature = self._record_signature(before)
+            if _inode(entry) != before_inode or self._record_signature(entry) != before_signature:
                 raise OccurrenceCorruptError("occurrence record binding changed")
             if before.st_size <= 0 or before.st_size > _MAX_RECORD_BYTES:
                 raise OccurrenceCorruptError(f"occurrence {occurrence_id} has an unsafe size")
@@ -431,13 +562,12 @@ class CronOccurrenceStore:
                 chunks.append(chunk)
                 remaining -= len(chunk)
             after = os.fstat(fd)
-            _private(after, directory=False)
-            if (
-                _inode(after) != _inode(before)
-                or (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
-                != (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
-            ):
+            if _inode(after) != before_inode or self._record_signature(after) != before_signature:
                 raise OccurrenceCorruptError("occurrence record changed while being read")
+            entry_after = os.stat(name, dir_fd=held.root_fd, follow_symlinks=False)
+            _private(entry_after, directory=False)
+            if _inode(entry_after) != before_inode or self._record_signature(entry_after) != before_signature:
+                raise OccurrenceCorruptError("occurrence record binding changed")
             try:
                 parsed = json.loads(b"".join(chunks).decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -446,8 +576,22 @@ class CronOccurrenceStore:
             if durable:
                 os.fsync(fd)
                 held.assert_bound()
+                self._assert_record_binding(
+                    held,
+                    name,
+                    fd,
+                    expected_inode=before_inode,
+                    expected_signature=before_signature,
+                )
                 os.fsync(held.root_fd)
                 held.assert_bound()
+                self._assert_record_binding(
+                    held,
+                    name,
+                    fd,
+                    expected_inode=before_inode,
+                    expected_signature=before_signature,
+                )
             return record
         except FileNotFoundError as exc:
             raise OccurrenceNotFoundError(f"occurrence {occurrence_id} does not exist") from exc
@@ -762,6 +906,22 @@ class CronOccurrenceStore:
         with self._held_lock() as held:
             record = self._read_record(held, occurrence_id)
             self._assert_namespace(record)
+            return record
+
+    def get_completed_durable(self, occurrence_id: str) -> OccurrenceRecord:
+        """Read one completed record only after reproving record and directory durability.
+
+        The returned record is detached evidence.  It never grants a claim,
+        computation authority, or delivery authority, and a claimed record is
+        explicitly left for reconciliation.
+        """
+        with self._held_lock() as held:
+            record = self._read_record(held, occurrence_id, durable=True)
+            self._assert_namespace(record)
+            if record.state != "completed" or record.completion is None:
+                raise OccurrenceReconciliationRequiredError(
+                    "occurrence is still claimed; reconcile it before treating it as completed"
+                )
             return record
 
     def reconciliation_required(self) -> list[OccurrenceRecord]:

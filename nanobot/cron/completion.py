@@ -30,6 +30,7 @@ from nanobot.cron.occurrence_store import (
     CronOccurrenceStore,
     OccurrenceClaim,
     OccurrenceNotFoundError,
+    OccurrenceReconciliationRequiredError,
     OccurrenceRecord,
 )
 
@@ -38,6 +39,7 @@ _PROJECTION_KIND = "cron_run_projection_v1"
 _MAX_PROJECTION_BYTES = 1_048_576
 _RUN_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,511}")
 _STATUS_VALUES = frozenset({"ok", "error", "skipped"})
+_PROVENANCE_KEY = "provenance"
 _MISSING = object()
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _O_NONBLOCK = getattr(os, "O_NONBLOCK", 0)
@@ -130,17 +132,43 @@ def _canonical_json(value: object, *, label: str) -> str:
 
 
 def _copy_mapping(value: Mapping[str, Any], *, label: str) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise CronCompletionConflictError(f"{label} must be a JSON object")
     try:
         copied = json.loads(_canonical_json(dict(value), label=label))
-    except json.JSONDecodeError as exc:  # pragma: no cover - canonical JSON is valid
+    except (TypeError, ValueError, RecursionError, json.JSONDecodeError) as exc:
         raise CronCompletionConflictError(f"{label} must be a JSON object") from exc
     if not isinstance(copied, dict):  # pragma: no cover - mapping encodes as object
         raise CronCompletionConflictError(f"{label} must be a JSON object")
     return copied
 
 
+def _strict_json_object(value: object, *, label: str) -> dict[str, Any]:
+    """Copy a finite JSON object and reject non-string keys at every depth."""
+    if not isinstance(value, Mapping):
+        raise CronCompletionConflictError(f"{label} must be a JSON object")
+
+    def check_keys(item: object) -> None:
+        if isinstance(item, Mapping):
+            if any(not isinstance(key, str) for key in item):
+                raise CronCompletionConflictError(f"{label} must be a JSON object")
+            for child in item.values():
+                check_keys(child)
+        elif isinstance(item, (list, tuple)):
+            for child in item:
+                check_keys(child)
+
+    check_keys(value)
+    return _copy_mapping(value, label=label)
+
+
 def _integrity(body: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical_json(dict(body), label="projection").encode("utf-8")).hexdigest()
+
+
+def _exact_equal(actual: object, expected: object) -> bool:
+    """Compare identity values without accepting bool/number coercion."""
+    return type(actual) is type(expected) and actual == expected
 
 
 def run_id_for_claim(claim: OccurrenceClaim) -> str:
@@ -416,19 +444,25 @@ class CronCompletionProjector:
             "generation": claim.generation,
         }
         for key, expected_value in expected.items():
-            if key in completion and completion[key] != expected_value:
+            if key in completion and not _exact_equal(completion[key], expected_value):
                 raise CronCompletionConflictError(f"completion conflicts with exact {key}")
             completion[key] = expected_value
+        if _PROVENANCE_KEY in completion:
+            completion[_PROVENANCE_KEY] = CronCompletionProjector._validate_provenance(
+                completion[_PROVENANCE_KEY],
+                claim=claim,
+                run_id=run_id,
+            )
         return completion
 
     @staticmethod
     def _validate_provenance(
-        value: Mapping[str, Any],
+        value: object,
         *,
         claim: OccurrenceClaim,
         run_id: str,
     ) -> dict[str, Any]:
-        provenance = _copy_mapping(value, label="cron completion provenance")
+        provenance = _strict_json_object(value, label="cron completion provenance")
         expected = {
             "run_id": run_id,
             "occurrence_id": claim.occurrence_id,
@@ -437,7 +471,7 @@ class CronCompletionProjector:
             "generation": claim.generation,
         }
         for key, expected_value in expected.items():
-            if key in provenance and provenance[key] != expected_value:
+            if key in provenance and not _exact_equal(provenance[key], expected_value):
                 raise CronCompletionConflictError(f"provenance conflicts with exact {key}")
         return provenance
 
@@ -459,7 +493,7 @@ class CronCompletionProjector:
             "generation": claim.generation,
             "status": completion["status"],
             "completion": _copy_mapping(completion, label="cron completion"),
-            "provenance": _copy_mapping(provenance, label="cron completion provenance"),
+            "provenance": _strict_json_object(provenance, label="cron completion provenance"),
             "delivery_state": "fenced",
         }
         body["integrity"] = _integrity(body)
@@ -500,16 +534,23 @@ class CronCompletionProjector:
         if type(value["generation"]) is not int or value["generation"] < 1:
             raise CronCompletionConflictError("cron completion projection has an invalid generation")
         completion = _copy_mapping(value["completion"], label="cron completion")
-        provenance = _copy_mapping(value["provenance"], label="cron completion provenance")
+        provenance = _strict_json_object(value["provenance"], label="cron completion provenance")
         if (
-            completion.get("run_id") != value["run_id"]
-            or completion.get("occurrence_id") != value["occurrence_id"]
-            or completion.get("job_id") != value["job_id"]
-            or completion.get("job_revision") != value["job_revision"]
-            or completion.get("generation") != value["generation"]
-            or completion.get("status") != value["status"]
+            not _exact_equal(completion.get("run_id"), value["run_id"])
+            or not _exact_equal(completion.get("occurrence_id"), value["occurrence_id"])
+            or not _exact_equal(completion.get("job_id"), value["job_id"])
+            or not _exact_equal(completion.get("job_revision"), value["job_revision"])
+            or not _exact_equal(completion.get("generation"), value["generation"])
+            or not _exact_equal(completion.get("status"), value["status"])
         ):
             raise CronCompletionConflictError("completion projection identity is not bound to its completion")
+        if _PROVENANCE_KEY in completion and _canonical_json(
+            _strict_json_object(completion[_PROVENANCE_KEY], label="cron completion provenance"),
+            label="cron completion provenance",
+        ) != _canonical_json(provenance, label="cron completion provenance"):
+            raise CronCompletionConflictError(
+                "completion projection provenance is not bound to its completion"
+            )
         return CronCompletionProjection(
             run_id=value["run_id"],
             occurrence_id=value["occurrence_id"],
@@ -519,6 +560,39 @@ class CronCompletionProjector:
             status=value["status"],
             completion=completion,
             provenance=provenance,
+        )
+
+    @staticmethod
+    def _projection_matches(
+        left: CronCompletionProjection,
+        right: CronCompletionProjection,
+        *,
+        include_provenance: bool,
+    ) -> bool:
+        body_left: dict[str, Any] = {
+            "run_id": left.run_id,
+            "occurrence_id": left.occurrence_id,
+            "job_id": left.job_id,
+            "job_revision": left.job_revision,
+            "generation": left.generation,
+            "status": left.status,
+            "completion": left.completion,
+        }
+        body_right: dict[str, Any] = {
+            "run_id": right.run_id,
+            "occurrence_id": right.occurrence_id,
+            "job_id": right.job_id,
+            "job_revision": right.job_revision,
+            "generation": right.generation,
+            "status": right.status,
+            "completion": right.completion,
+        }
+        if include_provenance:
+            body_left["provenance"] = left.provenance
+            body_right["provenance"] = right.provenance
+        return _canonical_json(body_left, label="cron completion projection") == _canonical_json(
+            body_right,
+            label="cron completion projection",
         )
 
     def _read_projection(
@@ -538,12 +612,15 @@ class CronCompletionProjector:
             fd = os.open(name, os.O_RDONLY | _O_NOFOLLOW | _O_NONBLOCK, dir_fd=held.root_fd)
             before = os.fstat(fd)
             self._private(before, directory=False)
+            before_inode = self._inode(before)
+            before_signature = self._projection_signature(before)
             if before.st_size <= 0:
                 raise CronCompletionConflictError("cron completion projection is empty")
             if before.st_size > _MAX_PROJECTION_BYTES:
                 raise CronCompletionConflictError("cron completion projection exceeds its size limit")
             entry = os.stat(name, dir_fd=held.root_fd, follow_symlinks=False)
-            if self._inode(entry) != self._inode(before):
+            self._private(entry, directory=False)
+            if self._inode(entry) != before_inode or self._projection_signature(entry) != before_signature:
                 raise CronCompletionConflictError("cron completion projection binding changed")
             chunks: list[bytes] = []
             remaining = before.st_size
@@ -556,11 +633,14 @@ class CronCompletionProjector:
             data = b"".join(chunks)
             after = os.fstat(fd)
             if (
-                self._inode(after) != self._inode(before)
-                or (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
-                != (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                self._inode(after) != before_inode
+                or self._projection_signature(after) != before_signature
             ):
                 raise CronCompletionConflictError("cron completion projection changed while being read")
+            entry_after = os.stat(name, dir_fd=held.root_fd, follow_symlinks=False)
+            self._private(entry_after, directory=False)
+            if self._inode(entry_after) != before_inode or self._projection_signature(entry_after) != before_signature:
+                raise CronCompletionConflictError("cron completion projection binding changed")
             try:
                 parsed = json.loads(data.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -569,8 +649,22 @@ class CronCompletionProjector:
             if durable:
                 os.fsync(fd)
                 held.assert_bound()
+                self._assert_projection_binding(
+                    held,
+                    name,
+                    fd,
+                    expected_inode=before_inode,
+                    expected_signature=before_signature,
+                )
                 os.fsync(held.root_fd)
                 held.assert_bound()
+                self._assert_projection_binding(
+                    held,
+                    name,
+                    fd,
+                    expected_inode=before_inode,
+                    expected_signature=before_signature,
+                )
             return projection
         except FileNotFoundError as exc:
             raise OccurrenceNotFoundError(f"run projection {run_id} does not exist") from exc
@@ -583,6 +677,41 @@ class CronCompletionProjector:
         finally:
             if fd is not None:
                 os.close(fd)
+
+    @staticmethod
+    def _projection_signature(info: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+        """Return metadata whose change invalidates a durable projection read."""
+        return (
+            info.st_mode,
+            info.st_uid,
+            info.st_gid,
+            info.st_nlink,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+
+    def _assert_projection_binding(
+        self,
+        held: _HeldProjection,
+        name: str,
+        fd: int,
+        *,
+        expected_inode: tuple[int, int],
+        expected_signature: tuple[int, int, int, int, int, int, int],
+    ) -> os.stat_result:
+        descriptor = os.fstat(fd)
+        self._private(descriptor, directory=False)
+        entry = os.stat(name, dir_fd=held.root_fd, follow_symlinks=False)
+        self._private(entry, directory=False)
+        if (
+            self._inode(descriptor) != expected_inode
+            or self._inode(entry) != expected_inode
+            or self._projection_signature(descriptor) != expected_signature
+            or self._projection_signature(entry) != expected_signature
+        ):
+            raise CronCompletionConflictError("cron completion projection binding changed")
+        return descriptor
 
     @staticmethod
     def _write_all(fd: int, data: bytes) -> None:
@@ -671,15 +800,16 @@ class CronCompletionProjector:
         occurrence_id = claim.occurrence_id if claim is not None else claim_or_occurrence_id
         if not isinstance(occurrence_id, str) or not occurrence_id:
             raise CronCompletionConflictError("occurrence_id is invalid")
-        record = self.occurrence_store.get(occurrence_id)
+        try:
+            record = self.occurrence_store.get_completed_durable(occurrence_id)
+        except OccurrenceReconciliationRequiredError as exc:
+            raise CronCompletionIncompleteError(
+                "occurrence is still claimed; crash state is not success"
+            ) from exc
         if claim is not None:
             self._record_for_claim(record, claim)
             expected_run_id = run_id_for_claim(claim)
         else:
-            if record.state != "completed":
-                raise CronCompletionIncompleteError(
-                    "occurrence is still claimed; crash state is not success"
-                )
             expected_run_id = f"cron-occurrence-{record.occurrence_id}-{record.generation}"
         if run_id is not None and self._validate_run_id(run_id) != expected_run_id:
             raise CronCompletionConflictError("completion conflicts with exact run identity")
@@ -687,13 +817,6 @@ class CronCompletionProjector:
         if record.state != "completed" or record.completion is None:
             raise CronCompletionIncompleteError("occurrence is still claimed; crash state is not success")
         completion = _copy_mapping(record.completion, label="cron completion")
-        if completion.get("run_id") not in {None, run_id}:
-            raise CronCompletionConflictError("durable completion conflicts with exact run identity")
-        completion.setdefault("run_id", run_id)
-        completion.setdefault("occurrence_id", record.occurrence_id)
-        completion.setdefault("job_id", record.identity.job_id)
-        completion.setdefault("job_revision", record.identity.job_revision)
-        completion.setdefault("generation", record.generation)
         projection_claim = claim or OccurrenceClaim(
             record.occurrence_id,
             record.identity,
@@ -702,13 +825,35 @@ class CronCompletionProjector:
             record.job_snapshot,
             record.destination_policy,
         )
-        if provenance is not None and not isinstance(provenance, Mapping):
-            raise CronCompletionConflictError("cron completion provenance must be a JSON object")
-        detached_provenance = self._validate_provenance(
-            {} if provenance is None else provenance,
+        completion = self._validate_completion(
+            completion,
             claim=projection_claim,
             run_id=run_id,
         )
+        canonical_provenance = (
+            self._validate_provenance(
+                completion[_PROVENANCE_KEY],
+                claim=projection_claim,
+                run_id=run_id,
+            )
+            if _PROVENANCE_KEY in completion
+            else {}
+        )
+        if provenance is None:
+            detached_provenance = canonical_provenance
+        else:
+            detached_provenance = self._validate_provenance(
+                provenance,
+                claim=projection_claim,
+                run_id=run_id,
+            )
+            if _canonical_json(detached_provenance, label="cron completion provenance") != _canonical_json(
+                canonical_provenance,
+                label="cron completion provenance",
+            ):
+                raise CronCompletionConflictError(
+                    "completion provenance conflicts with canonical completion"
+                )
         data = self._wire_projection(
             claim=projection_claim,
             completion=completion,
@@ -721,18 +866,16 @@ class CronCompletionProjector:
                 self._replace_projection(run_id, data, held)
                 return self._projection_from_wire(json.loads(data.decode("utf-8")), run_id=run_id)
             candidate = self._projection_from_wire(json.loads(data.decode("utf-8")), run_id=run_id)
-            if provenance is None:
-                if (
-                    existing.occurrence_id != candidate.occurrence_id
-                    or existing.job_id != candidate.job_id
-                    or existing.job_revision != candidate.job_revision
-                    or existing.generation != candidate.generation
-                    or existing.status != candidate.status
-                    or existing.completion != candidate.completion
-                ):
+            if _PROVENANCE_KEY in completion or provenance is not None:
+                if not self._projection_matches(existing, candidate, include_provenance=True):
                     raise CronCompletionConflictError("run projection already has different canonical content")
-            elif existing != candidate:
-                raise CronCompletionConflictError("run projection already has different canonical content")
+            else:
+                # A legacy D projection may carry historical provenance that
+                # was never part of the completed occurrence. Preserve that
+                # strictly validated evidence when the caller omitted an
+                # explicit provenance value; it must not become E2 input.
+                if not self._projection_matches(existing, candidate, include_provenance=False):
+                    raise CronCompletionConflictError("run projection already has different canonical content")
             # A visible projection after a failed directory fsync is not an
             # acknowledgement.  Reprove file and directory durability.
             return self._read_projection(run_id, durable=True, held=held)
@@ -763,6 +906,25 @@ class CronCompletionProjector:
             values["result"] = result
         if error is not _MISSING:
             values["error"] = error
+        if _PROVENANCE_KEY in values:
+            values[_PROVENANCE_KEY] = self._validate_provenance(
+                values[_PROVENANCE_KEY],
+                claim=claim,
+                run_id=expected_run_id,
+            )
+        if provenance is not None:
+            supplied_provenance = self._validate_provenance(
+                provenance,
+                claim=claim,
+                run_id=expected_run_id,
+            )
+            if _PROVENANCE_KEY in values and _canonical_json(
+                values[_PROVENANCE_KEY], label="cron completion provenance"
+            ) != _canonical_json(supplied_provenance, label="cron completion provenance"):
+                raise CronCompletionConflictError(
+                    "completion provenance conflicts with reserved provenance"
+                )
+            values[_PROVENANCE_KEY] = supplied_provenance
         values.setdefault("status", "ok")
         canonical = self._validate_completion(values, claim=claim, run_id=expected_run_id)
         # The ledger is the source of computation truth.  If this write is
