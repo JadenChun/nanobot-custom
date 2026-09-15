@@ -882,3 +882,22 @@ exact dependency references, forged/stale proof and capture rejection, policy
 and blob failure, active-owner/recovery nonblocking behavior, activity-byte
 preservation, and no-write failure paths. Broader session/artifact validation
 and independent review remain required before any future wiring or enablement.
+
+### Dormant idle-compaction configuration contract (I3a)
+
+`agents.defaults.idleCompaction` now has a typed, camelCase configuration
+surface with a strict `enabled` flag, idle and scan durations, queue and
+concurrency limits, auxiliary and input/output/chunk budgets, retry backoff
+limits, and an optional `summaryModelPreset`. The default is disabled. Partial
+values may be persisted while disabled, but enabling the contract requires all
+operational values, a positive idle TTL, non-inverted backoff limits, and an
+explicit existing model-preset name. Numeric and boolean inputs are strict;
+durations must be finite and positive where applicable.
+
+The existing `idleCompactAfterMinutes` and `sessionTtlMinutes` aliases and
+`idleCompactCheckIntervalSeconds` setting continue to round-trip independently;
+legacy TTL input never enables or populates `idleCompaction`. The schema and
+loader perform no scanner, provider, task, summarizer, or checkpoint work, and
+the production migration guard and runtime activation remain unchanged.
+Numeric and model-selection choices are I4 activation gates, not I3 runtime
+behavior.
