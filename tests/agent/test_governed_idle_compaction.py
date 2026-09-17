@@ -472,6 +472,83 @@ async def test_compute_receives_immutable_pre_dispatch_auxiliary_limits():
         await coordinator.aclose()
 
 
+async def test_explicit_publication_is_one_shot_and_conflict_is_discarded():
+    published: list[str] = []
+
+    async def sessions() -> tuple[str, ...]:
+        return ("publish", "conflict")
+
+    async def capture(key: str) -> str | None:
+        return key
+
+    async def compute(key: str, _: str, __: IdleAuxiliaryLimits) -> IdleComputation[str]:
+        return IdleComputation(key, IdleAuxiliaryUsage(calls=1, tokens=1))
+
+    async def validate(_: str, __: str, ___: str) -> bool:
+        return True
+
+    async def publish(key: str, _: str, __: str) -> object:
+        published.append(key)
+        return key == "publish"
+
+    coordinator: IdleCompactionCoordinator[str, str] = IdleCompactionCoordinator(
+        policy=policy(),
+        enumerate_sessions=sessions,
+        capture=capture,
+        compute=compute,
+        validate=validate,
+        publish=publish,
+    )
+    try:
+        assert await coordinator.scan_once() == 2
+        await coordinator.drain()
+        assert published == ["publish", "conflict"]
+        assert coordinator.outcome_for("publish") is IdleJobOutcome.SUCCEEDED
+        assert coordinator.outcome_for("conflict") is IdleJobOutcome.DISCARDED
+    finally:
+        await coordinator.aclose()
+
+
+async def test_publisher_exception_consumes_attempt_without_retry():
+    attempts = 0
+
+    async def sessions() -> tuple[str, ...]:
+        return ("raise",)
+
+    async def capture(_: str) -> str | None:
+        return "capture"
+
+    async def compute(_: str, __: str, ___: IdleAuxiliaryLimits) -> IdleComputation[str]:
+        return IdleComputation("candidate", IdleAuxiliaryUsage(calls=1, tokens=1))
+
+    async def validate(_: str, __: str, ___: str) -> bool:
+        return True
+
+    async def publish(_: str, __: str, ___: str) -> object:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("write then raise")
+
+    coordinator: IdleCompactionCoordinator[str, str] = IdleCompactionCoordinator(
+        policy=policy(),
+        enumerate_sessions=sessions,
+        capture=capture,
+        compute=compute,
+        validate=validate,
+        publish=publish,
+    )
+    try:
+        assert await coordinator.scan_once() == 1
+        await coordinator.drain()
+        assert attempts == 1
+        assert coordinator.outcome_for("raise") is IdleJobOutcome.FAILED
+        # The normal failure backoff may admit a fresh capture later, but the
+        # already-consumed publication callback is not retried by this job.
+        assert coordinator.backoff_for("raise") is not None
+    finally:
+        await coordinator.aclose()
+
+
 class _SubclassedUsage(IdleAuxiliaryUsage):
     pass
 

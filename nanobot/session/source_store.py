@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 import uuid
 from copy import deepcopy
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from nanobot.session.execution_owner import ExecutionOwner
     from nanobot.session.idle_checkpoint import IdleCheckpointCapture, IdlePolicyBinding
     from nanobot.session.manager import JsonlSessionStore, Session
+    from nanobot.session.source_root import SourceRootAuthority
 
 
 @dataclass(frozen=True)
@@ -171,14 +173,31 @@ class SourceSessionStore:
     def _state(self, header: dict[str, Any]) -> SourceState:
         return _state(header, self._store_identity)
 
-    def _read_unlocked(self, key: str, *, require_source: bool = True) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    def _read_unlocked(
+        self,
+        key: str,
+        *,
+        require_source: bool = True,
+        root_authority: SourceRootAuthority | None = None,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         from nanobot.session.manager import SessionStorageError
 
         path = self._backend.get_session_path(key)
+        descriptor: int | None = None
         try:
-            if not stat.S_ISREG(path.lstat().st_mode):
-                raise SourceValidationError("Non-regular source file")
-            with path.open(encoding="utf-8") as handle:
+            if root_authority is None:
+                if not stat.S_ISREG(path.lstat().st_mode):
+                    raise SourceValidationError("Non-regular source file")
+                handle = path.open(encoding="utf-8")
+            else:
+                root_authority.require_current(self._backend)
+                descriptor = root_authority.open_regular(
+                    f"{self._backend.storage_key(key)}.jsonl",
+                    flags=os.O_RDONLY | getattr(os, "O_NONBLOCK", 0),
+                )
+                handle = os.fdopen(descriptor, "r", encoding="utf-8")
+                descriptor = None
+            with handle:
                 records = [json.loads(line, object_pairs_hook=_object_pairs) for line in handle if line.strip()]
             if not records or not isinstance(records[0], dict):
                 raise SourceValidationError("Invalid source header")
@@ -231,6 +250,9 @@ class SourceSessionStore:
             raise
         except (ValueError, TypeError, AttributeError, UnicodeError, RecursionError):
             raise SessionStorageError() from None
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
 
     def _snapshot(self, header: dict[str, Any], events: list[dict[str, Any]]) -> SourceSnapshot:
         state = self._state(header)
@@ -254,12 +276,63 @@ class SourceSessionStore:
                 logger.warning("Ignoring invalid context checkpoint; retained source remains authoritative")
         return SourceSnapshot(state, deepcopy(header), deepcopy(events), checkpoint)
 
-    def load_source_snapshot(self, key: str) -> SourceSnapshot:
-        with self._backend.locked_session_files():
-            return self._snapshot(*self._read_unlocked(key))
+    def load_source_snapshot(
+        self,
+        key: str,
+        *,
+        root_authority: SourceRootAuthority | None = None,
+    ) -> SourceSnapshot:
+        if root_authority is None:
+            with self._backend.locked_session_files():
+                return self._snapshot(*self._read_unlocked(key))
+        with root_authority.operation(self._backend):
+            with root_authority.lock_file(".session-files.lock", blocking=True):
+                return self._snapshot(
+                    *self._read_unlocked(key, root_authority=root_authority)
+                )
 
-    def _runtime_checkpoint_present(self, key: str) -> bool:
+    def create_discovery_cursor(self, *, limits: object) -> object:
+        """Create a bounded, read-only cursor over this exact source directory.
+
+        The cursor constructor pins only directory identity; it performs no
+        traversal.  Keeping this factory on the source owner prevents an idle
+        integration from accidentally discovering through the preview/listing
+        or legacy-repair paths.
+        """
+
+        from nanobot.session.source_discovery import SourceDiscoveryCursor
+        authority = self.create_source_root_authority()
+        try:
+            return SourceDiscoveryCursor(
+                self._backend,
+                limits=limits,
+                root_authority=authority,
+                own_root_authority=True,
+            )  # type: ignore[arg-type]
+        except BaseException:
+            authority.close()
+            raise
+
+    discovery_cursor = create_discovery_cursor
+
+    def create_source_root_authority(self) -> SourceRootAuthority:
+        from nanobot.session.source_root import SourceRootAuthority
+
+        return SourceRootAuthority.issue(self._backend)
+
+    source_root_authority = create_source_root_authority
+
+    def _runtime_checkpoint_present(
+        self,
+        key: str,
+        *,
+        root_authority: SourceRootAuthority | None = None,
+    ) -> bool:
         path = self._backend.get_runtime_checkpoint_path(key)
+        if root_authority is not None:
+            root_authority.require_current(self._backend)
+            value = root_authority.stat_relative(path.name)
+            return value is not None
         return path.exists() or path.is_symlink()
 
     def capture_idle_compaction(self, key: str) -> IdleCaptureToken | None:
@@ -284,6 +357,7 @@ class SourceSessionStore:
         runtime_fingerprint: str,
         policy_fingerprint: str,
         policy: IdlePolicyBinding | None = None,
+        root_authority: SourceRootAuthority | None = None,
     ) -> IdleCheckpointCapture | None:
         """Capture the dormant integration-owned idle checkpoint substrate.
 
@@ -300,6 +374,7 @@ class SourceSessionStore:
             runtime_fingerprint=runtime_fingerprint,
             policy_fingerprint=policy_fingerprint,
             policy=policy,
+            root_authority=root_authority,
         )
 
     def publish_idle_checkpoint(
@@ -312,6 +387,7 @@ class SourceSessionStore:
         policy_fingerprint: str,
         policy: IdlePolicyBinding | None = None,
         proof: SummaryDependencyProof | None = None,
+        root_authority: SourceRootAuthority | None = None,
     ) -> SourceSnapshot:
         """Attempt one dormant idle checkpoint publication without an owner.
 
@@ -331,6 +407,7 @@ class SourceSessionStore:
             policy_fingerprint=policy_fingerprint,
             policy=policy,
             proof=proof,
+            root_authority=root_authority,
         )
 
     def record_user_activity(self, key: str, expected: SourceState, *,
@@ -425,7 +502,13 @@ class SourceSessionStore:
         self._check(header, expected)
         return header, events
 
-    def _write(self, header: dict[str, Any], events: list[dict[str, Any]]) -> SourceSnapshot:
+    def _write(
+        self,
+        header: dict[str, Any],
+        events: list[dict[str, Any]],
+        *,
+        root_authority: SourceRootAuthority | None = None,
+    ) -> SourceSnapshot:
         header, events = deepcopy(header), deepcopy(events)
         # Validate and prepare the detached result before the irreversible replace.
         validate_event_ids(events)
@@ -440,7 +523,14 @@ class SourceSessionStore:
         canonical_events(records)
         result = self._snapshot(header, events)
         text = "".join(json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n" for row in records)
-        self._backend._write_text_atomic(self._backend.get_session_path(header["key"]), text)
+        if root_authority is None:
+            self._backend._write_text_atomic(self._backend.get_session_path(header["key"]), text)
+        else:
+            root_authority.require_current(self._backend)
+            root_authority.write_text_atomic(
+                f"{self._backend.storage_key(header['key'])}.jsonl",
+                text,
+            )
         return result
 
     def upgrade_source_session(self, key: str, *, expected_revision: int, expected_generation: int, expected_incarnation: str) -> SourceSnapshot:

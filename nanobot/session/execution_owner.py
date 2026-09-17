@@ -22,6 +22,7 @@ from nanobot.session.source import validate_execution_links
 
 if TYPE_CHECKING:
     from nanobot.session.manager import JsonlSessionStore
+    from nanobot.session.source_root import SourceRootAuthority
     from nanobot.session.source_store import SourceSnapshot
 
 _CAPABILITY = object()
@@ -240,8 +241,27 @@ async def acquire_execution(backend: JsonlSessionStore, key: str, *, run_id: str
 @contextmanager
 def execution_transaction(backend: JsonlSessionStore, key: str,
                           owner: ExecutionOwner | None = None, *, destructive: bool = False,
-                          allow_legacy: bool = False) -> Iterator[None]:
+                          allow_legacy: bool = False,
+                          root_authority: SourceRootAuthority | None = None) -> Iterator[None]:
     """Always acquire execution authority before entering the directory lock."""
+    if root_authority is not None:
+        if owner is not None or destructive or allow_legacy:
+            raise ExecutionOwnershipError()
+        with root_authority.operation(backend):
+            with _descriptor_execution_lock_guard(backend, key, root_authority), root_authority.lock_file(
+                ".session-files.lock", blocking=True
+            ):
+                try:
+                    header, _ = backend.source._read_unlocked(
+                        key, root_authority=root_authority
+                    )
+                except FileNotFoundError:
+                    raise SessionWriteConflict() from None
+                metadata = header["metadata"]
+                if "execution_lease" in metadata or "execution_recovery_required" in metadata:
+                    raise ExecutionOwnershipError()
+                yield
+        return
     if owner is not None:
         if type(owner) is not ExecutionOwner:
             raise ExecutionOwnershipError()
@@ -277,3 +297,22 @@ def execution_lock_guard(backend: JsonlSessionStore, key: str) -> Iterator[None]
         yield
     finally:
         lock.release()
+
+
+@contextmanager
+def _descriptor_execution_lock_guard(
+    backend: JsonlSessionStore,
+    key: str,
+    root_authority: SourceRootAuthority,
+) -> Iterator[None]:
+    """Acquire the same flock-compatible execution lock relative to the root."""
+
+    try:
+        with root_authority.lock_nested_file(
+            ".execution-locks",
+            f"{backend.storage_key(key)}.lock",
+            blocking=False,
+        ):
+            yield
+    except BlockingIOError:
+        raise ExecutionBusyError() from None

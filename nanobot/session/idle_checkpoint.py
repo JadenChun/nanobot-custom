@@ -16,6 +16,7 @@ atomic JSONL replacement.
 from __future__ import annotations
 
 import copy
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
@@ -46,6 +47,7 @@ from nanobot.session.idle_compaction import (
     validate_idle_capture,
 )
 from nanobot.session.source import SourceValidationError
+from nanobot.session.source_root import SourceRootAuthority, SourceRootAuthorityError
 
 if TYPE_CHECKING:
     from nanobot.context_repo.policy import ResourceAccessPolicy
@@ -176,6 +178,7 @@ class IdleCheckpointCapture:
     _source: SourceSessionStore = field(repr=False, compare=False)
     _nonce: object = field(repr=False, compare=False)
     dependencies: IdleDependencyAccess | None = None
+    root_authority: SourceRootAuthority | None = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if type(self.token) is not IdleCaptureToken or not isinstance(self.snapshot, object):
@@ -200,6 +203,20 @@ def _validate_fingerprint(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise IdleCheckpointError(f"Invalid idle {label} fingerprint")
     return value
+
+
+def _validate_root_authority(
+    source: SourceSessionStore,
+    root_authority: SourceRootAuthority | None,
+) -> None:
+    if root_authority is None:
+        return
+    if type(root_authority) is not SourceRootAuthority:
+        raise IdleCheckpointError("Invalid idle source-root authority")
+    try:
+        root_authority.require_current(source._backend)
+    except SourceRootAuthorityError:
+        raise IdleCheckpointConflict("Idle source-root authority changed") from None
 
 
 def _root_descriptors(
@@ -241,6 +258,7 @@ def _capture_with_snapshot(
     policy_fingerprint: str,
     policy: IdlePolicyBinding | None,
     runtime_checkpoint_present: bool,
+    root_authority: SourceRootAuthority | None,
 ) -> IdleCheckpointCapture | None:
     token = capture_idle_token(snapshot, runtime_checkpoint_present=runtime_checkpoint_present)
     if token is None:
@@ -269,6 +287,7 @@ def _capture_with_snapshot(
         source,
         nonce,
         dependencies,
+        root_authority,
     )
 
 
@@ -279,6 +298,7 @@ def capture_idle_checkpoint(
     runtime_fingerprint: str,
     policy_fingerprint: str,
     policy: IdlePolicyBinding | None = None,
+    root_authority: SourceRootAuthority | None = None,
 ) -> IdleCheckpointCapture | None:
     """Capture idle source and dependency state without holding a lock for compute."""
 
@@ -288,19 +308,38 @@ def capture_idle_checkpoint(
     policy_fingerprint = _validate_fingerprint(policy_fingerprint, "policy")
     if policy is not None and policy.fingerprint != policy_fingerprint:
         raise IdleCheckpointError("Idle policy fingerprint does not match binding")
+    _validate_root_authority(source, root_authority)
     backend = source._backend
-    with backend.locked_session_files():
-        header, events = source._read_unlocked(key)
-        snapshot = source._snapshot(header, events)
-        return _capture_with_snapshot(
-            source,
-            key,
-            snapshot,
-            runtime_fingerprint=runtime_fingerprint,
-            policy_fingerprint=policy_fingerprint,
-            policy=policy,
-            runtime_checkpoint_present=source._runtime_checkpoint_present(key),
-        )
+    if root_authority is None:
+        with backend.locked_session_files():
+            header, events = source._read_unlocked(key)
+            snapshot = source._snapshot(header, events)
+            return _capture_with_snapshot(
+                source,
+                key,
+                snapshot,
+                runtime_fingerprint=runtime_fingerprint,
+                policy_fingerprint=policy_fingerprint,
+                policy=policy,
+                runtime_checkpoint_present=source._runtime_checkpoint_present(key),
+                root_authority=None,
+            )
+    with root_authority.operation(backend):
+        with root_authority.lock_file(".session-files.lock", blocking=True):
+            header, events = source._read_unlocked(key, root_authority=root_authority)
+            snapshot = source._snapshot(header, events)
+            return _capture_with_snapshot(
+                source,
+                key,
+                snapshot,
+                runtime_fingerprint=runtime_fingerprint,
+                policy_fingerprint=policy_fingerprint,
+                policy=policy,
+                runtime_checkpoint_present=source._runtime_checkpoint_present(
+                    key, root_authority=root_authority
+                ),
+                root_authority=root_authority,
+            )
 
 
 def _source_store_type() -> type[SourceSessionStore]:
@@ -365,6 +404,7 @@ def _validate_capture_for_source(
     *,
     runtime_fingerprint: str,
     policy_fingerprint: str,
+    root_authority: SourceRootAuthority | None,
 ) -> None:
     if (
         type(capture) is not IdleCheckpointCapture
@@ -377,6 +417,10 @@ def _validate_capture_for_source(
         raise IdleCheckpointConflict("Idle checkpoint capture binding changed")
     if capture.dependencies is not None and not capture.dependencies._matches_capture(source, capture):
         raise IdleCheckpointConflict("Idle dependency capability binding changed")
+    if capture.root_authority is not root_authority:
+        raise IdleCheckpointConflict("Idle source-root authority changed")
+    if root_authority is not None:
+        _validate_root_authority(source, root_authority)
 
 
 def _publish_unlocked(
@@ -389,14 +433,17 @@ def _publish_unlocked(
     *,
     policy: IdlePolicyBinding | None,
     blobs: ArtifactBlobTransaction | None,
+    root_authority: SourceRootAuthority | None,
 ) -> SourceSnapshot:
-    header, events = source._read_unlocked(key)
+    header, events = source._read_unlocked(key, root_authority=root_authority)
     snapshot = source._snapshot(header, events)
     try:
         validate_idle_capture(
             capture.token,
             snapshot,
-            runtime_checkpoint_present=source._runtime_checkpoint_present(key),
+            runtime_checkpoint_present=source._runtime_checkpoint_present(
+                key, root_authority=root_authority
+            ),
         )
     except IdleCaptureConflictError:
         raise IdleCheckpointConflict("Idle source state changed during publication") from None
@@ -436,7 +483,7 @@ def _publish_unlocked(
         blobs.assert_reachable()
     header["metadata"]["context_checkpoint"] = validated_current
     header["revision"] += 1
-    return source._write(header, events)
+    return source._write(header, events, root_authority=root_authority)
 
 
 def publish_idle_checkpoint(
@@ -449,6 +496,7 @@ def publish_idle_checkpoint(
     policy_fingerprint: str,
     policy: IdlePolicyBinding | None = None,
     proof: SummaryDependencyProof | None = None,
+    root_authority: SourceRootAuthority | None = None,
 ) -> SourceSnapshot:
     """Attempt exactly one lease-free idle checkpoint publication.
 
@@ -471,6 +519,7 @@ def publish_idle_checkpoint(
         capture,
         runtime_fingerprint=runtime_fingerprint,
         policy_fingerprint=policy_fingerprint,
+        root_authority=root_authority,
     )
     validated, references, detached_proof = _candidate_and_proof(capture, candidate, proof)
     if references:
@@ -478,32 +527,50 @@ def publish_idle_checkpoint(
         if access is None or policy is None or source._artifact_store is not access._store:
             raise IdleCheckpointError("Idle dependency access is unavailable")
         try:
-            with access._store.transaction(blocking=False) as blobs:
-                blobs.assert_reachable()
-                with execution_transaction(source._backend, key):
-                    return _publish_unlocked(
-                        source,
+            authority_context = (
+                root_authority.operation(source._backend)
+                if root_authority is not None
+                else nullcontext()
+            )
+            with authority_context:
+                with access._store.transaction(blocking=False) as blobs:
+                    blobs.assert_reachable()
+                    with execution_transaction(
+                        source._backend,
                         key,
-                        capture,
-                        validated,
-                        references,
-                        detached_proof,
-                        policy=policy,
-                        blobs=blobs,
-                    )
+                        root_authority=root_authority,
+                    ):
+                        return _publish_unlocked(
+                            source,
+                            key,
+                            capture,
+                            validated,
+                            references,
+                            detached_proof,
+                            policy=policy,
+                            blobs=blobs,
+                            root_authority=root_authority,
+                        )
         except ArtifactStorageBusyError:
             raise ExecutionBusyError() from None
-    with execution_transaction(source._backend, key):
-        return _publish_unlocked(
-            source,
-            key,
-            capture,
-            validated,
-            references,
-            detached_proof,
-            policy=policy,
-            blobs=None,
-        )
+    authority_context = (
+        root_authority.operation(source._backend)
+        if root_authority is not None
+        else nullcontext()
+    )
+    with authority_context:
+        with execution_transaction(source._backend, key, root_authority=root_authority):
+            return _publish_unlocked(
+                source,
+                key,
+                capture,
+                validated,
+                references,
+                detached_proof,
+                policy=policy,
+                blobs=None,
+                root_authority=root_authority,
+            )
 
 
 __all__ = [

@@ -35,6 +35,7 @@ from nanobot.config.schema import IdleCompactionConfig
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.session.idle_checkpoint import IdlePolicyBinding
 from nanobot.session.model_selection import model_preset_from_metadata
+from nanobot.session.source_root import SourceRootAuthority
 from nanobot.session.source_store import SourceSessionStore, SourceSnapshot, SourceState
 from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
 
@@ -1257,10 +1258,15 @@ class IdleRuntimeBindingRegistry:
             raise TypeError("session_key must be a non-empty string")
         return session_key
 
-    def _capture_source(self, session_key: str) -> _SourceCapture:
+    def _capture_source(
+        self,
+        session_key: str,
+        *,
+        root_authority: SourceRootAuthority | None = None,
+    ) -> _SourceCapture:
         key = self._require_session_key(session_key)
         try:
-            snapshot = self._source.load_source_snapshot(key)
+            snapshot = self._source.load_source_snapshot(key, root_authority=root_authority)
         except Exception:
             raise IdleRuntimeIneligibleError("authoritative source snapshot is unavailable") from None
         if type(snapshot) is not SourceSnapshot:
@@ -1442,9 +1448,11 @@ class IdleRuntimeBindingRegistry:
     def _issue_locked(
         self,
         session_key: str,
+        *,
+        root_authority: SourceRootAuthority | None = None,
     ) -> IdleRuntimeBinding:
         self._ensure_open()
-        capture = self._capture_source(session_key)
+        capture = self._capture_source(session_key, root_authority=root_authority)
         material = self._build_material(capture)
         current = self._current.get(session_key)
         if current is not None and self._binding_matches(current, material):
@@ -1472,13 +1480,19 @@ class IdleRuntimeBindingRegistry:
             ),
         )
 
-    def _revalidate_locked(self, binding: IdleRuntimeBinding, session_key: str) -> bool:
+    def _revalidate_locked(
+        self,
+        binding: IdleRuntimeBinding,
+        session_key: str,
+        *,
+        root_authority: SourceRootAuthority | None = None,
+    ) -> bool:
         self._ensure_open()
         self._validate_binding(binding)
         if binding.session_key != session_key or self._current.get(session_key) is not binding:
             return False
         try:
-            capture = self._capture_source(session_key)
+            capture = self._capture_source(session_key, root_authority=root_authority)
             material = self._build_material(capture)
         except IdleRuntimeError:
             self._retire_current_locked(session_key)
@@ -1507,13 +1521,31 @@ class IdleRuntimeBindingRegistry:
         """Return the one current binding for a source session."""
         return self.issue(session_key)
 
-    async def resolve_current_async(self, session_key: str) -> IdleRuntimeBinding:
+    async def resolve_current_async(
+        self,
+        session_key: str,
+        *,
+        root_authority: SourceRootAuthority | None = None,
+    ) -> IdleRuntimeBinding:
         async with self.publication_gate():
-            return self._issue_locked(self._require_session_key(session_key))
+            return self._issue_locked(
+                self._require_session_key(session_key),
+                root_authority=root_authority,
+            )
 
-    async def revalidate_async(self, binding: IdleRuntimeBinding, session_key: str) -> bool:
+    async def revalidate_async(
+        self,
+        binding: IdleRuntimeBinding,
+        session_key: str,
+        *,
+        root_authority: SourceRootAuthority | None = None,
+    ) -> bool:
         async with self.publication_gate():
-            return self._revalidate_locked(binding, self._require_session_key(session_key))
+            return self._revalidate_locked(
+                binding,
+                self._require_session_key(session_key),
+                root_authority=root_authority,
+            )
 
     def _invalidate_locked(
         self,
@@ -1631,6 +1663,7 @@ class IdleRuntimeBindingRegistry:
         sync_callback: Callable[[IdleRuntimeBinding], object],
         *,
         session_key: str | None = None,
+        root_authority: SourceRootAuthority | None = None,
     ) -> object:
         """Reload/revalidate and invoke one non-awaitable callback under the gate."""
         key = self._require_session_key(
@@ -1639,7 +1672,7 @@ class IdleRuntimeBindingRegistry:
         if not callable(sync_callback):
             raise TypeError("sync_callback must be callable")
         async with self.publication_gate():
-            if not self._revalidate_locked(binding, key):
+            if not self._revalidate_locked(binding, key, root_authority=root_authority):
                 raise IdleRuntimeStaleError(
                     "idle runtime binding no longer matches current evidence"
                 )

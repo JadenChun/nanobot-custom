@@ -1046,3 +1046,47 @@ boundaries, receipt and hidden-attempt rejection, timeout and cancellation
 joining, exact source/checkpoint binding, atomic-group preflight, weak
 reservation identity, accessor failures, pre-admission invalidation, and zero
 writes.
+
+### Dormant I3d source discovery and idle publication adapter
+
+`nanobot.session.source_discovery.SourceDiscoveryCursor` is a process-local,
+read-only cursor over the exact converted-session directory owned by the
+injected `SourceSessionStore`. Each explicit scan supplies positive limits for
+physical entries inspected, canonical keys returned, header bytes, and
+decoded-key bytes. Invalid, non-session, noncanonical, symlinked, oversized,
+or malformed entries consume the physical inspection budget and return only
+content-free counters. The cursor pins directory identity, closes on
+exhaustion or shutdown, and invalidates itself when the source directory is
+replaced. Traversal order is native filesystem order and is not globally
+ordered; one captured history and repeated I3b reloads are not yet bounded by a
+total byte ceiling. Per-history read bounds belong to I4.
+
+`nanobot.agent.idle_scanner.IdleCompactionScanner` composes that cursor with
+the existing bounded `IdleCompactionCoordinator`, I3b binding authority, I2
+capture/publication, and an injected I3c adapter. It has explicit one-shot
+`scan_once`, foreground notification, and `aclose` lifecycle methods only.
+Construction creates no task, cadence, provider, or production activation.
+Idle capture requires an aware injected UTC clock at the exact TTL boundary,
+all durable I2 blockers to be clear, and an injected synchronous,
+revision-bearing content-free runtime blocker authority. Publication runs
+once through `IdleRuntimeBindingRegistry.publish_if_current`; its callback
+rechecks the blocker revision, TTL, binding/proposal identity, and no-progress
+boundary before marking the attempt consumed and calling the exact I2
+publisher. A publisher exception consumes that proposal attempt and is never
+retried; synchronous success remains committed across immediate cancellation.
+
+The I3d adapter is construction-inert and remains unwired in production. No
+numeric values, blocker wiring, scanner cadence, single-process ownership
+claim, provider transport qualification, external namespace-mutation policy, or
+cleanup bound is selected here; those activation and lifecycle decisions remain
+I4/I3e gates. The source-root capability is issued only after qualifying the
+POSIX descriptor-relative no-follow open/stat/unlink/mkdir/replace primitives,
+`flock`, and directory `fsync`; a platform without that set, including
+Windows, fails closed. If the configured pathname is renamed after an
+operation has validated the descriptor, descriptor-relative writes continue in
+the original directory (now reachable through its renamed path), and the
+replacement directory at the configured pathname receives no write. The next
+reachability check retires the authority and prevents adoption of that
+replacement. This bounds the I3d race semantics without asserting protection
+against independent external namespace mutation or a finite cleanup duration;
+both remain activation gates.

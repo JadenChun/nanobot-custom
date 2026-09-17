@@ -10,6 +10,7 @@ when that work may run and discards work when foreground activity wins.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import math
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
@@ -26,6 +27,7 @@ IdleCompute = Callable[
     [str, CaptureT, "IdleAuxiliaryLimits"], Awaitable["IdleComputation[CandidateT]"]
 ]
 IdleValidate = Callable[[str, CaptureT, CandidateT], Awaitable[bool]]
+IdlePublish = Callable[[str, CaptureT, CandidateT], Awaitable[object] | object]
 Clock = Callable[[], float]
 
 
@@ -43,6 +45,13 @@ class IdleUnknownUsageError(IdleAuxiliaryBudgetError):
 
 class IdleInvalidUsageError(IdleAuxiliaryBudgetError):
     """The candidate computation returned malformed usage evidence."""
+
+
+class IdlePublicationConflictError(IdleCompactionError):
+    """The candidate lost an authoritative publication race."""
+
+
+IdlePublicationConflict = IdlePublicationConflictError
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +205,15 @@ class _QueuedJob(Generic[CaptureT]):
     capture: CaptureT
 
 
+class _PublicationOutcome(str, Enum):
+    """Internal result of the one-shot publication phase."""
+
+    SUCCEEDED = "succeeded"
+    DISCARDED = "discarded"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+
+
 class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
     """Bounded, production-unwired coordinator for callback-owned idle work.
 
@@ -216,6 +234,8 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
         capture: IdleCapture[CaptureT],
         compute: IdleCompute[CaptureT, CandidateT],
         validate: IdleValidate[CaptureT, CandidateT],
+        publish: IdlePublish[CaptureT, CandidateT] | None = None,
+        publication: IdlePublish[CaptureT, CandidateT] | None = None,
         clock: Clock = monotonic,
     ) -> None:
         self._policy = policy
@@ -223,6 +243,9 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
         self._capture = capture
         self._compute = compute
         self._validate = validate
+        if publish is not None and publication is not None and publish is not publication:
+            raise ValueError("publish and publication must refer to the same callback")
+        self._publish = publish if publish is not None else publication
         self._clock = clock
         # A disabled policy must never create worker tasks or enqueue an item.
         # The inert queue therefore needs no invented production capacity.
@@ -246,6 +269,7 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
             str, tuple[int, asyncio.Task[IdleComputation[CandidateT]]]
         ] = {}
         self._cleanup: dict[str, tuple[int, asyncio.Task[None]]] = {}
+        self._publishing: dict[str, tuple[int, asyncio.Task[object]]] = {}
 
     @property
     def worker_count(self) -> int:
@@ -272,6 +296,7 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
         tasks.extend(task for _, task in self._active.values())
         tasks.extend(task for _, task in self._computing.values())
         tasks.extend(task for _, task in self._cleanup.values())
+        tasks.extend(task for _, task in self._publishing.values())
         return sum(not task.done() for task in tasks)
 
     def outcome_for(self, session_key: str) -> IdleJobOutcome | None:
@@ -361,6 +386,9 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
                 compute_entry = self._computing.get(session_key)
                 if compute_entry is not None and compute_entry[0] == identifier:
                     local_task = compute_entry[1]
+                publish_entry = self._publishing.get(session_key)
+                if publish_entry is not None and publish_entry[0] == identifier:
+                    local_task = publish_entry[1]
         self._request_cancel(local_task)
 
     async def drain(self) -> None:
@@ -392,10 +420,18 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
             active_tasks = tuple(task for _, task in self._active.values())
             compute_tasks = tuple(task for _, task in self._computing.values())
             cleanup_tasks = tuple(task for _, task in self._cleanup.values())
+            publishing_tasks = tuple(task for _, task in self._publishing.values())
             worker_tasks = tuple(self._workers)
         # A worker keeps serving while its nested job unwinds.  Cancelling it
         # first can detach the wait_for child and let close return too early.
-        for task in (*scan_tasks, *enumeration_tasks, *capture_tasks, *active_tasks, *compute_tasks):
+        for task in (
+            *scan_tasks,
+            *enumeration_tasks,
+            *capture_tasks,
+            *active_tasks,
+            *compute_tasks,
+            *publishing_tasks,
+        ):
             self._request_cancel(task)
         owned_tasks = (
             *scan_tasks,
@@ -404,6 +440,7 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
             *active_tasks,
             *compute_tasks,
             *cleanup_tasks,
+            *publishing_tasks,
         )
         if owned_tasks:
             await asyncio.gather(*owned_tasks, return_exceptions=True)
@@ -417,6 +454,7 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
         self._active.clear()
         self._computing.clear()
         self._cleanup.clear()
+        self._publishing.clear()
         self._workers.clear()
 
     async def _ensure_workers(self) -> None:
@@ -573,7 +611,21 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
                 if not await self._is_current(job):
                     terminal = IdleJobOutcome.CANCELLED
                 elif valid:
-                    terminal = IdleJobOutcome.SUCCEEDED
+                    if self._publish is None:
+                        # Preserve the old generic-caller behavior: a
+                        # successful pure validation is the terminal success
+                        # when no explicit publication phase was supplied.
+                        terminal = IdleJobOutcome.SUCCEEDED
+                    elif not await self._is_current(job):
+                        terminal = IdleJobOutcome.CANCELLED
+                    else:
+                        publication = await self._publish_once(job, result.candidate)
+                        terminal = {
+                            _PublicationOutcome.SUCCEEDED: IdleJobOutcome.SUCCEEDED,
+                            _PublicationOutcome.DISCARDED: IdleJobOutcome.DISCARDED,
+                            _PublicationOutcome.CANCELLED: IdleJobOutcome.CANCELLED,
+                            _PublicationOutcome.FAILED: IdleJobOutcome.FAILED,
+                        }[publication]
                 else:
                     terminal = IdleJobOutcome.DISCARDED
         except asyncio.TimeoutError:
@@ -657,6 +709,96 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
                 return
             except asyncio.CancelledError:
                 continue
+
+    async def _publish_once(
+        self, job: _QueuedJob[CaptureT], candidate: CandidateT
+    ) -> _PublicationOutcome:
+        """Run the explicit publisher once and join it across cancellation.
+
+        The publisher is deliberately a separate task.  A synchronous source
+        write inside a binding gate cannot be interrupted by asyncio; when a
+        caller is cancelled immediately after that write, the completed task
+        remains a committed success.  A publisher exception consumes this
+        attempt as well and is never retried by this coordinator.
+        """
+
+        async def invoke() -> object:
+            result = self._publish(job.session_key, job.capture, candidate)  # type: ignore[misc]
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        publication_task = asyncio.create_task(invoke())
+        async with self._control_lock:
+            if self._is_current_unlocked(job.session_key, job.identifier, job.epoch):
+                self._publishing[job.session_key] = (job.identifier, publication_task)
+            else:
+                self._request_cancel(publication_task)
+        try:
+            try:
+                result = await asyncio.shield(publication_task)
+            except asyncio.CancelledError:
+                # Cancellation before a gate is acquired must leave zero
+                # writes.  Cancellation after a synchronous callback returns
+                # observes its result and preserves the durable success.
+                if not publication_task.done():
+                    self._request_cancel(publication_task)
+                await self._await_publication_cleanup(publication_task)
+                if publication_task.cancelled():
+                    if self._publication_completed(job.capture):
+                        return _PublicationOutcome.SUCCEEDED
+                    return _PublicationOutcome.CANCELLED
+                try:
+                    result = publication_task.result()
+                except IdlePublicationConflict:
+                    return _PublicationOutcome.DISCARDED
+                except BaseException:
+                    return _PublicationOutcome.FAILED
+            except IdlePublicationConflict:
+                return _PublicationOutcome.DISCARDED
+            except asyncio.CancelledError:
+                return _PublicationOutcome.CANCELLED
+            except BaseException:
+                return _PublicationOutcome.FAILED
+            # ``False`` is the one explicit content-free conflict result;
+            # source snapshots and other successful receipts are accepted.
+            return (
+                _PublicationOutcome.DISCARDED
+                if result is False
+                else _PublicationOutcome.SUCCEEDED
+            )
+        finally:
+            async with self._control_lock:
+                current = self._publishing.get(job.session_key)
+                if current is not None and current[0] == job.identifier:
+                    self._publishing.pop(job.session_key, None)
+
+    @staticmethod
+    async def _await_publication_cleanup(task: asyncio.Task[object]) -> None:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if not task.done():
+                    task.cancel()
+                continue
+            except BaseException:
+                break
+        try:
+            await asyncio.shield(task)
+        except BaseException:
+            pass
+
+    @staticmethod
+    def _publication_completed(capture: object) -> bool:
+        """Read an optional content-free completion boundary from an adapter.
+
+        Generic publishers do not need this hook and retain their existing
+        cancellation behavior.  The dormant scanner supplies only a sealed
+        boolean boundary set after its synchronous I2 callback returns.
+        """
+        state = getattr(capture, "_publication", None)
+        return getattr(state, "completed", False) is True
 
     async def _forget_job_tasks_resilient(self, job: _QueuedJob[CaptureT]) -> None:
         """Release callback ownership only after terminal settlement."""

@@ -121,6 +121,32 @@ Capture must fail closed when a session has an active foreground run, live tool 
 
 The future schema-v2 integration must still add the lease-free, dependency-proof checkpoint publisher described above. It must run the normal atomic source transaction, revalidate the same capture token inside it, authorize and verify every artifact dependency through the existing reader/proof path, write the checkpoint durably, and leave `last_user_activity_at` unchanged. The coordinator may invoke no publisher and implements no summarizer; until this adapter exists, validation can only report/discard an in-memory proposal.
 
+The dormant I3d slice now supplies the bounded source cursor and the explicit
+composition seam for a later activation. The cursor inspects only a bounded
+first header line from exact converted-session files and returns canonical keys
+plus content-free counters. Native directory traversal is allowed and is not
+globally ordered; a captured history and repeated I3b reloads are not yet
+bounded by a total byte limit, while per-history reads remain an I4 concern.
+Its source-root authority is qualified only when the required POSIX
+descriptor-relative, no-follow, exact-device/inode, `flock`, atomic-replace,
+and directory-`fsync` primitives are available. Unsupported platforms,
+including Windows where that primitive set is unavailable, fail closed before
+the authority is issued. The open descriptor remains attached to the original
+directory if a pathname replacement races an in-flight operation: a validated
+descriptor-relative replacement therefore lands in that renamed original
+directory, while the replacement now reachable at the configured pathname is
+left untouched. The reachability check then invalidates the authority, so a
+later scan or operation cannot adopt the replacement directory.
+The scanner has no start or cadence operation: callers explicitly invoke
+`scan_once`, foreground notification, and `aclose`. It requires injected
+positive limits, an aware UTC clock, a synchronous revision-bearing blocker
+authority, a qualified I3c adapter, and an I3b registry. Production blocker
+wiring, chosen numeric values, cadence, single-process ownership, transport
+qualification, external namespace-mutation handling, and a finite cleanup
+bound remain I4/I3e activation gates. The descriptor path protects its own
+operations; it does not yet claim a globally coordinated namespace against
+independent writers or provide an unbounded cleanup wait.
+
 A future goal runtime may supply an immutable goal ID/revision, objective, structured status, limits and usage counters to `TurnContext`; context summaries can reference these and the store can pin their evidence. Each compaction/auxiliary model call reports usage to the existing run accounting and future goal ledger. Context checkpoints never infer goals from chat, reset budgets, schedule continuation or suppress final messages. Approval, cancellation, policy blocks and exhausted limits remain execution boundaries even when a checkpoint is valid. Automatic continuation, goal-wide total-cost policy and goal restart admission belong to optional P8 follow-on work outside the parent migration definition of done. Neither their implementation nor an explicit deferral decision is required to complete the base migration and agreed context enhancements.
 
 ## Work packages, sequencing and ownership
