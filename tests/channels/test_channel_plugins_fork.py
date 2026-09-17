@@ -9,11 +9,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from nanobot.bus.events import OutboundMessage
+from nanobot.bus.outbound_events import ProgressEvent
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.channels.manager import ChannelManager
-from nanobot.config.schema import ChannelsConfig
-
+from nanobot.config.schema import ChannelsConfig, Config
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -60,6 +60,13 @@ def _make_entry_point(name: str, cls: type):
     """Create a mock entry point that returns *cls* on load()."""
     ep = SimpleNamespace(name=name, load=lambda _cls=cls: _cls)
     return ep
+
+
+def _make_dispatch_manager(*, task_update_mode: str) -> ChannelManager:
+    """Build a real manager with channel discovery disabled for dispatch tests."""
+    config = Config.model_validate({"channels": {"taskUpdateMode": task_update_mode}})
+    with patch.object(ChannelManager, "_init_channels"):
+        return ChannelManager(config, MessageBus())
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +219,10 @@ async def test_manager_loads_plugin_from_dict_config():
 
 
 def test_channels_login_uses_discovered_plugin_class(monkeypatch):
+    from typer.testing import CliRunner
+
     from nanobot.cli.commands import app
     from nanobot.config.schema import Config
-    from typer.testing import CliRunner
 
     runner = CliRunner()
     seen: dict[str, object] = {}
@@ -602,6 +610,7 @@ async def test_send_with_retry_propagates_cancelled_error_during_sleep():
 @pytest.mark.asyncio
 async def test_dispatch_outbound_skips_progress_when_task_update_mode_is_not_verbose():
     sent: list[str] = []
+    delivered = asyncio.Event()
 
     class _ProgressChannel(BaseChannel):
         name = "progress"
@@ -615,17 +624,10 @@ async def test_dispatch_outbound_skips_progress_when_task_update_mode_is_not_ver
 
         async def send(self, msg: OutboundMessage) -> None:
             sent.append(msg.content)
+            delivered.set()
 
-    fake_config = SimpleNamespace(
-        channels=ChannelsConfig(task_update_mode="result"),
-        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
-    )
-
-    mgr = ChannelManager.__new__(ChannelManager)
-    mgr.config = fake_config
-    mgr.bus = MessageBus()
-    mgr.channels = {"progress": _ProgressChannel(fake_config, mgr.bus)}
-    mgr._dispatch_task = None
+    mgr = _make_dispatch_manager(task_update_mode="result")
+    mgr.channels = {"progress": _ProgressChannel(mgr.config, mgr.bus)}
 
     task = asyncio.create_task(mgr._dispatch_outbound())
     try:
@@ -633,14 +635,19 @@ async def test_dispatch_outbound_skips_progress_when_task_update_mode_is_not_ver
             channel="progress",
             chat_id="123",
             content="thinking",
-            metadata={"_progress": True},
+            event=ProgressEvent(content="thinking"),
         ))
-        await asyncio.sleep(0.05)
+        await mgr.bus.publish_outbound(OutboundMessage(
+            channel="progress",
+            chat_id="123",
+            content="final answer",
+        ))
+        await asyncio.wait_for(delivered.wait(), timeout=1.0)
     finally:
         task.cancel()
         await task
 
-    assert sent == []
+    assert sent == ["final answer"]
 
 
 # ---------------------------------------------------------------------------
@@ -937,4 +944,3 @@ async def test_start_all_creates_dispatch_task():
 
     # Dispatch task should have been created
     assert mgr._dispatch_task is not None
-

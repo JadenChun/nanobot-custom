@@ -1,25 +1,26 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.policy import DelegatedReadOnlyPolicy, RiskyActionPolicy
-from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.filesystem import SearchFilesTool
 from nanobot.agent.tools.social_crawl import SocialCrawlTool
 from nanobot.agent.turn import RunStatus, ToolOutcome, TurnRequest
 from nanobot.context_repo import ResourceAccessPolicy
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from nanobot.utils.llm_runtime import LLMRuntime
 
 
 def _provider() -> MagicMock:
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
     provider.chat_with_retry = AsyncMock()
     return provider
 
@@ -185,22 +186,31 @@ async def test_delegated_unsafe_browser_call_is_blocked_before_tool_execution() 
             name="agent_browser",
             arguments={"args": ["click", "@e1"]},
         )],
-        usage={},
+        usage=None,
     )
     tool = MagicMock(spec=AgentBrowserTool)
     tool.name = "agent_browser"
     tool.supports_parallel_calls = False
+    tool.to_schema.return_value = {
+        "type": "function",
+        "function": {
+            "name": "agent_browser",
+            "description": "test browser",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
     tool.execute = AsyncMock(return_value="executed")
     from nanobot.agent.runner import AgentRunner, AgentRunSpec
     from nanobot.agent.tools.registry import ToolRegistry
 
     registry = ToolRegistry()
     registry.register(tool)
-    result = await AgentRunner(provider).run(AgentRunSpec(
+    result = await AgentRunner().run(AgentRunSpec(
         initial_messages=[],
         tools=registry,
-        model="test-model",
+        runtime=LLMRuntime.capture(provider, "test-model", context_window_tokens=128_000),
         max_iterations=2,
+        max_tool_result_chars=16_000,
         tool_policy=DelegatedReadOnlyPolicy(
             allowed_tools={"agent_browser"},
             approval_granted=True,
@@ -212,7 +222,9 @@ async def test_delegated_unsafe_browser_call_is_blocked_before_tool_execution() 
 
 
 @pytest.mark.asyncio
-async def test_nested_read_only_stop_reaches_outer_turn_without_approval_or_extra_call(tmp_path) -> None:
+async def test_nested_read_only_stop_reaches_outer_turn_without_approval_or_extra_call(
+    tmp_path,
+) -> None:
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus
 
@@ -224,12 +236,12 @@ async def test_nested_read_only_stop_reaches_outer_turn_without_approval_or_extr
             name="plan_task",
             arguments={"objective": "Inspect the repository"},
         )],
-        usage={},
+        usage=None,
     )
-    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path)
-    loop.delegation.runner.run = AsyncMock(return_value=AgentRunResult(
-        final_content="Blocked by delegated capability policy.",
-        messages=[],
+    with patch("nanobot.migration_guard.require_runtime_ready"):
+        loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path)
+    loop._fork_dependencies.foreground_manager.run_plan = AsyncMock(return_value=ToolOutcome(
+        content="Blocked by delegated capability policy.",
         stop_reason=RunStatus.POLICY_BLOCKED.value,
         policy_metadata={"action_class": "state_changing", "requires_approval": False},
     ))
@@ -240,7 +252,8 @@ async def test_nested_read_only_stop_reaches_outer_turn_without_approval_or_extr
     assert result.status is RunStatus.POLICY_BLOCKED
     assert result.stop_reason == RunStatus.POLICY_BLOCKED.value
     assert result.policy_metadata["requires_approval"] is False
-    assert loop._pending_approvals == {}
+    snapshot = await loop.approval_admission.snapshot("cli:direct", "Inspect the repository")
+    assert snapshot.pending is None
     assert "approval" not in str(result.content).lower()
 
 
