@@ -15,7 +15,8 @@ from nanobot.providers.factory import ProviderSnapshot
 from nanobot.utils.llm_runtime import LLMRuntime
 
 from .test_migration_engine import ScriptedProvider
-from .test_migration_engine import engine_config as engine_config
+
+pytest_plugins = ("tests.agent.test_migration_engine",)
 
 
 def build(config):
@@ -47,7 +48,8 @@ async def test_owned_manager_closed_once_and_cleanup_continues_after_failure(eng
         await loop.aclose()
     loop.subagents.close.assert_awaited_once()
     loop._exec_session_manager.close_all.assert_awaited_once()
-    await loop.aclose()
+    with pytest.raises(RuntimeError, match='foreground cleanup failed'):
+        await loop.aclose()
     close.assert_awaited_once()
 
 

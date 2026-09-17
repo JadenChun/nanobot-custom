@@ -839,8 +839,9 @@ canonical turn; the internal message-identity marker suppresses a duplicate
 activity write and callback when that turn starts. Durable activity commit and
 callback success are tracked separately: a callback failure or cancellation
 still retains the marker, while the current turn stops before model work. The
-marker is consumed on dispatch and cleared on cancellation, enqueue failure,
-cleanup failure, and shutdown.
+marker is consumed only after notification succeeds; every failed retry keeps
+the exact in-memory message identity queued for republish, including a bus
+enqueue failure. Loop shutdown clears both the marker and retained message.
 
 This package adds no scanner, summarizer, provider call, checkpoint publisher,
 configuration default, guard change, or legacy `AutoCompact` behavior. Focused
@@ -1078,8 +1079,8 @@ retried; synchronous success remains committed across immediate cancellation.
 The I3d adapter is construction-inert and remains unwired in production. No
 numeric values, blocker wiring, scanner cadence, single-process ownership
 claim, provider transport qualification, external namespace-mutation policy, or
-cleanup bound is selected here; those activation and lifecycle decisions remain
-I4/I3e gates. The source-root capability is issued only after qualifying the
+cleanup bound is selected here; activation policy and numeric choices remain
+I4 gates. The source-root capability is issued only after qualifying the
 POSIX descriptor-relative no-follow open/stat/unlink/mkdir/replace primitives,
 `flock`, and directory `fsync`; a platform without that set, including
 Windows, fails closed. If the configured pathname is renamed after an
@@ -1090,3 +1091,38 @@ reachability check retires the authority and prevents adoption of that
 replacement. This bounds the I3d race semantics without asserting protection
 against independent external namespace mutation or a finite cleanup duration;
 both remain activation gates.
+
+### Dormant explicit idle lifecycle integration (I3e)
+
+`nanobot.agent.idle_lifecycle.IdleLifecycleIntegration` is the only lifecycle
+wrapper for the dormant I3d/I3b pair. It accepts exact, already constructed
+`IdleCompactionScanner` and `IdleRuntimeBindingRegistry` instances plus
+explicit scanner and registry ownership flags. Construction validates the
+exact source-store pairing and rejects a registry that also owns the scanner's
+coordinator. Borrowed source, session, runtime, provider, transport, and MCP
+handles remain borrowed; only transferred scanner or registry objects are
+closed.
+
+The wrapper exposes authoritative `enabled`, one-shot `scan_once`,
+`foreground_admitted`, and cancellation-safe shared `aclose` methods. The
+scanner's enabled value includes the complete policy and runtime-limit
+decision, and its close fence is visible before teardown is scheduled. A close
+joins the explicit scan and coordinator callbacks before discovery and the
+source-root descriptor are closed, and later cleanup steps still run after an
+earlier exception. `AgentLoop` accepts this wrapper only through explicit
+injection, delegates a manual `scan_idle_once` call when open and enabled, and
+does not create it from config, SDK, CLI, gateway, or provider factories.
+Absent, incomplete, or disabled production wiring remains inert. An explicitly
+injected enabled borrowed pair may scan and notify, but the lifecycle and loop
+do not tear down objects whose ownership was not transferred.
+
+Trusted direct, gateway, SDK, and API activity is durably committed before
+foreground notification and model dispatch. A queued follow-up records its
+activity once; if notification fails after that commit, republished execution
+retries only the notification and remains blocked until it succeeds. Cron,
+local, system, recovery, subagent, and rejected-approval turns remain outside
+the activity path. Loop shutdown fences new turn, scan, and notification
+admission, shares one cooperative teardown among concurrent callers, and
+retains cleanup ownership when an external bounded wait expires. Production
+activation, cadence, background scanning, numeric choices, and migration-guard
+state remain dormant.

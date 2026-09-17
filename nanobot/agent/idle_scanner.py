@@ -326,6 +326,7 @@ class IdleCompactionScanner:
         chosen_clock = utc_clock if utc_clock is not None else clock
         self._utc_clock = chosen_clock if chosen_clock is not None else (lambda: datetime.now(timezone.utc))
         self._monotonic_clock = monotonic_clock if monotonic_clock is not None else monotonic
+        self._closing = False
         self._closed = False
         self._state_lock = asyncio.Lock()
         self._scan_task: asyncio.Task[int] | None = None
@@ -351,6 +352,24 @@ class IdleCompactionScanner:
         return self._coordinator
 
     @property
+    def source_store(self) -> SourceSessionStore:
+        """Return the exact injected source owner used by this scanner."""
+
+        return self._source
+
+    @property
+    def binding_registry(self) -> IdleRuntimeBindingRegistry | None:
+        """Return the exact injected I3b registry, when present."""
+
+        return self._registry
+
+    @property
+    def enabled(self) -> bool:
+        """Return the complete policy/runtime-limit admission decision."""
+
+        return self._enabled and not self._closing and not self._closed
+
+    @property
     def discovery(self) -> SourceDiscoveryCursor | None:
         return self._discovery
 
@@ -367,7 +386,7 @@ class IdleCompactionScanner:
         return self._closed
 
     async def _enumerate_sessions(self) -> tuple[str, ...]:
-        if not self._enabled or self._discovery is None:
+        if not self.enabled or self._discovery is None:
             return ()
         try:
             result = await self._discovery.scan_once()
@@ -873,7 +892,7 @@ class IdleCompactionScanner:
     async def scan_once(self) -> int:
         """Coalesce overlapping explicit scans into one bounded operation."""
 
-        if self._closed or not self._enabled or self._discovery is None:
+        if not self.enabled or self._discovery is None:
             return 0
         async with self._state_lock:
             if self._closed:
@@ -893,33 +912,77 @@ class IdleCompactionScanner:
     async def foreground_admitted(self, session_key: str) -> None:
         """Notify local idle work after the durable foreground activity write."""
 
-        if self._closed:
+        if not self.enabled:
             return
         if self._registry is not None:
-            self._registry.invalidate(session_key=session_key)
+            try:
+                if self._registry.closed or bool(getattr(self._registry, "_closing", False)):
+                    return
+                self._registry.invalidate(session_key=session_key)
+            except Exception:
+                # A concurrent registry close is an admission fence, not a
+                # reason to reopen or fabricate idle authority.
+                if self._closed or bool(getattr(self._registry, "_closing", False)):
+                    return
+                raise
         # Invalidate the I3b binding before cancelling local work.  This keeps
         # a publication already waiting at its gate from observing the old
         # authority, while still supporting an externally owned coordinator.
         await self._coordinator.foreground_admitted(session_key)
 
     async def _close_operation(self) -> None:
+        errors: list[BaseException] = []
+        # ``aclose`` sets this synchronously before scheduling this operation;
+        # retain the assignment here for callers that inspect scanner state
+        # from a teardown task itself.
+        self._closing = True
         self._closed = True
-        task = self._scan_task
-        if task is not None and not task.done():
-            task.cancel()
+        scan = self._scan_task
+        if scan is not None and not scan.done():
+            scan.cancel()
+        if scan is not None:
+            try:
+                await asyncio.shield(scan)
+            except asyncio.CancelledError:
+                # Cancellation is the expected close path for the outer scan.
+                pass
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                if self._scan_task is scan:
+                    self._scan_task = None
+
         close = getattr(self._coordinator, "aclose", None)
         if callable(close):
-            result = close()
-            if inspect.isawaitable(result):
-                await result
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            except BaseException as exc:
+                errors.append(exc)
         if self._discovery is not None:
-            await self._discovery.aclose()
+            try:
+                await self._discovery.aclose()
+            except BaseException as exc:
+                errors.append(exc)
         if self._root_authority is not None:
-            self._root_authority.close()
+            try:
+                self._root_authority.close()
+            except BaseException as exc:
+                errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise BaseExceptionGroup("failed to close idle scanner", errors)
 
     async def aclose(self) -> None:
         """Close discovery/coordinator once and join cleanup under cancellation."""
 
+        # Fence new scan and notification admission before creating the shared
+        # teardown task.  This closes the race where a scan observes the old
+        # flag while a concurrent close is being scheduled.
+        self._closing = True
+        self._closed = True
         if self._close_task is None:
             self._close_task = asyncio.create_task(self._close_operation())
         task = self._close_task

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import os
 import re
 import time
@@ -39,6 +40,7 @@ from nanobot.agent.cron_turns import CronTurnCoordinator
 from nanobot.agent.delegation import reset_current_turn_context, set_current_turn_context
 from nanobot.agent.foreground import build_foreground_dependencies, validate_foreground_dependencies
 from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
+from nanobot.agent.idle_lifecycle import IdleLifecycleIntegration
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.model_runtime import ModelRuntimeResolver
 from nanobot.agent.policy import RiskyActionPolicy
@@ -147,6 +149,7 @@ from nanobot.session.summary import (
     SessionSummaryCheckpoint,
 )
 from nanobot.session.turn_writer import SourceTurnWriter
+from nanobot.triggers.local_session_turns import local_trigger
 from nanobot.triggers.local_turns import LocalTriggerTurnCoordinator
 from nanobot.utils.cancellation import task_is_cancelling
 from nanobot.utils.document import reference_non_image_attachments
@@ -180,6 +183,7 @@ _FOREGROUND_IDLE_SOURCES = frozenset({
     TurnSource.API,
 })
 _ACTIVITY_ADMITTED_ATTRIBUTE = "_nanobot_activity_admitted"
+_ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE = "_nanobot_activity_notification_pending"
 
 
 class ForegroundIdleIntegration(Protocol):
@@ -294,6 +298,14 @@ class _ForegroundActivityResult:
     callback_error: BaseException | None = None
 
 
+@dataclass(frozen=True)
+class _AdmittedActivityMessage:
+    """Internal identity proof for one committed queued activity update."""
+
+    message: InboundMessage
+    notification_succeeded: bool = False
+
+
 @dataclass
 class _SourceActivityAdmission:
     queue: asyncio.Queue[_ActivityAdmissionRequest | None]
@@ -343,6 +355,8 @@ class _TurnExecutionOptions:
     inbound: InboundMessage | None = None
     trusted_foreground_activity: bool = False
     activity_already_recorded: bool = False
+    retry_activity_notification: bool = False
+    admitted_activity_marker: _AdmittedActivityMessage | None = None
 
 
 class AgentLoop:
@@ -572,6 +586,12 @@ class AgentLoop:
         )
         self._unified_session = unified_session
         self._running = False
+        self._closing = False
+        self._closed = False
+        self._loop_task: asyncio.Task[Any] | None = None
+        self._close_task: asyncio.Task[None] | None = None
+        self._close_initiator: asyncio.Task[Any] | None = None
+        self._close_draining_tasks: set[asyncio.Task[Any]] = set()
         self._runtime_context_providers: list[RuntimeContextProvider] = []
         self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
         self._discarding_sessions: set[str] = set()
@@ -588,7 +608,7 @@ class AgentLoop:
         # Keep the message object alive while a source cleanup republishes it;
         # object identity is the internal handoff proof for one already-admitted
         # pending message and cannot be forged through inbound metadata.
-        self._admitted_activity_messages: dict[int, InboundMessage] = {}
+        self._admitted_activity_messages: dict[int, _AdmittedActivityMessage] = {}
         self._activity_admission_token = object()
         self._pending_republish: dict[str, list[InboundMessage]] = {}
         self._bus_cleanup_tasks: dict[str, set[asyncio.Future[Any]]] = {}
@@ -638,6 +658,32 @@ class AgentLoop:
         self._register_default_tools(provider_snapshot_loader=provider_snapshot_loader)
         self.commands = CommandRouter()
         register_builtin_commands(self.commands)
+
+    def _ensure_lifecycle_state(self) -> None:
+        """Lazily supply lifecycle fields for compatibility test hosts."""
+
+        if not hasattr(self, "_closing"):
+            self._closing = False
+        if not hasattr(self, "_closed"):
+            self._closed = False
+        if not hasattr(self, "_loop_task"):
+            self._loop_task = None
+        if not hasattr(self, "_close_task"):
+            self._close_task = None
+        if not hasattr(self, "_close_initiator"):
+            self._close_initiator = None
+        if not hasattr(self, "_close_draining_tasks"):
+            self._close_draining_tasks: set[asyncio.Task[Any]] = set()
+
+    def _lifecycle_is_closing(self) -> bool:
+        """Read the close fence safely on legacy/object-constructed hosts."""
+
+        close_task = getattr(self, "_close_task", None)
+        return bool(
+            getattr(self, "_closing", False)
+            or getattr(self, "_closed", False)
+            or (close_task is not None and not close_task.done())
+        )
 
     @classmethod
     def from_config(
@@ -1170,19 +1216,23 @@ class AgentLoop:
         The dormant coordinator is intentionally not constructed here.  This
         adapter accepts a caller-owned coordinator (or equivalent) only when
         it exposes the complete enabled flag and foreground notification
-        callback.  Missing or partial wiring remains a no-op.
+        callback.  Missing or partial wiring remains a no-op.  The private
+        policy object is never consulted as an activation signal.
         """
 
         integration = getattr(self, "_idle_integration", None)
         if integration is None:
             return None
+        if type(integration) is IdleLifecycleIntegration:
+            try:
+                if integration.enabled is not True:
+                    return None
+                callback = integration.foreground_admitted
+            except Exception:
+                return None
+            return integration if callable(callback) else None
         try:
             enabled = getattr(integration, "enabled", None)
-            if enabled is None:
-                policy = getattr(integration, "policy", None)
-                if policy is None:
-                    policy = getattr(integration, "_policy", None)
-                enabled = getattr(policy, "enabled", False)
             callback = getattr(integration, "foreground_admitted", None)
         except Exception:
             return None
@@ -1190,12 +1240,41 @@ class AgentLoop:
             return None
         return cast(ForegroundIdleIntegration, integration)
 
+    async def scan_idle_once(self) -> int:
+        """Run one explicitly requested idle scan through injected lifecycle."""
+
+        if self._lifecycle_is_closing():
+            return 0
+        integration = getattr(self, "_idle_integration", None)
+        if integration is None:
+            return 0
+        try:
+            enabled = getattr(integration, "enabled", None)
+            scan = getattr(integration, "scan_once", None)
+            closed = getattr(integration, "closed", False)
+        except Exception:
+            return 0
+        if enabled is not True or closed is True or not callable(scan):
+            return 0
+        result = scan()
+        if not inspect.isawaitable(result):
+            return 0
+        try:
+            value = await cast(Awaitable[object], result)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return 0
+        return value if type(value) is int and value >= 0 else 0
+
     @staticmethod
     def _inbound_turn_source(msg: InboundMessage) -> TurnSource:
         """Classify trusted bus provenance without treating system input as gateway input."""
 
         if cron_trigger(msg.metadata):
             return TurnSource.CRON
+        if local_trigger(msg.metadata) is not None:
+            return TurnSource.SYSTEM_COMPAT
         if msg.channel == "system" or not msg.is_user_input:
             return TurnSource.SYSTEM_COMPAT
         return TurnSource.GATEWAY
@@ -1209,6 +1288,7 @@ class AgentLoop:
             and msg.input_role != "system"
             and msg.is_user_input
             and not cron_trigger(msg.metadata)
+            and local_trigger(msg.metadata) is None
             and RECOVERY_INBOUND_METADATA_KEY not in msg.metadata
             and msg.sender_id != "subagent"
             and not msg.sender_id.startswith("system:")
@@ -1225,6 +1305,10 @@ class AgentLoop:
     ) -> _ForegroundActivityResult:
         """Persist accepted foreground activity before any turn work starts."""
 
+        if self._lifecycle_is_closing():
+            return _ForegroundActivityResult(
+                callback_error=RuntimeError("agent loop is closing"),
+            )
         if (
             not trusted
             or source not in _FOREGROUND_IDLE_SOURCES
@@ -1252,20 +1336,46 @@ class AgentLoop:
         # The source replacement above fsyncs before returning.  Only then may
         # the coordinator cancel/discard dormant work; callback failures
         # propagate and prevent the turn from reaching BUILD/RUN.
+        return await self._notify_foreground_activity(
+            session_key,
+            activity_committed=True,
+        )
+
+    async def _notify_foreground_activity(
+        self,
+        session_key: str,
+        *,
+        activity_committed: bool,
+    ) -> _ForegroundActivityResult:
+        """Notify injected idle work after a durable activity commit."""
+
+        if self._lifecycle_is_closing():
+            return _ForegroundActivityResult(
+                activity_committed=activity_committed,
+                callback_error=RuntimeError("agent loop is closing"),
+            )
+        integration = self._configured_idle_integration()
+        if integration is None:
+            return _ForegroundActivityResult(activity_committed=activity_committed)
         try:
             await integration.foreground_admitted(session_key)
         except BaseException as exc:
             return _ForegroundActivityResult(
-                activity_committed=True,
+                activity_committed=activity_committed,
                 callback_error=exc,
             )
         return _ForegroundActivityResult(
-            activity_committed=True,
+            activity_committed=activity_committed,
             callback_succeeded=True,
         )
 
-    def _remember_admitted_activity_message(self, msg: InboundMessage) -> None:
-        """Retain one internal identity marker until republished dispatch starts."""
+    def _remember_admitted_activity_message(
+        self,
+        msg: InboundMessage,
+        *,
+        notification_succeeded: bool = True,
+    ) -> None:
+        """Retain one internal identity marker until notification succeeds."""
 
         admitted_messages = getattr(self, "_admitted_activity_messages", None)
         if admitted_messages is None:
@@ -1273,41 +1383,81 @@ class AgentLoop:
         token = getattr(self, "_activity_admission_token", None)
         if token is not None:
             setattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE, token)
-        admitted_messages[id(msg)] = msg
+            setattr(
+                msg,
+                _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE,
+                not notification_succeeded,
+            )
+        admitted_messages[id(msg)] = _AdmittedActivityMessage(
+            msg,
+            notification_succeeded=notification_succeeded,
+        )
 
-    def _take_admitted_activity_message(self, msg: InboundMessage) -> bool:
-        """Consume an identity marker without trusting serialized metadata."""
+    def _take_admitted_activity_message(
+        self,
+        msg: InboundMessage,
+    ) -> _AdmittedActivityMessage | None:
+        """Read an identity marker without consuming its retry authority."""
 
         admitted_messages = getattr(self, "_admitted_activity_messages", {})
-        already_recorded = admitted_messages.pop(id(msg), None) is msg
+        marker = admitted_messages.get(id(msg))
+        already_recorded = marker is not None and marker.message is msg
         token = getattr(self, "_activity_admission_token", None)
         if not already_recorded and token is not None:
             already_recorded = (
                 getattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE, None) is token
             )
         if already_recorded:
-            with suppress(AttributeError):
-                delattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE)
-        return already_recorded
+            pending = bool(
+                getattr(msg, _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE, False)
+            )
+            return marker or _AdmittedActivityMessage(
+                msg,
+                notification_succeeded=not pending,
+            )
+        return None
 
-    def _discard_admitted_activity_message(self, msg: InboundMessage) -> None:
-        """Drop the map entry while retaining the in-memory retry marker."""
+    def _ack_admitted_activity_message(self, msg: InboundMessage) -> None:
+        """Consume a marker only after its notification callback succeeds."""
 
         admitted_messages = getattr(self, "_admitted_activity_messages", {})
-        admitted_messages.pop(id(msg), None)
+        marker = admitted_messages.get(id(msg))
+        if marker is not None and marker.message is msg:
+            admitted_messages.pop(id(msg), None)
+        with suppress(AttributeError):
+            delattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE)
+        with suppress(AttributeError):
+            delattr(msg, _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE)
+
+    def _retain_admitted_activity_for_republish(
+        self,
+        session_key: str,
+        msg: InboundMessage,
+    ) -> None:
+        """Queue the exact committed message for another notification retry."""
+
+        pending_republish = getattr(self, "_pending_republish", None)
+        if pending_republish is None:
+            pending_republish = self._pending_republish = {}
+        items = pending_republish.setdefault(session_key, [])
+        if not any(item is msg for item in items):
+            items.append(msg)
 
     def _clear_admitted_activity_messages(self) -> None:
         """Release markers when the loop shuts down without a republished turn."""
 
         admitted_messages = getattr(self, "_admitted_activity_messages", {})
         pending_republish = getattr(self, "_pending_republish", {})
-        messages = list(admitted_messages.values())
+        messages = [marker.message for marker in admitted_messages.values()]
         for pending_items in pending_republish.values():
             messages.extend(pending_items)
         for msg in messages:
             with suppress(AttributeError):
                 delattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE)
+            with suppress(AttributeError):
+                delattr(msg, _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE)
         admitted_messages.clear()
+        pending_republish.clear()
 
     async def _admit_pending_activity(self, key: str, msg: InboundMessage) -> bool:
         """Use the active source owner to admit one queued user message."""
@@ -1842,6 +1992,9 @@ class AgentLoop:
 
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
+        if self._lifecycle_is_closing():
+            return
+        self._loop_task = asyncio.current_task()
         self._running = True
         try:
             logger.info("Agent loop started")
@@ -1864,6 +2017,12 @@ class AgentLoop:
                 except Exception as e:
                     logger.warning("Error consuming inbound message: {}, continuing...", e)
                     continue
+
+                # A concurrent close may have ended the run while this
+                # message was waking the consumer.  Recheck the synchronous
+                # fence before admitting any new turn.
+                if self._lifecycle_is_closing() or not self._running:
+                    break
 
                 raw = msg.content.strip()
                 effective_key = self._effective_session_key(msg)
@@ -1976,6 +2135,8 @@ class AgentLoop:
                 task = asyncio.create_task(self._dispatch(msg))
                 self._track_active_task(effective_key, task)
         finally:
+            if getattr(self, "_loop_task", None) is asyncio.current_task():
+                self._loop_task = None
             await self.aclose()
 
     def preserve_inflight_turns_on_shutdown(self) -> None:
@@ -2043,8 +2204,6 @@ class AgentLoop:
                     self.bus.publish_inbound_nowait(item)
                 except Exception:
                     self._pending_republish[key] = items[index:]
-                    for pending_item in items[index:]:
-                        self._discard_admitted_activity_message(pending_item)
                     logger.warning('Retained unpublished pending input for {}', key)
                     break
             try:
@@ -2125,7 +2284,7 @@ class AgentLoop:
 
     async def _dispatch(self, msg: InboundMessage) -> None:
         """Adapt trusted bus ingress to canonical admission without another lock."""
-        activity_already_recorded = self._take_admitted_activity_message(msg)
+        activity_marker = self._take_admitted_activity_message(msg)
         registration_key = self._effective_session_key(msg)
         msg = dataclasses.replace(msg, session_key_override=registration_key)
         recovery = self._recovery_admission
@@ -2147,7 +2306,13 @@ class AgentLoop:
             await self.execute_turn(request, _options=_TurnExecutionOptions(
                 inbound=msg, admission_scope=partial(self._bus_turn_scope, msg), raise_errors=True,
                 trusted_foreground_activity=self._trusted_foreground_inbound(msg),
-                activity_already_recorded=activity_already_recorded))
+                activity_already_recorded=activity_marker is not None,
+                retry_activity_notification=(
+                    activity_marker is not None
+                    and not activity_marker.notification_succeeded
+                ),
+                admitted_activity_marker=activity_marker,
+            ))
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -2159,40 +2324,113 @@ class AgentLoop:
     async def aclose(self) -> None:
         """Stop active work, then close resources owned by the agent loop.
 
-        Resource teardown must still run if cancellation interrupts task draining.
-        Gateway shutdown deliberately bounds this coroutine, so keeping the cleanup
-        phase in ``finally`` prevents a timed-out background task from leaving
-        subprocess transports alive after the event loop closes.
+        A synchronous admission fence is installed before a shared teardown
+        task is created.  Waiters are shielded from that task so a cancelled
+        caller cannot abandon the cooperative cleanup owned by the loop.
         """
-        # The loop closes itself from ``run()`` while application shutdown also
-        # performs a guaranteed final close. Serialize those owners so they cannot
-        # tear down the same resources concurrently.
-        close_lock = getattr(self, "_close_lock", None)
-        if close_lock is None:
-            close_lock = self._close_lock = asyncio.Lock()
-        async with close_lock:
-            await self._aclose_unlocked()
+        self._ensure_lifecycle_state()
+        current = asyncio.current_task()
+        close_task = getattr(self, "_close_task", None)
+        if current is close_task or (
+            current is not None
+            and current in self._close_draining_tasks
+        ):
+            # The close operation may be waiting for this active/background
+            # task to finish.  A reentrant close from its finally block must
+            # not await the operation that is waiting on it.
+            return
+        self._closing = True
+        self._running = False
+        if close_task is None:
+            self._close_initiator = current
+            draining = self._close_draining_tasks
+            active_groups = getattr(self, "_active_tasks", {})
+            draining.update(
+                task
+                for tasks in active_groups.values()
+                for task in tasks
+                if not task.done()
+            )
+            draining.update(
+                task
+                for task in getattr(self, "_background_tasks", set())
+                if not task.done()
+            )
+            self._close_task = asyncio.create_task(self._aclose_operation())
+            close_task = self._close_task
+        task = close_task
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                # The shared task is shielded and remains owned by the loop;
+                # let a bounded gateway/SDK waiter return while a later owner
+                # can still join the same cleanup operation.
+                raise
+            except BaseException:
+                # Inspect the shared task below so repeated callers do not
+                # rerun the already-owned cleanup operation.
+                break
+        if task.cancelled():
+            raise asyncio.CancelledError
+        error = task.exception()
+        if error is not None:
+            raise error
 
-    async def _aclose_unlocked(self) -> None:
+    async def _aclose_operation(self) -> None:
+        """Run the one shared cooperative teardown operation."""
+
         errors: list[BaseException] = []
         active_task_groups = getattr(self, "_active_tasks", {})
         active_tasks = tuple({task for tasks in active_task_groups.values() for task in tasks})
         active_task_groups.clear()
         current_task = asyncio.current_task()
-        active_tasks = tuple(task for task in active_tasks if task is not current_task)
+        initiating_task = getattr(self, "_close_initiator", None)
+        loop_task = getattr(self, "_loop_task", None)
+        draining = getattr(self, "_close_draining_tasks", set())
+        active_tasks = tuple(
+            task for task in active_tasks
+            if task is not current_task
+            and task is not initiating_task
+            and task is not loop_task
+            and not task.done()
+        )
+        draining.update(active_tasks)
         for task in active_tasks:
-            if not task.done():
-                task.cancel()
+            task.cancel()
         try:
             if active_tasks:
                 await asyncio.gather(*active_tasks, return_exceptions=True)
-            if self._background_tasks:
-                await asyncio.gather(*self._background_tasks, return_exceptions=True)
+            background_tasks = tuple(
+                task for task in getattr(self, "_background_tasks", set())
+                if task is not current_task
+                and task is not initiating_task
+                and not task.done()
+            )
+            draining.update(background_tasks)
+            if background_tasks:
+                for task in background_tasks:
+                    task.cancel()
+                await asyncio.gather(*background_tasks, return_exceptions=True)
         except BaseException as exc:
             errors.append(exc)
         finally:
-            self._background_tasks.clear()
+            getattr(self, "_background_tasks", set()).clear()
         self._clear_admitted_activity_messages()
+
+        idle_integration = getattr(self, "_idle_integration", None)
+        close_idle = (
+            getattr(idle_integration, "aclose", None)
+            if type(idle_integration) is IdleLifecycleIntegration
+            else None
+        )
+        if callable(close_idle):
+            try:
+                result = close_idle()
+                if inspect.isawaitable(result):
+                    await cast(Awaitable[object], result)
+            except BaseException as exc:
+                errors.append(exc)
 
         owned_foreground = getattr(self, "_owned_foreground_manager", None)
         self._owned_foreground_manager = None
@@ -2206,6 +2444,8 @@ class AgentLoop:
                 await cleanup()
             except BaseException as exc:
                 errors.append(exc)
+        self._closed = True
+        draining.clear()
         if len(errors) == 1:
             raise errors[0]
         if errors:
@@ -2294,7 +2534,10 @@ class AgentLoop:
                         # Mark from the owner-registered worker itself so
                         # cancellation of the submitting bus task cannot
                         # lose the duplicate-suppression proof.
-                        self._remember_admitted_activity_message(item.message)
+                        self._remember_admitted_activity_message(
+                            item.message,
+                            notification_succeeded=outcome.callback_succeeded,
+                        )
                     if not item.result.done():
                         item.result.set_result(outcome)
 
@@ -2315,6 +2558,8 @@ class AgentLoop:
         """Admit one serialized canonical turn into the upstream stage pipeline."""
         if not isinstance(request, TurnRequest):
             raise TypeError('execute_turn expects a TurnRequest')
+        if self._lifecycle_is_closing():
+            raise RuntimeError("agent loop is closing")
         options = _options or _TurnExecutionOptions()
         deps = self._fork_dependencies
         if deps is None:
@@ -2358,6 +2603,20 @@ class AgentLoop:
                     scope = options.admission_scope(key) if options.admission_scope else nullcontext(_AdmittedTurnIO())
                     async with scope as io:
                         action = await self.approval_admission.consume(snapshot)
+                        activity_marker = options.admitted_activity_marker
+                        if activity_marker is not None:
+                            if not activity_marker.notification_succeeded:
+                                activity = await self._notify_foreground_activity(
+                                    key,
+                                    activity_committed=True,
+                                )
+                                if activity.callback_error is not None:
+                                    self._retain_admitted_activity_for_republish(
+                                        key,
+                                        activity_marker.message,
+                                    )
+                                    raise activity.callback_error
+                            self._ack_admitted_activity_message(activity_marker.message)
                         if action in ('negative', 'stale'):
                             text = ('Cancelled the pending risky action.' if action == 'negative' else
                                     'That approval request is no longer current. Please reply to the latest approval request.')
@@ -2372,6 +2631,13 @@ class AgentLoop:
                                     source=request.source,
                                     sender_id=request.sender_id,
                                     trusted=context.trusted_foreground_activity,
+                                )
+                                if activity.callback_error is not None:
+                                    raise activity.callback_error
+                            elif options.retry_activity_notification and activity_marker is None:
+                                activity = await self._notify_foreground_activity(
+                                    key,
+                                    activity_committed=True,
                                 )
                                 if activity.callback_error is not None:
                                     raise activity.callback_error

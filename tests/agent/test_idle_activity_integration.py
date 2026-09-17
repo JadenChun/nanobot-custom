@@ -13,6 +13,7 @@ from nanobot.agent.turn import RunStatus, TurnSource
 from nanobot.bus.events import InboundMessage
 from nanobot.providers.base import LLMResponse
 from nanobot.session.recovery import RECOVERY_INBOUND_METADATA_KEY
+from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
 
 engine_config = engine_fixtures.engine_config
 
@@ -85,6 +86,38 @@ async def test_disabled_or_partial_integration_does_not_write_activity(engine_co
         assert "user_activity_revision" not in backend.source.load_source_snapshot(
             "cli:idle"
         ).header["metadata"]
+    finally:
+        await loop.aclose()
+
+
+async def test_manual_idle_scan_delegates_only_to_open_enabled_integration(engine_config):
+    loop = AgentLoop.from_config(
+        engine_config,
+        tool_registry=ToolRegistry(),
+        provider=ScriptedProvider([]),
+    )
+
+    class ManualScanner:
+        enabled = True
+        closed = False
+
+        def __init__(self):
+            self.calls = 0
+
+        async def scan_once(self):
+            self.calls += 1
+            return 7
+
+    integration = ManualScanner()
+    loop._idle_integration = integration
+    try:
+        assert await loop.scan_idle_once() == 7
+        assert integration.calls == 1
+        integration.enabled = False
+        assert await loop.scan_idle_once() == 0
+        integration.enabled = True
+        integration.closed = True
+        assert await loop.scan_idle_once() == 0
     finally:
         await loop.aclose()
 
@@ -192,6 +225,10 @@ async def test_rejected_approvals_do_not_record_foreground_activity(engine_confi
             channel="websocket", chat_id="idle", sender_id="system:recovery", content="recovered",
             metadata={RECOVERY_INBOUND_METADATA_KEY: "recovery"}, input_role="user",
         ),
+        InboundMessage(
+            channel="websocket", chat_id="idle", sender_id="trigger", content="triggered",
+            metadata={LOCAL_TRIGGER_META: {"trigger_id": "trigger-1"}}, input_role="user",
+        ),
     ],
 )
 async def test_system_origin_and_recovery_do_not_record_activity(engine_config, message):
@@ -211,7 +248,7 @@ async def test_system_origin_and_recovery_do_not_record_activity(engine_config, 
         await loop.aclose()
 
 
-async def test_activity_identity_is_removed_when_republished_dispatch_is_cancelled(engine_config):
+async def test_activity_identity_survives_cancelled_republish_until_close(engine_config):
     loop = AgentLoop.from_config(
         engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([])
     )
@@ -229,15 +266,16 @@ async def test_activity_identity_is_removed_when_republished_dispatch_is_cancell
     task = asyncio.create_task(loop._dispatch(message))
     try:
         await entered.wait()
-        assert loop._admitted_activity_messages == {}
+        assert loop._admitted_activity_messages[id(message)].message is message
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        assert loop._admitted_activity_messages == {}
+        assert loop._admitted_activity_messages[id(message)].message is message
     finally:
         if not task.done():
             task.cancel()
         await loop.aclose()
+    assert loop._admitted_activity_messages == {}
 
 
 async def test_activity_identity_is_not_created_when_pending_enqueue_fails(engine_config):
@@ -306,8 +344,12 @@ async def test_activity_identity_clears_when_cleanup_cannot_republish(engine_con
         release_first.set()
         while "telegram:idle" not in loop._pending_republish:
             await asyncio.sleep(0)
-        assert loop._admitted_activity_messages == {}
+        assert len(loop._admitted_activity_messages) == 1
         assert len(loop._pending_republish["telegram:idle"]) == 1
+        retained = loop._pending_republish["telegram:idle"][0]
+        marker = loop._admitted_activity_messages[id(retained)]
+        assert marker.message is retained
+        assert marker.notification_succeeded is True
     finally:
         release_first.set()
         loop.stop()
@@ -322,10 +364,12 @@ async def test_activity_identity_clears_on_shutdown(engine_config):
     message = InboundMessage(
         channel="telegram", chat_id="idle", sender_id="user", content="queued",
     )
-    loop._remember_admitted_activity_message(message)
+    loop._remember_admitted_activity_message(message, notification_succeeded=False)
+    loop._pending_republish["telegram:idle"] = [message]
     assert loop._admitted_activity_messages
     await loop.aclose()
     assert loop._admitted_activity_messages == {}
+    assert loop._pending_republish == {}
     assert not hasattr(message, "_nanobot_activity_admitted")
 
 
@@ -375,9 +419,12 @@ async def test_pending_foreground_followup_republishes_without_duplicate_activit
         await loop.aclose()
 
 
-@pytest.mark.parametrize("failure_kind", ["runtime", "cancelled"])
+@pytest.mark.parametrize(
+    ("failure_kind", "failure_count"),
+    [("runtime", 1), ("cancelled", 1), ("runtime", 2), ("cancelled", 2)],
+)
 async def test_pending_activity_commit_survives_callback_failure_on_republish(
-    engine_config, failure_kind,
+    engine_config, failure_kind, failure_count,
 ):
     first_started = asyncio.Event()
     release_first = asyncio.Event()
@@ -398,7 +445,7 @@ async def test_pending_activity_commit_survives_callback_failure_on_republish(
             self.persisted_revisions.append(
                 snapshot.header["metadata"]["user_activity_revision"]
             )
-            if len(self.calls) == 2:
+            if 2 <= len(self.calls) < 2 + failure_count:
                 if failure_kind == "runtime":
                     raise RuntimeError("pending callback failed")
                 raise asyncio.CancelledError()
@@ -429,17 +476,17 @@ async def test_pending_activity_commit_survives_callback_failure_on_republish(
         release_first.set()
         while len(provider.calls) < 2 or loop._pending_queues:
             await asyncio.sleep(0)
-        assert integration.calls == ["telegram:idle", "telegram:idle"]
-        assert integration.persisted_revisions == [1, 2]
+        assert integration.calls == ["telegram:idle"] * (2 + failure_count)
+        assert integration.persisted_revisions == [1] + [2] * (1 + failure_count)
         assert loop._admitted_activity_messages == {}
 
         await loop.bus.publish_inbound(InboundMessage(
             channel="telegram", chat_id="idle", sender_id="user", content="unrelated",
         ))
-        while len(integration.calls) < 3:
+        while len(integration.calls) < 3 + failure_count:
             await asyncio.sleep(0)
-        assert integration.calls == ["telegram:idle"] * 3
-        assert integration.persisted_revisions == [1, 2, 3]
+        assert integration.calls == ["telegram:idle"] * (3 + failure_count)
+        assert integration.persisted_revisions == [1] + [2] * (1 + failure_count) + [3]
         while len(provider.calls) < 3:
             await asyncio.sleep(0)
         assert len(provider.calls) == 3
