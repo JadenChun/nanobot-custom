@@ -121,14 +121,17 @@ Useful docs:
 
 ## Tools
 
-Tools are discovered from `nanobot/agent/tools/` and plugin entry points.
+Built-in tools are composed by the explicit foreground factories in
+`nanobot/agent/tools/fork_factories.py`. Installed tool packages may add a
+runtime tool through the `nanobot.tools` Python entry-point group. The loader
+validates and stages the complete manifest before changing the registry.
 
 Important files:
 
 | Tool area | Files |
 |---|---|
 | Tool base and schema | `nanobot/agent/tools/base.py`, `nanobot/agent/tools/schema.py` |
-| Discovery | `nanobot/agent/tools/registry.py` |
+| Discovery and entry-point construction | `nanobot/agent/tools/loader.py`, `nanobot/agent/tools/plugin_context.py` |
 | Shell execution | `nanobot/agent/tools/shell.py` |
 | Filesystem tools | `nanobot/agent/tools/filesystem.py` |
 | Web search/fetch | `nanobot/agent/tools/web.py` |
@@ -136,6 +139,23 @@ Important files:
 | Cron | `nanobot/agent/tools/cron.py`, `nanobot/cron/` |
 | Image generation | `nanobot/agent/tools/image_generation.py` |
 | Runtime self-inspection | `nanobot/agent/tools/self.py` |
+
+Entry-point callbacks receive a fresh, frozen, slotted
+`ExternalToolContext` containing a validated `ToolsConfig`, workspace and
+timezone strings, and an optional data-only workspace sandbox status. The
+loader creates that context from a JSON snapshot for each eligible plugin, so
+plugins can read configured values (including credential strings and MCP
+headers/environment) without receiving the foreground manager, bus, session,
+runtime-control, lock or crawler services. A plugin that needs those services
+is incompatible with the entry-point construction contract. Runtime execution
+still uses the existing request and turn contexts.
+
+The exact entry-point and produced tool names `spawn` and `spawn_pipeline` are
+reserved for host-owned capabilities. External setup failures are reported at
+bounded stages and are staged atomically with respect to registry mutation.
+This is construction-context isolation for ordinary installed Python code; it
+is not a malicious-code sandbox, and importing or constructing a plugin can
+still have its own process-level side effects.
 
 Tool behavior is part of the model contract. Keep user-visible tool names, schemas, and error messages stable unless a change is intentional.
 

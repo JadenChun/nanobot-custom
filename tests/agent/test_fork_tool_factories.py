@@ -1,5 +1,5 @@
 """The real loader must expose only explicitly selected foreground capabilities."""
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -22,8 +22,8 @@ def context(tmp_path):
 def load(context, monkeypatch):
     monkeypatch.setattr('nanobot.migration_guard.require_runtime_ready', lambda: None)
     loader = ToolLoader()
-    loader.discover = MagicMock(side_effect=AssertionError('discovery must not run'))
-    loader._discover_plugins = MagicMock(side_effect=AssertionError('plugins must not run'))
+    loader.discover = MagicMock(side_effect=AssertionError('built-in discovery must not run'))
+    loader._discover_plugins = MagicMock(return_value={})
     registry = ToolRegistry()
     names = loader.load(context, registry)
     return names, registry
@@ -32,6 +32,22 @@ def load(context, monkeypatch):
 def test_unpatched_loader_remains_guarded(context):
     with pytest.raises(MigrationIncompleteError):
         ToolLoader().load(context, ToolRegistry())
+
+
+def test_unpatched_guard_stops_snapshot_discovery_factory_and_registry(context):
+    registry = ToolRegistry()
+    with (
+        patch("nanobot.agent.tools.loader.snapshot_external_context") as snapshot,
+        patch("nanobot.agent.tools.loader.entry_points") as discovery,
+        patch("nanobot.agent.tools.fork_factories.construct_core_tools") as factory,
+        patch.object(registry, "register") as register,
+        pytest.raises(MigrationIncompleteError),
+    ):
+        ToolLoader().load(context, registry)
+    snapshot.assert_not_called()
+    discovery.assert_not_called()
+    factory.assert_not_called()
+    register.assert_not_called()
 
 
 def test_exact_default_main_tools_and_dependency_handoff(context, monkeypatch):

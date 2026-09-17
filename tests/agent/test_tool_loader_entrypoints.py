@@ -7,6 +7,7 @@ from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.loader import ToolLoader
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
+from nanobot.config.schema import ToolsConfig
 
 
 class _NamedTool(Tool):
@@ -166,7 +167,7 @@ async def test_loader_entry_point_error_wrapper_preserves_tool_api(tmp_path):
     with patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]):
         _load_with_guarded_runtime(
             ToolLoader(test_classes=[]),
-            ToolContext(config=None, workspace=str(tmp_path)),
+            ToolContext(config=ToolsConfig(), workspace=str(tmp_path)),
             registry,
             core_tools=[],
         )
@@ -211,7 +212,7 @@ def test_loader_rejects_core_plugin_name_collision_before_registration(tmp_path)
         with pytest.raises(ValueError, match="Duplicate tool registration"):
             _load_with_guarded_runtime(
                 ToolLoader(test_classes=[]),
-                ToolContext(config=None, workspace=str(tmp_path)),
+                ToolContext(config=ToolsConfig(), workspace=str(tmp_path)),
                 registry,
                 core_tools=[_NamedTool("shared")],
             )
@@ -234,10 +235,10 @@ def test_loader_rejects_plugin_schema_name_collision_before_registration(tmp_pat
     mock_ep.load.return_value = _SchemaCollisionPlugin
     registry = ToolRegistry()
     with patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]):
-        with pytest.raises(ValueError, match="schema name"):
+        with pytest.raises(ValueError, match="schema"):
             _load_with_guarded_runtime(
                 ToolLoader(test_classes=[]),
-                ToolContext(config=None, workspace=str(tmp_path)),
+                ToolContext(config=ToolsConfig(), workspace=str(tmp_path)),
                 registry,
                 core_tools=[_NamedTool("shared")],
             )
@@ -268,7 +269,7 @@ def test_loader_rejects_duplicate_plugin_tool_names_before_registration(tmp_path
         with pytest.raises(ValueError, match="Duplicate tool registration"):
             _load_with_guarded_runtime(
                 ToolLoader(test_classes=[]),
-                ToolContext(config=None, workspace=str(tmp_path)),
+                ToolContext(config=ToolsConfig(), workspace=str(tmp_path)),
                 registry,
                 core_tools=[],
             )
@@ -307,7 +308,7 @@ async def test_loader_wraps_plugin_contextual_legacy_error(tmp_path):
     with patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]):
         _load_with_guarded_runtime(
             ToolLoader(test_classes=[]),
-            ToolContext(config=None, workspace=str(tmp_path)),
+            ToolContext(config=ToolsConfig(), workspace=str(tmp_path)),
             registry,
             core_tools=[],
         )

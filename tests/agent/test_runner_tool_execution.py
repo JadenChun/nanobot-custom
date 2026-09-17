@@ -17,7 +17,7 @@ from nanobot.agent.tools.execution import execute_tool_calls
 from nanobot.agent.tools.loader import ToolLoader
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ToolOutcome, TurnContext
-from nanobot.config.schema import AgentDefaults
+from nanobot.config.schema import AgentDefaults, ToolsConfig
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.openai_responses.parsing import parse_response_output
@@ -184,7 +184,7 @@ def _load_entry_point_plugin(tool_cls: type[Tool], tmp_path) -> ToolRegistry:
         patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=[]),
         patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]),
     ):
-        ToolLoader(test_classes=[]).load(ToolContext(config=None, workspace=str(tmp_path)), registry)
+        ToolLoader(test_classes=[]).load(ToolContext(config=ToolsConfig(), workspace=str(tmp_path)), registry)
     return registry
 
 

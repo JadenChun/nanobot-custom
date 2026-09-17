@@ -1,6 +1,26 @@
 # P2 explicit factories and shell-policy checkpoint
 
-The runtime loader now constructs only the explicit foreground manifest in `fork_factories.py`. Discovery and entry points remain available as inspection code but do not select runtime capabilities. Construction and collision checks precede registration; missing foreground manager/policy/locks fail without mutating the registry. Generic background/role scopes are rejected. Foreground role registries remain owned by their explicit manager builders. The public migration activation guard remains unchanged.
+The runtime loader constructs the explicit foreground manifest in
+`fork_factories.py` and then stages eligible `nanobot.tools` entry-point
+plugins through the bounded adapter below. Built-in package discovery remains
+inspection-only. Construction and collision checks precede registration;
+missing foreground manager/policy/locks fail without mutating the registry.
+Generic background/role scopes are rejected. Foreground role registries remain
+owned by their explicit manager builders. The public migration activation guard
+remains unchanged.
+
+Installed `nanobot.tools` entry points are supported only as additive core
+tools. Before callbacks run, the loader serializes the exact `ToolsConfig` and
+checks the workspace, timezone and sandbox scalars. Each eligible plugin then
+gets a fresh frozen `ExternalToolContext` rebuilt from that snapshot. It can
+read configured credential strings and MCP headers/environment, but it cannot
+receive foreground services such as the manager, bus, sessions, locks,
+crawler or runtime control. Service-dependent plugins are incompatible with
+this construction contract. The exact names `spawn` and `spawn_pipeline` are
+reserved at both the entry-point and produced-tool boundaries. This isolates
+construction inputs for installed Python code; it does not sandbox malicious
+imports or constructor side effects, and request/turn contexts remain the
+execution-time boundary.
 
 Factory dependencies carry the existing manager, resource policy and shared locks. Browser/device/desktop configuration reaches lazy constructors; crawler requires both existing switches; VPN retains exactly the existing `AGENT_VPN_BROKER_ENABLED` true predicate. Canonical image class selection is unique, but legacy image exposure/backend/config adaptation remains an open gate: this checkpoint must not be used as a runnable release.
 

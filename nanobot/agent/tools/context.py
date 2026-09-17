@@ -105,3 +105,13 @@ class ToolContext:
     workspace_sandbox: WorkspaceSandboxStatus | None = None
     runtime_control: RuntimeControl | None = None
     fork_dependencies: ForkToolDependencies | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalToolContext:
+    """Data-only construction inputs exposed to installed tool plugins."""
+
+    config: ToolsConfig
+    workspace: str
+    timezone: str
+    workspace_sandbox: WorkspaceSandboxStatus | None = None

@@ -7,19 +7,32 @@ from __future__ import annotations
 import importlib
 import pkgutil
 from importlib.metadata import entry_points
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult
+from nanobot.agent.tools.plugin_context import (
+    ExternalContextError,
+    ExternalContextSnapshot,
+    new_external_context,
+    snapshot_external_context,
+)
 from nanobot.agent.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
     from nanobot.agent.tools.context import RequestContext, ToolContext
 
+
+_EXTERNAL_SETUP_STAGES = frozenset({
+    "discovery", "configuration", "scope", "enablement", "construction", "name", "schema",
+})
+_RESERVED_EXTERNAL_TOOL_NAMES = frozenset({"spawn", "spawn_pipeline"})
+RESERVED_EXTERNAL_TOOL_NAMES = _RESERVED_EXTERNAL_TOOL_NAMES
+
 _SKIP_MODULES = frozenset({
     "base", "schema", "registry", "context", "loader", "config",
-    "file_state", "sandbox", "mcp", "__init__", "runtime_control",
+    "file_state", "sandbox", "mcp", "plugin_context", "__init__", "runtime_control",
 })
 
 
@@ -72,18 +85,23 @@ class ToolLoader:
         plugins: dict[str, type[Tool]] = {}
         try:
             eps = entry_points(group="nanobot.tools")
+            entries = list(eps)
+            named_entries: list[tuple[str, Any]] = []
+            entry_names: set[str] = set()
+            for ep in entries:
+                name = ep.name
+                if type(name) is not str or not name or name in _RESERVED_EXTERNAL_TOOL_NAMES:
+                    raise ValueError
+                if name in entry_names:
+                    raise ValueError
+                entry_names.add(name)
+                named_entries.append((name, ep))
+            named_entries.sort(key=lambda item: item[0])
         except Exception:
-            return plugins
-        entries = list(eps)
-        entry_names: set[str] = set()
-        for ep in entries:
-            if not isinstance(ep.name, str) or not ep.name:
-                raise ValueError("Tool plugin entry point has an invalid name")
-            if ep.name in entry_names:
-                raise ValueError(f"Duplicate tool plugin entry point: {ep.name}")
-            entry_names.add(ep.name)
-        entries.sort(key=lambda entry: entry.name)
-        for ep in entries:
+            self._log_external_setup_failure("discovery")
+            raise self._external_setup_error("discovery") from None
+
+        for entry_name, ep in named_entries:
             try:
                 cls = ep.load()
                 if (
@@ -92,29 +110,94 @@ class ToolLoader:
                     and not getattr(cls, "__abstractmethods__", None)
                     and getattr(cls, "_plugin_discoverable", True)
                 ):
-                    plugins[ep.name] = cls
+                    plugins[entry_name] = cls
             except Exception:
-                logger.exception("Failed to load tool plugin: %s", ep.name)
+                self._log_external_setup_failure("discovery")
+                raise self._external_setup_error("discovery") from None
         self._plugins = plugins
         return plugins
 
-    def _construct_plugins(self, ctx: ToolContext) -> list[Tool]:
+    @staticmethod
+    def _external_setup_error(stage: str) -> ValueError:
+        if stage not in _EXTERNAL_SETUP_STAGES:
+            stage = "construction"
+        return ValueError(f"External tool setup failed at {stage}")
+
+    @staticmethod
+    def _log_external_setup_failure(stage: str) -> None:
+        if stage not in _EXTERNAL_SETUP_STAGES:
+            stage = "construction"
+        logger.warning("External tool setup failed at {}", stage)
+
+    def _construct_plugins(self, snapshot: ExternalContextSnapshot, *, scope: str) -> list[Tool]:
         """Create enabled core-scope entry-point tools behind the compatibility adapter."""
         tools: list[Tool] = []
-        for entry_name, cls in sorted(self._discover_plugins().items()):
-            scopes = getattr(cls, "_scopes", {"core"})
-            if not isinstance(scopes, set) or not all(isinstance(scope, str) for scope in scopes):
-                raise ValueError(f"Tool plugin '{entry_name}' has invalid scope metadata")
-            if "core" not in scopes or not cls.enabled(ctx):
+        try:
+            discovered = self._discover_plugins()
+            entries = sorted(discovered.items())
+        except Exception:
+            self._log_external_setup_failure("discovery")
+            raise self._external_setup_error("discovery") from None
+        for _entry_name, cls in entries:
+            try:
+                scopes_value: object = getattr(cls, "_scopes", {"core"})
+                if type(scopes_value) is not set:
+                    raise ValueError
+                scope_values = cast(set[object], scopes_value)
+                if not all(type(value) is str for value in scope_values):
+                    raise ValueError
+                scopes = cast(set[str], scope_values)
+            except Exception:
+                self._log_external_setup_failure("scope")
+                raise self._external_setup_error("scope") from None
+            if scope not in scopes:
                 continue
-            tool = cls.create(ctx)
-            if not isinstance(tool, Tool):
-                raise TypeError(f"Tool plugin '{entry_name}' did not create a Tool")
-            if not isinstance(tool.name, str) or not tool.name:
-                raise ValueError(f"Tool plugin '{entry_name}' has an invalid tool name")
-            if ToolRegistry._schema_name(tool.to_schema()) != tool.name:
-                raise ValueError(f"Tool plugin '{entry_name}' schema name does not match its tool name")
-            tools.append(_LegacyErrorPrefixTool(tool))
+            try:
+                plugin_ctx = new_external_context(snapshot)
+            except ExternalContextError:
+                self._log_external_setup_failure("configuration")
+                raise self._external_setup_error("configuration") from None
+            except Exception:
+                self._log_external_setup_failure("configuration")
+                raise self._external_setup_error("configuration") from None
+            try:
+                enabled = cast(Any, cls).enabled(plugin_ctx)
+                if type(enabled) is not bool:
+                    raise ValueError
+            except Exception:
+                self._log_external_setup_failure("enablement")
+                raise self._external_setup_error("enablement") from None
+            if not enabled:
+                continue
+            try:
+                tool = cast(Any, cls).create(plugin_ctx)
+                if not isinstance(tool, Tool):
+                    raise TypeError
+            except Exception:
+                self._log_external_setup_failure("construction")
+                raise self._external_setup_error("construction") from None
+            try:
+                tool_name = tool.name
+                if type(tool_name) is not str or not tool_name:
+                    raise ValueError
+                if tool_name in _RESERVED_EXTERNAL_TOOL_NAMES:
+                    raise ValueError
+            except Exception:
+                self._log_external_setup_failure("name")
+                raise self._external_setup_error("name") from None
+            try:
+                schema_value: Any = tool.to_schema()
+                if not isinstance(schema_value, dict):
+                    raise ValueError
+                schema = cast(dict[str, Any], schema_value)
+                if ToolRegistry._schema_name(  # pyright: ignore[reportPrivateUsage]
+                    schema
+                ) != tool_name:
+                    raise ValueError
+            except Exception:
+                self._log_external_setup_failure("schema")
+                raise self._external_setup_error("schema") from None
+            tools.append(_LegacyErrorPrefixTool(tool, tool_name))
         return tools
 
     def load(self, ctx: ToolContext, registry: ToolRegistry, *, scope: str = "core") -> list[str]:
@@ -123,8 +206,13 @@ class ToolLoader:
         from nanobot.agent.tools.fork_factories import construct_core_tools
 
         if scope != "core":
-            raise ValueError(f"Unsupported runtime tool scope: {scope}")
-        tools = [*construct_core_tools(ctx), *self._construct_plugins(ctx)]
+            raise ValueError("Unsupported runtime tool scope")
+        try:
+            snapshot = snapshot_external_context(ctx)
+        except Exception:
+            self._log_external_setup_failure("configuration")
+            raise self._external_setup_error("configuration") from None
+        tools = [*construct_core_tools(ctx), *self._construct_plugins(snapshot, scope=scope)]
         names = [tool.name for tool in tools]
         if len(names) != len(set(names)) or any(registry.has(name) for name in names):
             raise ValueError("Duplicate tool registration in foreground manifest")
@@ -138,9 +226,9 @@ class _LegacyErrorPrefixTool(Tool):
 
     _plugin_discoverable = False
 
-    def __init__(self, wrapped: Tool) -> None:
+    def __init__(self, wrapped: Tool, name: str) -> None:
         self._wrapped = wrapped
-        self._name = wrapped.name
+        self._name = name
 
     @property
     def name(self) -> str:
@@ -185,9 +273,20 @@ class _LegacyErrorPrefixTool(Tool):
         return self._wrapped.validate_params(params)
 
     def to_schema(self) -> dict[str, Any]:
-        schema = self._wrapped.to_schema()
-        if ToolRegistry._schema_name(schema) != self._name:
+        try:
+            schema_value: Any = self._wrapped.to_schema()
+            if not isinstance(schema_value, dict):
+                raise ValueError
+            schema = cast(dict[str, Any], schema_value)
+            valid = ToolRegistry._schema_name(  # pyright: ignore[reportPrivateUsage]
+                schema
+            ) == self._name
+        except Exception:
+            schema = None
+            valid = False
+        if not valid:
             raise ValueError("Tool plugin schema name does not match its registered name")
+        assert schema is not None
         return schema
 
     async def execute(self, **kwargs: Any) -> Any:
