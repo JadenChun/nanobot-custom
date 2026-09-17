@@ -48,7 +48,11 @@ from nanobot.session.checkpoint_dependencies import (
     derive_summary_references,
 )
 from nanobot.session.context_checkpoint import validate_context_checkpoint
-from nanobot.session.idle_checkpoint import IdleCheckpointCapture
+from nanobot.session.idle_checkpoint import (
+    IdleCheckpointCapture,
+    _validate_capture_attestation,
+    project_idle_root_nodes,
+)
 from nanobot.session.idle_compaction import capture_idle_token
 from nanobot.session.source import SourceValidationError, prefix_digest
 from nanobot.session.source_compaction import SourceCompactionCandidate
@@ -1216,7 +1220,7 @@ def _checkpoint_from_capture(
         if validated != stored or stored.get("checkpoint_id") != snapshot.state.checkpoint_id:
             raise IdleSummaryBindingError("captured checkpoint identity changed")
     try:
-        canonical = source_nodes(snapshot.events)
+        canonical = project_idle_root_nodes(capture, source_nodes(snapshot.events))
         covered = {event["_event_id"] for event in snapshot.events[:previous_boundary]}
         newest_user = next(
             (node.event_id for node in reversed(canonical) if node.message.get("role") == "user"),
@@ -1237,7 +1241,8 @@ def _checkpoint_from_capture(
             accepted_boundary=previous_boundary,
             accepted_checkpoint=previous,
         )
-    except (KeyError, StopIteration, SourceValidationError):
+    except (AttributeError, KeyError, RecursionError, StopIteration, SourceValidationError,
+            TypeError, ValueError):
         raise IdleSummaryBindingError("captured root source projection is invalid") from None
     return candidate, previous
 
@@ -1256,6 +1261,10 @@ def _validate_capture_binding(
         raise IdleSummaryBindingError("exact I3b binding registry is required")
     actual_capture = cast(IdleCheckpointCapture, capture)
     actual_binding = cast(IdleRuntimeBinding, binding)
+    try:
+        _validate_capture_attestation(actual_capture)
+    except (AttributeError, RecursionError, SourceValidationError, TypeError, ValueError):
+        raise IdleSummaryBindingError("capture attestation is invalid") from None
     try:
         binding_registry.require_current(actual_binding, actual_binding.session_key)
     except Exception:

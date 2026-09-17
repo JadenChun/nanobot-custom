@@ -8,6 +8,8 @@ import multiprocessing
 import pickle
 import threading
 from contextlib import contextmanager
+from copy import copy as shallow_copy
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -17,7 +19,11 @@ import pytest
 from nanobot.agent.tools.execution import KnownToolResult
 from nanobot.agent.tools.filesystem import ReadFileTool
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.session.artifact import ArtifactValidationError, parse_artifact_descriptor
+from nanobot.session.artifact import (
+    ArtifactDescriptor,
+    ArtifactValidationError,
+    parse_artifact_descriptor,
+)
 from nanobot.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
 from nanobot.session.execution_owner import (
     ExecutionBusyError,
@@ -30,6 +36,7 @@ from nanobot.session.idle_checkpoint import (
     IdleCheckpointError,
     IdleDependencyAccess,
     IdlePolicyBinding,
+    project_idle_root_nodes,
 )
 from nanobot.session.manager import JsonlSessionStore, Session
 from nanobot.session.source import prefix_digest
@@ -126,12 +133,12 @@ def _hold_artifact_store(root, workspace_id, session_key, incarnation, generatio
         release.wait(timeout=10)
 
 
-async def _artifact_source(tmp_path):
+async def _artifact_source(tmp_path, text="evidence 中文 🌟"):
     """Build a published root artifact, then release its foreground owner."""
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    (workspace / "file").write_text("evidence 中文 🌟", encoding="utf-8")
+    (workspace / "file").write_text(text, encoding="utf-8")
     backend = JsonlSessionStore(workspace)
     session = Session("test:read")
     backend.save(session)
@@ -244,6 +251,7 @@ async def test_dependency_bearing_idle_checkpoint_verifies_exact_root_dependenci
         policy=policy,
     )
     assert capture is not None and isinstance(capture.dependencies, IdleDependencyAccess)
+    assert capture.dependencies._snapshot is not capture.snapshot
     candidate = _proposal(capture.snapshot, references=[descriptor.reference])
     proof = _dependency_proof(capture, candidate["summary"], descriptor)
     committed = source.publish_idle_checkpoint(
@@ -258,6 +266,117 @@ async def test_dependency_bearing_idle_checkpoint_verifies_exact_root_dependenci
     assert committed.checkpoint == candidate
     assert committed.checkpoint["artifact_references"] == [descriptor.reference]
     assert store.root.exists()
+
+
+@pytest.mark.asyncio
+async def test_idle_projection_bridge_uses_captured_root_descriptor_without_retrieval(tmp_path):
+    source, admitted, _, descriptor, policy = await _artifact_source(
+        tmp_path, "preview head\n" + ("a" * 2000) + "\nunique full-tail sentinel"
+    )
+    capture = source.capture_idle_checkpoint(
+        admitted.state.session_key,
+        runtime_fingerprint="runtime-1",
+        policy_fingerprint=policy.fingerprint,
+        policy=policy,
+    )
+    assert capture is not None and isinstance(capture.dependencies, IdleDependencyAccess)
+    original = source_nodes(capture.snapshot.events)
+    projected = project_idle_root_nodes(capture, original)
+    assert projected[:-1] == original[:-1]
+    assert projected[-1].event_id == descriptor.event_id
+    assert projected[-1].artifact is not None
+    assert descriptor.reference in projected[-1].message["content"]
+    assert "unique full-tail sentinel" in original[-1].message["content"]
+    assert "unique full-tail sentinel" not in projected[-1].message["content"]
+
+
+@pytest.mark.asyncio
+async def test_idle_projection_bridge_seal_rejects_reconstruction_mutation_and_swaps(tmp_path):
+    source, admitted, store, descriptor, policy = await _artifact_source(
+        tmp_path, "preview head\n" + ("a" * 2000) + "\nunique full-tail sentinel"
+    )
+    capture = source.capture_idle_checkpoint(
+        admitted.state.session_key,
+        runtime_fingerprint="runtime-1",
+        policy_fingerprint=policy.fingerprint,
+        policy=policy,
+    )
+    other = source.capture_idle_checkpoint(
+        admitted.state.session_key,
+        runtime_fingerprint="runtime-1",
+        policy_fingerprint=policy.fingerprint,
+        policy=policy,
+    )
+    assert capture is not None and other is not None
+    canonical = source_nodes(capture.snapshot.events)
+    for forged in (
+        replace(capture, snapshot=deepcopy(capture.snapshot)),
+        replace(capture, dependencies=None),
+        replace(capture, dependencies=other.dependencies),
+    ):
+        with pytest.raises(IdleCheckpointError):
+            project_idle_root_nodes(forged, canonical)
+    with pytest.raises(TypeError):
+        shallow_copy(capture)
+
+    binding_mutation = source.capture_idle_checkpoint(
+        admitted.state.session_key,
+        runtime_fingerprint="runtime-1",
+        policy_fingerprint=policy.fingerprint,
+        policy=policy,
+    )
+    assert binding_mutation is not None
+    binding_mutation.snapshot.header["metadata"]["artifact_manifest"]["descriptors"][
+        descriptor.artifact_id
+    ]["event_id"] = "foreign-event"
+    with pytest.raises(IdleCheckpointError):
+        project_idle_root_nodes(binding_mutation, source_nodes(binding_mutation.snapshot.events))
+
+    capture.snapshot.header["metadata"].pop("artifact_manifest")
+    with pytest.raises(IdleCheckpointError):
+        project_idle_root_nodes(capture, source_nodes(capture.snapshot.events))
+
+    assert store.root.exists()
+
+
+@pytest.mark.asyncio
+async def test_idle_projection_bridge_is_storage_and_policy_free(tmp_path, monkeypatch):
+    source, admitted, _, descriptor, policy = await _artifact_source(
+        tmp_path, "preview head\n" + ("a" * 2000) + "\nunique full-tail sentinel"
+    )
+    capture = source.capture_idle_checkpoint(
+        admitted.state.session_key,
+        runtime_fingerprint="runtime-1",
+        policy_fingerprint=policy.fingerprint,
+        policy=policy,
+    )
+    assert capture is not None
+
+    def fail(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise AssertionError("pure idle projection touched external authority")
+
+    monkeypatch.setattr(source, "_read_unlocked", fail)
+    monkeypatch.setattr(PrivateArtifactStore, "transaction", fail)
+    projected = project_idle_root_nodes(capture, source_nodes(capture.snapshot.events))
+    assert projected[-1].artifact is not None
+    assert projected[-1].artifact.artifact_id == descriptor.artifact_id
+    assert all(
+        not isinstance(node.artifact, (ArtifactDescriptor, IdleDependencyAccess, IdlePolicyBinding))
+        for node in projected
+    )
+
+
+@pytest.mark.asyncio
+async def test_idle_projection_bridge_fails_closed_without_matching_capability(tmp_path):
+    source, admitted, _, _, _ = await _artifact_source(tmp_path)
+    capture = source.capture_idle_checkpoint(
+        admitted.state.session_key,
+        runtime_fingerprint="runtime-1",
+        policy_fingerprint="policy-1",
+    )
+    assert capture is not None and capture.dependencies is None
+    with pytest.raises(IdleCheckpointError):
+        project_idle_root_nodes(capture, source_nodes(capture.snapshot.events))
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import asyncio
 import multiprocessing
 import os
 import shutil
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,7 +26,7 @@ from nanobot.agent.idle_scanner import (
     IdleScannerIneligible,
     InMemoryIdleBlockerAuthority,
 )
-from nanobot.agent.idle_summary import IdleDependencyVerification
+from nanobot.agent.idle_summary import IdleDependencyVerification, IdleSummaryBindingError
 from nanobot.providers.base import GenerationSettings
 from nanobot.session.artifact_reader import ArtifactReader
 from nanobot.session.idle_checkpoint import IdlePolicyBinding
@@ -48,13 +49,19 @@ def _enabled_policy(*, max_auxiliary_tokens: int = 1000) -> IdleCompactionPolicy
     )
 
 
-async def _dependency_fixture(tmp_path: Path):
-    """Build a released source with a published root artifact and retrieval."""
+async def _dependency_fixture(
+    tmp_path: Path,
+    *,
+    retrieval: bool = True,
+    text: str = "evidence 中文 🌟",
+):
+    """Build a released source with a published root artifact."""
 
-    async with setup_read(tmp_path) as (writer, tool, store, descriptor, _):
+    async with setup_read(tmp_path, text) as (writer, tool, store, descriptor, _):
         writer.append_message({"role": "user", "content": "idle objective"})
         reader = ArtifactReader(writer, "root_history", store, tool)
-        await _record_retrieval(writer, reader, descriptor.reference)
+        if retrieval:
+            await _record_retrieval(writer, reader, descriptor.reference)
         backend = writer.store._backend
         key = writer.owner.key
 
@@ -283,10 +290,106 @@ async def test_dependency_bearing_scanner_publishes_schema_v2_proof_once(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_dependency_mutation_rejects_before_i3c_dispatch_without_source_write(
+async def test_root_artifact_projection_scanner_without_retrieval_is_compact_and_authorized(
     tmp_path: Path,
 ) -> None:
-    source, store, _, policy, registry, binding, activity = await _dependency_fixture(tmp_path)
+    source, store, descriptor, policy, registry, binding, activity = await _dependency_fixture(
+        tmp_path,
+        retrieval=False,
+        text="preview head\n" + ("a" * 2000) + "\nunique full-tail sentinel",
+    )
+    before = source.load_source_snapshot(binding.session_key)
+    attempt = _Attempt(["offline summary"])
+    verifier = _ScannerDependencyVerifier(source, store, policy)
+    adapter = _adapter(
+        attempt,
+        source,
+        registry,
+        binding,
+        replace(_limits(), max_calls=1, max_total_tokens=10_000, max_wall_seconds=5.0),
+        dependency_verifier=verifier,
+    )
+    blockers = InMemoryIdleBlockerAuthority()
+    blockers.clear(binding.session_key)
+    scanner = IdleCompactionScanner(
+        source_store=source,
+        binding_registry=registry,
+        blocker_authority=blockers,
+        summary_adapter=adapter,
+        policy=_enabled_policy(max_auxiliary_tokens=10_000),
+        discovery_limits=SourceDiscoveryLimits(100, 100, 4000, 256),
+        utc_clock=lambda: datetime.fromisoformat(activity) + timedelta(seconds=30),
+    )
+    try:
+        assert await scanner.scan_once() == 1
+        await scanner.coordinator.drain()
+        after = source.load_source_snapshot(binding.session_key)
+        assert scanner.coordinator.outcome_for(binding.session_key).value == "succeeded"
+        assert after.checkpoint is not None
+        assert after.checkpoint["schema_version"] == 2
+        assert after.checkpoint["artifact_references"] == [descriptor.reference]
+        assert verifier.calls and verifier.calls[-1] == (descriptor.reference,)
+        assert len(attempt.requests) == 1
+        measured_text = str(attempt.measurements)
+        assert descriptor.reference in measured_text
+        assert "Incomplete preview" in measured_text
+        assert "unique full-tail sentinel" not in measured_text
+        assert after.events == before.events
+        assert not any("_artifact_read" in event for event in after.events)
+    finally:
+        await scanner.aclose()
+
+
+@pytest.mark.asyncio
+async def test_forged_idle_capture_cannot_drop_manifest_before_i3c_measurement(
+    tmp_path: Path,
+) -> None:
+    source, store, _, policy, registry, binding, _ = await _dependency_fixture(
+        tmp_path,
+        retrieval=False,
+        text=("preview head\n" + ("a" * 2000) + "\nSECRET_TAIL"),
+    )
+    capture = source.capture_idle_checkpoint(
+        binding.session_key,
+        runtime_fingerprint="runtime-1",
+        policy_fingerprint=policy.fingerprint,
+        policy=policy,
+    )
+    assert capture is not None and capture.dependencies is not None
+    forged_snapshot = deepcopy(capture.snapshot)
+    forged_snapshot.header["metadata"].pop("artifact_manifest")
+    forged = replace(capture, snapshot=forged_snapshot, dependencies=None)
+    before = source.load_source_snapshot(binding.session_key)
+    attempt = _Attempt(["offline summary"])
+    verifier = _ScannerDependencyVerifier(source, store, policy)
+    adapter = _adapter(
+        attempt,
+        source,
+        registry,
+        binding,
+        replace(_limits(), max_calls=1, max_total_tokens=10_000, max_wall_seconds=5.0),
+        dependency_verifier=verifier,
+    )
+    with pytest.raises(IdleSummaryBindingError):
+        await adapter.summarize(
+            forged, binding, deadline=asyncio.get_running_loop().time() + 2
+        )
+    assert attempt.measurements == []
+    assert attempt.requests == []
+    assert verifier.calls == []
+    after = source.load_source_snapshot(binding.session_key)
+    assert after == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("retrieval", [True, False])
+async def test_dependency_mutation_rejects_before_i3c_dispatch_without_source_write(
+    tmp_path: Path,
+    retrieval: bool,
+) -> None:
+    source, store, _, policy, registry, binding, activity = await _dependency_fixture(
+        tmp_path, retrieval=retrieval
+    )
     before = source._backend.get_session_path(binding.session_key).read_bytes()
     next(store.root.rglob("*.blob")).write_bytes(b"corrupt")
     attempt = _Attempt(["offline summary"])
@@ -319,6 +422,101 @@ async def test_dependency_mutation_rejects_before_i3c_dispatch_without_source_wr
         assert source._backend.get_session_path(binding.session_key).read_bytes() == before
     finally:
         await scanner.aclose()
+
+
+@pytest.mark.asyncio
+async def test_root_projection_policy_denial_discloses_no_artifact_or_provider_request(
+    tmp_path: Path,
+) -> None:
+    source, store, _, policy, registry, binding, activity = await _dependency_fixture(
+        tmp_path,
+        retrieval=False,
+        text="preview head\n" + ("a" * 2000) + "\nSECRET_TAIL",
+    )
+
+    def deny(_value: str) -> Path:
+        raise PermissionError("policy denied")
+
+    denied = IdlePolicyBinding(policy.fingerprint, policy.workspace, None, deny)
+    attempt = _Attempt(["offline summary"])
+    verifier = _ScannerDependencyVerifier(source, store, denied)
+    adapter = _adapter(
+        attempt,
+        source,
+        registry,
+        binding,
+        replace(_limits(), max_calls=1, max_total_tokens=10_000, max_wall_seconds=5.0),
+        dependency_verifier=verifier,
+    )
+    blockers = InMemoryIdleBlockerAuthority()
+    blockers.clear(binding.session_key)
+    scanner = IdleCompactionScanner(
+        source_store=source,
+        binding_registry=registry,
+        blocker_authority=blockers,
+        summary_adapter=adapter,
+        policy=_enabled_policy(max_auxiliary_tokens=10_000),
+        discovery_limits=SourceDiscoveryLimits(100, 100, 4000, 256),
+        utc_clock=lambda: datetime.fromisoformat(activity) + timedelta(seconds=30),
+    )
+    try:
+        assert await scanner.scan_once() == 1
+        await scanner.coordinator.drain()
+        assert scanner.coordinator.outcome_for(binding.session_key).value == "failed"
+        assert attempt.requests == []
+        assert "SECRET_TAIL" not in str(attempt.measurements)
+        assert source.load_source_snapshot(binding.session_key).checkpoint is None
+    finally:
+        await scanner.aclose()
+
+
+@pytest.mark.asyncio
+async def test_root_projection_reference_deduplicates_across_multi_chunk_fold(
+    tmp_path: Path,
+) -> None:
+    source, store, descriptor, policy, registry, binding, _ = await _dependency_fixture(
+        tmp_path,
+        retrieval=False,
+        text="preview head\n" + ("a" * 2000) + "\nSECRET_TAIL",
+    )
+    capture = source.capture_idle_checkpoint(
+        binding.session_key,
+        runtime_fingerprint="runtime-1",
+        policy_fingerprint=policy.fingerprint,
+        policy=policy,
+    )
+    assert capture is not None
+
+    class SplitAttempt(_Attempt):
+        def measure_request(self, messages, *, max_output_tokens, safety_buffer):  # type: ignore[no-untyped-def]
+            receipt = super().measure_request(
+                messages,
+                max_output_tokens=max_output_tokens,
+                safety_buffer=safety_buffer,
+            )
+            combined = "Tool output stored as" in str(messages) and "idle objective" in str(messages)
+            input_tokens = 1_100 if combined else 100
+            return replace(
+                receipt,
+                input_tokens=input_tokens,
+                total_reservation_tokens=input_tokens + max_output_tokens + safety_buffer,
+            )
+
+    attempt = SplitAttempt(["first", "second"])
+    verifier = _ScannerDependencyVerifier(source, store, policy)
+    result = await _adapter(
+        attempt,
+        source,
+        registry,
+        binding,
+        replace(_limits(), max_input_tokens=1_000, max_chunks=2, max_total_tokens=10_000),
+        dependency_verifier=verifier,
+    ).summarize(capture, binding, deadline=asyncio.get_running_loop().time() + 2)
+    assert result.status == "complete" and result.proposal is not None
+    assert result.proposal.checkpoint["artifact_references"] == [descriptor.reference]
+    assert len(result.proposal.proof.chunks) == 2
+    assert verifier.calls and all(call == (descriptor.reference,) for call in verifier.calls if call)
+    assert "SECRET_TAIL" not in str(attempt.measurements)
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from session.test_idle_checkpoint import _artifact_source
 
 import nanobot.agent.idle_summary as idle_summary_module
 from nanobot.agent.idle_runtime import IdleRuntimeBindingRegistry
@@ -978,6 +979,26 @@ async def test_root_candidate_retains_newest_user_and_waits_for_tool_closure(tmp
         capture, binding, deadline=asyncio.get_running_loop().time() + 2
     )
     assert result.proposal is not None and result.proposal.checkpoint["boundary"] == 6
+
+
+@pytest.mark.asyncio
+async def test_root_candidate_projects_captured_artifact_without_retrieval(tmp_path: Path) -> None:
+    source, admitted, _, descriptor, policy = await _artifact_source(
+        tmp_path, "preview head\n" + ("a" * 2000) + "\nunique full-tail sentinel"
+    )
+    capture = source.capture_idle_checkpoint(
+        admitted.state.session_key,
+        runtime_fingerprint="runtime-1",
+        policy_fingerprint=policy.fingerprint,
+        policy=policy,
+    )
+    assert capture is not None
+    candidate, previous = _checkpoint_from_capture(capture)
+    assert previous is None
+    evidence = candidate.summary_evidence(candidate.boundaries[-1])
+    assert tuple(projection.event_id for projection in evidence.projections) == (descriptor.event_id,)
+    assert evidence.projections[0].binding.artifact_id == descriptor.artifact_id
+    assert "unique full-tail sentinel" not in str(evidence.nodes)
 
 
 @pytest.mark.asyncio

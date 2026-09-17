@@ -16,6 +16,8 @@ atomic JSONL replacement.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -55,6 +57,27 @@ if TYPE_CHECKING:
 
 
 _CAPABILITY = object()
+_UNBOUND_ATTESTATION = object()
+
+
+@dataclass(frozen=True, slots=True)
+class _IdleCaptureAttestation:
+    """Factory-issued identity and immutable digest for one idle capture."""
+
+    _capability: object = field(repr=False)
+    _capture_id: int = field(repr=False)
+    _nonce: object = field(repr=False)
+    _token: IdleCaptureToken = field(repr=False)
+    _source: SourceSessionStore = field(repr=False)
+    _store: PrivateArtifactStore | None = field(repr=False)
+    _store_binding: tuple[str, str, str, int] | None
+    _runtime_fingerprint: str
+    _policy_fingerprint: str
+    _snapshot_digest: str
+    _dependency_present: bool
+    _dependency_id: int | None = field(repr=False)
+    _descriptor_digest: str | None
+    _root_authority: SourceRootAuthority | None = field(repr=False)
 
 
 class IdleCheckpointError(SourceValidationError):
@@ -111,6 +134,8 @@ class IdleDependencyAccess:
     _incarnation: str
     _generation: int
     _policy_fingerprint: str
+    _snapshot: SourceSnapshot
+    _snapshot_digest: str
     _descriptors: tuple[ArtifactDescriptor, ...]
 
     def __post_init__(self) -> None:
@@ -118,6 +143,10 @@ class IdleDependencyAccess:
             raise IdleCheckpointError("Invalid idle dependency capability")
         if type(self._token) is not IdleCaptureToken:
             raise IdleCheckpointError("Invalid idle dependency capture")
+        if type(self._snapshot) is not _source_snapshot_type():
+            raise IdleCheckpointError("Invalid idle dependency snapshot")
+        if self._snapshot_digest != _snapshot_digest(self._snapshot):
+            raise IdleCheckpointError("Invalid idle dependency snapshot seal")
         if not self._descriptors:
             # An empty root-history manifest is a valid capability. It still
             # must never be widened after capture.
@@ -141,6 +170,10 @@ class IdleDependencyAccess:
             and self._store.session_key == self._session_key
             and self._store.incarnation == self._incarnation
             and self._store.generation == self._generation
+            and self._policy_fingerprint == capture.policy_fingerprint
+            and self._snapshot is not capture.snapshot
+            and self._snapshot_digest == _snapshot_digest(self._snapshot)
+            and self._snapshot_digest == _snapshot_digest(capture.snapshot)
         )
 
     def _verify(
@@ -179,9 +212,12 @@ class IdleCheckpointCapture:
     _nonce: object = field(repr=False, compare=False)
     dependencies: IdleDependencyAccess | None = None
     root_authority: SourceRootAuthority | None = field(default=None, repr=False, compare=False)
+    _attestation: _IdleCaptureAttestation | object = field(
+        default=_UNBOUND_ATTESTATION, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
-        if type(self.token) is not IdleCaptureToken or not isinstance(self.snapshot, object):
+        if type(self.token) is not IdleCaptureToken or type(self.snapshot) is not _source_snapshot_type():
             raise IdleCheckpointError("Invalid idle checkpoint capture")
         for name, value in (
             ("runtime", self.runtime_fingerprint),
@@ -191,6 +227,11 @@ class IdleCheckpointCapture:
                 raise IdleCheckpointError(f"Invalid idle {name} fingerprint")
         if self.dependencies is not None and type(self.dependencies) is not IdleDependencyAccess:
             raise IdleCheckpointError("Invalid idle dependency capability")
+        if (
+            self._attestation is not _UNBOUND_ATTESTATION
+            and type(self._attestation) is not _IdleCaptureAttestation
+        ):
+            raise IdleCheckpointError("Invalid idle capture attestation")
 
     def __reduce__(self) -> object:
         raise TypeError("Idle checkpoint capture cannot be serialized")
@@ -203,6 +244,105 @@ def _validate_fingerprint(value: object, label: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise IdleCheckpointError(f"Invalid idle {label} fingerprint")
     return value
+
+
+def _json_digest(value: object, label: str) -> str:
+    try:
+        encoded = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        raise IdleCheckpointError(f"Invalid idle {label} seal") from None
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _snapshot_digest(snapshot: SourceSnapshot) -> str:
+    if type(snapshot) is not _source_snapshot_type():
+        raise IdleCheckpointError("Invalid idle snapshot seal")
+    try:
+        state = snapshot.state
+        payload = {
+            "state": {
+                "store_identity": state.store_identity,
+                "session_key": state.session_key,
+                "incarnation": state.incarnation,
+                "revision": state.revision,
+                "generation": state.generation,
+                "checkpoint_id": state.checkpoint_id,
+                "checkpoint_fingerprint": state.checkpoint_fingerprint,
+            },
+            "header": copy.deepcopy(snapshot.header),
+            "events": copy.deepcopy(snapshot.events),
+            "checkpoint": copy.deepcopy(snapshot.checkpoint),
+        }
+    except (AttributeError, TypeError, ValueError, RecursionError):
+        raise IdleCheckpointError("Invalid idle snapshot seal") from None
+    return _json_digest(payload, "snapshot")
+
+
+def _descriptor_digest(descriptors: tuple[ArtifactDescriptor, ...]) -> str:
+    if type(descriptors) is not tuple or any(
+        type(item) is not ArtifactDescriptor for item in descriptors
+    ):
+        raise IdleCheckpointError("Invalid idle dependency descriptor seal")
+    return _json_digest([item.to_dict() for item in descriptors], "dependency descriptor")
+
+
+def _validate_capture_attestation(capture: IdleCheckpointCapture) -> None:
+    """Require the factory-issued, immutable identity for one exact capture."""
+
+    if type(capture) is not IdleCheckpointCapture:
+        raise IdleCheckpointError("Invalid idle checkpoint capture")
+    attestation = capture._attestation
+    if (
+        type(attestation) is not _IdleCaptureAttestation
+        or attestation._capability is not _CAPABILITY
+        or attestation._capture_id != id(capture)
+        or attestation._nonce is not capture._nonce
+        or attestation._token is not capture.token
+        or attestation._source is not capture._source
+        or attestation._runtime_fingerprint != capture.runtime_fingerprint
+        or attestation._policy_fingerprint != capture.policy_fingerprint
+        or attestation._root_authority is not capture.root_authority
+    ):
+        raise IdleCheckpointError("Idle capture attestation changed")
+    if type(capture._source) is not _source_store_type():
+        raise IdleCheckpointError("Idle capture source binding changed")
+    store = capture._source._artifact_store
+    store_binding = (
+        None
+        if store is None
+        else (store.workspace_id, store.session_key, store.incarnation, store.generation)
+    )
+    if attestation._store is not store or attestation._store_binding != store_binding:
+        raise IdleCheckpointError("Idle capture artifact store binding changed")
+    snapshot_digest = _snapshot_digest(capture.snapshot)
+    if snapshot_digest != attestation._snapshot_digest:
+        raise IdleCheckpointError("Idle capture snapshot changed")
+    dependencies = capture.dependencies
+    if (dependencies is not None) != attestation._dependency_present:
+        raise IdleCheckpointError("Idle capture dependency authority changed")
+    if dependencies is None:
+        if attestation._dependency_id is not None or attestation._descriptor_digest is not None:
+            raise IdleCheckpointError("Idle capture dependency authority changed")
+        return
+    if (
+        type(dependencies) is not IdleDependencyAccess
+        or attestation._dependency_id != id(dependencies)
+        or dependencies._source is not capture._source
+        or dependencies._capture_nonce is not capture._nonce
+        or dependencies._token is not capture.token
+        or dependencies._store is not capture._source._artifact_store
+        or dependencies._policy_fingerprint != capture.policy_fingerprint
+        or dependencies._snapshot_digest != snapshot_digest
+        or _snapshot_digest(dependencies._snapshot) != dependencies._snapshot_digest
+        or attestation._descriptor_digest != _descriptor_digest(dependencies._descriptors)
+    ):
+        raise IdleCheckpointError("Idle capture dependency authority changed")
 
 
 def _validate_root_authority(
@@ -249,6 +389,96 @@ def _root_descriptors(
     return tuple(root)
 
 
+def _captured_root_descriptors(
+    capture: IdleCheckpointCapture,
+) -> tuple[ArtifactDescriptor, ...]:
+    """Validate and return only root descriptors from the detached capture."""
+
+    source = capture._source
+    store = source._artifact_store
+    if store is None:
+        metadata = capture.snapshot.header.get("metadata")
+        if not isinstance(metadata, dict) or "artifact_manifest" not in metadata:
+            return ()
+        manifest = metadata["artifact_manifest"]
+        if (
+            not isinstance(manifest, dict)
+            or set(manifest) != {"schema_version", "descriptors"}
+            or type(manifest["schema_version"]) is not int
+            or manifest["schema_version"] != 1
+            or not isinstance(manifest["descriptors"], dict)
+        ):
+            raise ArtifactValidationError("Invalid artifact manifest schema")
+        if manifest["descriptors"]:
+            raise ArtifactValidationError("Idle artifact store binding is unavailable")
+        return ()
+    return _root_descriptors(source, capture.snapshot)
+
+
+def project_idle_root_nodes(
+    capture: IdleCheckpointCapture,
+    nodes: tuple[object, ...],
+) -> tuple[object, ...]:
+    """Project captured root producer nodes through sealed artifact descriptors.
+
+    This is the I2-to-I3c projection boundary.  It reads only the detached
+    snapshot, canonical root nodes, and descriptor allowlist sealed at capture;
+    it never reads source or artifact storage and returns detached source nodes
+    without descriptors, stores, grants, or policy objects.
+    """
+
+    if type(capture) is not IdleCheckpointCapture:
+        raise IdleCheckpointError("Invalid idle checkpoint capture")
+    if type(nodes) is not tuple:
+        raise IdleCheckpointError("Invalid idle root projection")
+    _validate_capture_attestation(capture)
+
+    from nanobot.session.artifact_projection import (
+        render_artifact_projection,
+        validate_artifact_projection,
+    )
+    from nanobot.session.source_projection import SourceNode, source_nodes
+
+    if any(type(node) is not SourceNode for node in nodes):
+        raise IdleCheckpointError("Invalid idle root projection")
+    canonical = source_nodes(capture.snapshot.events)
+    if nodes != canonical:
+        raise IdleCheckpointError("Idle root projection is not canonical")
+
+    descriptors = _captured_root_descriptors(capture)
+    access = capture.dependencies
+    if access is None:
+        if descriptors:
+            raise IdleCheckpointError("Idle dependency capability is unavailable")
+        return tuple(copy.deepcopy(node) for node in canonical)
+    if type(access) is not IdleDependencyAccess or not access._matches_capture(
+        capture._source, capture
+    ):
+        raise IdleCheckpointError("Idle dependency capability binding changed")
+    if tuple(access._descriptors) != descriptors:
+        raise IdleCheckpointError("Idle dependency descriptor allowlist changed")
+
+    by_event: dict[str, ArtifactDescriptor] = {}
+    for descriptor in descriptors:
+        if descriptor.block_index is not None or descriptor.event_id in by_event:
+            raise ArtifactValidationError("Idle root artifact descriptor is ambiguous")
+        by_event[descriptor.event_id] = descriptor
+
+    projected: list[SourceNode] = []
+    for canonical_node in canonical:
+        descriptor = by_event.get(canonical_node.event_id)
+        if descriptor is None:
+            projected.append(copy.deepcopy(canonical_node))
+            continue
+        try:
+            candidate = render_artifact_projection(canonical_node, descriptor)
+            validate_artifact_projection(candidate, canonical_node, capture.snapshot)
+        except (ArtifactValidationError, KeyError, TypeError, ValueError):
+            raise ArtifactValidationError("Idle artifact projection is invalid") from None
+        projected.append(copy.deepcopy(candidate))
+    return tuple(projected)
+
+
 def _capture_with_snapshot(
     source: SourceSessionStore,
     key: str,
@@ -263,9 +493,12 @@ def _capture_with_snapshot(
     token = capture_idle_token(snapshot, runtime_checkpoint_present=runtime_checkpoint_present)
     if token is None:
         return None
+    detached_snapshot = copy.deepcopy(snapshot)
     nonce = object()
     dependencies = None
     if source._artifact_store is not None and policy is not None:
+        dependency_snapshot = copy.deepcopy(detached_snapshot)
+        descriptors = _root_descriptors(source, dependency_snapshot)
         dependencies = IdleDependencyAccess(
             _CAPABILITY,
             source,
@@ -277,18 +510,51 @@ def _capture_with_snapshot(
             snapshot.state.incarnation,
             snapshot.state.generation,
             policy.fingerprint,
-            _root_descriptors(source, snapshot),
+            dependency_snapshot,
+            _snapshot_digest(dependency_snapshot),
+            descriptors,
         )
-    return IdleCheckpointCapture(
+    capture = IdleCheckpointCapture(
         token,
-        copy.deepcopy(snapshot),
+        detached_snapshot,
         _validate_fingerprint(runtime_fingerprint, "runtime"),
         _validate_fingerprint(policy_fingerprint, "policy"),
         source,
         nonce,
         dependencies,
         root_authority,
+        _UNBOUND_ATTESTATION,
     )
+    object.__setattr__(
+        capture,
+        "_attestation",
+        _IdleCaptureAttestation(
+            _CAPABILITY,
+            id(capture),
+            nonce,
+            token,
+            source,
+            source._artifact_store,
+            (
+                None
+                if source._artifact_store is None
+                else (
+                    source._artifact_store.workspace_id,
+                    source._artifact_store.session_key,
+                    source._artifact_store.incarnation,
+                    source._artifact_store.generation,
+                )
+            ),
+            capture.runtime_fingerprint,
+            capture.policy_fingerprint,
+            _snapshot_digest(detached_snapshot),
+            dependencies is not None,
+            id(dependencies) if dependencies is not None else None,
+            _descriptor_digest(dependencies._descriptors) if dependencies is not None else None,
+            capture.root_authority,
+        ),
+    )
+    return capture
 
 
 def capture_idle_checkpoint(
@@ -349,6 +615,13 @@ def _source_store_type() -> type[SourceSessionStore]:
     return SourceSessionStore
 
 
+def _source_snapshot_type() -> type[SourceSnapshot]:
+    # Import lazily to avoid source_store -> idle_checkpoint import cycles.
+    from nanobot.session.source_store import SourceSnapshot
+
+    return SourceSnapshot
+
+
 def _candidate_and_proof(
     capture: IdleCheckpointCapture,
     candidate: object,
@@ -406,6 +679,10 @@ def _validate_capture_for_source(
     policy_fingerprint: str,
     root_authority: SourceRootAuthority | None,
 ) -> None:
+    try:
+        _validate_capture_attestation(capture)
+    except IdleCheckpointError:
+        raise IdleCheckpointConflict("Idle checkpoint capture attestation changed") from None
     if (
         type(capture) is not IdleCheckpointCapture
         or capture._source is not source
@@ -581,5 +858,6 @@ __all__ = [
     "IdleDependencyAccess",
     "IdlePolicyBinding",
     "capture_idle_checkpoint",
+    "project_idle_root_nodes",
     "publish_idle_checkpoint",
 ]
