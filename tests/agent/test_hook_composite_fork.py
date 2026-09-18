@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
 from nanobot.agent.hook import AgentHook, AgentHookContext, CompositeHook
@@ -141,6 +139,26 @@ async def test_composite_error_isolation_all_async():
     await hook.before_execute_tools(ctx)
     await hook.after_iteration(ctx)
     assert calls == ["on_stream_end", "before_execute_tools", "after_iteration"]
+
+
+@pytest.mark.asyncio
+async def test_composite_reraise_hook_propagates_without_isolation():
+    calls: list[str] = []
+
+    class Strict(AgentHook):
+        def __init__(self) -> None:
+            super().__init__(reraise=True)
+
+        async def before_iteration(self, context: AgentHookContext) -> None:
+            raise RuntimeError("strict hook failed")
+
+    class Good(AgentHook):
+        async def before_iteration(self, context: AgentHookContext) -> None:
+            calls.append("good")
+
+    with pytest.raises(RuntimeError, match="strict hook failed"):
+        await CompositeHook([Strict(), Good()]).before_iteration(_ctx())
+    assert calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -281,121 +299,3 @@ async def test_composite_empty_hooks_no_ops():
     await hook.before_execute_tools(ctx)
     await hook.after_iteration(ctx)
     assert hook.finalize_content(ctx, "test") == "test"
-
-
-# ---------------------------------------------------------------------------
-# Integration: AgentLoop with extra hooks
-# ---------------------------------------------------------------------------
-
-
-def _make_loop(tmp_path, hooks=None):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    provider.generation.max_tokens = 4096
-
-    with patch("nanobot.agent.loop.ContextBuilder"), \
-         patch("nanobot.agent.loop.SessionManager"), \
-         patch("nanobot.agent.loop.ForegroundAgentManager"), \
-         patch("nanobot.agent.loop.MemoryConsolidator"):
-        loop = AgentLoop(
-            bus=bus, provider=provider, workspace=tmp_path, hooks=hooks,
-        )
-    return loop
-
-
-@pytest.mark.asyncio
-async def test_agent_loop_extra_hook_receives_calls(tmp_path):
-    """Extra hook passed to AgentLoop is called alongside core LoopHook."""
-    from nanobot.providers.base import LLMResponse
-
-    events: list[str] = []
-
-    class TrackingHook(AgentHook):
-        async def before_iteration(self, context):
-            events.append(f"before_iter:{context.iteration}")
-
-        async def after_iteration(self, context):
-            events.append(f"after_iter:{context.iteration}")
-
-    loop = _make_loop(tmp_path, hooks=[TrackingHook()])
-    loop.provider.chat_with_retry = AsyncMock(
-        return_value=LLMResponse(content="done", tool_calls=[], usage={})
-    )
-    loop.tools.get_definitions = MagicMock(return_value=[])
-
-    content, tools_used, messages = await loop._run_agent_loop(
-        [{"role": "user", "content": "hi"}]
-    )
-
-    assert content == "done"
-    assert "before_iter:0" in events
-    assert "after_iter:0" in events
-
-
-@pytest.mark.asyncio
-async def test_agent_loop_extra_hook_error_isolation(tmp_path):
-    """A faulty extra hook does not crash the agent loop."""
-    from nanobot.providers.base import LLMResponse
-
-    class BadHook(AgentHook):
-        async def before_iteration(self, context):
-            raise RuntimeError("I am broken")
-
-    loop = _make_loop(tmp_path, hooks=[BadHook()])
-    loop.provider.chat_with_retry = AsyncMock(
-        return_value=LLMResponse(content="still works", tool_calls=[], usage={})
-    )
-    loop.tools.get_definitions = MagicMock(return_value=[])
-
-    content, _, _ = await loop._run_agent_loop(
-        [{"role": "user", "content": "hi"}]
-    )
-
-    assert content == "still works"
-
-
-@pytest.mark.asyncio
-async def test_agent_loop_extra_hooks_do_not_swallow_loop_hook_errors(tmp_path):
-    """Extra hooks must not change the core LoopHook failure behavior."""
-    from nanobot.providers.base import LLMResponse, ToolCallRequest
-
-    loop = _make_loop(tmp_path, hooks=[AgentHook()])
-    loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="c1", name="list_dir", arguments={"path": "."})],
-        usage={},
-    ))
-    loop.tools.get_definitions = MagicMock(return_value=[])
-    loop.tools.execute = AsyncMock(return_value="ok")
-
-    async def bad_progress(*args, **kwargs):
-        raise RuntimeError("progress failed")
-
-    with pytest.raises(RuntimeError, match="progress failed"):
-        await loop._run_agent_loop([], on_progress=bad_progress)
-
-
-@pytest.mark.asyncio
-async def test_agent_loop_no_hooks_backward_compat(tmp_path):
-    """Without hooks param, behavior is identical to before."""
-    from nanobot.providers.base import LLMResponse, ToolCallRequest
-
-    loop = _make_loop(tmp_path)
-    loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
-        content="working",
-        tool_calls=[ToolCallRequest(id="c1", name="list_dir", arguments={"path": "."})],
-    ))
-    loop.tools.get_definitions = MagicMock(return_value=[])
-    loop.tools.execute = AsyncMock(return_value="ok")
-    loop.max_iterations = 2
-
-    content, tools_used, _ = await loop._run_agent_loop([])
-    assert content == (
-        "I reached the maximum number of tool call iterations (2) "
-        "without completing the task. You can try breaking the task into smaller steps."
-    )
-    assert tools_used == ["list_dir", "list_dir"]

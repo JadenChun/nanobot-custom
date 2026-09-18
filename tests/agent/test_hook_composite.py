@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.context import TranscriptInput
+from nanobot.agent.foreground import build_foreground_dependencies
 from nanobot.agent.hook import (
     AgentHook,
     AgentHookContext,
@@ -14,8 +14,10 @@ from nanobot.agent.hook import (
     AgentTurnHookContext,
     CompositeHook,
 )
-from nanobot.agent.tools.context import RequestContext
-from nanobot.utils.progress_events import output_events
+from nanobot.agent.turn import DeliveryTarget, TurnRequest
+from nanobot.config.schema import ToolsConfig
+from nanobot.providers.base import GenerationSettings
+from nanobot.utils.llm_runtime import LLMRuntime
 
 
 def _ctx() -> AgentHookContext:
@@ -410,6 +412,12 @@ async def test_composite_can_wrap_another_composite():
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _allow_guarded_constructor_for_this_suite(monkeypatch):
+    """Open only this suite's constructor seam; restore the fail-closed guard after each test."""
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+
+
 def _make_loop(tmp_path, hooks=None, hook_factories=None):
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.queue import MessageBus
@@ -417,17 +425,23 @@ def _make_loop(tmp_path, hooks=None, hook_factories=None):
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    provider.generation.max_tokens = 4096
+    provider.generation = GenerationSettings(max_tokens=4096)
+    runtime = LLMRuntime.capture(provider, "test-model", context_window_tokens=120000)
+    dependencies = build_foreground_dependencies(
+        workspace=tmp_path,
+        runtime=runtime,
+        tools_config=ToolsConfig(),
+        restrict_to_workspace=False,
+    )
 
-    with patch("nanobot.agent.loop.ContextBuilder"), \
-         patch("nanobot.agent.loop.SessionManager"), \
-         patch("nanobot.agent.loop.SubagentManager") as mock_sub_mgr, \
+    with patch("nanobot.agent.loop.SubagentManager") as mock_sub_mgr, \
          patch("nanobot.agent.loop.Consolidator"):
         mock_sub_mgr.return_value.cancel_by_session = AsyncMock(return_value=0)
         loop = AgentLoop(
             bus=bus,
             provider=provider,
             workspace=tmp_path,
+            fork_dependencies=dependencies,
             hooks=hooks,
             hook_factories=hook_factories,
         )
@@ -460,12 +474,13 @@ async def test_agent_loop_extra_hook_receives_calls(tmp_path):
     )
     loop.tools.get_definitions = MagicMock(return_value=[])
 
-    result = await loop._run_agent_loop(
-        TranscriptInput(history=[{"role": "user", "content": "hi"}], current_message=None),
-        runtime=loop.llm_runtime(),
-    )
+    result = await loop.execute_turn(TurnRequest(
+        content="hi",
+        session_key="cli:hooks",
+        route=DeliveryTarget(channel="cli", chat_id="hooks"),
+    ))
 
-    assert result.final_content == "done"
+    assert result.content == "done"
     assert "before_run" in events
     assert "before_iter:0" in events
     assert "after_iter:0" in events
@@ -501,22 +516,11 @@ async def test_agent_loop_turn_hook_factories_receive_context(tmp_path):
     )
     loop.tools.get_definitions = MagicMock(return_value=[])
 
-    async def on_progress(*args, **kwargs):
-        pass
-
-    runtime = loop.llm_runtime()
-    await loop._run_agent_loop(
-        TranscriptInput(history=[{"role": "user", "content": "hi"}], current_message=None),
-        runtime=runtime,
-        events=output_events(on_progress=on_progress),
-        request_context=RequestContext(
-            channel="websocket",
-            chat_id="chat-1",
-            message_id="msg-1",
-            session_key="websocket:chat-1",
-            runtime=runtime,
-            metadata={"source": "test"},
-        ),
+    await loop.process_direct(
+        "hi",
+        session_key="websocket:chat-1",
+        channel="websocket",
+        chat_id="chat-1",
         hook_factories=[factory("turn")],
     )
 
@@ -527,14 +531,14 @@ async def test_agent_loop_turn_hook_factories_receive_context(tmp_path):
     assert [context.workspace for _, context in captured] == [tmp_path, tmp_path]
     assert [context.channel for _, context in captured] == ["websocket", "websocket"]
     assert [context.chat_id for _, context in captured] == ["chat-1", "chat-1"]
-    assert [context.message_id for _, context in captured] == ["msg-1", "msg-1"]
+    assert [context.message_id for _, context in captured] == [None, None]
     assert [context.session_key for _, context in captured] == [
         "websocket:chat-1",
         "websocket:chat-1",
     ]
     assert [context.metadata for _, context in captured] == [
-        {"source": "test"},
-        {"source": "test"},
+        {},
+        {},
     ]
 
 
@@ -553,12 +557,13 @@ async def test_agent_loop_extra_hook_error_isolation(tmp_path):
     )
     loop.tools.get_definitions = MagicMock(return_value=[])
 
-    result = await loop._run_agent_loop(
-        TranscriptInput(history=[{"role": "user", "content": "hi"}], current_message=None),
-        runtime=loop.llm_runtime(),
-    )
+    result = await loop.execute_turn(TurnRequest(
+        content="hi",
+        session_key="cli:hook-error",
+        route=DeliveryTarget(channel="cli", chat_id="hook-error"),
+    ))
 
-    assert result.final_content == "still works"
+    assert result.content == "still works"
 
 
 @pytest.mark.asyncio
@@ -579,10 +584,11 @@ async def test_agent_loop_extra_hooks_do_not_swallow_loop_hook_errors(tmp_path):
         raise RuntimeError("progress failed")
 
     with pytest.raises(RuntimeError, match="progress failed"):
-        await loop._run_agent_loop(
-            TranscriptInput(history=[], current_message=None),
-            runtime=loop.llm_runtime(),
-            events=output_events(on_progress=bad_progress),
+        await loop.process_direct(
+            "task",
+            session_key="cli:hook-progress",
+            on_progress=bad_progress,
+            hooks=[AgentHook()],
         )
 
 
@@ -600,11 +606,12 @@ async def test_agent_loop_no_hooks_backward_compat(tmp_path):
     loop.tools.execute = AsyncMock(return_value="ok")
     loop.max_iterations = 2
 
-    result = await loop._run_agent_loop(
-        TranscriptInput(history=[], current_message=None),
-        runtime=loop.llm_runtime(),
-    )
-    assert result.final_content == (
+    result = await loop.execute_turn(TurnRequest(
+        content="task",
+        session_key="cli:no-hooks",
+        route=DeliveryTarget(channel="cli", chat_id="no-hooks"),
+    ))
+    assert result.content == (
         "I reached the maximum number of tool call iterations (2) "
         "without completing the task. You can try breaking the task into smaller steps."
     )
