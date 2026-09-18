@@ -22,6 +22,10 @@ from uuid import uuid4
 
 from loguru import logger
 
+from nanobot.agent.memory_recovery import (
+    MEMORY_RECEIPT_FILENAME,
+    require_memory_receipt_recovery,
+)
 from nanobot.events import NO_EVENTS, ContextCompactionEvent, EventSink
 from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import LLMUsage, ProviderCallContext, ProviderConversationState
@@ -74,6 +78,12 @@ class MemoryStore:
     )
 
     def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY):
+        # A pending legacy receipt is owned by the recovery package.  Validate
+        # it before ``ensure_dir`` or any migration side effect can touch the
+        # workspace; Package B will apply or otherwise resolve the receipt.
+        require_memory_receipt_recovery(
+            Path(workspace) / "memory" / MEMORY_RECEIPT_FILENAME,
+        )
         self.workspace = workspace
         self.max_history_entries = max_history_entries
         self.memory_dir = ensure_dir(workspace / "memory")
