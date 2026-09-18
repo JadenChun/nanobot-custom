@@ -29,7 +29,7 @@ import stat
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self
+from typing import Callable, Self
 
 try:  # pragma: no cover - platform qualification is tested through the gate.
     import fcntl as _fcntl
@@ -44,6 +44,9 @@ _RECOVERY_NAME = ".recovery"
 _BLOBS_NAME = "blobs"
 _DIGEST_DIR_NAME = "sha256"
 _COMPANION_PREFIX = ".install-"
+_EVIDENCE_KINDS = frozenset(("transactions", "conversions"))
+_RECORD_SLOT_RE = re.compile(r"(?:genesis\.json|next-[0-9a-f]{64}\.json)\Z")
+_NAMESPACE_CAPABILITY = object()
 _PRIVATE_DIRECTORY_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
 _READ_CHUNK = 64 * 1024
@@ -388,6 +391,18 @@ def _validate_digest(value: str) -> str:
     return value
 
 
+def _validate_evidence_kind(value: str) -> str:
+    if type(value) is not str or value not in _EVIDENCE_KINDS:
+        raise _error("invalid") from None
+    return value
+
+
+def _validate_record_slot(value: str) -> str:
+    if type(value) is not str or _RECORD_SLOT_RE.fullmatch(value) is None:
+        raise _error("invalid") from None
+    return value
+
+
 def _write_all(fd: int, content: bytes) -> None:
     view = memoryview(content)
     offset = 0
@@ -399,6 +414,425 @@ def _write_all(fd: int, content: bytes) -> None:
         if written <= 0:
             raise _error("io") from None
         offset += written
+
+
+class _ImmutableSlotStore:
+    """Shared no-clobber publication for digest and named immutable slots."""
+
+    def __init__(
+        self,
+        directory_fd: Callable[[], int],
+        assert_binding: Callable[[], None],
+        sync_directory: Callable[[], None],
+    ) -> None:
+        self._directory_fd = directory_fd
+        self._assert_binding = assert_binding
+        self._sync_directory = sync_directory
+
+    def _fd(self) -> int:
+        return self._directory_fd()
+
+    def _entry_binding(self, entry: _Entry) -> None:
+        current = _stat_entry(self._fd(), entry.name)
+        if current is None or not _same_snapshot(current, entry.info):
+            raise _error("binding") from None
+
+    def _open_verified_file(
+        self,
+        name: str,
+        *,
+        content_digest: str | None,
+        expected: bytes | None,
+        missing_code: str,
+        conflict_code: str,
+        allowed_links: set[int] | frozenset[int],
+        fsync: bool = False,
+    ) -> _Entry:
+        directory_fd = self._fd()
+        observed = _stat_entry(directory_fd, name)
+        if observed is None:
+            raise _error(missing_code) from None
+        fd: int | None = None
+        try:
+            fd = os.open(name, _leaf_flags(), dir_fd=directory_fd)
+        except (OSError, TypeError, ValueError):
+            raise _error("corrupt") from None
+        try:
+            before = _fstat(fd, code="binding")
+            if not _same_binding(observed, before):
+                raise _error("binding") from None
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != _uid()
+                or stat.S_IMODE(before.st_mode) != _PRIVATE_FILE_MODE
+                or before.st_nlink not in allowed_links
+            ):
+                raise _error("corrupt") from None
+            digest_state = hashlib.sha256()
+            result = bytearray()
+            position = 0
+            while True:
+                try:
+                    chunk = os.read(fd, _READ_CHUNK)
+                except (OSError, TypeError, ValueError):
+                    raise _error("io") from None
+                if not chunk:
+                    break
+                digest_state.update(chunk)
+                if expected is not None:
+                    end = position + len(chunk)
+                    if end > len(expected) or chunk != expected[position:end]:
+                        raise _error(conflict_code) from None
+                else:
+                    result.extend(chunk)
+                position += len(chunk)
+            after = _fstat(fd, code="binding")
+            if not _same_snapshot(before, after) or position != after.st_size:
+                raise _error("binding") from None
+            if content_digest is not None and digest_state.hexdigest() != content_digest:
+                raise _error(conflict_code) from None
+            if expected is not None and position != len(expected):
+                raise _error(conflict_code) from None
+            current = _stat_entry(directory_fd, name)
+            if current is None or not _same_snapshot(current, after):
+                raise _error("binding") from None
+            if fsync:
+                _fsync(fd)
+                final = _fstat(fd, code="binding")
+                current = _stat_entry(directory_fd, name)
+                if current is None or not _same_snapshot(final, after) or not _same_snapshot(
+                    current, final
+                ):
+                    raise _error("binding") from None
+            return _Entry(name, _identity(after), after, bytes(result) if expected is None else expected)
+        finally:
+            _close(fd)
+
+    def _validate_relationship(self, target: _Entry, companion: _Entry | None) -> None:
+        """Accept exact original hardlinks or copied independent private files."""
+
+        if companion is None:
+            if target.info.st_nlink != 1:
+                raise _error("corrupt") from None
+            return
+        same = target.identity == companion.identity
+        if same:
+            if target.info.st_nlink != 2 or companion.info.st_nlink != 2:
+                raise _error("corrupt") from None
+            names: set[str] = set()
+            try:
+                entries = os.listdir(self._fd())
+            except (OSError, TypeError, ValueError):
+                raise _error("io") from None
+            for name in entries:
+                info = _stat_entry(self._fd(), name)
+                if info is not None and _identity(info) == target.identity:
+                    names.add(name)
+            if names != {target.name, companion.name}:
+                raise _error("corrupt") from None
+        elif (
+            target.info.st_nlink != 1
+            or companion.info.st_nlink != 1
+            or target.data != companion.data
+        ):
+            raise _error("corrupt") from None
+
+    def _compare_presence_state(
+        self,
+        before_target: _Entry | None,
+        before_companion: _Entry | None,
+        after_target: _Entry | None,
+        after_companion: _Entry | None,
+    ) -> None:
+        """Keep a missing/read state bound while checking both record names."""
+
+        for before, after in (
+            (before_target, after_target),
+            (before_companion, after_companion),
+        ):
+            if (before is None) != (after is None):
+                raise _error("binding") from None
+            if before is not None and after is not None:
+                if (
+                    before.identity != after.identity
+                    or not _same_snapshot(before.info, after.info)
+                    or before.data != after.data
+                ):
+                    raise _error("binding") from None
+
+    def state(
+        self,
+        target_name: str,
+        *,
+        content_digest: str | None,
+        expected: bytes | None,
+    ) -> tuple[_Entry | None, _Entry | None]:
+        directory_fd = self._fd()
+        companion_name = _COMPANION_PREFIX + target_name
+        target_info = _stat_entry(directory_fd, target_name)
+        companion_info = _stat_entry(directory_fd, companion_name)
+        target: _Entry | None = None
+        companion: _Entry | None = None
+        conflict_code = "conflict" if expected is not None else "corrupt"
+        if target_info is not None:
+            target = self._open_verified_file(
+                target_name,
+                content_digest=content_digest,
+                expected=expected,
+                missing_code="missing",
+                conflict_code=conflict_code,
+                allowed_links={1, 2},
+            )
+        if companion_info is not None:
+            companion = self._open_verified_file(
+                companion_name,
+                content_digest=content_digest,
+                expected=expected,
+                missing_code="missing",
+                conflict_code=conflict_code,
+                allowed_links={1, 2},
+            )
+        if target is not None and companion is not None:
+            self._validate_relationship(target, companion)
+        elif target is not None:
+            self._validate_relationship(target, None)
+        elif companion is not None and companion.info.st_nlink != 1:
+            raise _error("corrupt") from None
+        return target, companion
+
+    def _create_companion(self, target_name: str, content: bytes) -> _Entry:
+        companion_name = _COMPANION_PREFIX + target_name
+        content_digest = hashlib.sha256(content).hexdigest()
+        fd: int | None = None
+        try:
+            try:
+                fd = os.open(
+                    companion_name,
+                    _write_flags(),
+                    _PRIVATE_FILE_MODE,
+                    dir_fd=self._fd(),
+                )
+            except FileExistsError:
+                return self._open_verified_file(
+                    companion_name,
+                    content_digest=content_digest,
+                    expected=content,
+                    missing_code="missing",
+                    conflict_code="conflict",
+                    allowed_links={1, 2},
+                )
+            except (OSError, TypeError, ValueError):
+                raise _error("io") from None
+            before = _fstat(fd)
+            _private_file(before, links={1})
+            _write_all(fd, content)
+            current = _stat_entry(self._fd(), companion_name)
+            if current is None or not _same_binding(current, before):
+                raise _error("binding") from None
+            _fsync(fd)
+            after = _fstat(fd, code="binding")
+            if (
+                not _same_binding(before, after)
+                or after.st_uid != before.st_uid
+                or after.st_gid != before.st_gid
+                or stat.S_IMODE(after.st_mode) != _PRIVATE_FILE_MODE
+                or after.st_nlink != 1
+                or after.st_size != len(content)
+            ):
+                raise _error("binding") from None
+            current = _stat_entry(self._fd(), companion_name)
+            if current is None or not _same_identity_shape(current, after):
+                raise _error("binding") from None
+            verified = self._open_verified_file(
+                companion_name,
+                content_digest=content_digest,
+                expected=content,
+                missing_code="missing",
+                conflict_code="conflict",
+                allowed_links={1},
+            )
+            self._entry_binding(verified)
+            self._sync_directory()
+            self._assert_binding()
+            return verified
+        finally:
+            _close(fd)
+
+    def _compare_final_state(
+        self,
+        before_target: _Entry,
+        before_companion: _Entry | None,
+        after_target: _Entry | None,
+        after_companion: _Entry | None,
+    ) -> None:
+        if after_target is None or (before_companion is None) != (after_companion is None):
+            raise _error("binding") from None
+        if after_target.identity != before_target.identity or not _same_snapshot(
+            before_target.info, after_target.info
+        ):
+            raise _error("binding") from None
+        if after_target.data != before_target.data:
+            raise _error("binding") from None
+        if before_companion is not None and after_companion is not None:
+            if after_companion.identity != before_companion.identity or not _same_snapshot(
+                before_companion.info, after_companion.info
+            ):
+                raise _error("binding") from None
+            if after_companion.data != before_companion.data:
+                raise _error("binding") from None
+        self._validate_relationship(after_target, after_companion)
+
+    def _durable_success(
+        self,
+        target_name: str,
+        *,
+        content_digest: str | None,
+        expected: bytes | None,
+        initial_state: tuple[_Entry, _Entry | None] | None = None,
+        retained_companion_identity: tuple[int, int] | None = None,
+    ) -> bytes:
+        if initial_state is None:
+            target, companion = self.state(
+                target_name, content_digest=content_digest, expected=expected
+            )
+        else:
+            target, companion = initial_state
+        if target is None:
+            raise _error("missing") from None
+        self._validate_relationship(target, companion)
+        if retained_companion_identity is not None and (
+            companion is None or companion.identity != retained_companion_identity
+        ):
+            raise _error("binding") from None
+        durable_target = self._open_verified_file(
+            target_name,
+            content_digest=content_digest,
+            expected=expected,
+            missing_code="missing",
+            conflict_code="conflict" if expected is not None else "corrupt",
+            allowed_links={1, 2},
+            fsync=True,
+        )
+        before_directory_target, before_directory_companion = self.state(
+            target_name, content_digest=content_digest, expected=expected
+        )
+        if before_directory_target is None:
+            raise _error("missing") from None
+        self._compare_final_state(
+            target,
+            companion,
+            before_directory_target,
+            before_directory_companion,
+        )
+        self._validate_relationship(before_directory_target, before_directory_companion)
+        if retained_companion_identity is not None and (
+            before_directory_companion is None
+            or before_directory_companion.identity != retained_companion_identity
+        ):
+            raise _error("binding") from None
+        self._entry_binding(durable_target)
+        self._assert_binding()
+        self._sync_directory()
+        after_directory_target, after_directory_companion = self.state(
+            target_name, content_digest=content_digest, expected=expected
+        )
+        self._compare_final_state(
+            before_directory_target,
+            before_directory_companion,
+            after_directory_target,
+            after_directory_companion,
+        )
+        if retained_companion_identity is not None and (
+            after_directory_companion is None
+            or after_directory_companion.identity != retained_companion_identity
+        ):
+            raise _error("binding") from None
+        self._assert_binding()
+        return after_directory_target.data or b""
+
+    def publish(self, target_name: str, content: bytes, *, content_digest: str | None) -> None:
+        self._assert_binding()
+        target, companion = self.state(
+            target_name, content_digest=content_digest, expected=content
+        )
+        if target is not None:
+            if companion is None:
+                self._create_companion(target_name, content)
+            self._durable_success(
+                target_name,
+                content_digest=content_digest,
+                expected=content,
+            )
+            return
+
+        if companion is None:
+            companion = self._create_companion(target_name, content)
+        elif companion.info.st_nlink != 1:
+            raise _error("corrupt") from None
+        self._entry_binding(companion)
+        self._assert_binding()
+        linked = False
+        companion_name = _COMPANION_PREFIX + target_name
+        try:
+            os.link(
+                companion_name,
+                target_name,
+                src_dir_fd=self._fd(),
+                dst_dir_fd=self._fd(),
+                follow_symlinks=False,
+            )
+            linked = True
+        except FileExistsError:
+            target, current_companion = self.state(
+                target_name, content_digest=content_digest, expected=content
+            )
+            if target is None:
+                raise _error("conflict") from None
+            self._entry_binding(companion)
+            if current_companion is None:
+                raise _error("binding") from None
+        except (OSError, TypeError, ValueError):
+            raise _error("io") from None
+        self._assert_binding()
+        self._durable_success(
+            target_name,
+            content_digest=content_digest,
+            expected=content,
+            retained_companion_identity=companion.identity if linked else None,
+        )
+
+    def read(
+        self,
+        target_name: str,
+        *,
+        content_digest: str | None,
+        missing_is_none: bool,
+    ) -> bytes | None:
+        self._assert_binding()
+        target, companion = self.state(
+            target_name, content_digest=content_digest, expected=None
+        )
+        if target is None:
+            self._assert_binding()
+            confirmed_target, confirmed_companion = self.state(
+                target_name, content_digest=content_digest, expected=None
+            )
+            self._compare_presence_state(
+                target,
+                companion,
+                confirmed_target,
+                confirmed_companion,
+            )
+            self._assert_binding()
+            if missing_is_none and companion is None:
+                return None
+            raise _error("missing") from None
+        return self._durable_success(
+            target_name,
+            content_digest=content_digest,
+            expected=None,
+            initial_state=(target, companion),
+        )
 
 
 class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
@@ -424,6 +858,12 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         self._pid = os.getpid()
         self._active = False
         self._lock_held = False
+        self._namespaces: list[ImmutableEvidenceNamespace] = []
+        self._blob_store = _ImmutableSlotStore(
+            self._digest_fd_or_closed,
+            self._assert_binding,
+            self._sync_digest_directory,
+        )
 
     @property
     def workspace(self) -> Path:
@@ -440,6 +880,24 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
     @property
     def lock_path(self) -> Path:
         return self._workspace_path / _LOCK_NAME
+
+    def open_evidence_namespace(
+        self, kind: str, identity: str
+    ) -> ImmutableEvidenceNamespace:
+        """Open the private immutable record namespace for one chain identity."""
+
+        kind = _validate_evidence_kind(kind)
+        identity = _validate_digest(identity)
+        self._assert_process()
+        self._assert_binding()
+        return ImmutableEvidenceNamespace(
+            self,
+            kind,
+            identity,
+            _capability=_NAMESPACE_CAPABILITY,
+        )
+
+    open_namespace = open_evidence_namespace
 
     def __reduce__(self) -> object:
         raise TypeError("memory recovery authority cannot be serialized")
@@ -513,6 +971,9 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
 
     def _cleanup(self) -> None:
         self._active = False
+        for namespace in tuple(self._namespaces):
+            namespace._close_from_authority()
+        self._namespaces.clear()
         if self._lock_held and self._lock_fd is not None and _fcntl is not None:
             try:
                 _fcntl.flock(self._lock_fd, _fcntl.LOCK_UN)
@@ -639,11 +1100,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
                 raise _error("binding") from None
 
     def _entry_binding(self, entry: _Entry) -> None:
-        if self._digest_fd is None:
-            raise _error("closed") from None
-        current = _stat_entry(self._digest_fd, entry.name)
-        if current is None or not _same_snapshot(current, entry.info):
-            raise _error("binding") from None
+        self._blob_store._entry_binding(entry)
 
     def _open_verified_file(
         self,
@@ -656,131 +1113,40 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         allowed_links: set[int] | frozenset[int],
         fsync: bool = False,
     ) -> _Entry:
-        assert self._digest_fd is not None
-        observed = _stat_entry(self._digest_fd, name)
-        if observed is None:
-            raise _error(missing_code) from None
-        fd: int | None = None
-        try:
-            fd = os.open(name, _leaf_flags(), dir_fd=self._digest_fd)
-        except (OSError, TypeError, ValueError):
-            raise _error("corrupt") from None
-        try:
-            before = _fstat(fd, code="binding")
-            if not _same_binding(observed, before):
-                raise _error("binding") from None
-            if (
-                not stat.S_ISREG(before.st_mode)
-                or before.st_uid != _uid()
-                or stat.S_IMODE(before.st_mode) != _PRIVATE_FILE_MODE
-                or before.st_nlink not in allowed_links
-            ):
-                raise _error("corrupt") from None
-            digest_state = hashlib.sha256()
-            result = bytearray()
-            position = 0
-            while True:
-                try:
-                    chunk = os.read(fd, _READ_CHUNK)
-                except (OSError, TypeError, ValueError):
-                    raise _error("io") from None
-                if not chunk:
-                    break
-                digest_state.update(chunk)
-                if expected is not None:
-                    end = position + len(chunk)
-                    if end > len(expected) or chunk != expected[position:end]:
-                        raise _error(conflict_code) from None
-                else:
-                    result.extend(chunk)
-                position += len(chunk)
-            after = _fstat(fd, code="binding")
-            if not _same_snapshot(before, after) or position != after.st_size:
-                raise _error("binding") from None
-            if digest_state.hexdigest() != digest:
-                raise _error(conflict_code) from None
-            if expected is not None and position != len(expected):
-                raise _error(conflict_code) from None
-            current = _stat_entry(self._digest_fd, name)
-            if current is None or not _same_snapshot(current, after):
-                raise _error("binding") from None
-            if fsync:
-                _fsync(fd)
-                final = _fstat(fd, code="binding")
-                current = _stat_entry(self._digest_fd, name)
-                if current is None or not _same_snapshot(final, after) or not _same_snapshot(current, final):
-                    raise _error("binding") from None
-            return _Entry(name, _identity(after), after, bytes(result) if expected is None else expected)
-        finally:
-            _close(fd)
+        return self._blob_store._open_verified_file(
+            name,
+            content_digest=digest,
+            expected=expected,
+            missing_code=missing_code,
+            conflict_code=conflict_code,
+            allowed_links=allowed_links,
+            fsync=fsync,
+        )
 
     def _validate_relationship(self, target: _Entry, companion: _Entry | None) -> None:
-        """Accept exact original hardlinks or copied independent private files."""
-
-        if self._digest_fd is None:
-            raise _error("closed") from None
-        if companion is None:
-            if target.info.st_nlink != 1:
-                raise _error("corrupt") from None
-            return
-        same = target.identity == companion.identity
-        if same:
-            if target.info.st_nlink != 2 or companion.info.st_nlink != 2:
-                raise _error("corrupt") from None
-            names: set[str] = set()
-            try:
-                entries = os.listdir(self._digest_fd)
-            except (OSError, TypeError, ValueError):
-                raise _error("io") from None
-            for name in entries:
-                info = _stat_entry(self._digest_fd, name)
-                if info is not None and _identity(info) == target.identity:
-                    names.add(name)
-            if names != {target.name, companion.name}:
-                raise _error("corrupt") from None
-        else:
-            if target.info.st_nlink != 1 or companion.info.st_nlink != 1:
-                raise _error("corrupt") from None
+        self._blob_store._validate_relationship(target, companion)
 
     def _state(self, digest: str, *, expected: bytes | None) -> tuple[_Entry | None, _Entry | None]:
-        target_name = digest
-        companion_name = _COMPANION_PREFIX + digest
-        target_info = _stat_entry(self._digest_fd_or_closed(), target_name)
-        companion_info = _stat_entry(self._digest_fd_or_closed(), companion_name)
-        target: _Entry | None = None
-        companion: _Entry | None = None
-        if target_info is not None:
-            target = self._open_verified_file(
-                target_name,
-                digest,
-                expected=expected,
-                missing_code="missing",
-                conflict_code="conflict" if expected is not None else "corrupt",
-                allowed_links={1, 2},
-            )
-        if companion_info is not None:
-            companion = self._open_verified_file(
-                companion_name,
-                digest,
-                expected=expected,
-                missing_code="missing",
-                conflict_code="conflict" if expected is not None else "corrupt",
-                allowed_links={1, 2},
-            )
-        if target is not None and companion is not None:
-            self._validate_relationship(target, companion)
-        elif target is not None:
-            self._validate_relationship(target, None)
-        elif companion is not None and companion.info.st_nlink != 1:
-            # A companion with no target cannot have an unexplained extra
-            # hardlink.  Recovery links it only from this nlink=1 state.
-            raise _error("corrupt") from None
-        return target, companion
+        return self._blob_store.state(digest, content_digest=digest, expected=expected)
 
     def _digest_fd_or_closed(self) -> int:
         if self._digest_fd is None:
             raise _error("closed") from None
         return self._digest_fd
+
+    def _recovery_fd_or_closed(self) -> int:
+        if self._recovery_fd is None:
+            raise _error("closed") from None
+        return self._recovery_fd
+
+    def _unregister_namespace(self, namespace: ImmutableEvidenceNamespace) -> None:
+        try:
+            self._namespaces.remove(namespace)
+        except ValueError:
+            pass
+
+    def _register_namespace(self, namespace: ImmutableEvidenceNamespace) -> None:
+        self._namespaces.append(namespace)
 
     def _sync_digest_directory(self) -> None:
         digest_fd = self._digest_fd_or_closed()
@@ -789,57 +1155,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         self._assert_binding()
 
     def _create_companion(self, digest: str, content: bytes) -> _Entry:
-        assert self._digest_fd is not None
-        name = _COMPANION_PREFIX + digest
-        fd: int | None = None
-        try:
-            try:
-                fd = os.open(name, _write_flags(), _PRIVATE_FILE_MODE, dir_fd=self._digest_fd)
-            except FileExistsError:
-                return self._open_verified_file(
-                    name,
-                    digest,
-                    expected=content,
-                    missing_code="missing",
-                    conflict_code="conflict",
-                    allowed_links={1, 2},
-                )
-            except (OSError, TypeError, ValueError):
-                raise _error("io") from None
-            before = _fstat(fd)
-            _private_file(before, links={1})
-            _write_all(fd, content)
-            current = _stat_entry(self._digest_fd, name)
-            if current is None or not _same_binding(current, before):
-                raise _error("binding") from None
-            _fsync(fd)
-            after = _fstat(fd, code="binding")
-            if (
-                not _same_binding(before, after)
-                or after.st_uid != before.st_uid
-                or after.st_gid != before.st_gid
-                or stat.S_IMODE(after.st_mode) != _PRIVATE_FILE_MODE
-                or after.st_nlink != 1
-                or after.st_size != len(content)
-            ):
-                raise _error("binding") from None
-            current = _stat_entry(self._digest_fd, name)
-            if current is None or not _same_identity_shape(current, after):
-                raise _error("binding") from None
-            verified = self._open_verified_file(
-                name,
-                digest,
-                expected=content,
-                missing_code="missing",
-                conflict_code="conflict",
-                allowed_links={1},
-            )
-            self._entry_binding(verified)
-            self._sync_digest_directory()
-            self._assert_binding()
-            return verified
-        finally:
-            _close(fd)
+        return self._blob_store._create_companion(digest, content)
 
     def _compare_final_state(
         self,
@@ -848,24 +1164,12 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         after_target: _Entry | None,
         after_companion: _Entry | None,
     ) -> None:
-        """Reject a replacement that happened during the final dir fsync."""
-
-        if after_target is None or (before_companion is None) != (after_companion is None):
-            raise _error("binding") from None
-        if after_target.identity != before_target.identity or not _same_snapshot(
-            before_target.info, after_target.info
-        ):
-            raise _error("binding") from None
-        if after_target.data != before_target.data:
-            raise _error("binding") from None
-        if before_companion is not None and after_companion is not None:
-            if after_companion.identity != before_companion.identity or not _same_snapshot(
-                before_companion.info, after_companion.info
-            ):
-                raise _error("binding") from None
-            if after_companion.data != before_companion.data:
-                raise _error("binding") from None
-        self._validate_relationship(after_target, after_companion)
+        self._blob_store._compare_final_state(
+            before_target,
+            before_companion,
+            after_target,
+            after_companion,
+        )
 
     def _durable_success(
         self,
@@ -874,59 +1178,13 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         *,
         retained_companion_identity: tuple[int, int] | None = None,
     ) -> bytes:
-        target, companion = self._state(digest, expected=content)
-        if target is None:
-            raise _error("missing") from None
-        self._validate_relationship(target, companion)
-        if retained_companion_identity is not None and (
-            companion is None or companion.identity != retained_companion_identity
-        ):
-            raise _error("binding") from None
-        durable_target = self._open_verified_file(
+        return self._blob_store._durable_success(
             digest,
-            digest,
+            content_digest=digest,
             expected=content,
-            missing_code="missing",
-            conflict_code="conflict" if content is not None else "corrupt",
-            allowed_links={1, 2},
-            fsync=True,
+            retained_companion_identity=retained_companion_identity,
         )
-        before_directory_target, before_directory_companion = self._state(digest, expected=content)
-        if before_directory_target is None:
-            raise _error("missing") from None
-        # Keep the first verified state bound through the target-file fsync.
-        # A copied tree legitimately has independent target/companion inodes,
-        # but replacing either path with another exact file during this window
-        # is still a binding change and must fail before directory-fsync rebasing.
-        self._compare_final_state(
-            target,
-            companion,
-            before_directory_target,
-            before_directory_companion,
-        )
-        self._validate_relationship(before_directory_target, before_directory_companion)
-        if retained_companion_identity is not None and (
-            before_directory_companion is None
-            or before_directory_companion.identity != retained_companion_identity
-        ):
-            raise _error("binding") from None
-        self._entry_binding(durable_target)
-        self._assert_binding()
-        self._sync_digest_directory()
-        after_directory_target, after_directory_companion = self._state(digest, expected=content)
-        self._compare_final_state(
-            before_directory_target,
-            before_directory_companion,
-            after_directory_target,
-            after_directory_companion,
-        )
-        if retained_companion_identity is not None and (
-            after_directory_companion is None
-            or after_directory_companion.identity != retained_companion_identity
-        ):
-            raise _error("binding") from None
-        self._assert_binding()
-        return after_directory_target.data or b""
+
 
     def publish_blob(self, content: bytes) -> str:
         """Publish bytes under their exact SHA-256 name without clobbering."""
@@ -935,51 +1193,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         if type(content) is not bytes:
             raise _error("invalid") from None
         digest = hashlib.sha256(content).hexdigest()
-        self._assert_binding()
-        target, companion = self._state(digest, expected=content)
-        if target is not None:
-            # A copied tree may contain only a safe target.  Restore the
-            # permanent companion by exclusive creation, never replacement.
-            if companion is None:
-                self._create_companion(digest, content)
-            self._durable_success(digest, content)
-            return digest
-
-        if companion is None:
-            companion = self._create_companion(digest, content)
-        else:
-            if companion.info.st_nlink != 1:
-                raise _error("corrupt") from None
-        self._entry_binding(companion)
-        self._assert_binding()
-        linked = False
-        try:
-            assert self._digest_fd is not None
-            os.link(
-                _COMPANION_PREFIX + digest,
-                digest,
-                src_dir_fd=self._digest_fd,
-                dst_dir_fd=self._digest_fd,
-                follow_symlinks=False,
-            )
-            linked = True
-        except FileExistsError:
-            # The destination is the sole arbitration point.  Verify the
-            # winner; this path never replaces or removes it.
-            target, current_companion = self._state(digest, expected=content)
-            if target is None:
-                raise _error("conflict") from None
-            self._entry_binding(companion)
-            if current_companion is None:
-                raise _error("binding") from None
-        except (OSError, TypeError, ValueError):
-            raise _error("io") from None
-        self._assert_binding()
-        self._durable_success(
-            digest,
-            content,
-            retained_companion_identity=companion.identity if linked else None,
-        )
+        self._blob_store.publish(digest, content, content_digest=digest)
         return digest
 
     # Small names make the typed boundary convenient without adding another
@@ -992,11 +1206,178 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
 
         digest = _validate_digest(digest)
         self._assert_process()
-        self._assert_binding()
-        return self._durable_success(digest, None)
+        content = self._blob_store.read(digest, content_digest=digest, missing_is_none=False)
+        assert content is not None
+        return content
 
     read = read_blob
     get = read_blob
+
+
+class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
+    """A descriptor-bound immutable record namespace under one chain identity."""
+
+    def __init__(
+        self,
+        authority: WorkspaceMemoryAuthority,
+        kind: str,
+        identity: str,
+        *,
+        _capability: object | None = None,
+    ) -> None:
+        if _capability is not _NAMESPACE_CAPABILITY:
+            raise _error("invalid") from None
+        self._authority = authority
+        self.kind = _validate_evidence_kind(kind)
+        self.identity = _validate_digest(identity)
+        self._kind_fd: int | None = None
+        self._record_fd: int | None = None
+        self._kind_identity: tuple[int, int] | None = None
+        self._record_identity: tuple[int, int] | None = None
+        self._pid = os.getpid()
+        self._active = False
+        kind_fd: int | None = None
+        record_fd: int | None = None
+        try:
+            authority._assert_process()
+            authority._assert_binding()
+            kind_fd = _open_child_directory(
+                authority._recovery_fd_or_closed(), self.kind, create=True
+            )
+            record_fd = _open_child_directory(kind_fd, self.identity, create=True)
+            self._kind_fd = kind_fd
+            self._record_fd = record_fd
+            kind_fd = None
+            record_fd = None
+            self._kind_identity = _identity(_fstat(self._kind_fd, code="binding"))
+            self._record_identity = _identity(_fstat(self._record_fd, code="binding"))
+            self._record_store = _ImmutableSlotStore(
+                self._record_fd_or_closed,
+                self._assert_binding,
+                self._sync_record_directory,
+            )
+            self._active = True
+            self._assert_binding()
+            authority._register_namespace(self)
+        except BaseException:
+            self._active = False
+            _close(record_fd)
+            _close(kind_fd)
+            _close(self._record_fd)
+            _close(self._kind_fd)
+            self._record_fd = None
+            self._kind_fd = None
+            raise
+
+    @property
+    def directory(self) -> Path:
+        return (
+            self._authority.workspace
+            / _MEMORY_NAME
+            / _RECOVERY_NAME
+            / self.kind
+            / self.identity
+        )
+
+    record_directory = directory
+
+    def __reduce__(self) -> object:
+        raise TypeError("memory recovery namespace cannot be serialized")
+
+    def __copy__(self) -> Self:
+        raise TypeError("memory recovery namespace cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        raise TypeError("memory recovery namespace cannot be copied")
+
+    def __enter__(self) -> Self:
+        self._assert_process()
+        self._assert_binding()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        self._cleanup()
+
+    def _close_from_authority(self) -> None:
+        self._cleanup()
+
+    def _cleanup(self) -> None:
+        was_active = self._active
+        self._active = False
+        record_fd = self._record_fd
+        kind_fd = self._kind_fd
+        self._record_fd = None
+        self._kind_fd = None
+        _close(record_fd)
+        _close(kind_fd)
+        if was_active:
+            self._authority._unregister_namespace(self)
+
+    def _assert_process(self) -> None:
+        if not self._active or self._pid != os.getpid():
+            raise _error("closed") from None
+        self._authority._assert_process()
+
+    def _assert_binding(self) -> None:
+        self._assert_process()
+        self._authority._assert_binding()
+        kind_fd = self._kind_fd
+        record_fd = self._record_fd
+        kind_identity = self._kind_identity
+        record_identity = self._record_identity
+        if kind_fd is None or record_fd is None or kind_identity is None or record_identity is None:
+            raise _error("closed") from None
+        kind_info = _fstat(kind_fd, code="binding")
+        _private_directory(kind_info)
+        if _identity(kind_info) != kind_identity:
+            raise _error("binding") from None
+        recovery_entry = _stat_entry(self._authority._recovery_fd_or_closed(), self.kind)
+        if recovery_entry is None or not _same_binding(recovery_entry, kind_info):
+            raise _error("binding") from None
+        record_info = _fstat(record_fd, code="binding")
+        _private_directory(record_info)
+        if _identity(record_info) != record_identity:
+            raise _error("binding") from None
+        record_entry = _stat_entry(kind_fd, self.identity)
+        if record_entry is None or not _same_binding(record_entry, record_info):
+            raise _error("binding") from None
+
+    def _record_fd_or_closed(self) -> int:
+        if self._record_fd is None:
+            raise _error("closed") from None
+        return self._record_fd
+
+    def _sync_record_directory(self) -> None:
+        record_fd = self._record_fd_or_closed()
+        self._assert_binding()
+        _fsync(record_fd)
+        self._assert_binding()
+
+    def publish_record(self, slot: str, content: bytes) -> str:
+        """Publish one immutable named record without replacing an existing entry."""
+
+        slot = _validate_record_slot(slot)
+        self._assert_process()
+        if type(content) is not bytes:
+            raise _error("invalid") from None
+        self._record_store.publish(slot, content, content_digest=None)
+        return slot
+
+    publish = publish_record
+    put = publish_record
+
+    def read_record(self, slot: str) -> bytes | None:
+        """Read and verify one named record, returning ``None`` only when absent."""
+
+        slot = _validate_record_slot(slot)
+        self._assert_process()
+        return self._record_store.read(slot, content_digest=None, missing_is_none=True)
+
+    read = read_record
+    get = read_record
 
 
 # A descriptive alias for callers that prefer a storage noun.
@@ -1019,6 +1400,7 @@ __all__ = [
     "MemoryStorageError",
     "MemoryStorageMissingError",
     "MemoryStorageUnavailableError",
+    "ImmutableEvidenceNamespace",
     "WorkspaceMemoryAuthority",
     "WorkspaceMemoryAuthorityError",
     "open_workspace_memory",
