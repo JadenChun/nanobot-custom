@@ -25,6 +25,16 @@ tokens receives a `CronDefinitionTokenRequiredError` and no action is
 appended. The old startup `remove_system_job(job_id)` call is a safe no-op
 without tokens, while token-bearing system deletion is still protected.
 
+The cron tool admits at most 256 additional destinations, requiring each item
+to be exactly `{channel,to}` with trimmed, nonblank string identifiers no longer
+than 512 UTF-8 bytes. It preserves input order and raw duplicate entries in
+the definition; `CronPayload.delivery_destinations()` later places the primary
+destination first and removes only exact duplicate pairs. Contextual adds use
+the immutable turn request route, map the unified session to its concrete
+`channel:chat` route, detach request metadata, and reject cron-origin nested
+scheduling. The service deep-copies the admitted destination list before the
+definition is serialized.
+
 Each mutation derives its action ID from the exact typed request. It retries a
 stale action-store generation only before `append` acknowledges a durable
 receipt. After acknowledgement, a stale checkpoint raises

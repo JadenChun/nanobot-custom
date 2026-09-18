@@ -21,7 +21,7 @@ from nanobot.cron.service import (
     CronDefinitionTokenRequiredError,
     CronService,
 )
-from nanobot.cron.types import CronSchedule
+from nanobot.cron.types import CronDestination, CronSchedule
 
 NAMESPACE = "cron:c3-service-tests"
 
@@ -107,6 +107,125 @@ def test_management_uses_typed_definitions_without_legacy_files(tmp_path: Path) 
     assert raw.pending_actions == ()
     assert "state" not in raw.candidate["definitions"][0]
     assert "createdAtMs" not in raw.candidate["definitions"][0]
+
+
+def test_additional_destinations_are_detached_and_round_trip_in_definition(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    destinations = [
+        CronDestination(channel=" discord ", to=" room "),
+        CronDestination(channel="discord", to="room"),
+        CronDestination(channel="discord", to="room"),
+    ]
+
+    job = service.add_job(
+        "multi-target",
+        CronSchedule(kind="every", every_ms=60_000),
+        "send report",
+        deliver=True,
+        channel="telegram",
+        to="primary",
+        additional_destinations=destinations,
+    )
+    destinations.append(CronDestination(channel="mutated", to="after-add"))
+
+    assert job.payload.additional_destinations == [
+        CronDestination(channel=" discord ", to=" room "),
+        CronDestination(channel="discord", to="room"),
+        CronDestination(channel="discord", to="room"),
+    ]
+    loaded = service.get_job(job.id)
+    assert loaded is not None
+    assert loaded.payload.additional_destinations == job.payload.additional_destinations
+    assert loaded.payload.delivery_destinations() == [
+        CronDestination(channel="telegram", to="primary"),
+        CronDestination(channel=" discord ", to=" room "),
+        CronDestination(channel="discord", to="room"),
+    ]
+
+    replay = service.definition_store.action_store.replay()
+    assert replay.candidate is not None
+    payload = replay.candidate["definitions"][0]["payload"]
+    assert payload["additionalDestinations"] == [
+        {"channel": " discord ", "to": " room "},
+        {"channel": "discord", "to": "room"},
+        {"channel": "discord", "to": "room"},
+    ]
+
+
+def test_delivery_admission_counts_fallback_primary_toward_256_limit(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    destinations = [
+        CronDestination(channel=f"channel-{index}", to=f"chat-{index}")
+        for index in range(255)
+    ]
+
+    job = service.add_job(
+        "maximum-targets",
+        CronSchedule(kind="every", every_ms=60_000),
+        "send report",
+        deliver=True,
+        to="primary",
+        additional_destinations=destinations,
+    )
+
+    assert len(job.payload.delivery_destinations()) == 256
+
+
+def test_delivery_admission_rejects_257_unique_targets_with_fallback_primary(
+    tmp_path: Path,
+) -> None:
+    service = _service(tmp_path)
+    destinations = [
+        CronDestination(channel=f"channel-{index}", to=f"chat-{index}")
+        for index in range(256)
+    ]
+
+    with pytest.raises(ValueError, match="more than 256 unique destinations"):
+        service.add_job(
+            "too-many-targets",
+            CronSchedule(kind="every", every_ms=60_000),
+            "send report",
+            deliver=True,
+            to="primary",
+            additional_destinations=destinations,
+        )
+
+
+def test_delivery_destinations_deduplicate_fallback_primary(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    job = service.add_job(
+        "duplicate-fallback-primary",
+        CronSchedule(kind="every", every_ms=60_000),
+        "send report",
+        deliver=True,
+        to="primary",
+        additional_destinations=[
+            CronDestination(channel="cli", to="primary"),
+            CronDestination(channel="slack", to="room"),
+        ],
+    )
+
+    assert job.payload.delivery_destinations() == [
+        CronDestination(channel="cli", to="primary"),
+        CronDestination(channel="slack", to="room"),
+    ]
+
+
+def test_legacy_positional_add_job_keeps_delete_after_run_argument(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+
+    job = service.add_job(
+        "legacy-positional",
+        CronSchedule(kind="every", every_ms=60_000),
+        "send report",
+        False,
+        None,
+        None,
+        True,
+    )
+
+    assert job.delete_after_run is True
 
 
 def test_update_and_delete_fail_closed_without_exact_tokens(tmp_path: Path) -> None:

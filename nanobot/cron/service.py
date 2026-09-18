@@ -60,6 +60,7 @@ from nanobot.cron.occurrence_store import (
     OccurrenceRecord,
 )
 from nanobot.cron.types import (
+    CronDestination,
     CronJob,
     CronJobState,
     CronPayload,
@@ -71,6 +72,9 @@ CRON_DEFINITION_ONLY_DIAGNOSTIC = (
     "cron definition-only execution adapter is not installed; execution is fenced "
     "until Packages D/E install runtime, occurrence, and delivery authorities"
 )
+
+_MAX_DELIVERY_DESTINATIONS = 256
+_MAX_DELIVERY_IDENTIFIER_BYTES = 512
 
 
 class CronJobSkippedError(Exception):
@@ -138,6 +142,55 @@ def _validate_schedule_for_add(schedule: CronSchedule) -> None:
                 ZoneInfo(schedule.tz)
             except Exception:
                 raise ValueError(f"unknown timezone '{schedule.tz}'") from None
+
+
+def _validate_delivery_destinations_for_add(
+    *,
+    deliver: bool,
+    channel: str | None,
+    to: str | None,
+    additional_destinations: list[CronDestination] | None,
+) -> None:
+    """Validate admitted delivery identifiers before writing a definition."""
+    if additional_destinations is not None and type(additional_destinations) is not list:
+        raise TypeError("additional_destinations must be a list or None")
+    additional = additional_destinations or []
+    if len(additional) > _MAX_DELIVERY_DESTINATIONS:
+        raise ValueError(
+            f"additional_destinations cannot contain more than {_MAX_DELIVERY_DESTINATIONS} items"
+        )
+
+    candidates: list[tuple[str, str]] = []
+    for label, value in (("delivery channel", channel), ("delivery to", to)):
+        if value is not None and type(value) is not str:
+            raise ValueError(f"{label} must be a string")
+        if isinstance(value, str) and len(value.encode("utf-8")) > _MAX_DELIVERY_IDENTIFIER_BYTES:
+            raise ValueError(f"{label} exceeds the {_MAX_DELIVERY_IDENTIFIER_BYTES}-byte limit")
+    if to:
+        candidates.append((channel or "cli", to))
+    for index, destination in enumerate(additional):
+        if not isinstance(destination, CronDestination):
+            raise TypeError(f"additional_destinations[{index}] must be a CronDestination")
+        if type(destination.channel) is not str or type(destination.to) is not str:
+            raise ValueError(f"additional_destinations[{index}] channel and to must be strings")
+        if not destination.channel or not destination.to:
+            raise ValueError(f"additional_destinations[{index}] channel and to must be non-empty")
+        if len(destination.channel.encode("utf-8")) > _MAX_DELIVERY_IDENTIFIER_BYTES:
+            raise ValueError(
+                f"additional_destinations[{index}] channel exceeds the "
+                f"{_MAX_DELIVERY_IDENTIFIER_BYTES}-byte limit"
+            )
+        if len(destination.to.encode("utf-8")) > _MAX_DELIVERY_IDENTIFIER_BYTES:
+            raise ValueError(
+                f"additional_destinations[{index}] to exceeds the "
+                f"{_MAX_DELIVERY_IDENTIFIER_BYTES}-byte limit"
+            )
+        candidates.append((destination.channel, destination.to))
+
+    if deliver and len(set(candidates)) > _MAX_DELIVERY_DESTINATIONS:
+        raise ValueError(
+            f"cron jobs cannot contain more than {_MAX_DELIVERY_DESTINATIONS} unique destinations"
+        )
 
 
 def _normalize_agent_turn_job(_job: CronJob) -> bool:
@@ -767,9 +820,16 @@ class CronService:
         origin_channel: str | None = None,
         origin_chat_id: str | None = None,
         origin_metadata: dict[str, Any] | None = None,
+        additional_destinations: list[CronDestination] | None = None,
     ) -> CronJob:
         """Create and checkpoint one typed definition."""
         _validate_schedule_for_add(schedule)
+        _validate_delivery_destinations_for_add(
+            deliver=deliver,
+            channel=channel,
+            to=to,
+            additional_destinations=additional_destinations,
+        )
         existing = self._require_store().jobs
         job_id = uuid.uuid4().hex[:8]
         while any(job.id == job_id for job in existing):
@@ -785,6 +845,9 @@ class CronService:
                 deliver=deliver,
                 channel=channel,
                 to=to,
+                additional_destinations=deepcopy(
+                    [] if additional_destinations is None else additional_destinations
+                ),
                 channel_meta=deepcopy(channel_meta or {}),
                 session_key=session_key,
                 origin_channel=origin_channel,

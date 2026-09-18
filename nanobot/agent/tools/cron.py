@@ -5,24 +5,48 @@
 from __future__ import annotations
 
 from contextvars import ContextVar, Token
+from copy import deepcopy
 from datetime import datetime
 from typing import Any
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext, current_request_context
 from nanobot.agent.tools.schema import (
+    ArraySchema,
     IntegerSchema,
+    ObjectSchema,
     StringSchema,
     tool_parameters_schema,
 )
+from nanobot.agent.turn import ToolOutcome, TurnContext, TurnSource
 from nanobot.cron.definition_store import DefinitionStoreConflictError
 from nanobot.cron.service import (
     CronDefinitionConflictError,
     CronDefinitionTokenRequiredError,
     CronService,
 )
-from nanobot.cron.types import CronJob, CronJobState, CronSchedule
+from nanobot.cron.types import CronDestination, CronJob, CronJobState, CronSchedule
 from nanobot.session.keys import UNIFIED_SESSION_KEY
+
+_MAX_DESTINATIONS = 256
+_MAX_IDENTIFIER_BYTES = 512
+
+_ADDITIONAL_DESTINATION = ObjectSchema(
+    properties={
+        "channel": StringSchema(
+            "Destination channel name.",
+            min_length=1,
+            max_length=_MAX_IDENTIFIER_BYTES,
+        ),
+        "to": StringSchema(
+            "Destination recipient identifier.",
+            min_length=1,
+            max_length=_MAX_IDENTIFIER_BYTES,
+        ),
+    },
+    required=["channel", "to"],
+    additional_properties=False,
+)
 
 _CRON_PARAMETERS = tool_parameters_schema(
     action=StringSchema("Action to perform", enum=["add", "list", "remove"]),
@@ -44,6 +68,14 @@ _CRON_PARAMETERS = tool_parameters_schema(
     at=StringSchema(
         "ISO datetime for one-time execution (e.g. '2026-02-12T10:30:00'). "
         "Naive values use the tool's default timezone."
+    ),
+    additional_destinations=ArraySchema(
+        _ADDITIONAL_DESTINATION,
+        description=(
+            "Optional additional result destinations for action='add'. Each item is exactly "
+            "{channel,to}; the current chat remains the primary destination."
+        ),
+        max_items=_MAX_DESTINATIONS,
     ),
     job_id=StringSchema("REQUIRED when action='remove'. Job ID to remove (obtain via action='list')."),
     required=["action"],
@@ -87,7 +119,104 @@ class CronTool(Tool):
         session_key = (
             raw_key if ctx.session_key == UNIFIED_SESSION_KEY else (ctx.session_key or "")
         )
-        return session_key, ctx.channel or "", ctx.chat_id or "", dict(ctx.metadata or {})
+        return session_key, ctx.channel or "", ctx.chat_id or "", deepcopy(dict(ctx.metadata or {}))
+
+    @staticmethod
+    def _turn_route(context: TurnContext) -> tuple[str, str, str, dict[str, Any]]:
+        """Return the detached route admitted with an immutable turn request."""
+        request = context.request
+        if request is None:
+            return "", "", "", {}
+        route = request.route or request.delivery_target
+        if route is None:
+            return "", "", "", deepcopy(dict(request.metadata or {}))
+        channel = route.channel or ""
+        chat_id = route.chat_id or route.to or route.recipient or ""
+        raw_key = f"{channel}:{chat_id}" if channel and chat_id else ""
+        session_key = (
+            raw_key if request.session_key == UNIFIED_SESSION_KEY else (request.session_key or "")
+        )
+        return session_key, channel, chat_id, deepcopy(dict(request.metadata or {}))
+
+    @staticmethod
+    def _additional_destinations(
+        value: list[dict[str, Any]] | None,
+        *,
+        primary_channel: str,
+        primary_to: str,
+    ) -> tuple[list[CronDestination], ToolResult | None]:
+        """Validate and trim tool destinations without changing their order."""
+        if value is None:
+            return [], None
+        if type(value) is not list:
+            return [], ToolResult.error("Error: additional_destinations must be an array")
+        if len(value) > _MAX_DESTINATIONS:
+            return [], ToolResult.error(
+                f"Error: additional_destinations cannot contain more than {_MAX_DESTINATIONS} items"
+            )
+
+        destinations: list[CronDestination] = []
+        for index, item in enumerate(value):
+            if type(item) is not dict:
+                return [], ToolResult.error(
+                    f"Error: additional_destinations[{index}] must be an object"
+                )
+            if set(item) != {"channel", "to"}:
+                return [], ToolResult.error(
+                    f"Error: additional_destinations[{index}] must contain exactly channel and to"
+                )
+            channel = item["channel"]
+            target = item["to"]
+            if type(channel) is not str or type(target) is not str:
+                return [], ToolResult.error(
+                    f"Error: additional_destinations[{index}] channel and to must be strings"
+                )
+            channel = channel.strip()
+            target = target.strip()
+            if not channel or not target:
+                return [], ToolResult.error(
+                    f"Error: additional_destinations[{index}] channel and to must be nonblank"
+                )
+            if len(channel.encode("utf-8")) > _MAX_IDENTIFIER_BYTES:
+                return [], ToolResult.error(
+                    f"Error: additional_destinations[{index}] channel exceeds the "
+                    f"{_MAX_IDENTIFIER_BYTES}-byte limit"
+                )
+            if len(target.encode("utf-8")) > _MAX_IDENTIFIER_BYTES:
+                return [], ToolResult.error(
+                    f"Error: additional_destinations[{index}] to exceeds the "
+                    f"{_MAX_IDENTIFIER_BYTES}-byte limit"
+                )
+            destinations.append(CronDestination(channel=channel, to=target))
+
+        unique = {(primary_channel, primary_to)}
+        unique.update((item.channel, item.to) for item in destinations)
+        if len(unique) > _MAX_DESTINATIONS:
+            return [], ToolResult.error(
+                f"Error: cron jobs cannot contain more than {_MAX_DESTINATIONS} unique destinations"
+            )
+        return destinations, None
+
+    @staticmethod
+    def _validate_primary_route(channel: object, target: object) -> ToolResult | None:
+        """Reject an unauthenticated or oversized primary delivery route."""
+        if type(channel) is not str or type(target) is not str:
+            return ToolResult.error(
+                "Error: scheduled cron jobs must be created from an authenticated chat session"
+            )
+        if not channel.strip() or not target.strip():
+            return ToolResult.error(
+                "Error: scheduled cron jobs must be created from an authenticated chat session"
+            )
+        if len(channel.encode("utf-8")) > _MAX_IDENTIFIER_BYTES:
+            return ToolResult.error(
+                f"Error: primary channel exceeds the {_MAX_IDENTIFIER_BYTES}-byte limit"
+            )
+        if len(target.encode("utf-8")) > _MAX_IDENTIFIER_BYTES:
+            return ToolResult.error(
+                f"Error: primary to exceeds the {_MAX_IDENTIFIER_BYTES}-byte limit"
+            )
+        return None
 
     def set_cron_context(self, active: bool) -> Token[bool]:
         """Mark whether the tool is executing inside a cron job callback."""
@@ -136,7 +265,30 @@ class CronTool(Tool):
             errors.append("message is required when action='add'")
         if action == "remove" and not str(params.get("job_id") or "").strip():
             errors.append("job_id is required when action='remove'")
+        additional = params.get("additional_destinations")
+        if isinstance(additional, list):
+            for index, item in enumerate(additional):
+                if type(item) is dict and set(item) == {"channel", "to"}:
+                    for field in ("channel", "to"):
+                        value = item[field]
+                        if type(value) is str and not value.strip():
+                            errors.append(
+                                f"additional_destinations[{index}] {field} must be nonblank"
+                            )
+                        elif type(value) is str and len(value.strip().encode("utf-8")) > _MAX_IDENTIFIER_BYTES:
+                            errors.append(
+                                f"additional_destinations[{index}] {field} exceeds the "
+                                f"{_MAX_IDENTIFIER_BYTES}-byte limit"
+                            )
         return errors
+
+    def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Keep destination values strict while retaining legacy scalar casts."""
+        raw_destinations = params.get("additional_destinations")
+        casted = super().cast_params(params)
+        if "additional_destinations" in params:
+            casted["additional_destinations"] = raw_destinations
+        return casted
 
     async def execute(
         self,
@@ -148,16 +300,62 @@ class CronTool(Tool):
         tz: str | None = None,
         at: str | None = None,
         job_id: str | None = None,
+        additional_destinations: list[dict[str, Any]] | None = None,
     ) -> str:
         if action == "add":
             if self._in_cron_context.get():
                 return ToolResult.error("Error: cannot schedule new jobs from within a cron job execution")
-            return self._add_job(name, message, every_seconds, cron_expr, tz, at)
+            return self._add_job(
+                name,
+                message,
+                every_seconds,
+                cron_expr,
+                tz,
+                at,
+                additional_destinations=additional_destinations,
+                route=self._request_route(),
+            )
         elif action == "list":
             return self._list_jobs()
         elif action == "remove":
             return self._remove_job(job_id)
         return f"Unknown action: {action}"
+
+    async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> ToolOutcome:
+        """Execute using the immutable turn request route.
+
+        The explicit context route is authoritative for a contextual call.  A
+        cron-origin turn is rejected here as well as through the legacy
+        ContextVar guard so nested scheduling cannot bypass the policy when no
+        ContextVar was installed.
+        """
+        action = kwargs.get("action")
+        if action == "add":
+            request = context.request
+            if self._in_cron_context.get() or (
+                request is not None and request.source is TurnSource.CRON
+            ):
+                return ToolOutcome(
+                    content=ToolResult.error(
+                        "Error: cannot schedule new jobs from within a cron job execution"
+                    )
+                )
+            result = self._add_job(
+                kwargs.get("name"),
+                kwargs.get("message", ""),
+                kwargs.get("every_seconds"),
+                kwargs.get("cron_expr"),
+                kwargs.get("tz"),
+                kwargs.get("at"),
+                additional_destinations=kwargs.get("additional_destinations"),
+                route=self._turn_route(context),
+            )
+            return ToolOutcome(content=result)
+        if action == "list":
+            return ToolOutcome(content=self._list_jobs())
+        if action == "remove":
+            return ToolOutcome(content=self._remove_job(kwargs.get("job_id")))
+        return ToolOutcome(content=f"Unknown action: {action}")
 
     def _add_job(
         self,
@@ -167,6 +365,9 @@ class CronTool(Tool):
         cron_expr: str | None,
         tz: str | None,
         at: str | None,
+        *,
+        additional_destinations: list[dict[str, Any]] | None = None,
+        route: tuple[str, str, str, dict[str, Any]] | None = None,
     ) -> str:
         if not message:
             return ToolResult.error(
@@ -174,11 +375,23 @@ class CronTool(Tool):
                 "describing what to do when the job triggers "
                 "(e.g. the reminder text). Retry including message=\"...\"."
             )
-        session_key, origin_channel, origin_chat_id, origin_metadata = self._request_route()
+        session_key, origin_channel, origin_chat_id, origin_metadata = (
+            route if route is not None else self._request_route()
+        )
         if not session_key:
             return ToolResult.error("Error: scheduled cron jobs must be created from a chat session")
         if not origin_channel or not origin_chat_id:
             return ToolResult.error("Error: scheduled cron jobs must be created from a chat session")
+        route_error = self._validate_primary_route(origin_channel, origin_chat_id)
+        if route_error is not None:
+            return route_error
+        destinations, destination_error = self._additional_destinations(
+            additional_destinations,
+            primary_channel=origin_channel,
+            primary_to=origin_chat_id,
+        )
+        if destination_error is not None:
+            return destination_error
         if tz and not cron_expr:
             return ToolResult.error("Error: tz can only be used with cron_expr")
         if tz:
@@ -215,6 +428,10 @@ class CronTool(Tool):
             name=name or message[:30],
             schedule=schedule,
             message=message,
+            deliver=True,
+            channel=origin_channel,
+            to=origin_chat_id,
+            additional_destinations=destinations,
             delete_after_run=delete_after,
             session_key=session_key,
             origin_channel=origin_channel,
