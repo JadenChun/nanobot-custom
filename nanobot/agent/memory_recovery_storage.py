@@ -26,6 +26,7 @@ import hashlib
 import os
 import re
 import stat
+import threading
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,7 @@ _COMPANION_PREFIX = ".install-"
 _EVIDENCE_KINDS = frozenset(("transactions", "conversions"))
 _RECORD_SLOT_RE = re.compile(r"(?:genesis\.json|next-[0-9a-f]{64}\.json)\Z")
 _NAMESPACE_CAPABILITY = object()
+_OPERATION_CAPABILITY = object()
 _PRIVATE_DIRECTORY_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
 _READ_CHUNK = 64 * 1024
@@ -60,6 +62,7 @@ class MemoryStorageError(RuntimeError):
         "unavailable": "memory recovery storage is unavailable",
         "invalid": "memory recovery storage input is invalid",
         "closed": "memory recovery authority is closed",
+        "borrowed": "memory recovery authority is borrowed",
         "binding": "memory recovery storage binding changed",
         "corrupt": "memory recovery storage content is unsafe",
         "conflict": "memory recovery storage content conflicts",
@@ -858,6 +861,12 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         self._pid = os.getpid()
         self._active = False
         self._lock_held = False
+        self._lifecycle_lock = threading.Lock()
+        self._entering = False
+        self._activation_thread: threading.Thread | None = None
+        self._activation_thread_id: int | None = None
+        self._activation_epoch = 0
+        self._borrowers: set[WorkspaceMemoryOperation] = set()
         self._namespaces: list[ImmutableEvidenceNamespace] = []
         self._blob_store = _ImmutableSlotStore(
             self._digest_fd_or_closed,
@@ -880,6 +889,19 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
     @property
     def lock_path(self) -> Path:
         return self._workspace_path / _LOCK_NAME
+
+    def operation(self) -> WorkspaceMemoryOperation:
+        """Issue one opaque lease for the current authority activation."""
+
+        self._require_process_owner()
+        with self._lifecycle_lock:
+            self._require_process_owner()
+            return WorkspaceMemoryOperation(
+                self,
+                _capability=_OPERATION_CAPABILITY,
+                _issued_epoch=self._activation_epoch,
+                _thread=threading.current_thread(),
+            )
 
     def open_evidence_namespace(
         self, kind: str, identity: str
@@ -909,14 +931,17 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         raise TypeError("memory recovery authority cannot be copied")
 
     def __enter__(self) -> Self:
-        if self._active:
-            raise _error("closed") from None
-        if self._pid != os.getpid():
-            raise _error("closed") from None
-        _require_capabilities()
+        self._require_process_owner()
+        activating_thread = threading.current_thread()
+        with self._lifecycle_lock:
+            self._require_process_owner()
+            if self._active or self._entering:
+                raise _error("closed") from None
+            self._entering = True
         workspace_fd: int | None = None
         lock_fd: int | None = None
         try:
+            _require_capabilities()
             workspace_fd = _open_directory_path(self._workspace_path)
             workspace_info = _fstat(workspace_fd)
             _private_directory(workspace_info, workspace=True)
@@ -943,34 +968,70 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
             self._blobs_fd = _open_child_directory(self._recovery_fd, _BLOBS_NAME, create=True)
             self._digest_fd = _open_child_directory(self._blobs_fd, _DIGEST_DIR_NAME, create=True)
             self._assert_binding()
-            self._active = True
-            return self
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                if not self._entering or self._active:
+                    raise _error("closed") from None
+                self._activation_thread = activating_thread
+                # Diagnostic only; authorization uses the retained thread object.
+                self._activation_thread_id = threading.get_ident()
+                self._activation_epoch += 1
+                self._active = True
+                self._entering = False
+                return self
         except MemoryStorageError:
-            self._cleanup()
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._cleanup()
+                self._entering = False
             _close(workspace_fd)
             _close(lock_fd)
             raise
         except (OSError, TypeError, ValueError):
-            self._cleanup()
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._cleanup()
+                self._entering = False
             _close(workspace_fd)
             _close(lock_fd)
             raise _error("io") from None
         except BaseException:
-            self._cleanup()
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._cleanup()
+                self._entering = False
             _close(workspace_fd)
             _close(lock_fd)
             raise
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        self._cleanup()
+        self._require_process_owner()
+        with self._lifecycle_lock:
+            self._require_process_owner()
+            if self._borrowers:
+                raise _error("borrowed") from None
+            if self._entering:
+                raise _error("closed") from None
+            self._cleanup()
 
     def close(self) -> None:
         """Release the authority and all descriptors; never remove storage."""
 
-        self._cleanup()
+        self._require_process_owner()
+        with self._lifecycle_lock:
+            self._require_process_owner()
+            if self._borrowers:
+                raise _error("borrowed") from None
+            if self._entering:
+                raise _error("closed") from None
+            self._cleanup()
 
     def _cleanup(self) -> None:
+        """Release authority state; callers hold ``_lifecycle_lock``."""
+
         self._active = False
+        self._activation_thread = None
+        self._activation_thread_id = None
         for namespace in tuple(self._namespaces):
             namespace._close_from_authority()
         self._namespaces.clear()
@@ -984,6 +1045,16 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
             fd = getattr(self, attr)
             setattr(self, attr, None)
             _close(fd)
+
+    def _require_process_owner(self) -> None:
+        if self._pid != os.getpid():
+            raise _error("closed") from None
+
+    def _register_operation(self, operation: WorkspaceMemoryOperation) -> None:
+        self._borrowers.add(operation)
+
+    def _unregister_operation(self, operation: WorkspaceMemoryOperation) -> None:
+        self._borrowers.discard(operation)
 
     def _open_or_create_lock(self) -> int:
         assert self._workspace_fd is not None
@@ -1214,6 +1285,142 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
     get = read_blob
 
 
+class WorkspaceMemoryOperation(AbstractContextManager[Self]):
+    """An opaque, one-shot lease on one authority activation."""
+
+    _NEW = "new"
+    _ACTIVE = "active"
+    _CLOSED = "closed"
+
+    def __init__(
+        self,
+        authority: WorkspaceMemoryAuthority,
+        *,
+        _capability: object | None = None,
+        _issued_epoch: int | None = None,
+        _thread: threading.Thread | None = None,
+    ) -> None:
+        if _capability is not _OPERATION_CAPABILITY:
+            raise _error("invalid") from None
+        if _issued_epoch is None or _thread is None:
+            raise _error("invalid") from None
+        self._authority = authority
+        self._pid = os.getpid()
+        self._thread = _thread
+        self._issued_epoch = _issued_epoch
+        self._state = self._NEW
+        self._registered = False
+        self._epoch: int | None = None
+        self._workspace_identity: tuple[int, int] | None = None
+
+    @property
+    def workspace_identity(self) -> tuple[int, int]:
+        """Return the bound workspace inode identity for this active lease."""
+
+        self._require_process_owner()
+        with self._authority._lifecycle_lock:
+            self._require_process_owner()
+            self._require_owner()
+            if self._state != self._ACTIVE or self._workspace_identity is None:
+                raise _error("closed") from None
+            return self._workspace_identity
+
+    def __reduce__(self) -> object:
+        raise TypeError("memory recovery operation cannot be serialized")
+
+    def __copy__(self) -> Self:
+        raise TypeError("memory recovery operation cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        raise TypeError("memory recovery operation cannot be copied")
+
+    def _require_owner(self) -> None:
+        authority = self._authority
+        current_pid = os.getpid()
+        current_thread = threading.current_thread()
+        if (
+            current_pid != self._pid
+            or current_pid != authority._pid
+            or current_thread is not self._thread
+        ):
+            raise _error("closed") from None
+
+    def _require_active_authority_owner(self) -> None:
+        self._require_owner()
+        if threading.current_thread() is not self._authority._activation_thread:
+            raise _error("closed") from None
+
+    def __enter__(self) -> Self:
+        authority = self._authority
+        self._require_process_owner()
+        with authority._lifecycle_lock:
+            self._require_process_owner()
+            if self._state != self._NEW:
+                raise _error("closed") from None
+            self._require_active_authority_owner()
+            if (
+                not authority._active
+                or not authority._lock_held
+                or authority._workspace_identity is None
+                or self._issued_epoch != authority._activation_epoch
+            ):
+                raise _error("closed") from None
+            epoch = authority._activation_epoch
+            authority._assert_binding()
+            if (
+                not authority._active
+                or not authority._lock_held
+                or authority._activation_epoch != epoch
+                or self._issued_epoch != epoch
+            ):
+                raise _error("closed") from None
+            self._epoch = epoch
+            self._workspace_identity = authority._workspace_identity
+            authority._register_operation(self)
+            self._registered = True
+            self._state = self._ACTIVE
+            return self
+
+    def require_current(self) -> None:
+        """Require that this lease still belongs to its active authority epoch."""
+
+        authority = self._authority
+        self._require_process_owner()
+        with authority._lifecycle_lock:
+            self._require_process_owner()
+            self._require_active_authority_owner()
+            if (
+                self._state != self._ACTIVE
+                or not self._registered
+                or self._epoch is None
+                or self._epoch != authority._activation_epoch
+                or not authority._active
+                or not authority._lock_held
+                or self not in authority._borrowers
+            ):
+                raise _error("closed") from None
+            authority._assert_binding()
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        authority = self._authority
+        self._require_process_owner()
+        with authority._lifecycle_lock:
+            self._require_process_owner()
+            self._require_owner()
+            if self._state == self._CLOSED:
+                return
+            if self._state != self._ACTIVE or not self._registered:
+                raise _error("closed") from None
+            self._registered = False
+            self._state = self._CLOSED
+            authority._unregister_operation(self)
+
+    def _require_process_owner(self) -> None:
+        current_pid = os.getpid()
+        if self._pid != current_pid or self._authority._pid != current_pid:
+            raise _error("closed") from None
+
+
 class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
     """A descriptor-bound immutable record namespace under one chain identity."""
 
@@ -1403,5 +1610,6 @@ __all__ = [
     "ImmutableEvidenceNamespace",
     "WorkspaceMemoryAuthority",
     "WorkspaceMemoryAuthorityError",
+    "WorkspaceMemoryOperation",
     "open_workspace_memory",
 ]
