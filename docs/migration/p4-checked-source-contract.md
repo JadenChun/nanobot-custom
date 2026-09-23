@@ -1,0 +1,21 @@
+# P4 checked-source lock authority contract
+
+`nanobot.session.checked_source.open_checked_session(backend, key)` issues a dormant, context-managed lock capability for one exact `JsonlSessionStore` object and key. The caller must already hold memory authority before entering it. The capability provides only `require_current()` and `close()`; it cannot read, parse, or mutate source sessions, or open arbitrary locks. It is process-local, bound to the exact `Thread` object that issued it, and cannot be copied or serialized.
+
+Entry pins the configured absolute session namespace by opening `/` and walking every path component with descriptor-relative, no-follow directory opens. It retains each ancestor descriptor and the initial directory identity, owner, mode, and parent-edge identity. Before creating or acquiring locks, it requires the session namespace and its migration-lock parent to be effective-user-owned, owner-readable/searchable, and free of group/other write bits and special permission bits. Normal `0755` namespaces and `0700` migration parents are accepted. Higher ancestors must be owned by the effective user or root and must not be group/other writable, except for root-owned sticky system directories such as `/tmp`. The final pinned directory must agree with `backend.sessions_dir`. Each `require_current()` and successful context exit checks every retained descriptor and path edge again. A path, identity, owner, or mode change fails closed with a content-free error code.
+
+The authority acquires locks in this order, using nonblocking exclusive `flock` compatible with the repository's `filelock.FileLock` paths:
+
+1. `<sessions-root>/.workspace-migration.lock`
+2. `<sessions-root>/<namespace>/.execution-locks/<storage-key>.lock`
+3. `<sessions-root>/<namespace>/.session-files.lock`
+
+The lock files are persistent synchronization objects. Existing files are accepted only when they are empty, regular, owned by the effective user, have one hard link, and have exactly mode `0600`, `0604`, `0640`, or `0644`. Existing files are never chmodded, truncated, written, or unlinked. Missing lock files are created exclusively with no-follow semantics. The returned descriptor is recorded immediately; only that newly created descriptor may be fchmodded, to `0600`. The descriptor and path are compared before and after `flock`, and lock files are never unlinked during cleanup.
+
+The `.execution-locks` directory must be a current-owner directory with exact mode `0700`. If absent, entry attempts `mkdir(0700)` and establishes a fresh no-follow baseline before adoption. A restrictive umask that leaves a different mode produces an `unsafe` failure; that residue is preserved for operator inspection and is never repaired or deleted. A same-UID substitution that occurs before the fresh baseline and presents a safe `0700` directory is indistinguishable from the created directory and may be adopted. Substitution or metadata drift after the baseline is detected and rejected.
+
+Lifecycle is `NEW -> ACTIVE -> CLOSED`, with one entry only. A child process rejects inherited authority before touching its inherited mutex and closes its inherited descriptors without `LOCK_UN`; closing those duplicate descriptors does not release the parent's lock. Calls from a different thread or process fail. Closing detaches descriptor ownership before release and close, so repeated close cannot close an unrelated descriptor that later reuses the same integer.
+
+Public failures use only `invalid`, `unavailable`, `unsafe`, `changed`, `busy`, `missing`, `closed`, and `io`. Their messages contain no backend paths, keys, source values, or underlying exception details, and they carry no live exception cause or context.
+
+This facility is dormant until a future migration read interface is designed and explicitly connected. Such an interface must separately specify bounded source reading and parsing under this lock authority. This contract does not change ordinary session APIs or establish source-session format semantics. The lock assumes cooperating code uses the same paths and `flock` protocol; it does not authenticate against a same-UID actor that substitutes a safe directory before the initial baseline.
