@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import errno
 import os
+import secrets
 import stat
 import threading
 from dataclasses import dataclass
@@ -25,11 +26,12 @@ if TYPE_CHECKING:
 
 ErrorCode = Literal[
     "invalid", "unavailable", "unsafe", "changed", "busy", "missing", "closed", "io",
-    "limit",
+    "limit", "uncertain",
 ]
 _ALLOWED_LOCK_MODES = frozenset({0o600, 0o604, 0o640, 0o644})
 _MAX_SOURCE_BYTES = 64 * 1024 * 1024
 _SOURCE_READ_CHUNK_SIZE = 64 * 1024
+_TEMP_CREATE_ATTEMPTS = 8
 _MIGRATION_LOCK = ".workspace-migration.lock"
 _SESSION_FILES_LOCK = ".session-files.lock"
 _EXECUTION_DIRECTORY = ".execution-locks"
@@ -44,7 +46,7 @@ class CheckedSessionAuthorityError(RuntimeError):
     def __init__(self, code: ErrorCode) -> None:
         if code not in {
             "invalid", "unavailable", "unsafe", "changed", "busy", "missing", "closed", "io",
-            "limit",
+            "limit", "uncertain",
         }:
             code = "io"
         self.code: ErrorCode = code
@@ -226,6 +228,10 @@ def _validate_source_stat(value: os.stat_result) -> None:
         _fail("unsafe")
 
 
+def _temporary_name() -> str:
+    return f".checked-source-{secrets.token_hex(16)}.tmp"
+
+
 def _require_source_read_platform() -> None:
     flags = ("O_NOFOLLOW", "O_NONBLOCK", "O_CLOEXEC")
     if os.name != "posix" or any(
@@ -236,13 +242,26 @@ def _require_source_read_platform() -> None:
         _fail("unavailable")
 
 
+def _require_source_replace_platform() -> None:
+    flags = ("O_CREAT", "O_EXCL", "O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK")
+    if os.name != "posix" or any(
+        not isinstance(getattr(os, flag, None), int) for flag in flags
+    ):
+        _fail("unavailable")
+    if not all(
+        callable(getattr(os, function, None))
+        for function in ("fchmod", "fsync", "lseek", "read", "replace", "write")
+    ):
+        _fail("unavailable")
+
+
 class CheckedSessionAuthority:
     """Factory-only lock capability bound to one backend, key, process, and thread."""
 
     __slots__ = (
         "_backend", "_key", "_storage_key", "_path", "_components", "_pid", "_thread",
         "_mutex", "_state", "_owned_fds", "_directories", "_execution_directory",
-        "_locks",
+        "_locks", "_source_evidence", "_replacement_used",
     )
 
     def __init__(
@@ -269,6 +288,10 @@ class CheckedSessionAuthority:
         self._directories: list[_DirectoryBaseline] = []
         self._execution_directory: _DirectoryBaseline | None = None
         self._locks: list[_LockBaseline] = []
+        self._source_evidence: tuple[
+            bytes, tuple[int, int, int, int, int, int, int, int, int]
+        ] | None = None
+        self._replacement_used = False
 
     def __copy__(self) -> CheckedSessionAuthority:
         raise TypeError("CheckedSessionAuthority cannot be copied")
@@ -290,6 +313,7 @@ class CheckedSessionAuthority:
         self._directories = []
         self._execution_directory = None
         self._state = "closed"
+        self._source_evidence = None
         for descriptor in reversed(descriptors):
             try:
                 os.close(descriptor)
@@ -605,6 +629,7 @@ class CheckedSessionAuthority:
         self._locks = []
         self._directories = []
         self._execution_directory = None
+        self._source_evidence = None
         close_error = False
         if unlock and fcntl is not None:
             for baseline in reversed(locks):
@@ -675,8 +700,11 @@ class CheckedSessionAuthority:
             self._raise_public("closed")
         self.require_current()
 
+        with self._mutex:
+            self._source_evidence = None
         failure: ErrorCode | None = None
         result: bytes | None = None
+        result_signature: tuple[int, int, int, int, int, int, int, int, int] | None = None
         descriptor: int | None = None
         try:
             with self._mutex:
@@ -784,6 +812,7 @@ class CheckedSessionAuthority:
                     _fail("changed")
                 self._validate_all()
                 result = bytes(data)
+                result_signature = baseline
         except _FailureError as exc:
             failure = exc.code
         except OSError as exc:
@@ -799,10 +828,236 @@ class CheckedSessionAuthority:
                         failure = _error_code(exc)
 
         if failure is not None:
+            self._source_evidence = None
             self._raise_public(failure)
-        if result is None:
+        if result is None or result_signature is None:
             self._raise_public("io")
+        self._source_evidence = (result, result_signature)
         return result
+
+    def _detach_and_close(self, descriptor: int) -> None:
+        try:
+            self._owned_fds.remove(descriptor)
+        except ValueError:
+            return
+        os.close(descriptor)
+
+    def _check_temp_entry(self, descriptor: int, name: str, parent_fd: int) -> os.stat_result:
+        try:
+            opened = os.fstat(descriptor)
+        except OSError as exc:
+            _fail(_error_code(exc))
+        _validate_source_stat(opened)
+        if stat.S_IMODE(opened.st_mode) != 0o600:
+            _fail("unsafe")
+        current = _stat_at(parent_fd, name)
+        if current is None or _source_signature(current) != _source_signature(opened):
+            _fail("changed")
+        return opened
+
+    def _verify_temp_bytes(self, descriptor: int, expected: bytes) -> None:
+        try:
+            os.lseek(descriptor, 0, os.SEEK_SET)
+        except OSError as exc:
+            _fail(_error_code(exc))
+        offset = 0
+        while offset < len(expected):
+            try:
+                chunk = os.read(descriptor, min(_SOURCE_READ_CHUNK_SIZE, len(expected) - offset))
+            except OSError as exc:
+                if exc.errno == errno.EINTR:
+                    continue
+                _fail(_error_code(exc))
+            if not chunk or len(chunk) > len(expected) - offset:
+                _fail("changed")
+            if chunk != expected[offset : offset + len(chunk)]:
+                _fail("changed")
+            offset += len(chunk)
+        while True:
+            try:
+                extra = os.read(descriptor, 1)
+                break
+            except OSError as exc:
+                if exc.errno != errno.EINTR:
+                    _fail(_error_code(exc))
+        if extra:
+            _fail("changed")
+
+    def replace_source_bytes(self, new_bytes: bytes) -> None:
+        """Replace the source once, conditional on this authority's last checked read."""
+        self._check_process()
+        self._check_thread()
+        if self._state != "active":
+            self._raise_public("closed")
+        if type(new_bytes) is not bytes:
+            self._raise_public("invalid")
+        failure: ErrorCode | None = None
+        descriptor: int | None = None
+        replacement_consumed = False
+        replace_attempted = False
+        try:
+            with self._mutex:
+                if self._state != "active":
+                    _fail("closed")
+                evidence = self._source_evidence
+                if evidence is None or self._replacement_used:
+                    _fail("invalid")
+                if len(new_bytes) > _MAX_SOURCE_BYTES:
+                    _fail("limit")
+                prior_bytes, prior_signature = evidence
+                replacement_consumed = True
+                self._source_evidence = None
+                self._replacement_used = True
+                self._validate_all()
+                _require_source_replace_platform()
+                source_name = f"{self._storage_key}.jsonl"
+                namespace_fd = self._directories[-1].fd
+
+                current_bytes = self.read_source_bytes()
+                current_evidence = self._source_evidence
+                self._source_evidence = None
+                if (
+                    current_evidence is None
+                    or current_evidence[1] != prior_signature
+                    or current_bytes != prior_bytes
+                ):
+                    _fail("changed")
+
+                temp_name = ""
+                for _attempt in range(_TEMP_CREATE_ATTEMPTS):
+                    temp_name = _temporary_name()
+                    try:
+                        descriptor = os.open(
+                            temp_name,
+                            os.O_RDWR
+                            | os.O_CREAT
+                            | os.O_EXCL
+                            | os.O_NOFOLLOW
+                            | os.O_CLOEXEC
+                            | os.O_NONBLOCK,
+                            0o600,
+                            dir_fd=namespace_fd,
+                        )
+                    except FileExistsError:
+                        continue
+                    except (TypeError, NotImplementedError):
+                        _fail("unavailable")
+                    except OSError as exc:
+                        _fail(_error_code(exc))
+                    self._owned_fds.append(descriptor)
+                    break
+                if descriptor is None:
+                    _fail("changed")
+
+                try:
+                    created = os.fstat(descriptor)
+                except OSError as exc:
+                    _fail(_error_code(exc))
+                if (
+                    not stat.S_ISREG(created.st_mode)
+                    or created.st_uid != os.geteuid()
+                    or created.st_nlink != 1
+                    or created.st_size != 0
+                    or stat.S_IMODE(created.st_mode) & ~0o600
+                ):
+                    _fail("unsafe")
+                if stat.S_IMODE(created.st_mode) != 0o600:
+                    try:
+                        os.fchmod(descriptor, 0o600)
+                    except (TypeError, NotImplementedError):
+                        _fail("unavailable")
+                    except OSError as exc:
+                        _fail(_error_code(exc))
+                self._check_temp_entry(descriptor, temp_name, namespace_fd)
+
+                offset = 0
+                while offset < len(new_bytes):
+                    try:
+                        written = os.write(descriptor, memoryview(new_bytes)[offset:])
+                    except OSError as exc:
+                        if exc.errno == errno.EINTR:
+                            continue
+                        _fail(_error_code(exc))
+                    if written <= 0 or written > len(new_bytes) - offset:
+                        _fail("io")
+                    offset += written
+
+                self._check_temp_entry(descriptor, temp_name, namespace_fd)
+                self._verify_temp_bytes(descriptor, new_bytes)
+                self._check_temp_entry(descriptor, temp_name, namespace_fd)
+                try:
+                    os.fsync(descriptor)
+                except OSError as exc:
+                    _fail(_error_code(exc))
+                self._check_temp_entry(descriptor, temp_name, namespace_fd)
+
+                current_bytes = self.read_source_bytes()
+                current_evidence = self._source_evidence
+                self._source_evidence = None
+                if (
+                    current_evidence is None
+                    or current_evidence[1] != prior_signature
+                    or current_bytes != prior_bytes
+                ):
+                    _fail("changed")
+                self._validate_all()
+                self._check_temp_entry(descriptor, temp_name, namespace_fd)
+
+                replace_attempted = True
+                try:
+                    os.replace(
+                        temp_name,
+                        source_name,
+                        src_dir_fd=namespace_fd,
+                        dst_dir_fd=namespace_fd,
+                    )
+                except (TypeError, NotImplementedError):
+                    _fail("uncertain")
+                except OSError:
+                    _fail("uncertain")
+
+                self._validate_all()
+                replaced = self._check_temp_entry(descriptor, source_name, namespace_fd)
+                if replaced.st_size != len(new_bytes):
+                    _fail("changed")
+                self._verify_temp_bytes(descriptor, new_bytes)
+                self._validate_all()
+                try:
+                    os.fsync(namespace_fd)
+                except OSError:
+                    _fail("uncertain")
+                self._validate_all()
+                self._check_temp_entry(descriptor, source_name, namespace_fd)
+        except _FailureError as exc:
+            failure = "uncertain" if replace_attempted else exc.code
+        except CheckedSessionAuthorityError as exc:
+            if replace_attempted:
+                failure = "uncertain"
+            else:
+                failure = "changed" if exc.code == "missing" else exc.code
+        except OSError as exc:
+            if replace_attempted:
+                failure = "uncertain"
+            else:
+                failure = _error_code(exc)
+                if failure == "missing":
+                    failure = "changed"
+        except Exception:
+            failure = "uncertain" if replace_attempted else "io"
+        finally:
+            if replacement_consumed:
+                self._source_evidence = None
+            if descriptor is not None:
+                owned_descriptor = descriptor
+                descriptor = None
+                try:
+                    self._detach_and_close(owned_descriptor)
+                except OSError as exc:
+                    if failure is None:
+                        failure = "uncertain" if replace_attempted else _error_code(exc)
+
+        if failure is not None:
+            self._raise_public(failure)
 
     def close(self) -> None:
         if os.getpid() != self._pid:
