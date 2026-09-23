@@ -24,9 +24,12 @@ if TYPE_CHECKING:
 
 
 ErrorCode = Literal[
-    "invalid", "unavailable", "unsafe", "changed", "busy", "missing", "closed", "io"
+    "invalid", "unavailable", "unsafe", "changed", "busy", "missing", "closed", "io",
+    "limit",
 ]
 _ALLOWED_LOCK_MODES = frozenset({0o600, 0o604, 0o640, 0o644})
+_MAX_SOURCE_BYTES = 64 * 1024 * 1024
+_SOURCE_READ_CHUNK_SIZE = 64 * 1024
 _MIGRATION_LOCK = ".workspace-migration.lock"
 _SESSION_FILES_LOCK = ".session-files.lock"
 _EXECUTION_DIRECTORY = ".execution-locks"
@@ -40,7 +43,8 @@ class CheckedSessionAuthorityError(RuntimeError):
 
     def __init__(self, code: ErrorCode) -> None:
         if code not in {
-            "invalid", "unavailable", "unsafe", "changed", "busy", "missing", "closed", "io"
+            "invalid", "unavailable", "unsafe", "changed", "busy", "missing", "closed", "io",
+            "limit",
         }:
             code = "io"
         self.code: ErrorCode = code
@@ -194,6 +198,42 @@ def _validate_lock_stat(value: os.stat_result) -> None:
         or stat.S_IMODE(value.st_mode) not in _ALLOWED_LOCK_MODES
     ):
         _fail("unsafe")
+
+
+def _source_signature(value: os.stat_result) -> tuple[int, int, int, int, int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_uid,
+        value.st_gid,
+        value.st_mode,
+        value.st_nlink,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _validate_source_stat(value: os.stat_result) -> None:
+    mode = value.st_mode
+    if (
+        not stat.S_ISREG(mode)
+        or value.st_uid != os.geteuid()
+        or value.st_nlink != 1
+        or not mode & 0o400
+        or mode & (0o022 | 0o7000)
+    ):
+        _fail("unsafe")
+
+
+def _require_source_read_platform() -> None:
+    flags = ("O_NOFOLLOW", "O_NONBLOCK", "O_CLOEXEC")
+    if os.name != "posix" or any(
+        not isinstance(getattr(os, flag, None), int) for flag in flags
+    ):
+        _fail("unavailable")
+    if not callable(os.read):
+        _fail("unavailable")
 
 
 class CheckedSessionAuthority:
@@ -626,6 +666,143 @@ class CheckedSessionAuthority:
             failure = exc.code
         if failure is not None:
             self._raise_public(failure)
+
+    def read_source_bytes(self) -> bytes:
+        """Return a bounded, exact byte snapshot of this authority's JSONL source."""
+        self._check_process()
+        self._check_thread()
+        if self._state != "active":
+            self._raise_public("closed")
+        self.require_current()
+
+        failure: ErrorCode | None = None
+        result: bytes | None = None
+        descriptor: int | None = None
+        try:
+            with self._mutex:
+                if self._state != "active":
+                    _fail("closed")
+                self._validate_all()
+                _require_source_read_platform()
+
+                source_name = f"{self._storage_key}.jsonl"
+                namespace_fd = self._directories[-1].fd
+                before = _stat_at(namespace_fd, source_name)
+                if before is None:
+                    _fail("missing")
+                _validate_source_stat(before)
+                baseline = _source_signature(before)
+                if before.st_size > _MAX_SOURCE_BYTES:
+                    _fail("limit")
+
+                try:
+                    descriptor = os.open(
+                        source_name,
+                        os.O_RDONLY
+                        | os.O_NOFOLLOW
+                        | os.O_NONBLOCK
+                        | os.O_CLOEXEC,
+                        dir_fd=namespace_fd,
+                    )
+                except FileNotFoundError:
+                    _fail("changed")
+                except (TypeError, NotImplementedError):
+                    _fail("unavailable")
+                except OSError as exc:
+                    _fail(_error_code(exc))
+
+                try:
+                    opened = os.fstat(descriptor)
+                except OSError as exc:
+                    _fail(_error_code(exc))
+                if _source_signature(opened) != baseline:
+                    _fail("changed")
+                current = _stat_at(namespace_fd, source_name)
+                if current is None or _source_signature(current) != baseline:
+                    _fail("changed")
+
+                self._validate_all()
+                data = bytearray()
+                while True:
+                    self._validate_all()
+                    try:
+                        opened = os.fstat(descriptor)
+                    except OSError as exc:
+                        _fail(_error_code(exc))
+                    current = _stat_at(namespace_fd, source_name)
+                    if (
+                        _source_signature(opened) != baseline
+                        or current is None
+                        or _source_signature(current) != baseline
+                    ):
+                        _fail("changed")
+
+                    request_size = min(
+                        _SOURCE_READ_CHUNK_SIZE,
+                        _MAX_SOURCE_BYTES + 1 - len(data),
+                    )
+                    try:
+                        chunk = os.read(descriptor, request_size)
+                    except OSError as exc:
+                        if exc.errno == errno.EINTR:
+                            continue
+                        _fail(_error_code(exc))
+                    if not chunk:
+                        if len(data) != before.st_size:
+                            _fail("changed")
+                        break
+                    if len(chunk) > request_size:
+                        _fail("io")
+                    data.extend(chunk)
+                    if len(data) > _MAX_SOURCE_BYTES:
+                        _fail("limit")
+
+                    self._validate_all()
+                    try:
+                        opened = os.fstat(descriptor)
+                    except OSError as exc:
+                        _fail(_error_code(exc))
+                    current = _stat_at(namespace_fd, source_name)
+                    if (
+                        _source_signature(opened) != baseline
+                        or current is None
+                        or _source_signature(current) != baseline
+                    ):
+                        _fail("changed")
+
+                self._validate_all()
+                try:
+                    opened = os.fstat(descriptor)
+                except OSError as exc:
+                    _fail(_error_code(exc))
+                current = _stat_at(namespace_fd, source_name)
+                if (
+                    _source_signature(opened) != baseline
+                    or current is None
+                    or _source_signature(current) != baseline
+                ):
+                    _fail("changed")
+                self._validate_all()
+                result = bytes(data)
+        except _FailureError as exc:
+            failure = exc.code
+        except OSError as exc:
+            failure = _error_code(exc)
+        finally:
+            if descriptor is not None:
+                owned_descriptor = descriptor
+                descriptor = None
+                try:
+                    os.close(owned_descriptor)
+                except OSError as exc:
+                    if failure is None:
+                        failure = _error_code(exc)
+
+        if failure is not None:
+            self._raise_public(failure)
+        if result is None:
+            self._raise_public("io")
+        return result
 
     def close(self) -> None:
         if os.getpid() != self._pid:
