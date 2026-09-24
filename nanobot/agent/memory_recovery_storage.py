@@ -230,6 +230,18 @@ def _require_capabilities() -> None:
         raise MemoryStorageUnavailableError()
 
 
+def _require_lock_gate_capabilities() -> None:
+    """Require the duplicate-descriptor flock probe used only by the lock gate."""
+
+    _require_capabilities()
+    if (
+        not callable(getattr(os, "dup", None))
+        or _fcntl is None
+        or not isinstance(getattr(_fcntl, "LOCK_NB", None), int)
+    ):
+        raise MemoryStorageUnavailableError()
+
+
 def _dir_flags() -> int:
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_NONBLOCK
     cloexec = getattr(os, "O_CLOEXEC", 0)
@@ -838,6 +850,342 @@ class _ImmutableSlotStore:
         )
 
 
+def _check_workspace_memory_lock_binding(workspace_fd: int, lock_fd: int) -> None:
+    """Validate the persistent lock and its workspace-relative name."""
+
+    workspace_info = _fstat(workspace_fd, code="binding")
+    if not stat.S_ISDIR(workspace_info.st_mode) or workspace_info.st_uid != _uid():
+        raise _error("binding") from None
+    lock_info = _fstat(lock_fd, code="binding")
+    _private_file(lock_info, links={1})
+    path_lock = _stat_entry(workspace_fd, _LOCK_NAME)
+    if path_lock is None or not _same_binding(path_lock, lock_info):
+        raise _error("binding") from None
+
+
+def _open_or_create_workspace_memory_lock(
+    workspace_fd: int, check_binding: Callable[[int], None] | None = None
+) -> int:
+    """Open or exclusively create the persistent private workspace lock."""
+
+    def validate_binding(lock_fd: int) -> None:
+        if check_binding is None:
+            _check_workspace_memory_lock_binding(workspace_fd, lock_fd)
+        else:
+            check_binding(lock_fd)
+
+    flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    if isinstance(cloexec, int):
+        flags |= cloexec
+    lock_fd: int | None = None
+    for _ in range(8):
+        try:
+            lock_fd = os.open(_LOCK_NAME, flags, dir_fd=workspace_fd)
+            break
+        except FileNotFoundError:
+            try:
+                lock_fd = os.open(
+                    _LOCK_NAME,
+                    flags | os.O_CREAT | os.O_EXCL,
+                    _PRIVATE_FILE_MODE,
+                    dir_fd=workspace_fd,
+                )
+                break
+            except FileExistsError:
+                continue
+            except (OSError, TypeError, ValueError):
+                raise _error("io") from None
+        except (OSError, TypeError, ValueError):
+            raise _error("io") from None
+    if lock_fd is None:
+        raise _error("io") from None
+    try:
+        validate_binding(lock_fd)
+        _fsync(lock_fd)
+        validate_binding(lock_fd)
+        _fsync(workspace_fd)
+        validate_binding(lock_fd)
+        return lock_fd
+    except BaseException:
+        _close(lock_fd)
+        raise
+
+
+class _WorkspaceMemoryLockGate(AbstractContextManager[Self]):
+    """A process- and thread-bound lock gate without a recovery-layout policy."""
+
+    def __init__(self, workspace: Path | str) -> None:
+        _require_lock_gate_capabilities()
+        self._workspace_path = _canonical_workspace(workspace)
+        self._workspace_fd: int | None = None
+        self._lock_fd: int | None = None
+        self._lock_anchor_fd: int | None = None
+        self._workspace_binding: os.stat_result | None = None
+        self._lock_binding: os.stat_result | None = None
+        self._lock_anchor_binding: os.stat_result | None = None
+        self._pid = os.getpid()
+        self._thread = threading.current_thread()
+        self._used = False
+        self._active = False
+        self._lock_held = False
+
+    @property
+    def workspace(self) -> Path:
+        """The resolved workspace alias pinned by this gate."""
+
+        return self._workspace_path
+
+    @property
+    def lock_path(self) -> Path:
+        """The persistent lock's path in the pinned workspace."""
+
+        return self._workspace_path / _LOCK_NAME
+
+    def __reduce__(self) -> object:
+        raise TypeError("workspace memory lock gate cannot be serialized")
+
+    def __copy__(self) -> Self:
+        raise TypeError("workspace memory lock gate cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        raise TypeError("workspace memory lock gate cannot be copied")
+
+    def __enter__(self) -> Self:
+        self._require_owner()
+        if self._used:
+            raise _error("closed") from None
+        self._used = True
+        workspace_fd: int | None = None
+        lock_fd: int | None = None
+        lock_anchor_fd: int | None = None
+        try:
+            _require_lock_gate_capabilities()
+            workspace_fd = _open_directory_path(self._workspace_path)
+            workspace_info = _fstat(workspace_fd)
+            _private_directory(workspace_info, workspace=True)
+            self._workspace_binding = workspace_info
+            self._workspace_fd = workspace_fd
+            workspace_fd = None
+
+            assert self._workspace_fd is not None
+            lock_fd = _open_or_create_workspace_memory_lock(self._workspace_fd)
+            lock_binding = _fstat(lock_fd, code="binding")
+            try:
+                lock_anchor_fd = os.dup(lock_fd)
+            except (OSError, TypeError, ValueError):
+                raise _error("io") from None
+            lock_anchor_binding = _fstat(lock_anchor_fd, code="binding")
+            if not _same_binding(lock_binding, lock_anchor_binding):
+                raise _error("binding") from None
+
+            self._lock_fd = lock_fd
+            lock_fd = None
+            self._lock_binding = lock_binding
+            self._lock_anchor_fd = lock_anchor_fd
+            lock_anchor_fd = None
+            self._lock_anchor_binding = lock_anchor_binding
+            try:
+                assert _fcntl is not None
+                _fcntl.flock(self._lock_anchor_fd, _fcntl.LOCK_EX)
+            except (OSError, TypeError, ValueError):
+                raise _error("io") from None
+            self._lock_held = True
+            self._active = True
+            # Revalidate the path and original descriptor after blocking flock.
+            self.require_current()
+            return self
+        except MemoryStorageError:
+            self._cleanup()
+            _close(workspace_fd)
+            _close(lock_fd)
+            _close(lock_anchor_fd)
+            raise
+        except (OSError, TypeError, ValueError):
+            self._cleanup()
+            _close(workspace_fd)
+            _close(lock_fd)
+            _close(lock_anchor_fd)
+            raise _error("io") from None
+        except BaseException:
+            self._cleanup()
+            _close(workspace_fd)
+            _close(lock_fd)
+            _close(lock_anchor_fd)
+            raise
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self._require_owner()
+        validation_code: str | None = None
+        try:
+            self.require_current()
+        except MemoryStorageError as error:
+            validation_code = error.code
+        except BaseException:
+            validation_code = "binding"
+
+        descriptors_current = self._cleanup()
+        if exc_type is None:
+            if validation_code is not None:
+                raise _error(validation_code) from None
+            if not descriptors_current:
+                raise _error("binding") from None
+
+    def require_current(self) -> None:
+        """Prove that this active gate still refers to its original workspace lock."""
+
+        self._require_owner()
+        if not self._active:
+            raise _error("closed") from None
+        if (
+            self._workspace_fd is None
+            or self._lock_fd is None
+            or self._lock_anchor_fd is None
+            or self._workspace_binding is None
+            or self._lock_binding is None
+            or self._lock_anchor_binding is None
+        ):
+            raise _error("closed") from None
+
+        workspace_info = _fstat(self._workspace_fd, code="binding")
+        if not _same_binding(self._workspace_binding, workspace_info):
+            raise _error("binding") from None
+        _private_directory(workspace_info, workspace=True)
+        rebound = _open_directory_path(self._workspace_path)
+        try:
+            rebound_info = _fstat(rebound, code="binding")
+            if not _same_binding(workspace_info, rebound_info):
+                raise _error("binding") from None
+        finally:
+            _close(rebound)
+
+        anchor_info = _fstat(self._lock_anchor_fd, code="binding")
+        if not _same_binding(self._lock_anchor_binding, anchor_info):
+            raise _error("binding") from None
+        lock_info = _fstat(self._lock_fd, code="binding")
+        if not _same_binding(self._lock_binding, lock_info):
+            raise _error("binding") from None
+        if not self._original_lock_fd_shares_anchor():
+            raise _error("binding") from None
+        _check_workspace_memory_lock_binding(self._workspace_fd, self._lock_fd)
+
+    def close(self) -> None:
+        """Release this gate and detach its descriptors without removing storage."""
+
+        self._require_owner()
+        if not self._cleanup():
+            raise _error("binding") from None
+
+    def _require_owner(self) -> None:
+        if self._pid != os.getpid() or self._thread is not threading.current_thread():
+            raise _error("closed") from None
+
+    def _cleanup(self) -> bool:
+        """Detach state, then release only descriptors still bound to this gate.
+
+        Device, inode, and file type detect closed or reused descriptor numbers.
+        A same-UID actor that closes and reopens the exact same inode can spoof
+        that binding. An uncooperative thread can also race a raw ``os.close``
+        after the nonblocking probe; neither case is solvable within this
+        cooperating-process boundary.
+        """
+
+        lock_fd = self._lock_fd
+        lock_anchor_fd = self._lock_anchor_fd
+        workspace_fd = self._workspace_fd
+        lock_binding = self._lock_binding
+        lock_anchor_binding = self._lock_anchor_binding
+        workspace_binding = self._workspace_binding
+        lock_held = self._lock_held
+        self._lock_fd = None
+        self._lock_anchor_fd = None
+        self._workspace_fd = None
+        self._lock_binding = None
+        self._lock_anchor_binding = None
+        self._workspace_binding = None
+        self._lock_held = False
+        self._active = False
+        self._used = True
+
+        lock_current = self._descriptor_matches(lock_fd, lock_binding)
+        anchor_current = self._descriptor_matches(lock_anchor_fd, lock_anchor_binding)
+        workspace_current = self._descriptor_matches(workspace_fd, workspace_binding)
+        pair_absent = (
+            lock_fd is None
+            and lock_anchor_fd is None
+            and lock_binding is None
+            and lock_anchor_binding is None
+            and not lock_held
+        )
+        lock_pair_current = pair_absent
+        if (
+            lock_held
+            and lock_fd is not None
+            and lock_anchor_fd is not None
+            and lock_current
+            and anchor_current
+        ):
+            lock_pair_current = self._original_fd_shares_anchor(lock_fd, lock_anchor_fd)
+
+        # Validate both saved descriptors before any unlock or close. The
+        # anchor owns flock; the original fd is closed only after its open-file
+        # description is proved to share the anchor's lock.
+        if lock_anchor_fd is not None and anchor_current:
+            if lock_held and _fcntl is not None:
+                try:
+                    _fcntl.flock(lock_anchor_fd, _fcntl.LOCK_UN)
+                except (OSError, TypeError, ValueError):
+                    pass
+            _close(lock_anchor_fd)
+        if lock_fd is not None and lock_pair_current:
+            _close(lock_fd)
+        if workspace_fd is not None and workspace_current:
+            _close(workspace_fd)
+        return lock_pair_current and anchor_current and workspace_current
+
+    def _original_lock_fd_shares_anchor(self) -> bool:
+        if self._lock_fd is None or self._lock_anchor_fd is None:
+            return False
+        return self._original_fd_shares_anchor(self._lock_fd, self._lock_anchor_fd)
+
+    @staticmethod
+    def _original_fd_shares_anchor(lock_fd: int, lock_anchor_fd: int) -> bool:
+        """Use the held anchor lock to test whether the original fd is its dup."""
+
+        if _fcntl is None:
+            return False
+        try:
+            lock_info = os.fstat(lock_fd)
+            anchor_info = os.fstat(lock_anchor_fd)
+        except (OSError, TypeError, ValueError):
+            return False
+        if not _same_binding(lock_info, anchor_info):
+            return False
+        try:
+            _fcntl.flock(lock_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        except (OSError, TypeError, ValueError):
+            return False
+        return True
+
+    @staticmethod
+    def _descriptor_matches(
+        fd: int | None, binding: os.stat_result | None
+    ) -> bool:
+        if fd is None or binding is None:
+            return fd is None and binding is None
+        try:
+            current = os.fstat(fd)
+        except (OSError, TypeError, ValueError):
+            return False
+        return _same_binding(binding, current)
+
+
+def open_workspace_memory_lock(workspace: Path | str) -> _WorkspaceMemoryLockGate:
+    """Return a single-use lock gate without requiring memory recovery storage."""
+
+    return _WorkspaceMemoryLockGate(workspace)
+
+
 class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
     """A process-local authority for one private workspace memory namespace.
 
@@ -1058,51 +1406,13 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
 
     def _open_or_create_lock(self) -> int:
         assert self._workspace_fd is not None
-        flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
-        cloexec = getattr(os, "O_CLOEXEC", 0)
-        if isinstance(cloexec, int):
-            flags |= cloexec
-        lock_fd: int | None = None
-        for _ in range(8):
-            try:
-                lock_fd = os.open(_LOCK_NAME, flags, dir_fd=self._workspace_fd)
-                break
-            except FileNotFoundError:
-                try:
-                    lock_fd = os.open(
-                        _LOCK_NAME,
-                        flags | os.O_CREAT | os.O_EXCL,
-                        _PRIVATE_FILE_MODE,
-                        dir_fd=self._workspace_fd,
-                    )
-                    break
-                except FileExistsError:
-                    continue
-            except (OSError, TypeError, ValueError):
-                raise _error("io") from None
-        if lock_fd is None:
-            raise _error("io") from None
-        try:
-            self._check_lock_binding(lock_fd)
-            _fsync(lock_fd)
-            self._check_lock_binding(lock_fd)
-            _fsync(self._workspace_fd)
-            self._check_lock_binding(lock_fd)
-            return lock_fd
-        except BaseException:
-            _close(lock_fd)
-            raise
+        return _open_or_create_workspace_memory_lock(
+            self._workspace_fd, self._check_lock_binding
+        )
 
     def _check_lock_binding(self, lock_fd: int) -> None:
         assert self._workspace_fd is not None
-        workspace_info = _fstat(self._workspace_fd, code="binding")
-        if not stat.S_ISDIR(workspace_info.st_mode) or workspace_info.st_uid != _uid():
-            raise _error("binding") from None
-        lock_info = _fstat(lock_fd, code="binding")
-        _private_file(lock_info, links={1})
-        path_lock = _stat_entry(self._workspace_fd, _LOCK_NAME)
-        if path_lock is None or not _same_binding(path_lock, lock_info):
-            raise _error("binding") from None
+        _check_workspace_memory_lock_binding(self._workspace_fd, lock_fd)
 
     def _assert_process(self) -> None:
         if not self._active and self._workspace_fd is None:
