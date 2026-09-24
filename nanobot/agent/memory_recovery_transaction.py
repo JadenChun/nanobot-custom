@@ -83,6 +83,50 @@ _SOURCE_FIELDS = frozenset(
 )
 _OLD_TARGET_FIELDS = frozenset(("exists", "size", "digest", "stat"))
 _NEW_TARGET_FIELDS = frozenset(("exists", "size", "blob_digest"))
+_HISTORY_APPLIED_FIELDS = frozenset(
+    ("schema_version", "receipt_digest", "history_row_digest", "history_target", "cursor_target")
+)
+_MEMORY_APPLIED_FIELDS = frozenset(
+    ("schema_version", "receipt_digest", "memory_action", "memory_target")
+)
+_SOURCE_APPLIED_FIELDS = frozenset(("digest", "size", "generation", "revision", "cursor"))
+_OFFSET_APPLIED_FIELDS = frozenset(("schema_version", "receipt_digest", "source"))
+_RECEIPT_COMMITTED_FIELDS = frozenset(
+    (
+        "schema_version",
+        "receipt_digest",
+        "prepared_record_digest",
+        "history_applied_record_digest",
+        "memory_applied_record_digest",
+        "offset_applied_record_digest",
+        "receipt_size",
+        "receipt_present",
+    )
+)
+_COMPLETE_FIELDS = frozenset(
+    (
+        "schema_version",
+        "receipt_digest",
+        "commit_record_digest",
+        "receipt",
+        "history_target",
+        "cursor_target",
+        "memory_target",
+        "source",
+        "history_row_digest",
+        "history_marker_digest",
+        "marker_occurrences",
+    )
+)
+_TRANSACTION_PHASE_SEQUENCE = {
+    "CAPTURED": 0,
+    "PREPARED": 1,
+    "HISTORY_APPLIED": 2,
+    "MEMORY_APPLIED": 3,
+    "OFFSET_APPLIED": 4,
+    "RECEIPT_COMMITTED": 5,
+    "COMPLETE": 6,
+}
 
 
 class MemoryRecoveryTransactionError(ValueError):
@@ -379,6 +423,121 @@ class PreparedTransactionPayload:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class HistoryAppliedTransactionPayload:
+    receipt_digest: str
+    history_row_digest: str
+    history_target: NewTargetDescriptor
+    cursor_target: NewTargetDescriptor
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "receipt_digest": self.receipt_digest,
+            "history_row_digest": self.history_row_digest,
+            "history_target": self.history_target.to_payload(),
+            "cursor_target": self.cursor_target.to_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryAppliedTransactionPayload:
+    receipt_digest: str
+    memory_action: str
+    memory_target: NewTargetDescriptor
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "receipt_digest": self.receipt_digest,
+            "memory_action": self.memory_action,
+            "memory_target": self.memory_target.to_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class SourceAppliedState:
+    digest: str
+    size: int
+    generation: int
+    revision: int
+    cursor: int
+
+    def to_payload(self) -> dict[str, int | str]:
+        return {
+            "digest": self.digest,
+            "size": self.size,
+            "generation": self.generation,
+            "revision": self.revision,
+            "cursor": self.cursor,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OffsetAppliedTransactionPayload:
+    receipt_digest: str
+    source: SourceAppliedState
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "receipt_digest": self.receipt_digest,
+            "source": self.source.to_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ReceiptCommittedTransactionPayload:
+    receipt_digest: str
+    prepared_record_digest: str
+    history_applied_record_digest: str
+    memory_applied_record_digest: str
+    offset_applied_record_digest: str
+    receipt_size: int
+    receipt_present: bool
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "receipt_digest": self.receipt_digest,
+            "prepared_record_digest": self.prepared_record_digest,
+            "history_applied_record_digest": self.history_applied_record_digest,
+            "memory_applied_record_digest": self.memory_applied_record_digest,
+            "offset_applied_record_digest": self.offset_applied_record_digest,
+            "receipt_size": self.receipt_size,
+            "receipt_present": self.receipt_present,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CompleteTransactionPayload:
+    receipt_digest: str
+    commit_record_digest: str
+    receipt: OldTargetDescriptor
+    history_target: NewTargetDescriptor
+    cursor_target: NewTargetDescriptor
+    memory_target: NewTargetDescriptor
+    source: SourceAppliedState
+    history_row_digest: str
+    history_marker_digest: str
+    marker_occurrences: int
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "receipt_digest": self.receipt_digest,
+            "commit_record_digest": self.commit_record_digest,
+            "receipt": self.receipt.to_payload(),
+            "history_target": self.history_target.to_payload(),
+            "cursor_target": self.cursor_target.to_payload(),
+            "memory_target": self.memory_target.to_payload(),
+            "source": self.source.to_payload(),
+            "history_row_digest": self.history_row_digest,
+            "history_marker_digest": self.history_marker_digest,
+            "marker_occurrences": self.marker_occurrences,
+        }
+
+
 def _old_target(value: object) -> OldTargetDescriptor:
     if type(value) is not dict or set(value) != _OLD_TARGET_FIELDS:
         _fail()
@@ -642,14 +801,17 @@ def _prepared_from_payload(
 
 
 def _validate_record_bounds(payload: dict[str, Any], phase: str, identity: str) -> None:
+    sequence = _TRANSACTION_PHASE_SEQUENCE.get(phase)
+    if sequence is None:
+        _fail()
     try:
         record = json.dumps(
             {
                 "version": 1,
                 "kind": "transactions",
                 "identity": identity,
-                "sequence": 0 if phase == "CAPTURED" else 1,
-                "predecessor_digest": None if phase == "CAPTURED" else "0" * 64,
+                "sequence": sequence,
+                "predecessor_digest": None if sequence == 0 else "0" * 64,
                 "phase": phase,
                 "payload": payload,
             },
@@ -684,37 +846,610 @@ def _parse_payload(value: object) -> dict[str, Any]:
     return value
 
 
+def _phase_fields(payload: object, fields: frozenset[str]) -> dict[str, Any]:
+    if type(payload) is not dict or set(payload) != fields:
+        _fail()
+    if type(payload["schema_version"]) is not int or payload["schema_version"] != _SCHEMA_VERSION:
+        _fail()
+    return payload
+
+
+def _transaction_context(
+    captured: object, prepared: object
+) -> tuple[CapturedTransactionPayload, PreparedTransactionPayload]:
+    if type(captured) is not CapturedTransactionPayload:
+        _fail()
+    valid_captured = _validated_captured(captured)
+    if type(prepared) is not PreparedTransactionPayload or prepared.captured != valid_captured:
+        _fail()
+    valid_prepared = _prepared_from_payload(prepared.to_payload(), valid_captured)
+    if valid_prepared != prepared:
+        _fail()
+    return valid_captured, valid_prepared
+
+
+def _source_applied(value: object) -> SourceAppliedState:
+    if type(value) is not dict or set(value) != _SOURCE_APPLIED_FIELDS:
+        _fail()
+    return SourceAppliedState(
+        _digest(value["digest"]),
+        _counter(value["size"]),
+        _counter(value["generation"]),
+        _counter(value["revision"]),
+        _counter(value["cursor"]),
+    )
+
+
+def _prepared_source_state(prepared: PreparedTransactionPayload) -> SourceAppliedState:
+    source = prepared.source
+    return SourceAppliedState(
+        source.new_digest,
+        source.new_size,
+        source.new_generation,
+        source.new_revision,
+        source.new_cursor,
+    )
+
+
+def _history_applied_from_payload(
+    payload: object,
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+) -> HistoryAppliedTransactionPayload:
+    captured, prepared = _transaction_context(captured, prepared)
+    raw = _phase_fields(payload, _HISTORY_APPLIED_FIELDS)
+    receipt_digest = _digest(raw["receipt_digest"])
+    row_digest = _digest(raw["history_row_digest"])
+    history_target = _new_target(raw["history_target"])
+    cursor_target = _new_target(raw["cursor_target"])
+    if (
+        receipt_digest != captured.receipt_digest
+        or not history_target.exists
+        or not cursor_target.exists
+        or row_digest != prepared.history_row_digest
+        or history_target != prepared.targets["history.jsonl"].new
+        or cursor_target != prepared.targets[".cursor"].new
+    ):
+        _fail()
+    return HistoryAppliedTransactionPayload(
+        receipt_digest, row_digest, history_target, cursor_target
+    )
+
+
+def _validated_history_applied(
+    value: object,
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+) -> HistoryAppliedTransactionPayload:
+    if type(value) is not HistoryAppliedTransactionPayload:
+        _fail()
+    decoded = _history_applied_from_payload(value.to_payload(), captured, prepared)
+    if decoded != value:
+        _fail()
+    return decoded
+
+
+def _memory_applied_from_payload(
+    payload: object,
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: object,
+) -> MemoryAppliedTransactionPayload:
+    captured, prepared = _transaction_context(captured, prepared)
+    _validated_history_applied(history_applied, captured, prepared)
+    raw = _phase_fields(payload, _MEMORY_APPLIED_FIELDS)
+    receipt_digest = _digest(raw["receipt_digest"])
+    action = raw["memory_action"]
+    target = _new_target(raw["memory_target"])
+    if (
+        receipt_digest != captured.receipt_digest
+        or type(action) is not str
+        or action != prepared.memory_action
+        or target != prepared.targets["MEMORY.md"].new
+    ):
+        _fail()
+    return MemoryAppliedTransactionPayload(receipt_digest, action, target)
+
+
+def _validated_memory_applied(
+    value: object,
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: object,
+) -> MemoryAppliedTransactionPayload:
+    if type(value) is not MemoryAppliedTransactionPayload:
+        _fail()
+    decoded = _memory_applied_from_payload(
+        value.to_payload(), captured, prepared, history_applied
+    )
+    if decoded != value:
+        _fail()
+    return decoded
+
+
+def _offset_applied_from_payload(
+    payload: object,
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: object,
+    memory_applied: object,
+) -> OffsetAppliedTransactionPayload:
+    captured, prepared = _transaction_context(captured, prepared)
+    _validated_memory_applied(
+        memory_applied, captured, prepared, history_applied
+    )
+    raw = _phase_fields(payload, _OFFSET_APPLIED_FIELDS)
+    receipt_digest = _digest(raw["receipt_digest"])
+    source = _source_applied(raw["source"])
+    if receipt_digest != captured.receipt_digest or source != _prepared_source_state(prepared):
+        _fail()
+    return OffsetAppliedTransactionPayload(receipt_digest, source)
+
+
+def _validated_offset_applied(
+    value: object,
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: object,
+    memory_applied: object,
+) -> OffsetAppliedTransactionPayload:
+    if type(value) is not OffsetAppliedTransactionPayload:
+        _fail()
+    decoded = _offset_applied_from_payload(
+        value.to_payload(), captured, prepared, history_applied, memory_applied
+    )
+    if decoded != value:
+        _fail()
+    return decoded
+
+
+def _record_digest_inputs(
+    prepared_record_digest: object,
+    history_applied_record_digest: object,
+    memory_applied_record_digest: object,
+    offset_applied_record_digest: object,
+) -> tuple[str, str, str, str]:
+    return (
+        _digest(prepared_record_digest),
+        _digest(history_applied_record_digest),
+        _digest(memory_applied_record_digest),
+        _digest(offset_applied_record_digest),
+    )
+
+
+def _receipt_committed_from_payload(
+    payload: object,
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: object,
+    memory_applied: object,
+    offset_applied: object,
+    *,
+    prepared_record_digest: object,
+    history_applied_record_digest: object,
+    memory_applied_record_digest: object,
+    offset_applied_record_digest: object,
+) -> ReceiptCommittedTransactionPayload:
+    captured, prepared = _transaction_context(captured, prepared)
+    _validated_offset_applied(
+        offset_applied, captured, prepared, history_applied, memory_applied
+    )
+    expected_digests = _record_digest_inputs(
+        prepared_record_digest,
+        history_applied_record_digest,
+        memory_applied_record_digest,
+        offset_applied_record_digest,
+    )
+    raw = _phase_fields(payload, _RECEIPT_COMMITTED_FIELDS)
+    receipt_digest = _digest(raw["receipt_digest"])
+    record_digests = _record_digest_inputs(
+        raw["prepared_record_digest"],
+        raw["history_applied_record_digest"],
+        raw["memory_applied_record_digest"],
+        raw["offset_applied_record_digest"],
+    )
+    receipt_size = _counter(raw["receipt_size"], positive=True)
+    receipt_present = raw["receipt_present"]
+    if (
+        receipt_digest != captured.receipt_digest
+        or record_digests != expected_digests
+        or receipt_size != captured.receipt_size
+        or type(receipt_present) is not bool
+        or receipt_present is not True
+    ):
+        _fail()
+    return ReceiptCommittedTransactionPayload(
+        receipt_digest, *record_digests, receipt_size, receipt_present
+    )
+
+
+def _validated_receipt_committed(
+    value: object,
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: object,
+    memory_applied: object,
+    offset_applied: object,
+    *,
+    prepared_record_digest: object,
+    history_applied_record_digest: object,
+    memory_applied_record_digest: object,
+    offset_applied_record_digest: object,
+) -> ReceiptCommittedTransactionPayload:
+    if type(value) is not ReceiptCommittedTransactionPayload:
+        _fail()
+    decoded = _receipt_committed_from_payload(
+        value.to_payload(),
+        captured,
+        prepared,
+        history_applied,
+        memory_applied,
+        offset_applied,
+        prepared_record_digest=prepared_record_digest,
+        history_applied_record_digest=history_applied_record_digest,
+        memory_applied_record_digest=memory_applied_record_digest,
+        offset_applied_record_digest=offset_applied_record_digest,
+    )
+    if decoded != value:
+        _fail()
+    return decoded
+
+
+def _complete_from_payload(
+    payload: object,
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: object,
+    memory_applied: object,
+    offset_applied: object,
+    receipt_committed: object,
+    *,
+    commit_record_digest: object,
+    prepared_record_digest: object,
+    history_applied_record_digest: object,
+    memory_applied_record_digest: object,
+    offset_applied_record_digest: object,
+) -> CompleteTransactionPayload:
+    captured, prepared = _transaction_context(captured, prepared)
+    _validated_receipt_committed(
+        receipt_committed,
+        captured,
+        prepared,
+        history_applied,
+        memory_applied,
+        offset_applied,
+        prepared_record_digest=prepared_record_digest,
+        history_applied_record_digest=history_applied_record_digest,
+        memory_applied_record_digest=memory_applied_record_digest,
+        offset_applied_record_digest=offset_applied_record_digest,
+    )
+    raw = _phase_fields(payload, _COMPLETE_FIELDS)
+    receipt_digest = _digest(raw["receipt_digest"])
+    parsed_commit_digest = _digest(raw["commit_record_digest"])
+    expected_commit_digest = _digest(commit_record_digest)
+    receipt = _old_target(raw["receipt"])
+    history_target = _new_target(raw["history_target"])
+    cursor_target = _new_target(raw["cursor_target"])
+    memory_target = _new_target(raw["memory_target"])
+    source = _source_applied(raw["source"])
+    row_digest = _digest(raw["history_row_digest"])
+    marker_digest = _digest(raw["history_marker_digest"])
+    marker_occurrences = _counter(raw["marker_occurrences"], positive=True)
+    expected_receipt = OldTargetDescriptor(
+        True, captured.receipt_size, captured.receipt_digest, prepared.receipt_stat
+    )
+    if (
+        receipt_digest != captured.receipt_digest
+        or parsed_commit_digest != expected_commit_digest
+        or receipt != expected_receipt
+        or history_target != prepared.targets["history.jsonl"].new
+        or cursor_target != prepared.targets[".cursor"].new
+        or memory_target != prepared.targets["MEMORY.md"].new
+        or source != _prepared_source_state(prepared)
+        or row_digest != prepared.history_row_digest
+        or marker_digest != captured.history_marker_digest
+        or marker_occurrences != 1
+    ):
+        _fail()
+    return CompleteTransactionPayload(
+        receipt_digest,
+        parsed_commit_digest,
+        receipt,
+        history_target,
+        cursor_target,
+        memory_target,
+        source,
+        row_digest,
+        marker_digest,
+        marker_occurrences,
+    )
+
+
+def _validate_built_payload(
+    phase: str, payload: dict[str, Any], captured: CapturedTransactionPayload
+) -> None:
+    try:
+        derive_manifest_identity("transactions", payload)
+    except Exception:
+        _fail()
+    _validate_record_bounds(payload, phase, captured.identity)
+
+
+def history_applied_transaction_payload(
+    captured: CapturedTransactionPayload, prepared: PreparedTransactionPayload
+) -> HistoryAppliedTransactionPayload:
+    """Build HISTORY_APPLIED evidence from validated PREPARED descriptors."""
+
+    captured, prepared = _transaction_context(captured, prepared)
+    payload = HistoryAppliedTransactionPayload(
+        captured.receipt_digest,
+        prepared.history_row_digest,
+        prepared.targets["history.jsonl"].new,
+        prepared.targets[".cursor"].new,
+    ).to_payload()
+    _validate_built_payload("HISTORY_APPLIED", payload, captured)
+    return _history_applied_from_payload(payload, captured, prepared)
+
+
+def memory_applied_transaction_payload(
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: HistoryAppliedTransactionPayload,
+) -> MemoryAppliedTransactionPayload:
+    """Build MEMORY_APPLIED evidence after typed history proof."""
+
+    captured, prepared = _transaction_context(captured, prepared)
+    history = _validated_history_applied(history_applied, captured, prepared)
+    payload = MemoryAppliedTransactionPayload(
+        captured.receipt_digest,
+        prepared.memory_action,
+        prepared.targets["MEMORY.md"].new,
+    ).to_payload()
+    _validate_built_payload("MEMORY_APPLIED", payload, captured)
+    return _memory_applied_from_payload(payload, captured, prepared, history)
+
+
+def offset_applied_transaction_payload(
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: HistoryAppliedTransactionPayload,
+    memory_applied: MemoryAppliedTransactionPayload,
+) -> OffsetAppliedTransactionPayload:
+    """Build OFFSET_APPLIED evidence after typed history and memory proofs."""
+
+    captured, prepared = _transaction_context(captured, prepared)
+    history = _validated_history_applied(history_applied, captured, prepared)
+    memory = _validated_memory_applied(memory_applied, captured, prepared, history)
+    payload = OffsetAppliedTransactionPayload(
+        captured.receipt_digest, _prepared_source_state(prepared)
+    ).to_payload()
+    _validate_built_payload("OFFSET_APPLIED", payload, captured)
+    return _offset_applied_from_payload(payload, captured, prepared, history, memory)
+
+
+def receipt_committed_transaction_payload(
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: HistoryAppliedTransactionPayload,
+    memory_applied: MemoryAppliedTransactionPayload,
+    offset_applied: OffsetAppliedTransactionPayload,
+    *,
+    prepared_record_digest: str,
+    history_applied_record_digest: str,
+    memory_applied_record_digest: str,
+    offset_applied_record_digest: str,
+) -> ReceiptCommittedTransactionPayload:
+    """Build commit evidence using manifest-supplied predecessor record digests."""
+
+    captured, prepared = _transaction_context(captured, prepared)
+    history = _validated_history_applied(history_applied, captured, prepared)
+    memory = _validated_memory_applied(memory_applied, captured, prepared, history)
+    offset = _validated_offset_applied(
+        offset_applied, captured, prepared, history, memory
+    )
+    payload = ReceiptCommittedTransactionPayload(
+        captured.receipt_digest,
+        *_record_digest_inputs(
+            prepared_record_digest,
+            history_applied_record_digest,
+            memory_applied_record_digest,
+            offset_applied_record_digest,
+        ),
+        captured.receipt_size,
+        True,
+    ).to_payload()
+    _validate_built_payload("RECEIPT_COMMITTED", payload, captured)
+    return _receipt_committed_from_payload(
+        payload,
+        captured,
+        prepared,
+        history,
+        memory,
+        offset,
+        prepared_record_digest=prepared_record_digest,
+        history_applied_record_digest=history_applied_record_digest,
+        memory_applied_record_digest=memory_applied_record_digest,
+        offset_applied_record_digest=offset_applied_record_digest,
+    )
+
+
+def complete_transaction_payload(
+    captured: CapturedTransactionPayload,
+    prepared: PreparedTransactionPayload,
+    history_applied: HistoryAppliedTransactionPayload,
+    memory_applied: MemoryAppliedTransactionPayload,
+    offset_applied: OffsetAppliedTransactionPayload,
+    receipt_committed: ReceiptCommittedTransactionPayload,
+    *,
+    commit_record_digest: str,
+    prepared_record_digest: str,
+    history_applied_record_digest: str,
+    memory_applied_record_digest: str,
+    offset_applied_record_digest: str,
+) -> CompleteTransactionPayload:
+    """Build final proof from typed phase records and explicit manifest digests."""
+
+    captured, prepared = _transaction_context(captured, prepared)
+    history = _validated_history_applied(history_applied, captured, prepared)
+    memory = _validated_memory_applied(memory_applied, captured, prepared, history)
+    offset = _validated_offset_applied(
+        offset_applied, captured, prepared, history, memory
+    )
+    committed = _validated_receipt_committed(
+        receipt_committed,
+        captured,
+        prepared,
+        history,
+        memory,
+        offset,
+        prepared_record_digest=prepared_record_digest,
+        history_applied_record_digest=history_applied_record_digest,
+        memory_applied_record_digest=memory_applied_record_digest,
+        offset_applied_record_digest=offset_applied_record_digest,
+    )
+    payload = CompleteTransactionPayload(
+        captured.receipt_digest,
+        _digest(commit_record_digest),
+        OldTargetDescriptor(
+            True, captured.receipt_size, captured.receipt_digest, prepared.receipt_stat
+        ),
+        prepared.targets["history.jsonl"].new,
+        prepared.targets[".cursor"].new,
+        prepared.targets["MEMORY.md"].new,
+        _prepared_source_state(prepared),
+        prepared.history_row_digest,
+        captured.history_marker_digest,
+        1,
+    ).to_payload()
+    _validate_built_payload("COMPLETE", payload, captured)
+    return _complete_from_payload(
+        payload,
+        captured,
+        prepared,
+        history,
+        memory,
+        offset,
+        committed,
+        commit_record_digest=commit_record_digest,
+        prepared_record_digest=prepared_record_digest,
+        history_applied_record_digest=history_applied_record_digest,
+        memory_applied_record_digest=memory_applied_record_digest,
+        offset_applied_record_digest=offset_applied_record_digest,
+    )
+
+
 def decode_transaction_payload(
     phase: str,
     payload: object,
     *,
     captured: CapturedTransactionPayload | None = None,
-) -> CapturedTransactionPayload | PreparedTransactionPayload:
-    """Strictly decode CAPTURED/PREPARED payloads without state or filesystem I/O.
+    prepared: PreparedTransactionPayload | None = None,
+    history_applied: HistoryAppliedTransactionPayload | None = None,
+    memory_applied: MemoryAppliedTransactionPayload | None = None,
+    offset_applied: OffsetAppliedTransactionPayload | None = None,
+    receipt_committed: ReceiptCommittedTransactionPayload | None = None,
+    commit_record_digest: str | None = None,
+    prepared_record_digest: str | None = None,
+    history_applied_record_digest: str | None = None,
+    memory_applied_record_digest: str | None = None,
+    offset_applied_record_digest: str | None = None,
+) -> CapturedTransactionPayload | PreparedTransactionPayload | HistoryAppliedTransactionPayload | MemoryAppliedTransactionPayload | OffsetAppliedTransactionPayload | ReceiptCommittedTransactionPayload | CompleteTransactionPayload:
+    """Strictly decode typed phase evidence without state or filesystem I/O.
 
-    PREPARED is a successor to CAPTURED, so its decoder requires the typed
-    captured payload to check receipt, offset, generation, marker, and entry
-    digest parity.
+    Every phase after CAPTURED requires its typed predecessors. Record digests
+    that come from the manifest are explicit inputs and are never reconstructed
+    from the phase payloads.
     """
 
     try:
         raw = _parse_payload(payload)
         # The manifest API is authoritative for JSON-compatible types, UTF-8
         # string/key limits, depth, nodes, signed integers, and canonical bytes.
-        identity = derive_manifest_identity("transactions", raw)
+        derive_manifest_identity("transactions", raw)
         if phase == "CAPTURED":
             decoded = _captured_from_payload(raw)
             if captured is not None:
                 _fail()
-            _validate_record_bounds(raw, phase, identity)
+            _validate_record_bounds(raw, phase, decoded.identity)
             return decoded
         if phase == "PREPARED":
-            if type(captured) is not CapturedTransactionPayload:
+            if captured is None:
                 _fail()
-            decoded = _prepared_from_payload(raw, captured)
-            _validate_record_bounds(raw, phase, captured.identity)
+            valid_captured = _validated_captured(captured)
+            decoded = _prepared_from_payload(raw, valid_captured)
+            _validate_record_bounds(raw, phase, valid_captured.identity)
             return decoded
-        _fail()
+        if captured is None or prepared is None:
+            _fail()
+        valid_captured, valid_prepared = _transaction_context(captured, prepared)
+        if phase == "HISTORY_APPLIED":
+            decoded = _history_applied_from_payload(raw, valid_captured, valid_prepared)
+        elif phase == "MEMORY_APPLIED":
+            if history_applied is None:
+                _fail()
+            decoded = _memory_applied_from_payload(
+                raw, valid_captured, valid_prepared, history_applied
+            )
+        elif phase == "OFFSET_APPLIED":
+            if history_applied is None or memory_applied is None:
+                _fail()
+            decoded = _offset_applied_from_payload(
+                raw, valid_captured, valid_prepared, history_applied, memory_applied
+            )
+        elif phase == "RECEIPT_COMMITTED":
+            if (
+                history_applied is None
+                or memory_applied is None
+                or offset_applied is None
+                or prepared_record_digest is None
+                or history_applied_record_digest is None
+                or memory_applied_record_digest is None
+                or offset_applied_record_digest is None
+            ):
+                _fail()
+            decoded = _receipt_committed_from_payload(
+                raw,
+                valid_captured,
+                valid_prepared,
+                history_applied,
+                memory_applied,
+                offset_applied,
+                prepared_record_digest=prepared_record_digest,
+                history_applied_record_digest=history_applied_record_digest,
+                memory_applied_record_digest=memory_applied_record_digest,
+                offset_applied_record_digest=offset_applied_record_digest,
+            )
+        elif phase == "COMPLETE":
+            if (
+                history_applied is None
+                or memory_applied is None
+                or offset_applied is None
+                or receipt_committed is None
+                or commit_record_digest is None
+                or prepared_record_digest is None
+                or history_applied_record_digest is None
+                or memory_applied_record_digest is None
+                or offset_applied_record_digest is None
+            ):
+                _fail()
+            decoded = _complete_from_payload(
+                raw,
+                valid_captured,
+                valid_prepared,
+                history_applied,
+                memory_applied,
+                offset_applied,
+                receipt_committed,
+                commit_record_digest=commit_record_digest,
+                prepared_record_digest=prepared_record_digest,
+                history_applied_record_digest=history_applied_record_digest,
+                memory_applied_record_digest=memory_applied_record_digest,
+                offset_applied_record_digest=offset_applied_record_digest,
+            )
+        else:
+            _fail()
+        _validate_record_bounds(raw, phase, valid_captured.identity)
+        return decoded
     except MemoryRecoveryTransactionError:
         raise
     except (MemoryManifestError, TypeError, ValueError, UnicodeError, OverflowError):
@@ -723,19 +1458,38 @@ def decode_transaction_payload(
         _fail()
 
 
-Payload: TypeAlias = CapturedTransactionPayload | PreparedTransactionPayload
+Payload: TypeAlias = (
+    CapturedTransactionPayload
+    | PreparedTransactionPayload
+    | HistoryAppliedTransactionPayload
+    | MemoryAppliedTransactionPayload
+    | OffsetAppliedTransactionPayload
+    | ReceiptCommittedTransactionPayload
+    | CompleteTransactionPayload
+)
 
 __all__ = [
     "CapturedTransactionPayload",
+    "CompleteTransactionPayload",
+    "HistoryAppliedTransactionPayload",
+    "MemoryAppliedTransactionPayload",
     "MemoryFileStat",
     "MemoryRecoveryTransactionError",
     "NewTargetDescriptor",
+    "OffsetAppliedTransactionPayload",
     "OldTargetDescriptor",
     "Payload",
     "PreparedTransactionPayload",
+    "ReceiptCommittedTransactionPayload",
+    "SourceAppliedState",
     "SourceTransition",
     "TargetTransition",
     "capture_transaction_payload",
+    "complete_transaction_payload",
     "decode_transaction_payload",
+    "history_applied_transaction_payload",
+    "memory_applied_transaction_payload",
+    "offset_applied_transaction_payload",
     "prepare_transaction_payload",
+    "receipt_committed_transaction_payload",
 ]

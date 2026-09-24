@@ -20,8 +20,13 @@ from nanobot.agent.memory_recovery_transaction import (
     CapturedTransactionPayload,
     MemoryRecoveryTransactionError,
     capture_transaction_payload,
+    complete_transaction_payload,
     decode_transaction_payload,
+    history_applied_transaction_payload,
+    memory_applied_transaction_payload,
+    offset_applied_transaction_payload,
     prepare_transaction_payload,
+    receipt_committed_transaction_payload,
 )
 
 WORKSPACE_ID = "a" * 32
@@ -460,6 +465,159 @@ def test_manifest_chain_round_trips_through_typed_decoder(tmp_path: Path) -> Non
         authority.close()
 
 
+def test_all_seven_manifest_phases_use_manifest_record_digests(tmp_path: Path) -> None:
+    captured = capture_transaction_payload(
+        _receipt(), workspace_id=WORKSPACE_ID, workspace_identity=(1, 2)
+    )
+    authority = storage.WorkspaceMemoryAuthority(tmp_path)
+    authority.__enter__()
+    namespace = authority.open_evidence_namespace("transactions", captured.identity)
+    manifest = MemoryRecoveryManifest(namespace)
+    try:
+        captured_record = manifest.create(captured.to_payload())
+        decoded_captured = decode_transaction_payload(
+            captured_record.phase, captured_record.payload
+        )
+        assert decoded_captured == captured
+
+        prepared = prepare_transaction_payload(captured, **_prepared_inputs(captured))
+        prepared_record = manifest.append(
+            predecessor_digest=captured_record.digest,
+            phase="PREPARED",
+            payload=prepared.to_payload(),
+        )
+        decoded_prepared = decode_transaction_payload(
+            prepared_record.phase, prepared_record.payload, captured=decoded_captured
+        )
+        assert decoded_prepared == prepared
+
+        history = history_applied_transaction_payload(captured, prepared)
+        history_record = manifest.append(
+            predecessor_digest=prepared_record.digest,
+            phase="HISTORY_APPLIED",
+            payload=history.to_payload(),
+        )
+        decoded_history = decode_transaction_payload(
+            history_record.phase,
+            history_record.payload,
+            captured=captured,
+            prepared=prepared,
+        )
+        assert decoded_history == history
+
+        memory = memory_applied_transaction_payload(captured, prepared, history)
+        memory_record = manifest.append(
+            predecessor_digest=history_record.digest,
+            phase="MEMORY_APPLIED",
+            payload=memory.to_payload(),
+        )
+        decoded_memory = decode_transaction_payload(
+            memory_record.phase,
+            memory_record.payload,
+            captured=captured,
+            prepared=prepared,
+            history_applied=history,
+        )
+        assert decoded_memory == memory
+
+        offset = offset_applied_transaction_payload(
+            captured, prepared, history, memory
+        )
+        offset_record = manifest.append(
+            predecessor_digest=memory_record.digest,
+            phase="OFFSET_APPLIED",
+            payload=offset.to_payload(),
+        )
+        decoded_offset = decode_transaction_payload(
+            offset_record.phase,
+            offset_record.payload,
+            captured=captured,
+            prepared=prepared,
+            history_applied=history,
+            memory_applied=memory,
+        )
+        assert decoded_offset == offset
+
+        record_digests = {
+            "prepared_record_digest": prepared_record.digest,
+            "history_applied_record_digest": history_record.digest,
+            "memory_applied_record_digest": memory_record.digest,
+            "offset_applied_record_digest": offset_record.digest,
+        }
+        committed = receipt_committed_transaction_payload(
+            captured, prepared, history, memory, offset, **record_digests
+        )
+        committed_record = manifest.append(
+            predecessor_digest=offset_record.digest,
+            phase="RECEIPT_COMMITTED",
+            payload=committed.to_payload(),
+        )
+        decoded_committed = decode_transaction_payload(
+            committed_record.phase,
+            committed_record.payload,
+            captured=captured,
+            prepared=prepared,
+            history_applied=history,
+            memory_applied=memory,
+            offset_applied=offset,
+            **record_digests,
+        )
+        assert decoded_committed == committed
+
+        with pytest.raises(MemoryRecoveryTransactionError):
+            decode_transaction_payload(
+                committed_record.phase,
+                committed_record.payload,
+                captured=captured,
+                prepared=prepared,
+                history_applied=history,
+                memory_applied=memory,
+                offset_applied=offset,
+                **{**record_digests, "prepared_record_digest": _digest(b"wrong prepared")},
+            )
+
+        complete = complete_transaction_payload(
+            captured,
+            prepared,
+            history,
+            memory,
+            offset,
+            committed,
+            commit_record_digest=committed_record.digest,
+            **record_digests,
+        )
+        complete_record = manifest.append(
+            predecessor_digest=committed_record.digest,
+            phase="COMPLETE",
+            payload=complete.to_payload(),
+        )
+        decoded_complete = decode_transaction_payload(
+            complete_record.phase,
+            complete_record.payload,
+            captured=captured,
+            prepared=prepared,
+            history_applied=history,
+            memory_applied=memory,
+            offset_applied=offset,
+            receipt_committed=committed,
+            commit_record_digest=committed_record.digest,
+            **record_digests,
+        )
+        assert decoded_complete == complete
+        assert [record.phase for record in manifest.load()] == [
+            "CAPTURED",
+            "PREPARED",
+            "HISTORY_APPLIED",
+            "MEMORY_APPLIED",
+            "OFFSET_APPLIED",
+            "RECEIPT_COMMITTED",
+            "COMPLETE",
+        ]
+    finally:
+        namespace.close()
+        authority.close()
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -500,3 +658,226 @@ def test_typed_decoder_rejects_manifest_semantic_contradictions(
     finally:
         namespace.close()
         authority.close()
+
+
+@pytest.mark.parametrize(
+    ("target_name", "phase_field"),
+    (("history.jsonl", "history_target"), (".cursor", "cursor_target")),
+)
+def test_history_applied_requires_present_targets_in_builder_and_decoder(
+    target_name: str, phase_field: str
+) -> None:
+    captured = capture_transaction_payload(
+        _receipt(), workspace_id=WORKSPACE_ID, workspace_identity=(1, 2)
+    )
+    inputs = _prepared_inputs(captured)
+    inputs["targets"][target_name]["new"] = {
+        "exists": False,
+        "size": 0,
+        "blob_digest": None,
+    }
+    prepared = prepare_transaction_payload(captured, **inputs)
+
+    with pytest.raises(MemoryRecoveryTransactionError):
+        history_applied_transaction_payload(captured, prepared)
+
+    history_payload = {
+        "schema_version": 1,
+        "receipt_digest": captured.receipt_digest,
+        "history_row_digest": prepared.history_row_digest,
+        "history_target": prepared.targets["history.jsonl"].new.to_payload(),
+        "cursor_target": prepared.targets[".cursor"].new.to_payload(),
+    }
+    assert history_payload[phase_field]["exists"] is False
+    with pytest.raises(MemoryRecoveryTransactionError):
+        decode_transaction_payload(
+            "HISTORY_APPLIED",
+            history_payload,
+            captured=captured,
+            prepared=prepared,
+        )
+
+
+def _phase_chain() -> dict[str, Any]:
+    receipt = _receipt()
+    captured = capture_transaction_payload(
+        receipt, workspace_id=WORKSPACE_ID, workspace_identity=(1, 2)
+    )
+    prepared = prepare_transaction_payload(captured, **_prepared_inputs(captured))
+    history = history_applied_transaction_payload(captured, prepared)
+    memory = memory_applied_transaction_payload(captured, prepared, history)
+    offset = offset_applied_transaction_payload(captured, prepared, history, memory)
+    record_digests = {
+        "prepared_record_digest": _digest(b"prepared record"),
+        "history_applied_record_digest": _digest(b"history record"),
+        "memory_applied_record_digest": _digest(b"memory record"),
+        "offset_applied_record_digest": _digest(b"offset record"),
+    }
+    committed = receipt_committed_transaction_payload(
+        captured, prepared, history, memory, offset, **record_digests
+    )
+    commit_record_digest = _digest(b"commit record")
+    complete = complete_transaction_payload(
+        captured,
+        prepared,
+        history,
+        memory,
+        offset,
+        committed,
+        commit_record_digest=commit_record_digest,
+        **record_digests,
+    )
+    return {
+        "captured": captured,
+        "prepared": prepared,
+        "history": history,
+        "memory": memory,
+        "offset": offset,
+        "committed": committed,
+        "complete": complete,
+        "record_digests": record_digests,
+        "commit_record_digest": commit_record_digest,
+    }
+
+
+def _decode_phase_chain(phase: str, payload: object, chain: dict[str, Any]) -> Any:
+    return decode_transaction_payload(
+        phase,
+        payload,
+        captured=chain["captured"],
+        prepared=chain["prepared"],
+        history_applied=chain["history"],
+        memory_applied=chain["memory"],
+        offset_applied=chain["offset"],
+        receipt_committed=chain["committed"],
+        commit_record_digest=chain["commit_record_digest"],
+        **chain["record_digests"],
+    )
+
+
+def test_all_transaction_phases_round_trip_with_explicit_manifest_digests() -> None:
+    chain = _phase_chain()
+    phases = (
+        ("HISTORY_APPLIED", "history"),
+        ("MEMORY_APPLIED", "memory"),
+        ("OFFSET_APPLIED", "offset"),
+        ("RECEIPT_COMMITTED", "committed"),
+        ("COMPLETE", "complete"),
+    )
+    for phase, key in phases:
+        typed = chain[key]
+        assert _decode_phase_chain(phase, typed.to_payload(), chain) == typed
+
+    history_payload = chain["history"].to_payload()
+    assert history_payload["history_row_digest"] == chain["prepared"].history_row_digest
+    assert history_payload["history_target"] == chain["prepared"].targets["history.jsonl"].new.to_payload()
+    assert history_payload["cursor_target"] == chain["prepared"].targets[".cursor"].new.to_payload()
+    assert chain["committed"].to_payload()["receipt_present"] is True
+    complete_payload = chain["complete"].to_payload()
+    assert complete_payload["receipt"] == {
+        "exists": True,
+        "size": chain["captured"].receipt_size,
+        "digest": chain["captured"].receipt_digest,
+        "stat": chain["prepared"].receipt_stat.to_payload(),
+    }
+    assert complete_payload["marker_occurrences"] == 1
+
+
+@pytest.mark.parametrize(
+    ("phase", "phase_key", "mutate"),
+    [
+        ("HISTORY_APPLIED", "history", lambda p: p.update(receipt_digest=_digest(b"other receipt"))),
+        ("HISTORY_APPLIED", "history", lambda p: p.update(history_row_digest=_digest(b"other row"))),
+        ("HISTORY_APPLIED", "history", lambda p: p["history_target"].update(blob_digest=_digest(b"other history"))),
+        ("HISTORY_APPLIED", "history", lambda p: p["cursor_target"].update(size=p["cursor_target"]["size"] + 1)),
+        ("MEMORY_APPLIED", "memory", lambda p: p.update(receipt_digest=_digest(b"other receipt"))),
+        ("MEMORY_APPLIED", "memory", lambda p: p.update(memory_action="preserve")),
+        ("MEMORY_APPLIED", "memory", lambda p: p["memory_target"].update(blob_digest=_digest(b"other memory"))),
+        ("OFFSET_APPLIED", "offset", lambda p: p.update(receipt_digest=_digest(b"other receipt"))),
+        ("OFFSET_APPLIED", "offset", lambda p: p["source"].update(digest=_digest(b"other source"))),
+        ("OFFSET_APPLIED", "offset", lambda p: p["source"].update(size=p["source"]["size"] + 1)),
+        ("OFFSET_APPLIED", "offset", lambda p: p["source"].update(generation=p["source"]["generation"] + 1)),
+        ("OFFSET_APPLIED", "offset", lambda p: p["source"].update(revision=p["source"]["revision"] + 1)),
+        ("OFFSET_APPLIED", "offset", lambda p: p["source"].update(cursor=p["source"]["cursor"] + 1)),
+        ("RECEIPT_COMMITTED", "committed", lambda p: p.update(prepared_record_digest=_digest(b"other prepared"))),
+        ("RECEIPT_COMMITTED", "committed", lambda p: p.update(history_applied_record_digest=_digest(b"other history record"))),
+        ("RECEIPT_COMMITTED", "committed", lambda p: p.update(memory_applied_record_digest=_digest(b"other memory record"))),
+        ("RECEIPT_COMMITTED", "committed", lambda p: p.update(offset_applied_record_digest=_digest(b"other offset record"))),
+        ("RECEIPT_COMMITTED", "committed", lambda p: p.update(receipt_size=p["receipt_size"] + 1)),
+        ("RECEIPT_COMMITTED", "committed", lambda p: p.update(receipt_present=False)),
+        ("COMPLETE", "complete", lambda p: p.update(receipt_digest=_digest(b"other receipt"))),
+        ("COMPLETE", "complete", lambda p: p.update(commit_record_digest=_digest(b"other commit record"))),
+        ("COMPLETE", "complete", lambda p: p["receipt"].update(size=p["receipt"]["size"] + 1)),
+        ("COMPLETE", "complete", lambda p: p["receipt"]["stat"].update(inode=p["receipt"]["stat"]["inode"] + 1)),
+        ("COMPLETE", "complete", lambda p: p["history_target"].update(blob_digest=_digest(b"other history"))),
+        ("COMPLETE", "complete", lambda p: p["cursor_target"].update(blob_digest=_digest(b"other cursor"))),
+        ("COMPLETE", "complete", lambda p: p["memory_target"].update(blob_digest=_digest(b"other output"))),
+        ("COMPLETE", "complete", lambda p: p["source"].update(digest=_digest(b"other source"))),
+        ("COMPLETE", "complete", lambda p: p["source"].update(size=p["source"]["size"] + 1)),
+        ("COMPLETE", "complete", lambda p: p["source"].update(generation=p["source"]["generation"] + 1)),
+        ("COMPLETE", "complete", lambda p: p["source"].update(revision=p["source"]["revision"] + 1)),
+        ("COMPLETE", "complete", lambda p: p["source"].update(cursor=p["source"]["cursor"] + 1)),
+        ("COMPLETE", "complete", lambda p: p.update(history_row_digest=_digest(b"other row"))),
+        ("COMPLETE", "complete", lambda p: p.update(history_marker_digest=_digest(b"other marker"))),
+        ("COMPLETE", "complete", lambda p: p.update(marker_occurrences=2)),
+    ],
+)
+def test_later_phase_decoders_reject_parity_and_proof_mutations(
+    phase: str, phase_key: str, mutate: Any
+) -> None:
+    chain = _phase_chain()
+    payload = json.loads(json.dumps(chain[phase_key].to_payload()))
+    mutate(payload)
+    with pytest.raises(MemoryRecoveryTransactionError) as raised:
+        _decode_phase_chain(phase, payload, chain)
+    assert str(raised.value) == "memory recovery transaction payload is invalid"
+
+
+@pytest.mark.parametrize(
+    ("phase", "phase_key", "mutate"),
+    [
+        ("HISTORY_APPLIED", "history", lambda p: p.update(unexpected=True)),
+        ("MEMORY_APPLIED", "memory", lambda p: p.update(receipt_digest="A" * 64)),
+        ("OFFSET_APPLIED", "offset", lambda p: p["source"].update(cursor=True)),
+        ("RECEIPT_COMMITTED", "committed", lambda p: p.update(offset_applied_record_digest="z" * 64)),
+        ("COMPLETE", "complete", lambda p: p.update(marker_occurrences=True)),
+    ],
+)
+def test_later_phase_decoders_reject_unknown_fields_and_bad_types(
+    phase: str, phase_key: str, mutate: Any
+) -> None:
+    chain = _phase_chain()
+    payload = json.loads(json.dumps(chain[phase_key].to_payload()))
+    mutate(payload)
+    with pytest.raises(MemoryRecoveryTransactionError):
+        _decode_phase_chain(phase, payload, chain)
+
+
+def test_phase_decoding_requires_typed_predecessors_and_explicit_record_digests() -> None:
+    chain = _phase_chain()
+    with pytest.raises(MemoryRecoveryTransactionError):
+        decode_transaction_payload(
+            "HISTORY_APPLIED", chain["history"].to_payload(), captured=chain["captured"]
+        )
+    with pytest.raises(MemoryRecoveryTransactionError):
+        decode_transaction_payload(
+            "RECEIPT_COMMITTED",
+            chain["committed"].to_payload(),
+            captured=chain["captured"],
+            prepared=chain["prepared"],
+            history_applied=chain["history"],
+            memory_applied=chain["memory"],
+            offset_applied=chain["offset"],
+        )
+    with pytest.raises(MemoryRecoveryTransactionError):
+        receipt_committed_transaction_payload(
+            chain["captured"],
+            chain["prepared"],
+            chain["history"],
+            chain["memory"],
+            chain["offset"],
+            prepared_record_digest="not-a-record-digest",
+            history_applied_record_digest=chain["record_digests"]["history_applied_record_digest"],
+            memory_applied_record_digest=chain["record_digests"]["memory_applied_record_digest"],
+            offset_applied_record_digest=chain["record_digests"]["offset_applied_record_digest"],
+        )
