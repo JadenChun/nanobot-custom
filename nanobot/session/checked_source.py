@@ -2,8 +2,8 @@
 
 This dormant migration capability pins the configured directory ancestry and
 holds the repository's migration, execution, and session-file flock locks.
-Its recovery-only variant can read one detached recovery candidate under an
-active workspace-memory lease and deliberately cannot replace that source.
+Its recovery variant reads one detached candidate under an active workspace-memory
+lease; an explicitly issued replacement variant may replace it once.
 """
 
 from __future__ import annotations
@@ -458,6 +458,7 @@ class CheckedSessionAuthority:
         "_mutex", "_state", "_owned_fds", "_directories", "_execution_directory",
         "_locks", "_source_evidence", "_replacement_used", "_memory_operation",
         "_recovery_candidate", "_recovery_only", "_recovery_namespace",
+        "_recovery_replace", "_expected_recovery_source_identity",
     )
 
     def __init__(
@@ -471,6 +472,7 @@ class CheckedSessionAuthority:
         *,
         memory_operation: WorkspaceMemoryOperation | None = None,
         recovery_candidate: RecoveryCandidate | None = None,
+        recovery_replace: bool = False,
     ) -> None:
         if token is not _CONSTRUCTOR_TOKEN:
             raise TypeError("CheckedSessionAuthority instances are issued by open_checked_session")
@@ -495,6 +497,10 @@ class CheckedSessionAuthority:
         self._recovery_candidate = recovery_candidate
         self._recovery_only = recovery_candidate is not None
         self._recovery_namespace: _DirectoryBaseline | None = None
+        self._recovery_replace = recovery_replace
+        self._expected_recovery_source_identity = (
+            recovery_candidate.session_file_identity if recovery_candidate is not None else None
+        )
 
     def __copy__(self) -> CheckedSessionAuthority:
         raise TypeError("CheckedSessionAuthority cannot be copied")
@@ -793,7 +799,10 @@ class CheckedSessionAuthority:
                         if source_entry is None:
                             _fail("changed")
                         _validate_source_stat(source_entry)
-                        if _recovery_file_identity(source_entry) != candidate.session_file_identity:
+                        if (
+                            _recovery_file_identity(source_entry)
+                            != self._expected_recovery_source_identity
+                        ):
                             _fail("changed")
                 finally:
                     if namespace_fd >= 0:
@@ -889,7 +898,7 @@ class CheckedSessionAuthority:
                 final_workspace_marker not in (expected_id, expected_id + b"\n")
                 or final_namespace_marker != expected_binding
                 or final_source is None
-                or _recovery_file_identity(final_source) != candidate.session_file_identity
+                or _recovery_file_identity(final_source) != self._expected_recovery_source_identity
             ):
                 _fail("changed")
             self._require_memory_operation_current()
@@ -1336,9 +1345,16 @@ class CheckedSessionAuthority:
 
     def replace_source_bytes(self, new_bytes: bytes) -> None:
         """Replace a regular checked source, when this authority permits it."""
+        self._replace_source_bytes(new_bytes, recovery=False)
+
+    def replace_recovery_source_bytes(self, new_bytes: bytes) -> None:
+        """Replace one previously read recovery source on explicit write authority."""
+        self._replace_source_bytes(new_bytes, recovery=True)
+
+    def _replace_source_bytes(self, new_bytes: bytes, *, recovery: bool) -> None:
         self._check_process()
         self._check_thread()
-        if self._recovery_only:
+        if self._recovery_only != recovery or (recovery and not self._recovery_replace):
             self._raise_public("invalid")
         if self._state != "active":
             self._raise_public("closed")
@@ -1364,7 +1380,12 @@ class CheckedSessionAuthority:
                 self._validate_all()
                 _require_source_replace_platform()
                 source_name = f"{self._storage_key}.jsonl"
-                namespace_fd = self._directories[-1].fd
+                if recovery:
+                    if self._recovery_namespace is None:
+                        _fail("closed")
+                    namespace_fd = self._recovery_namespace.fd
+                else:
+                    namespace_fd = self._directories[-1].fd
 
                 current_bytes = self.read_source_bytes()
                 current_evidence = self._source_evidence
@@ -1469,11 +1490,15 @@ class CheckedSessionAuthority:
                 except OSError:
                     _fail("uncertain")
 
-                self._validate_all()
+                if not recovery:
+                    self._validate_all()
                 replaced = self._check_temp_entry(descriptor, source_name, namespace_fd)
                 if replaced.st_size != len(new_bytes):
                     _fail("changed")
                 self._verify_temp_bytes(descriptor, new_bytes)
+                replaced = self._check_temp_entry(descriptor, source_name, namespace_fd)
+                if recovery:
+                    self._expected_recovery_source_identity = _recovery_file_identity(replaced)
                 self._validate_all()
                 try:
                     os.fsync(namespace_fd)
@@ -1551,11 +1576,29 @@ class CheckedSessionAuthority:
         return False
 
 
+def open_checked_recovery_session_for_replace(
+    operation: WorkspaceMemoryOperation,
+    candidate: RecoveryCandidate,
+) -> CheckedSessionAuthority:
+    """Issue a one-use replacement authority for a checked recovery candidate."""
+    return _open_checked_recovery_session(operation, candidate, replace=True)
+
+
 def open_checked_recovery_session(
     operation: WorkspaceMemoryOperation,
     candidate: RecoveryCandidate,
 ) -> CheckedSessionAuthority:
-    """Issue a read-only authority for one located candidate and active memory lease.
+    """Issue a read-only authority for one located candidate and active memory lease."""
+    return _open_checked_recovery_session(operation, candidate, replace=False)
+
+
+def _open_checked_recovery_session(
+    operation: WorkspaceMemoryOperation,
+    candidate: RecoveryCandidate,
+    *,
+    replace: bool,
+) -> CheckedSessionAuthority:
+    """Validate shared candidate issuance before any lock side effects.
 
     The candidate is validated before any lock directory or lock file is created.
     The caller must keep ``operation`` active for the entire checked-session scope.
@@ -1647,6 +1690,7 @@ def open_checked_recovery_session(
         components,
         memory_operation=operation,
         recovery_candidate=candidate,
+        recovery_replace=replace,
     )
 
 
