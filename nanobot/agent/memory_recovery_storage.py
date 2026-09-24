@@ -1084,10 +1084,10 @@ class _WorkspaceMemoryLockGate(AbstractContextManager[Self]):
         """Detach state, then release only descriptors still bound to this gate.
 
         Device, inode, and file type detect closed or reused descriptor numbers.
-        A same-UID actor that closes and reopens the exact same inode can spoof
-        that binding. An uncooperative thread can also race a raw ``os.close``
-        after the nonblocking probe; neither case is solvable within this
-        cooperating-process boundary.
+        The anchor probe detects a sequential same-inode reopen of the
+        original descriptor. An uncooperative thread can still race raw
+        ``os.close`` after that probe, or replace the anchor itself; those
+        actions cannot be made atomic within this cooperating-process boundary.
         """
 
         lock_fd = self._lock_fd
