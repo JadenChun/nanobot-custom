@@ -13,7 +13,7 @@ import os
 import re
 import threading
 import weakref
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -26,6 +26,7 @@ from nanobot.agent.memory_recovery import (
     MEMORY_RECEIPT_FILENAME,
     require_memory_receipt_recovery,
 )
+from nanobot.agent.memory_recovery_storage import open_workspace_memory_lock
 from nanobot.events import NO_EVENTS, ContextCompactionEvent, EventSink
 from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import LLMUsage, ProviderCallContext, ProviderConversationState
@@ -58,6 +59,11 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.utils.llm_runtime import LLMRuntime
 
+
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
 # ---------------------------------------------------------------------------
 # MemoryStore — pure file I/O layer
 # ---------------------------------------------------------------------------
@@ -79,30 +85,46 @@ class MemoryStore:
 
     def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY):
         # A pending legacy receipt is owned by the recovery package.  Validate
-        # it before ``ensure_dir`` or any migration side effect can touch the
-        # workspace; Package B will apply or otherwise resolve the receipt.
+        # it before any workspace mutation; Package B will apply or otherwise
+        # resolve the receipt.
         require_memory_receipt_recovery(
             Path(workspace) / "memory" / MEMORY_RECEIPT_FILENAME,
         )
-        self.workspace = workspace
-        self.max_history_entries = max_history_entries
-        self.memory_dir = ensure_dir(workspace / "memory")
-        self.memory_file = self.memory_dir / "MEMORY.md"
-        self.history_file = self.memory_dir / "history.jsonl"
-        self.legacy_history_file = self.memory_dir / "HISTORY.md"
-        self.soul_file = workspace / "SOUL.md"
-        self.user_file = workspace / "USER.md"
-        self._cursor_file = self.memory_dir / ".cursor"
-        self._dream_cursor_file = self.memory_dir / ".dream_cursor"
-        self._corruption_logged = False  # rate-limit invalid cursor warning
-        self._malformed_entry_logged = False  # rate-limit bad history shape warning
-        self._oversize_logged = False  # rate-limit oversized-entry warning
-        self._dream_prompt_oversize_logged = False
-        self._append_lock = threading.Lock()  # serialize cursor allocation + append
-        self._git = GitStore(workspace, tracked_files=[
-            "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
-        ])
-        self._maybe_migrate_legacy_history()
+        # The gate requires an existing workspace.  Preserve the historical
+        # behavior of creating it when absent, after the read-only preflight.
+        ensure_dir(workspace)
+        memory_gate = (
+            nullcontext(None)
+            if _is_windows()
+            else open_workspace_memory_lock(workspace)
+        )
+        with memory_gate as memory_lock:
+            # A cooperating writer may have published a receipt while this
+            # constructor waited for the shared gate.
+            require_memory_receipt_recovery(
+                Path(workspace) / "memory" / MEMORY_RECEIPT_FILENAME,
+            )
+            self.workspace = workspace
+            self.max_history_entries = max_history_entries
+            self.memory_dir = ensure_dir(workspace / "memory")
+            self.memory_file = self.memory_dir / "MEMORY.md"
+            self.history_file = self.memory_dir / "history.jsonl"
+            self.legacy_history_file = self.memory_dir / "HISTORY.md"
+            self.soul_file = workspace / "SOUL.md"
+            self.user_file = workspace / "USER.md"
+            self._cursor_file = self.memory_dir / ".cursor"
+            self._dream_cursor_file = self.memory_dir / ".dream_cursor"
+            self._corruption_logged = False  # rate-limit invalid cursor warning
+            self._malformed_entry_logged = False  # rate-limit bad history shape warning
+            self._oversize_logged = False  # rate-limit oversized-entry warning
+            self._dream_prompt_oversize_logged = False
+            self._append_lock = threading.Lock()  # serialize cursor allocation + append
+            self._git = GitStore(workspace, tracked_files=[
+                "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
+            ])
+            self._maybe_migrate_legacy_history()
+            if memory_lock is not None:
+                memory_lock.require_current()
 
     @property
     def git(self) -> GitStore:

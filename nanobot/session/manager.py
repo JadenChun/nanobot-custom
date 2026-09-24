@@ -10,7 +10,7 @@ import secrets
 import stat
 import uuid
 from collections import OrderedDict
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager, nullcontext, suppress
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,6 +22,7 @@ from filelock import FileLock
 from loguru import logger
 
 from nanobot.agent.memory_recovery import MEMORY_RECEIPT_FILENAME, require_memory_receipt_recovery
+from nanobot.agent.memory_recovery_storage import open_workspace_memory_lock
 from nanobot.config.paths import get_legacy_sessions_dir, get_runtime_subdir
 from nanobot.providers.base import ProviderConversationState
 from nanobot.runtime_context import (
@@ -643,45 +644,56 @@ class JsonlSessionStore:
 
     def __init__(self, workspace: Path, *, sessions_root: Path | None = None):
         canonical_workspace = Path(workspace).expanduser().resolve(strict=False)
-        require_memory_receipt_recovery(
-            canonical_workspace / "memory" / MEMORY_RECEIPT_FILENAME,
-        )
+        receipt_path = canonical_workspace / "memory" / MEMORY_RECEIPT_FILENAME
+        require_memory_receipt_recovery(receipt_path)
         ensure_dir(canonical_workspace)
-        root = (
-            Path(sessions_root).expanduser().resolve(strict=False)
-            if sessions_root is not None
-            else get_runtime_subdir("sessions").resolve(strict=False)
+        memory_lock = (
+            nullcontext()
+            if os.name == "nt"
+            else open_workspace_memory_lock(canonical_workspace)
         )
-        if root == canonical_workspace or root.is_relative_to(canonical_workspace):
-            raise RuntimeError(
-                "session storage must be outside the agent workspace; "
-                "move --config outside --workspace or choose a nested workspace directory"
+        with memory_lock as memory_gate:
+            if memory_gate is not None:
+                memory_gate.require_current()
+            require_memory_receipt_recovery(receipt_path)
+            root = (
+                Path(sessions_root).expanduser().resolve(strict=False)
+                if sessions_root is not None
+                else get_runtime_subdir("sessions").resolve(strict=False)
             )
-        ensure_dir(root)
-        with suppress(OSError):
-            os.chmod(root, 0o700)
-        self.workspace = canonical_workspace
-        self._migration_lock = FileLock(
-            str(root / ".workspace-migration.lock"),
-            timeout=_SESSION_MIGRATION_LOCK_TIMEOUT_SECONDS,
-        )
-        with self._migration_lock:
-            workspace_id = self._load_or_create_workspace_id(canonical_workspace, root)
-            workspace_id = self._claim_workspace_namespace(
-                root,
-                canonical_workspace,
-                workspace_id,
-            )
-            self.sessions_dir = ensure_dir(root / workspace_id)
-            self.legacy_sessions_dir = get_legacy_sessions_dir()
-            self._session_files_lock = FileLock(
-                str(self.sessions_dir / _SESSION_FILES_LOCK_FILENAME)
-            )
-            with self._session_files_lock:
-                require_memory_receipt_recovery(
-                    canonical_workspace / "memory" / MEMORY_RECEIPT_FILENAME,
+            if root == canonical_workspace or root.is_relative_to(canonical_workspace):
+                raise RuntimeError(
+                    "session storage must be outside the agent workspace; "
+                    "move --config outside --workspace or choose a nested workspace directory"
                 )
-                self._migrate_from_workspace(canonical_workspace)
+            ensure_dir(root)
+            with suppress(OSError):
+                os.chmod(root, 0o700)
+            self.workspace = canonical_workspace
+            self._migration_lock = FileLock(
+                str(root / ".workspace-migration.lock"),
+                timeout=_SESSION_MIGRATION_LOCK_TIMEOUT_SECONDS,
+            )
+            with self._migration_lock:
+                if memory_gate is not None:
+                    memory_gate.require_current()
+                require_memory_receipt_recovery(receipt_path)
+                workspace_id = self._load_or_create_workspace_id(canonical_workspace, root)
+                workspace_id = self._claim_workspace_namespace(
+                    root,
+                    canonical_workspace,
+                    workspace_id,
+                )
+                self.sessions_dir = ensure_dir(root / workspace_id)
+                self.legacy_sessions_dir = get_legacy_sessions_dir()
+                self._session_files_lock = FileLock(
+                    str(self.sessions_dir / _SESSION_FILES_LOCK_FILENAME)
+                )
+                with self._session_files_lock:
+                    if memory_gate is not None:
+                        memory_gate.require_current()
+                    require_memory_receipt_recovery(receipt_path)
+                    self._migrate_from_workspace(canonical_workspace)
 
     @property
     def source(self) -> "SourceSessionStore":
