@@ -32,6 +32,7 @@ import os
 import re
 import stat
 import threading
+import weakref
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +55,7 @@ _EVIDENCE_KINDS = frozenset(("transactions", "conversions"))
 _RECORD_SLOT_RE = re.compile(r"(?:genesis\.json|next-[0-9a-f]{64}\.json)\Z")
 _NAMESPACE_CAPABILITY = object()
 _OPERATION_CAPABILITY = object()
+_BOUND_TARGET_CAPABILITY = object()
 _PRIVATE_DIRECTORY_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
 _READ_CHUNK = 64 * 1024
@@ -166,7 +168,11 @@ class MemoryTargetStatIdentity:
     ctime_ns: int | None
 
 
-@dataclass(frozen=True, slots=True, init=False, repr=False)
+_TargetStatSeal = tuple[int, int, int, int, int, int, int, int | None, int | None]
+_TargetSnapshotSeal = tuple[str, bytes | None, _TargetStatSeal | None, int]
+
+
+@dataclass(frozen=True, slots=True, init=False, repr=False, weakref_slot=True)
 class MemoryTargetSnapshot:
     """Opaque immutable bytes captured under one active memory authority."""
 
@@ -229,6 +235,26 @@ class MemoryTargetSnapshot:
 
     def __deepcopy__(self, memo: dict[int, object]) -> Self:
         raise TypeError("memory target snapshot cannot be copied")
+
+
+def _target_snapshot_seal(snapshot: MemoryTargetSnapshot) -> _TargetSnapshotSeal:
+    identity = snapshot._stat_identity
+    stat_seal = (
+        None
+        if identity is None
+        else (
+            identity.device,
+            identity.inode,
+            identity.mode,
+            identity.uid,
+            identity.gid,
+            identity.links,
+            identity.size,
+            identity.mtime_ns,
+            identity.ctime_ns,
+        )
+    )
+    return snapshot._name, snapshot._content, stat_seal, snapshot._epoch
 
 
 def _target_stat_identity(info: os.stat_result) -> MemoryTargetStatIdentity:
@@ -1396,13 +1422,22 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         self._pid = os.getpid()
         self._active = False
         self._lock_held = False
-        self._lifecycle_lock = threading.Lock()
+        # Weakref callbacks may run synchronously during cyclic GC while a
+        # lifecycle operation holds this lock, so they must be able to reenter.
+        self._lifecycle_lock = threading.RLock()
         self._entering = False
         self._activation_thread: threading.Thread | None = None
         self._activation_thread_id: int | None = None
         self._activation_epoch = 0
         self._borrowers: set[WorkspaceMemoryOperation] = set()
         self._namespaces: list[ImmutableEvidenceNamespace] = []
+        self._target_snapshot_issuance: dict[
+            int,
+            tuple[
+                weakref.ReferenceType[MemoryTargetSnapshot],
+                _TargetSnapshotSeal,
+            ],
+        ] = {}
         self._blob_store = _ImmutableSlotStore(
             self._digest_fd_or_closed,
             self._assert_binding,
@@ -1574,6 +1609,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         self._activation_thread = None
         self._activation_thread_id = None
         self._memory_mode = None
+        self._target_snapshot_issuance.clear()
         for namespace in tuple(self._namespaces):
             namespace._close_from_authority()
         self._namespaces.clear()
@@ -1765,6 +1801,35 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
             retained_companion_identity=retained_companion_identity,
         )
 
+    def _register_target_snapshot_locked(self, snapshot: MemoryTargetSnapshot) -> None:
+        """Seal an issued snapshot without retaining it after callers release it."""
+
+        snapshot_id = id(snapshot)
+        authority_ref = weakref.ref(self)
+
+        def forget(reference: weakref.ReferenceType[MemoryTargetSnapshot]) -> None:
+            authority = authority_ref()
+            if authority is None:
+                return
+            with authority._lifecycle_lock:
+                issued = authority._target_snapshot_issuance.get(snapshot_id)
+                if issued is not None and issued[0] is reference:
+                    del authority._target_snapshot_issuance[snapshot_id]
+
+        reference = weakref.ref(snapshot, forget)
+        self._target_snapshot_issuance[snapshot_id] = (reference, _target_snapshot_seal(snapshot))
+
+    def _require_issued_target_snapshot_locked(
+        self, snapshot: MemoryTargetSnapshot
+    ) -> None:
+        """Authenticate object identity and unchanged fields for one issued snapshot."""
+
+        issued = self._target_snapshot_issuance.get(id(snapshot))
+        if issued is None or issued[0]() is not snapshot:
+            raise _error("invalid") from None
+        if issued[1] != _target_snapshot_seal(snapshot):
+            raise _error("invalid") from None
+
     def snapshot_target(self, name: str) -> MemoryTargetSnapshot:
         """Read an allowlisted legacy target without modifying workspace state.
 
@@ -1859,7 +1924,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
                 or threading.current_thread() is not self._activation_thread
             ):
                 raise _error("closed") from None
-            return MemoryTargetSnapshot(
+            snapshot = MemoryTargetSnapshot(
                 name,
                 content,
                 identity,
@@ -1867,6 +1932,8 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
                 epoch,
                 _capability=_SNAPSHOT_CAPABILITY,
             )
+            self._register_target_snapshot_locked(snapshot)
+            return snapshot
 
     def publish_blob(self, content: bytes) -> str:
         """Publish bytes under their exact SHA-256 name without clobbering."""
@@ -1923,6 +1990,7 @@ class WorkspaceMemoryOperation(AbstractContextManager[Self]):
         self._registered = False
         self._epoch: int | None = None
         self._workspace_identity: tuple[int, int] | None = None
+        self._target_parent_borrowers: set[BoundMemoryTarget] = set()
 
     @property
     def workspace_identity(self) -> tuple[int, int]:
@@ -1935,6 +2003,33 @@ class WorkspaceMemoryOperation(AbstractContextManager[Self]):
             if self._state != self._ACTIVE or self._workspace_identity is None:
                 raise _error("closed") from None
             return self._workspace_identity
+
+    def borrow_target_parent(self, snapshot: MemoryTargetSnapshot) -> BoundMemoryTarget:
+        """Issue scoped parent access anchored to an issued target snapshot."""
+
+        authority = self._authority
+        self._require_process_owner()
+        with authority._lifecycle_lock:
+            self._require_process_owner()
+            self._require_owner()
+            self._require_active_authority_owner()
+            if (
+                self._state != self._ACTIVE
+                or not self._registered
+                or self._epoch is None
+                or self._epoch != authority._activation_epoch
+                or not authority._active
+                or not authority._lock_held
+                or self not in authority._borrowers
+            ):
+                raise _error("closed") from None
+            BoundMemoryTarget._validate_snapshot(snapshot, authority, self._epoch)
+            authority._assert_binding()
+            return BoundMemoryTarget(
+                self,
+                snapshot,
+                _capability=_BOUND_TARGET_CAPABILITY,
+            )
 
     def __reduce__(self) -> object:
         raise TypeError("memory recovery operation cannot be serialized")
@@ -2022,6 +2117,8 @@ class WorkspaceMemoryOperation(AbstractContextManager[Self]):
                 return
             if self._state != self._ACTIVE or not self._registered:
                 raise _error("closed") from None
+            if self._target_parent_borrowers:
+                raise _error("borrowed") from None
             self._registered = False
             self._state = self._CLOSED
             authority._unregister_operation(self)
@@ -2030,6 +2127,261 @@ class WorkspaceMemoryOperation(AbstractContextManager[Self]):
         current_pid = os.getpid()
         if self._pid != current_pid or self._authority._pid != current_pid:
             raise _error("closed") from None
+
+
+class BoundMemoryTarget(AbstractContextManager[Self]):
+    """A scoped parent-directory borrow anchored to one issued target snapshot.
+
+    The scope retains a private duplicate of the authority's pinned ``memory``
+    descriptor. Its snapshot operations do not mutate workspace state. The
+    explicit caller-owned descriptor duplicate is a trusted in-process handoff:
+    the caller may use descriptor-relative APIs, and the scope cannot revoke
+    that duplicate after it is returned.
+    """
+
+    _NEW = "new"
+    _ACTIVE = "active"
+    _CLOSED = "closed"
+
+    def __init__(
+        self,
+        operation: WorkspaceMemoryOperation,
+        snapshot: MemoryTargetSnapshot,
+        *,
+        _capability: object | None = None,
+    ) -> None:
+        if _capability is not _BOUND_TARGET_CAPABILITY:
+            raise _error("invalid") from None
+        self._operation = operation
+        self._authority = operation._authority
+        self._snapshot = snapshot
+        self._pid = os.getpid()
+        self._thread = operation._thread
+        self._epoch = operation._epoch
+        self._snapshot_name = snapshot._name
+        self._snapshot_content = snapshot._content
+        self._snapshot_stat_identity = snapshot._stat_identity
+        self._state = self._NEW
+        self._registered = False
+        self._memory_fd: int | None = None
+        self._memory_identity: tuple[int, int] | None = None
+
+    @staticmethod
+    def _validate_snapshot(
+        snapshot: MemoryTargetSnapshot,
+        authority: WorkspaceMemoryAuthority,
+        epoch: int,
+    ) -> None:
+        if type(snapshot) is not MemoryTargetSnapshot:
+            raise _error("invalid") from None
+        if snapshot._authority is not authority:
+            raise _error("invalid") from None
+        if snapshot._epoch != epoch:
+            raise _error("binding") from None
+        if (
+            type(snapshot._name) is not str
+            or snapshot._name not in _MEMORY_TARGET_NAMES
+            or snapshot._name == _RECEIPT_TARGET_NAME
+            or (snapshot._content is None) != (snapshot._stat_identity is None)
+            or (
+                snapshot._stat_identity is not None
+                and type(snapshot._stat_identity) is not MemoryTargetStatIdentity
+            )
+            or (
+                snapshot._content is not None
+                and (
+                    type(snapshot._content) is not bytes
+                    or len(snapshot._content) > _MEMORY_TARGET_MAX_BYTES
+                    or snapshot._stat_identity is None
+                    or snapshot._stat_identity.size != len(snapshot._content)
+                )
+            )
+        ):
+            raise _error("invalid") from None
+        authority._require_issued_target_snapshot_locked(snapshot)
+
+    @property
+    def name(self) -> str:
+        """The allowlisted target basename bound to this active scope."""
+
+        self.require_current()
+        return self._snapshot_name
+
+    def duplicate_dir_fd(self) -> int:
+        """Return a caller-owned duplicate of the verified parent descriptor.
+
+        The caller must close the returned descriptor. It remains caller-owned
+        if this scope exits; the scope never closes a descriptor it did not
+        create, and it cannot revoke duplicates handed to callers.
+        """
+
+        authority = self._authority
+        self._require_process_owner()
+        with authority._lifecycle_lock:
+            self._require_process_owner()
+            self._require_current_locked()
+            memory_fd = self._memory_fd
+            if memory_fd is None:
+                raise _error("closed") from None
+            try:
+                return os.dup(memory_fd)
+            except (OSError, TypeError, ValueError):
+                raise _error("io") from None
+
+    def __reduce__(self) -> object:
+        raise TypeError("bound memory target cannot be serialized")
+
+    def __copy__(self) -> Self:
+        raise TypeError("bound memory target cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        raise TypeError("bound memory target cannot be copied")
+
+    def __enter__(self) -> Self:
+        authority = self._authority
+        self._require_process_owner()
+        with authority._lifecycle_lock:
+            self._require_process_owner()
+            if self._state != self._NEW:
+                raise _error("closed") from None
+            self._require_active_operation_locked()
+            epoch = self._operation._epoch
+            if epoch is None:
+                raise _error("closed") from None
+            self._require_snapshot_unchanged(epoch)
+            authority._assert_binding()
+            source_fd = authority._memory_fd
+            if source_fd is None:
+                raise _error("closed") from None
+            memory_fd: int | None = None
+            try:
+                memory_fd = os.dup(source_fd)
+            except (OSError, TypeError, ValueError):
+                raise _error("io") from None
+            try:
+                source_info = _fstat(source_fd, code="binding")
+                duplicate_info = _fstat(memory_fd, code="binding")
+                _workspace_memory_directory(duplicate_info)
+                if not _same_binding(source_info, duplicate_info):
+                    raise _error("binding") from None
+                authority._assert_binding()
+                self._operation._target_parent_borrowers.add(self)
+                self._memory_fd = memory_fd
+                self._memory_identity = _identity(duplicate_info)
+                self._registered = True
+                self._state = self._ACTIVE
+                memory_fd = None
+                return self
+            finally:
+                _close(memory_fd)
+
+    def require_current(self) -> None:
+        """Verify this parent borrow still belongs to its live operation epoch."""
+
+        authority = self._authority
+        self._require_process_owner()
+        with authority._lifecycle_lock:
+            self._require_process_owner()
+            self._require_current_locked()
+
+    def _require_current_locked(self) -> None:
+        self._require_active_operation_locked()
+        if (
+            self._state != self._ACTIVE
+            or not self._registered
+            or self not in self._operation._target_parent_borrowers
+        ):
+            raise _error("closed") from None
+        self._require_snapshot_unchanged(self._epoch or 0)
+        memory_fd = self._memory_fd
+        memory_identity = self._memory_identity
+        if memory_fd is None or memory_identity is None:
+            raise _error("closed") from None
+        self._authority._assert_binding()
+        info = _fstat(memory_fd, code="binding")
+        _workspace_memory_directory(info)
+        if _identity(info) != memory_identity:
+            raise _error("binding") from None
+
+    def _require_snapshot_unchanged(self, epoch: int) -> None:
+        self._validate_snapshot(self._snapshot, self._authority, epoch)
+        if (
+            self._snapshot._name != self._snapshot_name
+            or self._snapshot._content != self._snapshot_content
+            or self._snapshot._stat_identity != self._snapshot_stat_identity
+        ):
+            raise _error("invalid") from None
+
+    def _require_active_operation_locked(self) -> None:
+        self._require_owner()
+        operation = self._operation
+        authority = self._authority
+        epoch = self._epoch
+        if (
+            operation._state != operation._ACTIVE
+            or not operation._registered
+            or epoch is None
+            or operation._epoch != epoch
+            or operation._issued_epoch != epoch
+            or epoch != authority._activation_epoch
+            or not authority._active
+            or not authority._lock_held
+            or operation not in authority._borrowers
+            or threading.current_thread() is not authority._activation_thread
+        ):
+            raise _error("closed") from None
+
+    def _require_owner(self) -> None:
+        current_pid = os.getpid()
+        if (
+            current_pid != self._pid
+            or current_pid != self._authority._pid
+            or current_pid != self._operation._pid
+            or threading.current_thread() is not self._thread
+        ):
+            raise _error("closed") from None
+
+    def _require_process_owner(self) -> None:
+        current_pid = os.getpid()
+        if (
+            current_pid != self._pid
+            or current_pid != self._authority._pid
+            or current_pid != self._operation._pid
+        ):
+            raise _error("closed") from None
+
+    def snapshot_target(self) -> MemoryTargetSnapshot:
+        """Read the bound target through the authority's verified no-follow reader."""
+
+        self.require_current()
+        snapshot = self._authority.snapshot_target(self._snapshot_name)
+        authority = self._authority
+        self._require_process_owner()
+        with authority._lifecycle_lock:
+            self._require_process_owner()
+            self._require_current_locked()
+            self._validate_snapshot(snapshot, authority, self._epoch or 0)
+            if snapshot._name != self._snapshot_name:
+                raise _error("binding") from None
+            return snapshot
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self._require_process_owner()
+        authority = self._authority
+        with authority._lifecycle_lock:
+            self._require_process_owner()
+            self._require_owner()
+            if self._state == self._CLOSED:
+                return
+            if self._state != self._ACTIVE or not self._registered:
+                raise _error("closed") from None
+            self._registered = False
+            self._state = self._CLOSED
+            self._operation._target_parent_borrowers.discard(self)
+            memory_fd = self._memory_fd
+            self._memory_fd = None
+            self._memory_identity = None
+            _close(memory_fd)
 
 
 class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
@@ -2218,6 +2570,7 @@ __all__ = [
     "MemoryStorageError",
     "MemoryStorageMissingError",
     "MemoryStorageUnavailableError",
+    "BoundMemoryTarget",
     "MemoryTargetSnapshot",
     "MemoryTargetStatIdentity",
     "ImmutableEvidenceNamespace",
