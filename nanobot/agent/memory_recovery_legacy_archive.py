@@ -1,6 +1,7 @@
 """Descriptor-relative archive of legacy HISTORY.md with a frozen backup name.
 
-A present issued history.jsonl snapshot anchors the pinned memory directory during
+A present issued history.jsonl snapshot, or a privately issued pending receipt
+with explicit validated digest and size, anchors the pinned memory directory during
 archive and replay. The legacy source identity is frozen separately in PREPARED
 evidence. Participating writers hold the workspace lock; an uncooperative same-UID
 pathname race around conditional unlink cannot be eliminated with portable POSIX APIs.
@@ -17,6 +18,7 @@ from nanobot.agent import memory_recovery_storage as storage
 
 _SOURCE = "HISTORY.md"
 _ANCHOR = "history.jsonl"
+_RECEIPT = ".consolidation.pending.json"
 _BACKUP = re.compile(r"HISTORY\.md\.bak(?:\.([2-9][0-9]*))?\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _CHUNK = 64 * 1024
@@ -227,25 +229,71 @@ def archive_legacy_history_if_unchanged(
     expected_digest: str,
     expected_size: int,
     backup_name: str,
+    expected_receipt_digest: str | None = None,
+    expected_receipt_size: int | None = None,
 ) -> str:
     """Archive verified HISTORY.md; replay only matching two- or one-link states."""
     if type(backup_name) is not str or _BACKUP.fullmatch(backup_name) is None:
         _fail("invalid")
     _validate_evidence(expected_source_stat, expected_digest, expected_size)
+    receipt_anchor = (
+        type(history_anchor_snapshot) is storage.MemoryTargetSnapshot
+        and history_anchor_snapshot.name == _RECEIPT
+    )
+    if receipt_anchor:
+        if (
+            type(expected_receipt_digest) is not str
+            or _DIGEST.fullmatch(expected_receipt_digest) is None
+            or type(expected_receipt_size) is not int
+            or not 0 <= expected_receipt_size <= _MAX_BYTES
+        ):
+            _fail("invalid")
+        if (
+            history_anchor_snapshot.content is None
+            or history_anchor_snapshot.stat_identity is None
+            or len(history_anchor_snapshot.content) != expected_receipt_size
+            or hashlib.sha256(history_anchor_snapshot.content).hexdigest()
+            != expected_receipt_digest
+        ):
+            _fail("conflict")
+    elif expected_receipt_digest is not None or expected_receipt_size is not None:
+        _fail("invalid")
     _capabilities()
     mutation_attempted = False
     try:
-        with _scope(operation, history_anchor_snapshot, for_archive=True) as scope:
+        if receipt_anchor:
+            scope_context = operation.borrow_pending_receipt_parent(history_anchor_snapshot)
+        else:
+            scope_context = _scope(operation, history_anchor_snapshot, for_archive=True)
+        with scope_context as scope:
             scope.require_current()
             parent_fd = scope.duplicate_dir_fd()
             backup_fd: int | None = None
             try:
+                def require_anchor_current() -> None:
+                    scope.require_current()
+                    if receipt_anchor:
+                        anchor = scope.snapshot_target()
+                        if (
+                            anchor.content != history_anchor_snapshot.content
+                            or anchor.stat_identity != history_anchor_snapshot.stat_identity
+                        ):
+                            _fail("conflict")
+                        assert expected_receipt_digest is not None
+                        assert expected_receipt_size is not None
+                        assert history_anchor_snapshot.stat_identity is not None
+                        _read_entry(
+                            parent_fd, _RECEIPT, history_anchor_snapshot.stat_identity,
+                            expected_receipt_digest, expected_receipt_size, 1, initial=True,
+                        )
+
                 anchor = scope.snapshot_target()
                 if (
                     anchor.content != history_anchor_snapshot.content
                     or anchor.stat_identity != history_anchor_snapshot.stat_identity
                 ):
                     _fail("conflict")
+                require_anchor_current()
                 source = _stat(parent_fd, _SOURCE)
                 backup = _stat(parent_fd, backup_name)
                 if backup is None:
@@ -255,7 +303,7 @@ def archive_legacy_history_if_unchanged(
                         parent_fd, _SOURCE, expected_source_stat, expected_digest,
                         expected_size, 1, initial=True, sync_source=True,
                     )
-                    scope.require_current()
+                    require_anchor_current()
                     _read_entry(
                         parent_fd, _SOURCE, expected_source_stat, expected_digest,
                         expected_size, 1, initial=True,
@@ -275,8 +323,9 @@ def archive_legacy_history_if_unchanged(
                         parent_fd, backup_name, expected_source_stat, expected_digest,
                         expected_size, 1, initial=False,
                     )
-                    scope.require_current()
+                    require_anchor_current()
                     os.fsync(parent_fd)
+                    require_anchor_current()
                     _read_entry(
                         parent_fd, backup_name, expected_source_stat, expected_digest,
                         expected_size, 1, initial=False,
@@ -294,7 +343,7 @@ def archive_legacy_history_if_unchanged(
                     if _signature(source_info) != _signature(backup_info):
                         _fail("conflict")
                     if _ == 0:
-                        scope.require_current()
+                        require_anchor_current()
                         os.fsync(parent_fd)
                 backup_fd = os.open(
                     backup_name,
@@ -303,7 +352,7 @@ def archive_legacy_history_if_unchanged(
                 )
                 if _signature(os.fstat(backup_fd)) != _signature(backup_info):
                     _fail("conflict")
-                scope.require_current()
+                require_anchor_current()
                 # Recheck the named source immediately before unlink. This is
                 # conditional only with respect to cooperating locked writers.
                 _read_entry(
@@ -335,7 +384,7 @@ def archive_legacy_history_if_unchanged(
                     expected_size, 1, initial=False,
                 )
                 os.fsync(parent_fd)
-                scope.require_current()
+                require_anchor_current()
                 _read_entry(
                     parent_fd, backup_name, expected_source_stat, expected_digest,
                     expected_size, 1, initial=False,

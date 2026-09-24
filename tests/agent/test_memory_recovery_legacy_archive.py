@@ -319,3 +319,213 @@ def test_rejects_bad_frozen_evidence_and_wrong_anchor(tmp_path: Path) -> None:
             operation.__exit__(None, None, None)
     assert source.exists()
     assert (memory / "history.jsonl").exists()
+
+
+def _receipt_archive(operation, receipt, source_snapshot, name, *, digest=None, size=None):
+    assert receipt.content is not None
+    assert source_snapshot.content is not None
+    assert source_snapshot.stat_identity is not None
+    return archive.archive_legacy_history_if_unchanged(
+        operation, receipt,
+        expected_source_stat=source_snapshot.stat_identity,
+        expected_digest=hashlib.sha256(source_snapshot.content).hexdigest(),
+        expected_size=len(source_snapshot.content),
+        backup_name=name,
+        expected_receipt_digest=(
+            hashlib.sha256(receipt.content).hexdigest() if digest is None else digest
+        ),
+        expected_receipt_size=len(receipt.content) if size is None else size,
+    )
+
+
+def _receipt_setup(tmp_path):
+    memory, source = _setup(tmp_path)
+    (memory / "history.jsonl").unlink()
+    receipt = memory / ".consolidation.pending.json"
+    receipt.write_bytes(b'{"source":"HISTORY.md","rows":0}\n')
+    receipt.chmod(0o600)
+    return memory, source, receipt
+
+
+def test_zero_row_archive_uses_issued_private_receipt(tmp_path: Path) -> None:
+    memory, source, receipt_path = _receipt_setup(tmp_path)
+    before = receipt_path.read_bytes()
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        source_snapshot = authority.snapshot_target("HISTORY.md")
+        receipt = authority.snapshot_target(".consolidation.pending.json")
+        with authority.operation() as operation:
+            name = archive.choose_legacy_backup_name(operation, source_snapshot)
+            _receipt_archive(operation, receipt, source_snapshot, name)
+            _receipt_archive(operation, receipt, source_snapshot, name)
+    assert not source.exists()
+    assert not (memory / "history.jsonl").exists()
+    assert (memory / name).read_bytes() == source_snapshot.content
+    assert receipt_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("stage", ["link", "fsync", "unlink"])
+def test_receipt_anchor_replays_after_uncertain_mutation_with_fresh_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str,
+) -> None:
+    memory, source, receipt_path = _receipt_setup(tmp_path)
+    real_link, real_unlink, real_fsync = os.link, os.unlink, os.fsync
+    fired = False
+
+    def link(*args, **kwargs):
+        nonlocal fired
+        real_link(*args, **kwargs)
+        if stage == "link" and not fired:
+            fired = True
+            raise OSError(errno.EIO, "after link")
+
+    def unlink(*args, **kwargs):
+        nonlocal fired
+        real_unlink(*args, **kwargs)
+        if stage == "unlink" and not fired:
+            fired = True
+            raise OSError(errno.EIO, "after unlink")
+
+    def fsync(fd):
+        nonlocal fired
+        result = real_fsync(fd)
+        if stage == "fsync" and stat.S_ISDIR(os.fstat(fd).st_mode) and not fired:
+            fired = True
+            raise OSError(errno.EIO, "after directory fsync")
+        return result
+
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        source_snapshot = authority.snapshot_target("HISTORY.md")
+        receipt = authority.snapshot_target(".consolidation.pending.json")
+        with authority.operation() as operation:
+            name = archive.choose_legacy_backup_name(operation, source_snapshot)
+            with monkeypatch.context() as patch:
+                patch.setattr(os, "link", link)
+                patch.setattr(os, "unlink", unlink)
+                patch.setattr(os, "fsync", fsync)
+                patch.setattr(archive, "_capabilities", lambda: None)
+                _error(lambda: _receipt_archive(operation, receipt, source_snapshot, name), "uncertain")
+    assert fired
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        fresh_receipt = authority.snapshot_target(".consolidation.pending.json")
+        with authority.operation() as operation:
+            _receipt_archive(operation, fresh_receipt, source_snapshot, name)
+    assert not source.exists()
+    assert (memory / name).read_bytes() == source_snapshot.content
+    assert receipt_path.read_bytes() == receipt.content
+
+
+@pytest.mark.parametrize("drift", ["replaced", "symlink", "permissions", "digest", "size"])
+def test_receipt_anchor_rejects_unsafe_or_mismatched_receipt_before_mutation(
+    tmp_path: Path, drift: str,
+) -> None:
+    memory, source, receipt_path = _receipt_setup(tmp_path)
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        source_snapshot = authority.snapshot_target("HISTORY.md")
+        receipt = authority.snapshot_target(".consolidation.pending.json")
+        with authority.operation() as operation:
+            name = archive.choose_legacy_backup_name(operation, source_snapshot)
+            if drift == "replaced":
+                receipt_path.unlink()
+                receipt_path.write_bytes(receipt.content)
+                receipt_path.chmod(0o600)
+            elif drift == "symlink":
+                receipt_path.unlink()
+                receipt_path.symlink_to("missing")
+            elif drift == "permissions":
+                receipt_path.chmod(0o644)
+            kwargs = {"digest": "0" * 64} if drift == "digest" else {}
+            if drift == "size":
+                kwargs["size"] = len(receipt.content or b"") + 1
+            _error(
+                lambda: _receipt_archive(operation, receipt, source_snapshot, name, **kwargs),
+                "corrupt" if drift in ("symlink", "permissions") else "conflict",
+            )
+    assert source.exists()
+    assert not (memory / name).exists()
+
+
+def test_receipt_changed_after_link_blocks_unlink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    memory, source, receipt_path = _receipt_setup(tmp_path)
+    real_link = os.link
+
+    def link(*args, **kwargs):
+        real_link(*args, **kwargs)
+        receipt_path.write_bytes(b"tampered")
+
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        source_snapshot = authority.snapshot_target("HISTORY.md")
+        receipt = authority.snapshot_target(".consolidation.pending.json")
+        with authority.operation() as operation:
+            name = archive.choose_legacy_backup_name(operation, source_snapshot)
+            with monkeypatch.context() as patch:
+                patch.setattr(os, "link", link)
+                patch.setattr(archive, "_capabilities", lambda: None)
+                _error(lambda: _receipt_archive(operation, receipt, source_snapshot, name), "uncertain")
+    assert source.exists()
+    assert (memory / name).samefile(source)
+
+
+def test_receipt_anchor_rejects_wrong_target_and_missing_evidence(tmp_path: Path) -> None:
+    memory, source, _receipt_path = _receipt_setup(tmp_path)
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        source_snapshot = authority.snapshot_target("HISTORY.md")
+        receipt = authority.snapshot_target(".consolidation.pending.json")
+        with authority.operation() as operation:
+            name = archive.choose_legacy_backup_name(operation, source_snapshot)
+            assert source_snapshot.stat_identity is not None
+            assert source_snapshot.content is not None
+            _error(
+                lambda: archive.archive_legacy_history_if_unchanged(
+                    operation, receipt,
+                    expected_source_stat=source_snapshot.stat_identity,
+                    expected_digest=hashlib.sha256(source_snapshot.content).hexdigest(),
+                    expected_size=len(source_snapshot.content), backup_name=name,
+                ), "invalid",
+            )
+            _error(
+                lambda: _receipt_archive(operation, source_snapshot, source_snapshot, name),
+                "invalid",
+            )
+    assert source.exists()
+    assert not (memory / name).exists()
+
+
+def test_one_link_receipt_replay_rechecks_receipt_after_fsync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory, source, receipt_path = _receipt_setup(tmp_path)
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        source_snapshot = authority.snapshot_target("HISTORY.md")
+        receipt = authority.snapshot_target(".consolidation.pending.json")
+        with authority.operation() as operation:
+            name = archive.choose_legacy_backup_name(operation, source_snapshot)
+            _receipt_archive(operation, receipt, source_snapshot, name)
+    assert not source.exists()
+    original_receipt = receipt_path.read_bytes()
+    original_backup = (memory / name).read_bytes()
+    real_fsync = os.fsync
+    fired = False
+
+    def fsync(fd):
+        nonlocal fired
+        result = real_fsync(fd)
+        if stat.S_ISDIR(os.fstat(fd).st_mode) and not fired:
+            fired = True
+            receipt_path.write_bytes(b"tampered during replay fsync")
+        return result
+
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        fresh_receipt = authority.snapshot_target(".consolidation.pending.json")
+        with authority.operation() as operation:
+            with monkeypatch.context() as patch:
+                patch.setattr(os, "fsync", fsync)
+                _error(
+                    lambda: _receipt_archive(operation, fresh_receipt, source_snapshot, name),
+                    "conflict",
+                )
+    assert fired
+    assert not source.exists()
+    assert (memory / name).read_bytes() == original_backup
+    assert (memory / name).stat().st_nlink == 1
+    assert receipt_path.exists()
+    assert receipt_path.read_bytes() != original_receipt
