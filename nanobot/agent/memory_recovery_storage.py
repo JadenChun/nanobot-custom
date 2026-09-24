@@ -56,6 +56,7 @@ _RECORD_SLOT_RE = re.compile(r"(?:genesis\.json|next-[0-9a-f]{64}\.json)\Z")
 _NAMESPACE_CAPABILITY = object()
 _OPERATION_CAPABILITY = object()
 _BOUND_TARGET_CAPABILITY = object()
+_BOUND_RECEIPT_TARGET_CAPABILITY = object()
 _PRIVATE_DIRECTORY_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
 _READ_CHUNK = 64 * 1024
@@ -2031,6 +2032,42 @@ class WorkspaceMemoryOperation(AbstractContextManager[Self]):
                 _capability=_BOUND_TARGET_CAPABILITY,
             )
 
+    def borrow_pending_receipt_parent(
+        self, snapshot: MemoryTargetSnapshot
+    ) -> BoundMemoryTarget:
+        """Issue scoped parent access for one present, verified receipt snapshot."""
+
+        authority = self._authority
+        self._require_process_owner()
+        with authority._lifecycle_lock:
+            self._require_process_owner()
+            self._require_owner()
+            self._require_active_authority_owner()
+            if (
+                self._state != self._ACTIVE
+                or not self._registered
+                or self._epoch is None
+                or self._epoch != authority._activation_epoch
+                or not authority._active
+                or not authority._lock_held
+                or self not in authority._borrowers
+            ):
+                raise _error("closed") from None
+            BoundMemoryTarget._validate_snapshot(
+                snapshot,
+                authority,
+                self._epoch,
+                allow_receipt=True,
+            )
+            if snapshot._name != _RECEIPT_TARGET_NAME or not snapshot.exists:
+                raise _error("invalid") from None
+            authority._assert_binding()
+            return BoundMemoryTarget(
+                self,
+                snapshot,
+                _capability=_BOUND_RECEIPT_TARGET_CAPABILITY,
+            )
+
     def __reduce__(self) -> object:
         raise TypeError("memory recovery operation cannot be serialized")
 
@@ -2150,7 +2187,11 @@ class BoundMemoryTarget(AbstractContextManager[Self]):
         *,
         _capability: object | None = None,
     ) -> None:
-        if _capability is not _BOUND_TARGET_CAPABILITY:
+        if _capability is _BOUND_TARGET_CAPABILITY:
+            self._receipt_scope = False
+        elif _capability is _BOUND_RECEIPT_TARGET_CAPABILITY:
+            self._receipt_scope = True
+        else:
             raise _error("invalid") from None
         self._operation = operation
         self._authority = operation._authority
@@ -2171,6 +2212,8 @@ class BoundMemoryTarget(AbstractContextManager[Self]):
         snapshot: MemoryTargetSnapshot,
         authority: WorkspaceMemoryAuthority,
         epoch: int,
+        *,
+        allow_receipt: bool = False,
     ) -> None:
         if type(snapshot) is not MemoryTargetSnapshot:
             raise _error("invalid") from None
@@ -2181,7 +2224,7 @@ class BoundMemoryTarget(AbstractContextManager[Self]):
         if (
             type(snapshot._name) is not str
             or snapshot._name not in _MEMORY_TARGET_NAMES
-            or snapshot._name == _RECEIPT_TARGET_NAME
+            or (snapshot._name == _RECEIPT_TARGET_NAME and not allow_receipt)
             or (snapshot._content is None) != (snapshot._stat_identity is None)
             or (
                 snapshot._stat_identity is not None
@@ -2199,6 +2242,19 @@ class BoundMemoryTarget(AbstractContextManager[Self]):
         ):
             raise _error("invalid") from None
         authority._require_issued_target_snapshot_locked(snapshot)
+        if allow_receipt:
+            identity = snapshot._stat_identity
+            if snapshot._name != _RECEIPT_TARGET_NAME:
+                raise _error("invalid") from None
+            if snapshot._content is None or identity is None:
+                raise _error("invalid") from None
+            if (
+                not stat.S_ISREG(identity.mode)
+                or identity.uid != _uid()
+                or identity.links != 1
+                or stat.S_IMODE(identity.mode) != _PRIVATE_FILE_MODE
+            ):
+                raise _error("corrupt") from None
 
     @property
     def name(self) -> str:
@@ -2304,7 +2360,12 @@ class BoundMemoryTarget(AbstractContextManager[Self]):
             raise _error("binding") from None
 
     def _require_snapshot_unchanged(self, epoch: int) -> None:
-        self._validate_snapshot(self._snapshot, self._authority, epoch)
+        self._validate_snapshot(
+            self._snapshot,
+            self._authority,
+            epoch,
+            allow_receipt=self._receipt_scope,
+        )
         if (
             self._snapshot._name != self._snapshot_name
             or self._snapshot._content != self._snapshot_content
@@ -2360,7 +2421,12 @@ class BoundMemoryTarget(AbstractContextManager[Self]):
         with authority._lifecycle_lock:
             self._require_process_owner()
             self._require_current_locked()
-            self._validate_snapshot(snapshot, authority, self._epoch or 0)
+            self._validate_snapshot(
+                snapshot,
+                authority,
+                self._epoch or 0,
+                allow_receipt=self._receipt_scope,
+            )
             if snapshot._name != self._snapshot_name:
                 raise _error("binding") from None
             return snapshot
