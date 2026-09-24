@@ -2,17 +2,20 @@
 
 This dormant migration capability pins the configured directory ancestry and
 holds the repository's migration, execution, and session-file flock locks.
-It deliberately exposes no source-file or arbitrary lock operations.
+Its recovery-only variant can read one detached recovery candidate under an
+active workspace-memory lease and deliberately cannot replace that source.
 """
 
 from __future__ import annotations
 
 import errno
 import os
+import re
 import secrets
 import stat
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 try:  # pragma: no cover - platform qualification covers unavailable fcntl.
@@ -21,7 +24,9 @@ except ImportError:  # pragma: no cover
     fcntl = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
+    from nanobot.agent.memory_recovery_storage import WorkspaceMemoryOperation
     from nanobot.session.manager import JsonlSessionStore
+    from nanobot.session.recovery_locator import RecoveryCandidate
 
 
 ErrorCode = Literal[
@@ -35,6 +40,8 @@ _TEMP_CREATE_ATTEMPTS = 8
 _MIGRATION_LOCK = ".workspace-migration.lock"
 _SESSION_FILES_LOCK = ".session-files.lock"
 _EXECUTION_DIRECTORY = ".execution-locks"
+_RECOVERY_NAMESPACE_RE = re.compile(r"[0-9a-f]{32}\Z")
+_RECOVERY_MARKER_MAX_BYTES = 4096
 _CONSTRUCTOR_TOKEN = object()
 
 
@@ -242,6 +249,194 @@ def _require_source_read_platform() -> None:
         _fail("unavailable")
 
 
+def _recovery_directory_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
+    return value.st_dev, value.st_ino, value.st_mode, value.st_uid, value.st_gid
+
+
+def _recovery_file_identity(value: os.stat_result) -> tuple[int, int, int, int, int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_nlink,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+        value.st_uid,
+        value.st_gid,
+    )
+
+
+def _require_recovery_directory(value: os.stat_result) -> None:
+    permissions = stat.S_IMODE(value.st_mode)
+    if (
+        not stat.S_ISDIR(value.st_mode)
+        or value.st_ino <= 0
+        or value.st_uid != os.geteuid()
+        or permissions & 0o700 != 0o700
+        or permissions & (0o022 | 0o7000)
+    ):
+        _fail("unsafe")
+
+
+def _require_recovery_file(value: os.stat_result) -> None:
+    _validate_source_stat(value)
+
+
+def _open_recovery_directory(parent_fd: int, name: str) -> tuple[int, os.stat_result]:
+    before = _stat_at(parent_fd, name)
+    if before is None:
+        _fail("changed")
+    _require_recovery_directory(before)
+    descriptor = _open_directory_at(parent_fd, name)
+    try:
+        opened = _directory_stat(descriptor)
+        _require_recovery_directory(opened)
+        after = _stat_at(parent_fd, name)
+        if (
+            after is None
+            or _recovery_directory_identity(before) != _recovery_directory_identity(opened)
+            or _recovery_directory_identity(after) != _recovery_directory_identity(opened)
+        ):
+            _fail("changed")
+        return descriptor, opened
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _read_recovery_marker(
+    parent_fd: int,
+    name: str,
+    expected_identity: tuple[int, int, int, int, int, int, int, int, int] | None,
+) -> bytes:
+    before = _stat_at(parent_fd, name)
+    if before is None:
+        _fail("changed")
+    _require_recovery_file(before)
+    baseline = _recovery_file_identity(before)
+    if expected_identity is not None and baseline != expected_identity:
+        _fail("changed")
+    if before.st_size > _RECOVERY_MARKER_MAX_BYTES:
+        _fail("changed")
+
+    descriptor: int | None = None
+    try:
+        try:
+            descriptor = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                dir_fd=parent_fd,
+            )
+        except FileNotFoundError:
+            _fail("changed")
+        except (TypeError, NotImplementedError):
+            _fail("unavailable")
+        except OSError as exc:
+            _fail(_error_code(exc))
+
+        opened = os.fstat(descriptor)
+        _require_recovery_file(opened)
+        if _recovery_file_identity(opened) != baseline:
+            _fail("changed")
+        chunks: list[bytes] = []
+        remaining = _RECOVERY_MARKER_MAX_BYTES + 1
+        while remaining:
+            try:
+                chunk = os.read(descriptor, min(remaining, _SOURCE_READ_CHUNK_SIZE))
+            except OSError as exc:
+                if exc.errno == errno.EINTR:
+                    continue
+                _fail(_error_code(exc))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        after = os.fstat(descriptor)
+        current = _stat_at(parent_fd, name)
+        if (
+            len(payload) > _RECOVERY_MARKER_MAX_BYTES
+            or len(payload) != opened.st_size
+            or _recovery_file_identity(after) != baseline
+            or current is None
+            or _recovery_file_identity(current) != baseline
+        ):
+            _fail("changed")
+        return payload
+    except OSError as exc:
+        _fail(_error_code(exc))
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+def _valid_recovery_binding(payload: bytes) -> bool:
+    if not payload or len(payload) > _RECOVERY_MARKER_MAX_BYTES or not payload.endswith(b"\n"):
+        return False
+    try:
+        text = payload[:-1].decode("utf-8")
+        path = os.path.normpath(text)
+    except (UnicodeDecodeError, TypeError, ValueError):
+        return False
+    return text.startswith("/") and path == text and ".." not in text.split("/")
+
+
+def _open_absolute_recovery_directory(
+    path: str,
+) -> tuple[list[_DirectoryBaseline], list[int]]:
+    components = _configured_components(path)
+    owned: list[int] = []
+    baselines: list[_DirectoryBaseline] = []
+    try:
+        try:
+            descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except (TypeError, NotImplementedError):
+            _fail("unavailable")
+        except OSError as exc:
+            _fail(_error_code(exc))
+        owned.append(descriptor)
+        info = _directory_stat(descriptor)
+        baselines.append(_DirectoryBaseline(descriptor, None, None, _stat_identity(info), None))
+        parent_fd = descriptor
+        for component in components:
+            before = _stat_at(parent_fd, component)
+            if before is None or not stat.S_ISDIR(before.st_mode):
+                _fail("changed")
+            child_fd = _open_directory_at(parent_fd, component)
+            owned.append(child_fd)
+            opened = _directory_stat(child_fd)
+            edge = _stat_identity(before)
+            after = _stat_at(parent_fd, component)
+            if after is None or _stat_identity(opened) != edge or not _same_edge(after, edge):
+                _fail("changed")
+            baselines.append(
+                _DirectoryBaseline(child_fd, component, parent_fd, _stat_identity(opened), edge)
+            )
+            parent_fd = child_fd
+        return baselines, owned
+    except BaseException:
+        for descriptor in reversed(owned):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise
+
+
+def _revalidate_recovery_path(baselines: list[_DirectoryBaseline]) -> None:
+    for baseline in baselines:
+        if not _same_directory(_directory_stat(baseline.fd), baseline.identity):
+            _fail("changed")
+        if baseline.parent_fd is not None and baseline.name is not None:
+            edge = _stat_at(baseline.parent_fd, baseline.name)
+            if edge is None or baseline.edge is None or not _same_edge(edge, baseline.edge):
+                _fail("changed")
+
+
 def _require_source_replace_platform() -> None:
     flags = ("O_CREAT", "O_EXCL", "O_NOFOLLOW", "O_CLOEXEC", "O_NONBLOCK")
     if os.name != "posix" or any(
@@ -256,22 +451,26 @@ def _require_source_replace_platform() -> None:
 
 
 class CheckedSessionAuthority:
-    """Factory-only lock capability bound to one backend, key, process, and thread."""
+    """Factory-only checked lock and source capability bound to one caller."""
 
     __slots__ = (
         "_backend", "_key", "_storage_key", "_path", "_components", "_pid", "_thread",
         "_mutex", "_state", "_owned_fds", "_directories", "_execution_directory",
-        "_locks", "_source_evidence", "_replacement_used",
+        "_locks", "_source_evidence", "_replacement_used", "_memory_operation",
+        "_recovery_candidate", "_recovery_only", "_recovery_namespace",
     )
 
     def __init__(
         self,
         token: object,
-        backend: JsonlSessionStore,
+        backend: JsonlSessionStore | None,
         key: str,
         storage_key: str,
         path: str,
         components: tuple[str, ...],
+        *,
+        memory_operation: WorkspaceMemoryOperation | None = None,
+        recovery_candidate: RecoveryCandidate | None = None,
     ) -> None:
         if token is not _CONSTRUCTOR_TOKEN:
             raise TypeError("CheckedSessionAuthority instances are issued by open_checked_session")
@@ -292,6 +491,10 @@ class CheckedSessionAuthority:
             bytes, tuple[int, int, int, int, int, int, int, int, int]
         ] | None = None
         self._replacement_used = False
+        self._memory_operation = memory_operation
+        self._recovery_candidate = recovery_candidate
+        self._recovery_only = recovery_candidate is not None
+        self._recovery_namespace: _DirectoryBaseline | None = None
 
     def __copy__(self) -> CheckedSessionAuthority:
         raise TypeError("CheckedSessionAuthority cannot be copied")
@@ -312,6 +515,7 @@ class CheckedSessionAuthority:
         self._locks = []
         self._directories = []
         self._execution_directory = None
+        self._recovery_namespace = None
         self._state = "closed"
         self._source_evidence = None
         for descriptor in reversed(descriptors):
@@ -395,10 +599,15 @@ class CheckedSessionAuthority:
     def _validate_directories(self) -> None:
         if not self._directories:
             _fail("closed")
-        try:
-            current_path = os.fspath(self._backend.sessions_dir)
-        except (AttributeError, TypeError, ValueError):
-            _fail("changed")
+        if self._recovery_only:
+            current_path = self._path
+        else:
+            try:
+                if self._backend is None:
+                    _fail("changed")
+                current_path = os.fspath(self._backend.sessions_dir)
+            except (AttributeError, TypeError, ValueError):
+                _fail("changed")
         if current_path != self._path:
             _fail("changed")
         for baseline in self._directories:
@@ -424,9 +633,16 @@ class CheckedSessionAuthority:
             _fail("changed")
 
     def _open_execution_directory(self) -> None:
-        namespace_fd = self._directories[-1].fd
+        if self._recovery_only:
+            if self._recovery_namespace is None:
+                _fail("closed")
+            namespace_fd = self._recovery_namespace.fd
+        else:
+            namespace_fd = self._directories[-1].fd
         before = _stat_at(namespace_fd, _EXECUTION_DIRECTORY)
         if before is None:
+            if self._recovery_only:
+                self._validate_recovery_candidate()
             try:
                 os.mkdir(_EXECUTION_DIRECTORY, 0o700, dir_fd=namespace_fd)
             except FileExistsError:
@@ -476,8 +692,230 @@ class CheckedSessionAuthority:
         if _lock_identity(current) != baseline.identity:
             _fail("changed")
 
+    def _require_memory_operation_current(self) -> tuple[int, int]:
+        operation = self._memory_operation
+        candidate = self._recovery_candidate
+        if operation is None or candidate is None:
+            _fail("invalid")
+        try:
+            operation.require_current()
+            identity = operation.workspace_identity
+        except Exception:
+            _fail("changed")
+        expected = candidate.workspace_identity
+        if len(expected) != 5 or identity != expected[:2]:
+            _fail("changed")
+        return identity
+
+    def _validate_recovery_candidate(self) -> None:
+        candidate = self._recovery_candidate
+        if candidate is None:
+            return
+        lease_identity = self._require_memory_operation_current()
+        _require_source_read_platform()
+        if os.listdir not in getattr(os, "supports_fd", set()):
+            _fail("unavailable")
+        workspace_baselines: list[_DirectoryBaseline] = []
+        workspace_fds: list[int] = []
+        state_fd: int | None = None
+        target_namespace_fd: int | None = None
+        target_namespace_identity: tuple[int, int, int, int] | None = None
+        try:
+            workspace_baselines, workspace_fds = _open_absolute_recovery_directory(
+                os.fspath(candidate.workspace_path)
+            )
+            workspace_fd = workspace_baselines[-1].fd
+            workspace_stat = _directory_stat(workspace_fd)
+            _require_recovery_directory(workspace_stat)
+            if (
+                _recovery_directory_identity(workspace_stat) != candidate.workspace_identity
+                or (workspace_stat.st_dev, workspace_stat.st_ino) != lease_identity
+            ):
+                _fail("changed")
+
+            state_fd, state_stat = _open_recovery_directory(workspace_fd, ".nanobot")
+            state_payload = _read_recovery_marker(
+                state_fd, "workspace-id", candidate.workspace_marker_identity
+            )
+            expected_id = candidate.workspace_id.encode("ascii")
+            if state_payload not in (expected_id, expected_id + b"\n"):
+                _fail("changed")
+
+            root_fd = self._directories[-1].fd
+            root_stat = _directory_stat(root_fd)
+            _require_recovery_directory(root_stat)
+            if _recovery_directory_identity(root_stat) != candidate.sessions_root_identity:
+                _fail("changed")
+            expected_binding = f"{candidate.workspace_path}\n".encode("utf-8")
+            root_scan_identity = _recovery_file_identity(root_stat)
+            try:
+                namespace_names = os.listdir(root_fd)
+            except (TypeError, NotImplementedError):
+                _fail("unavailable")
+            except OSError as exc:
+                _fail(_error_code(exc))
+            matching_bindings = 0
+            target_name = candidate.workspace_id
+            source_name = f"{self._storage_key}.jsonl"
+            for name in sorted(namespace_names):
+                if _RECOVERY_NAMESPACE_RE.fullmatch(name) is None:
+                    continue
+                namespace_fd, namespace_stat = _open_recovery_directory(root_fd, name)
+                try:
+                    marker_entry = _stat_at(namespace_fd, ".workspace")
+                    if marker_entry is None:
+                        if name == target_name:
+                            _fail("changed")
+                        continue
+                    expected_marker = (
+                        candidate.namespace_marker_identity if name == target_name else None
+                    )
+                    payload = _read_recovery_marker(
+                        namespace_fd, ".workspace", expected_marker
+                    )
+                    if not _valid_recovery_binding(payload):
+                        _fail("changed")
+                    if payload == expected_binding:
+                        matching_bindings += 1
+                        if name != target_name:
+                            _fail("changed")
+                    if name == target_name:
+                        if (
+                            _recovery_directory_identity(namespace_stat)
+                            != candidate.namespace_identity
+                            or payload != expected_binding
+                        ):
+                            _fail("changed")
+                        target_namespace_fd = namespace_fd
+                        target_namespace_identity = _stat_identity(namespace_stat)
+                        namespace_fd = -1
+                        source_entry = _stat_at(target_namespace_fd, source_name)
+                        if source_entry is None:
+                            _fail("changed")
+                        _validate_source_stat(source_entry)
+                        if _recovery_file_identity(source_entry) != candidate.session_file_identity:
+                            _fail("changed")
+                finally:
+                    if namespace_fd >= 0:
+                        try:
+                            os.close(namespace_fd)
+                        except OSError:
+                            pass
+            root_after_scan = _directory_stat(root_fd)
+            root_path_after_scan = _stat_at(
+                self._directories[-2].fd, self._components[-1]
+            )
+            if (
+                _recovery_file_identity(root_after_scan) != root_scan_identity
+                or root_path_after_scan is None
+                or _recovery_file_identity(root_path_after_scan) != root_scan_identity
+            ):
+                _fail("changed")
+            if matching_bindings != 1 or target_namespace_fd is None:
+                _fail("changed")
+
+            _revalidate_recovery_path(workspace_baselines)
+            workspace_final = _directory_stat(workspace_fd)
+            state_current = _stat_at(workspace_fd, ".nanobot")
+            state_opened = _directory_stat(state_fd)
+            if (
+                _recovery_directory_identity(workspace_final) != candidate.workspace_identity
+                or state_current is None
+                or _recovery_directory_identity(state_current)
+                != _recovery_directory_identity(state_stat)
+                or _recovery_directory_identity(state_opened)
+                != _recovery_directory_identity(state_stat)
+            ):
+                _fail("changed")
+            root_final = _directory_stat(root_fd)
+            root_current = _stat_at(self._directories[-2].fd, self._components[-1])
+            target_current = _stat_at(root_fd, target_name)
+            target_opened = (
+                _directory_stat(target_namespace_fd)
+                if target_namespace_fd is not None
+                else None
+            )
+            if (
+                _recovery_directory_identity(root_final) != candidate.sessions_root_identity
+                or root_current is None
+                or _recovery_directory_identity(root_current) != candidate.sessions_root_identity
+                or target_current is None
+                or _recovery_directory_identity(target_current) != candidate.namespace_identity
+                or target_namespace_identity is None
+                or target_opened is None
+                or _recovery_directory_identity(target_opened) != candidate.namespace_identity
+            ):
+                _fail("changed")
+            pinned = self._recovery_namespace
+            if pinned is None:
+                self._owned_fds.append(target_namespace_fd)
+                self._recovery_namespace = _DirectoryBaseline(
+                    target_namespace_fd,
+                    target_name,
+                    root_fd,
+                    target_namespace_identity,
+                    target_namespace_identity,
+                )
+                target_namespace_fd = None
+            else:
+                pinned_edge = _stat_at(pinned.parent_fd or root_fd, pinned.name or "")
+                if (
+                    not _same_directory(_directory_stat(pinned.fd), pinned.identity)
+                    or _recovery_directory_identity(_directory_stat(pinned.fd))
+                    != candidate.namespace_identity
+                    or pinned.identity != target_namespace_identity
+                    or pinned_edge is None
+                    or pinned.edge is None
+                    or not _same_edge(pinned_edge, pinned.edge)
+                    or _recovery_directory_identity(pinned_edge)
+                    != candidate.namespace_identity
+                ):
+                    _fail("changed")
+            namespace_fd = (
+                self._recovery_namespace.fd
+                if self._recovery_namespace is not None
+                else target_namespace_fd
+            )
+            if namespace_fd is None:
+                _fail("changed")
+            final_workspace_marker = _read_recovery_marker(
+                state_fd, "workspace-id", candidate.workspace_marker_identity
+            )
+            final_namespace_marker = _read_recovery_marker(
+                namespace_fd, ".workspace", candidate.namespace_marker_identity
+            )
+            final_source = _stat_at(namespace_fd, source_name)
+            if (
+                final_workspace_marker not in (expected_id, expected_id + b"\n")
+                or final_namespace_marker != expected_binding
+                or final_source is None
+                or _recovery_file_identity(final_source) != candidate.session_file_identity
+            ):
+                _fail("changed")
+            self._require_memory_operation_current()
+        except OSError as exc:
+            _fail(_error_code(exc))
+        finally:
+            if target_namespace_fd is not None:
+                try:
+                    os.close(target_namespace_fd)
+                except OSError:
+                    pass
+            if state_fd is not None:
+                try:
+                    os.close(state_fd)
+                except OSError:
+                    pass
+            for descriptor in reversed(workspace_fds):
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
     def _validate_all(self) -> None:
         self._validate_directories()
+        if self._recovery_only:
+            self._validate_recovery_candidate()
         if self._execution_directory is not None:
             baseline = self._execution_directory
             current = _directory_stat(baseline.fd)
@@ -603,6 +1041,8 @@ class CheckedSessionAuthority:
         ):
             _fail("changed")
         if lock_error is not None:
+            if self._recovery_only:
+                self._validate_recovery_candidate()
             _fail(lock_error)
         baseline = _LockBaseline(descriptor, parent_fd, name, _lock_identity(post_lock))
         self._locks.append(baseline)
@@ -612,7 +1052,7 @@ class CheckedSessionAuthority:
         _require_platform()
         self._capture_directories()
         self._validate_initial_directory_policy()
-        self._validate_directories()
+        self._validate_all()
         namespace_fd = self._directories[-1].fd
         namespace_parent_fd = self._directories[-2].fd
         self._open_execution_directory()
@@ -620,7 +1060,12 @@ class CheckedSessionAuthority:
         execution_fd = self._execution_directory.fd if self._execution_directory else -1
         self._acquire_lock(namespace_parent_fd, _MIGRATION_LOCK)
         self._acquire_lock(execution_fd, f"{self._storage_key}.lock")
-        self._acquire_lock(namespace_fd, _SESSION_FILES_LOCK)
+        session_files_fd = (
+            self._recovery_namespace.fd
+            if self._recovery_only and self._recovery_namespace is not None
+            else namespace_fd
+        )
+        self._acquire_lock(session_files_fd, _SESSION_FILES_LOCK)
 
     def _release_resources(self, *, unlock: bool) -> ErrorCode | None:
         descriptors = self._owned_fds
@@ -629,6 +1074,7 @@ class CheckedSessionAuthority:
         self._locks = []
         self._directories = []
         self._execution_directory = None
+        self._recovery_namespace = None
         self._source_evidence = None
         close_error = False
         if unlock and fcntl is not None:
@@ -714,7 +1160,12 @@ class CheckedSessionAuthority:
                 _require_source_read_platform()
 
                 source_name = f"{self._storage_key}.jsonl"
-                namespace_fd = self._directories[-1].fd
+                if self._recovery_only:
+                    if self._recovery_namespace is None:
+                        _fail("closed")
+                    namespace_fd = self._recovery_namespace.fd
+                else:
+                    namespace_fd = self._directories[-1].fd
                 before = _stat_at(namespace_fd, source_name)
                 if before is None:
                     _fail("missing")
@@ -884,9 +1335,11 @@ class CheckedSessionAuthority:
             _fail("changed")
 
     def replace_source_bytes(self, new_bytes: bytes) -> None:
-        """Replace the source once, conditional on this authority's last checked read."""
+        """Replace a regular checked source, when this authority permits it."""
         self._check_process()
         self._check_thread()
+        if self._recovery_only:
+            self._raise_public("invalid")
         if self._state != "active":
             self._raise_public("closed")
         if type(new_bytes) is not bytes:
@@ -1096,6 +1549,105 @@ class CheckedSessionAuthority:
         if failure is not None and exc_type is None:
             self._raise_public(failure)
         return False
+
+
+def open_checked_recovery_session(
+    operation: WorkspaceMemoryOperation,
+    candidate: RecoveryCandidate,
+) -> CheckedSessionAuthority:
+    """Issue a read-only authority for one located candidate and active memory lease.
+
+    The candidate is validated before any lock directory or lock file is created.
+    The caller must keep ``operation`` active for the entire checked-session scope.
+    """
+    from nanobot.agent.memory_recovery_storage import WorkspaceMemoryOperation as OperationType
+    from nanobot.session.manager import JsonlSessionStore as StoreType
+    from nanobot.session.recovery_locator import RecoveryCandidate as CandidateType
+
+    failure = False
+    storage_key = ""
+    path = ""
+    components: tuple[str, ...] = ()
+    try:
+        if type(operation) is not OperationType or type(candidate) is not CandidateType:
+            raise ValueError
+        if (
+            not isinstance(candidate.workspace_path, Path)
+            or not isinstance(candidate.sessions_root, Path)
+            or not isinstance(candidate.namespace_path, Path)
+            or not isinstance(candidate.session_path, Path)
+            or not isinstance(candidate.session_key, str)
+            or not candidate.session_key.strip()
+            or not isinstance(candidate.workspace_id, str)
+            or _RECOVERY_NAMESPACE_RE.fullmatch(candidate.workspace_id) is None
+        ):
+            raise ValueError
+        identity_values = (
+            candidate.workspace_identity,
+            candidate.sessions_root_identity,
+            candidate.namespace_identity,
+            candidate.workspace_marker_identity,
+            candidate.namespace_marker_identity,
+            candidate.session_file_identity,
+        )
+        for expected_length, identity in zip((5, 5, 5, 9, 9, 9), identity_values, strict=True):
+            if (
+                type(identity) is not tuple
+                or len(identity) != expected_length
+                or any(type(value) is not int for value in identity)
+            ):
+                raise ValueError
+        workspace_path = os.fspath(candidate.workspace_path)
+        path = os.fspath(candidate.sessions_root)
+        workspace_components = _configured_components(workspace_path)
+        components = _configured_components(path)
+        del workspace_components
+        operation.require_current()
+        lease_identity = operation.workspace_identity
+        lease_workspace = operation._authority.workspace
+        if (
+            candidate.workspace_path != lease_workspace
+            or candidate.workspace_identity[:2] != lease_identity
+            or candidate.namespace_path != candidate.sessions_root / candidate.workspace_id
+        ):
+            raise ValueError
+        storage_key = StoreType.storage_key(candidate.session_key)
+        decoded = StoreType.decode_storage_key(storage_key)
+        if (
+            not _is_safe_component(storage_key)
+            or decoded != candidate.session_key
+            or StoreType.storage_key(decoded) != storage_key
+            or candidate.session_path
+            != candidate.namespace_path / f"{storage_key}.jsonl"
+        ):
+            raise ValueError
+        if not stat.S_ISDIR(candidate.workspace_identity[2]):
+            raise ValueError
+        if not stat.S_ISDIR(candidate.sessions_root_identity[2]):
+            raise ValueError
+        if not stat.S_ISDIR(candidate.namespace_identity[2]):
+            raise ValueError
+        for identity in (
+            candidate.workspace_marker_identity,
+            candidate.namespace_marker_identity,
+            candidate.session_file_identity,
+        ):
+            if not stat.S_ISREG(identity[2]):
+                raise ValueError
+    except Exception:
+        failure = True
+    if failure:
+        raise CheckedSessionAuthorityError("invalid") from None
+    return CheckedSessionAuthority(
+        _CONSTRUCTOR_TOKEN,
+        None,
+        candidate.session_key,
+        storage_key,
+        path,
+        components,
+        memory_operation=operation,
+        recovery_candidate=candidate,
+    )
 
 
 def open_checked_session(backend: JsonlSessionStore, key: str) -> CheckedSessionAuthority:
