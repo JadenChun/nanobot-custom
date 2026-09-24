@@ -21,6 +21,7 @@ from weakref import WeakValueDictionary
 from filelock import FileLock
 from loguru import logger
 
+from nanobot.agent.memory_recovery import MEMORY_RECEIPT_FILENAME, require_memory_receipt_recovery
 from nanobot.config.paths import get_legacy_sessions_dir, get_runtime_subdir
 from nanobot.providers.base import ProviderConversationState
 from nanobot.runtime_context import (
@@ -642,6 +643,9 @@ class JsonlSessionStore:
 
     def __init__(self, workspace: Path, *, sessions_root: Path | None = None):
         canonical_workspace = Path(workspace).expanduser().resolve(strict=False)
+        require_memory_receipt_recovery(
+            canonical_workspace / "memory" / MEMORY_RECEIPT_FILENAME,
+        )
         ensure_dir(canonical_workspace)
         root = (
             Path(sessions_root).expanduser().resolve(strict=False)
@@ -674,6 +678,9 @@ class JsonlSessionStore:
                 str(self.sessions_dir / _SESSION_FILES_LOCK_FILENAME)
             )
             with self._session_files_lock:
+                require_memory_receipt_recovery(
+                    canonical_workspace / "memory" / MEMORY_RECEIPT_FILENAME,
+                )
                 self._migrate_from_workspace(canonical_workspace)
 
     @property
