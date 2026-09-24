@@ -99,6 +99,90 @@ def test_authority_creates_private_layout_and_reload_is_idempotent(tmp_path: Pat
         assert authority.lock_path.stat().st_ino == lock_inode
 
 
+@pytest.mark.parametrize("mode", [0o750, 0o755])
+def test_existing_memory_directory_mode_is_preserved_across_publish_read_and_reentry(
+    tmp_path: Path, mode: int
+) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    memory.chmod(mode)
+    marker = memory / "MEMORY.md"
+    marker.write_bytes(b"existing memory bytes")
+    content = b"recovery blob bytes"
+    digest = _digest(content)
+
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        assert authority.publish_blob(content) == digest
+        assert authority.read_blob(digest) == content
+    assert stat.S_IMODE(memory.stat().st_mode) == mode
+    assert marker.read_bytes() == b"existing memory bytes"
+
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        assert authority.read_blob(digest) == content
+    assert stat.S_IMODE(memory.stat().st_mode) == mode
+    assert marker.read_bytes() == b"existing memory bytes"
+
+
+@pytest.mark.parametrize("mode", [0o775, 0o777, 0o1755])
+def test_existing_memory_directory_with_unsafe_mode_is_rejected_without_chmod(
+    tmp_path: Path, mode: int
+) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    memory.chmod(mode)
+    marker = memory / "MEMORY.md"
+    marker.write_bytes(b"existing memory bytes")
+
+    with pytest.raises(storage.MemoryStorageError):
+        with storage.WorkspaceMemoryAuthority(tmp_path):
+            pass
+
+    assert stat.S_IMODE(memory.stat().st_mode) == mode
+    assert marker.read_bytes() == b"existing memory bytes"
+
+
+def test_nonprivate_recovery_directory_is_rejected_without_chmod(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir(mode=0o755)
+    recovery = memory / ".recovery"
+    recovery.mkdir(mode=0o755)
+
+    with pytest.raises(storage.MemoryStorageError):
+        with storage.WorkspaceMemoryAuthority(tmp_path):
+            pass
+
+    assert stat.S_IMODE(memory.stat().st_mode) == 0o755
+    assert stat.S_IMODE(recovery.stat().st_mode) == 0o755
+
+
+def test_active_memory_directory_mode_change_is_detected(tmp_path: Path) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    memory.chmod(0o755)
+    content = b"bound recovery blob"
+
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        digest = authority.publish_blob(content)
+        memory.chmod(0o750)
+        with pytest.raises(storage.MemoryStorageError) as failure:
+            authority.read_blob(digest)
+
+    assert failure.value.code == "binding"
+
+
+def test_memory_directory_symlink_is_rejected(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / ".recovery").mkdir(mode=0o700)
+    (tmp_path / "memory").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(storage.MemoryStorageError):
+        with storage.WorkspaceMemoryAuthority(tmp_path):
+            pass
+
+    assert not (outside / ".recovery" / "blobs").exists()
+
+
 def test_evidence_namespace_publishes_named_records(tmp_path: Path) -> None:
     identity = "a" * 64
     content = b"named evidence"
@@ -632,12 +716,12 @@ def test_failed_namespace_construction_closes_all_child_descriptors(
         real_sync = storage._sync_directory_boundary
         armed = True
 
-        def sync(parent_fd: int, name: str, child_fd: int) -> None:
+        def sync(parent_fd: int, name: str, child_fd: int, **kwargs: Any) -> None:
             nonlocal armed
             if armed and name == "transactions":
                 armed = False
                 raise storage.MemoryStorageDurabilityError()
-            real_sync(parent_fd, name, child_fd)
+            real_sync(parent_fd, name, child_fd, **kwargs)
 
         monkeypatch.setattr(storage, "_sync_directory_boundary", sync)
         with pytest.raises(storage.MemoryStorageError) as failure:

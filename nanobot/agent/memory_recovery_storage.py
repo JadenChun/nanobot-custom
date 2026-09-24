@@ -16,6 +16,9 @@ same-UID owner that can rewrite or delete the whole store after validation.
 
 Only the caller-supplied workspace alias is resolved.  All storage traversal
 after that point is descriptor-relative, no-follow, and directory-qualified.
+The existing workspace ``memory`` directory may retain owner-controlled
+permissions without group/other write access; the recovery subtree remains
+exactly ``0700``.
 Unsupported platforms fail closed when this feature is invoked; importing
 this module has no platform side effects.
 """
@@ -284,6 +287,15 @@ def _private_directory(info: os.stat_result, *, workspace: bool = False) -> None
         raise _error("corrupt") from None
 
 
+def _workspace_memory_directory(info: os.stat_result) -> None:
+    """Validate the existing workspace ``memory`` directory without changing it."""
+
+    _private_directory(info, workspace=True)
+    mode = stat.S_IMODE(info.st_mode)
+    if mode & 0o700 != 0o700 or mode & 0o022 or info.st_mode & 0o7000:
+        raise _error("corrupt") from None
+
+
 def _private_file(info: os.stat_result, *, links: set[int] | frozenset[int]) -> None:
     if (
         not stat.S_ISREG(info.st_mode)
@@ -340,31 +352,74 @@ def _stat_entry(parent_fd: int, name: str) -> os.stat_result | None:
         raise _error("io") from None
 
 
-def _check_directory_binding(parent_fd: int, name: str, child_fd: int) -> os.stat_result:
+def _check_directory_binding(
+    parent_fd: int,
+    name: str,
+    child_fd: int,
+    *,
+    workspace_memory: bool = False,
+    expected_mode: int | None = None,
+) -> os.stat_result:
     """Prove a directory descriptor and its parent name still refer together."""
 
     parent_info = _fstat(parent_fd, code="binding")
     if not stat.S_ISDIR(parent_info.st_mode):
         raise _error("binding") from None
     child_info = _fstat(child_fd, code="binding")
-    _private_directory(child_info)
+    if workspace_memory:
+        _workspace_memory_directory(child_info)
+    else:
+        _private_directory(child_info)
+    if expected_mode is not None and stat.S_IMODE(child_info.st_mode) != expected_mode:
+        raise _error("binding") from None
     entry = _stat_entry(parent_fd, name)
     if entry is None or not _same_binding(entry, child_info):
         raise _error("binding") from None
     return child_info
 
 
-def _sync_directory_boundary(parent_fd: int, name: str, child_fd: int) -> None:
+def _sync_directory_boundary(
+    parent_fd: int,
+    name: str,
+    child_fd: int,
+    *,
+    workspace_memory: bool = False,
+    expected_mode: int | None = None,
+) -> None:
     """Fsync a child and parent, proving bindings around each durability call."""
 
-    _check_directory_binding(parent_fd, name, child_fd)
+    _check_directory_binding(
+        parent_fd,
+        name,
+        child_fd,
+        workspace_memory=workspace_memory,
+        expected_mode=expected_mode,
+    )
     _fsync(child_fd)
-    _check_directory_binding(parent_fd, name, child_fd)
+    _check_directory_binding(
+        parent_fd,
+        name,
+        child_fd,
+        workspace_memory=workspace_memory,
+        expected_mode=expected_mode,
+    )
     _fsync(parent_fd)
-    _check_directory_binding(parent_fd, name, child_fd)
+    _check_directory_binding(
+        parent_fd,
+        name,
+        child_fd,
+        workspace_memory=workspace_memory,
+        expected_mode=expected_mode,
+    )
 
 
-def _open_child_directory(parent_fd: int, name: str, *, create: bool) -> int:
+def _open_child_directory(
+    parent_fd: int,
+    name: str,
+    *,
+    create: bool,
+    workspace_memory: bool = False,
+) -> int:
     """Open one private directory and bind its name to its descriptor."""
 
     observed = _stat_entry(parent_fd, name)
@@ -388,12 +443,23 @@ def _open_child_directory(parent_fd: int, name: str, *, create: bool) -> int:
         raise _error("io") from None
     try:
         opened = _fstat(child, code="binding")
-        _private_directory(opened)
+        if workspace_memory:
+            _workspace_memory_directory(opened)
+            expected_mode = stat.S_IMODE(opened.st_mode)
+        else:
+            _private_directory(opened)
+            expected_mode = None
         if not _same_binding(observed, opened):
             raise _error("binding") from None
         # Existing directories use the same repair path as newly-created
         # ones.  A prior failed parent fsync is therefore repaired on retry.
-        _sync_directory_boundary(parent_fd, name, child)
+        _sync_directory_boundary(
+            parent_fd,
+            name,
+            child,
+            workspace_memory=workspace_memory,
+            expected_mode=expected_mode,
+        )
         return child
     except BaseException:
         _close(child)
@@ -1206,6 +1272,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         self._digest_fd: int | None = None
         self._workspace_identity: tuple[int, int] | None = None
         self._lock_identity: tuple[int, int] | None = None
+        self._memory_mode: int | None = None
         self._pid = os.getpid()
         self._active = False
         self._lock_held = False
@@ -1311,7 +1378,13 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
             self._assert_binding(layout=False)
 
             assert self._workspace_fd is not None
-            self._memory_fd = _open_child_directory(self._workspace_fd, _MEMORY_NAME, create=True)
+            self._memory_fd = _open_child_directory(
+                self._workspace_fd,
+                _MEMORY_NAME,
+                create=True,
+                workspace_memory=True,
+            )
+            self._memory_mode = stat.S_IMODE(_fstat(self._memory_fd).st_mode)
             self._recovery_fd = _open_child_directory(self._memory_fd, _RECOVERY_NAME, create=True)
             self._blobs_fd = _open_child_directory(self._recovery_fd, _BLOBS_NAME, create=True)
             self._digest_fd = _open_child_directory(self._blobs_fd, _DIGEST_DIR_NAME, create=True)
@@ -1380,6 +1453,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         self._active = False
         self._activation_thread = None
         self._activation_thread_id = None
+        self._memory_mode = None
         for namespace in tuple(self._namespaces):
             namespace._close_from_authority()
         self._namespaces.clear()
@@ -1463,19 +1537,24 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
             return
 
         parents = (
-            (self._workspace_fd, _MEMORY_NAME, self._memory_fd),
-            (self._memory_fd, _RECOVERY_NAME, self._recovery_fd),
-            (self._recovery_fd, _BLOBS_NAME, self._blobs_fd),
-            (self._blobs_fd, _DIGEST_DIR_NAME, self._digest_fd),
+            (self._workspace_fd, _MEMORY_NAME, self._memory_fd, True, self._memory_mode),
+            (self._memory_fd, _RECOVERY_NAME, self._recovery_fd, False, None),
+            (self._recovery_fd, _BLOBS_NAME, self._blobs_fd, False, None),
+            (self._blobs_fd, _DIGEST_DIR_NAME, self._digest_fd, False, None),
         )
-        for parent, name, child in parents:
+        for parent, name, child, workspace_memory, expected_mode in parents:
             if parent is None or child is None:
                 raise _error("closed") from None
             try:
                 child_info = _fstat(child, code="binding")
             except MemoryStorageError:
                 raise
-            _private_directory(child_info)
+            if workspace_memory:
+                _workspace_memory_directory(child_info)
+            else:
+                _private_directory(child_info)
+            if expected_mode is not None and stat.S_IMODE(child_info.st_mode) != expected_mode:
+                raise _error("binding") from None
             entry = _stat_entry(parent, name)
             if entry is None or not _same_binding(entry, child_info):
                 raise _error("binding") from None
