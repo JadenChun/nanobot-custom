@@ -20,11 +20,13 @@ The existing workspace ``memory`` directory may retain owner-controlled
 permissions without group/other write access; the recovery subtree remains
 exactly ``0700``.
 Unsupported platforms fail closed when this feature is invoked; importing
-this module has no platform side effects.
+this module has no platform side effects. Legacy target snapshots are bounded
+to 64 MiB, so larger targets require a separately qualified reader.
 """
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import re
@@ -55,6 +57,19 @@ _OPERATION_CAPABILITY = object()
 _PRIVATE_DIRECTORY_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
 _READ_CHUNK = 64 * 1024
+_MEMORY_TARGET_MAX_BYTES = 64 * 1024 * 1024
+_MEMORY_TARGET_NAMES = frozenset(
+    (
+        "MEMORY.md",
+        "history.jsonl",
+        "HISTORY.md",
+        ".cursor",
+        ".dream_cursor",
+        ".consolidation.pending.json",
+    )
+)
+_RECEIPT_TARGET_NAME = ".consolidation.pending.json"
+_SNAPSHOT_CAPABILITY = object()
 _MISSING = object()
 
 
@@ -134,6 +149,111 @@ class _Entry:
     identity: tuple[int, int]
     info: os.stat_result
     data: bytes | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryTargetStatIdentity:
+    """Stable stat fields used to qualify one detached legacy-target read."""
+
+    device: int
+    inode: int
+    mode: int
+    uid: int
+    gid: int
+    links: int
+    size: int
+    mtime_ns: int | None
+    ctime_ns: int | None
+
+
+@dataclass(frozen=True, slots=True, init=False, repr=False)
+class MemoryTargetSnapshot:
+    """Opaque immutable bytes captured under one active memory authority."""
+
+    _name: str
+    _content: bytes | None
+    _stat_identity: MemoryTargetStatIdentity | None
+    _authority: WorkspaceMemoryAuthority
+    _epoch: int
+
+    def __init__(
+        self,
+        name: str,
+        content: bytes | None,
+        stat_identity: MemoryTargetStatIdentity | None,
+        authority: WorkspaceMemoryAuthority,
+        epoch: int,
+        *,
+        _capability: object | None = None,
+    ) -> None:
+        if _capability is not _SNAPSHOT_CAPABILITY:
+            raise _error("invalid") from None
+        object.__setattr__(self, "_name", name)
+        object.__setattr__(self, "_content", content)
+        object.__setattr__(self, "_stat_identity", stat_identity)
+        object.__setattr__(self, "_authority", authority)
+        object.__setattr__(self, "_epoch", epoch)
+
+    @property
+    def name(self) -> str:
+        """The exact allowlisted workspace-memory basename."""
+
+        return self._name
+
+    @property
+    def content(self) -> bytes | None:
+        """Exact bytes, or ``None`` when the target was absent."""
+
+        return self._content
+
+    @property
+    def exists(self) -> bool:
+        """Whether the target existed at the qualified snapshot point."""
+
+        return self._content is not None
+
+    @property
+    def stat_identity(self) -> MemoryTargetStatIdentity | None:
+        """Stable target identity, or ``None`` for an absent target."""
+
+        return self._stat_identity
+
+    def __repr__(self) -> str:
+        return "<MemoryTargetSnapshot>"
+
+    def __reduce__(self) -> object:
+        raise TypeError("memory target snapshot cannot be serialized")
+
+    def __copy__(self) -> Self:
+        raise TypeError("memory target snapshot cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+        raise TypeError("memory target snapshot cannot be copied")
+
+
+def _target_stat_identity(info: os.stat_result) -> MemoryTargetStatIdentity:
+    return MemoryTargetStatIdentity(
+        device=info.st_dev,
+        inode=info.st_ino,
+        mode=info.st_mode,
+        uid=info.st_uid,
+        gid=info.st_gid,
+        links=info.st_nlink,
+        size=info.st_size,
+        mtime_ns=getattr(info, "st_mtime_ns", None),
+        ctime_ns=getattr(info, "st_ctime_ns", None),
+    )
+
+
+def _valid_memory_target(name: str, info: os.stat_result) -> None:
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != _uid() or info.st_nlink != 1:
+        raise _error("corrupt") from None
+    mode = stat.S_IMODE(info.st_mode)
+    if name == _RECEIPT_TARGET_NAME:
+        if mode != _PRIVATE_FILE_MODE:
+            raise _error("corrupt") from None
+    elif not (mode & 0o400) or mode & (0o022 | 0o7000):
+        raise _error("corrupt") from None
 
 
 def _error(code: str) -> MemoryStorageError:
@@ -1645,6 +1765,108 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
             retained_companion_identity=retained_companion_identity,
         )
 
+    def snapshot_target(self, name: str) -> MemoryTargetSnapshot:
+        """Read an allowlisted legacy target without modifying workspace state.
+
+        Reads are capped at 64 MiB. Larger targets fail closed; the bound is a
+        conservative qualification limit, not a claim that every legacy
+        history size is supported.
+        """
+
+        self._require_process_owner()
+        with self._lifecycle_lock:
+            self._require_process_owner()
+            epoch = self._activation_epoch
+            if (
+                not self._active
+                or not self._lock_held
+                or epoch <= 0
+                or threading.current_thread() is not self._activation_thread
+                or self._memory_fd is None
+            ):
+                raise _error("closed") from None
+            if type(name) is not str or name not in _MEMORY_TARGET_NAMES:
+                raise _error("invalid") from None
+            self._assert_binding()
+            memory_fd = self._memory_fd
+            observed = _stat_entry(memory_fd, name)
+            if observed is None:
+                # Confirm absence after proving the pinned parent binding. This
+                # distinguishes a stable absence from a create-at-the-boundary.
+                self._assert_binding()
+                if _stat_entry(memory_fd, name) is not None:
+                    raise _error("binding") from None
+                content = None
+                identity = None
+            else:
+                _valid_memory_target(name, observed)
+                if observed.st_size > _MEMORY_TARGET_MAX_BYTES:
+                    raise _error("corrupt") from None
+                try:
+                    target_fd = os.open(name, _leaf_flags(), dir_fd=memory_fd)
+                except OSError as error:
+                    if error.errno == errno.ENOENT:
+                        code = "binding"
+                    elif error.errno in (
+                        errno.EACCES,
+                        errno.EISDIR,
+                        errno.ELOOP,
+                        errno.ENOTDIR,
+                        errno.EPERM,
+                    ):
+                        code = "corrupt"
+                    else:
+                        code = "io"
+                    raise _error(code) from None
+                except (TypeError, ValueError):
+                    raise _error("io") from None
+                try:
+                    before = _fstat(target_fd, code="binding")
+                    before_identity = _target_stat_identity(before)
+                    if before_identity != _target_stat_identity(observed):
+                        raise _error("binding") from None
+                    _valid_memory_target(name, before)
+                    content_buffer = bytearray()
+                    while True:
+                        remaining = _MEMORY_TARGET_MAX_BYTES - len(content_buffer)
+                        try:
+                            chunk = os.read(target_fd, min(_READ_CHUNK, remaining + 1))
+                        except (OSError, TypeError, ValueError):
+                            raise _error("io") from None
+                        if not chunk:
+                            break
+                        if len(chunk) > remaining:
+                            raise _error("corrupt") from None
+                        content_buffer.extend(chunk)
+                    after = _fstat(target_fd, code="binding")
+                    after_identity = _target_stat_identity(after)
+                    if before_identity != after_identity or len(content_buffer) != after.st_size:
+                        raise _error("binding") from None
+                    _valid_memory_target(name, after)
+                    current = _stat_entry(memory_fd, name)
+                    if current is None or _target_stat_identity(current) != after_identity:
+                        raise _error("binding") from None
+                    _valid_memory_target(name, current)
+                    content = bytes(content_buffer)
+                    identity = after_identity
+                finally:
+                    _close(target_fd)
+            self._assert_binding()
+            if (
+                not self._active
+                or not self._lock_held
+                or self._activation_epoch != epoch
+                or threading.current_thread() is not self._activation_thread
+            ):
+                raise _error("closed") from None
+            return MemoryTargetSnapshot(
+                name,
+                content,
+                identity,
+                self,
+                epoch,
+                _capability=_SNAPSHOT_CAPABILITY,
+            )
 
     def publish_blob(self, content: bytes) -> str:
         """Publish bytes under their exact SHA-256 name without clobbering."""
@@ -1996,6 +2218,8 @@ __all__ = [
     "MemoryStorageError",
     "MemoryStorageMissingError",
     "MemoryStorageUnavailableError",
+    "MemoryTargetSnapshot",
+    "MemoryTargetStatIdentity",
     "ImmutableEvidenceNamespace",
     "WorkspaceMemoryAuthority",
     "WorkspaceMemoryAuthorityError",
