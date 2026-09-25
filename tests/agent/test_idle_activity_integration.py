@@ -69,6 +69,129 @@ async def test_injected_activity_is_durable_before_callback_and_model(engine_con
         await loop.aclose()
 
 
+@pytest.mark.parametrize(
+    ("queued_count", "failure_kind"),
+    [(1, None), (2, None), (1, "runtime"), (1, "cancelled"), (1, "caller_cancelled")],
+)
+async def test_queued_activity_is_readmitted_after_source_reset(
+    engine_config, queued_count, failure_kind,
+):
+    command_entered = asyncio.Event()
+    release_command = asyncio.Event()
+    old_activity_committed = asyncio.Event()
+    new_activity_entered = asyncio.Event()
+    release_new_activity = asyncio.Event()
+    queued_provider_entered = asyncio.Event()
+    key = "telegram:idle"
+
+    class ObservingIntegration(_IdleIntegration):
+        async def foreground_admitted(self, session_key: str) -> None:
+            await super().foreground_admitted(session_key)
+            if len(self.calls) == 1 + queued_count:
+                old_activity_committed.set()
+            if failure_kind == "caller_cancelled" and len(self.calls) == 3:
+                new_activity_entered.set()
+                await release_new_activity.wait()
+            if failure_kind in ("runtime", "cancelled") and len(self.calls) == 3:
+                if failure_kind == "cancelled":
+                    raise asyncio.CancelledError()
+                raise RuntimeError("post-reset notification failed")
+
+    class ObservingProvider(ScriptedProvider):
+        async def chat(self, messages, tools=None, model=None, **kwargs):
+            self.entry_snapshots.append(backend.source.load_source_snapshot(key))
+            if len(self.entry_snapshots) == queued_count:
+                queued_provider_entered.set()
+            return await super().chat(messages, tools=tools, model=model, **kwargs)
+
+    provider = ObservingProvider([LLMResponse(content="queued reply")] * queued_count)
+    provider.entry_snapshots = []
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend, initial = upgrade(loop, key)
+    integration = ObservingIntegration(backend)
+    loop._idle_integration = integration
+    original_command = loop._dispatch_source_command
+
+    async def gated_command(ctx):
+        if ctx.msg.content == "/new":
+            command_entered.set()
+            await release_command.wait()
+        return await original_command(ctx)
+
+    loop._dispatch_source_command = gated_command
+    run_task = asyncio.create_task(loop.run())
+    queued_messages = []
+    try:
+        await loop.bus.publish_inbound(InboundMessage(
+            channel="telegram", chat_id="idle", sender_id="user", content="/new",
+        ))
+        await asyncio.wait_for(command_entered.wait(), timeout=2)
+        for index in range(queued_count):
+            message = InboundMessage(
+                channel="telegram", chat_id="idle", sender_id="user", content=f"queued {index}",
+            )
+            queued_messages.append(message)
+            await loop.bus.publish_inbound(message)
+        await asyncio.wait_for(old_activity_committed.wait(), timeout=2)
+        assert backend.source.load_source_snapshot(key).header["metadata"][
+            "user_activity_revision"
+        ] == 1 + queued_count
+        release_command.set()
+        if failure_kind == "caller_cancelled":
+            await asyncio.wait_for(new_activity_entered.wait(), timeout=2)
+            dispatch_tasks = [
+                task for task in loop._active_tasks[key]
+                if task.get_coro().__qualname__ == "AgentLoop._dispatch"
+            ]
+            assert len(dispatch_tasks) == 1
+            dispatch_tasks[0].cancel()
+            release_new_activity.set()
+        await asyncio.wait_for(queued_provider_entered.wait(), timeout=2)
+        for index, snapshot in enumerate(provider.entry_snapshots, start=1):
+            assert snapshot.state.generation == initial.state.generation + 1
+            assert snapshot.header["metadata"].get("user_activity_revision") == index
+            assert all(event.get("content") != "/new" for event in snapshot.events)
+        assert integration.persisted_revisions == [
+            *range(1, queued_count + 2), *range(1, queued_count + 1),
+            *([1] if failure_kind in ("runtime", "cancelled") else []),
+        ]
+        assert len(provider.calls) == queued_count
+        for index, call in enumerate(provider.calls):
+            user_payloads = [row.get("content") for row in call[0] if row.get("role") == "user"]
+            assert user_payloads[-1] == f"queued {index}"
+            assert user_payloads.count(f"queued {index}") == 1
+        assert loop._admitted_activity_messages == {}
+        assert all(not hasattr(message, "_nanobot_activity_admitted") for message in queued_messages)
+    finally:
+        release_command.set()
+        release_new_activity.set()
+        loop.stop()
+        await asyncio.wait_for(run_task, timeout=2)
+        await loop.aclose()
+
+
+async def test_unbound_activity_marker_is_not_source_proof(engine_config):
+    provider = ScriptedProvider([LLMResponse(content="done")])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    backend, _ = upgrade(loop, "telegram:idle")
+    integration = _IdleIntegration(backend)
+    loop._idle_integration = integration
+    message = InboundMessage(
+        channel="telegram", chat_id="idle", sender_id="user", content="unbound proof",
+    )
+    loop._remember_admitted_activity_message(message)
+    try:
+        await asyncio.wait_for(loop._dispatch(message), timeout=2)
+        snapshot = backend.source.load_source_snapshot("telegram:idle")
+        assert snapshot.header["metadata"].get("user_activity_revision") == 1
+        assert integration.persisted_revisions == [1]
+        assert len(provider.calls) == 1
+        assert loop._admitted_activity_messages == {}
+        assert not hasattr(message, "_nanobot_activity_admitted")
+    finally:
+        await loop.aclose()
+
+
 async def test_disabled_or_partial_integration_does_not_write_activity(engine_config):
     provider = ScriptedProvider([LLMResponse(content="done"), LLMResponse(content="done")])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)

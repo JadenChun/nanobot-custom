@@ -184,6 +184,7 @@ _FOREGROUND_IDLE_SOURCES = frozenset({
 })
 _ACTIVITY_ADMITTED_ATTRIBUTE = "_nanobot_activity_admitted"
 _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE = "_nanobot_activity_notification_pending"
+_ACTIVITY_SOURCE_BINDING_ATTRIBUTE = "_nanobot_activity_source_binding"
 
 
 class ForegroundIdleIntegration(Protocol):
@@ -304,6 +305,7 @@ class _AdmittedActivityMessage:
 
     message: InboundMessage
     notification_succeeded: bool = False
+    source_binding: tuple[str, str, str, int] | None = None
 
 
 @dataclass
@@ -319,7 +321,17 @@ class _SourceActivityAdmission:
             return _ForegroundActivityResult()
         result = asyncio.get_running_loop().create_future()
         self.queue.put_nowait(_ActivityAdmissionRequest(message, result))
-        return await asyncio.shield(result)
+        try:
+            return await asyncio.shield(result)
+        except asyncio.CancelledError:
+            # The worker establishes the marker before resolving this result.
+            # Do not let bus cleanup republish against an unfinished proof.
+            while not result.done():
+                try:
+                    await asyncio.shield(result)
+                except asyncio.CancelledError:
+                    pass
+            raise
 
     async def close(self) -> None:
         """Drain admitted work and stop the owner-registered worker."""
@@ -1374,6 +1386,7 @@ class AgentLoop:
         msg: InboundMessage,
         *,
         notification_succeeded: bool = True,
+        source_binding: tuple[str, str, str, int] | None = None,
     ) -> None:
         """Retain one internal identity marker until notification succeeds."""
 
@@ -1388,9 +1401,11 @@ class AgentLoop:
                 _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE,
                 not notification_succeeded,
             )
+            setattr(msg, _ACTIVITY_SOURCE_BINDING_ATTRIBUTE, source_binding)
         admitted_messages[id(msg)] = _AdmittedActivityMessage(
             msg,
             notification_succeeded=notification_succeeded,
+            source_binding=source_binding,
         )
 
     def _take_admitted_activity_message(
@@ -1414,6 +1429,7 @@ class AgentLoop:
             return marker or _AdmittedActivityMessage(
                 msg,
                 notification_succeeded=not pending,
+                source_binding=getattr(msg, _ACTIVITY_SOURCE_BINDING_ATTRIBUTE, None),
             )
         return None
 
@@ -1428,6 +1444,8 @@ class AgentLoop:
             delattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE)
         with suppress(AttributeError):
             delattr(msg, _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE)
+        with suppress(AttributeError):
+            delattr(msg, _ACTIVITY_SOURCE_BINDING_ATTRIBUTE)
 
     def _retain_admitted_activity_for_republish(
         self,
@@ -1456,6 +1474,8 @@ class AgentLoop:
                 delattr(msg, _ACTIVITY_ADMITTED_ATTRIBUTE)
             with suppress(AttributeError):
                 delattr(msg, _ACTIVITY_NOTIFICATION_PENDING_ATTRIBUTE)
+            with suppress(AttributeError):
+                delattr(msg, _ACTIVITY_SOURCE_BINDING_ATTRIBUTE)
         admitted_messages.clear()
         pending_republish.clear()
 
@@ -2521,6 +2541,7 @@ class AgentLoop:
                     if item is None:
                         return
                     try:
+                        state = owner.read_snapshot().state
                         outcome = await self._record_foreground_activity(
                             context,
                             key,
@@ -2537,6 +2558,8 @@ class AgentLoop:
                         self._remember_admitted_activity_message(
                             item.message,
                             notification_succeeded=outcome.callback_succeeded,
+                            source_binding=(state.store_identity, state.session_key,
+                                            state.incarnation, state.generation),
                         )
                     if not item.result.done():
                         item.result.set_result(outcome)
@@ -2604,6 +2627,35 @@ class AgentLoop:
                     async with scope as io:
                         action = await self.approval_admission.consume(snapshot)
                         activity_marker = options.admitted_activity_marker
+                        if activity_marker is not None and context.execution_owner is not None:
+                            owner = context.execution_owner
+                            state = owner.read_snapshot().state
+                            current_binding = (state.store_identity, state.session_key,
+                                               state.incarnation, state.generation)
+                            if activity_marker.source_binding != current_binding:
+                                # Reset discarded the old activity, or an unbound
+                                # marker cannot prove it in this source generation.
+                                admission = self._source_activity_admissions[key]
+                                try:
+                                    activity = await admission.submit(activity_marker.message)
+                                except asyncio.CancelledError:
+                                    self._retain_admitted_activity_for_republish(
+                                        key, activity_marker.message,
+                                    )
+                                    raise
+                                if activity.callback_error is not None:
+                                    self._retain_admitted_activity_for_republish(
+                                        key, activity_marker.message,
+                                    )
+                                    raise activity.callback_error
+                                if not activity.activity_committed:
+                                    self._retain_admitted_activity_for_republish(
+                                        key, activity_marker.message,
+                                    )
+                                    raise RuntimeError("Queued activity was not admitted after source reset")
+                                activity_marker = self._take_admitted_activity_message(
+                                    activity_marker.message,
+                                )
                         if activity_marker is not None:
                             if not activity_marker.notification_succeeded:
                                 activity = await self._notify_foreground_activity(
