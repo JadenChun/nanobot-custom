@@ -120,6 +120,30 @@ def test_parser_returns_detached_typed_value_and_retains_unknown_metadata(tmp_pa
         {"history_marker_id": "   "},
         {"history_entry": 3},
         {"memory_output": None},
+        {"memory_output": None, "output_memory_digest": None},
+        {
+            "memory_output": None,
+            "output_memory_digest": None,
+            "reference_only": False,
+        },
+        {
+            "memory_output": None,
+            "output_memory_digest": hashlib.sha256(b"").hexdigest(),
+            "reference_only": True,
+        },
+        {"output_memory_digest": None},
+        {
+            "memory_output": None,
+            "output_memory_digest": None,
+            "reference_only": True,
+            "memory_update": "stale output",
+        },
+        {
+            "memory_output": None,
+            "output_memory_digest": None,
+            "reference_only": True,
+            "memory_output_digest": "c" * 64,
+        },
         {"base_memory_digest": "c" * 63},
         {"output_memory_digest": "c" * 64},
         {"reference_only": 1},
@@ -182,6 +206,42 @@ def test_aliases_must_agree_and_generation_alias_is_supported(tmp_path: Path) ->
     assert parsed.memory_base_digest == parsed.base_memory_digest
     assert parsed.memory_output_digest == parsed.output_memory_digest
     assert parsed.generation == parsed.session_generation
+
+
+def test_staging_reference_receipt_preserves_exact_nullable_fields_and_aliases(
+    tmp_path: Path,
+) -> None:
+    base_memory_digest = hashlib.sha256(b"existing memory").hexdigest()
+    payload: dict[str, object] = {
+        "version": 1,
+        "chunk_digest": "a" * 64,
+        "history_marker_id": "marker-1",
+        "history_entry": "[2026-09-18 12:00] referenced summary",
+        "memory_output": None,
+        "base_memory_digest": base_memory_digest,
+        "output_memory_digest": None,
+        "reference_only": True,
+        "created_at": "2026-09-18T12:00:00+00:00",
+        "session_key": "cli:receipt",
+        "start_offset": 0,
+        "end_offset": 2,
+        "session_generation": 4,
+        "memory_update": None,
+        "memory_base_digest": base_memory_digest,
+        "memory_output_digest": None,
+    }
+    raw_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    receipt_path = _write_receipt(tmp_path, payload, raw=raw_bytes)
+
+    parsed = parse_memory_receipt(receipt_path)
+
+    assert parsed is not None
+    assert parsed.raw_bytes == raw_bytes
+    assert parsed.memory_output is None
+    assert parsed.output_memory_digest is None
+    assert parsed.memory_update is None
+    assert parsed.memory_output_digest is None
+    assert parsed.memory_base_digest == base_memory_digest
 
 
 def test_missing_receipt_is_the_only_preflight_pass_through(tmp_path: Path) -> None:

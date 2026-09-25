@@ -24,10 +24,10 @@ The JSON root must be an object with these emitted fields:
 | `chunk_digest` | A lowercase 64-character SHA-256 digest. |
 | `history_marker_id` | A nonblank string. |
 | `history_entry` | A nonblank string. |
-| `memory_output` | A string, including its exact UTF-8 representation. |
+| `memory_output` | A string, including its exact UTF-8 representation, or `null` for a reference-only receipt. |
 | `base_memory_digest` | A lowercase 64-character SHA-256 digest. |
-| `output_memory_digest` | A lowercase 64-character SHA-256 digest of `memory_output`. |
-| `reference_only` | The exact JSON boolean type. |
+| `output_memory_digest` | A lowercase 64-character SHA-256 digest of a string `memory_output`, or `null` when `memory_output` is `null`. |
+| `reference_only` | The exact JSON boolean type; it must be `true` when both output fields are `null`. |
 | `created_at` | A nonblank string retained verbatim. |
 
 The optional fields are `session_key`, `start_offset`, `end_offset`, and
@@ -42,6 +42,12 @@ The accepted aliases are `memory_update` for `memory_output`,
 fields remain required where the schema requires them. If a canonical field
 and its alias are both present, they must have exactly equal values. A
 contradictory alias rejects the receipt.
+
+The null-output form is valid only when both `memory_output` and
+`output_memory_digest` are `null` and `reference_only` is exactly `true`. A
+string output still requires its exact SHA-256 UTF-8 digest, whether the
+receipt is reference-only or not. Aliases must match their canonical values
+exactly, including matching `null` values.
 
 Every JSON object, including unknown metadata, is checked for duplicate keys.
 Nonstandard JSON constants such as `NaN` are rejected. Unknown fields and the
@@ -78,5 +84,6 @@ constructor migration if it needs to close that absence/create race.
 
 This package does not apply history or memory output, advance session offsets,
 delete receipts, change session state, or add a `MemoryConsolidator` alias.
-Digestless legacy receipts remain blocked until a later package can establish
-the required evidence without overwriting the original receipt.
+Receipts with a missing or invalid digest for a string output remain blocked.
+The explicit null-output reference-only form is accepted without substituting
+an empty-string digest or writing memory output.

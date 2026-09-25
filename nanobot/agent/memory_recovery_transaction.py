@@ -13,7 +13,7 @@ import re
 import stat
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Mapping, TypeAlias
+from typing import Any, Mapping, NoReturn, TypeAlias
 
 from nanobot.agent import memory_recovery as receipt_codec
 from nanobot.agent.memory_recovery import MemoryReceipt
@@ -136,7 +136,7 @@ class MemoryRecoveryTransactionError(ValueError):
         super().__init__("memory recovery transaction payload is invalid")
 
 
-def _fail() -> None:
+def _fail() -> NoReturn:
     raise MemoryRecoveryTransactionError() from None
 
 
@@ -247,7 +247,7 @@ class CapturedTransactionPayload:
     session_generation: int
     chunk_digest: str
     base_memory_digest: str
-    output_memory_digest: str
+    output_memory_digest: str | None
     output_memory_size: int
     reference_only: bool
     history_marker_digest: str
@@ -299,14 +299,22 @@ def capture_transaction_payload(
     if parsed.start_offset >= parsed.end_offset:
         _fail()
     _text(parsed.session_key)
-    for value in (parsed.chunk_digest, parsed.base_memory_digest, parsed.output_memory_digest):
+    for value in (parsed.chunk_digest, parsed.base_memory_digest):
         _digest(value)
     if type(parsed.reference_only) is not bool:
         _fail()
-    try:
-        output_memory_size = len(parsed.memory_output.encode("utf-8"))
-    except UnicodeEncodeError:
-        _fail()
+    if parsed.memory_output is None:
+        if not parsed.reference_only or parsed.output_memory_digest is not None:
+            _fail()
+        output_memory_size = 0
+    else:
+        if parsed.output_memory_digest is None:
+            _fail()
+        _digest(parsed.output_memory_digest)
+        try:
+            output_memory_size = len(parsed.memory_output.encode("utf-8"))
+        except UnicodeEncodeError:
+            _fail()
     captured = CapturedTransactionPayload(
         receipt_digest=hashlib.sha256(parsed.raw_bytes).hexdigest(),
         receipt_size=len(parsed.raw_bytes),
@@ -664,9 +672,12 @@ def _prepare(
     elif captured.base_memory_digest != hashlib.sha256(b"").hexdigest():
         _fail()
     if memory_action == "replace":
+        output_memory_digest = captured.output_memory_digest
+        if output_memory_digest is None:
+            _fail()
         if (
             not memory_target.new.exists
-            or memory_target.new.blob_digest != captured.output_memory_digest
+            or memory_target.new.blob_digest != output_memory_digest
             or memory_target.new.size != captured.output_memory_size
         ):
             _fail()
@@ -754,11 +765,16 @@ def _captured_from_payload(payload: object) -> CapturedTransactionPayload:
         _fail()
     chunk_digest = _digest(payload["chunk_digest"])
     base_memory_digest = _digest(payload["base_memory_digest"])
-    output_memory_digest = _digest(payload["output_memory_digest"])
     output_memory_size = _counter(payload["output_memory_size"])
     reference_only = payload["reference_only"]
     if type(reference_only) is not bool:
         _fail()
+    output_memory_digest = payload["output_memory_digest"]
+    if output_memory_digest is None:
+        if not reference_only or output_memory_size != 0:
+            _fail()
+    else:
+        output_memory_digest = _digest(output_memory_digest)
     marker_digest = _digest(payload["history_marker_digest"])
     entry_digest = _digest(payload["history_entry_digest"])
     created_at_digest = _digest(payload["created_at_digest"])

@@ -166,6 +166,7 @@ def test_capture_payload_is_deterministic_bound_and_content_free() -> None:
     assert payload["source_format"] == "legacy_jsonl"
     assert payload["conversion_identity"] is None
     assert payload["output_memory_size"] == len(receipt.memory_output.encode("utf-8"))
+    assert payload["output_memory_digest"] == _digest(receipt.memory_output.encode("utf-8"))
     assert "workspace_id" not in payload
     assert "workspace_identity" not in payload
     assert decode_transaction_payload("CAPTURED", payload) == first
@@ -178,6 +179,38 @@ def test_capture_payload_is_deterministic_bound_and_content_free() -> None:
         receipt.memory_output,
     ):
         assert secret not in serialized
+
+
+def test_null_reference_output_captures_null_digest_and_zero_size() -> None:
+    receipt = _receipt(memory_output=None, output_memory_digest=None, reference_only=True)
+
+    captured = capture_transaction_payload(
+        receipt, workspace_id=WORKSPACE_ID, workspace_identity=(1, 2)
+    )
+    payload = captured.to_payload()
+
+    assert captured.output_memory_digest is None
+    assert captured.output_memory_size == 0
+    assert captured.reference_only is True
+    assert payload["output_memory_digest"] is None
+    assert payload["output_memory_size"] == 0
+    assert decode_transaction_payload("CAPTURED", payload) == captured
+
+
+@pytest.mark.parametrize("invalid", [{"output_memory_size": 1}, {"reference_only": False}])
+def test_captured_decoder_rejects_invalid_null_output_pairing(
+    invalid: dict[str, object],
+) -> None:
+    captured = capture_transaction_payload(
+        _receipt(memory_output=None, output_memory_digest=None, reference_only=True),
+        workspace_id=WORKSPACE_ID,
+        workspace_identity=(1, 2),
+    )
+    payload = captured.to_payload()
+    payload.update(invalid)
+
+    with pytest.raises(MemoryRecoveryTransactionError):
+        decode_transaction_payload("CAPTURED", payload)
 
 
 @pytest.mark.parametrize("workspace_id", ["workspace-1", "A" * 32, "a" * 31, "a" * 33])
@@ -417,6 +450,67 @@ def test_preserve_action_round_trips_an_unchanged_memory_target() -> None:
         decoded.targets["MEMORY.md"].old.digest
         == decoded.targets["MEMORY.md"].new.blob_digest
     )
+
+
+@pytest.mark.parametrize("memory_absent", [False, True])
+def test_null_reference_output_preserves_present_or_absent_memory(
+    memory_absent: bool,
+) -> None:
+    changes: dict[str, Any] = {}
+    if memory_absent:
+        changes["base_memory_digest"] = _digest(b"")
+    receipt = _receipt(
+        memory_output=None,
+        output_memory_digest=None,
+        reference_only=True,
+        **changes,
+    )
+    captured = capture_transaction_payload(
+        receipt, workspace_id=WORKSPACE_ID, workspace_identity=(1, 2)
+    )
+    inputs = _prepared_inputs(captured, receipt)
+    inputs["memory_action"] = "preserve"
+
+    prepared = prepare_transaction_payload(captured, **inputs)
+    decoded = decode_transaction_payload(
+        "PREPARED", prepared.to_payload(), captured=captured
+    )
+
+    memory_target = decoded.targets["MEMORY.md"]
+    assert decoded.memory_action == "preserve"
+    assert memory_target.old.exists is (not memory_absent)
+    assert memory_target.new.exists is memory_target.old.exists
+    assert memory_target.new.size == memory_target.old.size
+    assert memory_target.new.blob_digest == memory_target.old.digest
+
+
+@pytest.mark.parametrize("memory_absent", [False, True])
+def test_null_reference_output_rejects_memory_base_conflicts(
+    memory_absent: bool,
+) -> None:
+    receipt = _receipt(memory_output=None, output_memory_digest=None, reference_only=True)
+    captured = capture_transaction_payload(
+        receipt, workspace_id=WORKSPACE_ID, workspace_identity=(1, 2)
+    )
+    inputs = _prepared_inputs(captured, receipt)
+    inputs["memory_action"] = "preserve"
+    if memory_absent:
+        inputs["targets"]["MEMORY.md"]["old"] = {
+            "exists": False,
+            "size": 0,
+            "digest": None,
+            "stat": None,
+        }
+        inputs["targets"]["MEMORY.md"]["new"] = {
+            "exists": False,
+            "size": 0,
+            "blob_digest": None,
+        }
+    else:
+        inputs["targets"]["MEMORY.md"]["old"]["digest"] = _digest(b"conflicting memory")
+
+    with pytest.raises(MemoryRecoveryTransactionError):
+        prepare_transaction_payload(captured, **inputs)
 
 
 @pytest.mark.parametrize(

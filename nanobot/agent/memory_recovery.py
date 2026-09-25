@@ -86,9 +86,9 @@ class MemoryReceipt:
     chunk_digest: str
     history_marker_id: str
     history_entry: str
-    memory_output: str
+    memory_output: str | None
     base_memory_digest: str
-    output_memory_digest: str
+    output_memory_digest: str | None
     reference_only: bool
     created_at: str
     session_key: str | None = None
@@ -100,7 +100,7 @@ class MemoryReceipt:
     raw_bytes: bytes = b""
 
     @property
-    def memory_update(self) -> str:
+    def memory_update(self) -> str | None:
         """Compatibility view of the canonical memory output."""
 
         return self.memory_output
@@ -112,7 +112,7 @@ class MemoryReceipt:
         return self.base_memory_digest
 
     @property
-    def memory_output_digest(self) -> str:
+    def memory_output_digest(self) -> str | None:
         """Compatibility view of the canonical output digest."""
 
         return self.output_memory_digest
@@ -190,8 +190,12 @@ def _check_aliases(payload: dict[str, Any]) -> None:
         ("session_generation", "generation"),
     )
     for canonical, alias in pairs:
-        if alias in payload and canonical in payload and payload[alias] != payload[canonical]:
-            raise _invalid()
+        if alias in payload and canonical in payload:
+            if (
+                type(payload[alias]) is not type(payload[canonical])
+                or payload[alias] != payload[canonical]
+            ):
+                raise _invalid()
 
 
 def _validate_payload(payload: dict[str, Any], raw_bytes: bytes) -> MemoryReceipt:
@@ -207,20 +211,24 @@ def _validate_payload(payload: dict[str, Any], raw_bytes: bytes) -> MemoryReceip
         raise _invalid()
     if type(payload["history_entry"]) is not str or not payload["history_entry"].strip():
         raise _invalid()
-    if type(payload["memory_output"]) is not str:
-        raise _invalid()
     if not _is_sha256(payload["base_memory_digest"]):
-        raise _invalid()
-    if not _is_sha256(payload["output_memory_digest"]):
-        raise _invalid()
-    try:
-        output_digest = hashlib.sha256(payload["memory_output"].encode("utf-8")).hexdigest()
-    except UnicodeEncodeError:
-        raise _invalid() from None
-    if payload["output_memory_digest"] != output_digest:
         raise _invalid()
     if type(payload["reference_only"]) is not bool:
         raise _invalid()
+    memory_output = payload["memory_output"]
+    output_memory_digest = payload["output_memory_digest"]
+    if memory_output is None:
+        if not payload["reference_only"] or output_memory_digest is not None:
+            raise _invalid()
+    else:
+        if type(memory_output) is not str or not _is_sha256(output_memory_digest):
+            raise _invalid()
+        try:
+            output_digest = hashlib.sha256(memory_output.encode("utf-8")).hexdigest()
+        except UnicodeEncodeError:
+            raise _invalid() from None
+        if output_memory_digest != output_digest:
+            raise _invalid()
     if not _nonblank_text(payload["created_at"]):
         raise _invalid()
 
@@ -258,9 +266,9 @@ def _validate_payload(payload: dict[str, Any], raw_bytes: bytes) -> MemoryReceip
         chunk_digest=payload["chunk_digest"],
         history_marker_id=payload["history_marker_id"],
         history_entry=payload["history_entry"],
-        memory_output=payload["memory_output"],
+        memory_output=memory_output,
         base_memory_digest=payload["base_memory_digest"],
-        output_memory_digest=payload["output_memory_digest"],
+        output_memory_digest=output_memory_digest,
         reference_only=payload["reference_only"],
         created_at=payload["created_at"],
         session_key=session_key,
