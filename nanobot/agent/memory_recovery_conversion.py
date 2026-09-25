@@ -54,6 +54,25 @@ _PREPARED_FIELDS = frozenset(
         "outputs",
     )
 )
+_PHASE_BASE_FIELDS = frozenset(("schema_version", "conversion_identity", "disposition"))
+_JSONL_APPLIED_FIELDS = _PHASE_BASE_FIELDS | frozenset(("history_target",))
+_CURSORS_APPLIED_FIELDS = _PHASE_BASE_FIELDS | frozenset(
+    ("history_target", "cursor_target", "dream_cursor_target")
+)
+_LEGACY_FINALIZED_FIELDS = _PHASE_BASE_FIELDS | frozenset(
+    (
+        "prepared_record_digest",
+        "jsonl_applied_record_digest",
+        "cursors_applied_record_digest",
+        "targets",
+        "source",
+        "backup_basename",
+        "backup",
+    )
+)
+_COMPLETE_FIELDS = _PHASE_BASE_FIELDS | frozenset(
+    ("finalized_record_digest", "targets", "source", "backup_basename", "backup")
+)
 _FILE_FIELDS = frozenset(("exists", "size", "digest", "stat", "blob_digest"))
 _STAT_COUNTER_FIELDS = frozenset(("device", "inode", "mode", "uid", "gid", "links", "size"))
 _NEW_FILE_FIELDS = frozenset(("exists", "size", "blob_digest"))
@@ -62,7 +81,14 @@ _BACKUP_CANDIDATE_FIELDS = frozenset(("basename", "exists"))
 _DIGEST_RE = re.compile(r"[0-9a-f]{64}\Z")
 _FALLBACK_TIMESTAMP_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}\Z")
 _BACKUP_RE = re.compile(r"HISTORY\.md\.bak(?:\.([2-9][0-9]*))?\Z")
-_CONVERSION_PHASE_SEQUENCE = {"CAPTURED": 0, "CONVERSION_PREPARED": 1}
+_CONVERSION_PHASE_SEQUENCE = {
+    "CAPTURED": 0,
+    "CONVERSION_PREPARED": 1,
+    "JSONL_APPLIED": 2,
+    "CURSORS_APPLIED": 3,
+    "LEGACY_FINALIZED": 4,
+    "COMPLETE": 5,
+}
 
 
 class ConversionError(ValueError):
@@ -115,6 +141,18 @@ def _check_record_bounds(payload: dict[str, Any], phase: str, identity: str) -> 
     except (TypeError, ValueError, OverflowError, UnicodeError):
         _fail()
     if len(encoded) > MAX_RECORD_BYTES:
+        _fail()
+
+
+def _validate_built_payload(
+    phase: str,
+    payload: dict[str, Any],
+    captured: CapturedConversionPayload,
+) -> None:
+    try:
+        derive_manifest_identity("conversions", payload)
+        _check_record_bounds(payload, phase, captured.identity)
+    except Exception:
         _fail()
 
 
@@ -233,6 +271,90 @@ class CapturedConversionPayload:
             "schema_version": _SCHEMA_VERSION,
             "conversion_policy": _CONVERSION_POLICY,
             "receipt_transaction_identity": self.receipt_transaction_identity,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class JsonlAppliedConversionPayload:
+    conversion_identity: str
+    disposition: str
+    history_target: NewFileDescriptor
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "conversion_identity": self.conversion_identity,
+            "disposition": self.disposition,
+            "history_target": self.history_target.to_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CursorsAppliedConversionPayload:
+    conversion_identity: str
+    disposition: str
+    history_target: NewFileDescriptor
+    cursor_target: NewFileDescriptor
+    dream_cursor_target: NewFileDescriptor
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "conversion_identity": self.conversion_identity,
+            "disposition": self.disposition,
+            "history_target": self.history_target.to_payload(),
+            "cursor_target": self.cursor_target.to_payload(),
+            "dream_cursor_target": self.dream_cursor_target.to_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyFinalizedConversionPayload:
+    conversion_identity: str
+    disposition: str
+    prepared_record_digest: str
+    jsonl_applied_record_digest: str
+    cursors_applied_record_digest: str
+    targets: Mapping[str, NewFileDescriptor]
+    source: NewFileDescriptor
+    backup_basename: str | None
+    backup: NewFileDescriptor | None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "conversion_identity": self.conversion_identity,
+            "disposition": self.disposition,
+            "prepared_record_digest": self.prepared_record_digest,
+            "jsonl_applied_record_digest": self.jsonl_applied_record_digest,
+            "cursors_applied_record_digest": self.cursors_applied_record_digest,
+            "targets": {name: self.targets[name].to_payload() for name in _TARGET_NAMES},
+            "source": self.source.to_payload(),
+            "backup_basename": self.backup_basename,
+            "backup": None if self.backup is None else self.backup.to_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CompleteConversionPayload:
+    conversion_identity: str
+    disposition: str
+    finalized_record_digest: str
+    targets: Mapping[str, NewFileDescriptor]
+    source: NewFileDescriptor
+    backup_basename: str | None
+    backup: NewFileDescriptor | None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "conversion_identity": self.conversion_identity,
+            "disposition": self.disposition,
+            "finalized_record_digest": self.finalized_record_digest,
+            "targets": {name: self.targets[name].to_payload() for name in _TARGET_NAMES},
+            "source": self.source.to_payload(),
+            "backup_basename": self.backup_basename,
+            "backup": None if self.backup is None else self.backup.to_payload(),
         }
 
 
@@ -734,6 +856,479 @@ def _prepared_from_payload(
     )
 
 
+def _validated_prepared(
+    value: object,
+    captured: CapturedConversionPayload,
+) -> PreparedConversionPayload:
+    if type(value) is not PreparedConversionPayload:
+        _fail()
+    if value.captured != captured:
+        _fail()
+    payload = value.to_payload()
+    try:
+        derive_manifest_identity("conversions", payload)
+        _check_record_bounds(payload, "CONVERSION_PREPARED", captured.identity)
+    except Exception:
+        _fail()
+    decoded = _prepared_from_payload(payload, captured)
+    if decoded != value:
+        _fail()
+    return decoded
+
+
+def _conversion_context(
+    captured: object,
+    prepared: object,
+) -> tuple[CapturedConversionPayload, PreparedConversionPayload]:
+    valid_captured = _validated_captured(captured)
+    valid_prepared = _validated_prepared(prepared, valid_captured)
+    return valid_captured, valid_prepared
+
+
+def _old_projection(value: OldFileDescriptor) -> NewFileDescriptor:
+    return NewFileDescriptor(value.exists, value.size, value.blob_digest)
+
+
+def _prepared_target_projection(
+    prepared: PreparedConversionPayload,
+) -> Mapping[str, NewFileDescriptor]:
+    if prepared.disposition == "convert":
+        if prepared.outputs is None:
+            _fail()
+        return MappingProxyType({name: prepared.outputs[name] for name in _TARGET_NAMES})
+    if prepared.disposition == "preserve_nonempty_jsonl":
+        if prepared.outputs is not None:
+            _fail()
+        return MappingProxyType(
+            {name: _old_projection(prepared.targets[name]) for name in _TARGET_NAMES}
+        )
+    _fail()
+
+
+def _finalized_projection(
+    prepared: PreparedConversionPayload,
+    cursors_applied: CursorsAppliedConversionPayload,
+) -> tuple[
+    Mapping[str, NewFileDescriptor],
+    NewFileDescriptor,
+    str | None,
+    NewFileDescriptor | None,
+]:
+    targets = MappingProxyType(
+        {
+            "history.jsonl": cursors_applied.history_target,
+            ".cursor": cursors_applied.cursor_target,
+            ".dream_cursor": cursors_applied.dream_cursor_target,
+        }
+    )
+    if prepared.disposition == "convert":
+        if prepared.backup is None:
+            _fail()
+        source = NewFileDescriptor(False, 0, None)
+        backup_basename: str | None = prepared.backup.basename
+        backup = NewFileDescriptor(
+            True,
+            prepared.source.size,
+            prepared.source.blob_digest,
+        )
+        return targets, source, backup_basename, backup
+    if prepared.disposition == "preserve_nonempty_jsonl":
+        return targets, _old_projection(prepared.source), None, None
+    _fail()
+
+
+
+def _phase_payload(
+    value: object,
+    fields: frozenset[str],
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+) -> dict[str, Any]:
+    if type(value) is not dict or set(value) != fields:
+        _fail()
+    if type(value["schema_version"]) is not int or value["schema_version"] != _SCHEMA_VERSION:
+        _fail()
+    if _digest(value["conversion_identity"]) != captured.identity:
+        _fail()
+    if type(value["disposition"]) is not str or value["disposition"] != prepared.disposition:
+        _fail()
+    return value
+
+
+def _new_target_map(value: object) -> Mapping[str, NewFileDescriptor]:
+    if type(value) is not dict or set(value) != set(_TARGET_NAMES):
+        _fail()
+    return MappingProxyType({name: _new_file(value[name]) for name in _TARGET_NAMES})
+
+
+def _jsonl_applied_from_payload(
+    value: object,
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+) -> JsonlAppliedConversionPayload:
+    captured, prepared = _conversion_context(captured, prepared)
+    raw = _phase_payload(value, _JSONL_APPLIED_FIELDS, captured, prepared)
+    history_target = _new_file(raw["history_target"])
+    expected = _prepared_target_projection(prepared)["history.jsonl"]
+    if history_target != expected:
+        _fail()
+    return JsonlAppliedConversionPayload(captured.identity, prepared.disposition, history_target)
+
+
+def _validated_jsonl_applied(
+    value: object,
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+) -> JsonlAppliedConversionPayload:
+    if type(value) is not JsonlAppliedConversionPayload:
+        _fail()
+    decoded = _jsonl_applied_from_payload(value.to_payload(), captured, prepared)
+    if decoded != value:
+        _fail()
+    return decoded
+
+
+def _cursors_applied_from_payload(
+    value: object,
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+    jsonl_applied: object,
+) -> CursorsAppliedConversionPayload:
+    captured, prepared = _conversion_context(captured, prepared)
+    jsonl = _validated_jsonl_applied(jsonl_applied, captured, prepared)
+    raw = _phase_payload(value, _CURSORS_APPLIED_FIELDS, captured, prepared)
+    history_target = _new_file(raw["history_target"])
+    cursor_target = _new_file(raw["cursor_target"])
+    dream_cursor_target = _new_file(raw["dream_cursor_target"])
+    expected = _prepared_target_projection(prepared)
+    if (
+        history_target != jsonl.history_target
+        or cursor_target != expected[".cursor"]
+        or dream_cursor_target != expected[".dream_cursor"]
+    ):
+        _fail()
+    return CursorsAppliedConversionPayload(
+        captured.identity,
+        prepared.disposition,
+        history_target,
+        cursor_target,
+        dream_cursor_target,
+    )
+
+
+def _validated_cursors_applied(
+    value: object,
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+    jsonl_applied: object,
+) -> CursorsAppliedConversionPayload:
+    if type(value) is not CursorsAppliedConversionPayload:
+        _fail()
+    decoded = _cursors_applied_from_payload(value.to_payload(), captured, prepared, jsonl_applied)
+    if decoded != value:
+        _fail()
+    return decoded
+
+
+def _phase_record_digests(
+    prepared_record_digest: object,
+    jsonl_applied_record_digest: object,
+    cursors_applied_record_digest: object,
+) -> tuple[str, str, str]:
+    return (
+        _digest(prepared_record_digest),
+        _digest(jsonl_applied_record_digest),
+        _digest(cursors_applied_record_digest),
+    )
+
+
+def _legacy_finalized_from_payload(
+    value: object,
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+    jsonl_applied: object,
+    cursors_applied: object,
+    *,
+    prepared_record_digest: object,
+    jsonl_applied_record_digest: object,
+    cursors_applied_record_digest: object,
+) -> LegacyFinalizedConversionPayload:
+    captured, prepared = _conversion_context(captured, prepared)
+    _validated_jsonl_applied(jsonl_applied, captured, prepared)
+    cursors = _validated_cursors_applied(
+        cursors_applied, captured, prepared, jsonl_applied
+    )
+    expected_digests = _phase_record_digests(
+        prepared_record_digest,
+        jsonl_applied_record_digest,
+        cursors_applied_record_digest,
+    )
+    raw = _phase_payload(value, _LEGACY_FINALIZED_FIELDS, captured, prepared)
+    actual_digests = _phase_record_digests(
+        raw["prepared_record_digest"],
+        raw["jsonl_applied_record_digest"],
+        raw["cursors_applied_record_digest"],
+    )
+    if actual_digests != expected_digests:
+        _fail()
+    targets = _new_target_map(raw["targets"])
+    source = _new_file(raw["source"])
+    backup_basename = raw["backup_basename"]
+    backup_value = raw["backup"]
+    backup = None if backup_value is None else _new_file(backup_value)
+    expected_targets, expected_source, expected_basename, expected_backup = _finalized_projection(
+        prepared, cursors
+    )
+    if (
+        targets != expected_targets
+        or source != expected_source
+        or backup_basename != expected_basename
+        or backup != expected_backup
+    ):
+        _fail()
+    return LegacyFinalizedConversionPayload(
+        captured.identity,
+        prepared.disposition,
+        *actual_digests,
+        targets,
+        source,
+        backup_basename,
+        backup,
+    )
+
+
+def _validated_legacy_finalized(
+    value: object,
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+    jsonl_applied: object,
+    cursors_applied: object,
+    *,
+    prepared_record_digest: object,
+    jsonl_applied_record_digest: object,
+    cursors_applied_record_digest: object,
+) -> LegacyFinalizedConversionPayload:
+    if type(value) is not LegacyFinalizedConversionPayload:
+        _fail()
+    decoded = _legacy_finalized_from_payload(
+        value.to_payload(),
+        captured,
+        prepared,
+        jsonl_applied,
+        cursors_applied,
+        prepared_record_digest=prepared_record_digest,
+        jsonl_applied_record_digest=jsonl_applied_record_digest,
+        cursors_applied_record_digest=cursors_applied_record_digest,
+    )
+    if decoded != value:
+        _fail()
+    return decoded
+
+
+def _complete_from_payload(
+    value: object,
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+    jsonl_applied: object,
+    cursors_applied: object,
+    legacy_finalized: object,
+    *,
+    finalized_record_digest: object,
+) -> CompleteConversionPayload:
+    captured, prepared = _conversion_context(captured, prepared)
+    if type(legacy_finalized) is not LegacyFinalizedConversionPayload:
+        _fail()
+    if type(legacy_finalized) is not LegacyFinalizedConversionPayload:
+        _fail()
+    finalized = _validated_legacy_finalized(
+        legacy_finalized,
+        captured,
+        prepared,
+        jsonl_applied,
+        cursors_applied,
+        prepared_record_digest=legacy_finalized.prepared_record_digest,
+        jsonl_applied_record_digest=legacy_finalized.jsonl_applied_record_digest,
+        cursors_applied_record_digest=legacy_finalized.cursors_applied_record_digest,
+    )
+    expected_finalized_digest = _digest(finalized_record_digest)
+    raw = _phase_payload(value, _COMPLETE_FIELDS, captured, prepared)
+    if _digest(raw["finalized_record_digest"]) != expected_finalized_digest:
+        _fail()
+    targets = _new_target_map(raw["targets"])
+    source = _new_file(raw["source"])
+    backup_basename = raw["backup_basename"]
+    backup_value = raw["backup"]
+    backup = None if backup_value is None else _new_file(backup_value)
+    if (
+        targets != finalized.targets
+        or source != finalized.source
+        or backup_basename != finalized.backup_basename
+        or backup != finalized.backup
+    ):
+        _fail()
+    return CompleteConversionPayload(
+        captured.identity,
+        prepared.disposition,
+        expected_finalized_digest,
+        targets,
+        source,
+        backup_basename,
+        backup,
+    )
+
+
+def _validated_complete(
+    value: object,
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+    jsonl_applied: object,
+    cursors_applied: object,
+    legacy_finalized: object,
+    *,
+    finalized_record_digest: object,
+) -> CompleteConversionPayload:
+    if type(value) is not CompleteConversionPayload:
+        _fail()
+    decoded = _complete_from_payload(
+        value.to_payload(),
+        captured,
+        prepared,
+        jsonl_applied,
+        cursors_applied,
+        legacy_finalized,
+        finalized_record_digest=finalized_record_digest,
+    )
+    if decoded != value:
+        _fail()
+    return decoded
+
+
+def jsonl_applied_conversion_payload(
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+) -> JsonlAppliedConversionPayload:
+    """Build JSONL_APPLIED from the prepared target projection."""
+
+    captured, prepared = _conversion_context(captured, prepared)
+    payload = JsonlAppliedConversionPayload(
+        captured.identity,
+        prepared.disposition,
+        _prepared_target_projection(prepared)["history.jsonl"],
+    ).to_payload()
+    _validate_built_payload("JSONL_APPLIED", payload, captured)
+    return _jsonl_applied_from_payload(payload, captured, prepared)
+
+
+def cursors_applied_conversion_payload(
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+    jsonl_applied: JsonlAppliedConversionPayload,
+) -> CursorsAppliedConversionPayload:
+    """Build CURSORS_APPLIED after typed JSONL evidence."""
+
+    captured, prepared = _conversion_context(captured, prepared)
+    jsonl = _validated_jsonl_applied(jsonl_applied, captured, prepared)
+    expected = _prepared_target_projection(prepared)
+    payload = CursorsAppliedConversionPayload(
+        captured.identity,
+        prepared.disposition,
+        jsonl.history_target,
+        expected[".cursor"],
+        expected[".dream_cursor"],
+    ).to_payload()
+    _validate_built_payload("CURSORS_APPLIED", payload, captured)
+    return _cursors_applied_from_payload(payload, captured, prepared, jsonl)
+
+
+def legacy_finalized_conversion_payload(
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+    jsonl_applied: JsonlAppliedConversionPayload,
+    cursors_applied: CursorsAppliedConversionPayload,
+    *,
+    prepared_record_digest: str,
+    jsonl_applied_record_digest: str,
+    cursors_applied_record_digest: str,
+) -> LegacyFinalizedConversionPayload:
+    """Build LEGACY_FINALIZED from typed target evidence and manifest digests."""
+
+    captured, prepared = _conversion_context(captured, prepared)
+    jsonl = _validated_jsonl_applied(jsonl_applied, captured, prepared)
+    cursors = _validated_cursors_applied(cursors_applied, captured, prepared, jsonl)
+    digests = _phase_record_digests(
+        prepared_record_digest,
+        jsonl_applied_record_digest,
+        cursors_applied_record_digest,
+    )
+    targets, source, backup_basename, backup = _finalized_projection(prepared, cursors)
+    payload = LegacyFinalizedConversionPayload(
+        captured.identity,
+        prepared.disposition,
+        *digests,
+        targets,
+        source,
+        backup_basename,
+        backup,
+    ).to_payload()
+    _validate_built_payload("LEGACY_FINALIZED", payload, captured)
+    return _legacy_finalized_from_payload(
+        payload,
+        captured,
+        prepared,
+        jsonl,
+        cursors,
+        prepared_record_digest=prepared_record_digest,
+        jsonl_applied_record_digest=jsonl_applied_record_digest,
+        cursors_applied_record_digest=cursors_applied_record_digest,
+    )
+
+
+def complete_conversion_payload(
+    captured: CapturedConversionPayload,
+    prepared: PreparedConversionPayload,
+    jsonl_applied: JsonlAppliedConversionPayload,
+    cursors_applied: CursorsAppliedConversionPayload,
+    legacy_finalized: LegacyFinalizedConversionPayload,
+    *,
+    finalized_record_digest: str,
+) -> CompleteConversionPayload:
+    """Build COMPLETE from typed finalized evidence and its manifest digest."""
+
+    captured, prepared = _conversion_context(captured, prepared)
+    jsonl = _validated_jsonl_applied(jsonl_applied, captured, prepared)
+    cursors = _validated_cursors_applied(cursors_applied, captured, prepared, jsonl)
+    finalized = _validated_legacy_finalized(
+        legacy_finalized,
+        captured,
+        prepared,
+        jsonl,
+        cursors,
+        prepared_record_digest=legacy_finalized.prepared_record_digest,
+        jsonl_applied_record_digest=legacy_finalized.jsonl_applied_record_digest,
+        cursors_applied_record_digest=legacy_finalized.cursors_applied_record_digest,
+    )
+    digest = _digest(finalized_record_digest)
+    payload = CompleteConversionPayload(
+        captured.identity,
+        prepared.disposition,
+        digest,
+        finalized.targets,
+        finalized.source,
+        finalized.backup_basename,
+        finalized.backup,
+    ).to_payload()
+    _validate_built_payload("COMPLETE", payload, captured)
+    return _complete_from_payload(
+        payload,
+        captured,
+        prepared,
+        jsonl,
+        cursors,
+        finalized,
+        finalized_record_digest=finalized_record_digest,
+    )
+
+
 class _DuplicateKeyError(ValueError):
     pass
 
@@ -776,8 +1371,23 @@ def decode_conversion_payload(
     phase: object,
     *,
     captured: CapturedConversionPayload | None = None,
-) -> CapturedConversionPayload | PreparedConversionPayload:
-    """Strictly decode CAPTURED or CONVERSION_PREPARED evidence without I/O."""
+    prepared: PreparedConversionPayload | None = None,
+    jsonl_applied: JsonlAppliedConversionPayload | None = None,
+    cursors_applied: CursorsAppliedConversionPayload | None = None,
+    legacy_finalized: LegacyFinalizedConversionPayload | None = None,
+    prepared_record_digest: str | None = None,
+    jsonl_applied_record_digest: str | None = None,
+    cursors_applied_record_digest: str | None = None,
+    finalized_record_digest: str | None = None,
+) -> (
+    CapturedConversionPayload
+    | PreparedConversionPayload
+    | JsonlAppliedConversionPayload
+    | CursorsAppliedConversionPayload
+    | LegacyFinalizedConversionPayload
+    | CompleteConversionPayload
+):
+    """Strictly decode a conversion phase and its typed predecessor evidence."""
 
     try:
         if type(phase) is not str:
@@ -785,18 +1395,134 @@ def decode_conversion_payload(
         raw = _parse_payload(payload)
         derive_manifest_identity("conversions", raw)
         if phase == "CAPTURED":
-            if captured is not None:
+            if any(
+                item is not None
+                for item in (
+                    captured,
+                    prepared,
+                    jsonl_applied,
+                    cursors_applied,
+                    legacy_finalized,
+                    prepared_record_digest,
+                    jsonl_applied_record_digest,
+                    cursors_applied_record_digest,
+                    finalized_record_digest,
+                )
+            ):
                 _fail()
             decoded = _captured_from_payload(raw)
-            _check_record_bounds(raw, "CAPTURED", decoded.identity)
+            _check_record_bounds(raw, phase, decoded.identity)
             return decoded
         if phase == "CONVERSION_PREPARED":
-            if captured is None:
+            if captured is None or any(
+                item is not None
+                for item in (
+                    prepared,
+                    jsonl_applied,
+                    cursors_applied,
+                    legacy_finalized,
+                    prepared_record_digest,
+                    jsonl_applied_record_digest,
+                    cursors_applied_record_digest,
+                    finalized_record_digest,
+                )
+            ):
                 _fail()
             valid_captured = _validated_captured(captured)
             decoded_prepared = _prepared_from_payload(raw, valid_captured)
-            _check_record_bounds(raw, "CONVERSION_PREPARED", valid_captured.identity)
+            _check_record_bounds(raw, phase, valid_captured.identity)
             return decoded_prepared
+
+        if captured is None or prepared is None:
+            _fail()
+        valid_captured, valid_prepared = _conversion_context(captured, prepared)
+        if phase == "JSONL_APPLIED":
+            if any(
+                item is not None
+                for item in (
+                    jsonl_applied,
+                    cursors_applied,
+                    legacy_finalized,
+                    prepared_record_digest,
+                    jsonl_applied_record_digest,
+                    cursors_applied_record_digest,
+                    finalized_record_digest,
+                )
+            ):
+                _fail()
+            decoded_jsonl = _jsonl_applied_from_payload(raw, valid_captured, valid_prepared)
+            _check_record_bounds(raw, phase, valid_captured.identity)
+            return decoded_jsonl
+        if phase == "CURSORS_APPLIED":
+            if jsonl_applied is None or any(
+                item is not None
+                for item in (
+                    cursors_applied,
+                    legacy_finalized,
+                    prepared_record_digest,
+                    jsonl_applied_record_digest,
+                    cursors_applied_record_digest,
+                    finalized_record_digest,
+                )
+            ):
+                _fail()
+            decoded_cursors = _cursors_applied_from_payload(
+                raw, valid_captured, valid_prepared, jsonl_applied
+            )
+            _check_record_bounds(raw, phase, valid_captured.identity)
+            return decoded_cursors
+        if phase == "LEGACY_FINALIZED":
+            if (
+                jsonl_applied is None
+                or cursors_applied is None
+                or any(
+                    item is not None
+                    for item in (legacy_finalized, finalized_record_digest)
+                )
+                or prepared_record_digest is None
+                or jsonl_applied_record_digest is None
+                or cursors_applied_record_digest is None
+            ):
+                _fail()
+            decoded_finalized = _legacy_finalized_from_payload(
+                raw,
+                valid_captured,
+                valid_prepared,
+                jsonl_applied,
+                cursors_applied,
+                prepared_record_digest=prepared_record_digest,
+                jsonl_applied_record_digest=jsonl_applied_record_digest,
+                cursors_applied_record_digest=cursors_applied_record_digest,
+            )
+            _check_record_bounds(raw, phase, valid_captured.identity)
+            return decoded_finalized
+        if phase == "COMPLETE":
+            if (
+                jsonl_applied is None
+                or cursors_applied is None
+                or legacy_finalized is None
+                or finalized_record_digest is None
+                or any(
+                    item is not None
+                    for item in (
+                        prepared_record_digest,
+                        jsonl_applied_record_digest,
+                        cursors_applied_record_digest,
+                    )
+                )
+            ):
+                _fail()
+            decoded_complete = _complete_from_payload(
+                raw,
+                valid_captured,
+                valid_prepared,
+                jsonl_applied,
+                cursors_applied,
+                legacy_finalized,
+                finalized_record_digest=finalized_record_digest,
+            )
+            _check_record_bounds(raw, phase, valid_captured.identity)
+            return decoded_complete
         _fail()
     except ConversionError:
         raise

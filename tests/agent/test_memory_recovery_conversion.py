@@ -7,14 +7,24 @@ from datetime import datetime
 
 import pytest
 
+from nanobot.agent import memory_recovery_storage as storage
 from nanobot.agent.memory_recovery_conversion import (
     CapturedConversionPayload,
     ConversionError,
+    _check_record_bounds,
     capture_conversion_payload,
+    complete_conversion_payload,
+    cursors_applied_conversion_payload,
     decode_conversion_payload,
+    jsonl_applied_conversion_payload,
+    legacy_finalized_conversion_payload,
     prepare_conversion_payload,
 )
-from nanobot.agent.memory_recovery_manifest import derive_manifest_identity
+from nanobot.agent.memory_recovery_manifest import (
+    MAX_RECORD_BYTES,
+    MemoryRecoveryManifest,
+    derive_manifest_identity,
+)
 
 _SHA_EMPTY = hashlib.sha256(b"").hexdigest()
 _DEFAULT_STAT_FIELDS = {
@@ -103,6 +113,15 @@ def test_captured_payload_is_exact_deterministic_and_workspace_local() -> None:
     payload = captured.to_payload()
     payload["receipt_transaction_identity"] = "b" * 64
     assert captured.to_payload() == expected
+
+
+def test_conversion_record_rejects_payload_over_record_byte_limit() -> None:
+    captured = _capture()
+
+    with pytest.raises(ConversionError):
+        _check_record_bounds(
+            {"padding": "x" * MAX_RECORD_BYTES}, "CAPTURED", captured.identity
+        )
 
 
 @pytest.mark.parametrize("bad", ["A" * 64, "0" * 63, "0" * 65, 12, True])
@@ -486,3 +505,382 @@ def test_fallback_timestamp_must_be_a_fixed_local_minute_value() -> None:
         _prepare(fallback_timestamp=datetime.now())
     with pytest.raises(ConversionError):
         _prepare(fallback_timestamp="2025-13-03 11:22")
+
+
+def _prepare_preserve():
+    captured = _capture()
+    history = b'{"cursor":4,"timestamp":"2025-04-03 11:22","content":"kept"}\n'
+    targets = {
+        "history.jsonl": _file_descriptor(history),
+        ".cursor": _file_descriptor(b"4"),
+        ".dream_cursor": _file_descriptor(b"3"),
+    }
+    prepared = prepare_conversion_payload(
+        captured,
+        disposition="preserve_nonempty_jsonl",
+        source=_file_descriptor(b"legacy archive"),
+        source_bytes=None,
+        targets=targets,
+        backup=None,
+        fallback_timestamp=None,
+    )
+    return captured, prepared
+
+
+@pytest.mark.parametrize(
+    "disposition", ["convert", "convert_zero_rows", "preserve_nonempty_jsonl"]
+)
+def test_all_conversion_phases_roundtrip_with_real_manifest_digests(
+    tmp_path, disposition: str
+) -> None:
+    if disposition == "convert":
+        captured = _capture()
+        prepared = _prepare()
+    elif disposition == "convert_zero_rows":
+        values = _prepared_inputs(
+            source_bytes=b" \r\n",
+            history=None,
+            cursor=None,
+            dream_cursor=b"0",
+        )
+        values["backup"] = _backup([("HISTORY.md.bak", False)])
+        captured = _capture()
+        prepared = _prepare(**values)
+    else:
+        captured, prepared = _prepare_preserve()
+
+    authority = storage.WorkspaceMemoryAuthority(tmp_path)
+    authority.__enter__()
+    namespace = authority.open_evidence_namespace("conversions", captured.identity)
+    manifest = MemoryRecoveryManifest(namespace)
+    try:
+        record = manifest.create(captured.to_payload())
+        record = manifest.append(
+            predecessor_digest=record.digest,
+            phase="CONVERSION_PREPARED",
+            payload=prepared.to_payload(),
+        )
+        prepared_record_digest = record.digest
+
+        jsonl = jsonl_applied_conversion_payload(captured, prepared)
+        record = manifest.append(
+            predecessor_digest=record.digest,
+            phase="JSONL_APPLIED",
+            payload=jsonl.to_payload(),
+        )
+        jsonl_record_digest = record.digest
+        if disposition == "convert_zero_rows":
+            assert jsonl.history_target == prepared.outputs["history.jsonl"]
+            assert not jsonl.history_target.exists
+
+        cursors = cursors_applied_conversion_payload(captured, prepared, jsonl)
+        record = manifest.append(
+            predecessor_digest=record.digest,
+            phase="CURSORS_APPLIED",
+            payload=cursors.to_payload(),
+        )
+        cursors_record_digest = record.digest
+
+        finalized = legacy_finalized_conversion_payload(
+            captured,
+            prepared,
+            jsonl,
+            cursors,
+            prepared_record_digest=prepared_record_digest,
+            jsonl_applied_record_digest=jsonl_record_digest,
+            cursors_applied_record_digest=cursors_record_digest,
+        )
+        record = manifest.append(
+            predecessor_digest=record.digest,
+            phase="LEGACY_FINALIZED",
+            payload=finalized.to_payload(),
+        )
+        finalized_record_digest = record.digest
+
+        complete = complete_conversion_payload(
+            captured,
+            prepared,
+            jsonl,
+            cursors,
+            finalized,
+            finalized_record_digest=finalized_record_digest,
+        )
+        record = manifest.append(
+            predecessor_digest=record.digest,
+            phase="COMPLETE",
+            payload=complete.to_payload(),
+        )
+
+        records = manifest.load()
+        assert [item.phase for item in records] == [
+            "CAPTURED",
+            "CONVERSION_PREPARED",
+            "JSONL_APPLIED",
+            "CURSORS_APPLIED",
+            "LEGACY_FINALIZED",
+            "COMPLETE",
+        ]
+        assert record.sequence == 5
+        assert decode_conversion_payload(
+            jsonl.to_payload(), "JSONL_APPLIED", captured=captured, prepared=prepared
+        ) == jsonl
+        assert decode_conversion_payload(
+            cursors.to_payload(),
+            "CURSORS_APPLIED",
+            captured=captured,
+            prepared=prepared,
+            jsonl_applied=jsonl,
+        ) == cursors
+        assert decode_conversion_payload(
+            finalized.to_payload(),
+            "LEGACY_FINALIZED",
+            captured=captured,
+            prepared=prepared,
+            jsonl_applied=jsonl,
+            cursors_applied=cursors,
+            prepared_record_digest=prepared_record_digest,
+            jsonl_applied_record_digest=jsonl_record_digest,
+            cursors_applied_record_digest=cursors_record_digest,
+        ) == finalized
+        assert decode_conversion_payload(
+            complete.to_payload(),
+            "COMPLETE",
+            captured=captured,
+            prepared=prepared,
+            jsonl_applied=jsonl,
+            cursors_applied=cursors,
+            legacy_finalized=finalized,
+            finalized_record_digest=finalized_record_digest,
+        ) == complete
+    finally:
+        namespace.close()
+        authority.close()
+
+
+def test_conversion_phase_projection_parity_and_disposition_fields() -> None:
+    captured, prepared = _prepare_preserve()
+    jsonl = jsonl_applied_conversion_payload(captured, prepared)
+    cursors = cursors_applied_conversion_payload(captured, prepared, jsonl)
+    finalized = legacy_finalized_conversion_payload(
+        captured,
+        prepared,
+        jsonl,
+        cursors,
+        prepared_record_digest="1" * 64,
+        jsonl_applied_record_digest="2" * 64,
+        cursors_applied_record_digest="3" * 64,
+    )
+
+    expected_fields = (
+        {"schema_version", "conversion_identity", "disposition", "history_target"},
+        {
+            "schema_version",
+            "conversion_identity",
+            "disposition",
+            "history_target",
+            "cursor_target",
+            "dream_cursor_target",
+        },
+        {
+            "schema_version",
+            "conversion_identity",
+            "disposition",
+            "prepared_record_digest",
+            "jsonl_applied_record_digest",
+            "cursors_applied_record_digest",
+            "targets",
+            "source",
+            "backup_basename",
+            "backup",
+        },
+    )
+    for evidence, fields in zip((jsonl, cursors, finalized), expected_fields, strict=True):
+        payload = evidence.to_payload()
+        assert set(payload) == fields
+        assert payload["schema_version"] == 1
+        assert payload["conversion_identity"] == captured.identity
+        assert payload["disposition"] == "preserve_nonempty_jsonl"
+    assert jsonl.to_payload()["history_target"] == _file_descriptor_to_new(
+        prepared.targets["history.jsonl"]
+    )
+    assert cursors.history_target == jsonl.history_target
+    cursors_payload = cursors.to_payload()
+    assert cursors_payload["cursor_target"] == _file_descriptor_to_new(
+        prepared.targets[".cursor"]
+    )
+    assert cursors_payload["dream_cursor_target"] == _file_descriptor_to_new(
+        prepared.targets[".dream_cursor"]
+    )
+    assert finalized.to_payload()["source"] == _file_descriptor_to_new(prepared.source)
+    assert finalized.backup_basename is None
+    assert finalized.backup is None
+    detached = finalized.to_payload()
+    detached["targets"]["history.jsonl"]["size"] += 1
+    assert finalized.to_payload()["targets"]["history.jsonl"]["size"] == prepared.targets[
+        "history.jsonl"
+    ].size
+
+
+def _file_descriptor_to_new(old):
+    return {"exists": old.exists, "size": old.size, "blob_digest": old.blob_digest}
+
+
+def test_conversion_phase_decoders_reject_forged_parity_and_predecessors() -> None:
+    captured = _capture()
+    prepared = _prepare()
+    jsonl = jsonl_applied_conversion_payload(captured, prepared)
+    cursors = cursors_applied_conversion_payload(captured, prepared, jsonl)
+    wrong_target = jsonl.to_payload()
+    wrong_target["history_target"]["blob_digest"] = "0" * 64
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(
+            wrong_target, "JSONL_APPLIED", captured=captured, prepared=prepared
+        )
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(
+            cursors.to_payload(),
+            "CURSORS_APPLIED",
+            captured=captured,
+            prepared=prepared,
+        )
+
+    wrong_history = cursors.to_payload()
+    wrong_history["history_target"]["size"] += 1
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(
+            wrong_history,
+            "CURSORS_APPLIED",
+            captured=captured,
+            prepared=prepared,
+            jsonl_applied=jsonl,
+        )
+
+    forged_captured = capture_conversion_payload("b" * 64)
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(
+            jsonl.to_payload(),
+            "JSONL_APPLIED",
+            captured=forged_captured,
+            prepared=prepared,
+        )
+
+
+def test_conversion_finalization_rejects_bad_record_digests_and_backup_claims() -> None:
+    captured = _capture()
+    prepared = _prepare()
+    jsonl = jsonl_applied_conversion_payload(captured, prepared)
+    cursors = cursors_applied_conversion_payload(captured, prepared, jsonl)
+    args = {
+        "prepared_record_digest": "1" * 64,
+        "jsonl_applied_record_digest": "2" * 64,
+        "cursors_applied_record_digest": "3" * 64,
+    }
+    finalized = legacy_finalized_conversion_payload(
+        captured, prepared, jsonl, cursors, **args
+    )
+    payload = finalized.to_payload()
+    payload["backup"]["size"] += 1
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(
+            payload,
+            "LEGACY_FINALIZED",
+            captured=captured,
+            prepared=prepared,
+            jsonl_applied=jsonl,
+            cursors_applied=cursors,
+            **args,
+        )
+
+    args["prepared_record_digest"] = "A" * 64
+    with pytest.raises(ConversionError):
+        legacy_finalized_conversion_payload(captured, prepared, jsonl, cursors, **args)
+
+
+def test_finalized_decoder_requires_real_manifest_predecessor_digests() -> None:
+    captured = _capture()
+    prepared = _prepare()
+    jsonl = jsonl_applied_conversion_payload(captured, prepared)
+    cursors = cursors_applied_conversion_payload(captured, prepared, jsonl)
+    digests = {
+        "prepared_record_digest": "1" * 64,
+        "jsonl_applied_record_digest": "2" * 64,
+        "cursors_applied_record_digest": "3" * 64,
+    }
+    finalized = legacy_finalized_conversion_payload(
+        captured, prepared, jsonl, cursors, **digests
+    )
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(
+            finalized.to_payload(),
+            "LEGACY_FINALIZED",
+            captured=captured,
+            prepared=prepared,
+            jsonl_applied=jsonl,
+            cursors_applied=cursors,
+        )
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(
+            finalized.to_payload(),
+            "LEGACY_FINALIZED",
+            captured=captured,
+            prepared=prepared,
+            jsonl_applied=jsonl,
+            cursors_applied=cursors,
+            prepared_record_digest="4" * 64,
+            jsonl_applied_record_digest=digests["jsonl_applied_record_digest"],
+            cursors_applied_record_digest=digests["cursors_applied_record_digest"],
+        )
+
+
+
+def test_conversion_complete_rejects_forged_finalized_digest_and_targets() -> None:
+    captured = _capture()
+    prepared = _prepare()
+    jsonl = jsonl_applied_conversion_payload(captured, prepared)
+    cursors = cursors_applied_conversion_payload(captured, prepared, jsonl)
+    digests = {
+        "prepared_record_digest": "1" * 64,
+        "jsonl_applied_record_digest": "2" * 64,
+        "cursors_applied_record_digest": "3" * 64,
+    }
+    finalized = legacy_finalized_conversion_payload(
+        captured, prepared, jsonl, cursors, **digests
+    )
+    complete = complete_conversion_payload(
+        captured,
+        prepared,
+        jsonl,
+        cursors,
+        finalized,
+        finalized_record_digest="4" * 64,
+    )
+    forged = complete.to_payload()
+    forged["source"] = {"exists": True, "size": 0, "blob_digest": "a" * 64}
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(
+            forged,
+            "COMPLETE",
+            captured=captured,
+            prepared=prepared,
+            jsonl_applied=jsonl,
+            cursors_applied=cursors,
+            legacy_finalized=finalized,
+            finalized_record_digest="4" * 64,
+        )
+
+
+def test_conversion_phase_payloads_reject_extra_fields_and_duplicate_keys() -> None:
+    captured = _capture()
+    prepared = _prepare()
+    jsonl = jsonl_applied_conversion_payload(captured, prepared)
+    payload = jsonl.to_payload()
+    payload["extra"] = True
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(
+            payload, "JSONL_APPLIED", captured=captured, prepared=prepared
+        )
+    duplicated = json.dumps(jsonl.to_payload())[:-1] + ',"disposition":"convert"}'
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(
+            duplicated.encode(), "JSONL_APPLIED", captured=captured, prepared=prepared
+        )
