@@ -1,0 +1,9 @@
+# Receipt identity during offline v2 conversion finalization
+
+Across separate locked calls, the pending receipt is identified by its exact validated raw bytes, length, and SHA-256 digest recorded in the transaction `CAPTURED` and v2 `CONVERSION_PREPARED` evidence. A byte-preserving copy to a different inode remains the same receipt for conversion replay. Changed bytes, missing evidence, or a different receipt digest fail closed.
+
+Within one finalization call, the issued receipt snapshot binds both the bytes and the full file stat identity. The coordinator checks that binding before and after durable target verification and archive operations, and around each phase claim. Archive replay also checks its receipt anchor before and after link, unlink, and directory fsync. A receipt replaced during the call therefore cannot authorize a later phase claim.
+
+`COMPLETE` records the conversion of legacy history and its three targets. It does not authorize deleting `.consolidation.pending.json`. Receipt removal requires a separate future validation of the transaction and session state, including whether that receipt's session effects are committed. The offline conversion finalizer retains the receipt and does not change startup behavior.
+
+After archive, each terminal claim is gated on the archive helper's descriptor-bound backup-only replay: it checks the frozen source inode/metadata and backup digest/size, source absence, receipt binding, and durable parent state. The coordinator repeats this proof after a manifest append and on `COMPLETE` replay. It accepts only the helper's initial, two-link, or backup-only states; a copied source or unrelated backup is not replay evidence. These checks hold under the workspace lock for cooperating writers. Portable POSIX pathname operations cannot make the proof and manifest append atomic against an uncooperative same-UID process racing the directory between checks.
