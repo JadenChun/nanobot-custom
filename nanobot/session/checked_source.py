@@ -1295,6 +1295,135 @@ class CheckedSessionAuthority:
         self._source_evidence = (result, result_signature)
         return result
 
+    def verify_recovery_source_bytes(self, expected_bytes: bytes) -> None:
+        """Durably verify exact source bytes against this recovery candidate."""
+        self._check_process()
+        self._check_thread()
+        if not self._recovery_only:
+            self._raise_public("invalid")
+        if self._state != "active":
+            self._raise_public("closed")
+        if type(expected_bytes) is not bytes:
+            self._raise_public("invalid")
+
+        failure: ErrorCode | None = None
+        descriptor: int | None = None
+        try:
+            with self._mutex:
+                if self._state != "active":
+                    _fail("closed")
+                if self._replacement_used:
+                    _fail("invalid")
+                self._validate_all()
+                _require_source_read_platform()
+                if not callable(getattr(os, "fsync", None)):
+                    _fail("unavailable")
+                if len(expected_bytes) > _MAX_SOURCE_BYTES:
+                    _fail("limit")
+
+                namespace = self._recovery_namespace
+                if namespace is None:
+                    _fail("closed")
+                namespace_fd = namespace.fd
+                source_name = f"{self._storage_key}.jsonl"
+                before = _stat_at(namespace_fd, source_name)
+                if before is None:
+                    _fail("missing")
+                _require_recovery_file(before)
+                baseline = _recovery_file_identity(before)
+                if baseline != self._expected_recovery_source_identity:
+                    _fail("changed")
+                if before.st_size > _MAX_SOURCE_BYTES:
+                    _fail("limit")
+                if before.st_size != len(expected_bytes):
+                    _fail("changed")
+
+                try:
+                    descriptor = os.open(
+                        source_name,
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                        dir_fd=namespace_fd,
+                    )
+                except FileNotFoundError:
+                    _fail("changed")
+                except (TypeError, NotImplementedError):
+                    _fail("unavailable")
+                except OSError as exc:
+                    _fail(_error_code(exc))
+
+                opened = os.fstat(descriptor)
+                _require_recovery_file(opened)
+                current = _stat_at(namespace_fd, source_name)
+                if (
+                    _recovery_file_identity(opened) != baseline
+                    or current is None
+                    or _recovery_file_identity(current) != baseline
+                ):
+                    _fail("changed")
+
+                self._validate_all()
+                self._verify_temp_bytes(descriptor, expected_bytes)
+                self._validate_all()
+                opened = os.fstat(descriptor)
+                current = _stat_at(namespace_fd, source_name)
+                if (
+                    _recovery_file_identity(opened) != baseline
+                    or current is None
+                    or _recovery_file_identity(current) != baseline
+                ):
+                    _fail("changed")
+
+                try:
+                    os.fsync(descriptor)
+                except (TypeError, NotImplementedError):
+                    _fail("unavailable")
+                except OSError as exc:
+                    _fail(_error_code(exc))
+                try:
+                    os.fsync(namespace_fd)
+                except (TypeError, NotImplementedError):
+                    _fail("unavailable")
+                except OSError as exc:
+                    if exc.errno == errno.EINVAL:
+                        _fail("unavailable")
+                    _fail(_error_code(exc))
+
+                self._validate_all()
+                opened = os.fstat(descriptor)
+                current = _stat_at(namespace_fd, source_name)
+                if (
+                    _recovery_file_identity(opened) != baseline
+                    or current is None
+                    or _recovery_file_identity(current) != baseline
+                ):
+                    _fail("changed")
+                self._verify_temp_bytes(descriptor, expected_bytes)
+                opened = os.fstat(descriptor)
+                current = _stat_at(namespace_fd, source_name)
+                if (
+                    _recovery_file_identity(opened) != baseline
+                    or current is None
+                    or _recovery_file_identity(current) != baseline
+                ):
+                    _fail("changed")
+                self._validate_all()
+        except _FailureError as exc:
+            failure = exc.code
+        except OSError as exc:
+            failure = _error_code(exc)
+        except Exception:
+            failure = "io"
+        finally:
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError as exc:
+                    if failure is None:
+                        failure = _error_code(exc)
+
+        if failure is not None:
+            self._raise_public(failure)
+
     def _detach_and_close(self, descriptor: int) -> None:
         try:
             self._owned_fds.remove(descriptor)
