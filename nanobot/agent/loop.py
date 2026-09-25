@@ -3056,6 +3056,11 @@ class AgentLoop:
         writer = ctx.run_context.source_writer
         command = raw.split(maxsplit=1)[0].lower()
         if raw.lower() == '/new':
+            admission = self._source_activity_admissions.get(ctx.session_key)
+            if admission is not None:
+                # The worker is registered with this owner. Drain it before
+                # quiesce, which otherwise waits forever for its queue reader.
+                await admission.close()
             await writer.owner.quiesce()
             writer.store.reset_source_session(writer.owner.key, writer.owner.read_snapshot().state, [], owner=writer.owner)
             self.discard_session_file_state(ctx.session_key)

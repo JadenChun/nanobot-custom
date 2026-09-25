@@ -40,7 +40,11 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     loop.max_tool_result_chars = 1000
     loop.provider_retry_mode = 'standard'
     loop.sessions = None
-    loop.runner = SimpleNamespace(run=AsyncMock(return_value=AgentRunResult(final_content='done', messages=[])))
+    loop._artifact_reader_factory = None
+    loop.runner = SimpleNamespace(
+        run=AsyncMock(return_value=AgentRunResult(final_content='done', messages=[])),
+        artifact_reader_factory=None,
+    )
     monkeypatch.setattr(module, 'build_agent_turn_hook', lambda spec: None)
     if not fresh:
         monkeypatch.setattr(module, 'runner_wall_llm_timeout_s', lambda *args, **kwargs: None)
