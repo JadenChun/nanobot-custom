@@ -15,22 +15,31 @@ from datetime import datetime
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from nanobot.agent import memory_recovery as receipt_codec
 from nanobot.agent.legacy_history_codec import (
     MAX_LEGACY_HISTORY_BYTES,
     LegacyHistoryEntry,
     parse_legacy_history,
 )
+from nanobot.agent.memory_recovery import MemoryReceipt
 from nanobot.agent.memory_recovery_manifest import (
     MAX_INT,
     MAX_NODES,
     MAX_RECORD_BYTES,
     MAX_STRING_BYTES,
+    ManifestRecord,
     MemoryManifestError,
     derive_manifest_identity,
+)
+from nanobot.agent.memory_recovery_marker import classify_history_marker_frame
+from nanobot.agent.memory_recovery_transaction import (
+    CapturedTransactionPayload,
+    decode_transaction_payload,
 )
 
 _SCHEMA_VERSION = 1
 _CONVERSION_POLICY = "legacy_history_v1"
+_RECEIPT_TAIL_POLICY = "legacy_history_receipt_tail_v2"
 _TARGET_NAMES = ("history.jsonl", ".cursor", ".dream_cursor")
 _STAT_FIELDS = frozenset(
     ("device", "inode", "mode", "uid", "gid", "links", "size", "mtime_ns", "ctime_ns")
@@ -53,6 +62,9 @@ _PREPARED_FIELDS = frozenset(
         "sidecar_counters",
         "outputs",
     )
+)
+_V2_EVIDENCE_FIELDS = frozenset(
+    ("receipt", "transaction_captured_record_digest", "tail_frame", "canonical_row")
 )
 _PHASE_BASE_FIELDS = frozenset(("schema_version", "conversion_identity", "disposition"))
 _JSONL_APPLIED_FIELDS = _PHASE_BASE_FIELDS | frozenset(("history_target",))
@@ -261,6 +273,7 @@ class BackupPlan:
 @dataclass(frozen=True, slots=True)
 class CapturedConversionPayload:
     receipt_transaction_identity: str
+    schema_version: int = _SCHEMA_VERSION
 
     @property
     def identity(self) -> str:
@@ -268,8 +281,8 @@ class CapturedConversionPayload:
 
     def to_payload(self) -> dict[str, Any]:
         return {
-            "schema_version": _SCHEMA_VERSION,
-            "conversion_policy": _CONVERSION_POLICY,
+            "schema_version": self.schema_version,
+            "conversion_policy": _CONVERSION_POLICY if self.schema_version == 1 else _RECEIPT_TAIL_POLICY,
             "receipt_transaction_identity": self.receipt_transaction_identity,
         }
 
@@ -280,9 +293,11 @@ class JsonlAppliedConversionPayload:
     disposition: str
     history_target: NewFileDescriptor
 
+    schema_version: int = _SCHEMA_VERSION
+
     def to_payload(self) -> dict[str, Any]:
         return {
-            "schema_version": _SCHEMA_VERSION,
+            "schema_version": self.schema_version,
             "conversion_identity": self.conversion_identity,
             "disposition": self.disposition,
             "history_target": self.history_target.to_payload(),
@@ -297,9 +312,11 @@ class CursorsAppliedConversionPayload:
     cursor_target: NewFileDescriptor
     dream_cursor_target: NewFileDescriptor
 
+    schema_version: int = _SCHEMA_VERSION
+
     def to_payload(self) -> dict[str, Any]:
         return {
-            "schema_version": _SCHEMA_VERSION,
+            "schema_version": self.schema_version,
             "conversion_identity": self.conversion_identity,
             "disposition": self.disposition,
             "history_target": self.history_target.to_payload(),
@@ -320,9 +337,11 @@ class LegacyFinalizedConversionPayload:
     backup_basename: str | None
     backup: NewFileDescriptor | None
 
+    schema_version: int = _SCHEMA_VERSION
+
     def to_payload(self) -> dict[str, Any]:
         return {
-            "schema_version": _SCHEMA_VERSION,
+            "schema_version": self.schema_version,
             "conversion_identity": self.conversion_identity,
             "disposition": self.disposition,
             "prepared_record_digest": self.prepared_record_digest,
@@ -345,9 +364,11 @@ class CompleteConversionPayload:
     backup_basename: str | None
     backup: NewFileDescriptor | None
 
+    schema_version: int = _SCHEMA_VERSION
+
     def to_payload(self) -> dict[str, Any]:
         return {
-            "schema_version": _SCHEMA_VERSION,
+            "schema_version": self.schema_version,
             "conversion_identity": self.conversion_identity,
             "disposition": self.disposition,
             "finalized_record_digest": self.finalized_record_digest,
@@ -371,10 +392,15 @@ class PreparedConversionPayload:
     sidecar_counters: Mapping[str, int] | None
     outputs: Mapping[str, NewFileDescriptor] | None
 
+    receipt: Mapping[str, Any] | None = None
+    transaction_captured_record_digest: str | None = None
+    tail_frame: Mapping[str, Any] | None = None
+    canonical_row: Mapping[str, Any] | None = None
+
     def to_payload(self) -> dict[str, Any]:
-        return {
-            "schema_version": _SCHEMA_VERSION,
-            "conversion_policy": _CONVERSION_POLICY,
+        payload = {
+            "schema_version": self.captured.schema_version,
+            "conversion_policy": _CONVERSION_POLICY if self.captured.schema_version == 1 else _RECEIPT_TAIL_POLICY,
             "conversion_identity": self.captured.identity,
             "disposition": self.disposition,
             "source": self.source.to_payload(),
@@ -392,6 +418,14 @@ class PreparedConversionPayload:
                 else {name: self.outputs[name].to_payload() for name in _TARGET_NAMES}
             ),
         }
+        if self.captured.schema_version == 2 and self.disposition == "convert":
+            payload.update({
+                "receipt": None if self.receipt is None else dict(self.receipt),
+                "transaction_captured_record_digest": self.transaction_captured_record_digest,
+                "tail_frame": None if self.tail_frame is None else dict(self.tail_frame),
+                "canonical_row": None if self.canonical_row is None else dict(self.canonical_row),
+            })
+        return payload
 
 
 def capture_conversion_payload(receipt_transaction_identity: object) -> CapturedConversionPayload:
@@ -402,6 +436,20 @@ def capture_conversion_payload(receipt_transaction_identity: object) -> Captured
         payload = captured.to_payload()
         identity = derive_manifest_identity("conversions", payload)
         _check_record_bounds(payload, "CAPTURED", identity)
+        return captured
+    except ConversionError:
+        raise
+    except Exception:
+        _fail()
+
+
+def capture_receipt_tail_conversion_payload(
+    receipt_transaction_identity: object,
+) -> CapturedConversionPayload:
+    """Capture a receipt-tail conversion in a distinct v2 manifest namespace."""
+    try:
+        captured = CapturedConversionPayload(_digest(receipt_transaction_identity), 2)
+        _validate_built_payload("CAPTURED", captured.to_payload(), captured)
         return captured
     except ConversionError:
         raise
@@ -607,6 +655,111 @@ def _preview_outputs(
     )
 
 
+
+def _receipt_tail_evidence(
+    receipt: object,
+    transaction_captured: object,
+    transaction_captured_record: object,
+    conversion_identity: str,
+    source_bytes: bytes,
+    fallback_timestamp: str,
+) -> tuple[tuple[LegacyHistoryEntry, ...], Mapping[str, Any], str, Mapping[str, Any], Mapping[str, Any]]:
+    if type(receipt) is not MemoryReceipt or type(receipt.raw_bytes) is not bytes:
+        _fail()
+    try:
+        parsed = receipt_codec._validate_payload(
+            receipt_codec._decode(receipt.raw_bytes), receipt.raw_bytes
+        )
+    except Exception:
+        _fail()
+    if parsed != receipt or type(transaction_captured) is not CapturedTransactionPayload:
+        _fail()
+    if transaction_captured.identity != conversion_identity:
+        _fail()
+    if (transaction_captured.receipt_digest != _sha256(parsed.raw_bytes)
+            or transaction_captured.receipt_size != len(parsed.raw_bytes)):
+        _fail()
+    try:
+        marker = parsed.history_marker_id.encode("utf-8")
+        entry = parsed.history_entry.encode("utf-8")
+    except UnicodeError:
+        _fail()
+    try:
+        session_key = parsed.session_key.encode("utf-8")
+        created_at = parsed.created_at.encode("utf-8")
+        output_size = 0 if parsed.memory_output is None else len(parsed.memory_output.encode("utf-8"))
+    except (AttributeError, UnicodeError):
+        _fail()
+    if (
+        transaction_captured.history_marker_digest != _sha256(marker)
+        or transaction_captured.history_entry_digest != _sha256(entry)
+        or transaction_captured.created_at_digest != _sha256(created_at)
+        or transaction_captured.session_key_digest != _sha256(session_key)
+        or transaction_captured.chunk_digest != parsed.chunk_digest
+        or transaction_captured.base_memory_digest != parsed.base_memory_digest
+        or transaction_captured.output_memory_digest != parsed.output_memory_digest
+        or transaction_captured.output_memory_size != output_size
+        or transaction_captured.reference_only != parsed.reference_only
+        or transaction_captured.start_offset != parsed.start_offset
+        or transaction_captured.end_offset != parsed.end_offset
+        or transaction_captured.session_generation != parsed.session_generation
+    ):
+        _fail()
+    record = transaction_captured_record
+    if (type(record) is not ManifestRecord or record.version != 1
+            or record.kind != "transactions" or record.identity != conversion_identity
+            or record.sequence != 0 or record.predecessor_digest is not None
+            or record.phase != "CAPTURED" or type(record.raw_bytes) is not bytes
+            or record.digest != _sha256(record.raw_bytes)):
+        _fail()
+    try:
+        raw_record = json.loads(record.raw_bytes.decode("utf-8"), object_pairs_hook=_pairs_without_duplicates)
+        loaded = decode_transaction_payload("CAPTURED", record.payload)
+    except Exception:
+        _fail()
+    if (type(raw_record) is not dict or raw_record.get("payload") != transaction_captured.to_payload()
+            or loaded != transaction_captured
+            or raw_record.get("payload") != record.payload
+            or record.raw_bytes != json.dumps(raw_record, ensure_ascii=False, sort_keys=True,
+                                              separators=(",", ":"), allow_nan=False).encode("utf-8")
+            or raw_record != {"version": 1, "kind": "transactions", "identity": conversion_identity,
+                              "sequence": 0, "predecessor_digest": None, "phase": "CAPTURED",
+                              "payload": transaction_captured.to_payload()}):
+        _fail()
+    try:
+        source_bytes.decode("utf-8")
+        status, _ = classify_history_marker_frame(source_bytes, parsed.history_marker_id, parsed.history_entry)
+        if status != "present":
+            _fail()
+        frame = (b"<!-- nanobot-consolidation:" + marker + b" -->\n" + entry).rstrip() + b"\n\n"
+        offset = source_bytes.rfind(frame)
+        if offset < 0 or offset + len(frame) != len(source_bytes):
+            _fail()
+        # The marker must be an isolated, unique final frame. The prefix parser is untouched.
+        if (source_bytes.count(b"<!-- nanobot-consolidation:" + marker) != 1
+                or (offset != 0 and not source_bytes[:offset].endswith(b"\n\n"))):
+            _fail()
+        prefix_rows = parse_legacy_history(source_bytes[:offset], fallback_timestamp=fallback_timestamp)
+        content = frame[:-2].decode("utf-8")
+    except ConversionError:
+        raise
+    except Exception:
+        _fail()
+    row = LegacyHistoryEntry(len(prefix_rows) + 1, fallback_timestamp, content)
+    try:
+        canonical = (json.dumps({"cursor": row.cursor, "timestamp": row.timestamp,
+                                 "content": row.content}, ensure_ascii=False) + "\n").encode("utf-8")
+    except (UnicodeError, ValueError, TypeError):
+        _fail()
+    return (
+        (*prefix_rows, row),
+        MappingProxyType({"size": len(parsed.raw_bytes), "blob_digest": _sha256(parsed.raw_bytes)}),
+        record.digest,
+        MappingProxyType({"offset": offset, "size": len(frame), "digest": _sha256(frame)}),
+        MappingProxyType({"cursor": row.cursor, "size": len(canonical), "blob_digest": _sha256(canonical)}),
+    )
+
+
 def _prepare(
     captured: CapturedConversionPayload,
     *,
@@ -617,6 +770,9 @@ def _prepare(
     fallback_timestamp: object,
     source_bytes: object,
     target_contents: object,
+    receipt: object,
+    transaction_captured: object,
+    transaction_captured_record: object,
 ) -> PreparedConversionPayload:
     captured = _validated_captured(captured)
     if type(disposition) is not str or disposition not in (
@@ -630,6 +786,8 @@ def _prepare(
         _fail()
 
     if disposition == "preserve_nonempty_jsonl":
+        if any(value is not None for value in (receipt, transaction_captured, transaction_captured_record)):
+            _fail()
         if not parsed_targets["history.jsonl"].exists or parsed_targets["history.jsonl"].size == 0:
             _fail()
         if (
@@ -662,14 +820,23 @@ def _prepare(
         verified_contents = _verify_target_contents(parsed_targets, target_contents)
         if verified_contents["history.jsonl"] not in (None, b""):
             _fail()
-        try:
-            rows = parse_legacy_history(
-                raw_source,
-                fallback_timestamp=parsed_fallback,
-                base_cursor=0,
+        evidence = None
+        if captured.schema_version == 2:
+            rows, *evidence = _receipt_tail_evidence(
+                receipt, transaction_captured, transaction_captured_record,
+                captured.receipt_transaction_identity, raw_source, parsed_fallback,
             )
-        except Exception:
-            _fail()
+        else:
+            if any(value is not None for value in (receipt, transaction_captured, transaction_captured_record)):
+                _fail()
+            try:
+                rows = parse_legacy_history(
+                    raw_source,
+                    fallback_timestamp=parsed_fallback,
+                    base_cursor=0,
+                )
+            except Exception:
+                _fail()
         counters = _counter_contents(parsed_targets, target_contents)
         final_cursor = rows[-1].cursor if rows else 0
         old_cursor = counters[".cursor"]
@@ -691,6 +858,7 @@ def _prepare(
             final_cursor,
             sidecar_counters,
             outputs,
+            *(evidence or ()),
         )
     payload = prepared.to_payload()
     try:
@@ -711,6 +879,9 @@ def prepare_conversion_payload(
     target_contents: object = None,
     backup: object = None,
     fallback_timestamp: object = None,
+    receipt: object = None,
+    transaction_captured: object = None,
+    transaction_captured_record: object = None,
 ) -> PreparedConversionPayload:
     """Build immutable PREPARED evidence from explicit captured claims.
 
@@ -729,6 +900,9 @@ def prepare_conversion_payload(
             fallback_timestamp=fallback_timestamp,
             source_bytes=source_bytes,
             target_contents=target_contents,
+            receipt=receipt,
+            transaction_captured=transaction_captured,
+            transaction_captured_record=transaction_captured_record,
         )
     except ConversionError:
         raise
@@ -754,22 +928,24 @@ def _validated_captured(value: object) -> CapturedConversionPayload:
 def _captured_from_payload(value: object) -> CapturedConversionPayload:
     if type(value) is not dict or set(value) != _CAPTURED_FIELDS:
         _fail()
-    if type(value["schema_version"]) is not int or value["schema_version"] != _SCHEMA_VERSION:
+    version = value["schema_version"]
+    if type(version) is not int or version not in (1, 2):
         _fail()
-    if value["conversion_policy"] != _CONVERSION_POLICY:
+    if value["conversion_policy"] != (_CONVERSION_POLICY if version == 1 else _RECEIPT_TAIL_POLICY):
         _fail()
-    return CapturedConversionPayload(_digest(value["receipt_transaction_identity"]))
+    return CapturedConversionPayload(_digest(value["receipt_transaction_identity"]), version)
 
 
 def _prepared_from_payload(
     value: object,
     captured: CapturedConversionPayload,
 ) -> PreparedConversionPayload:
-    if type(value) is not dict or set(value) != _PREPARED_FIELDS:
+    fields = _PREPARED_FIELDS | (_V2_EVIDENCE_FIELDS if captured.schema_version == 2 and type(value) is dict and value.get("disposition") == "convert" else frozenset())
+    if type(value) is not dict or set(value) != fields:
         _fail()
-    if type(value["schema_version"]) is not int or value["schema_version"] != _SCHEMA_VERSION:
+    if type(value["schema_version"]) is not int or value["schema_version"] != captured.schema_version:
         _fail()
-    if value["conversion_policy"] != _CONVERSION_POLICY:
+    if value["conversion_policy"] != (_CONVERSION_POLICY if captured.schema_version == 1 else _RECEIPT_TAIL_POLICY):
         _fail()
     if _digest(value["conversion_identity"]) != captured.identity:
         _fail()
@@ -842,6 +1018,32 @@ def _prepared_from_payload(
             _fail()
         if outputs[".cursor"] != expected_cursor or outputs[".dream_cursor"] != expected_cursor:
             _fail()
+    evidence: tuple[Mapping[str, Any], str, Mapping[str, Any], Mapping[str, Any]] | tuple[()] = ()
+    if captured.schema_version == 2:
+        receipt_value = value["receipt"]
+        frame_value = value["tail_frame"]
+        row_value = value["canonical_row"]
+        if (type(receipt_value) is not dict or set(receipt_value) != {"size", "blob_digest"}
+                or type(frame_value) is not dict or set(frame_value) != {"offset", "size", "digest"}
+                or type(row_value) is not dict or set(row_value) != {"cursor", "size", "blob_digest"}):
+            _fail()
+        receipt_size = _counter(receipt_value["size"], positive=True)
+        receipt_digest = _digest(receipt_value["blob_digest"])
+        offset = _counter(frame_value["offset"])
+        frame_size = _counter(frame_value["size"], positive=True)
+        frame_digest = _digest(frame_value["digest"])
+        row_cursor = _counter(row_value["cursor"], positive=True)
+        row_size = _counter(row_value["size"], positive=True)
+        row_digest = _digest(row_value["blob_digest"])
+        if (offset + frame_size != source.size or row_cursor != final_cursor
+                or row_size > outputs["history.jsonl"].size):
+            _fail()
+        evidence = (
+            MappingProxyType({"size": receipt_size, "blob_digest": receipt_digest}),
+            _digest(value["transaction_captured_record_digest"]),
+            MappingProxyType({"offset": offset, "size": frame_size, "digest": frame_digest}),
+            MappingProxyType({"cursor": row_cursor, "size": row_size, "blob_digest": row_digest}),
+        )
     return PreparedConversionPayload(
         captured,
         disposition,
@@ -853,6 +1055,7 @@ def _prepared_from_payload(
         final_cursor,
         MappingProxyType(counters),
         outputs,
+        *evidence,
     )
 
 
@@ -946,7 +1149,7 @@ def _phase_payload(
 ) -> dict[str, Any]:
     if type(value) is not dict or set(value) != fields:
         _fail()
-    if type(value["schema_version"]) is not int or value["schema_version"] != _SCHEMA_VERSION:
+    if type(value["schema_version"]) is not int or value["schema_version"] != captured.schema_version:
         _fail()
     if _digest(value["conversion_identity"]) != captured.identity:
         _fail()
@@ -972,7 +1175,7 @@ def _jsonl_applied_from_payload(
     expected = _prepared_target_projection(prepared)["history.jsonl"]
     if history_target != expected:
         _fail()
-    return JsonlAppliedConversionPayload(captured.identity, prepared.disposition, history_target)
+    return JsonlAppliedConversionPayload(captured.identity, prepared.disposition, history_target, captured.schema_version)
 
 
 def _validated_jsonl_applied(
@@ -1013,6 +1216,7 @@ def _cursors_applied_from_payload(
         history_target,
         cursor_target,
         dream_cursor_target,
+        captured.schema_version,
     )
 
 
@@ -1094,6 +1298,7 @@ def _legacy_finalized_from_payload(
         source,
         backup_basename,
         backup,
+        captured.schema_version,
     )
 
 
@@ -1174,6 +1379,7 @@ def _complete_from_payload(
         source,
         backup_basename,
         backup,
+        captured.schema_version,
     )
 
 
@@ -1214,6 +1420,7 @@ def jsonl_applied_conversion_payload(
         captured.identity,
         prepared.disposition,
         _prepared_target_projection(prepared)["history.jsonl"],
+        captured.schema_version,
     ).to_payload()
     _validate_built_payload("JSONL_APPLIED", payload, captured)
     return _jsonl_applied_from_payload(payload, captured, prepared)
@@ -1235,6 +1442,7 @@ def cursors_applied_conversion_payload(
         jsonl.history_target,
         expected[".cursor"],
         expected[".dream_cursor"],
+        captured.schema_version,
     ).to_payload()
     _validate_built_payload("CURSORS_APPLIED", payload, captured)
     return _cursors_applied_from_payload(payload, captured, prepared, jsonl)
@@ -1269,6 +1477,7 @@ def legacy_finalized_conversion_payload(
         source,
         backup_basename,
         backup,
+        captured.schema_version,
     ).to_payload()
     _validate_built_payload("LEGACY_FINALIZED", payload, captured)
     return _legacy_finalized_from_payload(
@@ -1316,6 +1525,7 @@ def complete_conversion_payload(
         finalized.source,
         finalized.backup_basename,
         finalized.backup,
+        captured.schema_version,
     ).to_payload()
     _validate_built_payload("COMPLETE", payload, captured)
     return _complete_from_payload(

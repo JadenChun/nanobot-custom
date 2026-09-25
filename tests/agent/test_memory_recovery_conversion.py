@@ -884,3 +884,353 @@ def test_conversion_phase_payloads_reject_extra_fields_and_duplicate_keys() -> N
         decode_conversion_payload(
             duplicated.encode(), "JSONL_APPLIED", captured=captured, prepared=prepared
         )
+
+
+def _v2_receipt(entry: str = "[2025-04-03 11:22] first\n\n[2025-04-04 12:34] second"):
+    from types import MappingProxyType
+
+    from nanobot.agent.memory_recovery import MemoryReceipt
+    from nanobot.agent.memory_recovery_manifest import ManifestRecord
+    from nanobot.agent.memory_recovery_transaction import capture_transaction_payload
+
+    values = {
+        "version": 1,
+        "chunk_digest": hashlib.sha256(b"chunk").hexdigest(),
+        "history_marker_id": "receipt-marker",
+        "history_entry": entry,
+        "memory_output": None,
+        "base_memory_digest": hashlib.sha256(b"old").hexdigest(),
+        "output_memory_digest": None,
+        "reference_only": True,
+        "created_at": "2026-09-24T00:00:00Z",
+        "session_key": "session",
+        "start_offset": 0,
+        "end_offset": 1,
+        "session_generation": 0,
+    }
+    raw = json.dumps(values, sort_keys=True, separators=(",", ":")).encode()
+    receipt = MemoryReceipt(
+        values["version"], values["chunk_digest"], values["history_marker_id"],
+        entry, None, values["base_memory_digest"], None, True,
+        values["created_at"], values["session_key"], 0, 1, 0,
+        raw_fields=MappingProxyType(values), raw_bytes=raw,
+    )
+    transaction = capture_transaction_payload(receipt, workspace_id="a" * 32, workspace_identity=(1, 2))
+    payload = transaction.to_payload()
+    identity = transaction.identity
+    record_bytes = json.dumps({
+        "version": 1, "kind": "transactions", "identity": identity, "sequence": 0,
+        "predecessor_digest": None, "phase": "CAPTURED", "payload": payload,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    record = ManifestRecord(1, "transactions", identity, 0, None, "CAPTURED",
+                            record_bytes, hashlib.sha256(record_bytes).hexdigest(),
+                            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
+    return receipt, transaction, record
+
+
+def _v2_prepare(entry: str = "[2025-04-03 11:22] first\n\n[2025-04-04 12:34] second"):
+    from nanobot.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
+
+    receipt, transaction, record = _v2_receipt(entry)
+    captured = capture_receipt_tail_conversion_payload(transaction.identity)
+    source = b"[2025-01-01 10:00] prefix\n\n<!-- nanobot-consolidation:receipt-marker -->\n" + entry.rstrip().encode() + b"\n\n"
+    values = _prepared_inputs(source_bytes=source)
+    prepared = prepare_conversion_payload(
+        captured, disposition="convert", receipt=receipt,
+        transaction_captured=transaction, transaction_captured_record=record, **values,
+    )
+    return captured, prepared, values, receipt, transaction, record
+
+
+def test_receipt_tail_v2_is_single_canonical_row_and_distinct_namespace() -> None:
+    captured, prepared, values, receipt, transaction, record = _v2_prepare()
+    assert captured.identity != capture_conversion_payload(transaction.identity).identity
+    assert captured.to_payload() == {
+        "schema_version": 2, "conversion_policy": "legacy_history_receipt_tail_v2",
+        "receipt_transaction_identity": transaction.identity,
+    }
+    assert prepared.row_count == 2
+    assert prepared.to_payload()["receipt"] == {
+        "size": len(receipt.raw_bytes), "blob_digest": hashlib.sha256(receipt.raw_bytes).hexdigest(),
+    }
+    assert prepared.to_payload()["transaction_captured_record_digest"] == record.digest
+    assert prepared.to_payload()["tail_frame"] == {
+        "offset": values["source_bytes"].index(b"<!-- nanobot-consolidation:"),
+        "size": len(values["source_bytes"]) - values["source_bytes"].index(b"<!-- nanobot-consolidation:"),
+        "digest": hashlib.sha256(values["source_bytes"][values["source_bytes"].index(b"<!-- nanobot-consolidation:"):]).hexdigest(),
+    }
+    frame_body = "<!-- nanobot-consolidation:receipt-marker -->\n" + receipt.history_entry
+    expected = json.dumps({"cursor": 2, "timestamp": "2025-04-03 11:22",
+                           "content": frame_body}, ensure_ascii=False).encode() + b"\n"
+    assert json.loads(expected)["content"] == frame_body
+    assert json.loads(expected)["content"].startswith("<!-- nanobot-consolidation:receipt-marker -->\n")
+    assert "\n\n[2025-04-04 12:34] second" in json.loads(expected)["content"]
+    entry_only = json.dumps({"cursor": 2, "timestamp": "2025-04-03 11:22",
+                             "content": receipt.history_entry}, ensure_ascii=False).encode() + b"\n"
+    assert hashlib.sha256(expected).digest() != hashlib.sha256(entry_only).digest()
+    prefix = json.dumps({"cursor": 1, "timestamp": "2025-01-01 10:00", "content": "prefix"}, ensure_ascii=False).encode() + b"\n"
+    assert prepared.outputs["history.jsonl"].blob_digest == hashlib.sha256(prefix + expected).hexdigest()
+    assert prepared.to_payload()["canonical_row"] == {
+        "cursor": 2, "size": len(expected), "blob_digest": hashlib.sha256(expected).hexdigest(),
+    }
+    assert decode_conversion_payload(captured.to_payload(), "CAPTURED") == captured
+    assert decode_conversion_payload(prepared.to_payload(), "CONVERSION_PREPARED", captured=captured) == prepared
+
+
+@pytest.mark.parametrize("source", [
+    b"<!-- nanobot-consolidation:receipt-marker -->\nentry\n\nmore",
+    b"<!-- nanobot-consolidation:receipt-marker -->\nentry\n\n<!-- nanobot-consolidation:receipt-marker -->\nentry\n\n",
+    b"<!-- nanobot-consolidation:receipt-marker",
+    b"\xff\n<!-- nanobot-consolidation:receipt-marker -->\nentry\n\n",
+])
+def test_receipt_tail_v2_rejects_ambiguous_or_invalid_source(source: bytes) -> None:
+    from nanobot.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
+
+    receipt, transaction, record = _v2_receipt("entry")
+    values = _prepared_inputs(source_bytes=source)
+    with pytest.raises(ConversionError):
+        prepare_conversion_payload(capture_receipt_tail_conversion_payload(transaction.identity),
+                                   disposition="convert", receipt=receipt,
+                                   transaction_captured=transaction,
+                                   transaction_captured_record=record, **values)
+
+
+def test_receipt_tail_v2_phase_round_trip_and_context() -> None:
+    captured, prepared, _, _, _, _ = _v2_prepare()
+    jsonl = jsonl_applied_conversion_payload(captured, prepared)
+    cursors = cursors_applied_conversion_payload(captured, prepared, jsonl)
+    digests = dict(prepared_record_digest="1" * 64, jsonl_applied_record_digest="2" * 64,
+                   cursors_applied_record_digest="3" * 64)
+    finalized = legacy_finalized_conversion_payload(captured, prepared, jsonl, cursors, **digests)
+    complete = complete_conversion_payload(captured, prepared, jsonl, cursors, finalized,
+                                           finalized_record_digest="4" * 64)
+    for phase, value, kwargs in (
+        ("JSONL_APPLIED", jsonl, dict(captured=captured, prepared=prepared)),
+        ("CURSORS_APPLIED", cursors, dict(captured=captured, prepared=prepared, jsonl_applied=jsonl)),
+        ("LEGACY_FINALIZED", finalized, dict(captured=captured, prepared=prepared,
+             jsonl_applied=jsonl, cursors_applied=cursors, **digests)),
+        ("COMPLETE", complete, dict(captured=captured, prepared=prepared, jsonl_applied=jsonl,
+             cursors_applied=cursors, legacy_finalized=finalized, finalized_record_digest="4" * 64)),
+    ):
+        payload = value.to_payload()
+        assert payload["schema_version"] == 2
+        assert decode_conversion_payload(payload, phase, **kwargs) == value
+        payload["schema_version"] = 1
+        with pytest.raises(ConversionError):
+            decode_conversion_payload(payload, phase, **kwargs)
+
+
+def test_receipt_tail_v2_preserve_has_no_invented_evidence() -> None:
+    from nanobot.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
+
+    captured = capture_receipt_tail_conversion_payload("a" * 64)
+    values = _prepared_inputs(history=b'{"cursor":1}\n')
+    prepared = prepare_conversion_payload(captured, disposition="preserve_nonempty_jsonl",
+                                          source=values["source"], targets=values["targets"],
+                                          source_bytes=None)
+    assert not set(prepared.to_payload()) & {"receipt", "transaction_captured_record_digest",
+                                                 "tail_frame", "canonical_row"}
+    assert decode_conversion_payload(prepared.to_payload(), "CONVERSION_PREPARED", captured=captured) == prepared
+    forged = prepared.to_payload()
+    forged["receipt"] = {"size": 1, "blob_digest": "a" * 64}
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(forged, "CONVERSION_PREPARED", captured=captured)
+
+
+def test_receipt_tail_v2_rejects_mismatched_receipt_record_cursor_and_evidence() -> None:
+    from dataclasses import replace
+
+    captured, prepared, values, receipt, transaction, record = _v2_prepare()
+    attempts = (
+        {"receipt": replace(receipt, history_entry="different")},
+        {"transaction_captured": replace(transaction, history_marker_digest="0" * 64)},
+        {"transaction_captured": replace(transaction, created_at_digest="0" * 64)},
+        {"transaction_captured": replace(transaction, chunk_digest="0" * 64)},
+        {"transaction_captured_record": replace(record, digest="0" * 64)},
+        {"transaction_captured_record": replace(record, _payload_bytes=b'{}')},
+    )
+    for override in attempts:
+        with pytest.raises(ConversionError):
+            prepare_conversion_payload(captured, disposition="convert", **values,
+                **(dict(receipt=receipt, transaction_captured=transaction,
+                       transaction_captured_record=record) | override))
+    old_cursor = _prepared_inputs(source_bytes=values["source_bytes"], cursor=b"3")
+    with pytest.raises(ConversionError):
+        prepare_conversion_payload(captured, disposition="convert", **old_cursor,
+            receipt=receipt, transaction_captured=transaction, transaction_captured_record=record)
+    for field, key, bad in (("receipt", "size", 0), ("tail_frame", "offset", 1),
+                            ("canonical_row", "cursor", 3)):
+        forged = prepared.to_payload()
+        forged[field][key] = bad
+        with pytest.raises(ConversionError):
+            decode_conversion_payload(forged, "CONVERSION_PREPARED", captured=captured)
+
+
+def test_v1_captured_and_prepared_exact_payload_shape_retained() -> None:
+    captured = _capture()
+    prepared = _prepare()
+    assert captured.to_payload() == {"schema_version": 1, "conversion_policy": "legacy_history_v1",
+                                     "receipt_transaction_identity": "a" * 64}
+    assert set(prepared.to_payload()) == {
+        "schema_version", "conversion_policy", "conversion_identity", "disposition", "source",
+        "targets", "backup", "fallback_timestamp", "row_count", "final_legacy_cursor",
+        "sidecar_counters", "outputs",
+    }
+    assert prepared.row_count == 2
+
+
+def test_receipt_tail_v2_rejects_oversized_and_wrong_policy_payloads() -> None:
+    from nanobot.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
+
+    captured, prepared, _, _, _, _ = _v2_prepare()
+    wrong_policy = captured.to_payload()
+    wrong_policy["conversion_policy"] = "legacy_history_v1"
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(wrong_policy, "CAPTURED")
+    wrong_prepared = prepared.to_payload()
+    wrong_prepared["conversion_policy"] = "legacy_history_v1"
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(wrong_prepared, "CONVERSION_PREPARED", captured=captured)
+    oversized = prepared.to_payload()
+    oversized["extra"] = "x" * MAX_RECORD_BYTES
+    with pytest.raises(ConversionError):
+        decode_conversion_payload(oversized, "CONVERSION_PREPARED", captured=captured)
+    assert capture_receipt_tail_conversion_payload("a" * 64).schema_version == 2
+
+
+def test_receipt_tail_v2_row_retains_marker_and_trims_only_staging_suffix() -> None:
+    captured, prepared, values, receipt, _, _ = _v2_prepare("line one\n\n[2025-04-04 12:34] line two  \n  ")
+    frame_body = "<!-- nanobot-consolidation:receipt-marker -->\nline one\n\n[2025-04-04 12:34] line two"
+    expected = (json.dumps({"cursor": 2, "timestamp": values["fallback_timestamp"],
+                            "content": frame_body}, ensure_ascii=False) + "\n").encode()
+    assert prepared.to_payload()["canonical_row"] == {
+        "cursor": 2, "size": len(expected), "blob_digest": hashlib.sha256(expected).hexdigest(),
+    }
+    assert prepared.row_count == 2
+    assert decode_conversion_payload(prepared.to_payload(), "CONVERSION_PREPARED", captured=captured) == prepared
+    assert receipt.history_entry.endswith("  \n  ")
+
+
+def test_receipt_tail_v2_roundtrip_through_real_manifest_chain(tmp_path) -> None:
+    """The transaction record and every conversion predecessor digest are loaded evidence."""
+    from dataclasses import replace
+
+    from nanobot.agent.memory_recovery_conversion import capture_receipt_tail_conversion_payload
+
+    receipt, transaction, _ = _v2_receipt()
+    authority = storage.WorkspaceMemoryAuthority(tmp_path)
+    authority.__enter__()
+    transaction_namespace = authority.open_evidence_namespace("transactions", transaction.identity)
+    conversion_namespace = None
+    try:
+        transaction_manifest = MemoryRecoveryManifest(transaction_namespace)
+        transaction_manifest.create(transaction.to_payload())
+        loaded_transaction = transaction_manifest.load()[0]
+        assert loaded_transaction.phase == "CAPTURED"
+        assert loaded_transaction.payload == transaction.to_payload()
+
+        captured = capture_receipt_tail_conversion_payload(loaded_transaction.identity)
+        source = (
+            b"[2025-01-01 10:00] prefix\n\n"
+            + b"<!-- nanobot-consolidation:receipt-marker -->\n"
+            + receipt.history_entry.rstrip().encode("utf-8") + b"\n\n"
+        )
+        values = _prepared_inputs(source_bytes=source)
+        with pytest.raises(ConversionError):
+            prepare_conversion_payload(
+                captured, disposition="convert", receipt=receipt,
+                transaction_captured=transaction,
+                transaction_captured_record=replace(loaded_transaction, digest="0" * 64),
+                **values,
+            )
+        prepared = prepare_conversion_payload(
+            captured, disposition="convert", receipt=receipt,
+            transaction_captured=transaction, transaction_captured_record=loaded_transaction,
+            **values,
+        )
+        frame_body = "<!-- nanobot-consolidation:receipt-marker -->\n" + receipt.history_entry
+        final_line = (json.dumps({"cursor": 2, "timestamp": values["fallback_timestamp"],
+                                  "content": frame_body}, ensure_ascii=False) + "\n").encode()
+        assert prepared.canonical_row == {
+            "cursor": 2, "size": len(final_line),
+            "blob_digest": hashlib.sha256(final_line).hexdigest(),
+        }
+        assert "\n\n[2025-04-04 12:34] second" in frame_body
+
+        conversion_namespace = authority.open_evidence_namespace("conversions", captured.identity)
+        manifest = MemoryRecoveryManifest(conversion_namespace)
+        genesis = manifest.create(captured.to_payload())
+        prepared_record = manifest.append(
+            predecessor_digest=genesis.digest, phase="CONVERSION_PREPARED",
+            payload=prepared.to_payload(),
+        )
+        jsonl = jsonl_applied_conversion_payload(captured, prepared)
+        jsonl_record = manifest.append(
+            predecessor_digest=prepared_record.digest, phase="JSONL_APPLIED", payload=jsonl.to_payload(),
+        )
+        cursors = cursors_applied_conversion_payload(captured, prepared, jsonl)
+        cursors_record = manifest.append(
+            predecessor_digest=jsonl_record.digest, phase="CURSORS_APPLIED",
+            payload=cursors.to_payload(),
+        )
+        finalized = legacy_finalized_conversion_payload(
+            captured, prepared, jsonl, cursors,
+            prepared_record_digest=prepared_record.digest,
+            jsonl_applied_record_digest=jsonl_record.digest,
+            cursors_applied_record_digest=cursors_record.digest,
+        )
+        finalized_record = manifest.append(
+            predecessor_digest=cursors_record.digest, phase="LEGACY_FINALIZED",
+            payload=finalized.to_payload(),
+        )
+        complete = complete_conversion_payload(
+            captured, prepared, jsonl, cursors, finalized,
+            finalized_record_digest=finalized_record.digest,
+        )
+        manifest.append(
+            predecessor_digest=finalized_record.digest, phase="COMPLETE",
+            payload=complete.to_payload(),
+        )
+
+        records = manifest.load()
+        assert [record.phase for record in records] == [
+            "CAPTURED", "CONVERSION_PREPARED", "JSONL_APPLIED",
+            "CURSORS_APPLIED", "LEGACY_FINALIZED", "COMPLETE",
+        ]
+        loaded_captured = decode_conversion_payload(records[0].payload, records[0].phase)
+        loaded_prepared = decode_conversion_payload(
+            records[1].payload, records[1].phase, captured=loaded_captured,
+        )
+        loaded_jsonl = decode_conversion_payload(
+            records[2].payload, records[2].phase,
+            captured=loaded_captured, prepared=loaded_prepared,
+        )
+        loaded_cursors = decode_conversion_payload(
+            records[3].payload, records[3].phase,
+            captured=loaded_captured, prepared=loaded_prepared, jsonl_applied=loaded_jsonl,
+        )
+        loaded_finalized = decode_conversion_payload(
+            records[4].payload, records[4].phase,
+            captured=loaded_captured, prepared=loaded_prepared, jsonl_applied=loaded_jsonl,
+            cursors_applied=loaded_cursors,
+            prepared_record_digest=records[1].digest,
+            jsonl_applied_record_digest=records[2].digest,
+            cursors_applied_record_digest=records[3].digest,
+        )
+        loaded_complete = decode_conversion_payload(
+            records[5].payload, records[5].phase,
+            captured=loaded_captured, prepared=loaded_prepared, jsonl_applied=loaded_jsonl,
+            cursors_applied=loaded_cursors, legacy_finalized=loaded_finalized,
+            finalized_record_digest=records[4].digest,
+        )
+        assert (loaded_captured, loaded_prepared, loaded_jsonl, loaded_cursors,
+                loaded_finalized, loaded_complete) == (
+                    captured, prepared, jsonl, cursors, finalized, complete,
+                )
+        assert records[1].payload["transaction_captured_record_digest"] == loaded_transaction.digest
+        assert loaded_prepared.canonical_row["blob_digest"] == hashlib.sha256(final_line).hexdigest()
+    finally:
+        if conversion_namespace is not None:
+            conversion_namespace.close()
+        transaction_namespace.close()
+        authority.close()
