@@ -72,13 +72,13 @@ POST_DELIVERY_BY_JOB: dict[str, list[str]] = {
     ],
 }
 
-#: Sentinel for idempotent insertion of the authoritative pillar instruction.
-PILLAR_SENTINEL = "AUTHORITATIVE ASSIGNED PILLAR (deterministic)"
+#: Sentinel for idempotent insertion of the assigned-pillar instruction.
+PILLAR_SENTINEL = "ASSIGNED PILLAR (soft default)"
 PILLAR_INSTRUCTION = f"""{PILLAR_SENTINEL}
 FIRST, before any ideation, run exactly:
 python3 tools/next_daily_pillar.py --json
-Use the returned assigned_pillar as this run's pillar. Do NOT infer the pillar from idea history, memory notes, or your own reading of previous runs: only a successfully verified and delivered idea consumes a rotation slot, and that resolver is the single source of truth. If it conflicts with anything below, the resolver wins.
-END AUTHORITATIVE ASSIGNED PILLAR
+Use the returned assigned_pillar as this run's DEFAULT pillar. Only a successfully verified and delivered idea consumes a rotation slot. The assigned pillar is a strong default, NOT an absolute rule: you MAY override it when today's trend research contains a genuinely strong opportunity that does not fit the assigned pillar. An override requires ALL of: the trend is the idea's primary evidence (source_mode trend_led); the chosen pillar is one of the five rotation pillars and genuinely fits the trend; the internal note records BOTH an "Assigned pillar:" line and a "Pillar override:" line naming the chosen pillar and the reason; and the client-facing title declares the chosen pillar. Do not override for a weak or marginal fit. The rotation continues from the pillar actually delivered, so a skipped pillar returns on the next cycle.
+END ASSIGNED PILLAR
 
 """
 
@@ -206,7 +206,7 @@ def migrate(data: dict, *, apply: bool) -> list[dict]:
                 change["record_tool"] = f"{RECORD_TOOL_OLD} -> {RECORD_TOOL_NEW}"
 
             if PILLAR_SENTINEL not in updated:
-                anchor = "PILLAR ROTATION (exact):"
+                anchor = "PILLAR ROTATION (soft default):"
                 if anchor in updated:
                     updated = updated.replace(anchor, PILLAR_INSTRUCTION + anchor, 1)
                 else:
