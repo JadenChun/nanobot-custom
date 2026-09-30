@@ -110,9 +110,12 @@ VERIFIERS_BY_JOB: dict[str, list[dict]] = {
             ],
             "cwd": REPO_ROOT,
             "timeout": 120,
-            # The internal research status is declared in the run's internal report.
-            "status_file": _T,
-            "status_regex": r"(?im)^\*\*Internal status:\*\*\s*([A-Za-z_]+)",
+            # The internal research status is the validated, structured field
+            # of the run's collection bundle. Resolving it here (not from a
+            # free-form report header the agent may omit or reformat) keeps the
+            # framework from crashing on an unresolvable status.
+            "status_file": _TC,
+            "status_regex": r'"research_status"\s*:\s*"([A-Za-z_]+)"',
         },
     ],
     "Weekly performance review": [
