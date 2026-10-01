@@ -8,6 +8,7 @@ import shutil
 import select
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -650,6 +651,57 @@ def _resolve_context_paths(config: Config) -> list[Path] | None:
     return [Path(p).expanduser().resolve() for p in raw if p]
 
 
+# Rate-limit recovery: when a scheduled client job fails only because the
+# ChatGPT/Codex 5-hour window is exhausted, retry it automatically just after
+# the window resets instead of dropping the task. A 7-day (weekly) exhaustion is
+# NOT rescheduled (its reset is too far away; retrying would only waste a run).
+_RATE_LIMIT_RETRY_MAX = 3
+_RATE_LIMIT_RETRY_BUFFER_MS = 120_000
+_RATE_LIMIT_RETRY_MAX_WAIT_MS = 24 * 3600 * 1000
+
+
+def _looks_like_codex_rate_limit(text: str) -> bool:
+    """True when an LLM/agent error text is a transient Codex rate limit."""
+    t = (text or "").casefold()
+    return "rate limit" in t or "rate_limit" in t
+
+
+def _codex_rate_limit_retry_at(*, current_retries: int) -> int | None:
+    """Return epoch-ms to retry after a 5-hour Codex limit, or None.
+
+    Returns None (do not reschedule) when: the retry budget is spent; the 7-day
+    weekly window is the binding limit; usage cannot be read; or the reset is
+    more than 24h away.
+    """
+    if current_retries >= _RATE_LIMIT_RETRY_MAX:
+        return None
+    try:
+        from nanobot.providers.codex_auth import get_codex_usage
+
+        usage = get_codex_usage()
+    except Exception:
+        return None
+    rl = usage.get("rate_limit") or {}
+    if usage.get("rate_limit_reached_type") == "secondary":
+        return None
+    secondary = rl.get("secondary_window") or {}
+    try:
+        if float(secondary.get("used_percent") or 0) >= 100:
+            return None
+    except (TypeError, ValueError):
+        pass
+    reset_at = (rl.get("primary_window") or {}).get("reset_at")
+    if not reset_at:
+        return None
+    now_ms = int(time.time() * 1000)
+    retry_at_ms = int(reset_at) * 1000 + _RATE_LIMIT_RETRY_BUFFER_MS
+    if retry_at_ms - now_ms > _RATE_LIMIT_RETRY_MAX_WAIT_MS:
+        return None
+    if retry_at_ms <= now_ms:
+        retry_at_ms = now_ms + _RATE_LIMIT_RETRY_BUFFER_MS
+    return retry_at_ms
+
+
 async def _run_cron_job(agent, bus, job) -> str | None:
     """Execute one scheduled job through the agent and deliver its result.
 
@@ -760,6 +812,33 @@ async def _run_cron_job(agent, bus, job) -> str | None:
             reason=reason,
         )
 
+    async def _reschedule_on_rate_limit(error_text: str) -> bool:
+        """On a Codex 5-hour rate limit, reschedule instead of failing.
+
+        Returns True when the job was rescheduled; the caller must then skip the
+        normal 'Failed' alert (and, for the not-verified case, the post-delivery
+        hook and the failure recording).
+        """
+        if not _looks_like_codex_rate_limit(error_text):
+            return False
+        current = int(getattr(job.state, "rate_limit_retries", 0) or 0)
+        retry_at_ms = _codex_rate_limit_retry_at(current_retries=current)
+        if retry_at_ms is None:
+            return False
+        job.state.retry_at_ms = retry_at_ms
+        job.state.rate_limit_retries = current + 1
+        from datetime import datetime, timezone
+
+        when = datetime.fromtimestamp(retry_at_ms / 1000, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M UTC"
+        )
+        await _owner_alert(
+            "Rate Limited — Rescheduled",
+            "The provider hit its 5-hour rate limit while producing the result. "
+            f"Re-running this task automatically after the window resets (about {when}).",
+        )
+        return True
+
     reminder_note = (
         "[Scheduled Task] Timer finished.\n\n"
         f"Task '{job.name}' has been triggered.\n"
@@ -794,6 +873,9 @@ async def _run_cron_job(agent, bus, job) -> str | None:
             )
         except Exception as exc:
             # GENERATION / AGENT EXECUTION FAILURE: no group result, one alert.
+            # A transient provider rate limit is retried later instead of failing.
+            if await _reschedule_on_rate_limit(str(exc)):
+                return None
             await _owner_alert(
                 "Failed",
                 "The scheduled task failed while producing a result. "
@@ -902,7 +984,14 @@ async def _run_cron_job(agent, bus, job) -> str | None:
                 error=err,
             )
         # outcome == "success": group delivered, owner stays silent.
+        if outcome == "success":
+            # A clean delivery clears the rate-limit retry budget.
+            job.state.rate_limit_retries = 0
     elif delivery_destinations and response and not verified:
+        # A rate-limited run produces an error string instead of a result; retry
+        # it after the 5-hour window resets rather than alerting a hard failure.
+        if await _reschedule_on_rate_limit(response):
+            return response
         ack_status = "blocked"
         err = f"client delivery blocked: {verdict_source}; refusing to deliver unverified client output"
         await _owner_alert(

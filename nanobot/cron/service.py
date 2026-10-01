@@ -159,6 +159,8 @@ class CronService:
                             last_run_at_ms=j.get("state", {}).get("lastRunAtMs"),
                             last_status=j.get("state", {}).get("lastStatus"),
                             last_error=j.get("state", {}).get("lastError"),
+                            retry_at_ms=j.get("state", {}).get("retryAtMs"),
+                            rate_limit_retries=j.get("state", {}).get("rateLimitRetries", 0),
                             run_history=[
                                 CronRunRecord(
                                     run_at_ms=r["runAtMs"],
@@ -235,6 +237,8 @@ class CronService:
                         "lastRunAtMs": j.state.last_run_at_ms,
                         "lastStatus": j.state.last_status,
                         "lastError": j.state.last_error,
+                        "retryAtMs": j.state.retry_at_ms,
+                        "rateLimitRetries": j.state.rate_limit_retries,
                         "runHistory": [
                             {
                                 "runAtMs": r.run_at_ms,
@@ -356,8 +360,14 @@ class CronService:
         ))
         job.state.run_history = job.state.run_history[-self._MAX_RUN_HISTORY:]
 
+        # A one-shot retry override (for example recovery from a transient
+        # 5-hour provider rate limit) takes precedence over the schedule for
+        # exactly one run.
+        if job.state.retry_at_ms is not None:
+            job.state.next_run_at_ms = job.state.retry_at_ms
+            job.state.retry_at_ms = None
         # Handle one-shot jobs
-        if job.schedule.kind == "at":
+        elif job.schedule.kind == "at":
             if job.delete_after_run:
                 self._store.jobs = [j for j in self._store.jobs if j.id != job.id]
             else:

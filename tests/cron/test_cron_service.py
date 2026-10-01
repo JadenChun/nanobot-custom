@@ -249,3 +249,46 @@ def test_legacy_job_without_verifiers_still_loads(tmp_path) -> None:
     loaded = CronService(store_path).get_job(job.id)
     assert loaded is not None
     assert loaded.payload.verifiers == []
+
+
+@pytest.mark.asyncio
+async def test_retry_at_ms_overrides_schedule_for_one_run(tmp_path) -> None:
+    store_path = tmp_path / "cron" / "jobs.json"
+    retry_at = 1_900_000_000_000
+
+    async def on_job(job) -> None:
+        # Simulate the runner scheduling a rate-limit recovery.
+        job.state.retry_at_ms = retry_at
+
+    service = CronService(store_path, on_job=on_job)
+    job = service.add_job(
+        name="retry",
+        schedule=CronSchedule(kind="every", every_ms=60_000),
+        message="hello",
+    )
+    await service.run_job(job.id)
+
+    loaded = service.get_job(job.id)
+    assert loaded.state.next_run_at_ms == retry_at
+    assert loaded.state.retry_at_ms is None
+    raw = json.loads(store_path.read_text(encoding="utf-8"))
+    assert raw["jobs"][0]["state"]["nextRunAtMs"] == retry_at
+
+
+def test_rate_limit_state_is_persisted(tmp_path) -> None:
+    store_path = tmp_path / "cron" / "jobs.json"
+    service = CronService(store_path)
+    job = service.add_job(
+        name="rl",
+        schedule=CronSchedule(kind="every", every_ms=60_000),
+        message="hello",
+    )
+    store = service._load_store()
+    target = next(j for j in store.jobs if j.id == job.id)
+    target.state.retry_at_ms = 123456
+    target.state.rate_limit_retries = 2
+    service._save_store()
+
+    loaded = CronService(store_path).get_job(job.id)
+    assert loaded.state.retry_at_ms == 123456
+    assert loaded.state.rate_limit_retries == 2

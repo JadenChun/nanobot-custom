@@ -129,6 +129,13 @@ class CronJobState:
     last_status: Literal["ok", "error", "skipped"] | None = None
     last_error: str | None = None
     run_history: list[CronRunRecord] = field(default_factory=list)
+    # One-shot override of the next run (set by the job runner, e.g. to retry a
+    # task that failed on a transient 5-hour provider rate limit). When set it
+    # takes precedence over the schedule for exactly one run.
+    retry_at_ms: int | None = None
+    # Consecutive rate-limit reschedules; reset when a run succeeds. Bounds the
+    # automatic retry so a persistent limit cannot loop forever.
+    rate_limit_retries: int = 0
 
 
 @dataclass
