@@ -13,9 +13,6 @@ from typing import Any, cast
 
 import httpx
 from loguru import logger
-from oauth_cli_kit import get_token as get_codex_token
-from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
-from oauth_cli_kit.storage import FileTokenStorage
 
 from nanobot import __version__
 from nanobot.providers.base import (
@@ -26,6 +23,9 @@ from nanobot.providers.base import (
     ProviderConversationState,
     resolve_stream_idle_timeout_s,
 )
+from nanobot.providers.codex_auth import get_codex_authority, get_codex_credential_view
+from nanobot.providers.codex_auth import get_token as get_codex_token
+from nanobot.providers.oauth_credentials import OAuthToken as CanonicalToken
 from nanobot.providers.oauth_model_catalog import (
     OAuthModelCatalog,
     OAuthModelCatalogSnapshot,
@@ -634,21 +634,44 @@ def _should_retry_status(
 def get_openai_codex_model_catalog(
     proxy: str | None = None,
 ) -> OAuthModelCatalogSnapshot:
-    storage = FileTokenStorage(token_filename=OPENAI_CODEX_PROVIDER.token_filename)
-    token = storage.load()
-    account_id = getattr(token, "account_id", None)
-    account_key = _catalog_account_key(account_id)
-    cache_key = f"{storage.get_token_path()}\0{account_key}\0{proxy or ''}"
-    return _OPENAI_CODEX_MODEL_CATALOG.get(cache_key=cache_key, proxy=proxy)
+    view = get_codex_credential_view(proxy=proxy)
+    account_key = _catalog_account_key(view.token.account_id)
+    cache_key = f"{view.generation}\0{account_key}\0{proxy or ''}"
+    generation = view.generation
+
+    def generation_is_current() -> bool:
+        try:
+            latest = get_codex_authority().get_view_or_import()
+        except Exception:
+            return False
+        return latest is not None and latest.generation == generation
+
+    return _OPENAI_CODEX_MODEL_CATALOG.get(
+        cache_key=cache_key,
+        proxy=proxy,
+        fetch=lambda selected_proxy: _fetch_openai_codex_models(
+            selected_proxy, token=view.token
+        ),
+        generation_check=generation_is_current,
+    )
 
 
 def invalidate_openai_codex_model_catalog() -> None:
     _OPENAI_CODEX_MODEL_CATALOG.invalidate()
 
 
-def _fetch_openai_codex_models(proxy: str | None) -> tuple[ProviderModelSpec, ...]:
-    token = get_codex_token(proxy=proxy)
-    account_id = getattr(token, "account_id", None)
+def _fetch_openai_codex_models(
+    proxy: str | None,
+    *,
+    token: CanonicalToken | None = None,
+) -> tuple[ProviderModelSpec, ...]:
+    if token is None:
+        live_token = get_codex_token(proxy=proxy)
+        access = live_token.access
+        account_id = live_token.account_id
+    else:
+        access = token.access
+        account_id = token.account_id
     if not isinstance(account_id, str) or not account_id:
         raise RuntimeError("OpenAI Codex OAuth token has no account ID")
     client_kwargs: dict[str, Any] = {"timeout": 10.0, "follow_redirects": False}
@@ -659,7 +682,7 @@ def _fetch_openai_codex_models(proxy: str | None) -> tuple[ProviderModelSpec, ..
             DEFAULT_OPENAI_CODEX_MODELS_URL,
             params={"client_version": OPENAI_CODEX_CATALOG_CLIENT_VERSION},
             headers={
-                "Authorization": f"Bearer {token.access}",
+                "Authorization": f"Bearer {access}",
                 "chatgpt-account-id": account_id,
                 "originator": DEFAULT_ORIGINATOR,
                 "User-Agent": f"nanobot/{__version__} (python)",

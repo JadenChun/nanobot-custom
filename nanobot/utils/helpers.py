@@ -15,6 +15,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast, overload
+from zoneinfo import ZoneInfo
 
 import tiktoken
 from loguru import logger
@@ -354,6 +355,19 @@ def ensure_dir(path: Path) -> Path:
 def timestamp() -> str:
     """Current ISO timestamp."""
     return datetime.now().isoformat()
+
+
+def current_time_str(timezone: str | None = None) -> str:
+    """Format legacy runtime time, falling back to the local zone on invalid input."""
+    try:
+        tz = ZoneInfo(timezone) if timezone else None
+    except Exception:
+        tz = None
+    now = datetime.now(tz=tz) if tz else datetime.now().astimezone()
+    offset = now.strftime("%z")
+    offset_fmt = f"{offset[:3]}:{offset[3:]}" if len(offset) == 5 else offset
+    tz_name = timezone or (time.strftime("%Z") or "UTC")
+    return f"{now.strftime('%Y-%m-%d %H:%M (%A)')} ({tz_name}, UTC{offset_fmt})"
 
 
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*]')

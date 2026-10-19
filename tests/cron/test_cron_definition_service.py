@@ -103,7 +103,8 @@ def test_management_uses_typed_definitions_without_legacy_files(tmp_path: Path) 
 
     raw = service.definition_store.action_store.replay()
     assert raw.candidate is not None
-    assert raw.candidate["kind"] == "cron_definition_candidate_v1"
+    assert raw.candidate["kind"] == "cron_definition_candidate_v2"
+    assert len(raw.candidate["scheduling_commits"]) >= 1
     assert raw.pending_actions == ()
     assert "state" not in raw.candidate["definitions"][0]
     assert "createdAtMs" not in raw.candidate["definitions"][0]
@@ -369,7 +370,8 @@ def test_service_materializes_converted_operations_once(tmp_path: Path) -> None:
     assert [item.name for item in first] == ["Daily snapshot"]
     assert second == first
     assert raw.candidate is not None
-    assert raw.candidate["kind"] == "cron_definition_candidate_v1"
+    assert raw.candidate["kind"] == "cron_definition_candidate_v2"
+    assert raw.candidate["scheduling_commits"] == []
     assert "operations" not in raw.candidate
     assert settled.candidate == raw.candidate
     assert "state" not in json.dumps(settled.candidate, sort_keys=True)

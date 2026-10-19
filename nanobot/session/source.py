@@ -8,8 +8,9 @@ import hashlib
 import json
 import math
 import secrets
+from collections.abc import Sequence
 from copy import deepcopy
-from typing import Any
+from typing import Any, cast
 
 
 class SourceValidationError(ValueError):
@@ -22,17 +23,19 @@ def _validate_json(value: object) -> None:
     if type(value) is float and math.isfinite(value):
         return
     if isinstance(value, list):
-        for item in value:
+        for item in cast(list[object], value):
             _validate_json(item)
         return
-    if isinstance(value, dict) and all(isinstance(key, str) for key in value):
-        for item in value.values():
+    if isinstance(value, dict) and all(
+        isinstance(key, str) for key in cast(dict[object, object], value)
+    ):
+        for item in cast(dict[object, object], value).values():
             _validate_json(item)
         return
     raise SourceValidationError("Invalid source representation")
 
 
-def canonical_events(events: list[dict[str, Any]]) -> bytes:
+def canonical_events(events: object) -> bytes:
     """Version 1 canonical representation, including persisted internal fields."""
     try:
         _validate_json(events)
@@ -49,7 +52,7 @@ def prefix_digest(events: list[dict[str, Any]], boundary: int) -> str:
     return hashlib.sha256(canonical_events(events[:boundary])).hexdigest()
 
 
-def new_source_event(payload: dict[str, Any], *, run_id: str) -> dict[str, Any]:
+def new_source_event(payload: object, *, run_id: object) -> dict[str, Any]:
     """Detach untrusted payload and assign trusted attribution before persistence.
 
     Execution links are assigned separately by the runtime after allocating an
@@ -59,22 +62,26 @@ def new_source_event(payload: dict[str, Any], *, run_id: str) -> dict[str, Any]:
         raise SourceValidationError("Invalid source run identity")
     if not isinstance(payload, dict):
         raise SourceValidationError("Invalid source event representation")
-    canonical_events([payload])
-    event = deepcopy(payload)
-    for key in ("_event_id", "_run_id", "_execution_id", "_execution_ids", "_source_origin", "_artifact_read"):
+    payload_values = cast(dict[object, object], payload)
+    canonical_events([payload_values])
+    # Recursive canonical validation established string keys for this JSON object.
+    event = deepcopy(cast(dict[str, Any], payload_values))
+    for key in ("_event_id", "_run_id", "_execution_id", "_execution_ids", "_source_origin", "_artifact_read", "_busy_input_id"):
         event.pop(key, None)
     event.update(_event_id=secrets.token_hex(16), _run_id=run_id)
     canonical_events([event])
     return event
 
 
-def validate_event_ids(events: list[dict[str, Any]]) -> None:
+def validate_event_ids(events: object) -> None:
     if not isinstance(events, list):
         raise SourceValidationError("Invalid source event representation")
     seen: set[str] = set()
-    for event in events:
-        if not isinstance(event, dict):
+    event_values = cast(list[object], events)
+    for raw_event in event_values:
+        if not isinstance(raw_event, dict):
             raise SourceValidationError("Invalid source event representation")
+        event = cast(dict[object, object], raw_event)
         identity = event.get("_event_id")
         if not isinstance(identity, str) or not identity.strip() or identity in seen:
             raise SourceValidationError("Invalid source event identity")
@@ -82,7 +89,7 @@ def validate_event_ids(events: list[dict[str, Any]]) -> None:
         if run_id is not None and (not isinstance(run_id, str) or not run_id.strip()):
             raise SourceValidationError("Invalid source run identity")
         seen.add(identity)
-    canonical_events(events)
+    canonical_events(event_values)
 
 
 def merge_source_events(
@@ -122,14 +129,16 @@ def validate_closed_boundary(events: list[dict[str, Any]], boundary: int) -> Non
         raise SourceValidationError("Unresolved source execution boundary")
 
 
-def validate_execution_links(events: list[dict[str, Any]]) -> frozenset[str]:
+def validate_execution_links(events: Sequence[object]) -> frozenset[str]:
     """Validate committed call/result evidence, permitting unresolved tail calls."""
     canonical_events(events)
     pending: dict[str, tuple[str, object]] = {}
     used: set[str] = set()
-    for event in events:
-        if not isinstance(event, dict):
+    for raw_event in events:
+        if not isinstance(raw_event, dict):
             raise SourceValidationError("Invalid source event representation")
+        # canonical_events above established the recursive JSON key invariant.
+        event = cast(dict[str, Any], raw_event)
         calls = event.get("tool_calls")
         if "tool_calls" in event:
             identities = event.get("_execution_ids")
@@ -137,20 +146,19 @@ def validate_execution_links(events: list[dict[str, Any]]) -> frozenset[str]:
                 event.get("role") != "assistant"
                 or not isinstance(calls, list)
                 or not isinstance(identities, list)
-                or len(identities) != len(calls)
+                or len(cast(list[object], identities)) != len(cast(list[object], calls))
             ):
                 raise SourceValidationError("Invalid source execution linkage")
-            for identity, call in zip(identities, calls):
+            for identity, call in zip(cast(list[object], identities), cast(list[object], calls)):
                 if not isinstance(identity, str) or not identity.strip() or identity in used:
                     raise SourceValidationError("Invalid source execution identity")
-                if (
-                    not isinstance(call, dict)
-                    or not isinstance(call.get("id"), str)
-                    or not call["id"].strip()
-                ):
+                if not isinstance(call, dict):
+                    raise SourceValidationError("Invalid source provider call identity")
+                provider_id = cast(dict[object, object], call).get("id")
+                if not isinstance(provider_id, str) or not provider_id.strip():
                     raise SourceValidationError("Invalid source provider call identity")
                 used.add(identity)
-                pending[identity] = (call["id"], event.get("_run_id"))
+                pending[identity] = (provider_id, event.get("_run_id"))
         if event.get("role") == "tool":
             identity = event.get("_execution_id")
             if not isinstance(identity, str) or identity not in pending:

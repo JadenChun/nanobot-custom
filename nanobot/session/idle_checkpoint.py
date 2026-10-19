@@ -18,46 +18,81 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from contextlib import nullcontext
+from contextlib import nullcontext as nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, NoReturn, Protocol, cast
 
 from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
 from nanobot.session.artifact import (
     ArtifactDescriptor,
     ArtifactValidationError,
-    parse_artifact_descriptor,
-    published_artifacts,
 )
-from nanobot.session.artifact_store import (
-    ArtifactBlobTransaction,
-    ArtifactStorageBusyError,
-    PrivateArtifactStore,
+from nanobot.session.artifact import (
+    parse_artifact_descriptor as parse_artifact_descriptor,
 )
+from nanobot.session.artifact import (
+    published_artifacts as published_artifacts,
+)
+from nanobot.session.artifact_store import ArtifactBlobTransaction, PrivateArtifactStore
+from nanobot.session.artifact_store import ArtifactStorageBusyError as ArtifactStorageBusyError
 from nanobot.session.artifact_verification import verify_published_artifact
 from nanobot.session.checkpoint_dependencies import (
     SummaryDependencyProof,
     derive_summary_references,
 )
 from nanobot.session.context_checkpoint import validate_context_checkpoint
-from nanobot.session.execution_owner import ExecutionBusyError, execution_transaction
-from nanobot.session.idle_compaction import (
-    IdleCaptureConflictError,
-    IdleCaptureToken,
-    capture_idle_token,
-    validate_idle_capture,
-)
+from nanobot.session.execution_owner import ExecutionBusyError as ExecutionBusyError
+from nanobot.session.execution_owner import execution_transaction as execution_transaction
+from nanobot.session.idle_compaction import IdleCaptureConflictError as IdleCaptureConflictError
+from nanobot.session.idle_compaction import IdleCaptureToken, capture_idle_token
+from nanobot.session.idle_compaction import validate_idle_capture as validate_idle_capture
 from nanobot.session.source import SourceValidationError
-from nanobot.session.source_root import SourceRootAuthority, SourceRootAuthorityError
+from nanobot.session.source_root import SourceRootAuthority
+from nanobot.session.source_root import (
+    SourceRootAuthorityError as SourceRootAuthorityError,
+)
 
 if TYPE_CHECKING:
     from nanobot.context_repo.policy import ResourceAccessPolicy
+    from nanobot.session.source_projection import SourceNode
     from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
 
 
 _CAPABILITY = object()
 _UNBOUND_ATTESTATION = object()
+
+
+class _IdleSourceBinding(Protocol):
+    @property
+    def source_store(self) -> object: ...
+
+
+@dataclass(frozen=True, slots=True, repr=False, eq=False)
+class IdleSourceIdentityObservation:
+    """One opaque identity operand, not an admission or storage capability.
+
+    The observation retains the source read at its caller's original argument
+    boundary. It can only compare identity; all attestation, live transport and
+    current-binding checks remain mandatory at their existing boundaries.
+    """
+
+    _source: object = field(repr=False)
+
+    def __repr__(self) -> str:
+        return "<idle-source-identity observation>"
+
+    def matches_source(self, source: object) -> bool:
+        return self._source is source
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("Idle source identity observation cannot be serialized")
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("Idle source identity observation cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        raise TypeError("Idle source identity observation cannot be copied")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +113,42 @@ class _IdleCaptureAttestation:
     _dependency_id: int | None = field(repr=False)
     _descriptor_digest: str | None
     _root_authority: SourceRootAuthority | None = field(repr=False)
+
+    def require_capture(
+        self,
+        capture: IdleCheckpointCapture,
+    ) -> None:
+        """Validate sealed fields through the exact capture's original live reads."""
+
+        if (
+            self._capability is not _CAPABILITY
+            or self._capture_id != id(capture)
+            or not IdleCheckpointCapture.matches_nonce(capture, self._nonce)
+            or self._token is not capture.token
+            or not IdleCheckpointCapture.matches_source(capture, self._source)
+            or self._runtime_fingerprint != capture.runtime_fingerprint
+            or self._policy_fingerprint != capture.policy_fingerprint
+            or self._root_authority is not capture.root_authority
+        ):
+            raise IdleCheckpointError("Idle capture attestation changed")
+        IdleCheckpointCapture.require_source_kind(capture)
+        IdleCheckpointCapture.require_artifact_binding(capture, self._store, self._store_binding)
+        snapshot_digest = _snapshot_digest(capture.snapshot)
+        if snapshot_digest != self._snapshot_digest:
+            raise IdleCheckpointError("Idle capture snapshot changed")
+        dependencies = capture.dependencies
+        if (dependencies is not None) != self._dependency_present:
+            raise IdleCheckpointError("Idle capture dependency authority changed")
+        if dependencies is None:
+            if self._dependency_id is not None or self._descriptor_digest is not None:
+                raise IdleCheckpointError("Idle capture dependency authority changed")
+            return
+        if type(dependencies) is not IdleDependencyAccess or self._dependency_id != id(dependencies):
+            raise IdleCheckpointError("Idle capture dependency authority changed")
+        IdleDependencyAccess.require_sealed_binding(
+            dependencies, capture, snapshot_digest=snapshot_digest,
+            descriptor_digest=self._descriptor_digest,
+        )
 
 
 class IdleCheckpointError(SourceValidationError):
@@ -106,11 +177,11 @@ class IdlePolicyBinding:
     resolve_read: Callable[[str], Path]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.fingerprint, str) or not self.fingerprint.strip():
+        if not isinstance(cast(object, self.fingerprint), str) or not self.fingerprint.strip():
             raise IdleCheckpointError("Invalid idle policy fingerprint")
         if not callable(self.resolve_read):
             raise IdleCheckpointError("Invalid idle policy resolver")
-        if self.workspace is not None and not isinstance(self.workspace, Path):
+        if self.workspace is not None and not isinstance(cast(object, self.workspace), Path):
             raise IdleCheckpointError("Invalid idle policy workspace")
 
 
@@ -154,18 +225,20 @@ class IdleDependencyAccess:
         if any(type(item) is not ArtifactDescriptor for item in self._descriptors):
             raise IdleCheckpointError("Invalid idle dependency descriptor")
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("Idle dependency access cannot be serialized")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> IdleDependencyAccess:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("Idle dependency access cannot be copied")
 
     def _matches_capture(self, source: SourceSessionStore, capture: IdleCheckpointCapture) -> bool:
+        from nanobot.session.source_store import SourceSessionStore
+
         return (
             self._source is source
-            and self._capture_nonce is capture._nonce
+            and IdleCheckpointCapture.matches_nonce(capture, self._capture_nonce)
             and self._token is capture.token
-            and self._store is source._artifact_store
+            and SourceSessionStore.matches_configured_artifact_store(source, self._store)
             and self._store.workspace_id == self._workspace_id
             and self._store.session_key == self._session_key
             and self._store.incarnation == self._incarnation
@@ -175,6 +248,48 @@ class IdleDependencyAccess:
             and self._snapshot_digest == _snapshot_digest(self._snapshot)
             and self._snapshot_digest == _snapshot_digest(capture.snapshot)
         )
+
+    def matches_capture(self, source: SourceSessionStore, capture: IdleCheckpointCapture) -> bool:
+        """Retain the live capture matcher without exposing dependency authority."""
+        return self._matches_capture(source, capture)
+
+    def differs_from_summary_binding(
+        self, binding: _IdleSourceBinding, policy: IdlePolicyBinding,
+    ) -> bool:
+        """Compare source then policy through their original live operand reads."""
+        return (
+            self._source is not binding.source_store
+            or self._policy_fingerprint != policy.fingerprint
+        )
+
+    def descriptor_digest(self) -> str:
+        """Hash the sealed descriptors through the current helper, returning no grants."""
+        return _descriptor_digest(self._descriptors)
+
+    def descriptors_differ(self, descriptors: tuple[ArtifactDescriptor, ...]) -> bool:
+        """Retain tuple conversion and comparison without returning the allowlist."""
+        return tuple(self._descriptors) != descriptors
+
+    def require_sealed_binding(
+        self,
+        capture: IdleCheckpointCapture,
+        *,
+        snapshot_digest: str,
+        descriptor_digest: str | None,
+    ) -> None:
+        """Validate dependency fields after the capture's exact-type/id checks."""
+
+        if (
+            not IdleCheckpointCapture.matches_source(capture, self._source)
+            or not IdleCheckpointCapture.matches_nonce(capture, self._capture_nonce)
+            or self._token is not capture.token
+            or not IdleCheckpointCapture.matches_artifact_store(capture, self._store)
+            or self._policy_fingerprint != capture.policy_fingerprint
+            or self._snapshot_digest != snapshot_digest
+            or _snapshot_digest(self._snapshot) != self._snapshot_digest
+            or descriptor_digest != _descriptor_digest(self._descriptors)
+        ):
+            raise IdleCheckpointError("Idle capture dependency authority changed")
 
     def _verify(
         self,
@@ -198,6 +313,61 @@ class IdleDependencyAccess:
             resolve_read=policy.resolve_read,
             root_history=True,
         )
+
+    def matches_configured_store(
+        self,
+        store: PrivateArtifactStore | None,
+    ) -> bool:
+        """Compare the exact configured store without exposing sealed authority."""
+
+        return store is self._store
+
+    def publish_in_artifact_transaction(
+        self,
+        source: SourceSessionStore,
+        key: str,
+        capture: IdleCheckpointCapture,
+        validated: dict[str, object],
+        references: tuple[str, ...],
+        proof: SummaryDependencyProof | None,
+        *,
+        policy: IdlePolicyBinding,
+        root_authority: SourceRootAuthority | None,
+    ) -> SourceSnapshot:
+        """Publish through one held artifact transaction and fixed source operation."""
+
+        from nanobot.session.source_store import SourceSessionStore
+
+        with self._store.transaction(blocking=False) as blobs:
+            blobs.assert_reachable()
+            return SourceSessionStore.publish_idle_checkpoint_in_execution_transaction(
+                source,
+                key,
+                capture,
+                validated,
+                references,
+                proof,
+                policy=policy,
+                blobs=blobs,
+                root_authority=root_authority,
+            )
+
+    @staticmethod
+    def verify_captured_references(
+        capture: IdleCheckpointCapture,
+        references: tuple[str, ...],
+        snapshot: SourceSnapshot,
+        proof: SummaryDependencyProof | None,
+        blobs: ArtifactBlobTransaction | None,
+        policy: IdlePolicyBinding | None,
+    ) -> None:
+        """Verify captured references under the existing artifact and source locks."""
+
+        if proof is None or blobs is None or capture.dependencies is None or policy is None:
+            raise IdleCheckpointError("Idle dependency access is unavailable")
+        for reference in references:
+            capture.dependencies._verify(reference, snapshot, blobs, policy)
+        blobs.assert_reachable()
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,7 +393,7 @@ class IdleCheckpointCapture:
             ("runtime", self.runtime_fingerprint),
             ("policy", self.policy_fingerprint),
         ):
-            if not isinstance(value, str) or not value.strip():
+            if not isinstance(cast(object, value), str) or not value.strip():
                 raise IdleCheckpointError(f"Invalid idle {name} fingerprint")
         if self.dependencies is not None and type(self.dependencies) is not IdleDependencyAccess:
             raise IdleCheckpointError("Invalid idle dependency capability")
@@ -233,11 +403,249 @@ class IdleCheckpointCapture:
         ):
             raise IdleCheckpointError("Invalid idle capture attestation")
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("Idle checkpoint capture cannot be serialized")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> IdleCheckpointCapture:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("Idle checkpoint capture cannot be copied")
+
+    def require_attestation(self) -> None:
+        """Require the factory-issued, immutable identity for one exact capture."""
+
+        if type(self) is not IdleCheckpointCapture:
+            raise IdleCheckpointError("Invalid idle checkpoint capture")
+        attestation = self._attestation
+        if type(attestation) is not _IdleCaptureAttestation:
+            raise IdleCheckpointError("Idle capture attestation changed")
+        _IdleCaptureAttestation.require_capture(attestation, self)
+
+    def matches_nonce(self, nonce: object) -> bool:
+        """Observe exact nonce identity without exposing the sealed nonce."""
+        return self._nonce is nonce
+
+    def matches_source(self, source: SourceSessionStore) -> bool:
+        """Observe exact source identity without returning its authority."""
+        return self._source is source
+
+    def matches_binding(self, binding: _IdleSourceBinding) -> bool:
+        """Retain the binding-before-capture source identity comparison."""
+        return binding.source_store is self._source
+
+    def observe_source_identity(self) -> IdleSourceIdentityObservation:
+        """Read one live source operand without returning usable source authority."""
+        return IdleSourceIdentityObservation(self._source)
+
+    def matches_dependencies(self, dependencies: IdleDependencyAccess) -> bool:
+        """Compare dependency authority against this capture's current source."""
+        return dependencies.matches_capture(self._source, self)
+
+    def require_source_kind(self) -> None:
+        """Retain the original source-class rejection and live helper lookup."""
+        if type(self._source) is not _source_store_type():
+            raise IdleCheckpointError("Idle capture source binding changed")
+
+    def require_artifact_binding(
+        self,
+        expected_store: PrivateArtifactStore | None,
+        expected_binding: tuple[str, str, str, int] | None,
+    ) -> None:
+        """Check the original live source's configured binding without returning it."""
+        from nanobot.session.source_store import SourceSessionStore
+
+        SourceSessionStore.require_idle_artifact_binding(self._source, expected_store, expected_binding)
+
+    def matches_artifact_store(self, store: PrivateArtifactStore | None) -> bool:
+        """Observe the original live source's store identity, not admission."""
+        from nanobot.session.source_store import SourceSessionStore
+
+        return SourceSessionStore.matches_configured_artifact_store(self._source, store)
+
+    def captured_root_descriptors(self) -> tuple[ArtifactDescriptor, ...]:
+        """Read captured root descriptors through the selected source, not its store."""
+        source = self._source
+        from nanobot.session.source_store import SourceSessionStore
+
+        return SourceSessionStore.captured_idle_root_descriptors(source, self)
+
+    @staticmethod
+    def admit_source_capture(
+        source: SourceSessionStore,
+        *,
+        runtime_fingerprint: str,
+        policy_fingerprint: str,
+        policy: IdlePolicyBinding | None,
+        root_authority: SourceRootAuthority | None,
+    ) -> tuple[str, str]:
+        """Validate the existing source capture admission before storage access."""
+
+        if type(source) is not _source_store_type():
+            raise IdleCheckpointError("Invalid idle source store")
+        runtime_fingerprint = _validate_fingerprint(runtime_fingerprint, "runtime")
+        policy_fingerprint = _validate_fingerprint(policy_fingerprint, "policy")
+        if policy is not None and policy.fingerprint != policy_fingerprint:
+            raise IdleCheckpointError("Idle policy fingerprint does not match binding")
+        _validate_root_authority(source, root_authority)
+        return runtime_fingerprint, policy_fingerprint
+
+    @staticmethod
+    def issue_from_snapshot(
+        source: SourceSessionStore,
+        key: str,
+        snapshot: SourceSnapshot,
+        *,
+        runtime_fingerprint: str,
+        policy_fingerprint: str,
+        policy: IdlePolicyBinding | None,
+        runtime_checkpoint_present: bool,
+        root_authority: SourceRootAuthority | None,
+    ) -> IdleCheckpointCapture | None:
+        """Issue one sealed idle capture from a lock-held source snapshot."""
+
+        token = capture_idle_token(snapshot, runtime_checkpoint_present=runtime_checkpoint_present)
+        if token is None:
+            return None
+        detached_snapshot = copy.deepcopy(snapshot)
+        nonce = object()
+        from nanobot.session.source_store import SourceSessionStore
+
+        return SourceSessionStore.issue_idle_capture_artifacts(
+            source, IdleCaptureIssuer(_CAPABILITY, source), snapshot, token, detached_snapshot, nonce,
+            runtime_fingerprint=runtime_fingerprint,
+            policy_fingerprint=policy_fingerprint,
+            policy=policy,
+            root_authority=root_authority,
+        )
+
+    @staticmethod
+    def prepare_source_publication(
+        source: SourceSessionStore,
+        key: str,
+        capture: IdleCheckpointCapture,
+        candidate: dict[str, object],
+        *,
+        runtime_fingerprint: str,
+        policy_fingerprint: str,
+        policy: IdlePolicyBinding | None,
+        proof: SummaryDependencyProof | None,
+        root_authority: SourceRootAuthority | None,
+    ) -> tuple[dict[str, object], tuple[str, ...], SummaryDependencyProof | None]:
+        """Detach and validate the existing publication proposal before transactions."""
+
+        if type(source) is not _source_store_type():
+            raise IdleCheckpointError("Invalid idle source store")
+        runtime_fingerprint = _validate_fingerprint(runtime_fingerprint, "runtime")
+        policy_fingerprint = _validate_fingerprint(policy_fingerprint, "policy")
+        if policy is not None and policy.fingerprint != policy_fingerprint:
+            raise IdleCheckpointError("Idle policy fingerprint does not match binding")
+        _validate_capture_for_source(
+            source,
+            key,
+            capture,
+            runtime_fingerprint=runtime_fingerprint,
+            policy_fingerprint=policy_fingerprint,
+            root_authority=root_authority,
+        )
+        validated, references, detached_proof = _candidate_and_proof(capture, candidate, proof)
+        return validated, references, detached_proof
+
+
+@dataclass(frozen=True, slots=True, repr=False, eq=False)
+class IdleCaptureIssuer:
+    """Source-bound construction service, never a publication or storage proof."""
+
+    _capability: object = field(repr=False)
+    _source: SourceSessionStore = field(repr=False)
+
+    def __post_init__(self) -> None:
+        if type(self) is not IdleCaptureIssuer or self._capability is not _CAPABILITY:
+            raise IdleCheckpointError("Invalid idle capture issuer")
+
+    def __repr__(self) -> str:
+        return "<idle capture issuer>"
+
+    def __reduce__(self) -> NoReturn:
+        raise TypeError("Idle capture issuer cannot be serialized")
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("Idle capture issuer cannot be copied")
+
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
+        raise TypeError("Idle capture issuer cannot be copied")
+
+    def require_source(self, source: SourceSessionStore) -> None:
+        if (
+            type(self) is not IdleCaptureIssuer
+            or self._capability is not _CAPABILITY
+            or self._source is not source
+        ):
+            raise IdleCheckpointError("Invalid idle capture issuer")
+
+    @staticmethod
+    def root_descriptors(source: SourceSessionStore, snapshot: SourceSnapshot) -> tuple[ArtifactDescriptor, ...]:
+        return _root_descriptors(source, snapshot)
+
+    @staticmethod
+    def snapshot_digest(snapshot: SourceSnapshot) -> str:
+        return _snapshot_digest(snapshot)
+
+    def dependency_constructor(
+        self, source: SourceSessionStore, nonce: object, token: IdleCaptureToken,
+    ) -> Callable[[PrivateArtifactStore, str, str, str, int, str, SourceSnapshot, str, tuple[ArtifactDescriptor, ...]], IdleDependencyAccess]:
+        """Select the real constructor and prefix before its live store operands."""
+        IdleCaptureIssuer.require_source(self, source)
+        constructor, capability = IdleDependencyAccess, _CAPABILITY
+
+        def construct(
+            store: PrivateArtifactStore, workspace_id: str, session_key: str,
+            incarnation: str, generation: int, policy_fingerprint: str,
+            snapshot: SourceSnapshot, snapshot_digest: str, descriptors: tuple[ArtifactDescriptor, ...],
+        ) -> IdleDependencyAccess:
+            return constructor(
+                capability, source, nonce, token, store, workspace_id, session_key,
+                incarnation, generation, policy_fingerprint, snapshot, snapshot_digest, descriptors,
+            )
+
+        return construct
+
+    def make_capture(
+        self, source: SourceSessionStore, token: IdleCaptureToken, detached_snapshot: SourceSnapshot,
+        runtime_fingerprint: str, policy_fingerprint: str, nonce: object,
+        dependencies: IdleDependencyAccess | None, root_authority: SourceRootAuthority | None,
+    ) -> IdleCheckpointCapture:
+        IdleCaptureIssuer.require_source(self, source)
+        return IdleCheckpointCapture(
+            token, detached_snapshot,
+            _validate_fingerprint(runtime_fingerprint, "runtime"),
+            _validate_fingerprint(policy_fingerprint, "policy"),
+            source, nonce, dependencies, root_authority, _UNBOUND_ATTESTATION,
+        )
+
+    def attestation_constructor(
+        self, source: SourceSessionStore, capture: IdleCheckpointCapture, nonce: object,
+        token: IdleCaptureToken,
+    ) -> Callable[[PrivateArtifactStore | None, tuple[str, str, str, int] | None, SourceSnapshot, IdleDependencyAccess | None], None]:
+        """Keep the attestation constructor selection before configured-store reads."""
+        IdleCaptureIssuer.require_source(self, source)
+        bind_attestation = object.__setattr__
+        constructor, capability, capture_id = _IdleCaptureAttestation, _CAPABILITY, id(capture)
+
+        def construct(
+            store: PrivateArtifactStore | None, store_binding: tuple[str, str, str, int] | None,
+            detached_snapshot: SourceSnapshot, dependencies: IdleDependencyAccess | None,
+        ) -> None:
+            bind_attestation(
+                capture, "_attestation",
+                constructor(
+                    capability, capture_id, nonce, token, source, store, store_binding,
+                    capture.runtime_fingerprint, capture.policy_fingerprint,
+                    _snapshot_digest(detached_snapshot), dependencies is not None,
+                    id(dependencies) if dependencies is not None else None,
+                    dependencies.descriptor_digest() if dependencies is not None else None,
+                    capture.root_authority,
+                ),
+            )
+
+        return construct
 
 
 def _validate_fingerprint(value: object, label: str) -> str:
@@ -295,68 +703,16 @@ def _descriptor_digest(descriptors: tuple[ArtifactDescriptor, ...]) -> str:
 def _validate_capture_attestation(capture: IdleCheckpointCapture) -> None:
     """Require the factory-issued, immutable identity for one exact capture."""
 
-    if type(capture) is not IdleCheckpointCapture:
-        raise IdleCheckpointError("Invalid idle checkpoint capture")
-    attestation = capture._attestation
-    if (
-        type(attestation) is not _IdleCaptureAttestation
-        or attestation._capability is not _CAPABILITY
-        or attestation._capture_id != id(capture)
-        or attestation._nonce is not capture._nonce
-        or attestation._token is not capture.token
-        or attestation._source is not capture._source
-        or attestation._runtime_fingerprint != capture.runtime_fingerprint
-        or attestation._policy_fingerprint != capture.policy_fingerprint
-        or attestation._root_authority is not capture.root_authority
-    ):
-        raise IdleCheckpointError("Idle capture attestation changed")
-    if type(capture._source) is not _source_store_type():
-        raise IdleCheckpointError("Idle capture source binding changed")
-    store = capture._source._artifact_store
-    store_binding = (
-        None
-        if store is None
-        else (store.workspace_id, store.session_key, store.incarnation, store.generation)
-    )
-    if attestation._store is not store or attestation._store_binding != store_binding:
-        raise IdleCheckpointError("Idle capture artifact store binding changed")
-    snapshot_digest = _snapshot_digest(capture.snapshot)
-    if snapshot_digest != attestation._snapshot_digest:
-        raise IdleCheckpointError("Idle capture snapshot changed")
-    dependencies = capture.dependencies
-    if (dependencies is not None) != attestation._dependency_present:
-        raise IdleCheckpointError("Idle capture dependency authority changed")
-    if dependencies is None:
-        if attestation._dependency_id is not None or attestation._descriptor_digest is not None:
-            raise IdleCheckpointError("Idle capture dependency authority changed")
-        return
-    if (
-        type(dependencies) is not IdleDependencyAccess
-        or attestation._dependency_id != id(dependencies)
-        or dependencies._source is not capture._source
-        or dependencies._capture_nonce is not capture._nonce
-        or dependencies._token is not capture.token
-        or dependencies._store is not capture._source._artifact_store
-        or dependencies._policy_fingerprint != capture.policy_fingerprint
-        or dependencies._snapshot_digest != snapshot_digest
-        or _snapshot_digest(dependencies._snapshot) != dependencies._snapshot_digest
-        or attestation._descriptor_digest != _descriptor_digest(dependencies._descriptors)
-    ):
-        raise IdleCheckpointError("Idle capture dependency authority changed")
+    return IdleCheckpointCapture.require_attestation(capture)
 
 
 def _validate_root_authority(
     source: SourceSessionStore,
     root_authority: SourceRootAuthority | None,
 ) -> None:
-    if root_authority is None:
-        return
-    if type(root_authority) is not SourceRootAuthority:
-        raise IdleCheckpointError("Invalid idle source-root authority")
-    try:
-        root_authority.require_current(source._backend)
-    except SourceRootAuthorityError:
-        raise IdleCheckpointConflict("Idle source-root authority changed") from None
+    from nanobot.session.source_store import SourceSessionStore
+
+    return SourceSessionStore.require_idle_root_authority(source, root_authority)
 
 
 def _root_descriptors(
@@ -365,28 +721,9 @@ def _root_descriptors(
 ) -> tuple[ArtifactDescriptor, ...]:
     """Return only current manifest descriptors from root-history events."""
 
-    store = source._artifact_store
-    if store is None:
-        return ()
-    if (
-        store.workspace_id != source._backend.sessions_dir.name
-        or store.session_key != snapshot.state.session_key
-        or store.incarnation != snapshot.state.incarnation
-        or store.generation != snapshot.state.generation
-        or snapshot.state.store_identity != source._store_identity
-    ):
-        raise ArtifactValidationError("Idle artifact store binding changed")
-    descriptors = published_artifacts(snapshot, workspace_id=store.workspace_id)
-    root: list[ArtifactDescriptor] = []
-    for descriptor in descriptors:
-        event = next((row for row in snapshot.events if row.get("_event_id") == descriptor.event_id), None)
-        if (
-            event is not None
-            and event.get("_parent_stream_id") is None
-            and descriptor.stream_id == event.get("_stream_id")
-        ):
-            root.append(parse_artifact_descriptor(descriptor.to_dict()))
-    return tuple(root)
+    from nanobot.session.source_store import SourceSessionStore
+
+    return SourceSessionStore.idle_root_descriptors(source, snapshot)
 
 
 def _captured_root_descriptors(
@@ -394,31 +731,18 @@ def _captured_root_descriptors(
 ) -> tuple[ArtifactDescriptor, ...]:
     """Validate and return only root descriptors from the detached capture."""
 
-    source = capture._source
-    store = source._artifact_store
-    if store is None:
-        metadata = capture.snapshot.header.get("metadata")
-        if not isinstance(metadata, dict) or "artifact_manifest" not in metadata:
-            return ()
-        manifest = metadata["artifact_manifest"]
-        if (
-            not isinstance(manifest, dict)
-            or set(manifest) != {"schema_version", "descriptors"}
-            or type(manifest["schema_version"]) is not int
-            or manifest["schema_version"] != 1
-            or not isinstance(manifest["descriptors"], dict)
-        ):
-            raise ArtifactValidationError("Invalid artifact manifest schema")
-        if manifest["descriptors"]:
-            raise ArtifactValidationError("Idle artifact store binding is unavailable")
-        return ()
-    return _root_descriptors(source, capture.snapshot)
+    return IdleCheckpointCapture.captured_root_descriptors(capture)
+
+
+def select_idle_root_descriptor_reader() -> Callable[[SourceSessionStore, SourceSnapshot], tuple[ArtifactDescriptor, ...]]:
+    """Select the original late descriptor reader, not storage or admission authority."""
+    return _root_descriptors
 
 
 def project_idle_root_nodes(
     capture: IdleCheckpointCapture,
     nodes: tuple[object, ...],
-) -> tuple[object, ...]:
+) -> tuple[SourceNode, ...]:
     """Project captured root producer nodes through sealed artifact descriptors.
 
     This is the I2-to-I3c projection boundary.  It reads only the detached
@@ -451,11 +775,11 @@ def project_idle_root_nodes(
         if descriptors:
             raise IdleCheckpointError("Idle dependency capability is unavailable")
         return tuple(copy.deepcopy(node) for node in canonical)
-    if type(access) is not IdleDependencyAccess or not access._matches_capture(
-        capture._source, capture
+    if type(access) is not IdleDependencyAccess or not IdleCheckpointCapture.matches_dependencies(
+        capture, access
     ):
         raise IdleCheckpointError("Idle dependency capability binding changed")
-    if tuple(access._descriptors) != descriptors:
+    if access.descriptors_differ(descriptors):
         raise IdleCheckpointError("Idle dependency descriptor allowlist changed")
 
     by_event: dict[str, ArtifactDescriptor] = {}
@@ -490,71 +814,16 @@ def _capture_with_snapshot(
     runtime_checkpoint_present: bool,
     root_authority: SourceRootAuthority | None,
 ) -> IdleCheckpointCapture | None:
-    token = capture_idle_token(snapshot, runtime_checkpoint_present=runtime_checkpoint_present)
-    if token is None:
-        return None
-    detached_snapshot = copy.deepcopy(snapshot)
-    nonce = object()
-    dependencies = None
-    if source._artifact_store is not None and policy is not None:
-        dependency_snapshot = copy.deepcopy(detached_snapshot)
-        descriptors = _root_descriptors(source, dependency_snapshot)
-        dependencies = IdleDependencyAccess(
-            _CAPABILITY,
-            source,
-            nonce,
-            token,
-            source._artifact_store,
-            source._artifact_store.workspace_id,
-            snapshot.state.session_key,
-            snapshot.state.incarnation,
-            snapshot.state.generation,
-            policy.fingerprint,
-            dependency_snapshot,
-            _snapshot_digest(dependency_snapshot),
-            descriptors,
-        )
-    capture = IdleCheckpointCapture(
-        token,
-        detached_snapshot,
-        _validate_fingerprint(runtime_fingerprint, "runtime"),
-        _validate_fingerprint(policy_fingerprint, "policy"),
+    return IdleCheckpointCapture.issue_from_snapshot(
         source,
-        nonce,
-        dependencies,
-        root_authority,
-        _UNBOUND_ATTESTATION,
+        key,
+        snapshot,
+        runtime_fingerprint=runtime_fingerprint,
+        policy_fingerprint=policy_fingerprint,
+        policy=policy,
+        runtime_checkpoint_present=runtime_checkpoint_present,
+        root_authority=root_authority,
     )
-    object.__setattr__(
-        capture,
-        "_attestation",
-        _IdleCaptureAttestation(
-            _CAPABILITY,
-            id(capture),
-            nonce,
-            token,
-            source,
-            source._artifact_store,
-            (
-                None
-                if source._artifact_store is None
-                else (
-                    source._artifact_store.workspace_id,
-                    source._artifact_store.session_key,
-                    source._artifact_store.incarnation,
-                    source._artifact_store.generation,
-                )
-            ),
-            capture.runtime_fingerprint,
-            capture.policy_fingerprint,
-            _snapshot_digest(detached_snapshot),
-            dependencies is not None,
-            id(dependencies) if dependencies is not None else None,
-            _descriptor_digest(dependencies._descriptors) if dependencies is not None else None,
-            capture.root_authority,
-        ),
-    )
-    return capture
 
 
 def capture_idle_checkpoint(
@@ -568,44 +837,16 @@ def capture_idle_checkpoint(
 ) -> IdleCheckpointCapture | None:
     """Capture idle source and dependency state without holding a lock for compute."""
 
-    if type(source) is not _source_store_type():
-        raise IdleCheckpointError("Invalid idle source store")
-    runtime_fingerprint = _validate_fingerprint(runtime_fingerprint, "runtime")
-    policy_fingerprint = _validate_fingerprint(policy_fingerprint, "policy")
-    if policy is not None and policy.fingerprint != policy_fingerprint:
-        raise IdleCheckpointError("Idle policy fingerprint does not match binding")
-    _validate_root_authority(source, root_authority)
-    backend = source._backend
-    if root_authority is None:
-        with backend.locked_session_files():
-            header, events = source._read_unlocked(key)
-            snapshot = source._snapshot(header, events)
-            return _capture_with_snapshot(
-                source,
-                key,
-                snapshot,
-                runtime_fingerprint=runtime_fingerprint,
-                policy_fingerprint=policy_fingerprint,
-                policy=policy,
-                runtime_checkpoint_present=source._runtime_checkpoint_present(key),
-                root_authority=None,
-            )
-    with root_authority.operation(backend):
-        with root_authority.lock_file(".session-files.lock", blocking=True):
-            header, events = source._read_unlocked(key, root_authority=root_authority)
-            snapshot = source._snapshot(header, events)
-            return _capture_with_snapshot(
-                source,
-                key,
-                snapshot,
-                runtime_fingerprint=runtime_fingerprint,
-                policy_fingerprint=policy_fingerprint,
-                policy=policy,
-                runtime_checkpoint_present=source._runtime_checkpoint_present(
-                    key, root_authority=root_authority
-                ),
-                root_authority=root_authority,
-            )
+    from nanobot.session.source_store import SourceSessionStore
+
+    return SourceSessionStore.capture_idle_checkpoint(
+        source,
+        key,
+        runtime_fingerprint=runtime_fingerprint,
+        policy_fingerprint=policy_fingerprint,
+        policy=policy,
+        root_authority=root_authority,
+    )
 
 
 def _source_store_type() -> type[SourceSessionStore]:
@@ -630,7 +871,7 @@ def _candidate_and_proof(
     if not isinstance(candidate, dict):
         raise IdleCheckpointError("Invalid idle checkpoint proposal")
     try:
-        detached_candidate = copy.deepcopy(candidate)
+        detached_candidate = copy.deepcopy(cast(dict[object, object], candidate))
         detached_proof = copy.deepcopy(proof) if proof is not None else None
     except (TypeError, ValueError, RecursionError):
         raise IdleCheckpointError("Invalid idle checkpoint proposal") from None
@@ -683,16 +924,18 @@ def _validate_capture_for_source(
         _validate_capture_attestation(capture)
     except IdleCheckpointError:
         raise IdleCheckpointConflict("Idle checkpoint capture attestation changed") from None
+    from nanobot.session.source_store import SourceSessionStore
+
     if (
         type(capture) is not IdleCheckpointCapture
-        or capture._source is not source
-        or capture.token.store_identity != source._store_identity
+        or not IdleCheckpointCapture.matches_source(capture, source)
+        or SourceSessionStore.idle_capture_identity_differs(source, capture.token)
         or capture.token.session_key != key
         or capture.runtime_fingerprint != runtime_fingerprint
         or capture.policy_fingerprint != policy_fingerprint
     ):
         raise IdleCheckpointConflict("Idle checkpoint capture binding changed")
-    if capture.dependencies is not None and not capture.dependencies._matches_capture(source, capture):
+    if capture.dependencies is not None and not capture.dependencies.matches_capture(source, capture):
         raise IdleCheckpointConflict("Idle dependency capability binding changed")
     if capture.root_authority is not root_authority:
         raise IdleCheckpointConflict("Idle source-root authority changed")
@@ -712,55 +955,19 @@ def _publish_unlocked(
     blobs: ArtifactBlobTransaction | None,
     root_authority: SourceRootAuthority | None,
 ) -> SourceSnapshot:
-    header, events = source._read_unlocked(key, root_authority=root_authority)
-    snapshot = source._snapshot(header, events)
-    try:
-        validate_idle_capture(
-            capture.token,
-            snapshot,
-            runtime_checkpoint_present=source._runtime_checkpoint_present(
-                key, root_authority=root_authority
-            ),
-        )
-    except IdleCaptureConflictError:
-        raise IdleCheckpointConflict("Idle source state changed during publication") from None
-    # Re-run exact structural validation against the lock-held source rather
-    # than trusting the detached copy used while the model computed.
-    validated_current = validate_context_checkpoint(
+    from nanobot.session.source_store import SourceSessionStore
+
+    return SourceSessionStore.commit_idle_checkpoint_unlocked(
+        source,
+        key,
+        capture,
         validated,
-        events,
-        generation=snapshot.state.generation,
-        source_revision=snapshot.state.revision,
-        parent_checkpoint_id=snapshot.state.checkpoint_id,
+        references,
+        proof,
+        policy=policy,
+        blobs=blobs,
+        root_authority=root_authority,
     )
-    if validated_current != validated:
-        raise IdleCheckpointConflict("Idle checkpoint proposal changed during publication")
-    if proof is not None:
-        if proof.candidate.snapshot != snapshot:
-            raise IdleCheckpointConflict("Idle dependency proof source changed during publication")
-        if proof.candidate.stream_id is not None:
-            raise IdleCheckpointError("Idle checkpoints require root-history proof")
-        if (
-            not proof.chunks
-            or proof.chunks[-1].evidence.boundary != validated_current["boundary"]
-            or proof.chunks[-1].summary != validated_current["summary"]
-        ):
-            raise IdleCheckpointConflict("Idle dependency proof changed during publication")
-        try:
-            locked_references = derive_summary_references(proof, snapshot)
-        except SourceValidationError:
-            raise IdleCheckpointConflict("Idle dependency proof changed during publication") from None
-        if locked_references != references:
-            raise IdleCheckpointConflict("Idle dependency proof references changed during publication")
-    if references:
-        if proof is None or blobs is None or capture.dependencies is None or policy is None:
-            raise IdleCheckpointError("Idle dependency access is unavailable")
-        for reference in references:
-            capture.dependencies._verify(reference, snapshot, blobs, policy)
-        blobs.assert_reachable()
-    header["metadata"]["context_checkpoint"] = validated_current
-    header["revision"] += 1
-    return source._write(header, events, root_authority=root_authority)
 
 
 def publish_idle_checkpoint(
@@ -784,70 +991,19 @@ def publish_idle_checkpoint(
     single checkpoint write.
     """
 
-    if type(source) is not _source_store_type():
-        raise IdleCheckpointError("Invalid idle source store")
-    runtime_fingerprint = _validate_fingerprint(runtime_fingerprint, "runtime")
-    policy_fingerprint = _validate_fingerprint(policy_fingerprint, "policy")
-    if policy is not None and policy.fingerprint != policy_fingerprint:
-        raise IdleCheckpointError("Idle policy fingerprint does not match binding")
-    _validate_capture_for_source(
+    from nanobot.session.source_store import SourceSessionStore
+
+    return SourceSessionStore.publish_idle_checkpoint(
         source,
         key,
         capture,
+        candidate,
         runtime_fingerprint=runtime_fingerprint,
         policy_fingerprint=policy_fingerprint,
+        policy=policy,
+        proof=proof,
         root_authority=root_authority,
     )
-    validated, references, detached_proof = _candidate_and_proof(capture, candidate, proof)
-    if references:
-        access = capture.dependencies
-        if access is None or policy is None or source._artifact_store is not access._store:
-            raise IdleCheckpointError("Idle dependency access is unavailable")
-        try:
-            authority_context = (
-                root_authority.operation(source._backend)
-                if root_authority is not None
-                else nullcontext()
-            )
-            with authority_context:
-                with access._store.transaction(blocking=False) as blobs:
-                    blobs.assert_reachable()
-                    with execution_transaction(
-                        source._backend,
-                        key,
-                        root_authority=root_authority,
-                    ):
-                        return _publish_unlocked(
-                            source,
-                            key,
-                            capture,
-                            validated,
-                            references,
-                            detached_proof,
-                            policy=policy,
-                            blobs=blobs,
-                            root_authority=root_authority,
-                        )
-        except ArtifactStorageBusyError:
-            raise ExecutionBusyError() from None
-    authority_context = (
-        root_authority.operation(source._backend)
-        if root_authority is not None
-        else nullcontext()
-    )
-    with authority_context:
-        with execution_transaction(source._backend, key, root_authority=root_authority):
-            return _publish_unlocked(
-                source,
-                key,
-                capture,
-                validated,
-                references,
-                detached_proof,
-                policy=policy,
-                blobs=None,
-                root_authority=root_authority,
-            )
 
 
 __all__ = [
@@ -860,4 +1016,8 @@ __all__ = [
     "capture_idle_checkpoint",
     "project_idle_root_nodes",
     "publish_idle_checkpoint",
+    # Legacy direct-call compatibility; callers retain all required capture
+    # locks or publication transactions and applicable root scope.
+    "_capture_with_snapshot",
+    "_publish_unlocked",
 ]

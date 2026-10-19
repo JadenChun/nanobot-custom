@@ -21,10 +21,14 @@ from nanobot.agent.tools.long_task import (
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.bus.outbound_events import GoalStateSyncEvent
 from nanobot.bus.queue import MessageBus
+from nanobot.providers.base import GenerationSettings
 from nanobot.session.goal_state import GOAL_STATE_KEY, MAX_GOAL_OBJECTIVE_CHARS
 from nanobot.session.manager import SessionManager
 from nanobot.session.turn_continuation import should_finalize_on_max_iterations
 from nanobot.session.webui_turns import WebuiTurnCoordinator
+from tests.agent import p6_admitted_fixtures
+
+admitted_async = p6_admitted_fixtures.admitted_async
 
 
 def _goal_metadata() -> dict[str, object]:
@@ -435,11 +439,26 @@ async def test_update_goal_without_active_is_noop_message(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_goal_tools_registered_in_base_registry(tmp_path):
-    bus = MessageBus()
+async def test_goal_tools_require_explicit_registration(tmp_path, admitted_async):
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+    provider.generation = GenerationSettings()
+
+    def build(inputs):
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="test-model", session_manager=inputs.sessions,
+            tool_registry=inputs.tools, cron_service=inputs.cron,
+            turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+        )
+
+    loop = await admitted_async(tmp_path, build)
+    # The accepted foreground manifest defers goal enablement. Preserve the
+    # optional tools' schema contract without enabling them by default.
+    assert not loop.tools.has("create_goal")
+    assert not loop.tools.has("update_goal")
+    loop.tools.register(CreateGoalTool(loop.sessions, loop.bus))
+    loop.tools.register(UpdateGoalTool(loop.sessions, loop.bus))
 
     create = loop.tools.get("create_goal")
     update = loop.tools.get("update_goal")

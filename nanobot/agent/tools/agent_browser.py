@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.process import run_owned_process
@@ -39,7 +39,7 @@ _FILE_OUTPUT_OPTIONS = frozenset({
 })
 
 
-def classify_browser_action(args: Sequence[str]) -> str:
+def classify_browser_action(args: object) -> str:
     """Classify agent-browser args for a later policy layer.
 
     Navigation and inspection primitives are read-navigation operations.  A
@@ -49,9 +49,9 @@ def classify_browser_action(args: Sequence[str]) -> str:
 
     if not isinstance(args, Sequence) or isinstance(args, (str, bytes)):
         return "state_changing"
-    if any(not isinstance(arg, str) for arg in args):
+    if any(not isinstance(arg, str) for arg in cast(Sequence[object], args)):
         return "state_changing"
-    normalized_args = [arg.strip().lower() for arg in args if isinstance(arg, str)]
+    normalized_args = [arg.strip().lower() for arg in cast(Sequence[object], args) if isinstance(arg, str)]
     option_names = [arg.split("=", 1)[0] for arg in normalized_args]
     # Screenshots are potentially file-producing even when no output path is
     # present in the invocation.  Treat every screenshot form, including

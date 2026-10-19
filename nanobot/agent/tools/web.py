@@ -10,8 +10,8 @@ import json
 import os
 import re
 from collections.abc import Callable
-from typing import Any, cast
-from urllib.parse import parse_qsl, quote, urljoin, urlparse
+from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import parse_qsl, quote, unquote, urljoin, urlparse
 
 import httpx
 from loguru import logger
@@ -72,6 +72,7 @@ class WebSearchConfig(Base):
 class WebFetchConfig(Base):
     """Web fetch tool configuration."""
     use_jina_reader: bool = True
+    blocked_hosts: list[str] = Field(default_factory=list)
 
 
 class WebToolsConfig(Base):
@@ -122,6 +123,40 @@ def _resolve_url_safe(url: str) -> tuple[bool, str, tuple[str, ...]]:
     from nanobot.security.network import resolve_url_target
 
     return resolve_url_target(url)
+
+
+def _configured_fetch_hosts(config: WebFetchConfig) -> tuple[str, ...]:
+    """Combine declared configuration with the retained legacy environment setting."""
+    entries = [*config.blocked_hosts, *os.environ.get("NANOBOT_WEB_FETCH_BLOCKED_HOSTS", "").split(",")]
+    hosts: list[str] = []
+    for entry in entries:
+        value = entry.strip()
+        if not value:
+            continue
+        try:
+            host = value.encode("idna").decode("ascii").lower().rstrip(".")
+        except UnicodeError:
+            raise ValueError("Invalid web_fetch blocked-host configuration") from None
+        if not host or len(host) > 253 or any(
+            len(label) > 63 or re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label) is None
+            for label in host.split(".")
+        ):
+            raise ValueError("Invalid web_fetch blocked-host configuration")
+        hosts.append(host)
+    return tuple(dict.fromkeys(hosts))
+
+
+def _blocked_fetch_error(url: str, blocked_hosts: tuple[str, ...]) -> str | None:
+    if not blocked_hosts:
+        return None
+    try:
+        hostname = urlparse(url).hostname or ""
+        host = unquote(hostname).encode("idna").decode("ascii").lower().rstrip(".")
+    except (ValueError, UnicodeError):
+        return "Invalid web_fetch URL hostname"
+    if any(host == blocked or host.endswith("." + blocked) for blocked in blocked_hosts):
+        return "direct web_fetch is disabled for this host by configuration"
+    return None
 
 
 def _pinned_dns_transport() -> httpx.AsyncBaseTransport:
@@ -207,10 +242,13 @@ async def _get_with_safe_redirects(
     client: httpx.AsyncClient,
     url: str,
     headers: dict[str, str] | None = None,
+    *, blocked_hosts: tuple[str, ...] = (),
 ) -> tuple[httpx.Response | None, str | None]:
     """GET a URL while validating every redirect target before requesting it."""
     current_url = url
     for _ in range(MAX_REDIRECTS + 1):
+        if blocked := _blocked_fetch_error(current_url, blocked_hosts):
+            return None, f"Redirect blocked: {blocked}"
         is_valid, error_msg, _ = _resolve_url_safe(current_url)
         if not is_valid:
             return None, f"Redirect blocked: {error_msg}"
@@ -231,6 +269,9 @@ async def _get_with_safe_redirects(
             return response, None
 
         next_url = urljoin(str(response.url), location)
+        if blocked := _blocked_fetch_error(next_url, blocked_hosts):
+            await response.aclose()
+            return None, f"Redirect blocked: {blocked}"
         is_valid, error_msg = _validate_url_safe(next_url)
         if not is_valid:
             await response.aclose()
@@ -246,11 +287,14 @@ async def _stream_with_safe_redirects(
     client: httpx.AsyncClient,
     url: str,
     headers: dict[str, str] | None = None,
+    *, blocked_hosts: tuple[str, ...] = (),
 ) -> tuple[httpx.Response | None, Any | None, str | None, bool]:
     """Open a streamed response while validating every redirect target first."""
     current_url = url
     chain_carries_credentials = _url_carries_credentials(url)
     for _ in range(MAX_REDIRECTS + 1):
+        if blocked := _blocked_fetch_error(current_url, blocked_hosts):
+            return None, None, f"Redirect blocked: {blocked}", chain_carries_credentials
         is_valid, error_msg, _ = _resolve_url_safe(current_url)
         if not is_valid:
             return None, None, f"Redirect blocked: {error_msg}", chain_carries_credentials
@@ -282,6 +326,9 @@ async def _stream_with_safe_redirects(
             return response, stream, None, chain_carries_credentials
 
         next_url = urljoin(str(response.url), location)
+        if blocked := _blocked_fetch_error(next_url, blocked_hosts):
+            await stream.__aexit__(None, None, None)
+            return None, None, f"Redirect blocked: {blocked}", chain_carries_credentials
         chain_carries_credentials = (
             chain_carries_credentials or _url_carries_credentials(next_url)
         )
@@ -362,6 +409,12 @@ def _normalize_volcengine_auth_level(value: Any) -> int | None:
 )
 class WebSearchTool(Tool):
     """Search the web using configured provider."""
+
+    if TYPE_CHECKING:
+        @property
+        def parameters(self) -> dict[str, Any]:
+            ...
+
     _scopes = {"core", "subagent"}
 
     name = "web_search"  # pyright: ignore[reportIncompatibleMethodOverride, reportAssignmentType]
@@ -1109,6 +1162,12 @@ class WebSearchTool(Tool):
 )
 class WebFetchTool(Tool):
     """Fetch and extract content from a URL."""
+
+    if TYPE_CHECKING:
+        @property
+        def parameters(self) -> dict[str, Any]:
+            ...
+
     _scopes = {"core", "subagent"}
 
     name = "web_fetch"  # pyright: ignore[reportIncompatibleMethodOverride, reportAssignmentType]
@@ -1154,6 +1213,12 @@ class WebFetchTool(Tool):
         **kwargs: Any,
     ) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
         url = url.strip(" \t\r\n`\"'")
+        try:
+            blocked_hosts = _configured_fetch_hosts(self.config)
+        except ValueError as exc:
+            return ToolResult.error(f"Error: {exc}")
+        if blocked := _blocked_fetch_error(url, blocked_hosts):
+            return ToolResult.error(f"Error: {blocked}")
         extract_mode = kwargs.pop("extractMode", extract_mode)
         max_chars = cast(int, kwargs.pop("maxChars", max_chars) or self.max_chars)
         is_valid, error_msg = _validate_url_safe(url)
@@ -1173,6 +1238,7 @@ class WebFetchTool(Tool):
                         client,
                         url,
                         headers={"User-Agent": self.user_agent},
+                        blocked_hosts=blocked_hosts,
                     )
                 )
                 if redirect_error:
@@ -1201,7 +1267,9 @@ class WebFetchTool(Tool):
             )
 
         result = None
-        if self.config.use_jina_reader and jina_remote_safe:
+        # Remote extraction can follow a different, opaque redirect chain.
+        # A configured routing policy must be enforced locally on every hop.
+        if self.config.use_jina_reader and jina_remote_safe and not blocked_hosts:
             result = await self._fetch_jina(url, max_chars)
         if result is None:
             result = await self._fetch_readability(url, extract_mode, max_chars)
@@ -1209,6 +1277,8 @@ class WebFetchTool(Tool):
 
     async def _fetch_jina(self, url: str, max_chars: int) -> str | None:
         """Try fetching via Jina Reader API. Returns None on failure."""
+        if _configured_fetch_hosts(self.config):
+            return None
         if _url_carries_credentials(url):
             logger.debug(
                 "Skipping Jina Reader for {}: URL carries credential material",
@@ -1267,6 +1337,7 @@ class WebFetchTool(Tool):
                     client,
                     url,
                     headers={"User-Agent": self.user_agent},
+                    blocked_hosts=_configured_fetch_hosts(self.config),
                 )
                 if redirect_error:
                     return json.dumps({"error": redirect_error, "url": url}, ensure_ascii=False)

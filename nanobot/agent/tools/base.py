@@ -224,10 +224,17 @@ class Tool(ABC):
         """Return optional per-turn prompt context owned by this tool."""
         return None
 
-    @abstractmethod
-    async def execute(self, **kwargs: Any) -> Any:
-        """Run the tool; return content, or ``ToolResult.error(...)`` for failures."""
-        ...
+    # The schema-validated dynamic call edge erases heterogeneous parameters;
+    # concrete signatures still govern callers holding a concrete tool type.
+    if typing.TYPE_CHECKING:
+        @abstractmethod
+        async def execute(self, *args: Any, **kwargs: Any) -> Any:
+            ...
+    else:
+        @abstractmethod
+        async def execute(self, **kwargs: Any) -> Any:
+            """Run the tool; return content, or ``ToolResult.error(...)`` for failures."""
+            ...
 
     @staticmethod
     def error(content: str) -> ToolResult:
@@ -249,26 +256,33 @@ class Tool(ABC):
                 casted[k] = v
         return casted
 
-    async def execute_with_context(self, context: Any, **kwargs: Any) -> Any:
-        """Execute with an explicit turn context when the tool opts in.
+    if typing.TYPE_CHECKING:
+        async def execute_with_context(self, context: Any, /, *args: Any, **kwargs: Any) -> Any:
+            ...
+    else:
+        async def execute_with_context(self, context: Any, /, **kwargs: Any) -> Any:
+            """Execute with an explicit turn context when the tool opts in.
 
         The legacy ``execute(**kwargs)`` contract remains unchanged.  A tool
         that needs per-turn state may either override this method or declare a
-        ``context``/``execution_context`` parameter on ``execute``.  We do not
-        inject context into arbitrary ``**kwargs`` methods because several
+        ``context``/``execution_context`` parameter on ``execute``.
+        Schema-declared parameters are user data, not injection slots. The
+        positional-only argument keeps that data separate from turn context.
+        We do not inject context into arbitrary ``**kwargs`` methods because several
         existing adapters forward unknown kwargs to remote tools.
         """
-        execute = self.execute
-        try:
-            parameters = inspect.signature(execute).parameters
-        except (TypeError, ValueError):
-            return await execute(**kwargs)
+            execute = self.execute
+            try:
+                parameters = inspect.signature(execute).parameters
+            except (TypeError, ValueError):
+                return await execute(**kwargs)
 
-        if "context" in parameters:
-            kwargs["context"] = context
-        elif "execution_context" in parameters:
-            kwargs["execution_context"] = context
-        return await execute(**kwargs)
+            properties = self.parameters.get("properties", {})
+            if "context" in parameters and "context" not in properties:
+                kwargs["context"] = context
+            elif "execution_context" in parameters and "execution_context" not in properties:
+                kwargs["execution_context"] = context
+            return await execute(**kwargs)
 
     def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """Apply safe schema-driven casts before validation."""

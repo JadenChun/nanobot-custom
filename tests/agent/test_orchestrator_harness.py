@@ -5,6 +5,8 @@ import pytest
 from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.delegation import DelegateTaskTool, PlanTaskTool, ReviewWorkTool
+from nanobot.agent.tools.explore import ExploreTool
+from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 
@@ -115,6 +117,33 @@ async def test_foreground_tools_wait_for_manager_results() -> None:
     assert await PlanTaskTool(manager).execute("Plan this") == "plan"
     assert await DelegateTaskTool(manager).execute("# Contract\nDo the work", ["report/"]) == "worker result"
     assert await ReviewWorkTool(manager).execute("Goal", "It works") == "PASS"
+
+
+@pytest.mark.parametrize(("name", "method", "arguments"), [
+    ("plan_task", "run_plan", {"objective": "Inspect task", "context": "user evidence"}),
+    ("delegate_task", "run_worker", {"contract": "A bounded implementation contract", "write_scope": ["report/"]}),
+    ("review_work", "run_review", {"goal": "Review task", "acceptance_criteria": "Checks pass"}),
+    ("explore", "run_explore", {"task": "Inspect task"}),
+])
+async def test_foreground_tools_preserve_structured_outcomes(name, method, arguments) -> None:
+    manager = MagicMock(spec=ForegroundAgentManager)
+    outcome = ToolOutcome("stopped", stop_reason="budget_exhausted", policy_metadata={"role": name})
+    callback = AsyncMock(return_value=outcome)
+    setattr(manager, method, callback)
+    tool = {
+        "plan_task": PlanTaskTool(manager),
+        "delegate_task": DelegateTaskTool(manager),
+        "review_work": ReviewWorkTool(manager),
+        "explore": ExploreTool(manager, max_iterations=4),
+    }[name]
+    assert tool.name == name
+    assert tool.description and tool.parameters["type"] == "object"
+    assert await tool.execute(**arguments) is outcome
+    turn = TurnContext(run_id="structured-role")
+    assert await tool.execute_with_context(turn, **arguments) is outcome
+    assert callback.await_args.kwargs["turn_context"] is turn
+    if name == "plan_task":
+        assert callback.await_args.kwargs["context"] == "user evidence"
 
 
 @pytest.mark.asyncio

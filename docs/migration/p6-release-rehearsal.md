@@ -1,5 +1,53 @@
 # P6 release and copied-state rehearsal
 
+Current authoritative verdict and finite gates:
+[P6 completion checklist](p6-completion-checklist.md), **P6 NOT_ACCEPTED**.
+Dated evidence below is retained history, not a current corrected-source release
+or production qualification. The test-only foreground slice is described next;
+it does not add a runtime bypass to the release helper.
+
+Latest [authorized follow-up](p6-cron-coverage-checkpoint.md) closes both cron
+coverage findings and begins the next strict-source qualification stage with a
+behavior-neutral checked-session annotation repair. Root final selection passes
+943 tests with 11 retained warnings; unchanged strict still FAILS at 3,977.
+Earlier CORRECT/4,122 records below remain historical, not current blockers of
+those two now-closed findings. Full P6 and all activation gates remain unaccepted.
+
+## Dedicated isolated foreground rehearsal (2026-10-02)
+
+[`test_p6_foreground_rehearsal.py`](../../tests/migration/test_p6_foreground_rehearsal.py)
+loads synthetic JSON through real `load_config`/`set_config_path` with a sanitized
+environment, explicit workspace/source-parent runtime paths, exact Config class,
+Heartbeat/Dream/idle/TTL disabled and no real user config. An absent synthetic home
+is used only for default-workspace comparisons; production paths remain unread.
+Real RuntimeComposition, AgentLoop, runner and durable session ownership perform
+clean acquire, exactly one scripted foreground turn, fake completion-sink delivery,
+cooperative close and a new composition reopening the same accepted source history
+without re-execution. Config bytes remain unchanged.
+
+The positive test temporarily injects only the migration guard and empty
+ToolLoader discovery, with invocation/empty-registry and restoration assertions.
+The scripted provider supplies its supported local token estimator and synthetic
+usage so no optional tokenizer assets are fetched. Ordinary guard-negative startup
+runs before/after that context and in a separate unpatched test. Effect traps and
+OS network/home denial remain active; positive effect-attempt inventory is empty.
+Cron is definition-only, no runtime timer is injected, no channels are constructed,
+and legacy AutoCompact, idle integration and agent background work remain absent.
+
+This is **not** actual CLI/systemd or Telegram transport activation, real
+provider/tool/plugin startup, native/production-target qualification, truthful
+stopped-production-copy rehearsal, or immutable previous-reader rollback proof.
+The existing state helper still proves relocation/export only. The release script
+has no public guard-patch/foreground-bypass flag. Exact current evidence and all
+unpassed gates are recorded once in the completion checklist.
+
+The bounded existing API/CLI compatibility fixture repairs were conditional on
+an independent frozen replay of the same six failures. Real temporary config JSON
+loading and public source-path binding restore the missing fixture context; all
+original assertions and production admission remain intact. The complete seven-file
+rehearsal/composition/API/CLI selection now passes100; the prior94pass/sixfail result
+and separate frozen-sixfail/sixpass evidence remain recorded, not overwritten.
+
 Status: **rehearsal tooling implemented; release gate remains open**. This
 document records the bounded checks that can run without credentials, live
 state, service control, network access, or a production deployment. It does
@@ -199,3 +247,103 @@ Assumptions are limited to the accepted source contract: the release owner
 will provide a separately frozen dependency artifact before release, and the
 actual live installation remains unknown until a read-only production
 preflight is authorized. No live canary or deployment was performed.
+
+## 2026-10-02 — P6 IN_PROGRESS — P6-A ACCEPTED
+
+The preceding 2026-09-15 build-blocked observations and old state-rehearsal output
+are historical, not current installed/runtime qualification. **P6 IN_PROGRESS —
+P6-A ACCEPTED**:
+actual immutable dirty-source, frontend, wheel and sdist build/inspection have
+root bounded AC1–AC5 PASS and fresh independent review PASS/no findings. Exact
+review/root verdict and pre-final scope/publication evidence are retained; root final
+publication recheck is not yet recorded. See [checkpoint](p6-artifact-checkpoint.md) and
+[permanent source/artifact/command evidence](p6-artifact-evidence.json).
+
+Fresh isolated pinned build-tool acquisition and frozen-lock `npm ci --ignore-scripts`
+preceded real OS-network-denied TypeScript/Vite and original Hatch hook builds.
+The first sdist's 910 npm-member packaging leak remains retained red; one bounded
+root-anchoring correction to its seven existing include entries and one added
+red-green regression produced actual archives with zero missing/forbidden members.
+No dependency cleanup, synthetic asset, lock/hook/runtime/default change or artificial
+VCS tree bypassed the test. The exact wheel and corrected sdist, complete manifests/
+hashes and source snapshot are retained read-only in the fresh private bundle.
+
+Corrected source tests passed 32 under full OS network/process denial; the exact
+version subprocess node passed separately under the unchanged local-process profile
+with all network denied. Root repeated both, separately from historical 31+1 evidence.
+Service inspection is read-only; no deploy/update/service operation ran.
+
+Full P6 **NOT_ACCEPTED**, runtime **NOT_READY/NOT_AUTHORIZED**, D9
+**NOT_AUTHORIZED**; P5 stays DONE and P7/H1/P8 are not delivered. Old state rehearsal
+remains **UNQUALIFIED/NOT_RUN** here. Clean installed artifact/dependency closure,
+channel extras, typing/DOCX, current copied-state/config/service-start/old-reader
+rollback, native targets and live inventory remain distinct required gates.
+
+## 2026-10-02 — host installation qualification accepted
+
+The preceding body is immutable historical evidence. Current
+[host installation checkpoint](p6-installed-checkpoint.md) and
+[hash-bound evidence](p6-installed-evidence.json) record a fresh macOS arm64/
+Python3.13 core+api+dev114-wheel freeze, offline hash-required install, pip check,
+installed imports/package bytes/assets/skills/channel inventory/help and unchanged
+guard-negative startup. Exact unchanged installed DOCX mock-agent fixture passes
+under separately authorized localhost-only isolation and public disposable instance
+binding, with worker/root runs recorded separately. Strict BasedPyright ran and
+FAILS with7420 errors;56 direct missing optional imports do not waive the other7364
+diagnostics. Failed profile/launcher/home-denial attempts remain retained red.
+
+HOST_QUALIFICATION_ACCEPTED: root bounded AC1–AC5 PASS and fresh review PASS/no
+findings are retained in `final_acceptance_evidence`; final root publication recheck
+is not yet performed. Full P6 NOT_ACCEPTED, P5/P6-A
+unchanged, runtime NOT_READY/NOT_AUTHORIZED, D9 NOT_AUTHORIZED. No current-state/
+operator/init-only-loader/old immutable rollback reader, production subset, native
+platform or positive service-start qualification is supplied; no background work
+or activation occurred. Historical denied-loopback/type/install records above are
+not retroactively green.
+
+## 2026-10-02 — full extras/channel host closure; strict source blocker
+
+[Full host environment evidence](p6-full-environment-checkpoint.md) advances the
+dependency gate:210 wheels cover all ten extras and17 channel manifests; offline
+hash-required install, dependency consistency and independent root input verification
+PASS. Unchanged strict checking reports5970 errors/zero missing imports; identical
+pinned-upstream checking reports zero. These need substantive bounded source repairs;
+no runtime source fix or new artifact acceptance is claimed. Earlier results remain
+history, not relabeled green.
+
+Full P6 stays NOT_ACCEPTED. Native/platform qualification, owner-selected production
+profile, approved immutable old rollback release, truthful stopped-state copies/
+backups/reference config/artifact provenance, actual loader policy and positive
+isolated rehearsal remain required. No live access, guard change, activation or
+deployment occurred. See the checkpoint's repair scope and bound raw records.
+
+## 2026-10-02 — bounded source type/call repairs accepted
+
+[Repair checkpoint](p6-type-root-repair-checkpoint.md) records root/fresh review
+PASS for journal/decorator declarations, eight throw-only recovery annotations,
+provider positional-call parity and one independently reproduced stale symlink-test
+expectation. Root409 session/recovery and207 provider cases pass; unchanged strict
+checking still FAILS at4815 errors (net1155 fewer; zero new outside owned files).
+Only the bounded source wave is accepted. Prior exact artifacts remain historical,
+not rebuilt or relabeled as the current corrected source. Full P6 NOT_ACCEPTED;
+native/production/stopped-copy/loader/rollback/rehearsal gates remain open. No guard,
+activation, live-state, deployment or external publication action occurred.
+
+The later root current-source fan-in is recorded in the
+[completion checklist](p6-completion-checklist.md): unchanged strict FAIL at4,122
+raw diagnostics, not4,122 independent defects. The newly passing synthetic-loader/
+foreground-close/restart slice narrows two offline rehearsal gaps; it does not
+retroactively qualify prior artifacts or waive native/current-production/old-reader
+inputs. Production guard and checker policy remain byte-identical.
+
+## 2026-10-02 — final bounded diagnosis review CORRECT
+
+The [single completion checklist](p6-completion-checklist.md#final-bounded-root-verdict-and-private-qa-publication)
+links the private allowlisted root records: fullcron+Stage3 764PASS/eight retained
+warnings/zero exclusions, offline rehearsal100PASS, recovery930PASS/two existing
+skips, scopedlintPASS and 20-file compilation STRUCTURAL_PASS. Integrated review
+is **CORRECT**, not PASS: requested schedule/unaffected-field assertions and a
+positive exact-token delivery-target mutation remain two P2 AC3 test-only gaps.
+No third correction is authorized. QA records describe pre-publication reviewed
+implementation inventories, not a final source freeze/release artifact. Strict
+FAIL4122, S3 FAIL and full P6 NOT_ACCEPTED remain; runtime/D9 stay unauthorized.

@@ -100,15 +100,17 @@ def test_onboard_does_not_crash_with_legacy_memory_window(tmp_path, monkeypatch)
     )
 
     monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
-    monkeypatch.setattr("nanobot.cli.commands.get_workspace_path", lambda _workspace=None: workspace)
 
     from typer.testing import CliRunner
 
     from nanobot.cli.commands import app
     runner = CliRunner()
-    result = runner.invoke(app, ["onboard"], input="n\n")
+    result = runner.invoke(app, ["onboard", "--workspace", str(workspace)], input="n\n")
 
     assert result.exit_code == 0
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["agents"]["defaults"]["maxTokens"] == 3333
+    assert saved["agents"]["defaults"]["workspace"] == str(workspace)
 
 
 def test_save_config_preserves_provider_api_keys_list(tmp_path) -> None:
@@ -219,7 +221,6 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
     )
 
     monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
-    monkeypatch.setattr("nanobot.cli.commands.get_workspace_path", lambda _workspace=None: workspace)
     monkeypatch.setattr(
         "nanobot.channels.registry.discover_plugins",
         lambda: {"qq": load_channel_package("qq")},
@@ -229,11 +230,12 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
 
     from nanobot.cli.commands import app
     runner = CliRunner()
-    result = runner.invoke(app, ["onboard"], input="n\n")
+    result = runner.invoke(app, ["onboard", "--workspace", str(workspace)], input="n\n")
 
     assert result.exit_code == 0
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     assert saved["channels"]["qq"]["msgFormat"] == "plain"
+    assert saved["agents"]["defaults"]["workspace"] == str(workspace)
 
 
 def test_load_config_backfills_ltx_desktop_mcp_timeout(tmp_path) -> None:
@@ -279,3 +281,73 @@ def test_load_config_preserves_explicit_ltx_desktop_mcp_timeout(tmp_path) -> Non
     config = load_config(config_path)
 
     assert config.tools.mcp_servers["ltx-desktop"].tool_timeout == 45
+
+
+def test_checked_wire_validators_preserve_objects_and_non_string_keys() -> None:
+    from types import MappingProxyType
+
+    import pytest
+
+    from nanobot.config.schema import (
+        AgentDefaults,
+        ChannelsConfig,
+        IdleCompactionConfig,
+        ToolsConfig,
+    )
+
+    marker = object()
+    for validator in (
+        ChannelsConfig.preserve_fork_activation_defaults,
+        IdleCompactionConfig.reject_alias_duplicates,
+        AgentDefaults.reject_idle_compaction_alias_duplicates,
+        ToolsConfig._select_image_configuration,
+    ):
+        assert validator(marker) is marker
+
+    wire = {marker: marker, "websocket": {marker: marker, "enabled": True}, "sendProgress": []}
+    copied = ChannelsConfig.preserve_fork_activation_defaults(wire)
+    assert copied is not wire
+    assert copied[marker] is marker
+    assert copied["websocket"] == {marker: marker, "enabled": True}
+    assert copied["taskUpdateMode"] == "result"
+    assert "taskUpdateMode" not in wire
+    explicit = {"task_update_mode": "verbose", "sendProgress": False}
+    assert "taskUpdateMode" not in ChannelsConfig.preserve_fork_activation_defaults(explicit)
+
+    mapping = MappingProxyType({marker: marker})
+    idle = IdleCompactionConfig.reject_alias_duplicates(mapping)
+    assert idle == {marker: marker}
+    assert idle is not mapping
+    assert AgentDefaults.reject_idle_compaction_alias_duplicates(mapping) is mapping
+    with pytest.raises(ValueError, match="Specify only one"):
+        IdleCompactionConfig.reject_alias_duplicates(
+            MappingProxyType({"idle_ttl_seconds": 0, "idleTtlSeconds": 0})
+        )
+    with pytest.raises(ValueError, match="Specify only one"):
+        AgentDefaults.reject_idle_compaction_alias_duplicates(
+            MappingProxyType({"idleCompaction": {}, "idle_compaction": {}})
+        )
+
+    image_wire = {marker: marker}
+    selected = ToolsConfig._select_image_configuration(image_wire)
+    assert selected == {marker: marker, "image_generation": {"configuration_source": "legacy"}}
+    assert image_wire == {marker: marker}
+    for alias in ("image_generation", "imageGeneration"):
+        configured = {alias: {"configuration_source": "explicit"}}
+        assert ToolsConfig._select_image_configuration(configured) is configured
+
+
+def test_artifact_root_checked_edge_keeps_direct_call_errors_and_lexical_path(tmp_path) -> None:
+    import inspect
+
+    import pytest
+
+    from nanobot.config.schema import ArtifactsConfig
+
+    assert list(inspect.signature(ArtifactsConfig._validate_root).parameters) == ["value"]
+    assert ArtifactsConfig._validate_root(None) is None
+    for invalid in (object(), 42, "", "relative", "/"):
+        with pytest.raises(ValueError, match="absolute"):
+            ArtifactsConfig._validate_root(invalid)
+    lexical = str(tmp_path / "missing" / ".." / "artifacts")
+    assert ArtifactsConfig._validate_root(lexical) == str(tmp_path / "artifacts")

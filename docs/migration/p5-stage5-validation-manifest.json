@@ -1,0 +1,1031 @@
+{
+  "version": 1,
+  "status": "TECHNICAL_ROOT_PASS_P5_NOT_DONE",
+  "profiles": {
+    "full": "(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))",
+    "local_process": "(version 1) (allow default) (deny network*) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))",
+    "lease": "(version 1) (allow default) (deny network*)"
+  },
+  "commands": {
+    "prior": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/migration/test_p5_stage1_composition.py tests/migration/test_p5_stage1_shutdown.py tests/migration/test_p5_stage1_adapter_matrix.py tests/migration/test_p5_stage2_composition.py tests/cli/test_startup_admission_agent_gateway.py tests/cli/test_startup_admission_onboard_webui_api.py --tb=short",
+    "modes": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/session/test_session_mode_registry.py tests/session/test_session_mode_conversion.py tests/session/test_session_mode_export.py tests/session/test_session_mode_operations.py tests/migration/test_p5_stage2_crash_matrix.py tests/agent/test_p5_stage2_engine.py --tb=short",
+    "consumers": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/session/test_p5_stage2_temporary_sessions.py tests/session/test_p5_stage2_consumers.py tests/webui/test_forking.py tests/utils/test_webui_workspaces.py --tb=short",
+    "adapters": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/channels/test_telegram_headless_composition.py tests/channels/test_telegram_migration_differential.py tests/agent/test_migration_api_engine.py tests/agent/test_migration_sdk.py --tb=short",
+    "cron": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/cron/test_schedule.py tests/cron/test_schedule_commit.py tests/cron/test_scheduler.py tests/cron/test_runtime_adapters.py tests/migration/test_p5_stage3_composition.py tests/migration/test_p5_stage3_shutdown.py tests/cli/test_cron_runtime_inspection.py --tb=short",
+    "lease": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*)' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/cron/test_scheduler_store.py --tb=short",
+    "historical": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/cron/test_migration_cron_fields.py tests/cron/test_cron_tool_list.py tests/cron/test_cron_tool_list_fork.py --tb=short",
+    "substrate_full_denial": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/agent/test_memory_recovery_startup_admission.py tests/agent/test_memory_recovery_constructor_admission.py tests/session/test_source_projection.py tests/session/test_artifact_operator.py tests/session/test_artifact_rematerialization.py tests/session/test_artifact_factory.py tests/session/test_artifact_store.py tests/providers/test_conversation_state.py --tb=short --deselect='tests/session/test_artifact_store.py::test_concurrent_distinct_blobs_cannot_exceed_namespace_quota' --deselect='tests/session/test_artifact_store.py::test_two_processes_reuse_one_complete_immutable_blob' --deselect='tests/session/test_artifact_store.py::test_two_processes_install_missing_once_and_reuse' --deselect='tests/session/test_artifact_store.py::test_actual_crash_between_link_and_unlink_recovers_only_verified_staging_link' --deselect='tests/session/test_artifact_store.py::test_install_missing_recovers_actual_crash_after_link' --deselect='tests/session/test_artifact_store.py::test_install_missing_recovers_actual_crash_before_link[8]' --deselect='tests/session/test_artifact_store.py::test_install_missing_recovers_actual_crash_before_link[64]'",
+    "substrate_local_process": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q 'tests/session/test_artifact_store.py::test_concurrent_distinct_blobs_cannot_exceed_namespace_quota' 'tests/session/test_artifact_store.py::test_two_processes_reuse_one_complete_immutable_blob' 'tests/session/test_artifact_store.py::test_two_processes_install_missing_once_and_reuse' 'tests/session/test_artifact_store.py::test_actual_crash_between_link_and_unlink_recovers_only_verified_staging_link' 'tests/session/test_artifact_store.py::test_install_missing_recovers_actual_crash_after_link' 'tests/session/test_artifact_store.py::test_install_missing_recovers_actual_crash_before_link[8]' 'tests/session/test_artifact_store.py::test_install_missing_recovers_actual_crash_before_link[64]' --tb=short",
+    "p3_full_denial": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/cron/test_occurrence_store.py tests/cron/test_cron_package_d.py tests/cron/test_cron_package_e.py tests/cron/test_canonical_execution.py tests/cron/test_canonical_result_adapter.py tests/cron/test_cron_composition.py tests/cron/test_cron_callback_store.py tests/cron/test_cron_channel_sender.py tests/cron/test_cron_delivery_runtime.py tests/cron/test_cron_delivery_store.py tests/cron/test_delivery_reconciliation.py tests/cron/test_visible_completion_link.py tests/cli/test_cron_delivery_reconciliation.py tests/agent/test_cron_silent_turn.py --tb=short --deselect='tests/cron/test_occurrence_store.py::test_only_one_process_wins_the_exclusive_claim' --deselect='tests/cron/test_occurrence_store.py::test_fork_inherited_claim_cannot_complete' --deselect='tests/cron/test_occurrence_store.py::test_fork_child_drops_inherited_fence_without_unlocking_or_retaining_parent_lock' --deselect='tests/cron/test_cron_delivery_store.py::test_two_process_reservation_has_one_winner' --deselect='tests/cron/test_cron_delivery_store.py::test_fork_inherited_claim_has_no_authority' --deselect='tests/cron/test_cron_delivery_store.py::test_fork_child_drops_inherited_send_fence_without_unlocking_parent'",
+    "p3_local_process": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q 'tests/cron/test_occurrence_store.py::test_only_one_process_wins_the_exclusive_claim' 'tests/cron/test_occurrence_store.py::test_fork_inherited_claim_cannot_complete' 'tests/cron/test_occurrence_store.py::test_fork_child_drops_inherited_fence_without_unlocking_or_retaining_parent_lock' 'tests/cron/test_cron_delivery_store.py::test_two_process_reservation_has_one_winner' 'tests/cron/test_cron_delivery_store.py::test_fork_inherited_claim_has_no_authority' 'tests/cron/test_cron_delivery_store.py::test_fork_child_drops_inherited_send_fence_without_unlocking_parent' --tb=short",
+    "primitive_full_denial": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/cron/test_action_store.py tests/cron/test_action_store_conversion.py tests/cron/test_definition_store.py tests/cron/test_cron_definition_service.py tests/cron/test_cron_tool_schema_contract.py --tb=short --deselect='tests/cron/test_action_store.py::test_append_generation_cas_serializes_concurrent_new_actions' --deselect='tests/cron/test_action_store.py::test_append_and_checkpoint_race_invalidates_the_checkpoint_generation' --deselect='tests/cron/test_action_store.py::test_two_process_append_and_checkpoint_races_are_serialized'",
+    "primitive_local_process": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q 'tests/cron/test_action_store.py::test_append_generation_cas_serializes_concurrent_new_actions' 'tests/cron/test_action_store.py::test_append_and_checkpoint_race_invalidates_the_checkpoint_generation' 'tests/cron/test_action_store.py::test_two_process_append_and_checkpoint_races_are_serialized' --tb=short",
+    "stage5_focus": "NANOBOT_DISABLE_NETWORK=1 PYTHONDONTWRITEBYTECODE=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/migration/test_p5_stage5_preflight.py tests/cli/test_migration_preflight.py --tb=short",
+    "stage4_focus": "NANOBOT_DISABLE_NETWORK=1 PYTHONDONTWRITEBYTECODE=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/migration/test_p5_stage4_integration.py tests/migration/test_p5_stage4_recovery.py tests/migration/test_p5_stage4_diagnostics.py --tb=short",
+    "cold_sdk": "NANOBOT_DISABLE_NETWORK=1 PYTHONDONTWRITEBYTECODE=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/agent/test_migration_sdk.py::test_from_config_real_runner_keeps_default_trace_private_and_sanitizes_streamed_opt_in --tb=short",
+    "stage2_diagnostic": "NANOBOT_DISABLE_NETWORK=1 /usr/bin/sandbox-exec -p '(version 1) (allow default) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\"))' /Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m pytest -q tests/test_nanobot_facade.py tests/test_nanobot_facade_fork.py tests/agent/test_loop_save_turn.py tests/webui/test_forking.py tests/utils/test_webui_workspaces.py nanobot/channels/websocket/tests/test_websocket_channel.py --tb=no"
+  },
+  "localProcessNodes": {
+    "substrate": [
+      "tests/session/test_artifact_store.py::test_concurrent_distinct_blobs_cannot_exceed_namespace_quota",
+      "tests/session/test_artifact_store.py::test_two_processes_reuse_one_complete_immutable_blob",
+      "tests/session/test_artifact_store.py::test_two_processes_install_missing_once_and_reuse",
+      "tests/session/test_artifact_store.py::test_actual_crash_between_link_and_unlink_recovers_only_verified_staging_link",
+      "tests/session/test_artifact_store.py::test_install_missing_recovers_actual_crash_after_link",
+      "tests/session/test_artifact_store.py::test_install_missing_recovers_actual_crash_before_link[8]",
+      "tests/session/test_artifact_store.py::test_install_missing_recovers_actual_crash_before_link[64]"
+    ],
+    "p3": [
+      "tests/cron/test_occurrence_store.py::test_only_one_process_wins_the_exclusive_claim",
+      "tests/cron/test_occurrence_store.py::test_fork_inherited_claim_cannot_complete",
+      "tests/cron/test_occurrence_store.py::test_fork_child_drops_inherited_fence_without_unlocking_or_retaining_parent_lock",
+      "tests/cron/test_cron_delivery_store.py::test_two_process_reservation_has_one_winner",
+      "tests/cron/test_cron_delivery_store.py::test_fork_inherited_claim_has_no_authority",
+      "tests/cron/test_cron_delivery_store.py::test_fork_child_drops_inherited_send_fence_without_unlocking_parent"
+    ],
+    "primitive": [
+      "tests/cron/test_action_store.py::test_append_generation_cas_serializes_concurrent_new_actions",
+      "tests/cron/test_action_store.py::test_append_and_checkpoint_race_invalidates_the_checkpoint_generation",
+      "tests/cron/test_action_store.py::test_two_process_append_and_checkpoint_races_are_serialized"
+    ]
+  },
+  "independentSelections": true,
+  "overlappingCountsMustNotBeSummed": true,
+  "requiredGreen": [
+    "prior",
+    "modes",
+    "consumers",
+    "adapters",
+    "cron",
+    "lease",
+    "substrate_full_denial",
+    "substrate_local_process",
+    "p3_full_denial",
+    "p3_local_process",
+    "primitive_full_denial",
+    "primitive_local_process",
+    "stage5_focus",
+    "stage4_focus",
+    "cold_sdk"
+  ],
+  "historicalBaseline": {
+    "cron": {
+      "failed": 16,
+      "passed": 61,
+      "additionalFailuresAllowed": 0
+    },
+    "stage2": {
+      "oldFailed": 108,
+      "osDeniedAdded": 22,
+      "failed": 130,
+      "passed": 245
+    }
+  },
+  "classifications": [
+    {
+      "node": "tests/cron/test_migration_cron_fields.py::test_service_serializer_preserves_identifiers_and_destinations[session_bound]",
+      "owner": "Stage3 / P3 cron",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Direct jobs.json _store/_save_store private ABI is no longer durable definition authority; preserve serialization behavior through supported conversion/export seam."
+    },
+    {
+      "node": "tests/cron/test_migration_cron_fields.py::test_service_serializer_preserves_identifiers_and_destinations[legacy_fresh]",
+      "owner": "Stage3 / P3 cron",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Direct jobs.json _store/_save_store private ABI is no longer durable definition authority; preserve serialization behavior through supported conversion/export seam."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list.py::test_list_shows_last_run_state",
+      "owner": "Stage3 / P3 cron",
+      "classification": "HISTORICAL_CONFLICTING_CONTRACT",
+      "rationale": "Direct mutable legacy job run-state/next-run/disabled-list assertions are not durable cursor/ledger authority; no alternate execution-state source."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list.py::test_list_shows_error_message",
+      "owner": "Stage3 / P3 cron",
+      "classification": "HISTORICAL_CONFLICTING_CONTRACT",
+      "rationale": "Direct mutable legacy job run-state/next-run/disabled-list assertions are not durable cursor/ledger authority; no alternate execution-state source."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list.py::test_list_shows_next_run",
+      "owner": "Stage3 / P3 cron",
+      "classification": "HISTORICAL_CONFLICTING_CONTRACT",
+      "rationale": "Direct mutable legacy job run-state/next-run/disabled-list assertions are not durable cursor/ledger authority; no alternate execution-state source."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list.py::test_add_job_binds_current_session_key",
+      "owner": "Stage3 / P3 cron",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Preserved timezone/binding/destination assertions use old admission/context seam; port to accepted sender-first ownership/definition facade, never bypass authorization."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list.py::test_add_job_captures_owner_and_origin_without_legacy_delivery_fields",
+      "owner": "Stage3 / P3 cron",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Preserved timezone/binding/destination assertions use old admission/context seam; port to accepted sender-first ownership/definition facade, never bypass authorization."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list.py::test_list_excludes_disabled_jobs",
+      "owner": "Stage3 / P3 cron",
+      "classification": "HISTORICAL_CONFLICTING_CONTRACT",
+      "rationale": "Direct mutable legacy job run-state/next-run/disabled-list assertions are not durable cursor/ledger authority; no alternate execution-state source."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list_fork.py::test_list_shows_last_run_state",
+      "owner": "Stage3 / P3 cron",
+      "classification": "HISTORICAL_CONFLICTING_CONTRACT",
+      "rationale": "Direct mutable legacy job run-state/next-run/disabled-list assertions are not durable cursor/ledger authority; no alternate execution-state source."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list_fork.py::test_list_shows_error_message",
+      "owner": "Stage3 / P3 cron",
+      "classification": "HISTORICAL_CONFLICTING_CONTRACT",
+      "rationale": "Direct mutable legacy job run-state/next-run/disabled-list assertions are not durable cursor/ledger authority; no alternate execution-state source."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list_fork.py::test_list_shows_next_run",
+      "owner": "Stage3 / P3 cron",
+      "classification": "HISTORICAL_CONFLICTING_CONTRACT",
+      "rationale": "Direct mutable legacy job run-state/next-run/disabled-list assertions are not durable cursor/ledger authority; no alternate execution-state source."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list_fork.py::test_add_cron_job_defaults_to_tool_timezone",
+      "owner": "Stage3 / P3 cron",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Preserved timezone/binding/destination assertions use old admission/context seam; port to accepted sender-first ownership/definition facade, never bypass authorization."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list_fork.py::test_add_cron_job_accepts_additional_destinations",
+      "owner": "Stage3 / P3 cron",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Preserved timezone/binding/destination assertions use old admission/context seam; port to accepted sender-first ownership/definition facade, never bypass authorization."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list_fork.py::test_add_cron_job_rejects_invalid_additional_destination",
+      "owner": "Stage3 / P3 cron",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Preserved timezone/binding/destination assertions use old admission/context seam; port to accepted sender-first ownership/definition facade, never bypass authorization."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list_fork.py::test_add_at_job_uses_default_timezone_for_naive_datetime",
+      "owner": "Stage3 / P3 cron",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Preserved timezone/binding/destination assertions use old admission/context seam; port to accepted sender-first ownership/definition facade, never bypass authorization."
+    },
+    {
+      "node": "tests/cron/test_cron_tool_list_fork.py::test_list_excludes_disabled_jobs",
+      "owner": "Stage3 / P3 cron",
+      "classification": "HISTORICAL_CONFLICTING_CONTRACT",
+      "rationale": "Direct mutable legacy job run-state/next-run/disabled-list assertions are not durable cursor/ledger authority; no alternate execution-state source."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_from_config_missing_file",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_from_config_missing_env_reports_explicit_config_path",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_from_config_creates_instance",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_from_config_composes_configured_mcp_outside_agent_loop",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_from_config_accepts_default_model_override",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_from_config_accepts_default_model_preset",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_from_config_rejects_multiple_model_selectors",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_from_config_default_path",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_returns_result",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_with_hooks",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_hooks_restored_on_error",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_none_response",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_workspace_override",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_custom_session_key",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_exposes_attributes_to_context_provider_without_persisting_them",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_persisted_turn_callback_is_best_effort_and_reads_display_safe_session",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_persisted_turn_callback_observes_saved_command_turn",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_ephemeral_run_does_not_invoke_persisted_turn_callback",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_populates_tools_used_across_iterations",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_populates_final_messages",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_no_iterations_leaves_defaults_empty",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_populates_observability_fields",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_ephemeral_still_captures_runner_observability",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_forwards_non_default_runtime_options",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_allows_parallel_sessions_without_model_override",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_model_overrides_can_overlap_without_default_mutation",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_model_override_is_per_run_without_default_mutation",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_model_preset_override_is_per_run",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_rejects_multiple_model_selectors",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_user_hooks_still_fire_alongside_capture",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_concurrent_run_hooks_are_isolated_per_call",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_restores_extra_hooks_even_on_populated_iterations",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_stream_yields_text_events_in_order",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_streamed_wait_returns_full_result_without_consuming_events",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_streamed_cancel_releases_full_queue_without_consuming",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_streamed_text_returns_final_content",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_streamed_forwards_runtime_options",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_streamed_model_override_reports_admitted_runtime",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_stream_rejects_multiple_model_selectors",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_streamed_emits_tool_events",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_streamed_emits_reasoning_events",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_stream_generator_break_cancels_underlying_run",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_streamed_restores_hooks_and_reports_failure",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_run_streamed_stream_events_is_single_consumer",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_sessions_ingest_imports_transcript_without_running_model",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_sessions_ingest_preserves_full_transcript",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_sessions_ingest_validates_message_shape",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_session_helpers_get_list_export_clear_delete_flush",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_session_helpers_read_live_session_outside_strong_cache",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_session_export_and_restore_preserve_runtime_context",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_session_ingest_cannot_restore_runtime_context_marker",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_session_restore_validates_before_mutating_target",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_memory_helpers_read_write_append_and_filter_history",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_runtime_helpers_expose_model_workspace_and_compact",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_aclose_releases_loop_and_mcp_provider",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_context_manager_calls_aclose_on_exit",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade.py::test_context_manager_does_not_swallow_exceptions",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_from_config_missing_file",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_from_config_creates_instance",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_from_config_default_path",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_run_returns_result",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_run_with_hooks",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_run_hooks_restored_on_error",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_run_none_response",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_workspace_override",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_run_custom_session_key",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_run_hooks_are_isolated_for_concurrent_calls",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/test_nanobot_facade_fork.py::test_run_messages_are_opt_in_and_sanitized_detached_trace",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_agent_loop_llm_runtime_reflects_current_provider_and_model",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_persist_cron_turn_uses_distinct_history_marker",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_persist_user_message_acknowledges_durable_followup",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_persist_local_trigger_turn_uses_hidden_automation_marker",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_new_with_bot_suffix_does_not_persist_command",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_invalid_slash_command_is_rejected_without_calling_provider[/neaw-Unknown command \"/neaw\". Did you mean \"/new\"?]",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_invalid_slash_command_is_rejected_without_calling_provider[/status now-Command \"/status\" does not accept arguments. Did you mean \"/status\"?]",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_process_message_persists_user_message_before_turn_completes",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_subagent_followup_stages_provider_state_before_turn_runs",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_subagent_followup_state_is_durable_before_prompt_assembly",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_subagent_redelivery_does_not_duplicate_staged_provider_input",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_subagent_followup_clears_state_before_compatibility_failure",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_process_message_persists_unified_session_delivery_route",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_unified_session_route_ignores_non_user_destinations[msg0-True]",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_unified_session_route_ignores_non_user_destinations[msg1-False]",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_unified_session_route_ignores_non_user_destinations[msg2-True]",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_unified_session_route_ignores_non_user_destinations[msg3-True]",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_process_message_persists_media_paths_on_user_turn",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_process_message_persists_media_only_turn_without_text",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_process_message_does_not_duplicate_early_persisted_user_message",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_internal_continuation_queues_turn_without_fake_user_history",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_internal_continuation_preserves_streaming_route_metadata",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_websocket_internal_continuation_keeps_single_visible_run",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_process_message_keeps_delivery_chat_for_thread_session",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_process_message_uses_explicit_session_for_goal_context",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_run_agent_loop_continuation_reads_latest_goal_metadata",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_process_direct_rejects_reserved_system_channel",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_process_direct_skip_user_persist_does_not_save_retry_user",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_request_context_uses_effective_key_for_spawn_tool",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_next_turn_after_crash_closes_pending_user_turn_before_new_input",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_stop_preserves_runtime_checkpoint_for_next_turn",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_system_subagent_followup_is_persisted_before_prompt_assembly",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_turn_usage_is_persisted_with_the_saved_session",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_system_subagent_followup_does_not_log_content",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_system_subagent_followup_uses_common_turn_lifecycle",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_multiple_subagent_followups_all_persist_as_standalone_history",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_request_context_passes_thread_session_key_to_spawn",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_system_subagent_followup_uses_thread_session_and_slack_metadata",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "tests/agent/test_loop_save_turn.py::test_turn_after_unanswered_user_keeps_tool_call_pairing",
+      "owner": "Stage2 engine compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical fixture uses removed private runner/context/persistence ABI; port to canonical turn/accepted session/composition seam while retaining behavioral assertion."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_settings_api_returns_safe_subset_and_updates_whitelist",
+      "owner": "Stage1 SDK/entrypoint compatibility",
+      "classification": "COMPATIBILITY_PORT_REQUIRED",
+      "rationale": "Historical eager or unguarded SDK/constructor fixture conflicts with definition/acquire lifecycle and intact global guard; use scoped test-local guard injection with fake authorities, retain public behavior."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_token_issue_route_requires_secret_when_static_token_configured",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_end_to_end_client_receives_ready_and_agent_sees_inbound",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_token_rejects_handshake_when_mismatch",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_wrong_path_returns_404",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_http_route_issues_token_then_websocket_requires_it",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_image_settings_hot_reload_without_restart",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_image_settings_fall_back_to_restart_when_hot_reload_fails",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_commands_api_returns_slash_command_metadata",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_bootstrap_exposes_native_surface",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_end_to_end_server_pushes_streaming_deltas_to_client",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_token_issue_rejects_when_at_capacity",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_allow_from_rejects_unauthorized_client_id",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_client_id_truncation",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_non_utf8_binary_frame_ignored",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_static_token_accepts_issued_token_as_fallback",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_allow_from_empty_list_denies_all",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_websocket_requires_token_without_issue_path",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_multiplex_legacy_still_works",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_multiplex_new_chat_roundtrip",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_multiplex_two_chats_isolated",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_multiplex_invalid_frames_return_error",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "nanobot/channels/websocket/tests/test_websocket_channel.py::test_multiplex_cleanup_on_disconnect",
+      "owner": "P6 environment / Stage4 diagnostic",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "Unchanged existing loopback WebSocket fixture denied by exact full OS network profile; no relaxed network qualification or green count."
+    },
+    {
+      "node": "tests/test_api_attachment.py::test_docx_upload_passes_media_path",
+      "owner": "P6 packaging",
+      "classification": "ENVIRONMENT_RELEASE_BLOCKED",
+      "rationale": "python-docx absent; NOT_RUN, never counted PASS; no dependency installed."
+    }
+  ],
+  "unqualified": [
+    "BasedPyright unavailable",
+    "native Windows",
+    "native/installed artifact",
+    "immutable release/dependency inventory",
+    "full Config schema and channel runtime import validation"
+  ],
+  "sourceManifest": "Stage4 exact finite accepted manifest; no unsplit substrate/p3/primitive gates.",
+  "closureEvidenceGate": {
+    "status": "PENDING_POSITIVE_PRESERVED_ASSERTION_MAPPING",
+    "p5Verdict": "NOT_DONE",
+    "classificationIsNotCoverage": true,
+    "compatibilityPortRequiredNodes": 116,
+    "environmentReleaseBlockedNodes": 23,
+    "historicalConflictingNodes": 8,
+    "mappingScope": "For each exact COMPATIBILITY_PORT_REQUIRED node, map every preserved assertion to actual supported positive current-contract node IDs, owning stage and accepted outcome; root validates coverage rather than inferring it from green selection counts.",
+    "uncoveredBehaviorOwner": "Exact prior owning Stage1/Stage2/Stage3 contract; separately bounded evidence or fixture-port work, not blanket P6 transfer or general refactor.",
+    "finalGate": "Root binary nine-statement ledger review after accepted mapping; technical Stage5 preflight/handoff acceptance remains separate.",
+    "stage5FixturePortsAuthorized": false
+  },
+  "rootResults": {
+    "date": "2026-10-02",
+    "verdict": "TECHNICAL_ROOT_PASS",
+    "scope": "Bounded copied-root preflight/report/rollback/P6-P7 handoff only",
+    "p5": "NOT_DONE",
+    "fullStage5Closure": "NOT_ACCEPTED",
+    "activation": "NOT_READY_NOT_AUTHORIZED",
+    "focus": {"passed": 57, "seconds": 0.49, "profile": "full"},
+    "hashSeedConflictProbes": {"seeds": [1, 2], "configStructure": "FAIL", "backgroundDormancy": "FAIL"},
+    "coldValidCLI": {"exitCode": 1, "result": "NOT_READY", "checks": 15, "cleanInventories": "PASS", "runtimeConfigProviderChannelSDKImports": "ABSENT"},
+    "independentPreservedTreeSelections": {
+      "stage4_focus": {"passed": 118},
+      "cold_sdk": {"passed": 1},
+      "prior": {"passed": 87},
+      "modes": {"passed": 271},
+      "consumers": {"passed": 77},
+      "adapters": {"passed": 93},
+      "cron": {"passed": 77},
+      "lease": {"passed": 16},
+      "substrate_full_denial": {"passed": 145},
+      "substrate_local_process": {"passed": 7},
+      "p3_full_denial": {"passed": 260},
+      "p3_local_process": {"passed": 6},
+      "primitive_full_denial": {"passed": 218},
+      "primitive_local_process": {"passed": 3},
+      "historical": {"failed": 16, "passed": 61, "exactFailureNodeSetUnchanged": true, "addedFailures": 0}
+    },
+    "countsAreIndependentNeverSummed": true,
+    "review": "Fresh GPT-6.1 Sol Medium CORRECT then narrow PASS; all three findings resolved",
+    "correctionRoundsUsed": 2,
+    "static": {"ruff": "PASS", "inMemoryCompile": "PASS", "diffCheck": "PASS", "newDocLinks": 27, "brokenLinks": 0, "basedPyright": "UNQUALIFIED_ABSENT"},
+    "implementationScopeBeforePublication": {"baselineFiles": 1849, "baselineByteIdentical": 1849, "additions": 9, "existingChanges": 0, "removals": 0, "violations": 0},
+    "classificationAudit": {"uniqueNodes": 147, "compatibility": 116, "environmentP6": 23, "historical": 8, "omissions": 0, "duplicates": 0, "positiveAssertionCoverage": "NOT_PROVEN"},
+    "frozenPythonSHA256": {
+      "nanobot/_migration_preflight.py": "60884ccc23bde791855d354fa9463d8fa249ebbe58fa435730b4f82656f0eacd",
+      "nanobot/cli/migration_preflight.py": "2d5def4cded80d9295c72a5f65fa812f8fe7b1db5996e8c4b575404d37a98de3",
+      "tests/cli/test_migration_preflight.py": "96c3a4caa97ce443b8072b49f6c632c3490b2512ba1c62278207eda5dfb8b0a5",
+      "tests/migration/test_p5_stage5_preflight.py": "ffdbd369aee663fb5873af197aeab38a20a5292ae9fbd17650dfa77dcc91c7ef"
+    },
+    "qualificationsNotClaimed": ["full runtime Config compatibility", "immutable installed/native release", "DOCX exact node NOT_RUN", "BasedPyright absent", "setproctitle absent", "native Windows", "live inventory/lease", "D9 authorization", "P7 canary", "H1 not delivered", "P8 optional"],
+    "nextGateBeforeP6": "Finite assertion-level positive preserved-behavior mapping for all 116 compatibility nodes, followed by root binary nine-statement ledger review",
+    "rawArtifactsSupplementaryOnly": "/tmp/nanobot-stage5.9h2qn6"
+  }
+}

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.turn import ToolOutcome
@@ -13,6 +13,30 @@ from nanobot.session.artifact import ArtifactValidationError, parse_artifact_ref
 from nanobot.session.artifact_reader import ArtifactReader, ArtifactReadResult
 from nanobot.session.execution_owner import ExecutionOwnershipError
 from nanobot.session.source import SourceValidationError
+
+if TYPE_CHECKING:
+    from abc import ABCMeta
+
+    class _ConstantToolMetadata(ABCMeta):
+        # Model class-level value lookup, not runtime property descriptors.
+        @property
+        def name(cls) -> str:
+            ...
+
+        @property
+        def description(cls) -> str:
+            ...
+
+        @property
+        def parameters(cls) -> dict[str, object]:
+            ...
+
+        @property
+        def read_only(cls) -> bool:
+            ...
+else:
+    # Keep the existing runtime metaclass, abstractness and MRO unchanged.
+    _ConstantToolMetadata = type(Tool)
 
 
 @dataclass(frozen=True)
@@ -30,7 +54,10 @@ class ArtifactRetrievalReceipt:
 
 
 def parse_retrieval_receipt(raw: object) -> ArtifactRetrievalReceipt:
-    if (not isinstance(raw, dict) or set(raw) != {'schema_version', 'reference', 'start_offset',
+    if not isinstance(raw, dict):
+        raise ArtifactValidationError('Invalid artifact retrieval receipt')
+    raw = cast(dict[object, object], raw)
+    if (set(raw) != {'schema_version', 'reference', 'start_offset',
             'next_offset', 'sha256'} or type(raw['schema_version']) is not int
             or raw['schema_version'] != 1 or type(raw['start_offset']) is not int
             or type(raw['next_offset']) is not int or not 0 <= raw['start_offset'] <= raw['next_offset']
@@ -38,7 +65,7 @@ def parse_retrieval_receipt(raw: object) -> ArtifactRetrievalReceipt:
             or any(c not in '0123456789abcdef' for c in raw['sha256'])):
         raise ArtifactValidationError('Invalid artifact retrieval receipt')
     parse_artifact_reference(raw['reference'])
-    return ArtifactRetrievalReceipt(raw['reference'], raw['start_offset'], raw['next_offset'], raw['sha256'])
+    return ArtifactRetrievalReceipt(cast(str, raw['reference']), raw['start_offset'], raw['next_offset'], raw['sha256'])
 
 
 def bounded_artifact_response(result: ArtifactReadResult) -> tuple[str, ArtifactReadResult]:
@@ -65,18 +92,36 @@ def bounded_artifact_response(result: ArtifactReadResult) -> tuple[str, Artifact
     return payload, result
 
 
-class ReadArtifactTool(Tool):
+class ReadArtifactTool(Tool, metaclass=_ConstantToolMetadata):
     _plugin_discoverable = False
-    name = 'read_artifact'
-    description = ('Read a stored text artifact by opaque reference. Byte offsets skip initial partial '
-                   'UTF-8 characters; trailing partial characters remain for the next page. '
-                   'Use next_offset to continue. max_bytes must be 4–16384. '
-                   'The complete JSON response is capped at 16384 UTF-8 bytes.')
-    read_only = True
-    parameters = {'type': 'object', 'properties': {
-        'reference': {'type': 'string'}, 'offset': {'type': 'integer', 'minimum': 0},
-        'max_bytes': {'type': 'integer', 'minimum': 4, 'maximum': 16384}},
-        'required': ['reference'], 'additionalProperties': False}
+    # Preserve runtime class constants while declaring the Tool instance contract.
+    if TYPE_CHECKING:
+        @property
+        def name(self) -> str:
+            ...
+
+        @property
+        def description(self) -> str:
+            ...
+
+        @property
+        def read_only(self) -> bool:
+            ...
+
+        @property
+        def parameters(self) -> dict[str, object]:
+            ...
+    else:
+        name = 'read_artifact'
+        description = ('Read a stored text artifact by opaque reference. Byte offsets skip initial partial '
+                       'UTF-8 characters; trailing partial characters remain for the next page. '
+                       'Use next_offset to continue. max_bytes must be 4–16384. '
+                       'The complete JSON response is capped at 16384 UTF-8 bytes.')
+        read_only = True
+        parameters = {'type': 'object', 'properties': {
+            'reference': {'type': 'string'}, 'offset': {'type': 'integer', 'minimum': 0},
+            'max_bytes': {'type': 'integer', 'minimum': 4, 'maximum': 16384}},
+            'required': ['reference'], 'additionalProperties': False}
 
     def __init__(self, reader: ArtifactReader):
         self.reader = reader

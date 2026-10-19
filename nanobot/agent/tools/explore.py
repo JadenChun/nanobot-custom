@@ -2,22 +2,36 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.turn import ToolOutcome, TurnContext
+
+if TYPE_CHECKING:
+    from nanobot.agent.delegation import ForegroundAgentManager
 
 
 class ExploreTool(Tool):
     """Run a focused read-only exploration pass in separate context."""
 
-    name = "explore"
-    description = (
+    @property
+    def name(self) -> str:
+        return "explore"
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self._parameters
+
+    _description = (
         "Launch a foreground read-only exploration role for broad or repeated investigation "
         "without filling the main context with raw search history. Use this only when "
         "simple direct read/search tools are insufficient."
     )
-    parameters = {
+    _parameters: dict[str, Any] = {
         "type": "object",
         "properties": {
             "task": {
@@ -42,7 +56,7 @@ class ExploreTool(Tool):
         "additionalProperties": False,
     }
 
-    def __init__(self, manager: Any, *, max_iterations: int) -> None:
+    def __init__(self, manager: ForegroundAgentManager, *, max_iterations: int) -> None:
         self._manager = manager
         self._max_iterations = max_iterations
 
@@ -52,7 +66,7 @@ class ExploreTool(Tool):
         thoroughness: str = "medium",
         artifact_references: list[str] | None = None,
         **_: Any,
-    ) -> str:
+    ) -> str | ToolOutcome:
         result = await self._manager.run_explore(
             task=task,
             thoroughness=thoroughness,
@@ -65,7 +79,7 @@ class ExploreTool(Tool):
 
         return self._format_result(result)
 
-    async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> Any:
+    async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:
         result = await self._manager.run_explore(
             task=kwargs.get("task", ""),
             thoroughness=kwargs.get("thoroughness", "medium"),
@@ -87,19 +101,19 @@ class ExploreTool(Tool):
             lines.append(f"Status: partial ({reason})")
         if summary := result.get("summary"):
             lines.extend(["Summary:", summary])
-        findings = result.get("findings") or []
+        findings = result.get("findings") or ()
         if findings:
             lines.append("Findings:")
             lines.extend(f"- {item}" for item in findings)
-        references = result.get("references") or []
+        references = result.get("references") or ()
         if references:
             lines.append("References:")
             lines.extend(f"- {item}" for item in references)
-        open_questions = result.get("open_questions") or []
+        open_questions = result.get("open_questions") or ()
         if open_questions:
             lines.append("Open Questions:")
             lines.extend(f"- {item}" for item in open_questions)
-        searched_areas = result.get("searched_areas") or []
+        searched_areas = result.get("searched_areas") or ()
         if searched_areas:
             lines.append("Searched Areas:")
             lines.extend(f"- {item}" for item in searched_areas)

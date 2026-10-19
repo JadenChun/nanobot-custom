@@ -16,7 +16,7 @@ import stat
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NoReturn, SupportsIndex, cast
 
 try:  # pragma: no cover - platform qualification covers unavailable fcntl.
     import fcntl
@@ -64,10 +64,10 @@ class _FailureError(Exception):
     __slots__ = ("code",)
 
     def __init__(self, code: ErrorCode) -> None:
-        self.code = code
+        self.code: ErrorCode = code
 
 
-def _fail(code: ErrorCode) -> None:
+def _fail(code: ErrorCode) -> NoReturn:
     raise _FailureError(code) from None
 
 
@@ -138,15 +138,18 @@ def _require_platform() -> None:
     ) or not callable(getattr(fcntl, "flock", None)):
         _fail("unavailable")
     for function in (os.open, os.stat, os.mkdir):
-        if function not in getattr(os, "supports_dir_fd", set()):
+        if function not in getattr(os, "supports_dir_fd", set[object]()):
             _fail("unavailable")
     if not callable(getattr(os, "fchmod", None)):
         _fail("unavailable")
 
 
 def _configured_components(path: object) -> tuple[str, ...]:
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        _fail("invalid")
     try:
-        raw = os.fspath(path)
+        # os.fspath itself rejects any __fspath__ result other than str/bytes.
+        raw = cast(str | bytes, os.fspath(path))
     except (TypeError, ValueError):
         _fail("invalid")
     if not isinstance(raw, str) or not raw.startswith("/") or "\x00" in raw:
@@ -167,6 +170,27 @@ def _is_safe_component(value: object) -> bool:
         and "/" not in value
         and "\\" not in value
         and "\x00" not in value
+    )
+
+
+def _valid_recovery_candidate_fields(
+    workspace_path: object,
+    sessions_root: object,
+    namespace_path: object,
+    session_path: object,
+    session_key: object,
+    workspace_id: object,
+) -> bool:
+    """Validate runtime field values, including forged dataclass instances."""
+    return (
+        isinstance(workspace_path, Path)
+        and isinstance(sessions_root, Path)
+        and isinstance(namespace_path, Path)
+        and isinstance(session_path, Path)
+        and isinstance(session_key, str)
+        and bool(session_key.strip())
+        and isinstance(workspace_id, str)
+        and _RECOVERY_NAMESPACE_RE.fullmatch(workspace_id) is not None
     )
 
 
@@ -502,16 +526,16 @@ class CheckedSessionAuthority:
             recovery_candidate.session_file_identity if recovery_candidate is not None else None
         )
 
-    def __copy__(self) -> CheckedSessionAuthority:
+    def __copy__(self) -> NoReturn:
         raise TypeError("CheckedSessionAuthority cannot be copied")
 
-    def __deepcopy__(self, memo: object) -> CheckedSessionAuthority:
+    def __deepcopy__(self, memo: object) -> NoReturn:
         raise TypeError("CheckedSessionAuthority cannot be copied")
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("CheckedSessionAuthority cannot be serialized")
 
-    def __reduce_ex__(self, protocol: int) -> object:
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
         raise TypeError("CheckedSessionAuthority cannot be serialized")
 
     def _close_after_fork(self) -> None:
@@ -719,7 +743,7 @@ class CheckedSessionAuthority:
             return
         lease_identity = self._require_memory_operation_current()
         _require_source_read_platform()
-        if os.listdir not in getattr(os, "supports_fd", set()):
+        if os.listdir not in getattr(os, "supports_fd", set[object]()):
             _fail("unavailable")
         workspace_baselines: list[_DirectoryBaseline] = []
         workspace_fds: list[int] = []
@@ -841,7 +865,7 @@ class CheckedSessionAuthority:
             target_current = _stat_at(root_fd, target_name)
             target_opened = (
                 _directory_stat(target_namespace_fd)
-                if target_namespace_fd is not None
+                if cast(object, target_namespace_fd) is not None
                 else None
             )
             if (
@@ -927,6 +951,8 @@ class CheckedSessionAuthority:
             self._validate_recovery_candidate()
         if self._execution_directory is not None:
             baseline = self._execution_directory
+            if baseline.parent_fd is None:
+                _fail("changed")
             current = _directory_stat(baseline.fd)
             if not _same_directory(current, baseline.identity):
                 _fail("changed")
@@ -1018,6 +1044,9 @@ class CheckedSessionAuthority:
         _fail("changed")
 
     def _acquire_lock(self, parent_fd: int, name: str) -> None:
+        lock_module = fcntl
+        if lock_module is None:
+            _fail("unavailable")
         self._validate_all()
         descriptor, _created, opened = self._open_lock(parent_fd, name)
         _validate_lock_stat(opened)
@@ -1025,7 +1054,7 @@ class CheckedSessionAuthority:
         if before_lock_path is None or _lock_identity(before_lock_path) != _lock_identity(opened):
             _fail("changed")
         try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_module.flock(descriptor, lock_module.LOCK_EX | lock_module.LOCK_NB)
         except OSError as exc:
             if exc.errno in {
                 errno.EACCES,
@@ -1099,7 +1128,7 @@ class CheckedSessionAuthority:
                 close_error = True
         return "io" if close_error else None
 
-    def _raise_public(self, code: ErrorCode) -> None:
+    def _raise_public(self, code: ErrorCode) -> NoReturn:
         # Called only after internal exception handling has ended, so public
         # failures carry neither a cause nor a live exception context.
         raise CheckedSessionAuthorityError(code) from None
@@ -1684,7 +1713,7 @@ class CheckedSessionAuthority:
         if failure is not None:
             self._raise_public(failure)
 
-    def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> Literal[False]:
         if os.getpid() != self._pid:
             self.close()
             return False
@@ -1743,15 +1772,13 @@ def _open_checked_recovery_session(
     try:
         if type(operation) is not OperationType or type(candidate) is not CandidateType:
             raise ValueError
-        if (
-            not isinstance(candidate.workspace_path, Path)
-            or not isinstance(candidate.sessions_root, Path)
-            or not isinstance(candidate.namespace_path, Path)
-            or not isinstance(candidate.session_path, Path)
-            or not isinstance(candidate.session_key, str)
-            or not candidate.session_key.strip()
-            or not isinstance(candidate.workspace_id, str)
-            or _RECOVERY_NAMESPACE_RE.fullmatch(candidate.workspace_id) is None
+        if not _valid_recovery_candidate_fields(
+            candidate.workspace_path,
+            candidate.sessions_root,
+            candidate.namespace_path,
+            candidate.session_path,
+            candidate.session_key,
+            candidate.workspace_id,
         ):
             raise ValueError
         identity_values = (
@@ -1776,7 +1803,7 @@ def _open_checked_recovery_session(
         del workspace_components
         operation.require_current()
         lease_identity = operation.workspace_identity
-        lease_workspace = operation._authority.workspace
+        lease_workspace = operation.workspace
         if (
             candidate.workspace_path != lease_workspace
             or candidate.workspace_identity[:2] != lease_identity
@@ -1787,6 +1814,7 @@ def _open_checked_recovery_session(
         decoded = StoreType.decode_storage_key(storage_key)
         if (
             not _is_safe_component(storage_key)
+            or decoded is None
             or decoded != candidate.session_key
             or StoreType.storage_key(decoded) != storage_key
             or candidate.session_path
@@ -1823,7 +1851,7 @@ def _open_checked_recovery_session(
     )
 
 
-def open_checked_session(backend: JsonlSessionStore, key: str) -> CheckedSessionAuthority:
+def open_checked_session(backend: JsonlSessionStore, key: object) -> CheckedSessionAuthority:
     """Issue a context-managed, lock-only authority for ``backend`` and ``key``.
 
     The caller must already hold the memory authority.  The returned object
@@ -1843,6 +1871,7 @@ def open_checked_session(backend: JsonlSessionStore, key: str) -> CheckedSession
         path = os.fspath(backend.sessions_dir)
         if (
             not _is_safe_component(storage_key)
+            or decoded is None
             or decoded != key
             or backend.storage_key(decoded) != storage_key
         ):

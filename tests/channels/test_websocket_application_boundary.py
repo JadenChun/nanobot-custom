@@ -50,6 +50,16 @@ def _statements_without_docstring(node: ast.AsyncFunctionDef) -> list[ast.stmt]:
     return body
 
 
+def _contains_persisted_prefix_literal(source: str) -> bool:
+    """Ignore identifiers/annotations while catching hardcoded session keys."""
+    return any(
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value.startswith("websocket:")
+        for node in ast.walk(ast.parse(source))
+    )
+
+
 def test_websocket_runtime_does_not_import_application_command_trees() -> None:
     tree = ast.parse(_RUNTIME_PATH.read_text(encoding="utf-8"))
     imported = {
@@ -83,12 +93,18 @@ def test_persisted_webui_session_prefix_has_one_production_owner() -> None:
     for path in (_REPOSITORY_ROOT / "nanobot").rglob("*.py"):
         if "tests" in path.parts or path == _SESSION_IDENTITY_PATH:
             continue
-        if "websocket:" in path.read_text(encoding="utf-8"):
+        if _contains_persisted_prefix_literal(path.read_text(encoding="utf-8")):
             owners.append(path.relative_to(_REPOSITORY_ROOT).as_posix())
     assert owners == []
     assert 'WEBUI_SESSION_STORAGE_PREFIX = "websocket:"' in _SESSION_IDENTITY_PATH.read_text(
         encoding="utf-8"
     )
+
+
+def test_prefix_owner_scanner_ignores_annotations_but_catches_runtime_literals() -> None:
+    assert not _contains_persisted_prefix_literal("websocket: dict[str, str] = {}")
+    assert _contains_persisted_prefix_literal('return f"websocket:{chat_id}"')
+    assert _contains_persisted_prefix_literal('return "websocket:" + chat_id')
 
 
 def test_runtime_exports_compatibility_protocol_helpers() -> None:

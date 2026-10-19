@@ -7,7 +7,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from nanobot.agent.loop import AgentLoop
-from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import RuntimeModelChanged
 from nanobot.config.errors import ConfigLoadError
@@ -20,6 +19,13 @@ from nanobot.session.model_selection import (
     model_preset_from_metadata,
 )
 from nanobot.webui.settings_api import update_agent_settings
+from tests.agent.p6_admitted_fixtures import (
+    AgentInputs,
+    AsyncAdmittedFactory,
+    SyncAdmittedFactory,
+)
+from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
+from tests.agent.p6_admitted_fixtures import admitted_sync as admitted_sync
 
 
 def _provider(default_model: str, max_tokens: int = 123) -> MagicMock:
@@ -29,13 +35,65 @@ def _provider(default_model: str, max_tokens: int = 123) -> MagicMock:
     return provider
 
 
-def test_provider_refresh_updates_runtime_resolver(tmp_path: Path) -> None:
+def _build_loop(inputs: AgentInputs, **options: object) -> AgentLoop:
+    return AgentLoop(
+        bus=inputs.bus, workspace=inputs.config.workspace_path,
+        session_manager=inputs.sessions, tool_registry=inputs.tools,
+        cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+        tools_config=inputs.config.tools, restrict_to_workspace=True,
+        enable_legacy_auto_compact=False, **options,
+    )
+
+
+def _make_loop(
+    tmp_path: Path, admitted: SyncAdmittedFactory, **options: object,
+) -> AgentLoop:
+    return admitted(tmp_path, lambda inputs: _build_loop(inputs, **options))
+
+
+async def _make_async_loop(
+    tmp_path: Path, admitted: AsyncAdmittedFactory, **options: object,
+) -> AgentLoop:
+    return await admitted(tmp_path, lambda inputs: _build_loop(inputs, **options))
+
+
+def _synthetic_config_provider(
+    config: Config, *, preset: ModelPresetConfig | None = None,
+) -> MagicMock:
+    resolved = preset if preset is not None else config.resolve_preset()
+    provider = _provider(resolved.model, resolved.max_tokens)
+    provider.generation = resolved.to_generation_settings()
+    return provider
+
+
+def _make_config_loop(
+    tmp_path: Path, admitted: SyncAdmittedFactory, config: Config, snapshot_loader,
+) -> tuple[AgentLoop, Path]:
+    acquired_path = None
+
+    def build(inputs: AgentInputs) -> AgentLoop:
+        nonlocal acquired_path
+        acquired_path = inputs.config._source_path
+        return AgentLoop.from_config(
+            inputs.config, bus=inputs.bus, tool_registry=inputs.tools,
+            provider=_synthetic_config_provider(inputs.config),
+            session_manager=inputs.sessions, cron_service=inputs.cron,
+            turn_delivery_factory=inputs.delivery,
+            provider_snapshot_loader=snapshot_loader,
+            enable_legacy_auto_compact=False,
+        )
+
+    loop = admitted(tmp_path, build, config=config)
+    assert isinstance(acquired_path, Path)
+    return loop, acquired_path
+
+
+def test_provider_refresh_updates_runtime_resolver(tmp_path: Path, admitted_sync) -> None:
     old_provider = _provider("old-model")
     new_provider = _provider("new-model", max_tokens=456)
-    loop = AgentLoop(
-        bus=MessageBus(),
+    loop = _make_loop(
+        tmp_path, admitted_sync,
         provider=old_provider,
-        workspace=tmp_path,
         model="old-model",
         context_window_tokens=1000,
         provider_snapshot_loader=lambda: ProviderSnapshot(
@@ -55,13 +113,12 @@ def test_provider_refresh_updates_runtime_resolver(tmp_path: Path) -> None:
     assert loop.context_window_tokens == 2000
 
 
-def test_llm_runtime_refreshes_provider_snapshot(tmp_path: Path) -> None:
+def test_llm_runtime_refreshes_provider_snapshot(tmp_path: Path, admitted_sync) -> None:
     old_provider = _provider("old-model")
     new_provider = _provider("new-model", max_tokens=456)
-    loop = AgentLoop(
-        bus=MessageBus(),
+    loop = _make_loop(
+        tmp_path, admitted_sync,
         provider=old_provider,
-        workspace=tmp_path,
         model="old-model",
         context_window_tokens=1000,
         provider_snapshot_loader=lambda: ProviderSnapshot(
@@ -80,14 +137,13 @@ def test_llm_runtime_refreshes_provider_snapshot(tmp_path: Path) -> None:
     assert loop.provider is new_provider
 
 
-def test_llm_runtime_surfaces_invalidated_config_errors(tmp_path: Path) -> None:
+def test_llm_runtime_surfaces_invalidated_config_errors(tmp_path: Path, admitted_sync) -> None:
     def fail_refresh() -> ProviderSnapshot:
         raise ValueError("invalid config")
 
-    loop = AgentLoop(
-        bus=MessageBus(),
+    loop = _make_loop(
+        tmp_path, admitted_sync,
         provider=_provider("old-model"),
-        workspace=tmp_path,
         model="old-model",
         context_window_tokens=1000,
         provider_snapshot_loader=fail_refresh,
@@ -116,7 +172,7 @@ def test_provider_snapshot_missing_env_reports_explicit_config_path(
     assert exc_info.value.path == config_path
 
 
-def test_same_snapshot_default_clears_preset_and_publishes_update(tmp_path: Path) -> None:
+def test_same_snapshot_default_clears_preset_and_publishes_update(tmp_path: Path, admitted_sync) -> None:
     base_provider = _provider("base-model")
     fast_provider = _provider("fast-model")
     fast_snapshot = ProviderSnapshot(
@@ -126,10 +182,9 @@ def test_same_snapshot_default_clears_preset_and_publishes_update(tmp_path: Path
         signature=("fast-model", "auto", "same-runtime"),
     )
     published: list[tuple[str, str | None]] = []
-    loop = AgentLoop(
-        bus=MessageBus(),
+    loop = _make_loop(
+        tmp_path, admitted_sync,
         provider=base_provider,
-        workspace=tmp_path,
         model="base-model",
         context_window_tokens=1000,
         provider_signature=("base-model", "auto", "initial"),
@@ -148,7 +203,7 @@ def test_same_snapshot_default_clears_preset_and_publishes_update(tmp_path: Path
     assert published == [("fast-model", None)]
 
 
-def test_named_default_refresh_is_used_by_sessions_without_override(tmp_path: Path) -> None:
+def test_named_default_refresh_is_used_by_sessions_without_override(tmp_path: Path, admitted_sync) -> None:
     provider = _provider("shared-model")
     shared_signature = ("shared-model", "auto", "same-settings")
     snapshots = {
@@ -168,10 +223,9 @@ def test_named_default_refresh_is_used_by_sessions_without_override(tmp_path: Pa
         ),
     }
     default_snapshot = snapshots["deep"]
-    loop = AgentLoop(
-        bus=MessageBus(),
+    loop = _make_loop(
+        tmp_path, admitted_sync,
         provider=provider,
-        workspace=tmp_path,
         model="shared-model",
         context_window_tokens=16_000,
         provider_signature=shared_signature,
@@ -196,6 +250,7 @@ def test_named_default_refresh_is_used_by_sessions_without_override(tmp_path: Pa
 @pytest.mark.asyncio
 async def test_config_invalidation_defers_canonical_notification_until_default_refresh(
     tmp_path: Path,
+    admitted_async,
 ) -> None:
     provider = _provider("model-a")
     catalog = {"fast": ModelPresetConfig(model="model-a")}
@@ -211,10 +266,9 @@ async def test_config_invalidation_defers_canonical_notification_until_default_r
             model_preset="fast",
         )
 
-    loop = AgentLoop(
-        bus=MessageBus(),
+    loop = await _make_async_loop(
+        tmp_path, admitted_async,
         provider=provider,
-        workspace=tmp_path,
         model="model-a",
         context_window_tokens=16_000,
         provider_signature=("model-a", "auto"),
@@ -247,7 +301,7 @@ async def test_config_invalidation_defers_canonical_notification_until_default_r
 
 
 @pytest.mark.asyncio
-async def test_config_refresh_publishes_renamed_canonical_preset(tmp_path: Path) -> None:
+async def test_config_refresh_publishes_renamed_canonical_preset(tmp_path: Path, admitted_async) -> None:
     provider = _provider("model-a")
     catalog = {"fast": ModelPresetConfig(model="model-a")}
     default_name = "fast"
@@ -262,10 +316,9 @@ async def test_config_refresh_publishes_renamed_canonical_preset(tmp_path: Path)
             model_preset=name,
         )
 
-    loop = AgentLoop(
-        bus=MessageBus(),
+    loop = await _make_async_loop(
+        tmp_path, admitted_async,
         provider=provider,
-        workspace=tmp_path,
         model="model-a",
         context_window_tokens=16_000,
         provider_signature=("fast", "model-a"),
@@ -290,13 +343,13 @@ async def test_config_refresh_publishes_renamed_canonical_preset(tmp_path: Path)
 
 def test_next_turn_captures_generation_changed_after_previous_admission(
     tmp_path: Path,
+    admitted_sync,
 ) -> None:
     provider = _provider("test-model")
     provider.generation = GenerationSettings(temperature=0.2, max_tokens=1024)
-    loop = AgentLoop(
-        bus=MessageBus(),
+    loop = _make_loop(
+        tmp_path, admitted_sync,
         provider=provider,
-        workspace=tmp_path,
         model="test-model",
         context_window_tokens=16_384,
     )
@@ -314,6 +367,7 @@ def test_next_turn_captures_generation_changed_after_previous_admission(
 def test_settings_context_window_refreshes_runtime_state(
     tmp_path: Path,
     monkeypatch,
+    admitted_sync,
 ) -> None:
     config_path = tmp_path / "config.json"
     config = Config()
@@ -326,12 +380,12 @@ def test_settings_context_window_refreshes_runtime_state(
     monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
 
     def loader(*, preset_name: str | None = None) -> ProviderSnapshot:
-        return load_provider_snapshot(config_path, preset_name=preset_name)
+        with monkeypatch.context() as factory_patch:
+            factory_patch.setattr("nanobot.providers.factory.make_provider", _synthetic_config_provider)
+            return load_provider_snapshot(config_path, preset_name=preset_name)
 
-    loop = AgentLoop.from_config(
-        config,
-        tool_registry=ToolRegistry(),
-        provider_snapshot_loader=loader,
+    loop, config_path = _make_config_loop(
+        tmp_path, admitted_sync, config, loader,
     )
 
     payload = update_agent_settings({"context_window_tokens": ["262144"]})
@@ -341,3 +395,88 @@ def test_settings_context_window_refreshes_runtime_state(
     assert payload["requires_restart"] is False
     assert loop.context_window_tokens == 262_144
     assert loop.llm_runtime().context_window_tokens == 262_144
+
+
+def test_runtime_refresh_unadmitted_constructor_refuses_before_effects(tmp_path, monkeypatch) -> None:
+    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from nanobot.session.manager import SessionManager
+
+    provider = _provider("unadmitted-model")
+    bus = MessageBus()
+    workspace = tmp_path / "unadmitted"
+    pending = workspace / "memory" / ".consolidation.pending.json"
+    pending.parent.mkdir(parents=True)
+    pending.write_text("{broken", encoding="utf-8")
+
+    def denied(*_args, **_kwargs):
+        pytest.fail("unadmitted runtime refresh reached a session or directory effect")
+
+    monkeypatch.setattr(SessionManager, "__init__", denied)
+    monkeypatch.setattr(Path, "mkdir", denied)
+    before = tuple(tmp_path.iterdir())
+    with pytest.raises(StartupReceiptAdmissionError):
+        AgentLoop(
+            bus=bus, provider=provider, workspace=workspace,
+            sessions_root=tmp_path / "sessions",
+        )
+    assert tuple(tmp_path.iterdir()) == before
+    assert not bus._pending
+    provider.chat.assert_not_called()
+    provider.chat_with_retry.assert_not_called()
+
+
+def test_runtime_refresh_settings_use_acquired_config_without_optional_effects(
+    tmp_path, monkeypatch, admitted_sync,
+) -> None:
+    from nanobot.config.loader import load_config
+    from nanobot.providers import factory
+
+    config = Config()
+    config.agents.defaults.model = "openai/gpt-4o"
+    config.agents.defaults.provider = "openai"
+    config.agents.defaults.context_window_tokens = 8192
+    config.providers.openai.api_key = "synthetic-only"
+    config_path = tmp_path / "unused-config.json"
+    constructed = []
+    denied_factory = factory.make_provider
+
+    def make_synthetic(current: Config, *, preset=None):
+        provider = _synthetic_config_provider(current, preset=preset)
+        constructed.append((current._source_path, provider))
+        return provider
+
+    def loader(*, preset_name=None):
+        with monkeypatch.context() as factory_patch:
+            factory_patch.setattr(factory, "make_provider", make_synthetic)
+            return load_provider_snapshot(config_path, preset_name=preset_name)
+
+    loop, config_path = _make_config_loop(tmp_path, admitted_sync, config, loader)
+    initial = loop.llm_runtime()
+    assert initial.context_window_tokens == 8192
+    assert load_config()._source_path == config_path
+    assert load_config().workspace_path == loop.workspace
+    assert config_path.parent == loop.sessions.sessions_root.parent
+    assert not (tmp_path / "unused-config.json").exists()
+    assert loop.sessions.has_managed_authority
+    assert loop.turn_delivery_factory.bus is loop.bus
+    assert loop.tools_config.restrict_to_workspace is True
+    assert loop.auto_compact is None
+    assert not loop._background_tasks
+    assert not loop.cron_service._running
+
+    payload = update_agent_settings({"context_window_tokens": ["65536"]})
+    loop.invalidate_runtime_config()
+    refreshed = loop.llm_runtime()
+
+    assert payload["requires_restart"] is False
+    assert refreshed.context_window_tokens == 65536
+    assert initial.context_window_tokens == 8192
+    assert load_config(config_path).agents.defaults.context_window_tokens == 65536
+    assert len(constructed) == 1
+    assert constructed[0][0] == config_path
+    assert refreshed.provider is constructed[0][1]
+    assert factory.make_provider is denied_factory
+    assert not loop._background_tasks
+    assert not loop.cron_service._running
+    loop.provider.chat.assert_not_called()
+    loop.provider.chat_with_retry.assert_not_called()

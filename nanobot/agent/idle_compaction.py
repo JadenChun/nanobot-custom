@@ -12,19 +12,19 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Coroutine, Iterable
 from dataclasses import dataclass
 from enum import Enum
 from time import monotonic
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, cast
 
 CaptureT = TypeVar("CaptureT")
 CandidateT = TypeVar("CandidateT")
 
-SessionEnumerator = Callable[[], Awaitable[Iterable[str]]]
-IdleCapture = Callable[[str], Awaitable[CaptureT | None]]
+SessionEnumerator = Callable[[], Coroutine[object, object, Iterable[str]]]
+IdleCapture = Callable[[str], Coroutine[object, object, CaptureT | None]]
 IdleCompute = Callable[
-    [str, CaptureT, "IdleAuxiliaryLimits"], Awaitable["IdleComputation[CandidateT]"]
+    [str, CaptureT, "IdleAuxiliaryLimits"], Coroutine[object, object, "IdleComputation[CandidateT]"]
 ]
 IdleValidate = Callable[[str, CaptureT, CandidateT], Awaitable[bool]]
 IdlePublish = Callable[[str, CaptureT, CandidateT], Awaitable[object] | object]
@@ -93,7 +93,7 @@ class IdleComputation(Generic[CandidateT]):
     usage: IdleAuxiliaryUsage | None
 
 
-def _finite_non_negative(value: float | int, name: str) -> None:
+def _finite_non_negative(value: object, name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError(f"{name} must be a finite number")
     if value < 0:
@@ -249,7 +249,8 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
         self._clock = clock
         # A disabled policy must never create worker tasks or enqueue an item.
         # The inert queue therefore needs no invented production capacity.
-        capacity = policy.queue_capacity if policy.enabled else 0
+        capacity = cast(int, policy.queue_capacity) if policy.enabled else 0
+        # enabled requires every finite policy field, including queue capacity.
         self._queue: asyncio.Queue[_QueuedJob[CaptureT]] = asyncio.Queue(maxsize=capacity)
         self._control_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
@@ -328,7 +329,8 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
         except asyncio.CancelledError:
             # Close cancels the coordinator-owned scan task.  Do not turn a
             # routine stop into a cancellation of the integration scanner.
-            if self._closed or not asyncio.current_task().cancelling():
+            current = asyncio.current_task()
+            if self._closed or (current is not None and not current.cancelling()):
                 return 0
             raise
 
@@ -346,12 +348,13 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
         try:
             session_keys = await enumeration
         except asyncio.CancelledError:
-            if self._closed or not asyncio.current_task().cancelling():
+            current = asyncio.current_task()
+            if self._closed or (current is not None and not current.cancelling()):
                 return 0
             raise
         admitted = 0
         for session_key in session_keys:
-            if not isinstance(session_key, str) or not session_key:
+            if not isinstance(cast(object, session_key), str) or not session_key:
                 continue
             if await self._capture_and_enqueue(session_key):
                 admitted += 1
@@ -364,14 +367,9 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
         foreground session source owner performs that durable update before it
         calls this notification.  Here we only cancel/discard local work.
         """
-        if not isinstance(session_key, str) or not session_key:
+        if not isinstance(cast(object, session_key), str) or not session_key:
             return
-        local_task: (
-            asyncio.Task[None]
-            | asyncio.Task[CaptureT | None]
-            | asyncio.Task[IdleComputation[CandidateT]]
-            | None
-        ) = None
+        local_task: asyncio.Task[object] | None = None
         async with self._control_lock:
             self._epochs[session_key] = self._epochs.get(session_key, 0) + 1
             identifier = self._current.get(session_key)
@@ -433,7 +431,7 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
             *publishing_tasks,
         ):
             self._request_cancel(task)
-        owned_tasks = (
+        owned_tasks: tuple[asyncio.Task[object], ...] = (
             *scan_tasks,
             *enumeration_tasks,
             *capture_tasks,
@@ -502,7 +500,8 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
             # Foreground admission and close cancel the callback task, while a
             # caller cancelling scan_once cancels this outer task as well.
             # Only the latter must propagate to that caller.
-            if self._closed or not asyncio.current_task().cancelling():
+            current = asyncio.current_task()
+            if self._closed or (current is not None and not current.cancelling()):
                 return False
             raise
         except Exception:
@@ -529,7 +528,8 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
             await self._queue.put(job)
         except asyncio.CancelledError:
             await self._finish_cancelled(session_key, identifier)
-            if self._closed or not asyncio.current_task().cancelling():
+            current = asyncio.current_task()
+            if self._closed or (current is not None and not current.cancelling()):
                 return False
             raise
         return True
@@ -554,7 +554,8 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
                         # cancellation so the worker can drain other sessions.
                         # A cancellation of the worker itself (shutdown) still
                         # propagates after the child has been cleaned up.
-                        if asyncio.current_task().cancelling():
+                        current = asyncio.current_task()
+                        if current is None or current.cancelling():
                             if not job_task.done():
                                 job_task.cancel()
                             await asyncio.gather(job_task, return_exceptions=True)
@@ -605,7 +606,7 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
             else:
                 # The validator owns the opaque generation/activity comparison
                 # and storage CAS.  It remains outside coordinator locks too.
-                valid = await self._validate(job.session_key, job.capture, result.candidate)
+                valid = cast(object, await self._validate(job.session_key, job.capture, result.candidate))
                 if not isinstance(valid, bool):
                     raise IdleCompactionError("Idle validate callback returned a non-boolean result")
                 if not await self._is_current(job):
@@ -756,8 +757,6 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
                     return _PublicationOutcome.FAILED
             except IdlePublicationConflict:
                 return _PublicationOutcome.DISCARDED
-            except asyncio.CancelledError:
-                return _PublicationOutcome.CANCELLED
             except BaseException:
                 return _PublicationOutcome.FAILED
             # ``False`` is the one explicit content-free conflict result;
@@ -891,7 +890,7 @@ class IdleCompactionCoordinator(Generic[CaptureT, CandidateT]):
         return delay
 
     def _read_clock(self) -> float:
-        value = self._clock()
+        value = cast(object, self._clock())
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise IdleCompactionError("Idle coordinator clock returned an invalid value")
         return float(value)

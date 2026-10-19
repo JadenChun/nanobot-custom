@@ -1,153 +1,120 @@
-"""Tests for /stop preserving partial context from interrupted turns.
+"""Real cancellation preserves completed work; gateway shutdown retains recovery.
 
-When /stop cancels an active task, the runtime checkpoint (tool results,
-assistant messages accumulated so far) should be materialized into session
-history rather than silently discarded.
-
-See: https://github.com/HKUDS/nanobot/issues/2966
+Regression coverage for https://github.com/HKUDS/nanobot/issues/2966.
+The real runner records a completed read before cancellation, rather than
+injecting a checkpoint into mocked storage or a removed execution method.
 """
 
-from __future__ import annotations
-
 import asyncio
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from copy import deepcopy
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nanobot.agent.loop import AgentLoop
-from nanobot.bus.queue import MessageBus
-from nanobot.session.recovery import RUNTIME_CHECKPOINT_KEY
+from nanobot.bus.events import InboundMessage
+from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from nanobot.session.recovery import RUNTIME_CHECKPOINT_KEY, restore_runtime_checkpoint
+from tests.agent import p6_admitted_fixtures
+
+admitted_async = p6_admitted_fixtures.admitted_async
 
 
-def _make_provider():
-    """Create an LLM provider mock with required attributes."""
-    from types import SimpleNamespace
+async def _cancel_after_completed_read(tmp_path, admitted_async, *, shutdown):
+    blocked = asyncio.Event()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    provider.generation = SimpleNamespace(max_tokens=4096, temperature=0.1, reasoning_effort=None)
-    provider.estimate_prompt_tokens.return_value = (10_000, "test")
-    return provider
+    provider.generation = GenerationSettings()
+    provider.supports_bound_conversation_state.return_value = False
+    provider.can_resume_conversation_state.return_value = False
+    provider.estimate_prompt_tokens.return_value = (100, "fixture")
+    calls = 0
 
+    async def chat(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return LLMResponse(content="Let me read.", tool_calls=[ToolCallRequest(
+                id="tc_1", name="read_file", arguments={"path": "evidence.txt"},
+            )])
+        assert calls == 2
+        tool_rows = [row for row in kwargs["messages"] if row.get("role") == "tool"]
+        assert len(tool_rows) == 1 and "Search hit." in tool_rows[0]["content"]
+        blocked.set()
+        await asyncio.Event().wait()
+        raise AssertionError("blocked provider unexpectedly resumed")
 
-def _make_loop(tmp_path: Path) -> AgentLoop:
-    """Create a real AgentLoop with mocked provider — avoids patching __init__."""
-    bus = MessageBus()
-    provider = _make_provider()
-    with patch("nanobot.agent.loop.ContextBuilder"), \
-         patch("nanobot.agent.loop.SessionManager"), \
-         patch("nanobot.agent.loop.SubagentManager") as mock_subagent_manager:
-        mock_subagent_manager.return_value.cancel_by_session = AsyncMock(return_value=0)
-        return AgentLoop(bus=bus, provider=provider, workspace=tmp_path)
+    provider.chat_with_retry = AsyncMock(side_effect=chat)
 
-
-@pytest.mark.asyncio
-async def test_dispatch_cancellation_restores_checkpoint():
-    """Regression for #2966: /stop interrupting _dispatch must materialize the
-    in-flight runtime checkpoint into session.messages before the cancellation
-    unwinds, so the next turn can see the partial work.
-
-    This exercises the real _dispatch path (locks, pending queues, the
-    CancelledError handler), so a future refactor that drops the cancel-time
-    restore is caught by CI instead of silently regressing.
-    """
-    from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
-
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    workspace = MagicMock()
-    workspace.__truediv__ = MagicMock(return_value=MagicMock())
-
-    with patch("nanobot.agent.loop.ContextBuilder"), \
-         patch("nanobot.agent.loop.SessionManager"), \
-         patch("nanobot.agent.loop.SubagentManager") as mock_subagent_manager:
-        mock_subagent_manager.return_value.cancel_by_session = AsyncMock(return_value=0)
-        loop = AgentLoop(bus=bus, provider=provider, workspace=workspace)
-
-    checkpoint_key = RUNTIME_CHECKPOINT_KEY
-    session = SimpleNamespace(
-        key="test:c1",
-        metadata={
-            checkpoint_key: {
-                "phase": "awaiting_tools",
-                "iteration": 0,
-                "assistant_message": {
-                    "role": "assistant",
-                    "content": "Let me search.",
-                    "tool_calls": [
-                        {
-                            "id": "tc_1",
-                            "type": "function",
-                            "function": {"name": "web_search", "arguments": "{}"},
-                        }
-                    ],
-                },
-                "completed_tool_results": [
-                    {"role": "tool", "tool_call_id": "tc_1", "content": "Search hit."},
-                ],
-                "pending_tool_calls": [],
-            }
-        },
-        messages=[{"role": "user", "content": "Search for something"}],
-    )
-
-    loop.sessions.get_or_create = MagicMock(return_value=session)
-    loop.sessions.save = MagicMock()
-
-    async def _cancel(*_args, **_kwargs):
-        raise asyncio.CancelledError()
-
-    loop._process_message = _cancel
-
-    msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="work")
-
-    with pytest.raises(asyncio.CancelledError):
-        await loop._dispatch(msg)
-
-    roles = [m.get("role") for m in session.messages]
-    assert roles == ["user", "assistant", "tool"], (
-        "Expected the assistant message and completed tool result from the "
-        f"interrupted turn to be materialized into session.messages; got {roles}"
-    )
-    assert checkpoint_key not in session.metadata, \
-        "Checkpoint metadata should be cleared after restore"
-    assert loop.sessions.save.called, \
-        "Session should be persisted so the restored state survives process restart"
-
-
-@pytest.mark.asyncio
-async def test_dispatch_cancellation_keeps_checkpoint_for_gateway_shutdown(tmp_path: Path) -> None:
-    """Gateway shutdown preserves the checkpoint; an explicit stop restores it."""
-    loop = _make_loop(tmp_path)
-    loop.preserve_inflight_turns_on_shutdown()
-    checkpoint_key = RUNTIME_CHECKPOINT_KEY
-    checkpoint = {
-        "phase": "final_response",
-        "assistant_message": {"role": "assistant", "content": "finished"},
-        "completed_tool_results": [],
-        "pending_tool_calls": [],
-    }
-    session = SimpleNamespace(
-        metadata={checkpoint_key: checkpoint},
-        messages=[],
-        provider_state=None,
-    )
-    loop.sessions.get_or_create.return_value = session
-
-    async def _cancel(*_args: object, **_kwargs: object) -> None:
-        raise asyncio.CancelledError()
-
-    loop._process_message = _cancel  # type: ignore[method-assign]
-
-    from nanobot.bus.events import InboundMessage
-
-    with pytest.raises(asyncio.CancelledError):
-        await loop._dispatch(
-            InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="work")
+    def build(inputs):
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="test-model", session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            enable_legacy_auto_compact=False,
         )
 
-    assert session.metadata[checkpoint_key] == checkpoint
-    assert session.messages == []
+    loop = await admitted_async(tmp_path, build, keys=("test:c1",))
+    (loop.workspace / "evidence.txt").write_text("Search hit.", encoding="utf-8")
+    if shutdown:
+        loop.preserve_inflight_turns_on_shutdown()
+    task = asyncio.create_task(loop._dispatch(InboundMessage(
+        channel="test", sender_id="u1", chat_id="c1", content="Read the evidence",
+    )))
+    try:
+        await asyncio.wait_for(blocked.wait(), timeout=2)
+        before = loop.sessions.read_session_snapshot("test:c1")
+        assert before is not None
+        checkpoint = deepcopy(before.metadata[RUNTIME_CHECKPOINT_KEY])
+        assert checkpoint["phase"] == "tools_completed"
+        assert checkpoint["assistant_message"]["tool_calls"][0]["id"] == "tc_1"
+        assert len(checkpoint["completed_tool_results"]) == 1
+        assert "Search hit." in checkpoint["completed_tool_results"][0]["content"]
+        assert checkpoint["pending_tool_calls"] == []
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+    after = loop.sessions.read_session_snapshot("test:c1")
+    assert after is not None
+    provider.chat_with_retry.assert_awaited()
+    assert provider.chat_with_retry.await_count == 2
+    assert not loop._pending_queues
+    return loop, before, after, checkpoint
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cancellation_restores_checkpoint(tmp_path, admitted_async):
+    loop, before, after, _ = await _cancel_after_completed_read(
+        tmp_path, admitted_async, shutdown=False,
+    )
+    assert [row["role"] for row in before.messages] == ["user"]
+    assert [row["role"] for row in after.messages] == ["user", "assistant", "tool"]
+    assert after.messages[1]["content"] == "Let me read."
+    assert after.messages[2]["tool_call_id"] == "tc_1"
+    assert "Search hit." in after.messages[2]["content"]
+    assert RUNTIME_CHECKPOINT_KEY not in after.metadata
+    assert loop.sessions.get_cached("test:c1").messages == after.messages
+    # The detached disk snapshot proves persistence and restoration is idempotent.
+    unchanged = deepcopy(after.messages)
+    assert not restore_runtime_checkpoint(after)
+    assert after.messages == unchanged
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cancellation_keeps_checkpoint_for_gateway_shutdown(
+    tmp_path, admitted_async,
+):
+    loop, before, after, checkpoint = await _cancel_after_completed_read(
+        tmp_path, admitted_async, shutdown=True,
+    )
+    assert after.metadata[RUNTIME_CHECKPOINT_KEY] == checkpoint
+    assert after.messages == before.messages
+    assert [row["role"] for row in after.messages] == ["user"]
+    await loop.aclose()
+    reloaded = loop.sessions.read_session_snapshot("test:c1")
+    assert reloaded is not None
+    assert reloaded.metadata[RUNTIME_CHECKPOINT_KEY] == checkpoint
+    assert reloaded.messages == before.messages
+    assert loop.provider.chat_with_retry.await_count == 2

@@ -9,14 +9,15 @@ being migrated.
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 if TYPE_CHECKING:
+    from nanobot.agent.busy_dispatch import BusyTurn
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.providers.base import LLMUsage
@@ -137,7 +138,7 @@ class ScheduledTurnLink:
     def __post_init__(self) -> None:
         if isinstance(self.scheduled_at, datetime):
             object.__setattr__(self, "scheduled_at", self.scheduled_at.isoformat())
-        if not isinstance(self.additional_destinations, tuple):
+        if not isinstance(cast(object, self.additional_destinations), tuple):
             object.__setattr__(self, "additional_destinations", tuple(self.additional_destinations))
         if self.job_id is None and self.schedule_id is not None:
             object.__setattr__(self, "job_id", self.schedule_id)
@@ -157,7 +158,7 @@ class ApprovalGrant:
     scope: str | None = None
     granted_at: str | None = None
     expires_at: str | None = None
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
 
     def __post_init__(self) -> None:
         if self.granted is None:
@@ -196,7 +197,7 @@ class TurnRequest:
     approval_grant: ApprovalGrant | None = None
     approval: ApprovalGrant = field(default_factory=ApprovalGrant)
     callbacks: TurnCallbacks = field(default_factory=TurnCallbacks)
-    metadata: Mapping[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
     run_id: str | None = None
     tool_names: tuple[str, ...] | None = None
     scheduled: ScheduledTurnLink | None = None
@@ -210,11 +211,11 @@ class TurnRequest:
         canonical_content = self.content or self.prompt or self.message or ""
         object.__setattr__(self, "content", canonical_content)
         object.__setattr__(self, "prompt", canonical_content)
-        if not isinstance(self.media, tuple):
+        if not isinstance(cast(object, self.media), tuple):
             object.__setattr__(self, "media", tuple(self.media))
-        if not isinstance(self.hooks, tuple):
+        if not isinstance(cast(object, self.hooks), tuple):
             object.__setattr__(self, "hooks", tuple(self.hooks))
-        if self.tool_names is not None and not isinstance(self.tool_names, tuple):
+        if self.tool_names is not None and not isinstance(cast(object, self.tool_names), tuple):
             object.__setattr__(self, "tool_names", tuple(self.tool_names))
         if self.route is None and self.delivery_target is not None:
             object.__setattr__(self, "route", self.delivery_target)
@@ -228,11 +229,11 @@ class TurnRequest:
             object.__setattr__(self, "scheduled", self.scheduled_link)
         elif self.scheduled_link is None and self.scheduled is not None:
             object.__setattr__(self, "scheduled_link", self.scheduled)
-        if not isinstance(self.source, TurnSource):
+        if not isinstance(cast(object, self.source), TurnSource):
             object.__setattr__(self, "source", TurnSource(str(self.source)))
-        if not isinstance(self.history_mode, HistoryMode):
+        if not isinstance(cast(object, self.history_mode), HistoryMode):
             object.__setattr__(self, "history_mode", HistoryMode(str(self.history_mode)))
-        if not isinstance(self.trace_mode, TraceMode):
+        if not isinstance(cast(object, self.trace_mode), TraceMode):
             object.__setattr__(self, "trace_mode", TraceMode(str(self.trace_mode)))
         if self.message is not None:
             if self.prompt and self.prompt != self.message:
@@ -378,6 +379,7 @@ class TurnContext:
     artifact_handoff_notices: list[str] = field(default_factory=list, repr=False)
     source_history: SourceTranscript | None = field(default=None, repr=False)
     source_input_event_id: str | None = field(default=None, repr=False)
+    busy_turn: BusyTurn | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.request is not None:
@@ -460,7 +462,7 @@ def _metadata_key_is_safe(key: str) -> bool:
     return not any(part in _SENSITIVE_METADATA_PARTS for part in _KEY_PART_RE.findall(lowered))
 
 
-def _sanitize_metadata_value(value: Any, *, depth: int = 0) -> Any:
+def _sanitize_metadata_value(value: object, *, depth: int = 0) -> object:
     """Return a bounded JSON-compatible value without sensitive/raw fields."""
 
     if depth > 4:
@@ -472,26 +474,37 @@ def _sanitize_metadata_value(value: Any, *, depth: int = 0) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, Mapping):
-        result: dict[str, Any] = {}
-        for raw_key, raw_value in list(value.items())[:64]:
+        result: dict[str, object] = {}
+        # Container validation does not promise anything about raw key/value types.
+        items = cast(Mapping[object, object], value).items()
+        for raw_key, raw_value in list(items)[:64]:
             key = str(raw_key)
             if _metadata_key_is_safe(key):
                 result[key] = _sanitize_metadata_value(raw_value, depth=depth + 1)
         return result
     if isinstance(value, (list, tuple, set, frozenset)):
-        return [_sanitize_metadata_value(item, depth=depth + 1) for item in list(value)[:64]]
+        items = list(cast(Iterable[object], value))[:64]
+        return [_sanitize_metadata_value(item, depth=depth + 1) for item in items]
     # Avoid repr() for arbitrary objects: it can contain credentials or raw
     # request details.  A type marker is sufficient for sanitized metadata.
     return f"<{type(value).__name__}>"
 
 
-def sanitize_metadata(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
+def sanitize_metadata(metadata: object) -> dict[str, Any]:
     """Sanitize user/runtime metadata before it is placed in a run record."""
 
     if not isinstance(metadata, Mapping):
         return {}
-    sanitized = _sanitize_metadata_value(metadata)
-    return sanitized if isinstance(sanitized, dict) else {}
+    sanitized = _sanitize_metadata_value(cast(Mapping[object, object], metadata))
+    # The mapping branch above constructs only string keys and sanitized values.
+    return cast(dict[str, Any], sanitized) if isinstance(sanitized, dict) else {}
+
+
+def _normalize_usage(value: object) -> dict[str, int]:
+    if not isinstance(value, Mapping):
+        return {}
+    items = cast(Mapping[object, object], value).items()
+    return {str(key): int(count) for key, count in items if isinstance(count, (int, float))}
 
 
 def _utc_timestamp() -> str:
@@ -522,7 +535,7 @@ class RunRecord:
     scheduled_job_id: str | None = None
     resumed_run_id: str | None = None
     tools_used: tuple[str, ...] = ()
-    usage: Mapping[str, int] = field(default_factory=dict)
+    usage: Mapping[str, int] = field(default_factory=dict[str, int])
     error_type: str | None = None
     session_ref: SessionRunRef | None = None
     started_at: str | datetime = field(default_factory=_utc_timestamp)
@@ -543,9 +556,9 @@ class RunRecord:
                 self.run_id = self.detail_ref.run_id
             else:
                 raise ValueError("run record must include a run_id")
-        if not isinstance(self.status, RunStatus):
+        if not isinstance(cast(object, self.status), RunStatus):
             self.status = RunStatus(str(self.status))
-        if not isinstance(self.source, TurnSource):
+        if not isinstance(cast(object, self.source), TurnSource):
             self.source = TurnSource(str(self.source))
         if self.detail_ref is None and self.session_ref is not None:
             self.detail_ref = self.session_ref
@@ -553,13 +566,13 @@ class RunRecord:
             self.session_ref = self.detail_ref
         if isinstance(self.detail_ref, Mapping):
             self.detail_ref = SessionRunRef(
-                session_key=str(self.detail_ref.get("session_key", "")),
-                run_id=str(self.detail_ref.get("run_id", self.run_id)),
+                session_key=str(cast(Mapping[object, object], self.detail_ref).get("session_key", "")),
+                run_id=str(cast(Mapping[object, object], self.detail_ref).get("run_id", self.run_id)),
             )
         if isinstance(self.session_ref, Mapping):
             self.session_ref = SessionRunRef(
-                session_key=str(self.session_ref.get("session_key", "")),
-                run_id=str(self.session_ref.get("run_id", self.run_id)),
+                session_key=str(cast(Mapping[object, object], self.session_ref).get("session_key", "")),
+                run_id=str(cast(Mapping[object, object], self.session_ref).get("run_id", self.run_id)),
             )
         if self.detail_ref is None and self.session_ref is not None:
             self.detail_ref = self.session_ref
@@ -574,16 +587,12 @@ class RunRecord:
         elif self.session_ref is None and self.detail_ref is not None:
             self.session_ref = self.detail_ref
         if isinstance(self.delivery_target, Mapping):
-            self.delivery_target = DeliveryTarget(**dict(self.delivery_target))
+            self.delivery_target = DeliveryTarget(**dict(cast(Mapping[Any, Any], self.delivery_target)))
         if isinstance(self.scheduled_link, Mapping):
-            self.scheduled_link = ScheduledTurnLink(**dict(self.scheduled_link))
-        if not isinstance(self.tools_used, tuple):
+            self.scheduled_link = ScheduledTurnLink(**dict(cast(Mapping[Any, Any], self.scheduled_link)))
+        if not isinstance(cast(object, self.tools_used), tuple):
             self.tools_used = tuple(self.tools_used)
-        self.usage = {
-            str(key): int(value)
-            for key, value in self.usage.items()
-            if isinstance(value, (int, float))
-        }
+        self.usage = _normalize_usage(self.usage)
         if self.scheduled_job_id is None and self.scheduled_link is not None:
             self.scheduled_job_id = self.scheduled_link.job_id
         if self.error_type is None and self.error is not None:
@@ -657,7 +666,7 @@ class RunRecord:
     def from_dict(cls, payload: Mapping[str, Any]) -> "RunRecord":
         """Load a record while ignoring unknown/non-schema fields."""
 
-        if not isinstance(payload, Mapping) or not payload.get("run_id"):
+        if not isinstance(cast(object, payload), Mapping) or not payload.get("run_id"):
             raise ValueError("run record must include a run_id")
         return cls(
             schema_version=int(payload.get("schema_version", 1)),
@@ -670,14 +679,14 @@ class RunRecord:
             scheduled_job_id=payload.get("scheduled_job_id"),
             resumed_run_id=payload.get("resumed_run_id"),
             tools_used=tuple(payload.get("tools_used") or ()),
-            usage=payload.get("usage") if isinstance(payload.get("usage"), Mapping) else {},
+            usage=_normalize_usage(payload.get("usage")),
             started_at=payload.get("started_at") or _utc_timestamp(),
             updated_at=payload.get("updated_at") or _utc_timestamp(),
             completed_at=payload.get("completed_at"),
             stop_reason=payload.get("stop_reason"),
             error=payload.get("error"),
             error_type=payload.get("error_type", payload.get("error")),
-            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), Mapping) else {},
+            metadata=sanitize_metadata(payload.get("metadata")),
             delivery_target=payload.get("delivery_target"),
             scheduled_link=payload.get("scheduled_link"),
         )
@@ -693,25 +702,25 @@ class TurnResult:
     final_content: Any = None
     stop_reason: str | None = None
     error: str | None = None
-    usage: Mapping[str, int] = field(default_factory=dict)
+    usage: Mapping[str, int] = field(default_factory=dict[str, int])
     tools_used: list[str] = field(default_factory=list)
     outbound: Any | None = None
     sent_messages: tuple[Any, ...] = ()
     record: RunRecord | None = None
-    policy_metadata: Mapping[str, Any] = field(default_factory=dict)
+    policy_metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
     messages: list[dict[str, Any]] | None = None
     llm_usage: LLMUsage | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.status, RunStatus):
+        if not isinstance(cast(object, self.status), RunStatus):
             self.status = RunStatus(str(self.status))
         if self.content is None and self.final_content is not None:
             self.content = self.final_content
         elif self.final_content is None and self.content is not None:
             self.final_content = self.content
-        if not isinstance(self.tools_used, list):
+        if not isinstance(cast(object, self.tools_used), list):
             self.tools_used = list(self.tools_used)
-        if self.messages is not None and not isinstance(self.messages, list):
+        if self.messages is not None and not isinstance(cast(object, self.messages), list):
             self.messages = list(self.messages)
 
     def to_dict(self) -> dict[str, Any]:
@@ -741,7 +750,7 @@ class ToolOutcome:
 
     content: Any = None
     stop_reason: str | None = None
-    policy_metadata: Mapping[str, Any] = field(default_factory=dict)
+    policy_metadata: Mapping[str, Any] = field(default_factory=dict[str, Any])
     producer_receipt: FilesystemReadReceipt | None = None
     retrieval_receipt: ArtifactRetrievalReceipt | None = None
     handoff_receipt: ArtifactHandoffReceipt | None = field(default=None, repr=False, compare=False)

@@ -15,18 +15,21 @@ boundary.
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import hashlib
 import json
 import os
 import re
 import stat
+import threading
 import uuid
+import weakref
 from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generator, Literal
+from typing import Any, Generator, Literal, Never, NoReturn, SupportsIndex, cast, overload
 
 from nanobot.cron.occurrence_store import CronOccurrenceStore, OccurrenceRecord
 
@@ -44,6 +47,7 @@ _MAX_ATTEMPTS = 256
 _MAX_IDENTIFIER_BYTES = 512
 _MAX_EVIDENCE_BYTES = 512
 _HASH_RE = re.compile(r"[0-9a-f]{64}")
+_SEND_LOCK_RE = re.compile(r"\.send\.([0-9a-f]{64})\.lock")
 _TEMP_ENTRY_RE = re.compile(r"\.[0-9a-f]{64}\.[0-9a-f]{32}\.tmp")
 _O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 _O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
@@ -99,6 +103,10 @@ class DeliveryOutboxOwnershipError(DeliveryOutboxError):
 
 class DeliveryOutboxReconciliationRequiredError(DeliveryOutboxError):
     """A destination is already claimed or uncertain and cannot auto-execute."""
+
+
+class DeliverySendBusyError(DeliveryOutboxReconciliationRequiredError):
+    """The destination is fenced by a live sender or reconciliation."""
 
 
 class DeliveryOutboxNotFoundError(DeliveryOutboxError):
@@ -233,6 +241,116 @@ class DeliveryClaim:
         return self.attempt
 
 
+_FENCE_CONSTRUCTION_TOKEN = object()
+_LIVE_SEND_FENCES: weakref.WeakSet[DeliverySendFence] = weakref.WeakSet()
+
+
+@dataclass(slots=True)
+class _FenceLifecycle:
+    active: bool = True
+    started: bool = False
+
+
+class DeliverySendFence:
+    """Non-serializable task capability holding one destination send lock."""
+
+    __slots__ = (
+        "_store", "_claim", "_frozen_claim", "_pid", "_task", "_lifecycle",
+        "_root_binding", "_lock_fd", "_lock_inode", "__weakref__",
+    )
+
+    def __init__(
+        self,
+        token: object,
+        *,
+        store: CronDeliveryOutboxStore,
+        claim: DeliveryClaim,
+        task: asyncio.Task[object],
+        root_binding: _RootBinding,
+        lock_fd: int,
+        lock_inode: tuple[int, int],
+        lifecycle: _FenceLifecycle | None = None,
+    ) -> None:
+        if token is not _FENCE_CONSTRUCTION_TOKEN:
+            raise TypeError("delivery send fences are issued only by their store")
+        self._store = store
+        self._claim = claim
+        self._frozen_claim = _claim_fields(claim)
+        self._pid = os.getpid()
+        self._task = task
+        self._lifecycle = _FenceLifecycle() if lifecycle is None else lifecycle
+        self._root_binding = root_binding
+        self._lock_fd = lock_fd
+        self._lock_inode = lock_inode
+
+    @property
+    def active(self) -> bool:
+        return self._lifecycle.active
+
+    @property
+    def started(self) -> bool:
+        return self._lifecycle.started
+
+    def __enter__(self) -> DeliverySendFence:
+        self._store.assert_send_fence_valid(self, require_started=False)
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self._store.release_send_fence(self)
+
+    def __copy__(self) -> NoReturn:
+        raise TypeError("delivery send fences cannot be copied")
+
+    def __deepcopy__(self, _memo: object) -> NoReturn:
+        raise TypeError("delivery send fences cannot be copied")
+
+    def __reduce_ex__(self, _protocol: SupportsIndex) -> NoReturn:
+        raise TypeError("delivery send fences cannot be serialized")
+
+    def issued_state_mismatch(
+        self, *, store: CronDeliveryOutboxStore, issued: _IssuedSendFence, claim: DeliveryClaim | None
+    ) -> bool:
+        return (
+            not self._lifecycle.active
+            or self._store is not store
+            or self._claim is not issued.claim
+            or self._pid != issued.pid
+            or self._task is not issued.task
+            or self._root_binding is not issued.root_binding
+            or self._lock_fd != issued.lock_fd
+            or self._lock_inode != issued.lock_inode
+            or self._frozen_claim != issued.frozen_claim
+            or _claim_fields(issued.claim) != issued.frozen_claim
+            or self._lifecycle.started != issued.started
+            or (claim is not None and issued.claim is not claim)
+            or self._lifecycle is not issued.lifecycle
+        )
+
+    def close_inherited_after_fork(self) -> None:
+        if self._pid == os.getpid():
+            return
+        self._after_fork_child()
+
+    def _after_fork_child(self) -> None:
+        if not self._lifecycle.active:
+            return
+        self._lifecycle.active = False
+        try:
+            os.close(self._lock_fd)
+        except OSError:
+            pass
+        self._root_binding.close()
+
+
+def _close_inherited_send_fences() -> None:
+    for fence in tuple(_LIVE_SEND_FENCES):
+        fence.close_inherited_after_fork()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_close_inherited_send_fences)
+
+
 @dataclass(frozen=True)
 class _RootBinding:
     store: CronDeliveryOutboxStore
@@ -245,7 +363,7 @@ class _RootBinding:
         return self.fds[-1]
 
     def assert_bound(self) -> None:
-        self.store._assert_path_binding(self)
+        self.store.assert_root_binding(self)
 
     def close(self) -> None:
         for fd in reversed(self.fds):
@@ -268,7 +386,7 @@ class _HeldOutbox:
         return self.root_binding.root_fd
 
     def assert_bound(self) -> None:
-        self.store._assert_binding(self)
+        self.store.assert_outbox_binding(self)
 
 
 @dataclass(frozen=True)
@@ -285,6 +403,33 @@ class _IssuedClaim:
     store_identity: int
     phase: Literal["claimed", "sending"]
     current_revision: int
+
+
+@dataclass
+class _IssuedSendFence:
+    fence: DeliverySendFence
+    claim: DeliveryClaim
+    pid: int
+    task: asyncio.Task[object]
+    root_binding: _RootBinding
+    lock_fd: int
+    lock_inode: tuple[int, int]
+    frozen_claim: tuple[object, ...]
+    lifecycle: _FenceLifecycle
+    started: bool = False
+
+
+def _claim_fields(claim: DeliveryClaim) -> tuple[object, ...]:
+    return (
+        claim.outbox_id,
+        claim.destination_id,
+        claim.attempt,
+        claim.owner,
+        claim.expected_revision,
+        claim.record_revision,
+        claim.action_id,
+        claim.request_digest,
+    )
 
 
 def _inode(info: os.stat_result) -> tuple[int, int]:
@@ -304,7 +449,7 @@ def _private(info: os.stat_result, *, directory: bool, links: int = 1) -> None:
         )
 
 
-def _reject_constant(value: str) -> None:
+def _reject_constant(value: str) -> Never:
     raise ValueError(f"non-finite JSON constant {value!r} is not allowed")
 
 
@@ -332,13 +477,14 @@ def _assert_json_value(value: object, *, error: type[DeliveryOutboxError], label
             raise error(f"{label} contains a non-finite JSON number")
         return
     if isinstance(value, Mapping):
-        for key, item in value.items():
+        # The runtime Mapping check proves only the container, not key/value types.
+        for key, item in cast(Mapping[object, object], value).items():
             if not isinstance(key, str):
                 raise error(f"{label} contains a non-string JSON key")
             _assert_json_value(item, error=error, label=label)
         return
     if isinstance(value, (list, tuple)):
-        for item in value:
+        for item in cast(list[object] | tuple[object, ...], value):
             _assert_json_value(item, error=error, label=label)
         return
     raise error(f"{label} contains a non-JSON value")
@@ -366,14 +512,15 @@ def _copy_json_value(
 
 
 def _copy_json_mapping(
-    value: Mapping[str, Any], *, label: str, error: type[DeliveryOutboxError] = DeliveryOutboxConflictError
+    value: object, *, label: str, error: type[DeliveryOutboxError] = DeliveryOutboxConflictError
 ) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise error(f"{label} must be a JSON object")
-    copied = _copy_json_value(value, label=label, error=error)
+    copied = _copy_json_value(cast(Mapping[object, object], value), label=label, error=error)
     if not isinstance(copied, dict):  # pragma: no cover - mappings encode as objects
         raise error(f"{label} must be a JSON object")
-    return copied
+    # JSON decoding constructs string-keyed objects with opaque JSON values.
+    return cast(dict[str, Any], copied)
 
 
 def _text(value: object, *, label: str, maximum: int = _MAX_IDENTIFIER_BYTES) -> str:
@@ -450,8 +597,9 @@ def _request_digest(
 def _validate_delivery_envelope(
     value: object, *, error: type[DeliveryOutboxError]
 ) -> dict[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != {"version", "deliver", "messages"}:
+    if not isinstance(value, Mapping) or set(cast(Mapping[object, object], value)) != {"version", "deliver", "messages"}:
         raise error("delivery envelope must have exactly version, deliver, and messages fields")
+    value = cast(Mapping[str, Any], value)  # Exact field set checked above.
     if type(value["version"]) is not int or value["version"] != 1:
         raise error("delivery envelope version must be integer 1")
     if type(value["deliver"]) is not bool:
@@ -459,10 +607,12 @@ def _validate_delivery_envelope(
     messages = value["messages"]
     if not isinstance(messages, list):
         raise error("delivery envelope messages must be a list")
+    messages = cast(list[object], messages)  # Individual message schemas follow below.
     copied_messages: list[dict[str, Any]] = []
     for message in messages:
-        if not isinstance(message, Mapping) or set(message) != {"content", "media"}:
+        if not isinstance(message, Mapping) or set(cast(Mapping[object, object], message)) != {"content", "media"}:
             raise error("delivery messages must have exactly content and media fields")
+        message = cast(Mapping[str, Any], message)  # Exact field set checked above.
         if not isinstance(message["content"], str):
             raise error("delivery message content must be text")
         if not isinstance(message["media"], list) or message["media"] != []:
@@ -479,8 +629,17 @@ def _validate_occurrence_identity(
     value: object, *, namespace: str, error: type[DeliveryOutboxError]
 ) -> dict[str, Any]:
     expected = {"store_namespace", "job_id", "job_revision", "scheduled_fire_time_ms"}
-    if not isinstance(value, Mapping) or set(value) != expected:
+    if isinstance(value, Mapping) and "trigger_version" in value:
+        from nanobot.cron.occurrence_store import CronOccurrenceStore, OccurrenceCorruptError
+
+        try:
+            CronOccurrenceStore.parse_persisted_identity(dict(cast(Mapping[object, object], value)))
+        except OccurrenceCorruptError as exc:
+            raise error("invalid triggered occurrence identity") from exc
+        expected |= {"trigger_version", "source", "sequence", "controller"}
+    if not isinstance(value, Mapping) or set(cast(Mapping[object, object], value)) != expected:
         raise error("occurrence identity has an invalid schema")
+    value = cast(Mapping[str, Any], value)  # Exact field set checked above.
     if value["store_namespace"] != namespace:
         raise error("occurrence belongs to a different outbox namespace")
     if not isinstance(value["job_id"], str) or not value["job_id"]:
@@ -515,10 +674,11 @@ def _derive_destinations(
         additional = []
     if not isinstance(additional, list):
         raise error("destination policy additionalDestinations must be a list")
+    additional = cast(list[object], additional)  # Each entry's container is checked below.
     for item in additional:
         if not isinstance(item, Mapping):
             raise error("destination policy contains an invalid additional destination")
-        candidates.append((item.get("channel"), item.get("to")))
+        candidates.append((cast(Mapping[object, object], item).get("channel"), cast(Mapping[object, object], item).get("to")))
 
     destinations: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -574,24 +734,172 @@ class CronDeliveryOutboxStore:
     """Private one-record-per-completed-occurrence delivery outbox."""
 
     def __init__(self, root: Path, *, namespace: str):
-        self._require_qualified_platform()
+        self._flock = self._require_qualified_platform()
         root = Path(root)
         if not root.is_absolute() or root == Path(root.anchor) or ".." in root.parts:
             raise ValueError("delivery outbox root must be an absolute non-root path without '..'")
         self.root = root
-        if not isinstance(namespace, str) or not namespace or len(namespace.encode("utf-8")) > _MAX_IDENTIFIER_BYTES:
+        if not isinstance(cast(object, namespace), str) or not namespace or len(namespace.encode("utf-8")) > _MAX_IDENTIFIER_BYTES:
             raise ValueError("namespace must be a non-empty string no longer than 512 UTF-8 bytes")
         self.namespace = namespace
         self._root_identity: tuple[int, int] | None = None
         self._lock_identity: tuple[int, int] | None = None
         self._default_owner = uuid.uuid4().hex
         self._issued_claims: dict[int, _IssuedClaim] = {}
+        self._send_fence_guard = threading.Lock()
+        self._issued_send_fences: dict[int, _IssuedSendFence] = {}
+        self._existing_only = False
         with self._root_fd(create=True) as root_fd:
             self._root_identity = _inode(os.fstat(root_fd))
         self._validate_existing_records()
 
+    @classmethod
+    def open_existing(
+        cls,
+        root: Path,
+        *,
+        namespace: str,
+        expected_root_identity: tuple[int, int] | None = None,
+    ) -> CronDeliveryOutboxStore:
+        """Open a mutation authority only when the complete E2 store exists.
+
+        The returned instance never creates or repairs the ordinary root lock.
+        Later operations remain pinned to the root inode established here.
+        Destination reconciliation may still create its permanent send lock as
+        the explicitly authorized E2 mutation fence.
+        """
+        flock = cls._require_qualified_platform()
+        root = Path(root)
+        if not root.is_absolute() or root == Path(root.anchor) or ".." in root.parts:
+            raise ValueError("delivery outbox root must be an absolute non-root path without '..'")
+        if not isinstance(cast(object, namespace), str) or not namespace or len(namespace.encode("utf-8")) > _MAX_IDENTIFIER_BYTES:
+            raise ValueError("namespace must be a non-empty string no longer than 512 UTF-8 bytes")
+        store = cls.__new__(cls)
+        store._flock = flock
+        store.root = root
+        store.namespace = namespace
+        store._root_identity = None
+        store._lock_identity = None
+        store._default_owner = uuid.uuid4().hex
+        store._issued_claims = {}
+        store._send_fence_guard = threading.Lock()
+        store._issued_send_fences = {}
+        store._existing_only = True
+        with store._root_binding(create=False) as binding:
+            identity = _inode(os.fstat(binding.root_fd))
+            if expected_root_identity is not None and identity != expected_root_identity:
+                raise DeliveryOutboxConflictError("delivery outbox root identity changed")
+            store._root_identity = identity
+            lock_fd = store._open_existing_lock(binding.root_fd)
+            try:
+                store._lock_identity = _inode(os.fstat(lock_fd))
+            finally:
+                try:
+                    store._flock.flock(lock_fd, store._flock.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+        # Reuse the strict, existing-only snapshot parser and entry checks.
+        cls.inspect_existing(root, namespace=namespace)
+        return store
+
+    @classmethod
+    def inspect_existing(cls, root: Path, *, namespace: str) -> list[DeliveryOutboxRecord]:
+        """Read a complete strict snapshot without creating or syncing anything.
+
+        An absent root is the empty snapshot.  Once any root is present it must
+        be a fully initialized E2 store, including its private permanent lock.
+        This entry point deliberately bypasses ``__init__`` because ordinary
+        construction is a mutating authority.
+        """
+        flock = cls._require_qualified_platform()
+        root = Path(root)
+        if not root.is_absolute() or root == Path(root.anchor) or ".." in root.parts:
+            raise ValueError("delivery outbox root must be an absolute non-root path without '..'")
+        if not isinstance(cast(object, namespace), str) or not namespace or len(namespace.encode("utf-8")) > _MAX_IDENTIFIER_BYTES:
+            raise ValueError("namespace must be a non-empty string no longer than 512 UTF-8 bytes")
+
+        reader = cls.__new__(cls)
+        reader._flock = flock
+        reader.root = root
+        reader.namespace = namespace
+        reader._root_identity = None
+        reader._lock_identity = None
+        reader._default_owner = ""
+        reader._issued_claims = {}
+        reader._send_fence_guard = threading.Lock()
+        reader._issued_send_fences = {}
+        try:
+            binding = reader._open_root_binding(create=False)
+        except DeliveryOutboxPersistenceError:
+            # Only genuine absence is clean.  Broken links, wrong types and
+            # inaccessible present roots remain errors from the strict opener.
+            try:
+                os.stat(root, follow_symlinks=False)
+            except FileNotFoundError:
+                return []
+            raise
+        try:
+            reader._root_identity = _inode(os.fstat(binding.root_fd))
+            lock_fd = reader._open_existing_lock(binding.root_fd)
+            try:
+                lock_identity = _inode(os.fstat(lock_fd))
+                reader._lock_identity = lock_identity
+                held = _HeldOutbox(
+                    reader,
+                    binding,
+                    lock_fd,
+                    reader._root_identity,
+                    lock_identity,
+                )
+                held.assert_bound()
+                names = sorted(os.listdir(held.root_fd))
+                records: list[DeliveryOutboxRecord] = []
+                retained_wires: dict[str, dict[str, Any]] = {}
+                for name in names:
+                    if name == ".lock":
+                        continue
+                    if _SEND_LOCK_RE.fullmatch(name):
+                        reader._validate_send_lock_entry(binding, name)
+                        continue
+                    if _TEMP_ENTRY_RE.fullmatch(name):
+                        raise DeliveryOutboxCorruptError(
+                            "delivery outbox contains an incomplete temporary entry"
+                        )
+                    if not name.endswith(".json") or _HASH_RE.fullmatch(name[:-5]) is None:
+                        raise DeliveryOutboxCorruptError("unsafe entry in delivery outbox")
+                    wire, record = reader._read_bytes(held, name[:-5], durable=False)
+                    retained_wires[name[:-5]] = wire
+                    records.append(record)
+                held.assert_bound()
+                if sorted(os.listdir(held.root_fd)) != names:
+                    raise DeliveryOutboxCorruptError("delivery outbox changed during inspection")
+                for name in names:
+                    if _SEND_LOCK_RE.fullmatch(name):
+                        reader._validate_send_lock_entry(binding, name)
+                for outbox_id, retained in retained_wires.items():
+                    current, _record = reader._read_bytes(held, outbox_id, durable=False)
+                    if _canonical_json(
+                        current, error=DeliveryOutboxCorruptError
+                    ) != _canonical_json(retained, error=DeliveryOutboxCorruptError):
+                        raise DeliveryOutboxCorruptError(
+                            "delivery outbox changed during inspection"
+                        )
+                held.assert_bound()
+                return records
+            except OSError as exc:
+                raise DeliveryOutboxPersistenceError(
+                    "could not inspect existing delivery outbox"
+                ) from exc
+            finally:
+                try:
+                    reader._flock.flock(lock_fd, reader._flock.LOCK_UN)
+                finally:
+                    os.close(lock_fd)
+        finally:
+            binding.close()
+
     @staticmethod
-    def _require_qualified_platform() -> None:
+    def _require_qualified_platform():
         required_calls = {os.open, os.mkdir, os.stat, os.unlink, os.rename}
         if (
             os.name != "posix"
@@ -602,6 +910,8 @@ class CronDeliveryOutboxStore:
             raise DeliveryOutboxPersistenceError(
                 "private cron delivery outbox requires qualified POSIX descriptor and flock support"
             )
+        # Infer the concrete stdlib module type, which has no annotation spelling.
+        return _fcntl
 
     @staticmethod
     def _dir_flags() -> int:
@@ -719,7 +1029,7 @@ class CronDeliveryOutboxStore:
             current = _inode(os.fstat(lock_fd))
             if self._lock_identity is not None and current != self._lock_identity:
                 raise DeliveryOutboxCorruptError("delivery outbox lock binding changed")
-            _fcntl.flock(lock_fd, _fcntl.LOCK_EX)
+            self._flock.flock(lock_fd, self._flock.LOCK_EX)
             return lock_fd
         except DeliveryOutboxError:
             if lock_fd is not None:
@@ -731,6 +1041,44 @@ class CronDeliveryOutboxStore:
             if exc.errno == errno.ELOOP:
                 raise DeliveryOutboxCorruptError("delivery outbox lock must not be a symlink") from exc
             raise DeliveryOutboxPersistenceError("could not acquire delivery outbox lock") from exc
+
+    def _open_existing_lock(self, root_fd: int) -> int:
+        """Open the permanent ordinary lock without creating or syncing it."""
+        lock_fd: int | None = None
+        try:
+            lock_fd = os.open(
+                ".lock", os.O_RDWR | _O_NOFOLLOW | _O_NONBLOCK, dir_fd=root_fd
+            )
+            _private(os.fstat(lock_fd), directory=False)
+            path_info = os.stat(".lock", dir_fd=root_fd, follow_symlinks=False)
+            _private(path_info, directory=False)
+            if _inode(path_info) != _inode(os.fstat(lock_fd)):
+                raise DeliveryOutboxCorruptError("delivery outbox lock binding changed")
+            self._flock.flock(lock_fd, self._flock.LOCK_EX)
+            return lock_fd
+        except FileNotFoundError as exc:
+            if lock_fd is not None:
+                os.close(lock_fd)
+            raise DeliveryOutboxCorruptError(
+                "existing delivery outbox is missing its permanent lock"
+            ) from exc
+        except DeliveryOutboxError:
+            if lock_fd is not None:
+                os.close(lock_fd)
+            raise
+        except OSError as exc:
+            if lock_fd is not None:
+                os.close(lock_fd)
+            if exc.errno in {errno.ELOOP, errno.ENXIO}:
+                raise DeliveryOutboxCorruptError(
+                    "delivery outbox lock must be a private regular file"
+                ) from exc
+            raise DeliveryOutboxPersistenceError(
+                "could not acquire existing delivery outbox lock"
+            ) from exc
+
+    def assert_root_binding(self, binding: _RootBinding) -> None:
+        self._assert_path_binding(binding)
 
     def _assert_path_binding(self, binding: _RootBinding) -> None:
         try:
@@ -759,6 +1107,9 @@ class CronDeliveryOutboxStore:
                 raise DeliveryOutboxCorruptError("delivery outbox root path binding changed") from exc
             raise DeliveryOutboxCorruptError("delivery outbox root path binding could not be verified") from exc
 
+    def assert_outbox_binding(self, held: _HeldOutbox) -> None:
+        self._assert_binding(held)
+
     def _assert_binding(self, held: _HeldOutbox) -> None:
         held.root_binding.assert_bound()
         root_info = os.fstat(held.root_fd)
@@ -779,7 +1130,11 @@ class CronDeliveryOutboxStore:
     @contextmanager
     def _held_lock(self) -> Generator[_HeldOutbox, None, None]:
         with self._root_binding() as root_binding:
-            lock_fd = self._open_lock(root_binding.root_fd)
+            lock_fd = (
+                self._open_existing_lock(root_binding.root_fd)
+                if self._existing_only
+                else self._open_lock(root_binding.root_fd)
+            )
             try:
                 lock_identity = _inode(os.fstat(lock_fd))
                 if self._lock_identity is None:
@@ -796,13 +1151,283 @@ class CronDeliveryOutboxStore:
                 held.assert_bound()
             finally:
                 try:
-                    _fcntl.flock(lock_fd, _fcntl.LOCK_UN)
+                    self._flock.flock(lock_fd, self._flock.LOCK_UN)
                 finally:
                     os.close(lock_fd)
 
     @staticmethod
+    def _send_lock_name(destination_id: str) -> str:
+        if not isinstance(cast(object, destination_id), str) or _HASH_RE.fullmatch(destination_id) is None:
+            raise ValueError("destination_id must be a SHA-256 hexadecimal digest")
+        return f".send.{destination_id}.lock"
+
+    @staticmethod
+    def _private_send_lock(info: os.stat_result) -> None:
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.geteuid()
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or info.st_nlink != 1
+        ):
+            raise DeliveryOutboxCorruptError(
+                "delivery send lock is not a private regular owner file with exact mode 0600"
+            )
+
+    def _assert_send_lock_binding(
+        self,
+        root_binding: _RootBinding,
+        name: str,
+        lock_fd: int,
+        lock_inode: tuple[int, int],
+    ) -> None:
+        root_binding.assert_bound()
+        try:
+            descriptor = os.fstat(lock_fd)
+            entry = os.stat(name, dir_fd=root_binding.root_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise DeliveryOutboxCorruptError("delivery send lock binding could not be verified") from exc
+        self._private_send_lock(descriptor)
+        self._private_send_lock(entry)
+        if _inode(descriptor) != lock_inode or _inode(entry) != lock_inode:
+            raise DeliveryOutboxCorruptError("delivery send lock binding changed")
+
+    def _validate_send_lock_entry(self, root_binding: _RootBinding, name: str) -> None:
+        if _SEND_LOCK_RE.fullmatch(name) is None:
+            raise DeliveryOutboxCorruptError(f"unsafe entry in delivery outbox: {name}")
+        fd: int | None = None
+        try:
+            fd = os.open(
+                name,
+                os.O_RDWR | _O_NOFOLLOW | _O_NONBLOCK,
+                dir_fd=root_binding.root_fd,
+            )
+            lock_inode = _inode(os.fstat(fd))
+            self._assert_send_lock_binding(root_binding, name, fd, lock_inode)
+        except DeliveryOutboxError:
+            raise
+        except OSError as exc:
+            if exc.errno in {errno.ELOOP, errno.ENXIO}:
+                raise DeliveryOutboxCorruptError(
+                    "delivery send lock must be a private regular file, never a link or FIFO"
+                ) from exc
+            raise DeliveryOutboxPersistenceError("could not validate delivery send lock") from exc
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+    def _acquire_send_lock(self, destination_id: str) -> tuple[_RootBinding, int, tuple[int, int]]:
+        """Acquire a permanent per-destination lock before any outbox lock."""
+        name = self._send_lock_name(destination_id)
+        root_binding = self._open_root_binding()
+        lock_fd: int | None = None
+        locked = False
+        granted = False
+        try:
+            for _ in range(8):
+                try:
+                    lock_fd = os.open(
+                        name,
+                        os.O_RDWR | _O_NOFOLLOW | _O_NONBLOCK,
+                        dir_fd=root_binding.root_fd,
+                    )
+                    break
+                except FileNotFoundError:
+                    try:
+                        lock_fd = os.open(
+                            name,
+                            os.O_RDWR | os.O_CREAT | os.O_EXCL | _O_NOFOLLOW | _O_NONBLOCK,
+                            0o600,
+                            dir_fd=root_binding.root_fd,
+                        )
+                    except FileExistsError:
+                        continue
+                    os.fchmod(lock_fd, 0o600)
+                    break
+            if lock_fd is None:
+                raise DeliveryOutboxPersistenceError("delivery send lock could not be established")
+            lock_inode = _inode(os.fstat(lock_fd))
+            self._assert_send_lock_binding(root_binding, name, lock_fd, lock_inode)
+            os.fsync(lock_fd)
+            self._assert_send_lock_binding(root_binding, name, lock_fd, lock_inode)
+            os.fsync(root_binding.root_fd)
+            self._assert_send_lock_binding(root_binding, name, lock_fd, lock_inode)
+            try:
+                self._flock.flock(lock_fd, self._flock.LOCK_EX | self._flock.LOCK_NB)
+            except OSError as exc:
+                if exc.errno in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK}:
+                    raise DeliverySendBusyError(
+                        f"delivery destination {destination_id} has a live send or reconciliation fence"
+                    ) from exc
+                raise
+            locked = True
+            self._assert_send_lock_binding(root_binding, name, lock_fd, lock_inode)
+            granted = True
+            return root_binding, lock_fd, lock_inode
+        except DeliveryOutboxError:
+            raise
+        except OSError as exc:
+            if exc.errno in {errno.ELOOP, errno.ENXIO}:
+                raise DeliveryOutboxCorruptError(
+                    "delivery send lock must be a private regular file, never a link or FIFO"
+                ) from exc
+            raise DeliveryOutboxPersistenceError("could not acquire delivery send lock") from exc
+        finally:
+            if not granted and lock_fd is not None:
+                if locked:
+                    try:
+                        self._flock.flock(lock_fd, self._flock.LOCK_UN)
+                    except OSError:
+                        pass
+                os.close(lock_fd)
+            if not granted:
+                root_binding.close()
+
+    @contextmanager
+    def _held_send_lock(
+        self, destination_id: str
+    ) -> Generator[tuple[_RootBinding, int, tuple[int, int]], None, None]:
+        root_binding, lock_fd, lock_inode = self._acquire_send_lock(destination_id)
+        error: BaseException | None = None
+        try:
+            yield root_binding, lock_fd, lock_inode
+            self._assert_send_lock_binding(
+                root_binding, self._send_lock_name(destination_id), lock_fd, lock_inode
+            )
+        except BaseException as exc:
+            error = exc
+        try:
+            self._flock.flock(lock_fd, self._flock.LOCK_UN)
+        except OSError as exc:
+            if error is None:
+                error = DeliveryOutboxPersistenceError("could not release delivery send lock")
+                error.__cause__ = exc
+        finally:
+            try:
+                os.close(lock_fd)
+            finally:
+                root_binding.close()
+        if error is not None:
+            raise error
+
+    def acquire_send_fence(self, claim: DeliveryClaim) -> DeliverySendFence:
+        """Issue one exact task-owned capability while holding the destination lock."""
+        issued_claim = self._assert_claim(claim)
+        claim = issued_claim.claim
+        try:
+            task = asyncio.current_task()
+        except RuntimeError as exc:
+            raise DeliveryOutboxOwnershipError(
+                "a delivery send fence requires an active asyncio task"
+            ) from exc
+        if task is None:
+            raise DeliveryOutboxOwnershipError("a delivery send fence requires an active asyncio task")
+        root_binding, lock_fd, lock_inode = self._acquire_send_lock(claim.destination_id)
+        try:
+            lifecycle = _FenceLifecycle()
+            fence = DeliverySendFence(
+                _FENCE_CONSTRUCTION_TOKEN,
+                store=self,
+                claim=claim,
+                task=task,
+                root_binding=root_binding,
+                lock_fd=lock_fd,
+                lock_inode=lock_inode,
+                lifecycle=lifecycle,
+            )
+            issued = _IssuedSendFence(
+                fence,
+                claim,
+                os.getpid(),
+                task,
+                root_binding,
+                lock_fd,
+                lock_inode,
+                _claim_fields(claim),
+                lifecycle,
+            )
+            with self._send_fence_guard:
+                self._issued_send_fences[id(fence)] = issued
+                _LIVE_SEND_FENCES.add(fence)
+            return fence
+        except BaseException:
+            try:
+                self._flock.flock(lock_fd, self._flock.LOCK_UN)
+            finally:
+                os.close(lock_fd)
+                root_binding.close()
+            raise
+
+    def assert_send_fence_valid(self, fence: object, *, require_started: bool) -> None:
+        self._assert_send_fence(fence, require_started=require_started)
+
+    def _assert_send_fence(
+        self,
+        fence: object,
+        *,
+        claim: DeliveryClaim | None = None,
+        require_started: bool,
+    ) -> _IssuedSendFence:
+        if type(fence) is not DeliverySendFence:
+            raise DeliveryOutboxOwnershipError("operation requires an exact issued delivery send fence")
+        issued = self._issued_send_fences.get(id(fence))
+        try:
+            task = asyncio.current_task()
+        except RuntimeError:
+            task = None
+        if (
+            issued is None
+            or issued.fence is not fence
+            or issued.pid != os.getpid()
+            or issued.task is not task
+            or fence.issued_state_mismatch(store=self, issued=issued, claim=claim)
+        ):
+            raise DeliveryOutboxOwnershipError(
+                "delivery send fence is foreign, stale, inactive, or transferred"
+            )
+        if require_started and not issued.started:
+            raise DeliveryOutboxOwnershipError("delivery send fence has not started sending")
+        self._assert_send_lock_binding(
+            issued.root_binding,
+            self._send_lock_name(issued.claim.destination_id),
+            issued.lock_fd,
+            issued.lock_inode,
+        )
+        return issued
+
+    def release_send_fence(self, fence: DeliverySendFence) -> None:
+        """Release an exact task-owned fence without unlinking its persistent file."""
+        with self._send_fence_guard:
+            issued = self._assert_send_fence(fence, require_started=False)
+            del self._issued_send_fences[id(fence)]
+            _LIVE_SEND_FENCES.discard(fence)
+            issued.lifecycle.active = False
+        error: BaseException | None = None
+        try:
+            self._assert_send_lock_binding(
+                issued.root_binding,
+                self._send_lock_name(issued.claim.destination_id),
+                issued.lock_fd,
+                issued.lock_inode,
+            )
+        except BaseException as exc:
+            error = exc
+        try:
+            self._flock.flock(issued.lock_fd, self._flock.LOCK_UN)
+        except OSError as exc:
+            if error is None:
+                error = DeliveryOutboxPersistenceError("could not release delivery send lock")
+                error.__cause__ = exc
+        finally:
+            try:
+                os.close(issued.lock_fd)
+            finally:
+                issued.root_binding.close()
+        if error is not None:
+            raise error
+
+    @staticmethod
     def _record_name(outbox_id: str) -> str:
-        if not isinstance(outbox_id, str) or _HASH_RE.fullmatch(outbox_id) is None:
+        if not isinstance(cast(object, outbox_id), str) or _HASH_RE.fullmatch(outbox_id) is None:
             raise ValueError("outbox_id must be a SHA-256 hexadecimal digest")
         return outbox_id + ".json"
 
@@ -870,6 +1495,21 @@ class CronDeliveryOutboxStore:
         if expected_content is not None and _content_signature(self._read_fd_content(fd)) != expected_content:
             raise DeliveryOutboxCorruptError("delivery outbox record content changed")
         return descriptor
+
+    @overload
+    def _read_bytes(
+        self, held: _HeldOutbox, outbox_id: str, *, durable: bool, with_proof: Literal[False] = False
+    ) -> tuple[dict[str, Any], DeliveryOutboxRecord]: ...
+
+    @overload
+    def _read_bytes(
+        self, held: _HeldOutbox, outbox_id: str, *, durable: bool, with_proof: Literal[True]
+    ) -> tuple[dict[str, Any], DeliveryOutboxRecord, _RecordProof]: ...
+
+    @overload
+    def _read_bytes(
+        self, held: _HeldOutbox, outbox_id: str, *, durable: bool, with_proof: bool
+    ) -> tuple[dict[str, Any], DeliveryOutboxRecord] | tuple[dict[str, Any], DeliveryOutboxRecord, _RecordProof]: ...
 
     def _read_bytes(
         self, held: _HeldOutbox, outbox_id: str, *, durable: bool, with_proof: bool = False
@@ -973,8 +1613,9 @@ class CronDeliveryOutboxStore:
             "outcome",
             "receipt",
         }
-        if not isinstance(value, Mapping) or set(value) != expected:
+        if not isinstance(value, Mapping) or set(cast(Mapping[object, object], value)) != expected:
             raise error("resolution has an invalid schema")
+        value = cast(Mapping[str, Any], value)  # Exact string-key field set checked above.
         if value["action_id"] != attempt["action_id"]:
             raise error("resolution action_id does not match its predecessor attempt")
         if value["request_digest"] != attempt["request_digest"]:
@@ -1023,8 +1664,9 @@ class CronDeliveryOutboxStore:
         if not isinstance(value, Mapping):
             raise DeliveryOutboxCorruptError("delivery attempt must be an object")
         expected = {"attempt", "owner", "status", "action_id", "request_digest", "receipt", "resolution"}
-        if set(value) != expected:
+        if set(cast(Mapping[object, object], value)) != expected:
             raise DeliveryOutboxCorruptError("delivery attempt has an invalid schema")
+        value = cast(Mapping[str, Any], value)  # Exact string-key field set checked above.
         if type(value["attempt"]) is not int or value["attempt"] != expected_number:
             raise DeliveryOutboxCorruptError("delivery attempts must be contiguous integers")
         if value["attempt"] < 1 or value["attempt"] > _MAX_ATTEMPTS:
@@ -1045,7 +1687,7 @@ class CronDeliveryOutboxStore:
         if receipt is not None:
             if not isinstance(receipt, Mapping) or not receipt:
                 raise DeliveryOutboxCorruptError("delivery receipt must be a non-empty JSON object")
-            receipt = _copy_json_mapping(receipt, label="delivery receipt", error=DeliveryOutboxCorruptError)
+            receipt = _copy_json_mapping(cast(Mapping[object, object], receipt), label="delivery receipt", error=DeliveryOutboxCorruptError)
         if status == "confirmed_delivered" and receipt is None:
             raise DeliveryOutboxCorruptError("confirmed delivery requires a receipt")
         if status != "confirmed_delivered" and receipt is not None:
@@ -1076,8 +1718,9 @@ class CronDeliveryOutboxStore:
     ) -> None:
         """Replay retained transitions to prove revision and attempt history."""
 
-        if not isinstance(value, list) or len(value) != record_revision:
+        if not isinstance(value, list) or len(cast(list[object], value)) != record_revision:
             raise DeliveryOutboxCorruptError("delivery transition history does not match record_revision")
+        value = cast(list[object], value)  # Each event's schema is validated below.
         destination_by_id = {item["destination_id"]: item for item in destinations}
         replay: dict[str, list[dict[str, Any]]] = {destination_id: [] for destination_id in destination_by_id}
         states = {destination_id: "pending" for destination_id in destination_by_id}
@@ -1096,8 +1739,9 @@ class CronDeliveryOutboxStore:
                 "evidence_ref",
                 "predecessor_fenced_ref",
             }
-            if set(raw_event) != expected_fields:
+            if set(cast(Mapping[object, object], raw_event)) != expected_fields:
                 raise DeliveryOutboxCorruptError("delivery transition has an invalid schema")
+            raw_event = cast(Mapping[str, Any], raw_event)  # Exact field set checked above.
             if type(raw_event["revision"]) is not int or raw_event["revision"] != expected_revision:
                 raise DeliveryOutboxCorruptError("delivery transition revisions must be contiguous")
             destination_id = _digest(raw_event["destination_id"], label="transition destination_id", corrupt=True)
@@ -1133,7 +1777,7 @@ class CronDeliveryOutboxStore:
             if outcome == "confirmed_delivered":
                 if not isinstance(receipt, Mapping) or not receipt:
                     raise DeliveryOutboxCorruptError("confirmed delivery transition requires a receipt")
-                receipt = _copy_json_mapping(receipt, label="transition receipt", error=DeliveryOutboxCorruptError)
+                receipt = _copy_json_mapping(cast(Mapping[object, object], receipt), label="transition receipt", error=DeliveryOutboxCorruptError)
             elif receipt is not None:
                 raise DeliveryOutboxCorruptError("non-delivery transition cannot carry a receipt")
 
@@ -1152,6 +1796,8 @@ class CronDeliveryOutboxStore:
             elif operation == "settle":
                 if not history or attempt_number != len(history) or state != "sending":
                     raise DeliveryOutboxCorruptError("delivery transition settles an impossible attempt")
+                # The matching operation branch above already validated this outcome.
+                outcome = cast(str, outcome)
                 history[-1]["status"] = outcome
                 history[-1]["receipt"] = receipt
                 states[destination_id] = {
@@ -1163,6 +1809,10 @@ class CronDeliveryOutboxStore:
             else:
                 if not history or attempt_number != len(history) or state not in {"claimed", "sending", "uncertain"}:
                     raise DeliveryOutboxCorruptError("delivery transition resolves an impossible attempt")
+                # Reconciliation validation above proved all three strings.
+                outcome = cast(str, outcome)
+                evidence_ref = cast(str, evidence_ref)
+                predecessor_fenced_ref = cast(str, predecessor_fenced_ref)
                 if state == "claimed" and outcome != "confirmed_not_sent":
                     raise DeliveryOutboxCorruptError("claimed reconciliation must confirm not sent")
                 history[-1]["status"] = outcome
@@ -1225,8 +1875,9 @@ class CronDeliveryOutboxStore:
             "transition_history",
             "integrity",
         }
-        if not isinstance(value, dict) or set(value) != fields:
+        if not isinstance(value, dict) or set(cast(dict[object, object], value)) != fields:
             raise DeliveryOutboxCorruptError("delivery outbox record has an invalid schema")
+        value = cast(dict[str, Any], value)  # Exact string-key field set checked above.
         body = {key: item for key, item in value.items() if key != "integrity"}
         if type(value["schema_version"]) is not int or value["schema_version"] != _SCHEMA_VERSION:
             raise DeliveryOutboxCorruptError("delivery outbox record has an invalid schema version")
@@ -1253,10 +1904,11 @@ class CronDeliveryOutboxStore:
             "delivery",
             "provenance_available",
         }
-        if isinstance(immutable_value, Mapping) and immutable_value.get("provenance_available") is True:
+        if isinstance(immutable_value, Mapping) and cast(Mapping[object, object], immutable_value).get("provenance_available") is True:
             immutable_fields = immutable_fields | {"provenance"}
-        if not isinstance(immutable_value, dict) or set(immutable_value) != immutable_fields:
+        if not isinstance(immutable_value, dict) or set(cast(dict[object, object], immutable_value)) != immutable_fields:
             raise DeliveryOutboxCorruptError("delivery outbox immutable input has an invalid schema")
+        immutable_value = cast(dict[str, Any], immutable_value)  # Exact field set checked above.
         occurrence_id = _digest(immutable_value["occurrence_id"], label="occurrence_id", corrupt=True)
         if _outbox_id(self.namespace, occurrence_id) != outbox_id:
             raise DeliveryOutboxCorruptError("outbox_id does not match occurrence identity")
@@ -1272,7 +1924,7 @@ class CronDeliveryOutboxStore:
         identity = immutable_value["occurrence_identity"]
         identity_payload = _canonical_json(identity, error=DeliveryOutboxCorruptError).encode("utf-8")
         expected_occurrence_id = hashlib.sha256(
-            b"nanobot-cron-occurrence-v1\0" + identity_payload
+            (b"nanobot-cron-trigger-v2\0" if "trigger_version" in identity else b"nanobot-cron-occurrence-v1\0") + identity_payload
         ).hexdigest()
         if expected_occurrence_id != occurrence_id:
             raise DeliveryOutboxCorruptError("occurrence_id does not match occurrence identity")
@@ -1304,8 +1956,9 @@ class CronDeliveryOutboxStore:
             raise DeliveryOutboxCorruptError("unavailable provenance must remain absent")
         messages = delivery["messages"]
         raw_destinations = value["destinations"]
-        if not isinstance(raw_destinations, list) or len(raw_destinations) > _MAX_DESTINATIONS:
+        if not isinstance(raw_destinations, list) or len(cast(list[object], raw_destinations)) > _MAX_DESTINATIONS:
             raise DeliveryOutboxCorruptError("delivery outbox destination count exceeds its limit")
+        raw_destinations = cast(list[object], raw_destinations)  # Individual schemas follow below.
         destinations: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
         seen_pairs: set[tuple[str, str]] = set()
@@ -1313,8 +1966,9 @@ class CronDeliveryOutboxStore:
             if not isinstance(raw_destination, Mapping):
                 raise DeliveryOutboxCorruptError("delivery destination must be an object")
             destination_fields = {"destination_id", "channel", "to", "status", "attempts"}
-            if set(raw_destination) != destination_fields:
+            if set(cast(Mapping[object, object], raw_destination)) != destination_fields:
                 raise DeliveryOutboxCorruptError("delivery destination has an invalid schema")
+            raw_destination = cast(Mapping[str, Any], raw_destination)  # Exact field set checked above.
             destination_id = _digest(raw_destination["destination_id"], label="destination_id", corrupt=True)
             channel = _text_corrupt(raw_destination["channel"], label="destination channel")
             to = _text_corrupt(raw_destination["to"], label="destination to")
@@ -1325,8 +1979,9 @@ class CronDeliveryOutboxStore:
             seen_ids.add(destination_id)
             seen_pairs.add((channel, to))
             attempts_value = raw_destination["attempts"]
-            if not isinstance(attempts_value, list) or len(attempts_value) > _MAX_ATTEMPTS:
+            if not isinstance(attempts_value, list) or len(cast(list[object], attempts_value)) > _MAX_ATTEMPTS:
                 raise DeliveryOutboxCorruptError("delivery destination attempt count exceeds its limit")
+            attempts_value = cast(list[object], attempts_value)  # Each attempt is validated below.
             attempts = [
                 self._validate_attempt(
                     attempt,
@@ -1701,6 +2356,9 @@ class CronDeliveryOutboxStore:
             for name in entries:
                 if name == ".lock":
                     continue
+                if _SEND_LOCK_RE.fullmatch(name):
+                    self._validate_send_lock_entry(held.root_binding, name)
+                    continue
                 if _TEMP_ENTRY_RE.fullmatch(name):
                     try:
                         info = os.stat(name, dir_fd=held.root_fd, follow_symlinks=False)
@@ -1715,7 +2373,7 @@ class CronDeliveryOutboxStore:
     def _completed_input(
         self, completed: OccurrenceRecord
     ) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
-        if not isinstance(completed, OccurrenceRecord):
+        if not isinstance(cast(object, completed), OccurrenceRecord):
             raise TypeError("prepare_completed accepts only a durable OccurrenceRecord")
         if completed.state != "completed" or completed.completion is None:
             raise DeliveryOutboxReconciliationRequiredError("occurrence is not a completed durable record")
@@ -1726,6 +2384,7 @@ class CronDeliveryOutboxStore:
             raise DeliveryOutboxUnsupportedError("completed occurrence has no explicit delivery envelope")
         delivery = _validate_delivery_envelope(completion["delivery"], error=DeliveryOutboxConflictError)
         provenance_available = "provenance" in completion
+        provenance: dict[str, Any] | None = None
         if provenance_available:
             provenance = _copy_json_mapping(completion["provenance"], label="completion provenance")
         occurrence_id = _digest(completed.occurrence_id, label="occurrence_id")
@@ -1743,7 +2402,7 @@ class CronDeliveryOutboxStore:
             "delivery": delivery,
             "provenance_available": provenance_available,
         }
-        if provenance_available:
+        if provenance is not None:
             immutable["provenance"] = provenance
         destinations = _derive_destinations(
             policy=policy,
@@ -1779,9 +2438,9 @@ class CronDeliveryOutboxStore:
         stores are never nested.  A detached occurrence record is never
         accepted as preparation authority.
         """
-        if not isinstance(occurrence_store, CronOccurrenceStore):
+        if not isinstance(cast(object, occurrence_store), CronOccurrenceStore):
             raise TypeError("prepare_completed requires a CronOccurrenceStore")
-        if not isinstance(occurrence_id, str):
+        if not isinstance(cast(object, occurrence_id), str):
             raise TypeError("prepare_completed requires an occurrence_id string")
         completed = occurrence_store.get_completed_durable(occurrence_id)
         outbox_id, expected_wire, _destinations = self._completed_input(completed)
@@ -1820,6 +2479,9 @@ class CronDeliveryOutboxStore:
             records: list[DeliveryOutboxRecord] = []
             for name in names:
                 if name == ".lock" or _TEMP_ENTRY_RE.fullmatch(name):
+                    continue
+                if _SEND_LOCK_RE.fullmatch(name):
+                    self._validate_send_lock_entry(held.root_binding, name)
                     continue
                 if not name.endswith(".json") or _HASH_RE.fullmatch(name[:-5]) is None:
                     raise DeliveryOutboxCorruptError(f"unsafe entry in delivery outbox: {name}")
@@ -1895,8 +2557,9 @@ class CronDeliveryOutboxStore:
     ) -> None:
         current = _exact_int(wire["record_revision"], label="record_revision", corrupt=True)
         history = wire.get("transition_history")
-        if not isinstance(history, list) or len(history) != current:
+        if not isinstance(history, list) or len(cast(list[object], history)) != current:
             raise DeliveryOutboxCorruptError("delivery transition history is inconsistent")
+        history = cast(list[object], history)
         if operation not in _TRANSITION_OPERATIONS:
             raise DeliveryOutboxConflictError("delivery transition operation is invalid")
         history.append(
@@ -1937,7 +2600,7 @@ class CronDeliveryOutboxStore:
                     owner=owner,
                 )
                 if issued is not None:
-                    index, destination = self._find_destination(wire, destination_id)
+                    _index, destination = self._find_destination(wire, destination_id)
                     if (
                         destination["status"] == "claimed"
                         and destination["attempts"]
@@ -2003,11 +2666,23 @@ class CronDeliveryOutboxStore:
             )
             return claim
 
-    def mark_sending(self, claim: DeliveryClaim) -> DeliveryOutboxRecord:
+    def mark_sending(
+        self, claim: DeliveryClaim, fence: DeliverySendFence
+    ) -> DeliveryOutboxRecord:
         """Durably fence a claim as sending while retaining its settlement capability."""
         issued = self._assert_claim(claim)
+        issued_fence = self._assert_send_fence(fence, claim=claim, require_started=False)
+        if issued_fence.started:
+            raise DeliveryOutboxOwnershipError("delivery send fence has already started sending")
         try:
             with self._held_lock() as held:
+                issued_fence = self._assert_send_fence(
+                    fence, claim=claim, require_started=False
+                )
+                if issued_fence.started:
+                    raise DeliveryOutboxOwnershipError(
+                        "delivery send fence has already started sending"
+                    )
                 wire, record, predecessor_proof = self._read_bytes(
                     held, claim.outbox_id, durable=False, with_proof=True
                 )
@@ -2017,6 +2692,8 @@ class CronDeliveryOutboxStore:
                     raise DeliveryOutboxOwnershipError("claim owner is stale")
                 if attempt["status"] == "sending" and destination["status"] == "sending":
                     issued.phase = "sending"
+                    issued_fence.started = True
+                    issued_fence.lifecycle.started = True
                     return record
                 if attempt["status"] != "claimed" or destination["status"] != "claimed":
                     raise DeliveryOutboxOwnershipError("claim is no longer sendable")
@@ -2036,6 +2713,8 @@ class CronDeliveryOutboxStore:
                 )
                 issued.phase = "sending"
                 issued.current_revision = wire["record_revision"]
+                issued_fence.started = True
+                issued_fence.lifecycle.started = True
                 _new_wire, new_record = self._read_bytes(held, claim.outbox_id, durable=False)
                 return new_record
         except Exception:
@@ -2059,6 +2738,7 @@ class CronDeliveryOutboxStore:
             outcome_value = result if outcome is None else outcome
             receipt_value = receipt
         elif isinstance(result, Mapping):
+            result = cast(Mapping[object, object], result)
             if receipt is not None:
                 raise DeliveryOutboxConflictError("settlement object and keyword receipt cannot be combined")
             if set(result) not in ({"outcome"}, {"outcome", "receipt"}):
@@ -2072,7 +2752,7 @@ class CronDeliveryOutboxStore:
         if outcome_value == "confirmed_delivered":
             if not isinstance(receipt_value, Mapping) or not receipt_value:
                 raise DeliveryOutboxConflictError("confirmed delivery requires a strict receipt object")
-            return outcome_value, _copy_json_mapping(receipt_value, label="delivery receipt")
+            return outcome_value, _copy_json_mapping(cast(Mapping[object, object], receipt_value), label="delivery receipt")
         if receipt_value is not None:
             raise DeliveryOutboxConflictError("only confirmed delivery may carry a receipt")
         return outcome_value, None
@@ -2082,15 +2762,18 @@ class CronDeliveryOutboxStore:
         claim: DeliveryClaim,
         result: object = None,
         *,
+        fence: DeliverySendFence,
         outcome: str | None = None,
         receipt: Mapping[str, Any] | None = None,
     ) -> DeliveryOutboxRecord:
         """Durably settle one sending claim; the capability is then consumed."""
         issued = self._assert_claim(claim)
+        self._assert_send_fence(fence, claim=claim, require_started=True)
         outcome_value, receipt_value = self._parse_settlement(result, outcome=outcome, receipt=receipt)
         try:
             with self._held_lock() as held:
-                wire, record, predecessor_proof = self._read_bytes(
+                self._assert_send_fence(fence, claim=claim, require_started=True)
+                wire, _record, predecessor_proof = self._read_bytes(
                     held, claim.outbox_id, durable=False, with_proof=True
                 )
                 _index, destination = self._find_destination(wire, claim.destination_id)
@@ -2134,6 +2817,7 @@ class CronDeliveryOutboxStore:
         receipt: Mapping[str, Any] | None,
     ) -> tuple[str, dict[str, Any] | None]:
         if isinstance(resolution, Mapping):
+            resolution = cast(Mapping[object, object], resolution)
             if set(resolution) not in ({"outcome"}, {"outcome", "receipt"}):
                 raise DeliveryOutboxConflictError("resolution must have outcome and optional receipt fields")
             outcome = resolution["outcome"]
@@ -2146,7 +2830,7 @@ class CronDeliveryOutboxStore:
         if outcome == "confirmed_delivered":
             if not isinstance(receipt_value, Mapping) or not receipt_value:
                 raise DeliveryOutboxConflictError("confirmed delivery reconciliation requires a strict receipt")
-            return outcome, _copy_json_mapping(receipt_value, label="reconciliation receipt")
+            return outcome, _copy_json_mapping(cast(Mapping[object, object], receipt_value), label="reconciliation receipt")
         if receipt_value is not None:
             raise DeliveryOutboxConflictError("only confirmed delivery reconciliation may carry a receipt")
         return outcome, None
@@ -2253,7 +2937,7 @@ class CronDeliveryOutboxStore:
             outcome=outcome,
             receipt=receipt_value,
         )
-        with self._held_lock() as held:
+        with self._held_send_lock(destination_id), self._held_lock() as held:
             wire, record, predecessor_proof = self._read_bytes(
                 held, outbox_id, durable=True, with_proof=True
             )
@@ -2370,6 +3054,7 @@ CronDeliveryOutboxConflictError = DeliveryOutboxConflictError
 CronDeliveryOutboxStaleRevisionError = DeliveryOutboxStaleRevisionError
 CronDeliveryOutboxOwnershipError = DeliveryOutboxOwnershipError
 CronDeliveryOutboxReconciliationRequiredError = DeliveryOutboxReconciliationRequiredError
+CronDeliverySendBusyError = DeliverySendBusyError
 CronDeliveryStoreError = DeliveryOutboxError
 DeliveryStoreError = DeliveryOutboxError
 DeliveryStorePersistenceError = DeliveryOutboxPersistenceError
@@ -2378,3 +3063,4 @@ DeliveryStoreConflictError = DeliveryOutboxConflictError
 DeliveryStoreStaleRevisionError = DeliveryOutboxStaleRevisionError
 DeliveryStoreOwnershipError = DeliveryOutboxOwnershipError
 DeliveryStoreReconciliationRequiredError = DeliveryOutboxReconciliationRequiredError
+DeliveryStoreSendBusyError = DeliverySendBusyError

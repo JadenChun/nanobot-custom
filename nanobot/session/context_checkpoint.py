@@ -2,7 +2,7 @@
 
 from copy import deepcopy
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from nanobot.session.source import (
     SourceValidationError,
@@ -16,7 +16,7 @@ MAX_SUMMARY_CHARS = 64_000
 
 
 def validate_context_checkpoint(
-    candidate: dict[str, Any],
+    candidate: object,
     events: list[dict[str, Any]],
     *,
     generation: int,
@@ -32,7 +32,9 @@ def validate_context_checkpoint(
     """
     if not isinstance(candidate, dict):
         raise SourceValidationError("Invalid context checkpoint schema")
-    canonical_events([candidate])
+    canonical_events([cast(dict[object, object], candidate)])
+    # Canonical validation proves recursively string-keyed JSON objects.
+    candidate = cast(dict[str, object], candidate)
     validate_event_ids(events)
     required = {
         "schema_version", "digest_version", "summary_format_version", "session_generation",
@@ -47,7 +49,8 @@ def validate_context_checkpoint(
     if usage is not None and (
         not isinstance(usage, dict)
         or not usage
-        or any(type(value) is not int or value < 0 for value in usage.values())
+        or any(type(value) is not int or value < 0
+               for value in cast(dict[object, object], usage).values())
     ):
         raise SourceValidationError("Invalid context checkpoint auxiliary usage")
     version = candidate.get('schema_version')
@@ -82,8 +85,11 @@ def validate_context_checkpoint(
     references = candidate.get('artifact_references')
     if version == 1 and references != []:
         raise SourceValidationError('Version-1 context checkpoint cannot carry artifacts')
-    if not isinstance(references, list) or any(not isinstance(value, str) for value in references):
+    if not isinstance(references, list) or any(
+        not isinstance(value, str) for value in cast(list[object], references)
+    ):
         raise SourceValidationError('Invalid context checkpoint artifact references')
+    references = cast(list[str], references)
     if references != sorted(set(references)):
         raise SourceValidationError('Context checkpoint references must be sorted and unique')
     if references:
@@ -92,6 +98,8 @@ def validate_context_checkpoint(
         for reference in references:
             parse_artifact_reference(reference)
     boundary = candidate.get("boundary")
+    if type(boundary) is not int:
+        raise SourceValidationError("Invalid source boundary")
     digest = prefix_digest(events, boundary)
     if (
         candidate.get("prefix_digest") != digest

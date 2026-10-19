@@ -10,14 +10,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent import test_migration_engine as engine_fixtures
-from agent.test_migration_engine import ScriptedProvider
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.api.server import handle_chat_completions
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+from tests.agent import test_migration_engine as engine_fixtures
+from tests.agent.test_migration_engine import ScriptedProvider
 
 engine_config = engine_fixtures.engine_config
 
@@ -46,6 +46,20 @@ async def _post(loop: AgentLoop, content: str, session_id: str | None = None) ->
     response = await handle_chat_completions(_ApiRequest(loop, body))
     assert response.status == 200
     return json.loads(response.body)
+
+
+@pytest.mark.asyncio
+async def test_api_adapter_delegates_one_foreground_turn_to_execute_turn(engine_config) -> None:
+    provider = ScriptedProvider([LLMResponse(content="one result")])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    original = loop.execute_turn
+    loop.execute_turn = AsyncMock(wraps=original)  # type: ignore[method-assign]
+    try:
+        body = await _post(loop, "one request", session_id="one-turn")
+        assert body["choices"][0]["message"]["content"] == "one result"
+        loop.execute_turn.assert_awaited_once()  # type: ignore[attr-defined]
+    finally:
+        await loop.aclose()
 
 
 class _BlockingProvider(ScriptedProvider):
@@ -367,6 +381,44 @@ async def test_real_api_timeout_cancels_active_provider_and_releases_its_session
         assert provider.calls == ["provider timeout", "provider successor"]
         assert not loop._get_session_lock("api:active-provider").locked()
     finally:
+        await loop.aclose()
+
+
+@pytest.mark.asyncio
+async def test_real_api_timeout_joins_provider_cleanup_before_504_and_next_turn(
+    engine_config,
+) -> None:
+    provider = _ActiveProviderCall(wait_for_cleanup=True)
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    try:
+        timed_out = asyncio.create_task(_post_with_timeout(
+            loop,
+            "provider timeout",
+            session_id="provider-slow-cleanup",
+            timeout_s=0.02,
+        ))
+        await provider.started.wait()
+        await asyncio.wait_for(provider.cleanup_started.wait(), timeout=0.5)
+        successor = asyncio.create_task(_post(
+            loop, "provider successor", session_id="provider-slow-cleanup",
+        ))
+        try:
+            await asyncio.sleep(0)
+            assert not timed_out.done()
+            assert not successor.done()
+            assert provider.calls == ["provider timeout"]
+            assert loop._get_session_lock("api:provider-slow-cleanup").locked()
+        finally:
+            provider.release_cleanup.set()
+
+        status, body = await asyncio.wait_for(timed_out, timeout=0.5)
+        assert status == 504
+        assert body["error"]["message"] == "Request timed out after 0.02s"
+        completed = await asyncio.wait_for(successor, timeout=0.5)
+        assert completed["choices"][0]["message"]["content"] == "completed: provider successor"
+        assert provider.calls == ["provider timeout", "provider successor"]
+    finally:
+        provider.release_cleanup.set()
         await loop.aclose()
 
 

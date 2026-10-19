@@ -7,12 +7,13 @@ import pytest
 
 from nanobot.session.artifact import ArtifactValidationError
 from nanobot.session.artifact_reader import ArtifactReader
+from nanobot.session.artifact_rematerialization import ArtifactRematerializer
 from nanobot.session.checkpoint_admission import CheckpointAdmission
 from nanobot.session.source import SourceValidationError
 from nanobot.session.source_compaction import SourceCompactionCandidate
 from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode, source_nodes
 from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
-from session.test_artifact_reader import setup_read
+from tests.session.test_artifact_reader import setup_read
 
 
 def checkpoint_snapshot(writer, descriptor):
@@ -58,6 +59,28 @@ async def test_absent_reader_skips_dependent_but_accepts_legacy_checkpoint(tmp_p
         legacy = replace(snapshot, checkpoint={**snapshot.checkpoint,
                          'schema_version': 1, 'artifact_references': []})
         assert CheckpointAdmission().select(legacy, full) != full
+
+
+async def test_dependent_checkpoint_admits_only_after_explicit_rematerialization(tmp_path):
+    async with setup_read(tmp_path, 'evidence' * 6000) as (writer, tool, store, descriptor, _):
+        reader = ArtifactReader(writer, 'root_history', store, tool)
+        snapshot = checkpoint_snapshot(writer, descriptor)
+        full = SourceTranscript(source_nodes(snapshot.events))
+        missing = CheckpointAdmission(reader=reader)
+        reduced = missing.select(snapshot, full)
+        source_path = writer.store._backend.get_session_path(writer.owner.key)
+        before = source_path.read_bytes()
+        next(store.root.rglob('*.blob')).unlink()
+
+        assert not missing.validate_dependencies(snapshot, reduced, enabled=True)
+        result = ArtifactRematerializer(reader).rematerialize(
+            descriptor.reference, expected=snapshot.state
+        )
+        admitted = CheckpointAdmission(reader=reader)
+        retried = admitted.select(snapshot, full)
+        assert result.status == 'installed'
+        assert admitted.validate_dependencies(snapshot, retried, enabled=True)
+        assert source_path.read_bytes() == before
 
 
 @pytest.mark.parametrize('failure', ['revoked', 'manifest', 'scope'])
@@ -119,8 +142,6 @@ async def test_capture_never_rediscovers_rejected_disk_checkpoint(tmp_path):
 
 @pytest.mark.parametrize('failure', ['missing', 'no_tools', 'revoked'])
 async def test_governor_recovery_updates_raw_payload_and_retains_retry_once(tmp_path, failure):
-    from agent.test_source_summary import SummaryProvider, runtime
-
     from nanobot.agent.context_governance import (
         ContextGovernanceConfig,
         ContextGovernor,
@@ -131,6 +152,7 @@ async def test_governor_recovery_updates_raw_payload_and_retains_retry_once(tmp_
     from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.providers.base import LLMResponse, LLMUsage
     from nanobot.providers.conversation_state import ProviderConversationStateController
+    from tests.agent.test_source_summary import SummaryProvider, runtime
 
     async with setup_read(tmp_path, 'evidence') as (writer, tool, store, descriptor, _):
         snapshot = checkpoint_snapshot(writer, descriptor)

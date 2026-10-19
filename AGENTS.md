@@ -69,6 +69,18 @@ Messages flow through an async `MessageBus` (`nanobot/bus/queue.py`) that decoup
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for contribution flow and PR guidelines.
 
+## Migration repair validation
+
+While strict-type debt remains, follow `docs/migration/p6-error-attribution.md`.
+Each bounded repair needs a frozen before/after full-source checker report under
+the same dependency environment, passing affected tests, and zero newly introduced
+diagnostic signatures across **all** files (not only outside the edited scope).
+Use `scripts/check_type_regressions.py`; lower total counts alone do not pass.
+Retain source hashes and command/environment evidence; the comparator does not
+attest those inputs. Never silently refresh the baseline to absorb new errors.
+A repair-batch PASS is not stage completion: full unchanged strict checking must
+exit zero and the required local full test suite must pass before closing P6.
+
 ## Code Style
 
 - Python 3.11+, asyncio throughout.

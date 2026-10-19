@@ -29,6 +29,30 @@ def _store(tmp_path: Path) -> CronActionStore:
     return CronActionStore(tmp_path / "private-actions", namespace=NAMESPACE)
 
 
+def test_missing_fcntl_fails_before_creating_store(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "unqualified-actions"
+    monkeypatch.setattr(action_store, "_fcntl", None)
+    with pytest.raises(ActionStorePersistenceError, match="qualified POSIX"):
+        CronActionStore(root, namespace=NAMESPACE)
+    assert not root.exists()
+
+
+def test_qualified_module_capture_retains_in_place_flock_patches(tmp_path: Path, monkeypatch) -> None:
+    store = _store(tmp_path)
+    module = action_store._fcntl
+    calls = []
+    original = module.flock
+
+    def observed(fd, operation):
+        calls.append(operation)
+        return original(fd, operation)
+
+    monkeypatch.setattr(module, "flock", observed)
+    monkeypatch.setattr(action_store, "_fcntl", None)
+    store.replay()
+    assert calls == [module.LOCK_EX, module.LOCK_UN]
+
+
 def _append(store: CronActionStore, action_id: str = "action-1", **request: object):
     return store.append(action_id=action_id, request={"operation": "opaque", **request})
 

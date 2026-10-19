@@ -88,6 +88,19 @@ def test_malformed_candidate_root_is_content_free(candidate):
         validate(events, candidate)
 
 
+@pytest.mark.parametrize("nested", [False, True])
+def test_candidate_requires_recursive_string_keys(nested):
+    events, candidate = fixture()
+    if nested:
+        candidate["extra"] = {1: "not a JSON object key"}
+    else:
+        candidate[1] = "not a JSON object key"
+    before = deepcopy(candidate)
+    with pytest.raises(SourceValidationError):
+        validate(events, candidate)
+    assert candidate == before
+
+
 def test_v2_dependencies_are_structural_and_require_canonical_references():
     events, candidate = fixture()
     candidate['schema_version'] = 2
@@ -100,3 +113,11 @@ def test_v2_dependencies_are_structural_and_require_canonical_references():
             validate(events, malformed)
     with pytest.raises(SourceValidationError):
         validate(events, {**candidate, 'schema_version': 1})
+
+
+@pytest.mark.parametrize("boundary", [None, False, True, "1", 1.0, [], {}])
+def test_checkpoint_boundary_requires_exact_integer(boundary):
+    events, candidate = fixture()
+    candidate["boundary"] = boundary
+    with pytest.raises(SourceValidationError, match="^Invalid source boundary$"):
+        validate(events, candidate)

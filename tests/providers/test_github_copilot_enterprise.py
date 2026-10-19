@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from pathlib import Path
 
+import httpx
 import pytest
 
+from nanobot.providers import copilot_auth
 from nanobot.providers import github_copilot_provider as gc
 
 
@@ -36,7 +38,8 @@ def test_provider_api_base_honors_env_override(monkeypatch):
     assert provider.api_base == "https://copilot-api.acme.ghe.com"
 
 
-def test_login_uses_enterprise_endpoint_overrides(monkeypatch):
+def test_login_uses_enterprise_endpoint_overrides(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("NANOBOT_COPILOT_AUTH_PATH", str(tmp_path / "copilot.json"))
     monkeypatch.setenv("NANOBOT_GITHUB_COPILOT_CLIENT_ID", "enterprise-client-id")
     monkeypatch.setenv("NANOBOT_GITHUB_DEVICE_CODE_URL", "https://ghe.example/login/device/code")
     monkeypatch.setenv(
@@ -47,7 +50,6 @@ def test_login_uses_enterprise_endpoint_overrides(monkeypatch):
     monkeypatch.setattr(gc.webbrowser, "open", lambda _url: None)
 
     calls = []
-    saved = []
 
     class FakeResponse:
         def __init__(self, payload):
@@ -88,12 +90,10 @@ def test_login_uses_enterprise_endpoint_overrides(monkeypatch):
             return FakeResponse({"login": "enterprise-user"})
 
     monkeypatch.setattr(gc.httpx, "Client", FakeClient)
-    monkeypatch.setattr(gc, "get_storage", lambda: SimpleNamespace(save=saved.append))
-
     token = gc.login_github_copilot(print_fn=lambda _message: None)
 
     assert token.access == "github-token"
-    assert saved[0].account_id == "enterprise-user"
+    assert copilot_auth.get_copilot_identity().account_id == "enterprise-user"
     assert calls[0] == (
         "post",
         "https://ghe.example/login/device/code",
@@ -105,37 +105,29 @@ def test_login_uses_enterprise_endpoint_overrides(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_copilot_token_exchange_uses_enterprise_endpoint_override(monkeypatch):
+async def test_copilot_token_exchange_uses_enterprise_endpoint_override(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.setenv("NANOBOT_COPILOT_AUTH_PATH", str(tmp_path / "copilot.json"))
     monkeypatch.setenv(
         "NANOBOT_COPILOT_TOKEN_URL",
         "https://api.ghe.example/copilot_internal/v2/token",
     )
-    monkeypatch.setattr(gc, "_load_github_token", lambda: SimpleNamespace(access="github-token"))
+    authority = copilot_auth.get_copilot_authority()
+    generation = authority.begin_login()
+    authority.commit_login("github-token", generation)
 
     calls = []
 
-    class FakeResponse:
-        def raise_for_status(self):
-            pass
+    def fake_get(url, *, headers, timeout):
+        calls.append((url, headers))
+        return httpx.Response(
+            200,
+            json={"token": "copilot-token", "refresh_in": 1200},
+            request=httpx.Request("GET", url),
+        )
 
-        def json(self):
-            return {"token": "copilot-token", "refresh_in": 120}
-
-    class FakeAsyncClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def get(self, url, *, headers):
-            calls.append((url, headers))
-            return FakeResponse()
-
-    monkeypatch.setattr(gc.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(copilot_auth.httpx, "get", fake_get)
 
     provider = gc.GitHubCopilotProvider()
 

@@ -92,6 +92,7 @@ class WebUITemporaryChats:
         session = self._sessions.get_or_create_transient(
             self._session_key(chat_id),
             disabled_tools=_TEMPORARY_CHAT_DISABLED_TOOLS,
+            retain=True,
         )
         if session.policy.persist:
             raise RuntimeError("Temporary Chat must use a non-persistent session policy")

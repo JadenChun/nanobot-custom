@@ -24,7 +24,12 @@
       "allowFrom": {
         "label": "Usuários permitidos",
         "placeholder": "* ou IDs de usuário do Telegram",
-        "help": "Deixe vazio para usar códigos de pareamento."
+        "help": "Required: add at least one Telegram sender ID/username or \"*\". Pairing is additional and does not replace sender authorization."
+      },
+      "allowChats": {
+        "label": "Chats permitidos",
+        "placeholder": "IDs de grupos do Telegram",
+        "help": "Restrições de grupo opcionais. O remetente também deve ser um usuário permitido."
       },
       "groupPolicy": {
         "label": "Comportamento em grupos",

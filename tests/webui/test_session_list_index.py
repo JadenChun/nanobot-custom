@@ -96,13 +96,15 @@ def test_webui_session_index_uses_unique_temp_file(tmp_path: Path) -> None:
     session = manager.get_or_create("websocket:unique-index-temp")
     session.add_message("user", "hello")
     manager.save(session)
-    stale_shared_tmp = manager.sessions_dir / ".webui_session_index.json.tmp"
+    cache_path = session_list_index._index_path(manager.sessions_dir)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    stale_shared_tmp = cache_path.with_name(f"{cache_path.name}.tmp")
     stale_shared_tmp.write_text("stale", encoding="utf-8")
 
     assert list_webui_sessions(manager)[0]["preview"] == "hello"
 
     assert stale_shared_tmp.read_text(encoding="utf-8") == "stale"
-    assert not list(manager.sessions_dir.glob(".webui_session_index.json.*.tmp"))
+    assert not list(cache_path.parent.glob(f"{cache_path.name}.*.tmp"))
 
 
 def test_webui_session_list_indexes_workspace_scope_and_preserves_null(
@@ -200,7 +202,7 @@ def test_webui_session_scan_does_not_overlap_session_save(
     session.add_message("user", "before")
     manager.save(session)
     session_path = manager._get_session_path(session.key)
-    session.messages[0]["content"] = "after"
+    session.replace_messages([{**session.messages[0], "content": "after"}])
 
     reader_open = threading.Event()
     release_reader = threading.Event()
@@ -297,7 +299,7 @@ def test_webui_session_list_rescans_only_changed_file(tmp_path: Path, monkeypatc
 
     assert {row["preview"] for row in list_webui_sessions(manager)} == {"first", "second before"}
 
-    second.messages.clear()
+    second.replace_messages([])
     second.add_message("user", "second after")
     manager.save(second)
 
@@ -324,7 +326,6 @@ def test_webui_session_list_skips_provider_state_before_preview_budget(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(session_list_index, "_SESSION_LIST_PREVIEW_MAX_CHARS", 100)
     manager = SessionManager(tmp_path)
     session = manager.get_or_create("websocket:private-state")
     session.provider_state = ProviderConversationState(
@@ -336,6 +337,14 @@ def test_webui_session_list_skips_provider_state_before_preview_budget(
     )
     session.add_message("user", "visible preview")
     manager.save(session)
+
+    lines = manager._get_session_path(session.key).read_bytes().splitlines(keepends=True)
+    assert len(lines) == 3
+    assert json.loads(lines[1])["_type"] == "provider_state"
+    assert json.loads(lines[2])["content"] == "visible preview"
+    preview_budget = len(lines[2])
+    assert preview_budget < len(lines[1])
+    monkeypatch.setattr(session_list_index, "_SESSION_LIST_PREVIEW_MAX_CHARS", preview_budget)
 
     assert list_webui_sessions(manager)[0]["preview"] == "visible preview"
 

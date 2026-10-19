@@ -16,9 +16,10 @@ from nanobot.api.server import (
     _save_base64_data_url,
     create_app,
 )
+from tests.api_http_client import InProcessApiClient
 
 try:
-    from aiohttp.test_utils import TestClient, TestServer
+    from aiohttp import web
 
     HAS_AIOHTTP = True
 except ImportError:
@@ -49,12 +50,12 @@ def app(mock_agent):
 
 @pytest_asyncio.fixture
 async def aiohttp_client():
-    clients: list[TestClient] = []
+    clients: list[InProcessApiClient] = []
 
-    async def _make_client(app):
-        client = TestClient(TestServer(app))
-        await client.start_server()
+    async def _make_client(app: web.Application):
+        client = InProcessApiClient(app)
         clients.append(client)
+        await client.start()
         return client
 
     try:

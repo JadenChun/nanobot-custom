@@ -1,11 +1,13 @@
+import shlex
+import sys
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from nanobot.agent.tools.base import Tool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.shell import ExecTool
+from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
+from nanobot.agent.tools.shell import _WORKSPACE_BOUNDARY_NOTE, ExecTool
 
 
 class SampleTool(Tool):
@@ -128,13 +130,13 @@ def test_exec_extract_absolute_paths_captures_quoted_paths() -> None:
 def test_exec_guard_blocks_home_path_outside_workspace(tmp_path) -> None:
     tool = ExecTool(restrict_to_workspace=True)
     error = tool._guard_command("cat ~/.nanobot/config.json", str(tmp_path))
-    assert error == "Error: Command blocked by safety guard (path outside working dir)"
+    assert error == "Error: Command blocked by safety guard (path outside working dir)" + _WORKSPACE_BOUNDARY_NOTE
 
 
 def test_exec_guard_blocks_quoted_home_path_outside_workspace(tmp_path) -> None:
     tool = ExecTool(restrict_to_workspace=True)
     error = tool._guard_command('cat "~/.nanobot/config.json"', str(tmp_path))
-    assert error == "Error: Command blocked by safety guard (path outside working dir)"
+    assert error == "Error: Command blocked by safety guard (path outside working dir)" + _WORKSPACE_BOUNDARY_NOTE
 
 
 # --- cast_params tests ---
@@ -385,7 +387,7 @@ async def test_exec_head_tail_truncation() -> None:
     # Generate output that exceeds _MAX_OUTPUT (10_000 chars)
     # Use python to generate output to avoid command line length limits
     result = await tool.execute(
-        command="python -c \"print('A' * 6000 + '\\n' + 'B' * 6000)\""
+        command=f"{shlex.quote(sys.executable)} -c \"print('A' * 6000 + '\\n' + 'B' * 6000)\""
     )
     assert "chars truncated" in result
     # Head portion should start with As
@@ -430,7 +432,7 @@ def test_exec_blocks_shell_desktop_mutation_when_desktop_use_is_active(
 
     assert error is not None
     assert "desktop_use is enabled" in error
-    assert "without a fallback" in error
+    assert is_tool_error_result(error)
 
 
 def test_exec_allows_explicit_desktop_inspection_when_desktop_use_is_active() -> None:
@@ -466,14 +468,17 @@ async def test_exec_git_push_sets_noninteractive_env(monkeypatch) -> None:
         async def wait(self) -> int:
             return 0
 
-    async def _fake_create_subprocess_shell(*args, **kwargs):
-        captured_env.update(kwargs.get("env") or {})
+    async def _fake_spawn(command, cwd, env, *_args, **_kwargs):
+        assert command == "git push"
+        captured_env.update(env)
         return _FakeProcess()
 
     monkeypatch.delenv("GIT_TERMINAL_PROMPT", raising=False)
     monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.setenv("NANOBOT_SECRET_TOKEN", "must-not-leak")
+    monkeypatch.setattr("nanobot.agent.tools.shell._reap_pid", lambda _pid: None)
 
-    with patch("nanobot.agent.tools.shell.asyncio.create_subprocess_shell", _fake_create_subprocess_shell):
+    with patch.object(ExecTool, "_spawn", side_effect=_fake_spawn):
         tool = ExecTool()
         result = await tool.execute(command="git push")
 
@@ -481,6 +486,7 @@ async def test_exec_git_push_sets_noninteractive_env(monkeypatch) -> None:
     assert captured_env["GIT_TERMINAL_PROMPT"] == "0"
     assert "BatchMode=yes" in captured_env["GIT_SSH_COMMAND"]
     assert "ConnectTimeout=10" in captured_env["GIT_SSH_COMMAND"]
+    assert "NANOBOT_SECRET_TOKEN" not in captured_env
 
 
 async def test_exec_git_push_keeps_existing_ssh_command(monkeypatch) -> None:
@@ -500,14 +506,16 @@ async def test_exec_git_push_keeps_existing_ssh_command(monkeypatch) -> None:
         async def wait(self) -> int:
             return 0
 
-    async def _fake_create_subprocess_shell(*args, **kwargs):
-        captured_env.update(kwargs.get("env") or {})
+    async def _fake_spawn(command, cwd, env, *_args, **_kwargs):
+        assert command == "cd /repo && git push"
+        captured_env.update(env)
         return _FakeProcess()
 
     monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /tmp/bot-key")
     monkeypatch.delenv("GIT_TERMINAL_PROMPT", raising=False)
+    monkeypatch.setattr("nanobot.agent.tools.shell._reap_pid", lambda _pid: None)
 
-    with patch("nanobot.agent.tools.shell.asyncio.create_subprocess_shell", _fake_create_subprocess_shell):
+    with patch.object(ExecTool, "_spawn", side_effect=_fake_spawn):
         tool = ExecTool()
         await tool.execute(command="cd /repo && git push")
 

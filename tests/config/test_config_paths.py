@@ -11,6 +11,7 @@ from nanobot.config.paths import (
     get_workspace_path,
     is_default_workspace,
 )
+from tests.config.path_test_fixtures import isolate_path_home
 
 
 def test_runtime_dirs_follow_config_path(monkeypatch, tmp_path: Path) -> None:
@@ -36,7 +37,8 @@ def test_shared_and_legacy_paths_remain_global() -> None:
     assert get_legacy_sessions_dir() == Path.home() / ".nanobot" / "sessions"
 
 
-def test_workspace_path_is_explicitly_resolved() -> None:
+def test_workspace_path_is_explicitly_resolved(tmp_path: Path, monkeypatch) -> None:
+    isolate_path_home(tmp_path, monkeypatch)
     assert get_workspace_path() == Path.home() / ".nanobot" / "workspace"
     assert get_workspace_path("~/custom-workspace") == Path.home() / "custom-workspace"
 

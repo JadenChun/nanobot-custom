@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import pkgutil
-from typing import TYPE_CHECKING
+from importlib import metadata
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from nanobot.channels.plugin import (
     ChannelPlugin,
+    LegacyEntryPointChannelPlugin,
     has_channel_package,
     load_channel_package,
 )
+from nanobot.channels.plugin import parse_channel_target as _target_parts
 
 if TYPE_CHECKING:
     from nanobot.channels.base import BaseChannel
@@ -25,6 +28,11 @@ def _channel_package_names() -> list[str]:
         for _, name, is_package in pkgutil.iter_modules(package.__path__)
         if is_package and has_channel_package(name)
     ]
+
+
+def packaged_channel_names() -> frozenset[str]:
+    """Reserve every packaged channel name independent of manifest validity."""
+    return frozenset(_channel_package_names())
 
 
 def discover_plugins(
@@ -42,6 +50,55 @@ def discover_plugins(
         except Exception as exc:
             logger.warning("Failed to load channel package descriptor '{}': {}", name, exc)
     return plugins
+
+
+def discover_legacy_plugins(
+    enabled_names: set[str],
+    *,
+    reserved_names: set[str] | None = None,
+) -> dict[str, ChannelPlugin]:
+    """Describe explicitly enabled legacy channels without importing targets."""
+    if not enabled_names:
+        return {}
+    reserved = set(_channel_package_names()) if reserved_names is None else reserved_names
+    shadowed = sorted(enabled_names & reserved)
+    if shadowed:
+        raise ValueError(
+            "Legacy channel entry points cannot shadow built-in channels: "
+            + ", ".join(shadowed)
+        )
+    try:
+        candidates = metadata.entry_points(group="nanobot.channels")
+    except TypeError:  # pragma: no cover - compatibility with older metadata APIs
+        candidates = metadata.entry_points().select(group="nanobot.channels")
+    selected: dict[str, Any] = {}
+    for entry_point in candidates:
+        name = getattr(entry_point, "name", None)
+        if not isinstance(name, str) or name not in enabled_names:
+            continue
+        value = getattr(entry_point, "value", None)
+        if not isinstance(value, str):
+            raise ValueError("Malformed nanobot.channels entry-point metadata")
+        _target_parts(value, label="runtime")
+        if name in selected:
+            raise ValueError(f"Duplicate legacy channel entry point: {name}")
+        selected[name] = entry_point
+    missing = sorted(enabled_names - set(selected))
+    if missing:
+        raise ValueError(
+            "Enabled external channel has no installed nanobot.channels entry point: "
+            + ", ".join(missing)
+        )
+    return {
+        name: LegacyEntryPointChannelPlugin(
+            name=name,
+            display_name=name.replace("_", " ").title(),
+            runtime=entry_point.value,
+            default_enabled=False,
+            entry_point=entry_point,
+        )
+        for name, entry_point in selected.items()
+    }
 
 
 def load_channel_plugin(name: str) -> ChannelPlugin:
@@ -98,7 +155,9 @@ __all__ = [
     "channel_default_enabled",
     "discover_all",
     "discover_enabled",
+    "discover_legacy_plugins",
     "discover_plugins",
     "load_channel_class",
     "load_channel_plugin",
+    "packaged_channel_names",
 ]

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Iterable
+from typing import Iterable, cast
 
 FILE_READ_CAPABILITIES = frozenset({"read_file", "list_dir", "search_files"})
 WEB_READ_CAPABILITIES = frozenset({"web_search", "web_fetch"})
@@ -82,7 +82,7 @@ DELEGATED_READ_ONLY_ROLES = frozenset({"planner", "reviewer", "explorer", "crawl
 def role_capabilities(role: str) -> RoleCapabilityProfile:
     """Return the exact profile for *role*, failing closed for unknown roles."""
 
-    normalized = role.strip().lower() if isinstance(role, str) else ""
+    normalized = role.strip().lower() if isinstance(cast(object, role), str) else ""
     try:
         return ROLE_CAPABILITIES[normalized]
     except KeyError as exc:
@@ -100,7 +100,7 @@ def role_tool_names(
     if not profile.allow_read_only_mcp:
         return profile.tools
     return profile.tools | frozenset(
-        name for name in read_only_mcp_tools if isinstance(name, str) and name
+        name for name in read_only_mcp_tools if isinstance(cast(object, name), str) and name
     )
 
 

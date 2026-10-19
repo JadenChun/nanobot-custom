@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -37,8 +37,10 @@ def test_create_fork_rebuilds_missing_transcript_and_saves_clean_title(
     )
     rebuild.assert_called_once_with("websocket:fork-id", forked.messages)
     marker.assert_called_once_with("websocket:fork-id")
-    assert forked.metadata[WEBUI_TITLE_METADATA_KEY] == "Useful fork"
-    manager.save.assert_called_once_with(forked, fsync=True)
+    manager.upsert_session_metadata.assert_called_once_with(
+        "websocket:fork-id", {WEBUI_TITLE_METADATA_KEY: "Useful fork"}, fsync=True
+    )
+    manager.save.assert_not_called()
 
 
 def test_create_fork_rolls_back_session_and_transcript_together(
@@ -159,5 +161,5 @@ async def test_fork_handler_maps_invalid_source_and_internal_failure_to_stable_e
     )
     await forking.handle_webui_fork_chat(channel, connection, envelope)
 
-    warning.assert_called_once_with("fork_chat failed: {}", ANY)
+    warning.assert_called_once_with("fork_chat failed")
     channel.send_webui_protocol_error.assert_awaited_once_with(connection, "fork_chat_failed")

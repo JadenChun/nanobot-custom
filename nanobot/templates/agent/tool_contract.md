@@ -69,6 +69,8 @@
 - Use `message` only for proactive sends, cross-channel delivery, or delivering existing local files and generated images through its `media` parameter.
 - `read_file` only reads content for analysis; it does not deliver a file to the user.
 - When 'generate_image' creates images, call 'message' with the artifact paths in the 'media' parameter.
+- For video or media-editing tasks, inspect the actual visual artifacts first. If a source video file is available, extract timestamped representative frames into workspace artifacts before planning edits or claiming understanding.
+- When MCP timeline preview tools are available, use inspect_* tools before preview_* tools. Sample timeline previews sequentially, not in parallel, and prefer a few targeted timestamps over a broad fan-out. Use preview_clip for motion/timing checks and preview_frame for spot checks.
 
 ## Scheduling and Background Work
 

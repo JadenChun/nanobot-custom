@@ -488,3 +488,239 @@ def test_dependent_checkpoint_load_is_structural_but_generic_publication_is_disa
     assert loaded.checkpoint == proposal
     assert project_source(loaded).checkpoint is None
     assert path.read_bytes() == persisted
+
+
+def _source_transaction_api(backend, via_source):
+    from functools import partial
+
+    from nanobot.session.execution_owner import execution_transaction
+
+    return (backend.source.execution_transaction if via_source
+            else partial(execution_transaction, backend))
+
+
+@pytest.mark.parametrize('via_source', [False, True])
+@pytest.mark.parametrize('fail', [False, True])
+def test_source_transaction_returns_lazy_context_and_preserves_all_arguments(
+    backend, monkeypatch, via_source, fail,
+):
+    from contextlib import contextmanager
+
+    import nanobot.session.execution_owner as execution_module
+
+    owner, root = object(), object()
+    calls = []
+    failure = OSError('transaction failure')
+
+    @contextmanager
+    def context():
+        calls.append('enter')
+        try:
+            yield None
+        finally:
+            calls.append('exit')
+
+    retained = context()
+
+    def transaction(actual_backend, key, actual_owner=None, *, destructive=False,
+                    allow_legacy=False, root_authority=None):
+        calls.append((actual_backend, key, actual_owner, destructive, allow_legacy, root_authority))
+        return retained
+
+    monkeypatch.setattr(execution_module, 'execution_transaction', transaction)
+    api = _source_transaction_api(backend, via_source)
+    acquired = api('key', owner, destructive=True, allow_legacy=True, root_authority=root)
+    assert acquired is retained
+    assert calls == [(backend, 'key', owner, True, True, root)]
+    if fail:
+        with pytest.raises(OSError) as caught, acquired as value:
+            assert value is None
+            raise failure
+        assert caught.value is failure
+    else:
+        with acquired as value:
+            assert value is None
+    assert calls == [(backend, 'key', owner, True, True, root), 'enter', 'exit']
+
+
+@pytest.mark.parametrize('via_source', [False, True])
+async def test_source_transaction_retains_owner_lock_draining_and_release_fences(
+    backend, tmp_path, via_source,
+):
+    from nanobot.session.execution_owner import (
+        ExecutionBusyError,
+        ExecutionOwnershipError,
+        acquire_execution,
+    )
+
+    snapshot = upgrade(backend, seed(backend))
+    key = snapshot.state.session_key
+    api = _source_transaction_api(backend, via_source)
+    other = JsonlSessionStore(tmp_path / 'other-workspace', sessions_root=tmp_path / 'private')
+    async with acquire_execution(backend, key, run_id='transaction') as owner:
+        current = owner.read_snapshot()
+        before = backend.get_session_path(key).read_bytes()
+        with api(key, owner) as value:
+            assert value is None and owner.read_snapshot() == current
+            with pytest.raises(ExecutionBusyError), api(key):
+                pytest.fail('Unowned transaction bypassed retained execution lock')
+        with pytest.raises(ExecutionOwnershipError), api('wrong-key', owner):
+            pytest.fail('Transaction accepted a different owner key')
+        other.get_session_path(key).write_bytes(before)
+        with pytest.raises(ExecutionOwnershipError), _source_transaction_api(other, via_source)(key, owner):
+            pytest.fail('Transaction accepted an owner from another backend')
+        with pytest.raises(ExecutionOwnershipError), api(key, owner, destructive=True):
+            pytest.fail('Destructive transaction bypassed draining')
+        assert backend.get_session_path(key).read_bytes() == before
+        await owner.quiesce()
+        with api(key, owner, destructive=True):
+            assert owner.read_snapshot() == current
+        assert backend.get_session_path(key).read_bytes() == before
+    with pytest.raises(ExecutionOwnershipError), api(key, owner):
+        pytest.fail('Released owner was accepted')
+    with api(key):
+        assert backend.source.load_source_snapshot(key).events == snapshot.events
+
+
+@pytest.mark.parametrize('via_source', [False, True])
+def test_source_transaction_preserves_root_authority_and_incompatible_mode_rejection(
+    backend, tmp_path, via_source,
+):
+    from nanobot.session.execution_owner import ExecutionBusyError, ExecutionOwnershipError
+    from nanobot.session.source_root import SourceRootAuthorityError
+
+    snapshot = upgrade(backend, seed(backend))
+    key = snapshot.state.session_key
+    api = _source_transaction_api(backend, via_source)
+    before = backend.get_session_path(key).read_bytes()
+    authority = backend.source.create_source_root_authority()
+    try:
+        with api(key, root_authority=authority) as value:
+            assert value is None
+            assert backend.get_session_path(key).read_bytes() == before
+            with pytest.raises(ExecutionBusyError), api(key, root_authority=authority):
+                pytest.fail('Root transaction bypassed retained execution lock')
+        for kwargs in ({'allow_legacy': True}, {'destructive': True}, {'owner': object()}):
+            with pytest.raises(ExecutionOwnershipError), api(key, root_authority=authority, **kwargs):
+                pytest.fail('Root authority accepted an incompatible transaction mode')
+        other = JsonlSessionStore(tmp_path / 'other-workspace', sessions_root=tmp_path / 'private')
+        with pytest.raises(SourceRootAuthorityError), _source_transaction_api(other, via_source)(
+            key, root_authority=authority,
+        ):
+            pytest.fail('Transaction accepted a foreign root authority')
+    finally:
+        authority.close()
+    assert backend.get_session_path(key).read_bytes() == before
+    with pytest.raises(SourceRootAuthorityError), api(key, root_authority=authority):
+        pytest.fail('Transaction accepted closed root authority')
+
+
+@pytest.mark.parametrize('via_source', [False, True])
+@pytest.mark.parametrize('state', ['legacy', 'recovery', 'missing'])
+def test_source_transaction_preserves_legacy_recovery_and_missing_source_guards(
+    backend, via_source, state,
+):
+    from nanobot.session.execution_owner import ExecutionOwnershipError
+
+    api = _source_transaction_api(backend, via_source)
+    key = 'test:source'
+    if state == 'missing':
+        with pytest.raises(SessionWriteConflict), api(key):
+            pytest.fail('Transaction accepted missing source')
+        return
+    session = seed(backend)
+    path = backend.get_session_path(key)
+    if state == 'legacy':
+        before = path.read_bytes()
+        with pytest.raises(SessionStorageError, match='^Session storage is invalid; recovery is required.$'), api(key):
+            pytest.fail('Transaction silently admitted legacy source')
+        with api(key, allow_legacy=True) as value:
+            assert value is None
+        assert path.read_bytes() == before
+        return
+    upgrade(backend, session)
+    lines = path.read_text().splitlines()
+    header = json.loads(lines[0])
+    header['metadata']['execution_recovery_required'] = True
+    path.write_text('\n'.join([json.dumps(header), *lines[1:]]) + '\n')
+    before = path.read_bytes()
+    for kwargs in ({}, {'allow_legacy': True}):
+        with pytest.raises(ExecutionOwnershipError), api(key, **kwargs):
+            pytest.fail('Transaction bypassed retained recovery evidence')
+    authority = backend.source.create_source_root_authority()
+    try:
+        with pytest.raises(ExecutionOwnershipError), api(key, root_authority=authority):
+            pytest.fail('Root transaction bypassed retained recovery evidence')
+    finally:
+        authority.close()
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('via_source', [False, True])
+@pytest.mark.parametrize('invalid', ['workspace', 'root', 'nested'])
+def test_source_artifact_binding_retains_constructor_validation_without_source_writes(
+    backend, tmp_path, via_source, invalid,
+):
+    from types import SimpleNamespace
+
+    from nanobot.session.source_store import SourceSessionStore
+
+    snapshot = upgrade(backend, seed(backend))
+    path = backend.get_session_path(snapshot.state.session_key)
+    before = path.read_bytes()
+    binding = SimpleNamespace(
+        workspace_id=('f' * 32 if invalid == 'workspace' else backend.sessions_dir.name),
+        root=(tmp_path / 'artifacts' if invalid == 'workspace' else backend.workspace
+              if invalid == 'root' else backend.workspace / 'artifacts'),
+    )
+    if via_source:
+        api = backend.source.with_artifact_store
+    else:
+        def api(artifact_store):
+            return SourceSessionStore(backend, artifact_store=artifact_store)
+    with pytest.raises(SourceValidationError, match='^Invalid configured artifact store binding$'):
+        api(binding)
+    assert path.read_bytes() == before and backend.source.load_source_snapshot(snapshot.state.session_key) == snapshot
+
+
+@pytest.mark.parametrize('via_source', [False, True])
+async def test_source_artifact_binding_is_fresh_preserves_identity_and_prior_publication_store(
+    tmp_path, via_source,
+):
+    from nanobot.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
+    from nanobot.session.source_store import SourceSessionStore
+    from tests.session.test_artifact_publication import publication
+
+    async with publication(tmp_path) as (backend, original, store, owner, descriptor):
+        replacement = PrivateArtifactStore(tmp_path.resolve() / 'other-artifacts',
+            workspace_id=store.workspace_id, session_key=store.session_key,
+            incarnation=store.incarnation, generation=store.generation)
+        configured = (original.with_artifact_store(replacement) if via_source else
+                      SourceSessionStore(backend, artifact_store=replacement))
+        before = owner.read_snapshot()
+        path = backend.get_session_path(owner.key)
+        original_bytes = path.read_bytes()
+        assert configured is not original and configured is not backend.source
+        assert configured.load_source_snapshot(owner.key) == before
+        assert path.read_bytes() == original_bytes
+        with replacement.transaction() as blobs:
+            blobs.put(descriptor, b'evidence')
+            with pytest.raises(SourceValidationError, match='configured store transaction'):
+                backend.source.commit_artifact_descriptor(owner.key, before.state, descriptor,
+                    owner=owner, blobs=blobs)
+            with pytest.raises(ArtifactStorageError):
+                original.commit_artifact_descriptor(owner.key, before.state, descriptor,
+                    owner=owner, blobs=blobs)
+            assert path.read_bytes() == original_bytes
+            committed = configured.commit_artifact_descriptor(owner.key, before.state, descriptor,
+                owner=owner, blobs=blobs)
+            assert committed.state.store_identity == before.state.store_identity
+            assert committed.events == before.events and committed.state.revision == before.state.revision + 1
+        with store.transaction() as blobs:
+            blobs.put(descriptor, b'evidence')
+            assert original.commit_artifact_descriptor(owner.key, committed.state, descriptor,
+                owner=owner, blobs=blobs) == committed
+            with pytest.raises(ArtifactStorageError):
+                configured.commit_artifact_descriptor(owner.key, committed.state, descriptor,
+                    owner=owner, blobs=blobs)
+        assert original.load_source_snapshot(owner.key) == committed

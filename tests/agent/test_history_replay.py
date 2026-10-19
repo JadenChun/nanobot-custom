@@ -7,24 +7,60 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
+from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
+from nanobot.agent.turn import DeliveryTarget, RunStatus, TurnRequest, TurnResult
 from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMResponse
 from nanobot.session.manager import Session
-from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
+from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT, session_summary_from_metadata
+from tests.agent.p6_admitted_fixtures import AgentInputs, AsyncAdmittedFactory
+from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 
 
-def _make_loop(tmp_path: Path, context_window_tokens: int = 200_000) -> AgentLoop:
+async def _make_loop(
+    tmp_path: Path,
+    acquire: AsyncAdmittedFactory,
+    context_window_tokens: int = 200_000,
+    max_tokens: int = 4096,
+) -> AgentLoop:
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    provider.generation.max_tokens = 4096
-    return AgentLoop(
-        bus=MessageBus(),
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-        context_window_tokens=context_window_tokens,
+    provider.generation.max_tokens = max_tokens
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus,
+            provider=provider,
+            workspace=inputs.config.workspace_path,
+            model="test-model",
+            context_window_tokens=context_window_tokens,
+            session_manager=inputs.sessions,
+            tool_registry=inputs.tools,
+            cron_service=inputs.cron,
+            turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools,
+            restrict_to_workspace=True,
+            enable_legacy_auto_compact=False,
+        )
+
+    return await acquire(tmp_path, build, keys=("cli:test",))
+
+
+async def _execute_inbound(loop: AgentLoop, msg: InboundMessage) -> TurnResult:
+    return await loop.execute_turn(
+        TurnRequest(
+            content=msg.content,
+            session_key=msg.session_key,
+            sender_id=msg.sender_id,
+            source=loop._inbound_turn_source(msg),
+            media=tuple(msg.media),
+            metadata=dict(msg.metadata),
+            route=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id),
+        ),
+        _options=_TurnExecutionOptions(
+            inbound=msg,
+            raise_errors=True,
+            trusted_foreground_activity=loop._trusted_foreground_inbound(msg),
+        ),
     )
 
 
@@ -67,8 +103,10 @@ def test_explicit_message_limit_still_starts_at_user_turn() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_message_hands_complete_replay_to_runner(tmp_path: Path) -> None:
-    loop = _make_loop(tmp_path, context_window_tokens=32_768)
+async def test_process_message_hands_complete_replay_to_runner(
+    tmp_path: Path, admitted_async,
+) -> None:
+    loop = await _make_loop(tmp_path, admitted_async, context_window_tokens=32_768)
     loop.provider.chat_with_retry = AsyncMock(
         return_value=LLMResponse(content="ok", tool_calls=[], usage=None)
     )
@@ -76,17 +114,21 @@ async def test_process_message_hands_complete_replay_to_runner(tmp_path: Path) -
 
     session = loop.sessions.get_or_create("cli:test")
     with patch.object(session, "get_history", wraps=session.get_history) as get_history:
-        result = await loop._process_message(
+        result = await _execute_inbound(loop,
             InboundMessage(channel="cli", sender_id="user", chat_id="test", content="hello")
         )
 
     assert result is not None
     assert get_history.call_args.kwargs == {"extend_to_user": False}
+    assert result.status is RunStatus.COMPLETED and result.content == "ok"
 
 
 @pytest.mark.asyncio
-async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(tmp_path: Path) -> None:
-    loop = _make_loop(tmp_path, context_window_tokens=8_000)
+async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(
+    tmp_path: Path, admitted_async,
+) -> None:
+    # The normal request needs a checkpoint, but the archive request must still fit.
+    loop = await _make_loop(tmp_path, admitted_async, context_window_tokens=8_000, max_tokens=2_000)
     loop.provider.chat_with_retry = AsyncMock(
         return_value=LLMResponse(content="ok", tool_calls=[], usage=None)
     )
@@ -100,7 +142,7 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(tmp_path:
         session.messages.extend(_tool_round(f"older-{index}"))
     session.add_message("assistant", "older final")
 
-    result = await loop._process_message(
+    result = await _execute_inbound(loop,
         InboundMessage(
             channel="cli",
             sender_id="user",
@@ -116,3 +158,11 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(tmp_path:
     assert [message["role"] for message in sent_messages] == ["system", "user", "user"]
     assert sent_messages[1]["content"] == SUMMARY_CONTINUATION_TEXT
     assert any(message.get("content") == "long older turn" for message in session.messages)
+    assert result.status is RunStatus.COMPLETED and result.content == "ok"
+    assert loop.provider.chat_with_retry.await_count == 2
+    loop.sessions.invalidate("cli:test")
+    reloaded = loop.sessions.get_or_create("cli:test")
+    summary = session_summary_from_metadata(
+        reloaded.metadata, fallback_last_active=reloaded.updated_at,
+    )
+    assert summary is not None and summary["text"] == "ok"

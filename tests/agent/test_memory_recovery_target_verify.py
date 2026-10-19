@@ -18,6 +18,26 @@ from nanobot.agent import memory_recovery_target_verify as verifier
 _TARGET_NAMES = ("HISTORY.md", "history.jsonl", ".cursor", ".dream_cursor")
 
 
+@pytest.mark.parametrize("expected", [None, bytearray(b"target"), "target", 1])
+def test_nonbytes_refused_before_capabilities_or_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, expected: object,
+) -> None:
+    memory = tmp_path / "memory"
+    memory.mkdir()
+    _target(memory, "HISTORY.md", b"target")
+    calls = []
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        snapshot = authority.snapshot_target("HISTORY.md")
+        with authority.operation() as operation:
+            monkeypatch.setattr(verifier, "_check_capabilities", lambda: calls.append("capability"))
+            monkeypatch.setattr(storage.WorkspaceMemoryOperation, "borrow_target_parent",
+                                lambda *args: calls.append("filesystem"))
+            _patch_verifier_os(monkeypatch, fsync=lambda fd: calls.append("fsync"))
+            with pytest.raises(storage.MemoryStorageError):
+                verifier.durably_verify_target(operation, snapshot, expected)
+    assert calls == []
+
+
 def _verify_capable() -> bool:
     if os.name != "posix":
         return False

@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import AsyncExitStack, asynccontextmanager
 import sys
+from contextlib import AsyncExitStack, asynccontextmanager
 from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
+from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.tools.mcp import MCPToolWrapper, connect_mcp_servers, is_read_only_mcp_tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.schema import MCPServerConfig
+from nanobot.security.network import configure_ssrf_whitelist
 
 
 class _FakeTextContent:
@@ -30,19 +33,26 @@ def _fake_mcp_module(
     mod.types = SimpleNamespace(TextContent=_FakeTextContent)
 
     class _FakeStdioServerParameters:
-        def __init__(self, command: str, args: list[str], env: dict | None = None) -> None:
+        def __init__(
+            self, command: str, args: list[str], env: dict | None = None,
+            cwd: str | None = None,
+        ) -> None:
             self.command = command
             self.args = args
             self.env = env
+            self.cwd = cwd
 
     class _FakeClientSession:
         def __init__(self, _read: object, _write: object) -> None:
             self._session = fake_mcp_runtime["session"]
 
         async def __aenter__(self) -> object:
+            self._owner = asyncio.current_task()
             return self._session
 
         async def __aexit__(self, exc_type, exc, tb) -> bool:
+            assert asyncio.current_task() is self._owner
+            fake_mcp_runtime["closed"] = True
             return False
 
     @asynccontextmanager
@@ -348,15 +358,18 @@ async def test_connect_mcp_servers_enabled_tools_supports_raw_names(
     stack = AsyncExitStack()
     await stack.__aenter__()
     try:
-        await connect_mcp_servers(
+        connections = await connect_mcp_servers(
             {"test": MCPServerConfig(command="fake", enabled_tools=["demo"])},
             registry,
-            stack,
         )
+        for connection in connections.values():
+            stack.push_async_callback(connection.aclose)
+        assert set(connections) == {"test"}
     finally:
         await stack.aclose()
 
     assert registry.tool_names == ["mcp_test_demo"]
+    assert fake_mcp_runtime["closed"] is True
 
 
 @pytest.mark.asyncio
@@ -368,15 +381,18 @@ async def test_connect_mcp_servers_enabled_tools_defaults_to_all(
     stack = AsyncExitStack()
     await stack.__aenter__()
     try:
-        await connect_mcp_servers(
+        connections = await connect_mcp_servers(
             {"test": MCPServerConfig(command="fake")},
             registry,
-            stack,
         )
+        for connection in connections.values():
+            stack.push_async_callback(connection.aclose)
+        assert set(connections) == {"test"}
     finally:
         await stack.aclose()
 
     assert registry.tool_names == ["mcp_test_demo", "mcp_test_other"]
+    assert fake_mcp_runtime["closed"] is True
 
 
 @pytest.mark.asyncio
@@ -388,15 +404,18 @@ async def test_connect_mcp_servers_enabled_tools_supports_wrapped_names(
     stack = AsyncExitStack()
     await stack.__aenter__()
     try:
-        await connect_mcp_servers(
+        connections = await connect_mcp_servers(
             {"test": MCPServerConfig(command="fake", enabled_tools=["mcp_test_demo"])},
             registry,
-            stack,
         )
+        for connection in connections.values():
+            stack.push_async_callback(connection.aclose)
+        assert set(connections) == {"test"}
     finally:
         await stack.aclose()
 
     assert registry.tool_names == ["mcp_test_demo"]
+    assert fake_mcp_runtime["closed"] is True
 
 
 @pytest.mark.asyncio
@@ -408,15 +427,18 @@ async def test_connect_mcp_servers_enabled_tools_empty_list_registers_none(
     stack = AsyncExitStack()
     await stack.__aenter__()
     try:
-        await connect_mcp_servers(
+        connections = await connect_mcp_servers(
             {"test": MCPServerConfig(command="fake", enabled_tools=[])},
             registry,
-            stack,
         )
+        for connection in connections.values():
+            stack.push_async_callback(connection.aclose)
+        assert set(connections) == {"test"}
     finally:
         await stack.aclose()
 
     assert registry.tool_names == []
+    assert fake_mcp_runtime["closed"] is True
 
 
 @pytest.mark.asyncio
@@ -435,15 +457,18 @@ async def test_connect_mcp_servers_enabled_tools_warns_on_unknown_entries(
     stack = AsyncExitStack()
     await stack.__aenter__()
     try:
-        await connect_mcp_servers(
+        connections = await connect_mcp_servers(
             {"test": MCPServerConfig(command="fake", enabled_tools=["unknown"])},
             registry,
-            stack,
         )
+        for connection in connections.values():
+            stack.push_async_callback(connection.aclose)
+        assert set(connections) == {"test"}
     finally:
         await stack.aclose()
 
     assert registry.tool_names == []
+    assert fake_mcp_runtime["closed"] is True
     assert warnings
     assert "enabledTools entries not found: unknown" in warnings[-1]
     assert "Available raw names: demo" in warnings[-1]
@@ -451,8 +476,10 @@ async def test_connect_mcp_servers_enabled_tools_warns_on_unknown_entries(
 
 
 @pytest.mark.asyncio
-async def test_connect_mcp_servers_can_filter_to_read_only_tools(
+async def test_foreground_manager_filters_to_read_only_mcp_tools(
     fake_mcp_runtime: dict[str, object | None],
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake_mcp_runtime["session"] = _make_fake_session([
         SimpleNamespace(
@@ -468,17 +495,22 @@ async def test_connect_mcp_servers_can_filter_to_read_only_tools(
             annotations=None,
         ),
     ])
-    registry = ToolRegistry()
-    stack = AsyncExitStack()
-    await stack.__aenter__()
+    manager = ForegroundAgentManager(
+        provider=SimpleNamespace(get_default_model=lambda: "unused-offline-model"),
+        workspace=tmp_path,
+        mcp_servers={"test": MCPServerConfig(url="http://127.0.0.1:8765/mcp")},
+    )
+    monkeypatch.setattr("nanobot.agent.tools.mcp._probe_http_url", AsyncMock(return_value=True))
+    configure_ssrf_whitelist(["127.0.0.1/32"])
     try:
-        await connect_mcp_servers(
-            {"test": MCPServerConfig(url="http://127.0.0.1:8765/mcp")},
-            registry,
-            stack,
-            tool_filter=lambda tool: tool.is_read_only,
-        )
+        await manager._connect_read_only_mcp()
+        assert manager._read_only_mcp_tools.tool_names == ["mcp_test_inspect_timeline"]
+        assert set(manager._mcp_connections) == {"test"}
     finally:
-        await stack.aclose()
+        try:
+            await manager.close()
+        finally:
+            configure_ssrf_whitelist([])
 
-    assert registry.tool_names == ["mcp_test_inspect_timeline"]
+    assert fake_mcp_runtime["closed"] is True
+    assert not any(task.get_name() == "mcp:test" for task in asyncio.all_tasks())

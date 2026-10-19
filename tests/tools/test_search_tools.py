@@ -8,13 +8,13 @@ import re
 import threading
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.subagent import SubagentManager, SubagentStatus
+from nanobot.agent.tools.filesystem import SearchFilesTool
 from nanobot.agent.tools.search import FindFilesTool, GrepTool
 from nanobot.agent.tools.web import WebSearchTool
 from nanobot.bus.queue import MessageBus
@@ -26,6 +26,8 @@ from nanobot.security.workspace_access import (
     reset_workspace_scope,
 )
 from nanobot.utils.llm_runtime import LLMRuntime
+from tests.agent.p6_admitted_fixtures import AgentInputs
+from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 
 
 @pytest.mark.asyncio
@@ -724,19 +726,35 @@ async def test_search_tools_reject_paths_outside_workspace(tmp_path: Path) -> No
     assert grep_result.startswith("Error:")
 
 
-def test_agent_loop_registers_grep(tmp_path: Path) -> None:
-    bus = MessageBus()
+async def test_agent_exposes_explicit_manifest_and_delegated_search(tmp_path: Path, admitted_async) -> None:
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
 
-    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop.from_config(
+            inputs.config, inputs.bus, provider=provider,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            enable_legacy_auto_compact=False,
+        )
 
-    assert "find_files" in loop.tools.tool_names
-    assert "grep" in loop.tools.tool_names
+    loop = await admitted_async(tmp_path, build)
+    assert {"read_file", "list_dir", "explore", "delegate_task"} <= set(loop.tools.tool_names)
+    assert {"find_files", "grep", "spawn"}.isdisjoint(loop.tools.tool_names)
+    # The accepted foreground explorer owns bounded search, not package discovery.
+    tools = loop._fork_dependencies.foreground_manager._tools_for_role("explorer")
+    search = tools.get("search_files")
+    assert isinstance(search, SearchFilesTool)
+    assert search.read_only
+    (loop.workspace / "search-target.txt").write_text("unique search needle\n", encoding="utf-8")
+    result = await search.execute(query="unique search needle")
+    assert "search-target.txt:1: unique search needle" in result
 
 
 @pytest.mark.asyncio
-async def test_subagent_registers_grep(tmp_path: Path) -> None:
+async def test_retired_subagent_scope_fails_before_runner(tmp_path: Path, monkeypatch) -> None:
+    # Inspect scope rejection past the separate production activation guard.
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
     bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -746,22 +764,11 @@ async def test_subagent_registers_grep(tmp_path: Path) -> None:
         bus=bus,
         max_tool_result_chars=4096,
     )
-    captured: dict[str, list[str]] = {}
-
-    async def fake_run(spec):
-        captured["tool_names"] = spec.tools.tool_names
-        return SimpleNamespace(
-            stop_reason="ok",
-            final_content="done",
-            tool_events=[],
-            error=None,
-        )
-
-    mgr.runner.run = fake_run
+    mgr.runner.run = AsyncMock(side_effect=AssertionError("retired scope reached runner"))
     mgr._announce_result = AsyncMock()
 
     status = SubagentStatus(task_id="sub-1", label="label", task_description="search task", started_at=time.monotonic())
-    await mgr._run_subagent(
+    result = await mgr._run_subagent(
         "sub-1",
         "search task",
         "label",
@@ -770,8 +777,11 @@ async def test_subagent_registers_grep(tmp_path: Path) -> None:
         LLMRuntime.capture(provider, "test-model", context_window_tokens=128_000),
     )
 
-    assert "find_files" in captured["tool_names"]
-    assert "grep" in captured["tool_names"]
+    assert result == "Error: Unsupported runtime tool scope"
+    assert status.phase == "error"
+    assert status.error == "Unsupported runtime tool scope"
+    mgr.runner.run.assert_not_awaited()
+    mgr._announce_result.assert_awaited_once()
 
 
 def test_subagent_prompt_respects_disabled_skills(tmp_path: Path) -> None:

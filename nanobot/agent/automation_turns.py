@@ -24,9 +24,15 @@ async def publish_next_deferred_turn(
     if not queue:
         return False
     msg = queue.pop(0)
+    try:
+        await publish_inbound(msg)
+    except BaseException:
+        # The bus handoff did not complete. Keep the turn first for the next
+        # cleanup attempt, including when the publisher is cancelled.
+        queue.insert(0, msg)
+        raise
     if not queue:
         deferred_queues.pop(session_key, None)
-    await publish_inbound(msg)
     return True
 
 

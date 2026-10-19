@@ -6,12 +6,12 @@ import hashlib
 import json
 import os
 import stat
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, cast
 
 if TYPE_CHECKING:
     from nanobot.context_repo.policy import ResourceAccessPolicy
@@ -63,21 +63,28 @@ class FilesystemReadReceipt:
 
 
 def parse_read_receipt(raw: object) -> FilesystemReadReceipt:
-    from nanobot.session.artifact import ArtifactValidationError, _origin
+    from nanobot.session.artifact import (
+        ArtifactValidationError,
+        select_filesystem_artifact_origin_parser,
+    )
 
-    if (not isinstance(raw, dict) or set(raw) != {'source_access', 'root_binding', 'byte_length',
+    parse_origin = select_filesystem_artifact_origin_parser()
+    if not isinstance(raw, dict):
+        raise ArtifactValidationError('Invalid filesystem producer receipt')
+    raw = cast(dict[object, object], raw)
+    if (set(raw) != {'source_access', 'root_binding', 'byte_length',
             'sha256', 'schema_version', 'producer', 'block_index'}
             or type(raw['schema_version']) is not int or raw['schema_version'] != 1
             or not isinstance(raw['producer'], str)
             or raw['producer'] not in _FILESYSTEM_READ_PRODUCERS
             or raw['block_index'] is not None
             or type(raw['byte_length']) is not int or raw['byte_length'] < 0
-            or any(not isinstance(raw[key], str) or len(raw[key]) != 64
-                   or any(c not in '0123456789abcdef' for c in raw[key])
+            or any(not isinstance(raw[key], str) or len(cast(str, raw[key])) != 64
+                   or any(c not in '0123456789abcdef' for c in cast(str, raw[key]))
                    for key in ('sha256', 'root_binding'))):
         raise ArtifactValidationError('Invalid filesystem producer receipt')
-    return FilesystemReadReceipt(_origin(raw['source_access']), raw['root_binding'],
-                                 raw['byte_length'], raw['sha256'], producer=raw['producer'])
+    return FilesystemReadReceipt(parse_origin(raw['source_access']), cast(str, raw['root_binding']),
+                                 raw['byte_length'], cast(str, raw['sha256']), producer=raw['producer'])
 
 
 def locate_read(path: Path, workspace: Path | None, policy: ResourceAccessPolicy | None
@@ -117,7 +124,7 @@ def _stamp(info: os.stat_result) -> tuple[int, int, int, int, int]:
 
 @contextmanager
 def qualified_text_bytes(path: Path, *, max_bytes: int
-                         ) -> Iterator[tuple[bytes, Callable[[], None]] | None]:
+                         ) -> Generator[tuple[bytes, Callable[[], None]] | None, None, None]:
     """Hold a no-follow descriptor chain through rendering and receipt creation.
 
     Unsupported systems return no qualification. Supported systems reject changed
@@ -127,7 +134,7 @@ def qualified_text_bytes(path: Path, *, max_bytes: int
             or not hasattr(os, 'O_DIRECTORY') or os.open not in os.supports_dir_fd):
         yield None
         return
-    fds = []
+    fds: list[int] = []
     try:
         fds.append(os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
         for part in path.parts[1:-1]:
@@ -138,7 +145,7 @@ def qualified_text_bytes(path: Path, *, max_bytes: int
         before = os.fstat(fd)
         if not stat.S_ISREG(before.st_mode) or before.st_size > max_bytes:
             raise OSError('Unqualified text source')
-        chunks = []
+        chunks: list[bytes] = []
         count = 0
         while chunk := os.read(fd, min(65536, max_bytes + 1 - count)):
             chunks.append(chunk)

@@ -746,6 +746,11 @@ class OpenAICompatProvider(LLMProvider):
         force_string_content = (
             is_deepseek and _model_slug(model_name) not in _DEEPSEEK_MULTIMODAL_MODELS
         )
+        opencode_deepseek = (
+            self._spec is not None
+            and self._spec.name in ("opencode", "opencode_zen", "opencode_go")
+            and _model_slug(model_name).startswith("deepseek-")
+        )
         normalize_tool_ids = self._should_normalize_tool_call_ids()
         strip_reasoning = bool(
             self._spec
@@ -823,7 +828,8 @@ class OpenAICompatProvider(LLMProvider):
                 if clean.get("role") == "assistant":
                     # Some OpenAI-compatible gateways reject assistant messages
                     # that mix non-empty content with tool_calls.
-                    clean["content"] = None
+                    # OpenCode's DeepSeek route requires an empty string here.
+                    clean["content"] = "" if opencode_deepseek else None
             if "tool_call_id" in clean and clean["tool_call_id"]:
                 clean["tool_call_id"] = map_tool_result_id(clean["tool_call_id"])
             if (
@@ -970,6 +976,16 @@ class OpenAICompatProvider(LLMProvider):
 
         model_name = self._request_model_name(model_name)
 
+        if (
+            spec is not None
+            and spec.name in ("opencode", "opencode_zen", "opencode_go")
+            and _model_slug(model_name).startswith("minimax-")
+        ):
+            raise ValueError(
+                "OpenCode MiniMax models use the Anthropic-style /messages endpoint; "
+                "they cannot be sent through the OpenAI-compatible chat transport."
+            )
+
         kwargs: dict[str, Any] = {
             "model": model_name,
             "messages": self._sanitize_messages(
@@ -1108,7 +1124,7 @@ class OpenAICompatProvider(LLMProvider):
         )
         implicit_deepseek_thinking = (
             spec is not None
-            and spec.name == "deepseek"
+            and spec.name in ("deepseek", "opencode", "opencode_zen", "opencode_go")
             and semantic_effort not in ("none", "minimal", "minimum")
             and any(t in model_name.lower() for t in ("deepseek-v4", "deepseek-reasoner"))
         )
@@ -1387,6 +1403,11 @@ class OpenAICompatProvider(LLMProvider):
         if tools:
             body["tools"] = convert_tools(tools)
             body["tool_choice"] = tool_choice or "auto"
+            if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+                function_choice = self._maybe_mapping(tool_choice.get("function"))
+                if function_choice is not None:
+                    # Generic Chat choices need the Responses flat function shape.
+                    body["tool_choice"] = {"type": "function", "name": function_choice.get("name")}
 
         extra_body = getattr(self, "_extra_body", {})
         default_tools = getattr(self._spec, "responses_default_tools", ())
@@ -2099,7 +2120,7 @@ class OpenAICompatProvider(LLMProvider):
         provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
         delivered = [False]
-        callbacks = dict(on_content_delta=on_content_delta, on_thinking_delta=on_thinking_delta,
+        callbacks: dict[str, Callable[..., Awaitable[None]] | None] = dict(on_content_delta=on_content_delta, on_thinking_delta=on_thinking_delta,
                          on_tool_call_delta=on_tool_call_delta)
         track_stream_delivery(callbacks, delivered)
         on_content_delta = callbacks['on_content_delta']

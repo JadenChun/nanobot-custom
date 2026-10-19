@@ -4,7 +4,6 @@ import asyncio
 import json
 import types
 from collections.abc import Callable, Iterable, Sized
-from contextlib import suppress
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Literal, NamedTuple, TypeVar, cast, get_args, get_origin
@@ -1669,10 +1668,11 @@ def _quick_start_oauth_login(config: Config, provider_name: str) -> bool:
 
     try:
         # oauth-cli-kit does not publish type information.
-        from oauth_cli_kit import (  # pyright: ignore[reportMissingTypeStubs]
-            get_token,
-            login_oauth_interactive,
-        )
+        from oauth_cli_kit import login_oauth_interactive  # pyright: ignore[reportMissingTypeStubs]
+
+        from nanobot.cli.provider import AcquisitionOnlyStorage
+        from nanobot.providers.codex_auth import get_codex_authority
+        from nanobot.providers.oauth_credentials import OAuthToken as CanonicalToken
     except ImportError:
         console.print(f"[red]{OAUTH_CLI_KIT_MISSING_MESSAGE}[/red]")
         return False
@@ -1683,28 +1683,32 @@ def _quick_start_oauth_login(config: Config, provider_name: str) -> bool:
         console.print(f"[red]{escape(str(exc))}[/red]")
         return False
 
-    token = None
-    with suppress(Exception):
-        token = get_token(proxy=proxy)
-    if not getattr(token, "access", None):
-        console.print("[cyan]Starting interactive OAuth login...[/cyan]\n")
-        try:
-            token = login_oauth_interactive(
-                print_fn=lambda message: console.print(message, markup=False),
-                prompt_fn=lambda prompt: _get_questionary().text(prompt).ask() or "",
-                proxy=proxy,
-            )
-        except Exception as exc:
-            console.print(f"[red]OAuth login failed: {escape(str(exc))}[/red]")
-            return False
+    authority = get_codex_authority()
+    generation = authority.begin_login()
+    console.print("[cyan]Starting interactive OAuth login...[/cyan]\n")
+    try:
+        token = login_oauth_interactive(
+            print_fn=lambda message: console.print(message, markup=False),
+            prompt_fn=lambda prompt: _get_questionary().text(prompt).ask() or "",
+            proxy=proxy,
+            storage=AcquisitionOnlyStorage(),
+        )
+    except Exception as exc:
+        console.print(f"[red]OAuth login failed ({type(exc).__name__})[/red]")
+        return False
 
     if not getattr(token, "access", None):
         console.print("[red]OAuth login failed[/red]")
         return False
 
-    account = getattr(token, "account_id", None)
-    suffix = f"  [dim]{escape(str(account))}[/dim]" if account else ""
-    console.print(f"[green]Authenticated with OpenAI Codex[/green]{suffix}")
+    authority.commit_login(
+        CanonicalToken(token.access, token.refresh, token.expires, token.account_id),
+        generation,
+    )
+    from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
+
+    invalidate_oauth_model_catalog("openai_codex")
+    console.print("[green]Authenticated with OpenAI Codex[/green]")
     return True
 
 
@@ -1713,8 +1717,7 @@ def _quick_start_oauth_is_authenticated(config: Config, provider_name: str) -> b
     if provider_name != "openai_codex":
         return False
     try:
-        # oauth-cli-kit does not publish type information.
-        from oauth_cli_kit import get_token  # pyright: ignore[reportMissingTypeStubs]
+        from nanobot.providers.codex_auth import get_token
 
         proxy = _quick_start_codex_proxy(config)
         token = get_token(proxy=proxy)

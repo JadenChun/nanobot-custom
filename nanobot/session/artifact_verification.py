@@ -10,7 +10,7 @@ sealed allowlist in :mod:`nanobot.session.idle_checkpoint`.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, cast
 
 from nanobot.agent.tools.read_provenance import FilesystemReadReceipt, revalidate_read_receipt
 from nanobot.session.artifact import (
@@ -48,9 +48,9 @@ def verify_published_artifact(
     snapshot cannot select one.
     """
 
-    if not isinstance(descriptor, ArtifactDescriptor):
+    if not isinstance(cast(object, descriptor), ArtifactDescriptor):
         raise ArtifactValidationError("Invalid artifact verification input")
-    if type(blobs) is not ArtifactBlobTransaction or blobs._store is not store:
+    if type(blobs) is not ArtifactBlobTransaction or not blobs.matches_store(store):
         raise ArtifactValidationError("Artifact transaction does not match configured store")
     if not callable(resolve_read):
         raise ArtifactValidationError("Artifact verification lacks a current path resolver")

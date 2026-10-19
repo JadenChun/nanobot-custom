@@ -108,7 +108,7 @@ def test_descriptor_transport_is_bound_to_platform(monkeypatch, tmp_path: Path) 
 @pytest.mark.skipif(os.name == "nt", reason="Unix-domain socket protocol")
 def test_unix_request_revalidates_instance_identity() -> None:
     instance_id = "0b47107a-cd31-4711-b1ca-3b53dcedf90a"
-    with tempfile.TemporaryDirectory(prefix="nb-desktop-", dir="/tmp") as temporary:
+    with tempfile.TemporaryDirectory(prefix="nb-desktop-") as temporary:
         address = Path(temporary) / "connect-v1.sock"
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         server.bind(str(address))
@@ -310,8 +310,16 @@ def test_desktop_webui_selection_revalidates_and_opens_browser(monkeypatch, caps
     assert "bootstrapSecret" not in output
 
 
-def test_desktop_tui_selection_fails_without_fallback(monkeypatch, capsys) -> None:
+@pytest.mark.parametrize("admitted", [False, True])
+def test_desktop_tui_selection_fails_without_fallback(monkeypatch, capsys, admitted) -> None:
+    from nanobot.migration_guard import MigrationIncompleteError
+
     calls: list[str] = []
+    effects: list[str] = []
+
+    def forbidden(*_args, **_kwargs):
+        effects.append("external effect attempted")
+        raise AssertionError("incompatible Desktop must not install, launch, or connect")
 
     class Target:
         def request(self, operation: str) -> DesktopReply:
@@ -321,9 +329,24 @@ def test_desktop_tui_selection_fails_without_fallback(monkeypatch, capsys) -> No
     monkeypatch.setattr(desktop_target, "_interactive_shell", lambda: True)
     monkeypatch.setattr(desktop_target, "discover_desktop_target", Target)
     monkeypatch.setattr(desktop_target, "_choose_target", lambda _status: "desktop")
+    monkeypatch.setattr("nanobot.cli.tui_launcher.resolve_tui_command", forbidden)
+    monkeypatch.setattr("subprocess.Popen.__init__", forbidden)
+    monkeypatch.setattr("socket.socket.connect", forbidden)
+    monkeypatch.setattr("socket.socket.bind", forbidden)
+
+    if not admitted:
+        with pytest.raises(MigrationIncompleteError):
+            dispatch_bare_desktop_target([])
+        assert calls == ["status"]
+        assert effects == []
+        return
+
+    # Protocol-only coverage behind the separately asserted production guard.
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
 
     assert dispatch_bare_desktop_target([]) == 3
     assert calls == ["status", "tui"]
+    assert effects == []
     error = capsys.readouterr().err
     assert "unavailable or incompatible" in error
     assert "No backend was started" in error

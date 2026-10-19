@@ -1,13 +1,16 @@
 import asyncio
+from copy import deepcopy
+from unittest.mock import AsyncMock
 
 import pytest
 
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
+from nanobot.providers.pooled_provider import PooledProvider
 
 
 class ScriptedProvider(LLMProvider):
     def __init__(self, responses):
-        super().__init__()
+        super().__init__(provider_name="fixture")
         self._responses = list(responses)
         self.calls = 0
         self.last_kwargs: dict = {}
@@ -88,12 +91,13 @@ async def test_chat_with_retry_returns_final_error_after_retries(monkeypatch) ->
 
 @pytest.mark.asyncio
 async def test_chat_with_retry_does_not_restart_after_key_pool_exhausted(monkeypatch) -> None:
-    provider = ScriptedProvider([
-        LLMResponse(
-            content="Error: All configured API keys were rate-limited or out of quota after trying 5 keys. Last error: 429 quota exceeded",
-            finish_reason="error",
-        ),
-    ])
+    terminal = LLMResponse(
+        content="quota exceeded", finish_reason="error", error_status_code=429,
+        error_code="insufficient_quota",
+    )
+    leaves = [ScriptedProvider([terminal]) for _ in range(5)]
+    provider = PooledProvider(leaves, [f"fixture-{i}" for i in range(5)])
+    exhausted, status = AsyncMock(), AsyncMock()
     delays: list[int] = []
 
     async def _fake_sleep(delay: int) -> None:
@@ -101,21 +105,30 @@ async def test_chat_with_retry_does_not_restart_after_key_pool_exhausted(monkeyp
 
     monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
 
-    response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hello"}])
+    response = await provider.chat_with_retry(messages=[{"role": "user", "content": "hello"}],
+        on_retry_exhausted=exhausted, on_retry_status=status,
+    )
 
     assert response.finish_reason == "error"
-    assert provider.calls == 1
+    assert response is terminal
+    assert [leaf.calls for leaf in leaves] == [1, 1, 1, 1, 1]
+    exhausted.assert_awaited_once()
+    status.assert_awaited_once()
+    assert status.call_args.args[0].state == "exhausted"
+    assert status.call_args.args[0].attempt == 5
+    assert status.call_args.args[0].max_attempts == 5
     assert delays == []
 
 
 @pytest.mark.asyncio
 async def test_chat_stream_with_retry_does_not_restart_after_key_pool_exhausted(monkeypatch) -> None:
-    provider = ScriptedProvider([
-        LLMResponse(
-            content="Error: All configured API keys were rate-limited or out of quota after trying 5 keys. Last error: 429 quota exceeded",
-            finish_reason="error",
-        ),
-    ])
+    terminal = LLMResponse(
+        content="quota exceeded", finish_reason="error", error_status_code=429,
+        error_code="insufficient_quota",
+    )
+    leaves = [ScriptedProvider([terminal]) for _ in range(5)]
+    provider = PooledProvider(leaves, [f"fixture-{i}" for i in range(5)])
+    exhausted, status = AsyncMock(), AsyncMock()
     delays: list[int] = []
 
     async def _fake_sleep(delay: int) -> None:
@@ -123,10 +136,18 @@ async def test_chat_stream_with_retry_does_not_restart_after_key_pool_exhausted(
 
     monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
 
-    response = await provider.chat_stream_with_retry(messages=[{"role": "user", "content": "hello"}])
+    response = await provider.chat_stream_with_retry(messages=[{"role": "user", "content": "hello"}],
+        on_retry_exhausted=exhausted, on_retry_status=status,
+    )
 
     assert response.finish_reason == "error"
-    assert provider.calls == 1
+    assert response is terminal
+    assert [leaf.calls for leaf in leaves] == [1, 1, 1, 1, 1]
+    exhausted.assert_awaited_once()
+    status.assert_awaited_once()
+    assert status.call_args.args[0].state == "exhausted"
+    assert status.call_args.args[0].attempt == 5
+    assert status.call_args.args[0].max_attempts == 5
     assert delays == []
 
 
@@ -196,7 +217,7 @@ async def test_non_transient_error_with_images_retries_without_images() -> None:
         LLMResponse(content="ok, no image"),
     ])
 
-    response = await provider.chat_with_retry(messages=_IMAGE_MSG)
+    response = await provider.chat_with_retry(messages=deepcopy(_IMAGE_MSG))
 
     assert response.content == "ok, no image"
     assert provider.calls == 2
@@ -206,8 +227,8 @@ async def test_non_transient_error_with_images_retries_without_images() -> None:
         if isinstance(content, list):
             assert all(b.get("type") != "image_url" for b in content)
             assert any(
-                "IMAGE DROPPED" in (b.get("text") or "")
-                and "/media/test.png" in (b.get("text") or "")
+                "not delivered" in (b.get("text") or "").lower()
+                and "/media/test.png" not in (b.get("text") or "")
                 for b in content
             )
 
@@ -235,7 +256,7 @@ async def test_image_fallback_returns_error_on_second_failure() -> None:
         LLMResponse(content="still failing", finish_reason="error"),
     ])
 
-    response = await provider.chat_with_retry(messages=_IMAGE_MSG)
+    response = await provider.chat_with_retry(messages=deepcopy(_IMAGE_MSG))
 
     assert provider.calls == 2
     assert response.content == "still failing"
@@ -250,7 +271,7 @@ async def test_image_fallback_without_meta_uses_default_placeholder() -> None:
         LLMResponse(content="ok"),
     ])
 
-    response = await provider.chat_with_retry(messages=_IMAGE_MSG_NO_META)
+    response = await provider.chat_with_retry(messages=deepcopy(_IMAGE_MSG_NO_META))
 
     assert response.content == "ok"
     assert provider.calls == 2
@@ -258,7 +279,7 @@ async def test_image_fallback_without_meta_uses_default_placeholder() -> None:
     for msg in msgs_on_retry:
         content = msg.get("content")
         if isinstance(content, list):
-            assert any("IMAGE DROPPED" in (b.get("text") or "") for b in content)
+            assert any("not delivered" in (b.get("text") or "").lower() for b in content)
 
 
 @pytest.mark.asyncio
@@ -269,7 +290,7 @@ async def test_payload_too_large_error_uses_payload_specific_warning() -> None:
         LLMResponse(content="ok"),
     ])
 
-    response = await provider.chat_with_retry(messages=_IMAGE_MSG)
+    response = await provider.chat_with_retry(messages=deepcopy(_IMAGE_MSG))
 
     assert response.content == "ok"
     assert provider.calls == 2
@@ -280,7 +301,7 @@ async def test_payload_too_large_error_uses_payload_specific_warning() -> None:
         if isinstance(content, list):
             for b in content:
                 text = b.get("text") or ""
-                if "IMAGE DROPPED" in text and "payload" in text.lower():
+                if "not delivered" in text.lower() and "payload" in text.lower():
                     payload_warning_found = True
     assert payload_warning_found, "expected payload-too-large specific warning in placeholder"
 
@@ -295,7 +316,7 @@ def _image_block(path: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_prune_old_images_keeps_only_most_recent() -> None:
-    """Sliding window keeps the most-recent image and replaces older ones with a placeholder."""
+    """One image per message: only the newest image-bearing message survives."""
     provider = ScriptedProvider([LLMResponse(content="ok")])
     messages = [
         {"role": "user", "content": [{"type": "text", "text": "look"}, _image_block("/a.png")]},
@@ -320,15 +341,15 @@ async def test_prune_old_images_keeps_only_most_recent() -> None:
                     image_blocks.append(b)
                 elif isinstance(b, dict) and b.get("type") == "text":
                     text = b.get("text") or ""
-                    if "earlier screenshot omitted" in text:
+                    if "Earlier image omitted" in text:
                         placeholders.append(text)
 
-    # Default _IMAGE_HISTORY_KEEP is 1 → only newest image survives.
+    # The newest image-bearing message contains one attachment in this case.
     assert len(image_blocks) == 1
     assert image_blocks[0]["_meta"]["path"] == "/c.png"
     assert len(placeholders) == 2
-    assert any("/a.png" in p for p in placeholders)
-    assert any("/b.png" in p for p in placeholders)
+    assert all("/a.png" not in p and "/b.png" not in p for p in placeholders)
+    assert all("do not describe or reference" in p for p in placeholders)
 
 
 @pytest.mark.asyncio

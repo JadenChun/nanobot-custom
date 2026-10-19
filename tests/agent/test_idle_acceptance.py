@@ -9,12 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from agent.idle_acceptance_support import (
-    AcceptanceProvider,
-    NetworkDenial,
-    make_harness,
-    source_event,
-)
 from nanobot.agent.idle_compaction import IdleCompactionPolicy, IdleJobOutcome
 from nanobot.agent.idle_scanner import IdleCompactionScanner
 from nanobot.agent.loop import AgentLoop
@@ -24,6 +18,12 @@ from nanobot.migration_guard import MigrationIncompleteError
 from nanobot.session.context_checkpoint import validate_context_checkpoint
 from nanobot.session.manager import JsonlSessionStore
 from nanobot.session.source import prefix_digest, validate_closed_boundary
+from tests.agent.idle_acceptance_support import (
+    AcceptanceProvider,
+    NetworkDenial,
+    make_harness,
+    source_event,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -402,13 +402,15 @@ async def test_production_guard_and_unpatched_idle_factory_remain_closed(
     deny_external_io, tmp_path: Path
 ) -> None:
     from nanobot.migration_guard import require_runtime_ready
+    from nanobot.runtime_composition import RuntimePreflightError
 
     with pytest.raises(MigrationIncompleteError):
         require_runtime_ready()
     config = Config()
     config.bind_source_path(tmp_path / "config.json")
     config.agents.defaults.workspace = str(tmp_path / "workspace")
-    with pytest.raises(MigrationIncompleteError):
+    config.agents.defaults.idle_compaction.enabled = True
+    with pytest.raises(RuntimePreflightError, match="idle compaction"):
         AgentLoop.from_config(
             config,
             tool_registry=ToolRegistry(),

@@ -29,6 +29,7 @@ from nanobot.cron.delivery_store import (
     CronDeliveryOutboxStore,
     DeliveryOutboxOwnershipError,
     DeliveryOutboxPersistenceError,
+    DeliverySendBusyError,
 )
 from nanobot.cron.occurrence_store import CronOccurrenceStore
 from nanobot.cron.service import CronService, _job_definition
@@ -95,6 +96,21 @@ def _service(
     return service, runtime if inject_runtime else None
 
 
+def _complete(service: CronService, claim, completion):
+    def settle():
+        with service.occurrence_store.acquire_execution_fence(claim) as fence:
+            service.occurrence_store.begin_execution(claim, fence)
+            return service.complete_occurrence(claim, completion, fence=fence)
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        async def run():
+            return settle()
+        return asyncio.run(run())
+    return settle()
+
+
 def _prepared(
     tmp_path: Path,
     *,
@@ -131,7 +147,8 @@ def _prepared(
         expected_job_instance_id=job.job_instance_id,
         expected_definition_revision=job.definition_revision,
     )
-    service.complete_occurrence(
+    _complete(
+        service,
         claim,
         {
             "status": "ok",
@@ -200,6 +217,83 @@ async def test_sender_can_read_outbox_while_awaiting_without_lock_held(tmp_path:
     await runtime.dispatch(claim, sender=sender)
 
     assert observed == ["reconciliation-required"]
+
+
+async def test_reconciliation_is_busy_from_mark_through_provider_and_settlement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _service_obj, runtime, record = _prepared(tmp_path)
+    claim = _first_claim(runtime, record)
+    destination = record.destinations[0]
+    observer = CronDeliveryOutboxStore(runtime.outbox_store.root, namespace=NAMESPACE)
+
+    def reconcile() -> None:
+        observer.resolve_after_reconciliation(
+            record.outbox_id,
+            destination.destination_id,
+            expected_revision=2,
+            predecessor_attempt=claim.attempt,
+            predecessor_owner=claim.owner,
+            action_id=claim.action_id,
+            request_digest=claim.request_digest,
+            evidence_ref="evidence",
+            predecessor_fenced_ref="external-fence",
+            resolution="confirmed_delivered",
+            receipt={"id": "reconciled"},
+        )
+
+    original_mark = runtime.outbox_store.mark_sending
+    original_settle = runtime.outbox_store.settle
+    observed: list[str] = []
+
+    def mark(claim_arg, fence):
+        result = original_mark(claim_arg, fence)
+        with pytest.raises(DeliverySendBusyError):
+            reconcile()
+        observed.append("after-mark")
+        return result
+
+    def settle(*args, **kwargs):
+        with pytest.raises(DeliverySendBusyError):
+            reconcile()
+        observed.append("settlement")
+        return original_settle(*args, **kwargs)
+
+    monkeypatch.setattr(runtime.outbox_store, "mark_sending", mark)
+    monkeypatch.setattr(runtime.outbox_store, "settle", settle)
+    sender = FakeSender(ConfirmedDelivered({"id": "sent"}))
+    dispatch = asyncio.create_task(runtime.dispatch(claim, sender=sender))
+    await sender.started.wait()
+    with pytest.raises(DeliverySendBusyError):
+        reconcile()
+    observed.append("provider-await")
+    sender.release.set()
+    await dispatch
+    assert observed == ["after-mark", "provider-await", "settlement"]
+
+
+async def test_claimed_predecessor_reconciled_before_dispatch_sends_nothing(tmp_path: Path) -> None:
+    _service_obj, runtime, record = _prepared(tmp_path)
+    claim = _first_claim(runtime, record)
+    destination = record.destinations[0]
+    runtime.outbox_store.resolve_after_reconciliation(
+        record.outbox_id,
+        destination.destination_id,
+        expected_revision=1,
+        predecessor_attempt=claim.attempt,
+        predecessor_owner=claim.owner,
+        action_id=claim.action_id,
+        request_digest=claim.request_digest,
+        evidence_ref="not-sent-proof",
+        predecessor_fenced_ref="external-fence",
+        resolution="confirmed_not_sent",
+    )
+    sender = FakeSender(ConfirmedDelivered({"id": "must-not-send"}))
+    sender.release.set()
+    with pytest.raises(DeliveryOutboxOwnershipError):
+        await runtime.dispatch(claim, sender=sender)
+    assert sender.requests == []
 
 
 @pytest.mark.parametrize("kind", ["timeout", "exception", "invalid", "partial"])
@@ -339,7 +433,7 @@ async def test_mark_sending_failure_invokes_no_sender(tmp_path: Path, monkeypatc
     claim = _first_claim(runtime, record)
     sender = FakeSender(ConfirmedDelivered({"id": "unused"}))
 
-    def fail_mark(_claim: object) -> object:
+    def fail_mark(_claim: object, _fence: object) -> object:
         raise DeliveryOutboxPersistenceError("sending fence failed")
 
     monkeypatch.setattr(runtime.outbox_store, "mark_sending", fail_mark)

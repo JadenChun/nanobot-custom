@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-02",
+  "qualification": "HOST_ALL_EXTRAS_CHANNEL_DEPENDENCY_AND_STRICT_TYPING_DIAGNOSTIC",
+  "verdicts": {
+    "dependency_install": "PASS",
+    "root_input_integrity": "PASS",
+    "strict_typing": "FAIL",
+    "full_P6": "NOT_ACCEPTED",
+    "runtime": "NOT_READY/NOT_AUTHORIZED",
+    "D9": "NOT_AUTHORIZED"
+  },
+  "source": {
+    "head": "0a323e591ac48ae4da1472db8d47f74d7c7157d0",
+    "dirty_source_sha256": "fa582770bac7d9dd328558082f874ccefdf6eb1d5a069d51a8ea8194b85c4378",
+    "source_manifest_sha256": "2a7a25356f9f8ef6de52eaa40ce4e10ac2f04f773f5cc1c2d60b45b1ddadcdd2",
+    "accepted_wheel_sha256": "3c72e14e4358f33368904c9bad138c4c301889a70b7acaf3d12665df17fb26ff",
+    "verified_frozen_files": 1865,
+    "verified_prepublication_candidate_files": 1868,
+    "runtime_source_changed": false,
+    "guard_sha256": "5a653ef73328b4840d31a7737fc3d0a79fbf631bf648fd3ebf9793cbee012d74"
+  },
+  "environment": {
+    "host": "macOS 26.6.2 arm64",
+    "python": "3.13.2",
+    "all_declared_extras": 10,
+    "packaged_channel_manifests": 17,
+    "channel_requirement_strings": 23,
+    "wheels": 210,
+    "installed_distributions_including_bootstrap_pip": 211,
+    "requirements_sha256": "7cdcb70efb5e97a46919fa7893b734bd7ef6682884090aaca1146e18c49cfc46",
+    "acquisition": "Separate public PyPI wheel-only phase, isolated pip configuration and sanitized environment; no private index, sdists, build hooks or browser installation.",
+    "install": "Fresh empty environment; --no-index --require-hashes; OS network denied; exit 0.",
+    "pip_check": "Original and independently repeated root check exit 0.",
+    "limitations": "Resolver/install/metadata evidence only. No channel transport, desktop operation, crawler browser or application activation. Not the selected production profile."
+  },
+  "typing": {
+    "basedpyright": "1.40.1",
+    "pyright": "1.1.414",
+    "policy": {
+      "include": [
+        "nanobot"
+      ],
+      "exclude": [
+        "**/tests"
+      ],
+      "typeCheckingMode": "strict",
+      "pythonVersion": "3.11"
+    },
+    "candidate": {
+      "filesAnalyzed": 463,
+      "errors": 5970,
+      "warnings": 0,
+      "information": 0,
+      "missingImports": 0,
+      "exit_code": 1
+    },
+    "pinned_upstream": {
+      "commit": "f47b8f23155ddec23cfb80ec001b544d495df89c",
+      "filesAnalyzed": 326,
+      "errors": 0,
+      "warnings": 0,
+      "information": 0,
+      "exit_code": 0
+    },
+    "comparison": "Identical tool argv, dependency environment, OS isolation profile and unchanged checker policy; upstream extracted from candidate Git objects only. Diagnostic counts are not independent runtime bugs or a semantic regression verdict for every changed line.",
+    "prior_partial_environment": "7420 errors / 56 missing imports remains historical core+api+dev evidence, not relabeled green."
+  },
+  "repair_assessment": {
+    "mode": "Fresh read-only GPT-6.1 Sol High; no recursive delegation or source changes.",
+    "implemented": false,
+    "packages": [
+      {
+        "boundary": "Session declaration and journal keyword shapes",
+        "direct_diagnostics": 822,
+        "shared_keyword_expansion_diagnostics": 638,
+        "approach": "TypedDict for existing constructed journal kwargs; ParamSpec/Concatenate to preserve lock-decorator signatures; validate against unchanged conversion/export/registry/operations tests. No schema or lock redesign."
+      },
+      {
+        "boundary": "Memory recovery evidence typing",
+        "direct_diagnostics": 1494,
+        "approach": "Truthful Never/NoReturn for throw-only helpers, concrete checked parser/record/storage contracts; unchanged recovery, lease, corruption and durability tests."
+      },
+      {
+        "boundary": "Retained provider and desktop edges",
+        "direct_diagnostics": 571,
+        "approach": "Parent-compatible public provider signatures and closest positional/keyword regression tests, typed callbacks/internal leaves, finite PyObjC edge declarations and mocked desktop tests; no fallback policy or actual desktop execution."
+      }
+    ],
+    "residual_minimum_before_cascade_measurement": 3083,
+    "prohibition": "Do not lower strictness, blanket-cast/suppress errors, rewrite persistence/retry architecture or claim this first wave closes strict typing.",
+    "consequential_finding": "LegacyFallbackProvider.chat/chat_stream reject positional messages allowed by their parent; PooledProvider also narrows base positional parameters. Needs implementation and regressions; not fixed in this diagnostic checkpoint."
+  },
+  "open_gates": [
+    "Complete strict source repair and unchanged gate PASS; subsequently freeze/build the actual corrected source artifact.",
+    "Native Python 3.11/3.14 and required Windows/Linux/production-target evidence; host 3.13 is not equivalent.",
+    "Owner-selected production Python/OS, channel/plugin/crawler/dependency inventory.",
+    "Approved exact old immutable rollback artifact/environment and genuine reader.",
+    "Truthful stopped-state/reference-config/copy/backups/artifact-root provenance and restore/export rehearsal.",
+    "Actual operator loader/source policy and positive isolated service rehearsal; no guard bypass or D9 activation authority inferred."
+  ],
+  "unchanged_authorities": [
+    "P5 DONE/ACCEPTED",
+    "P6-A ACCEPTED historical exact artifact",
+    "Host installed qualification accepted historical scope",
+    "P7/H1/P8 NOT_DELIVERED",
+    "All background/runtime activation stays off"
+  ],
+  "preparation_failure": "The initial helper assumed the wrong source-prefix root and stopped after extraction before typing. Its original bytes are retained; the resume helper verified all frozen bytes at source/source/ before checking. This is preparation failure, not a product fix or green initial run.",
+  "retained_raw_evidence": [
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/all-extras-channels-download.json",
+      "sha256": "590355e53ce8ebc90096ba0f75e5bedc5baa5ad5dbf808bf4ddc32cb95ad86f2",
+      "size": 75852
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/baseline.json",
+      "sha256": "8fbdc3047b20090ebd692bd6d531fa2a0ca0186da3e4485f37e05cda8421583f",
+      "size": 208261
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/compare-upstream.py",
+      "sha256": "e90a53c2f452af68fa7258704174abc2ddd3ac83e4b499614e4cb570e61798cf",
+      "size": 3443
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/create-env.json",
+      "sha256": "780badbbec6e1ab6c954c394134a9f397a9de1a99270ab374c1ba7cf1bf91415",
+      "size": 1647
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/dependency-freeze.json",
+      "sha256": "992879ec6c743ec9f0f2508caf799be84a2a008382d6d406e382efa441bae5fc",
+      "size": 2419040
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/inputs.json",
+      "sha256": "bbf5d07e7c2a32abd394c3bd22ee1be3f600a1b4b9806eb3c8153c50ea564b59",
+      "size": 1502
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/install-and-typecheck-initial.py",
+      "sha256": "a68746832fd8b9911e394378a4bd68c5113250d4a5d2d222d00ef3496522331d",
+      "size": 5812
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/install-and-typecheck.py",
+      "sha256": "c13cd645c0ba8d7e7e5332d9a670b4667a93c01e4e52162c56d26f3f51190bbe",
+      "size": 4310
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/installed-inventory.json",
+      "sha256": "564b30d5107a97c5922e149c1427f3806dba01cd7e6e950522e580be094eee0f",
+      "size": 15199
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/offline-install.json",
+      "sha256": "955cc23798206690fd79775a78453db5d6c3ac6f60f11bed9b4be3414e1546e1",
+      "size": 54977
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/pinned-upstream.tar",
+      "sha256": "8c1e43bfe974d46a196ad1d4b9d7ee5b580b8adb68f8ec0e9a35e9012c7c60c0",
+      "size": 6635520
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/pip-check.json",
+      "sha256": "cedae9c349fad5352ce92d2c23e6a2ed853682a240a732a9c73cc3044ec44ed3",
+      "size": 4067
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/qualify-full-environment.py",
+      "sha256": "4ad0217af3780835e125c6be41a994724046103b51dc28bdb7f2d313b6dba24a",
+      "size": 4580
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/requirements-hashed.txt",
+      "sha256": "7cdcb70efb5e97a46919fa7893b734bd7ef6682884090aaca1146e18c49cfc46",
+      "size": 20545
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/result.json",
+      "sha256": "fd48878f4d83635d912021be6aa6bf3bd8dafc67850310ea8559fd11dcb3777d",
+      "size": 1600
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/root-full-environment-check.json",
+      "sha256": "98b5752ba2bdadecaf40b8a0d18357be024bc527d9805749699c7cd45f473a99",
+      "size": 1047
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/root-full-environment-check.py",
+      "sha256": "fdd4046637972b8918b8b6a7e0535c2ecefc1f299ab51cd71b0da0fa0ba84734",
+      "size": 7094
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/root-pip-check.json",
+      "sha256": "642b16a0708746b8a3dfdc2049cdbfb5af95f3fd1307f27f2d078808e84aa11d",
+      "size": 4067
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/strict-basedpyright.json",
+      "sha256": "0e9acae7d46b9a6e59bb1f9459c91f6919b83e3917d4cdeae7774288689998ec",
+      "size": 4763091
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/typing-comparison.json",
+      "sha256": "7e417f0b974dda64ae0a21f7087057cbfd03c46fbda2331e5699b69be8cdd84c",
+      "size": 1296
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/typing-result.json",
+      "sha256": "2df748b3217d246ff273a0352c80ac20448fd558261468bd870dd7034d2b3aa5",
+      "size": 3820
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-full-environment.xcmuciq3/upstream-strict.json",
+      "sha256": "8d9355bf44b2eb06dd1b4e30d5e038f83d19e7d3c88da49717596528bcb1ef45",
+      "size": 73978
+    }
+  ]
+}

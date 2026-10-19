@@ -7,6 +7,28 @@ import pytest
 
 from nanobot.agent.tools.filesystem import WriteFileTool
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
+from nanobot.context_repo.manager import ManagedContextRepo
+
+
+@pytest.mark.parametrize("field", ["stores", "modules", "entrypoints", "sync", "tools"])
+def test_manifest_objects_reject_non_string_keys(tmp_path: Path, field: str) -> None:
+    repo = ManagedContextRepo(
+        path=tmp_path, name="test", managed=True, manifest={field: {1: {}}},
+    )
+    accessor = "sync_config" if field == "sync" else field
+    with pytest.raises(ValueError, match="keys must be strings"):
+        getattr(repo, accessor)
+
+
+def test_malformed_store_cannot_discard_direct_edit_restriction(tmp_path: Path) -> None:
+    repo = ManagedContextRepo(
+        path=tmp_path, name="test", managed=True,
+        manifest={"stores": {"state": {
+            "path": "outputs/state.json", "directEdit": False, 1: "invalid",
+        }}},
+    )
+    with pytest.raises(ValueError, match="keys must be strings"):
+        repo.blocks_direct_store_edit("outputs/state.json")
 
 
 def _write_json(path: Path, payload: dict) -> None:

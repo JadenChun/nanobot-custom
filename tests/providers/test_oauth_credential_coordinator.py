@@ -62,6 +62,38 @@ def _race_import_worker(
     results.put(None if credentials is None else credentials.access)
 
 
+def _race_refresh_worker(path: str, marker: str, barrier: Any, results: Any) -> None:
+    coordinator = OAuthCredentialCoordinator(
+        Path(path), CredentialFlavor.CODEX, clock_ms=lambda: 1_000
+    )
+
+    def refresh(token: OAuthToken) -> OAuthToken:
+        with Path(marker).open("ab") as stream:
+            stream.write(b"r")
+            stream.flush()
+            os.fsync(stream.fileno())
+        return OAuthToken("fresh", token.refresh, 100_000, token.account_id)
+
+    barrier.wait(timeout=10)
+    results.put(coordinator.refresh_codex(30, refresh).token.access)
+
+
+def _race_exchange_worker(path: str, marker: str, barrier: Any, results: Any) -> None:
+    coordinator = OAuthCredentialCoordinator(
+        Path(path), CredentialFlavor.COPILOT, clock_ms=lambda: 1_000
+    )
+
+    def exchange(_token: OAuthToken) -> dict[str, object]:
+        with Path(marker).open("ab") as stream:
+            stream.write(b"e")
+            stream.flush()
+            os.fsync(stream.fileno())
+        return {"bearer": "derived", "expires_at_ms": 100_000}
+
+    barrier.wait(timeout=10)
+    results.put(coordinator.get_copilot_bearer(30, exchange).bearer)
+
+
 
 def test_json_null_canonical_is_invalid_and_never_triggers_import(tmp_path: Path) -> None:
     calls: list[int] = []
@@ -107,7 +139,14 @@ def test_exact_maximum_encoded_token_payload_is_accepted(tmp_path: Path) -> None
     size_limit = 65_536
     token = _codex_token()
     single_byte_payload = json.dumps(
-        token.to_dict(), ensure_ascii=False, separators=(",", ":")
+        {
+            "version": 2,
+            "flavor": "codex",
+            "generation": "0" * 32,
+            "token": token.to_dict(),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
     ).encode("utf-8")
     token = OAuthToken(
         access="x" * (size_limit - len(single_byte_payload) + len(token.access)),
@@ -115,9 +154,11 @@ def test_exact_maximum_encoded_token_payload_is_accepted(tmp_path: Path) -> None
         expires_at_ms=token.expires_at_ms,
         account_id=token.account_id,
     )
-    payload = json.dumps(token.to_dict(), ensure_ascii=False, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    payload = json.dumps(
+        {"version": 2, "flavor": "codex", "generation": "0" * 32, "token": token.to_dict()},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
     assert len(payload) == size_limit
 
     coordinator = OAuthCredentialCoordinator(tmp_path / "codex.json", CredentialFlavor.CODEX)
@@ -205,7 +246,10 @@ def test_copilot_import_stores_only_github_token_with_long_expiry(tmp_path: Path
         "github-long-lived-test-token", "", now_ms + 315_360_000_000, None
     )
     assert calls == [1]
-    assert json.loads(canonical.read_text(encoding="utf-8")) == {
+    envelope = json.loads(canonical.read_text(encoding="utf-8"))
+    assert envelope["version"] == 2
+    assert envelope["flavor"] == "copilot"
+    assert envelope["token"] == {
         "access": "github-long-lived-test-token",
         "refresh": "",
         "expires_at_ms": now_ms + 315_360_000_000,
@@ -327,8 +371,8 @@ def test_logout_tombstone_precedes_deletion_and_suppresses_reimport(tmp_path: Pa
     assert calls == []
     assert (tmp_path / "codex.json.lock").stat().st_ino == original_lock
     state = json.loads((tmp_path / "codex.json.state.json").read_text(encoding="utf-8"))
-    assert state["version"] == 1
-    assert len(state["generation"]) == 32
+    assert state["version"] == 2
+    assert state["active_generation"] is None
     assert state["logged_out"] is True
 
 
@@ -456,8 +500,9 @@ def test_copied_state_without_canonical_token_has_no_auth_claim(tmp_path: Path) 
     (tmp_path / "target.json.state.json").chmod(0o600)
 
     target = OAuthCredentialCoordinator(target_path, CredentialFlavor.CODEX)
-    assert target.peek_status() is CredentialStatus.ABSENT
-    assert target.get_cached_or_import() is None
+    assert target.peek_status() is CredentialStatus.INVALID
+    with pytest.raises(CredentialError, match="invalid credential store"):
+        target.get_cached_or_import()
 
 
 def test_canonical_state_and_lock_are_owner_private_and_regular(tmp_path: Path) -> None:
@@ -494,10 +539,8 @@ def test_symlink_hardlink_and_nonprivate_canonical_are_rejected(tmp_path: Path) 
     assert coordinator.peek_status() is CredentialStatus.INVALID
     canonical.unlink()
 
-    generation = coordinator.begin_login()
-    coordinator.commit_login(_codex_token(), generation)
-    canonical.chmod(0o644)
-    assert coordinator.peek_status() is CredentialStatus.INVALID
+    with pytest.raises(CredentialError, match="invalid credential store"):
+        coordinator.begin_login()
 
 
 def test_path_collision_between_flavors_fails_closed(tmp_path: Path) -> None:
@@ -621,7 +664,7 @@ def test_import_and_logout_serialize_to_a_final_tombstone(tmp_path: Path) -> Non
 
 
 def test_multiprocess_import_is_single_and_uses_stable_flock(tmp_path: Path) -> None:
-    context = multiprocessing.get_context("fork")
+    context = multiprocessing.get_context("spawn" if os.name == "nt" else "fork")
     path = tmp_path / "copilot.json"
     marker = tmp_path / "import-count"
     barrier = context.Barrier(4)
@@ -664,8 +707,8 @@ def test_atomic_import_directory_fsync_failure_fails_closed(
     with pytest.raises(CredentialError, match="credential store unavailable"):
         coordinator.get_cached_or_import()
 
-    assert canonical.exists()
-    assert coordinator.peek_status() is CredentialStatus.INVALID
+    assert not canonical.exists()
+    assert (tmp_path / "codex.json.state.json").exists()
     assert list(tmp_path.glob(".codex.json.*.tmp")) == []
 
 
@@ -689,3 +732,355 @@ def test_temp_file_fsync_failure_does_not_publish_canonical(
     assert not canonical.exists()
     assert coordinator.peek_status() is CredentialStatus.ABSENT
     assert list(tmp_path.glob(".codex.json.*.tmp"))
+
+
+def test_begin_login_keeps_active_view_usable_until_current_commit(tmp_path: Path) -> None:
+    coordinator = OAuthCredentialCoordinator(tmp_path / "codex.json", CredentialFlavor.CODEX)
+    first = coordinator.begin_login()
+    coordinator.commit_login(_codex_token(access="active"), first)
+
+    pending = coordinator.begin_login()
+
+    assert coordinator.get_cached_or_import() == _codex_token(access="active")
+    coordinator.commit_login(_codex_token(access="replacement"), pending)
+    assert coordinator.get_cached_or_import() == _codex_token(access="replacement")
+
+
+def test_codex_refresh_is_single_flight_and_rejects_account_switch(tmp_path: Path) -> None:
+    now_ms = 1_000
+    coordinator = OAuthCredentialCoordinator(
+        tmp_path / "codex.json", CredentialFlavor.CODEX, clock_ms=lambda: now_ms
+    )
+    generation = coordinator.begin_login()
+    coordinator.commit_login(_codex_token(expiry=now_ms + 1), generation)
+    calls: list[int] = []
+
+    def refresh(token: OAuthToken) -> OAuthToken:
+        calls.append(1)
+        return OAuthToken("fresh", token.refresh, now_ms + 60_000, token.account_id)
+
+    results: list[str] = []
+    threads = [
+        __import__("threading").Thread(
+            target=lambda: results.append(coordinator.refresh_codex(30, refresh).token.access)
+        )
+        for _ in range(4)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert results == ["fresh"] * 4
+    assert calls == [1]
+
+    with pytest.raises(CredentialError, match="credential account mismatch"):
+        coordinator.refresh_codex(
+            120,
+            lambda token: OAuthToken("wrong", token.refresh, now_ms + 300_000, "other"),
+        )
+    assert coordinator.get_cached_or_import().access == "fresh"
+
+
+def test_copilot_derived_bearer_is_generation_bound(tmp_path: Path) -> None:
+    now_ms = 1_000
+    coordinator = OAuthCredentialCoordinator(
+        tmp_path / "copilot.json", CredentialFlavor.COPILOT, clock_ms=lambda: now_ms
+    )
+    first = coordinator.begin_login()
+    coordinator.commit_login("github-one", first)
+    calls: list[str] = []
+
+    def exchange(token: OAuthToken) -> dict[str, object]:
+        calls.append(token.access)
+        return {"bearer": f"bearer-{token.access}", "expires_at_ms": now_ms + 60_000}
+
+    assert coordinator.get_copilot_bearer(30, exchange).bearer == "bearer-github-one"
+    assert coordinator.get_copilot_bearer(30, exchange).bearer == "bearer-github-one"
+    second = coordinator.begin_login()
+    coordinator.commit_login("github-two", second)
+    assert coordinator.get_copilot_bearer(30, exchange).bearer == "bearer-github-two"
+    assert calls == ["github-one", "github-two"]
+
+
+def test_read_recovers_target_published_before_final_active_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from nanobot.providers import oauth_credentials as credential_module
+
+    canonical = tmp_path / "codex.json"
+    coordinator = OAuthCredentialCoordinator(canonical, CredentialFlavor.CODEX)
+    first = coordinator.begin_login()
+    coordinator.commit_login(_codex_token(access="old"), first)
+    second = coordinator.begin_login()
+    real_write_state = coordinator._write_state
+    writes = 0
+
+    def fail_final_state(directory_fd: int, state: object) -> None:
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise credential_module._UnavailableError
+        real_write_state(directory_fd, state)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(coordinator, "_write_state", fail_final_state)
+
+    with pytest.raises(CredentialError, match="credential store unavailable"):
+        coordinator.commit_login(_codex_token(access="new"), second)
+
+    recovered = OAuthCredentialCoordinator(canonical, CredentialFlavor.CODEX)
+    assert recovered.get_cached_or_import().access == "new"
+    state = json.loads((tmp_path / "codex.json.state.json").read_text())
+    assert len(state["active_generation"]) == 32
+    assert "publication" not in state
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX fork contention coverage")
+@pytest.mark.parametrize(
+    ("flavor", "worker", "expected", "marker_byte"),
+    [
+        (CredentialFlavor.CODEX, _race_refresh_worker, "fresh", b"r"),
+        (CredentialFlavor.COPILOT, _race_exchange_worker, "derived", b"e"),
+    ],
+)
+def test_multiprocess_refresh_and_exchange_are_single_flight(
+    tmp_path: Path,
+    flavor: CredentialFlavor,
+    worker: Any,
+    expected: str,
+    marker_byte: bytes,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    path = tmp_path / f"{flavor.value}.json"
+    coordinator = OAuthCredentialCoordinator(path, flavor, clock_ms=lambda: 1_000)
+    generation = coordinator.begin_login()
+    if flavor is CredentialFlavor.CODEX:
+        coordinator.commit_login(_codex_token(expiry=1_001), generation)
+    else:
+        coordinator.commit_login("github", generation)
+    marker = tmp_path / f"{flavor.value}-count"
+    barrier = context.Barrier(4)
+    results = context.Queue()
+    workers = [
+        context.Process(target=worker, args=(str(path), str(marker), barrier, results))
+        for _ in range(4)
+    ]
+    for process in workers:
+        process.start()
+    for process in workers:
+        process.join(timeout=20)
+
+    assert [process.exitcode for process in workers] == [0, 0, 0, 0]
+    assert [results.get(timeout=2) for _ in workers] == [expected] * 4
+    assert marker.read_bytes() == marker_byte
+
+
+def test_windows_publication_seam_retains_verified_handle_across_swaps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from nanobot.providers import oauth_credentials as credential_module
+
+    target = tmp_path / "codex.json"
+    attacker = tmp_path / "attacker.json"
+    temporary = tmp_path / ".codex.tmp"
+    displaced = tmp_path / "verified-original.tmp"
+    attacker.write_bytes(b"attacker")
+    target.symlink_to(attacker)
+    identities: list[tuple[int, int]] = []
+    opened_fd = -1
+
+    def verified_open(path: Path, **kwargs: int) -> int:
+        nonlocal opened_fd
+        assert path == temporary
+        assert kwargs["share"] == 0
+        opened_fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        return opened_fd
+
+    def protect_handle(fd: int) -> None:
+        info = os.fstat(fd)
+        identities.append((info.st_dev, info.st_ino))
+
+    def rename_handle(fd: int, destination: Path) -> None:
+        os.replace(temporary, displaced)
+        temporary.write_bytes(b"swapped-temp")
+        os.lseek(fd, 0, os.SEEK_SET)
+        stable_bytes = os.read(fd, 1_024)
+        destination.unlink()
+        destination.write_bytes(stable_bytes)
+
+    monkeypatch.setattr(credential_module, "_open_windows_verified", verified_open)
+    monkeypatch.setattr(credential_module, "_protect_windows_handle", protect_handle)
+    monkeypatch.setattr(credential_module, "_rename_windows_verified", rename_handle)
+
+    credential_module._write_windows_verified(target, temporary, b"verified-payload")
+
+    assert identities[0] == identities[1]
+    assert target.read_bytes() == b"verified-payload"
+    assert attacker.read_bytes() == b"attacker"
+    assert temporary.read_bytes() == b"swapped-temp"
+    with pytest.raises(OSError):
+        os.fstat(opened_fd)
+
+
+@pytest.mark.parametrize("failure", ["acl", "rename"])
+def test_windows_publication_seam_failures_preserve_existing_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from nanobot.providers import oauth_credentials as credential_module
+
+    target = tmp_path / "codex.json"
+    temporary = tmp_path / ".codex.tmp"
+    target.write_bytes(b"existing")
+
+    def verified_open(path: Path, **_kwargs: int) -> int:
+        return os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+
+    def protect_handle(_fd: int) -> None:
+        if failure == "acl":
+            raise OSError("synthetic acl failure")
+
+    def rename_handle(_fd: int, _destination: Path) -> None:
+        raise OSError("synthetic rename failure")
+
+    monkeypatch.setattr(credential_module, "_open_windows_verified", verified_open)
+    monkeypatch.setattr(credential_module, "_protect_windows_handle", protect_handle)
+    monkeypatch.setattr(credential_module, "_rename_windows_verified", rename_handle)
+
+    with pytest.raises(OSError, match=f"synthetic {failure}"):
+        credential_module._write_windows_verified(target, temporary, b"new")
+
+    assert target.read_bytes() == b"existing"
+
+
+@pytest.mark.parametrize("failure", ["post_acl", "post_flush"])
+def test_windows_publication_post_rename_fault_never_publishes_attacker_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    from nanobot.providers import oauth_credentials as credential_module
+
+    target = tmp_path / "codex.json"
+    attacker = tmp_path / "attacker.json"
+    temporary = tmp_path / ".codex.tmp"
+    attacker.write_bytes(b"attacker")
+    target.symlink_to(attacker)
+    acl_calls = 0
+    flush_calls = 0
+    real_fsync = os.fsync
+
+    def verified_open(path: Path, **_kwargs: int) -> int:
+        return os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+
+    def protect_handle(_fd: int) -> None:
+        nonlocal acl_calls
+        acl_calls += 1
+        if failure == "post_acl" and acl_calls == 2:
+            raise OSError("synthetic post_acl failure")
+
+    def rename_handle(fd: int, destination: Path) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        stable_bytes = os.read(fd, 1_024)
+        destination.unlink()
+        destination.write_bytes(stable_bytes)
+
+    def flush_handle(fd: int) -> None:
+        nonlocal flush_calls
+        flush_calls += 1
+        if failure == "post_flush" and flush_calls == 2:
+            raise OSError("synthetic post_flush failure")
+        real_fsync(fd)
+
+    monkeypatch.setattr(credential_module, "_open_windows_verified", verified_open)
+    monkeypatch.setattr(credential_module, "_protect_windows_handle", protect_handle)
+    monkeypatch.setattr(credential_module, "_rename_windows_verified", rename_handle)
+    monkeypatch.setattr(credential_module.os, "fsync", flush_handle)
+
+    with pytest.raises(OSError, match=f"synthetic {failure}"):
+        credential_module._write_windows_verified(target, temporary, b"verified-payload")
+
+    assert target.read_bytes() == b"verified-payload"
+    assert attacker.read_bytes() == b"attacker"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows handle publication semantics")
+def test_windows_handle_publication_blocks_temp_swap_and_replaces_target_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from nanobot.providers import oauth_credentials as credential_module
+
+    target = tmp_path / "codex.json"
+    attacker = tmp_path / "attacker.json"
+    temporary = tmp_path / ".codex.tmp"
+    displaced = tmp_path / "displaced.tmp"
+    attacker.write_bytes(b"attacker")
+    try:
+        target.symlink_to(attacker)
+    except OSError:
+        pytest.skip("Windows symlink creation is unavailable")
+    real_rename = credential_module._rename_windows_verified
+
+    def attack_then_rename(fd: int, destination: Path) -> None:
+        with pytest.raises(OSError):
+            os.replace(temporary, displaced)
+        real_rename(fd, destination)
+
+    monkeypatch.setattr(credential_module, "_rename_windows_verified", attack_then_rename)
+    credential_module._write_windows_verified(target, temporary, b"verified-payload")
+
+    assert not target.is_symlink()
+    assert target.read_bytes() == b"verified-payload"
+    assert attacker.read_bytes() == b"attacker"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows handle semantics")
+def test_windows_reparse_entries_and_lock_swaps_are_rejected(tmp_path: Path) -> None:
+    target = tmp_path / "target.json"
+    _write_json(target, _codex_token().to_dict())
+    canonical = tmp_path / "codex.json"
+    try:
+        canonical.symlink_to(target)
+    except OSError:
+        pytest.skip("Windows symlink creation is unavailable")
+    coordinator = OAuthCredentialCoordinator(canonical, CredentialFlavor.CODEX)
+    assert coordinator.peek_status() is CredentialStatus.INVALID
+    canonical.unlink()
+
+    entered = __import__("threading").Event()
+    release = __import__("threading").Event()
+
+    def importer() -> OAuthToken:
+        entered.set()
+        assert release.wait(timeout=10)
+        return _codex_token()
+
+    coordinator = OAuthCredentialCoordinator(canonical, CredentialFlavor.CODEX, importer=importer)
+    thread = __import__("threading").Thread(target=coordinator.get_cached_or_import)
+    thread.start()
+    assert entered.wait(timeout=10)
+    replacement = tmp_path / "replacement.lock"
+    replacement.write_bytes(b"x")
+    with pytest.raises(OSError):
+        os.replace(replacement, coordinator.paths.lock)
+    release.set()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows backend fault coverage")
+def test_windows_verified_open_failure_fails_closed_without_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from nanobot.providers import oauth_credentials as credential_module
+
+    canonical = tmp_path / "codex.json"
+    coordinator = OAuthCredentialCoordinator(canonical, CredentialFlavor.CODEX)
+    monkeypatch.setattr(
+        credential_module,
+        "_open_windows_verified",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("synthetic")),
+    )
+
+    with pytest.raises(CredentialError, match="credential store unavailable"):
+        coordinator.get_cached_or_import()
+
+    assert not canonical.exists()
+    assert not coordinator.paths.state.exists()

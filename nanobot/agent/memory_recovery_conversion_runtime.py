@@ -10,6 +10,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NoReturn
 
 from nanobot.agent import memory_recovery as receipt_codec
 from nanobot.agent import memory_recovery_conversion as conversion
@@ -18,7 +19,7 @@ from nanobot.agent import memory_recovery_marker_stage as marker_stage
 from nanobot.agent import memory_recovery_storage as storage
 from nanobot.agent import memory_recovery_transaction as transaction
 from nanobot.agent.legacy_history_codec import parse_legacy_history
-from nanobot.agent.memory_recovery_manifest import ManifestRecord, MemoryRecoveryManifest
+from nanobot.agent.memory_recovery_manifest import JsonValue, ManifestRecord, MemoryRecoveryManifest
 
 _TARGETS = ("history.jsonl", ".cursor", ".dream_cursor")
 _RECEIPT = ".consolidation.pending.json"
@@ -31,7 +32,7 @@ class ConversionPreparationError(RuntimeError):
         super().__init__("memory recovery conversion preparation is unavailable")
 
 
-def _fail() -> None:
+def _fail() -> NoReturn:
     raise ConversionPreparationError() from None
 
 
@@ -80,7 +81,7 @@ def _chain(
 
 def _loaded_captured(
     manifest: MemoryRecoveryManifest,
-    payload: dict[str, object],
+    payload: dict[str, JsonValue],
 ) -> ManifestRecord:
     records = manifest.load()
     if len(records) > 1 or (records and records[0].phase != "CAPTURED"):
@@ -256,9 +257,7 @@ def prepare_receipt_tail_conversion(workspace: Path | str, *, workspace_id: str)
                     and fresh.stat_identity == receipt_snapshot.stat_identity
                 )
 
-            receipt = receipt_codec._validate_payload(
-                receipt_codec._decode(raw_receipt), raw_receipt
-            )
+            receipt = receipt_codec.decode_memory_receipt_bytes(raw_receipt)
             captured_transaction = transaction.capture_transaction_payload(
                 receipt,
                 workspace_id=workspace_id,
@@ -369,6 +368,7 @@ def prepare_receipt_tail_conversion(workspace: Path | str, *, workspace_id: str)
                 name: _descriptor(snapshot, _published(authority, snapshot.content))
                 for name, snapshot in targets.items()
             }
+            backup_name: str | None = None
             if convert:
                 backup_name = archive.choose_legacy_backup_name(operation, source_snapshot)
                 backup = _backup_plan(backup_name)
@@ -417,4 +417,16 @@ def prepare_receipt_tail_conversion(workspace: Path | str, *, workspace_id: str)
         _fail()
 
 
-__all__ = ["ConversionPreparationError", "prepare_receipt_tail_conversion"]
+def derive_conversion_output_bytes(
+    prepared: conversion.PreparedConversionPayload,
+    source: bytes,
+) -> dict[str, bytes]:
+    """Derive conversion output from the checked frozen preparation evidence."""
+    return _output_bytes(prepared, source)
+
+
+__all__ = [
+    "ConversionPreparationError",
+    "prepare_receipt_tail_conversion",
+    "derive_conversion_output_bytes",
+]

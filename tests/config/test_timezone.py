@@ -85,23 +85,20 @@ def test_onboard_refresh_materializes_manual_timezone_mode(tmp_path, monkeypatch
         encoding="utf-8",
     )
     monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
-    monkeypatch.setattr(
-        "nanobot.cli.commands.get_workspace_path",
-        lambda _workspace=None: workspace,
-    )
     monkeypatch.setattr("nanobot.cli.commands._onboard_plugins", lambda _path: None)
 
     from typer.testing import CliRunner
 
     from nanobot.cli.commands import app
 
-    result = CliRunner().invoke(app, ["onboard", "--refresh"])
+    result = CliRunner().invoke(app, ["onboard", "--refresh", "--workspace", str(workspace)])
 
     assert result.exit_code == 0, result.output
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     defaults = saved["agents"]["defaults"]
     assert defaults["timezone"] == "America/New_York"
     assert defaults["timezoneMode"] == "manual"
+    assert defaults["workspace"] == str(workspace)
 
 
 def test_backend_timezone_detection_falls_back_to_utc(monkeypatch) -> None:

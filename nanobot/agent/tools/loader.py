@@ -201,8 +201,6 @@ class ToolLoader:
         return tools
 
     def load(self, ctx: ToolContext, registry: ToolRegistry, *, scope: str = "core") -> list[str]:
-        from nanobot.migration_guard import require_runtime_ready
-        require_runtime_ready()
         from nanobot.agent.tools.fork_factories import construct_core_tools
 
         if scope != "core":

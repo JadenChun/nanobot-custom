@@ -41,7 +41,6 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
     )
 
     monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
-    monkeypatch.setattr("nanobot.cli.commands.get_workspace_path", lambda _workspace=None: workspace)
     monkeypatch.setattr(
         "nanobot.channels.registry.discover_plugins",
         lambda: {"qq": load_channel_package("qq")},
@@ -55,11 +54,12 @@ def test_onboard_refresh_backfills_missing_channel_fields(tmp_path, monkeypatch)
 
     from nanobot.cli.commands import app
     runner = CliRunner()
-    result = runner.invoke(app, ["onboard"], input="n\n")
+    result = runner.invoke(app, ["onboard", "--workspace", str(workspace)], input="n\n")
 
     assert result.exit_code == 0
     saved = json.loads(config_path.read_text(encoding="utf-8"))
     assert saved["channels"]["qq"]["msgFormat"] == "plain"
+    assert saved["agents"]["defaults"]["workspace"] == str(workspace)
 
 
 def test_load_config_migrates_legacy_my_tool_keys(tmp_path) -> None:

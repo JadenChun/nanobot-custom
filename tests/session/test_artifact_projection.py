@@ -12,7 +12,7 @@ from nanobot.session.source_compaction import SourceCompactionCandidate
 from nanobot.session.source_projection import RuntimeNode, SourceNode, source_nodes
 from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
 from nanobot.session.source_store import SourceSessionStore
-from session.test_artifact_reader import setup_read
+from tests.session.test_artifact_reader import setup_read
 
 
 def active(writer):
@@ -117,8 +117,6 @@ async def test_cas_conflict_keeps_inline_and_never_rebases_or_retries(tmp_path, 
 
 
 async def test_governor_replacement_keeps_runtime_notes_and_no_tools_obeys_hard_budget(tmp_path):
-    from agent.test_source_summary import SummaryProvider, runtime
-
     from nanobot.agent.context_governance import (
         ContextGovernanceConfig,
         ContextGovernor,
@@ -129,6 +127,7 @@ async def test_governor_replacement_keeps_runtime_notes_and_no_tools_obeys_hard_
     from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.providers.base import LLMResponse, LLMUsage
     from nanobot.providers.conversation_state import ProviderConversationStateController
+    from tests.agent.test_source_summary import SummaryProvider, runtime
 
     async with setup_read(tmp_path, 'evidence ' * 12000) as (writer, tool, store, _, _):
         original = active(writer)

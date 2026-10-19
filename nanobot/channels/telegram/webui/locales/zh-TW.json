@@ -24,7 +24,12 @@
       "allowFrom": {
         "label": "允許的使用者",
         "placeholder": "* 或 Telegram 使用者 ID",
-        "help": "留空則使用配對碼。"
+        "help": "Required: add at least one Telegram sender ID/username or \"*\". Pairing is additional and does not replace sender authorization."
+      },
+      "allowChats": {
+        "label": "允許的聊天",
+        "placeholder": "Telegram 群組聊天 ID",
+        "help": "群組限制為選用。傳送者也必須是允許的使用者。"
       },
       "groupPolicy": {
         "label": "群組行為",

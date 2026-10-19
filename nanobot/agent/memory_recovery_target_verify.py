@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import errno
 import os
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from nanobot.agent import memory_recovery_storage as storage
 
 _TARGET_NAMES = frozenset(("HISTORY.md", "history.jsonl", ".cursor", ".dream_cursor"))
-_MAX_TARGET_BYTES = storage._MEMORY_TARGET_MAX_BYTES
+_MAX_TARGET_BYTES = storage.MEMORY_TARGET_MAX_BYTES
 _READ_SIZE = 64 * 1024
 
 
@@ -29,11 +29,11 @@ def _check_capabilities() -> None:
         for name in ("open", "read", "fstat", "close", "fsync")
     ):
         _fail("unavailable")
-    if os.open not in getattr(os, "supports_dir_fd", set()):
+    if os.open not in getattr(os, "supports_dir_fd", set[object]()):
         _fail("unavailable")
-    if os.stat not in getattr(os, "supports_dir_fd", set()):
+    if os.stat not in getattr(os, "supports_dir_fd", set[object]()):
         _fail("unavailable")
-    if os.stat not in getattr(os, "supports_follow_symlinks", set()):
+    if os.stat not in getattr(os, "supports_follow_symlinks", set[object]()):
         _fail("unavailable")
 
 
@@ -82,7 +82,7 @@ def _read_target(fd: int) -> bytes:
 
 def _open_target(parent_fd: int, name: str) -> int:
     try:
-        return os.open(name, storage._leaf_flags(), dir_fd=parent_fd)
+        return storage.open_recovery_read_leaf(os.open, name, parent_fd)
     except OSError as error:
         if error.errno == errno.ENOENT:
             _fail("binding")
@@ -105,23 +105,23 @@ def _require_descriptor_binding(
     name: str,
     expected: storage.MemoryTargetStatIdentity,
 ) -> None:
-    descriptor_info = storage._fstat(target_fd, code="binding")
-    storage._valid_memory_target(name, descriptor_info)
-    if storage._target_stat_identity(descriptor_info) != expected:
+    descriptor_info = storage.stat_recovery_descriptor(target_fd, code="binding")
+    storage.require_safe_memory_target(name, descriptor_info)
+    if storage.memory_target_stat_identity(descriptor_info) != expected:
         _fail("binding")
 
-    named_info = storage._stat_entry(parent_fd, name)
+    named_info = storage.stat_recovery_entry(parent_fd, name)
     if named_info is None:
         _fail("binding")
-    storage._valid_memory_target(name, named_info)
-    if storage._target_stat_identity(named_info) != expected:
+    storage.require_safe_memory_target(name, named_info)
+    if storage.memory_target_stat_identity(named_info) != expected:
         _fail("binding")
 
 
 def durably_verify_target(
     operation: storage.WorkspaceMemoryOperation,
     snapshot: storage.MemoryTargetSnapshot,
-    expected_bytes: bytes,
+    expected_bytes: object,
 ) -> storage.MemoryTargetSnapshot:
     """Fsync an unchanged target and its bound parent, then return a fresh snapshot."""
 
@@ -150,7 +150,7 @@ def durably_verify_target(
             scope.require_current()
             target_fd = _open_target(parent_fd, snapshot.name)
             expected_identity = snapshot.stat_identity
-            if expected_identity is None:  # Narrow the issued-snapshot invariant for type checkers.
+            if cast(object, expected_identity) is None:  # Narrow the issued-snapshot invariant for type checkers.
                 _fail("invalid")
             _require_descriptor_binding(parent_fd, target_fd, snapshot.name, expected_identity)
             content = _read_target(target_fd)
@@ -173,8 +173,8 @@ def durably_verify_target(
     except (OSError, TypeError, ValueError):
         _fail("io")
     finally:
-        storage._close(target_fd)
-        storage._close(parent_fd)
+        storage.close_recovery_descriptor(target_fd)
+        storage.close_recovery_descriptor(parent_fd)
 
 
 __all__ = ["durably_verify_target"]

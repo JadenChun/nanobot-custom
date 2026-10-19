@@ -1,6 +1,7 @@
 """Runtime log visibility controls shared by CLI commands."""
 
 import sys
+from collections.abc import Callable
 from typing import Any
 
 from loguru import logger
@@ -105,8 +106,12 @@ def configure_agent_runtime_logs(*, show_console: bool, log_file: str | None) ->
     # for a file-only agent so prompt_toolkit's terminal remains reserved for
     # chat while application-owned sinks keep receiving records.
     if show_console:
-        replace_cli_console_sink(
+        # Preserve the native lambda while declaring its forwarded sink contract.
+        console_sinks: tuple[Callable[[object], int]] = (
             lambda message: sys.stderr.write(str(message)),
+        )
+        replace_cli_console_sink(
+            console_sinks[0],
             format=_COMPATIBILITY_LOG_FORMAT,
         )
     else:

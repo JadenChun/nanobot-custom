@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast
 
@@ -38,6 +38,33 @@ class MaxTokensConfig(Base):
 
     input: int = 120000
     output: int = 4096
+
+
+class BusyControlConfig(Base):
+    """Explicit limits for the dormant H1 stateless route-only model."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    max_concurrent: StrictInt = Field(default=2, ge=1, le=16)
+    timeout_seconds: float = Field(default=3.0, gt=0, le=30, allow_inf_nan=False)
+    max_calls_per_window: StrictInt = Field(default=30, ge=1, le=1000)
+    window_seconds: float = Field(default=60.0, gt=0, le=3600, allow_inf_nan=False)
+    max_input_bytes: StrictInt = Field(default=16384, ge=1, le=65536)
+    max_output_tokens: StrictInt = Field(default=128, ge=1, le=1024)
+    max_response_bytes: StrictInt = Field(default=4096, ge=1, le=16384)
+    minimum_confidence: float = Field(default=0.8, ge=0, le=1, allow_inf_nan=False)
+
+
+class BusyInboxConfig(Base):
+    """Finite admission storage; overload must fail before acceptance."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    max_pending: StrictInt = Field(default=256, ge=1, le=8192)
+    max_records: StrictInt = Field(default=4096, ge=1, le=65536)
+    max_bytes: StrictInt = Field(default=4194304, ge=256, le=67108864)
+    max_clarifications: StrictInt = Field(default=8, ge=1, le=32)
+
 
 class FallbackEntry(Base):
     """One entry in the provider fallback chain."""
@@ -130,12 +157,12 @@ class ChannelsConfig(Base):
     def preserve_fork_activation_defaults(cls, value: Any) -> Any:
         if not isinstance(value, dict):
             return value
-        data = dict(value)
+        data = dict(cast(dict[object, object], value))
         websocket = data.get("websocket")
         if websocket is None:
             data["websocket"] = {"enabled": False}
         elif isinstance(websocket, dict):
-            data["websocket"] = {"enabled": False, **websocket}
+            data["websocket"] = {"enabled": False, **cast(dict[object, object], websocket)}
         if "taskUpdateMode" not in data and "task_update_mode" not in data and "sendProgress" in data:
             data["taskUpdateMode"] = "verbose" if data["sendProgress"] else "result"
         return data
@@ -271,7 +298,7 @@ class IdleCompactionConfig(Base):
         """Reject ambiguous input when both generated aliases are supplied."""
         if not isinstance(value, Mapping):
             return value
-        data = dict(value)
+        data = dict(cast(Mapping[object, object], value))
         for snake_name, camel_name in cls._ALIASES:
             if snake_name in data and camel_name in data:
                 raise ValueError(
@@ -358,7 +385,7 @@ class AgentDefaults(Base):
     @classmethod
     def reject_idle_compaction_alias_duplicates(cls, value: Any) -> Any:
         if isinstance(value, Mapping):
-            data = dict(value)
+            data = dict(cast(Mapping[object, object], value))
             if "idleCompaction" in data and "idle_compaction" in data:
                 raise ValueError(
                     "Specify only one of 'idleCompaction' or 'idle_compaction'"
@@ -376,23 +403,26 @@ class AgentDefaults(Base):
                     "Specify only one of 'idleCompactCheckIntervalSeconds' or "
                     "'idle_compact_check_interval_seconds'"
                 )
-        return value
+        return cast(object, value)
 
     @model_validator(mode="before")
     @classmethod
     def normalize_fork_tokens(cls, value: Any) -> Any:
         if not isinstance(value, dict):
             return value
-        data = dict(value)
+        # The before-validator receives untrusted Python/JSON input. Keep its
+        # values opaque until Pydantic validates the normalized fields.
+        data = dict(cast(dict[object, object], value))
         raw = data.get("maxTokens", data.get("max_tokens"))
         legacy_input = data.pop("maxInputTokens", None)
         if isinstance(raw, dict):
+            token_fields = cast(dict[object, object], raw)
             explicit = data.get("contextWindowTokens", data.get("context_window_tokens"))
             fallback = legacy_input if legacy_input is not None else explicit
-            total = raw.get("input", fallback if fallback is not None else 120000)
+            total = token_fields.get("input", fallback if fallback is not None else 120000)
             data.pop("maxTokens", None)
             data.pop("max_tokens", None)
-            data["max_tokens"] = raw.get("output", 4096)
+            data["max_tokens"] = token_fields.get("output", 4096)
             data["context_window_tokens"] = total
             data.pop("contextWindowTokens", None)
         elif legacy_input is not None:
@@ -404,7 +434,10 @@ class AgentDefaults(Base):
         if "context_path" in data or "contextPath" in data:
             path = data.pop("context_path", data.pop("contextPath", None))
             if path:
-                paths = list(data.get("context_paths", data.get("contextPaths", [])))
+                existing_paths = data.get("context_paths", data.get("contextPaths", ()))
+                if not isinstance(existing_paths, Iterable):
+                    raise ValueError("context_paths must be iterable")
+                paths = list(cast(Iterable[object], existing_paths))
                 paths.append(path)
                 data.pop("contextPaths", None)
                 data["context_paths"] = paths
@@ -633,7 +666,10 @@ class HeartbeatConfig(Base):
     keep_recent_messages: int = 8
     """Heartbeat service configuration (now backed by cron)."""
 
-    enabled: bool = True
+    # P5 D7: installation alone must never opt a process into provider-backed
+    # background work.  Explicit ``enabled: true`` remains representable for
+    # compatibility, but Stage 1 does not construct a scheduler for it.
+    enabled: bool = False
     interval_s: int = 30 * 60  # 30 minutes
 
 
@@ -709,9 +745,9 @@ class ToolsConfig(Base):
     @classmethod
     def _select_image_configuration(cls, data: Any) -> Any:
         if isinstance(data, dict) and "image_generation" not in data and "imageGeneration" not in data:
-            data = dict(data)
+            data = dict(cast(dict[object, object], data))
             data["image_generation"] = {"configuration_source": "legacy"}
-        return data
+        return cast(object, data)
 
     agent_browser: AgentBrowserConfig = Field(default_factory=AgentBrowserConfig)
     agent_device: AgentDeviceConfig = Field(default_factory=AgentDeviceConfig)
@@ -758,7 +794,7 @@ class ArtifactsConfig(Base):
 
     @field_validator("root")
     @classmethod
-    def _validate_root(cls, value: str | None) -> str | None:
+    def _validate_root(cls, value: object) -> str | None:
         if value is None:
             return None
         if not isinstance(value, str) or not value.strip():
@@ -1070,7 +1106,7 @@ def __getattr__(name: str) -> Any:
 
 def _tool_config_types() -> dict[str, Any]:
     """Collect canonical types without recursively rebuilding Pydantic models."""
-    namespace = {}
+    namespace: dict[str, Any] = {}
     for name in _TOOL_CONFIG_MODULES:
         try:
             namespace[name] = globals().get(name) or __getattr__(name)

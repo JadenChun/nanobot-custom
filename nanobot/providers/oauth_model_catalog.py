@@ -38,6 +38,10 @@ class _CacheEntry:
     stored_at: float
 
 
+class _CatalogGenerationChangedError(RuntimeError):
+    pass
+
+
 class OAuthModelCatalog:
     """Cache one provider's discovery behind a small failure-tolerant interface."""
 
@@ -71,12 +75,23 @@ class OAuthModelCatalog:
         self._inflight: set[str] = set()
         self._generation = 0
 
-    def get(self, *, cache_key: str, proxy: str | None = None) -> OAuthModelCatalogSnapshot:
+    def get(
+        self,
+        *,
+        cache_key: str,
+        proxy: str | None = None,
+        fetch: Callable[[str | None], Sequence[ProviderModelSpec]] | None = None,
+        generation_check: Callable[[], bool] | None = None,
+    ) -> OAuthModelCatalogSnapshot:
         """Return a fresh catalog, sharing concurrent work and retaining a fallback."""
         with self._condition:
             generation = self._generation
             cached = self._cached_result(cache_key)
             if cached is not None:
+                if generation_check is not None and not generation_check():
+                    self._entries.pop(cache_key, None)
+                    self._failures.pop(cache_key, None)
+                    return self._stale_or_fallback(None, self._monotonic())
                 return cached
             while cache_key in self._inflight:
                 self._condition.wait()
@@ -84,13 +99,17 @@ class OAuthModelCatalog:
                     return self._stale_or_fallback(None, self._monotonic())
                 cached = self._cached_result(cache_key)
                 if cached is not None:
+                    if generation_check is not None and not generation_check():
+                        return self._stale_or_fallback(None, self._monotonic())
                     return cached
             self._inflight.add(cache_key)
 
         try:
-            models = tuple(self._fetch(proxy))
+            models = tuple((fetch or self._fetch)(proxy))
             if not models:
                 raise ValueError("provider returned an empty model catalog")
+            if generation_check is not None and not generation_check():
+                raise _CatalogGenerationChangedError
         except Exception as exc:
             logger.warning("OAuth model catalog refresh failed: type={}", type(exc).__name__)
             with self._condition:
@@ -107,7 +126,9 @@ class OAuthModelCatalog:
                 fetched_at=self._wall_clock(),
             )
             with self._condition:
-                if generation != self._generation:
+                if generation != self._generation or (
+                    generation_check is not None and not generation_check()
+                ):
                     result = self._stale_or_fallback(None, now)
                 else:
                     self._store(cache_key, _CacheEntry(snapshot=result, stored_at=now))
@@ -118,7 +139,6 @@ class OAuthModelCatalog:
                 self._condition.notify_all()
 
         return result
-
     def invalidate(self) -> None:
         """Drop cached work and prevent an older identity refresh from being stored."""
         with self._condition:

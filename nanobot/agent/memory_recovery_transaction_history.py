@@ -91,7 +91,7 @@ def _prove_locked(
     raw_receipt = receipt_snapshot.content
     if raw_receipt is None:
         _fail()
-    receipt = receipt_codec._validate_payload(receipt_codec._decode(raw_receipt), raw_receipt)
+    receipt = receipt_codec.decode_memory_receipt_bytes(raw_receipt)
     current_captured = transaction.capture_transaction_payload(
         receipt,
         workspace_id=workspace_id,
@@ -109,10 +109,10 @@ def _prove_locked(
     prepared = transaction.decode_transaction_payload(
         "PREPARED", records[1].payload, captured=captured,
     )
-    if preparation._receipt_stat(receipt_snapshot) != prepared.receipt_stat.to_payload():
+    if preparation.receipt_snapshot_stat(receipt_snapshot) != prepared.receipt_stat.to_payload():
         _fail()
 
-    conversion_prepared = preparation._conversion_evidence(
+    conversion_prepared = preparation.require_transaction_conversion_evidence(
         authority,
         captured,
         records[0],
@@ -128,7 +128,7 @@ def _prove_locked(
         _fail()
 
     source_bytes = checked_session.read_source_bytes()
-    source_payload, proposed_source_bytes = preparation._source_proposal(
+    source_payload, proposed_source_bytes = preparation.derive_recovery_source_proposal(
         source_bytes, receipt,
     )
     if source_payload != prepared.source.to_payload():
@@ -142,7 +142,7 @@ def _prove_locked(
     memory_bytes = snapshots["MEMORY.md"].content
     if history_bytes is None or cursor_bytes is None:
         _fail()
-    marker_row = preparation._verified_marker_row(
+    marker_row = preparation.read_verified_transaction_marker_row(
         authority,
         conversion_prepared,
         receipt,
@@ -160,12 +160,12 @@ def _prove_locked(
         "MEMORY.md": expected_memory,
     }
     target_proposals = {
-        name: preparation._target_descriptor(snapshots[name], target_bytes[name])
+        name: preparation.transaction_target_descriptor(snapshots[name], target_bytes[name])
         for name in _TARGETS
     }
     reconstructed = transaction.prepare_transaction_payload(
         captured,
-        receipt_stat=preparation._receipt_stat(receipt_snapshot),
+        receipt_stat=preparation.receipt_snapshot_stat(receipt_snapshot),
         targets=target_proposals,
         source=source_payload,
         history_marker_digest=captured.history_marker_digest,
@@ -222,11 +222,11 @@ def _verify_still_current(
     checked_session: CheckedSessionAuthority,
     proof: _HistoryProof,
 ) -> None:
-    preparation._receipt_bound(authority, receipt_snapshot)
+    preparation.require_transaction_receipt_binding(authority, receipt_snapshot)
     if checked_session.read_source_bytes() != proof.source_bytes:
         _fail()
     for name in _TARGETS:
-        preparation._same_snapshot(authority, proof.snapshots[name])
+        preparation.require_current_transaction_snapshot(authority, proof.snapshots[name])
     for name, content in (("history.jsonl", proof.target_bytes["history.jsonl"]), (".cursor", proof.target_bytes[".cursor"])):
         if content is None:
             _fail()
@@ -277,9 +277,7 @@ def reconcile_memory_recovery_transaction_history(
                     or current.stat_identity != receipt_snapshot.stat_identity
                 ):
                     _fail()
-            receipt = receipt_codec._validate_payload(
-                receipt_codec._decode(raw_receipt), raw_receipt,
-            )
+            receipt = receipt_codec.decode_memory_receipt_bytes(raw_receipt)
             captured = transaction.capture_transaction_payload(
                 receipt,
                 workspace_id=workspace_id,
@@ -353,7 +351,17 @@ def reconcile_memory_recovery_transaction_history(
         _fail()
 
 
+def require_transaction_target_blob(
+    authority: storage.WorkspaceMemoryAuthority,
+    descriptor: transaction.NewTargetDescriptor,
+    expected: bytes | None,
+) -> None:
+    """Require the proposed target blob, size and existence binding."""
+    return _check_new_target_blob(authority, descriptor, expected)
+
+
 __all__ = [
     "MemoryRecoveryTransactionHistoryError",
     "reconcile_memory_recovery_transaction_history",
+    "require_transaction_target_blob",
 ]

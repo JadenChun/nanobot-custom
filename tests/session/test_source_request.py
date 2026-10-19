@@ -5,7 +5,12 @@ from dataclasses import replace
 import pytest
 
 from nanobot.session.source import SourceValidationError
-from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode
+from nanobot.session.source_projection import (
+    ArtifactProjectionBinding,
+    CheckpointNode,
+    RuntimeNode,
+    SourceNode,
+)
 from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
 
 
@@ -114,3 +119,39 @@ def test_view_validation_detaches_retry_notes_without_issuing_or_acknowledging()
     with pytest.raises(SourceValidationError):
         state.validate_view(SourceTranscript((*before.nodes, source('foreign'))))
     assert state._pending == {}
+
+
+@pytest.mark.parametrize(('field', 'value'), [
+    ('artifact_id', None),
+    ('execution_id', None),
+    ('execution_id', 7),
+    ('execution_id', ''),
+    ('content_sha256', None),
+    ('content_sha256', []),
+])
+def test_request_keeps_defensive_artifact_binding_field_validation(field, value):
+    binding = ArtifactProjectionBinding('b' * 32, 'event', 'execution', 'a' * 64)
+    node = SourceNode('event', {'role': 'user', 'content': 'evidence'}, binding)
+    SourceRequestLedger.validate_transcript(SourceTranscript((node,)))
+
+    malformed = replace(node, artifact=replace(binding, **{field: value}))
+    with pytest.raises(SourceValidationError, match='Invalid source artifact projection binding'):
+        SourceRequestLedger.validate_transcript(SourceTranscript((malformed,)))
+
+
+@pytest.mark.parametrize('references', [
+    [],
+    ('artifact:' + 'b' * 32, 7),
+    ('artifact:' + 'b' * 32, 'artifact:' + 'b' * 32),
+    ('artifact:' + 'b' * 32, 'artifact:' + 'a' * 32),
+])
+def test_request_keeps_tuple_string_order_and_uniqueness_dependency_guards(references):
+    checkpoint = CheckpointNode('checkpoint', 'facts', references)
+
+    with pytest.raises(SourceValidationError, match='Invalid checkpoint request dependencies'):
+        SourceRequestLedger.validate_transcript(SourceTranscript((checkpoint,)))
+
+
+def test_request_keeps_unbound_node_rejection():
+    with pytest.raises(SourceValidationError, match='Unbound source request node'):
+        SourceRequestLedger.validate_transcript(SourceTranscript((object(),)))

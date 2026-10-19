@@ -19,7 +19,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from nanobot.utils.helpers import estimate_prompt_tokens_chain
 
@@ -117,7 +117,7 @@ class AsyncPortableFileLock:
         try:
             await asyncio.shield(task)
         except asyncio.CancelledError:
-            def _release_late(done: asyncio.Future) -> None:
+            def _release_late(done: asyncio.Future[None]) -> None:
                 if done.cancelled() or done.exception() is not None:
                     return
                 try:
@@ -259,7 +259,7 @@ def measure_prompt(
 ) -> PromptMeasurement:
     """Measure a fully rendered message/tool payload without mutating it."""
     measured, source = estimate_prompt_tokens_chain(provider, model, messages, tools)
-    if not isinstance(measured, int) or measured <= 0:
+    if not isinstance(cast(object, measured), int) or measured <= 0:
         measured = _fallback_prompt_tokens(messages, tools)
         source = "fallback"
     return PromptMeasurement(
@@ -299,9 +299,9 @@ def _content_text(content: Any) -> str:
         return content
     if isinstance(content, list):
         parts: list[str] = []
-        for block in content:
+        for block in cast(list[object], content):
             if isinstance(block, dict):
-                text = block.get("text")
+                text = cast(dict[object, object], block).get("text")
                 if isinstance(text, str):
                     parts.append(text)
         return "\n".join(parts)
@@ -322,9 +322,9 @@ def _is_managed_message(message: dict[str, Any]) -> bool:
 
 def _tool_call_ids(message: dict[str, Any]) -> list[str]:
     ids: list[str] = []
-    for call in message.get("tool_calls") or []:
-        if isinstance(call, dict) and call.get("id"):
-            ids.append(str(call["id"]))
+    for call in message.get("tool_calls") or ():
+        if isinstance(call, dict) and cast(dict[object, object], call).get("id"):
+            ids.append(str(cast(dict[object, object], call)["id"]))
     return ids
 
 
@@ -434,7 +434,7 @@ def _drop_managed_prefix_to_fit(
     # System instructions are not removable.  Managed user context is a
     # request-local convenience and is dropped oldest-first when necessary.
     retained = list(prefix)
-    for index, message in enumerate(prefix):
+    for message in prefix:
         if not _is_managed_message(message):
             continue
         trial = retained[:]

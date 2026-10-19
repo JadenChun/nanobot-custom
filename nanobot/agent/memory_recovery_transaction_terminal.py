@@ -7,11 +7,16 @@ remove the receipt or change the already-applied memory and session targets.
 from __future__ import annotations
 
 import hashlib
+import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from nanobot.agent import memory_recovery as receipt_codec
+from nanobot.agent import memory_recovery_conversion as conversion
+from nanobot.agent import memory_recovery_conversion_apply as application
+from nanobot.agent import memory_recovery_quarantine_storage as quarantine
 from nanobot.agent import memory_recovery_storage as storage
 from nanobot.agent import memory_recovery_transaction as transaction
 from nanobot.agent import memory_recovery_transaction_offset as offset_stage
@@ -86,16 +91,17 @@ def _check_record_chain(
 def _decode_proof(
     authority: storage.WorkspaceMemoryAuthority,
     operation: storage.WorkspaceMemoryOperation,
-    receipt_snapshot: storage.MemoryTargetSnapshot,
+    receipt_snapshot: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
     workspace_id: str,
     records: tuple[ManifestRecord, ...],
+    *, read_only: bool = False,
 ) -> _TerminalProof:
     if tuple(record.phase for record in records) not in _PHASES:
         _fail()
 
     # Reuse the established converted-target, receipt, marker, and blob proof.
     base = offset_stage._proof(  # pyright: ignore[reportPrivateUsage]
-        authority, operation, receipt_snapshot, workspace_id, records[:5],
+        authority, operation, receipt_snapshot, workspace_id, records[:5], read_only=read_only,
     )
     receipt, captured, prepared, history_applied, memory_applied, proposed_source_bytes = base
     _check_record_chain(records, captured)
@@ -108,7 +114,7 @@ def _decode_proof(
         history_applied=history_applied,
         memory_applied=memory_applied,
     )
-    if not isinstance(offset_recorded, transaction.OffsetAppliedTransactionPayload):
+    if not isinstance(cast(object, offset_recorded), transaction.OffsetAppliedTransactionPayload):
         _fail()
     offset_applied = transaction.offset_applied_transaction_payload(
         captured,
@@ -136,7 +142,7 @@ def _decode_proof(
             memory_applied_record_digest=records[3].digest,
             offset_applied_record_digest=records[4].digest,
         )
-        if not isinstance(decoded_committed, transaction.ReceiptCommittedTransactionPayload):
+        if not isinstance(cast(object, decoded_committed), transaction.ReceiptCommittedTransactionPayload):
             _fail()
         expected_committed = transaction.receipt_committed_transaction_payload(
             captured,
@@ -171,7 +177,7 @@ def _decode_proof(
             memory_applied_record_digest=records[3].digest,
             offset_applied_record_digest=records[4].digest,
         )
-        if not isinstance(decoded_complete, transaction.CompleteTransactionPayload):
+        if not isinstance(cast(object, decoded_complete), transaction.CompleteTransactionPayload):
             _fail()
         expected_complete = transaction.complete_transaction_payload(
             captured,
@@ -304,6 +310,214 @@ def _same_chain(
         _fail()
 
 
+_PROOF_TOKEN = object()
+
+
+class TerminalCompleteProof:
+    """Operation-scoped, recheckable seven-record terminal semantic evidence."""
+
+    __slots__ = (
+        "_sealed",
+        "_authority", "_operation", "_checked", "_workspace_id", "_evidence", "_claims",
+        "transaction_identity", "complete_digest", "receipt_digest", "receipt_size",
+        "receipt_stat", "checked_session_source_digest", "conversion_complete_digest",
+        "semantic_seal_digest",
+    )
+
+    def __init__(
+        self, token: object, authority: storage.WorkspaceMemoryAuthority,
+        operation: storage.WorkspaceMemoryOperation, checked: CheckedSessionAuthority,
+        workspace_id: str,
+        evidence: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+        claims: bytes,
+    ) -> None:
+        if token is not _PROOF_TOKEN:
+            raise TypeError("terminal proof is issued by semantic verification")
+        parsed = json.loads(claims)
+        self._authority, self._operation, self._checked = authority, operation, checked
+        self._workspace_id, self._evidence, self._claims = workspace_id, evidence, claims
+        self.transaction_identity = parsed["transaction_identity"]
+        self.complete_digest = parsed["transaction_complete_digest"]
+        self.receipt_digest = parsed["receipt_digest"]
+        self.receipt_size = parsed["receipt_size"]
+        self.receipt_stat = tuple(parsed["receipt_original_stat"])
+        self.checked_session_source_digest = parsed["session_source_new_digest"]
+        self.conversion_complete_digest = parsed["conversion_complete_digest"]
+        self.semantic_seal_digest = _hash(claims)
+        self._sealed = True
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if getattr(self, "_sealed", False):
+            raise AttributeError("terminal proof is immutable")
+        object.__setattr__(self, name, value)
+
+    @property
+    def semantic_seal_claims(self) -> dict[str, object]:
+        """A detached copy of the canonical, digest-only versioned seal claims."""
+        # The guarded proof constructor retains the immutable canonical JSON
+        # object produced by _terminal_seal_claims; every object key is a string.
+        return cast(dict[str, object], json.loads(self._claims))
+
+    def is_sealed_for(
+        self, authority: storage.WorkspaceMemoryAuthority,
+        operation: storage.WorkspaceMemoryOperation,
+    ) -> bool:
+        """Compare immutable issuance scope without granting or exposing it."""
+        return (self._sealed and self._authority is authority
+                and self._operation is operation)
+
+    def require_quarantine_commit_match(
+        self, authority: storage.WorkspaceMemoryAuthority,
+        operation: storage.WorkspaceMemoryOperation, binding: quarantine.QuarantineBinding,
+        *, copy_bytes: bytes, observe_copy_stat: Callable[[], tuple[int, ...]],
+        original_stat: list[int], digest_claims: Callable[[bytes], str],
+    ) -> None:
+        """Check owned copy/claims; the store must still perform terminal reproof.
+
+        Delayed observations retain the caller's real stat/digest fault seams.
+        This exposes no proof fields and never issues publication authority.
+        """
+        evidence = self._evidence
+        try:
+            if (type(evidence) is not quarantine.ValidatedQuarantineCopy
+                    or not quarantine.ValidatedQuarantineCopy.is_entered_for(
+                        evidence, authority, operation, binding,
+                    )
+                    or evidence.phase != "copy-ready" or evidence.raw_bytes != copy_bytes
+                    or evidence.copy_stat != observe_copy_stat()
+                    or self.transaction_identity != binding.transaction_identity
+                    or self.complete_digest != binding.complete_digest
+                    or self.receipt_digest != binding.receipt_digest
+                    or self.receipt_size != binding.receipt_size
+                    or tuple(self.receipt_stat) != tuple(original_stat)
+                    or self.semantic_seal_digest != digest_claims(self._claims)):
+                raise quarantine.QuarantineError() from None
+        except (AttributeError, OSError, TypeError, ValueError):
+            raise quarantine.QuarantineError() from None
+
+    def require_current(self) -> None:
+        try:
+            if _terminal_seal_claims(
+                self._authority, self._operation, self._checked,
+                self._workspace_id, self._evidence,
+            ) != self._claims:
+                _fail()
+        except MemoryRecoveryTransactionTerminalError:
+            raise
+        except Exception:
+            _fail()
+
+
+def _terminal_seal_claims(
+    authority: storage.WorkspaceMemoryAuthority,
+    operation: storage.WorkspaceMemoryOperation,
+    checked_session: CheckedSessionAuthority,
+    workspace_id: str,
+    evidence: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+) -> bytes:
+    if type(evidence) not in (storage.MemoryTargetSnapshot, quarantine.ValidatedQuarantineCopy):
+        _fail()
+    application.require_conversion_receipt_binding(authority, evidence)
+    raw = application.receipt_evidence_bytes(evidence)
+    receipt = receipt_codec.decode_memory_receipt_bytes(raw)
+    captured = transaction.capture_transaction_payload(
+        receipt, workspace_id=workspace_id, workspace_identity=operation.workspace_identity,
+    )
+    candidate = checked_session._recovery_candidate  # pyright: ignore[reportPrivateUsage]
+    if (
+        candidate is None or candidate.workspace_path != authority.workspace
+        or candidate.workspace_id != workspace_id or candidate.session_key != receipt.session_key
+    ):
+        _fail()
+    if not (
+        authority.workspace / "memory" / ".recovery" / "transactions" / captured.identity
+    ).is_dir():
+        _fail()
+    manifest = MemoryRecoveryManifest(authority.open_evidence_namespace("transactions", captured.identity))
+    records = manifest.load()
+    if len(records) != 7 or tuple(record.phase for record in records) != _PHASES[2]:
+        _fail()
+    proof = _decode_proof(authority, operation, evidence, workspace_id, records, read_only=True)
+    if proof.complete is None:
+        _fail()
+    _verify_new_source(checked_session, proof)
+    application.require_conversion_receipt_binding(authority, evidence)
+    conversion_identity = conversion.capture_receipt_tail_conversion_payload(captured.identity).identity
+    conversion_manifest = MemoryRecoveryManifest(
+        authority.open_evidence_namespace("conversions", conversion_identity)
+    )
+    conversion_records = conversion_manifest.load()
+    if len(conversion_records) != 6 or conversion_records[-1].phase != "COMPLETE":
+        _fail()
+    converted = preparation.require_transaction_conversion_evidence(
+        authority, captured, records[0], evidence, receipt, operation, read_only=True,
+    )
+    if converted.backup is None or converted.source.digest is None:
+        _fail()
+    _same_chain(conversion_manifest, conversion_records)
+    if type(evidence) is quarantine.ValidatedQuarantineCopy:
+        binding = evidence.binding
+        if (
+            binding.transaction_identity != captured.identity
+            or binding.complete_digest != records[-1].digest
+            or binding.receipt_digest != captured.receipt_digest
+            or binding.receipt_size != captured.receipt_size
+            or binding.workspace_id != workspace_id
+            or binding.workspace != candidate.workspace_path
+            or binding.sessions_root != candidate.sessions_root
+        ):
+            _fail()
+    stat_claim = application.receipt_evidence_stat(evidence)
+    if any(
+        descriptor.new.exists and descriptor.new.blob_digest is None
+        for descriptor in proof.prepared.targets.values()
+    ):
+        _fail()
+    keys = ("device", "inode", "mode", "uid", "gid", "links", "size", "mtime_ns", "ctime_ns")
+    claims = {
+        "schema_version": 1,
+        "transaction_identity": captured.identity,
+        "transaction_complete_digest": records[-1].digest,
+        "conversion_complete_digest": conversion_records[-1].digest,
+        "receipt_digest": captured.receipt_digest,
+        "receipt_size": captured.receipt_size,
+        "receipt_original_stat": [stat_claim[key] for key in keys],
+        "prepared_target_new_digests": {
+            name: proof.prepared.targets[name].new.blob_digest
+            for name in ("history.jsonl", ".cursor", "MEMORY.md")
+        },
+        "session_source_new_digest": proof.prepared.source.new_digest,
+        "archive_backup_digest": converted.source.digest,
+        "archive_backup_name": converted.backup.basename,
+    }
+    _same_chain(manifest, records)
+    application.require_conversion_receipt_binding(authority, evidence)
+    checked_session.verify_recovery_source_bytes(proof.proposed_source_bytes)
+    return (json.dumps(claims, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n").encode()
+
+
+def prove_terminal_complete_under_locks(
+    authority: storage.WorkspaceMemoryAuthority,
+    operation: storage.WorkspaceMemoryOperation,
+    checked_session: CheckedSessionAuthority,
+    workspace_id: str,
+    receipt_evidence: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+) -> TerminalCompleteProof:
+    """Read-only semantic proof with an issued live receipt or absent-pending Q1 copy."""
+    try:
+        claims = _terminal_seal_claims(
+            authority, operation, checked_session, workspace_id, receipt_evidence,
+        )
+        return TerminalCompleteProof(
+            _PROOF_TOKEN, authority, operation, checked_session, workspace_id,
+            receipt_evidence, claims,
+        )
+    except MemoryRecoveryTransactionTerminalError:
+        raise
+    except Exception:
+        _fail()
+
+
 def reconcile_memory_recovery_transaction_terminal(
     workspace: Path | str,
     *,
@@ -326,9 +540,7 @@ def reconcile_memory_recovery_transaction_terminal(
                 _fail()
             with operation.borrow_pending_receipt_parent(receipt_snapshot) as receipt_scope:
                 _same_receipt_snapshot(receipt_scope, receipt_snapshot)
-                receipt = receipt_codec._validate_payload(  # pyright: ignore[reportPrivateUsage]
-                    receipt_codec._decode(raw_receipt), raw_receipt,  # pyright: ignore[reportPrivateUsage]
-                )
+                receipt = receipt_codec.decode_memory_receipt_bytes(raw_receipt)
                 captured = transaction.capture_transaction_payload(
                     receipt,
                     workspace_id=workspace_id,
@@ -462,5 +674,7 @@ def reconcile_memory_recovery_transaction_terminal(
 
 __all__ = [
     "MemoryRecoveryTransactionTerminalError",
+    "TerminalCompleteProof",
+    "prove_terminal_complete_under_locks",
     "reconcile_memory_recovery_transaction_terminal",
 ]

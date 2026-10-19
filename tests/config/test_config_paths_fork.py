@@ -1,8 +1,8 @@
 from pathlib import Path
 
 from nanobot.config.paths import (
-    get_browser_test_artifacts_dir,
     get_bridge_install_dir,
+    get_browser_test_artifacts_dir,
     get_cli_history_path,
     get_cron_dir,
     get_data_dir,
@@ -13,6 +13,7 @@ from nanobot.config.paths import (
     get_workspace_path,
     is_default_workspace,
 )
+from tests.config.path_test_fixtures import isolate_path_home
 
 
 def test_runtime_dirs_follow_config_path(monkeypatch, tmp_path: Path) -> None:
@@ -39,12 +40,14 @@ def test_shared_and_legacy_paths_remain_global() -> None:
     assert get_legacy_sessions_dir() == Path.home() / ".nanobot" / "sessions"
 
 
-def test_workspace_path_is_explicitly_resolved() -> None:
+def test_workspace_path_is_explicitly_resolved(tmp_path: Path, monkeypatch) -> None:
+    isolate_path_home(tmp_path, monkeypatch)
     assert get_workspace_path() == Path.home() / ".nanobot" / "workspace"
     assert get_workspace_path("~/custom-workspace") == Path.home() / "custom-workspace"
 
 
-def test_browser_test_artifacts_dir_is_workspace_scoped() -> None:
+def test_browser_test_artifacts_dir_is_workspace_scoped(tmp_path: Path, monkeypatch) -> None:
+    isolate_path_home(tmp_path, monkeypatch)
     assert get_browser_test_artifacts_dir() == Path.home() / ".nanobot" / "workspace" / "artifacts" / "browser-tests"
     assert get_browser_test_artifacts_dir("~/custom-workspace") == Path.home() / "custom-workspace" / "artifacts" / "browser-tests"
 

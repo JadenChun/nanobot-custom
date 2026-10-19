@@ -24,7 +24,12 @@
       "allowFrom": {
         "label": "Người dùng được phép",
         "placeholder": "* hoặc ID người dùng Telegram",
-        "help": "Để trống để dùng mã ghép nối."
+        "help": "Required: add at least one Telegram sender ID/username or \"*\". Pairing is additional and does not replace sender authorization."
+      },
+      "allowChats": {
+        "label": "Cuộc trò chuyện được phép",
+        "placeholder": "ID nhóm trò chuyện Telegram",
+        "help": "Giới hạn nhóm là tùy chọn. Người gửi cũng phải là người dùng được phép."
       },
       "groupPolicy": {
         "label": "Hành vi trong nhóm",

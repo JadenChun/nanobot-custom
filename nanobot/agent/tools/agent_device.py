@@ -7,7 +7,7 @@ import json
 import os
 import shutil
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.process import run_owned_process
@@ -31,7 +31,7 @@ _FILE_OUTPUT_OPTIONS = frozenset({
 })
 
 
-def classify_device_action(args: Sequence[str]) -> str:
+def classify_device_action(args: object) -> str:
     """Classify agent-device args for policy consumers.
 
     Device inspection is read-only; commands that can interact with an app or
@@ -40,9 +40,9 @@ def classify_device_action(args: Sequence[str]) -> str:
 
     if not isinstance(args, Sequence) or isinstance(args, (str, bytes)):
         return "state_changing"
-    if any(not isinstance(arg, str) for arg in args):
+    if any(not isinstance(arg, str) for arg in cast(Sequence[object], args)):
         return "state_changing"
-    normalized_args = [arg.strip().lower() for arg in args if isinstance(arg, str)]
+    normalized_args = [arg.strip().lower() for arg in cast(Sequence[object], args) if isinstance(arg, str)]
     option_names = [arg.split("=", 1)[0] for arg in normalized_args]
     # A screenshot can write a caller-selected path, so every screenshot form
     # is state-changing for both delegated and main-agent policy decisions.

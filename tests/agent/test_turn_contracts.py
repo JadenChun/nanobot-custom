@@ -7,12 +7,17 @@ from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import (
     ApprovalGrant,
+    DeliveryTarget,
     HistoryMode,
+    RunRecord,
     RunStatus,
+    ScheduledTurnLink,
+    SessionRunRef,
     ToolOutcome,
     TraceMode,
     TurnContext,
     TurnRequest,
+    TurnResult,
     TurnSource,
 )
 from nanobot.session.manager import Session
@@ -111,3 +116,66 @@ def test_approval_grant_is_available_as_a_typed_value() -> None:
     grant = ApprovalGrant(approved=True, grant_id="approval-1")
     assert grant.approved is True
     assert grant.grant_id == "approval-1"
+
+
+@pytest.mark.parametrize("source", [TurnSource.SDK, "sdk"])
+def test_turn_request_retains_runtime_enum_and_sequence_normalization(source) -> None:
+    request = TurnRequest(
+        content="hello",
+        source=source,
+        history_mode="fresh",
+        trace_mode="sanitized",
+        media=["image.png"],
+        hooks=["hook"],
+        tool_names=["read_file"],
+    )
+
+    assert request.source is TurnSource.SDK
+    assert request.history_mode is HistoryMode.FRESH
+    assert request.trace_mode is TraceMode.SANITIZED
+    assert request.media == ("image.png",)
+    assert request.hooks == ("hook",)
+    assert request.tool_names == ("read_file",)
+    assert request.message == request.prompt == request.content == "hello"
+
+
+@pytest.mark.parametrize("reference_field", ["detail_ref", "session_ref"])
+def test_run_record_retains_checked_mapping_reference_normalization(reference_field) -> None:
+    record = RunRecord.from_dict({
+        "run_id": "run-compat",
+        "status": "completed",
+        "source": "sdk",
+        reference_field: {"session_key": 42, "run_id": 7, 99: "ignored"},
+        "tools_used": ["read_file"],
+    })
+
+    reference = SessionRunRef(session_key="42", run_id="7")
+    assert record.detail_ref == reference
+    assert record.session_ref == reference
+    assert record.session_key == "42"
+    assert record.status is RunStatus.COMPLETED
+    assert record.source is TurnSource.SDK
+    assert record.tools_used == ("read_file",)
+    assert record.to_dict()["detail_ref"] == {"session_key": "42", "run_id": "7"}
+
+
+@pytest.mark.parametrize("payload", [None, [], {}, {"run_id": ""}])
+def test_run_record_retains_nonmapping_and_missing_identity_refusal(payload) -> None:
+    with pytest.raises(ValueError, match="run record must include a run_id"):
+        RunRecord.from_dict(payload)
+
+
+def test_scheduled_link_and_turn_result_retain_sequence_normalization() -> None:
+    destination = DeliveryTarget(channel="telegram", chat_id="42")
+    link = ScheduledTurnLink(job_id="job", additional_destinations=[destination])
+    result = TurnResult(
+        status="completed",
+        tools_used=("read_file",),
+        messages=({"role": "assistant", "content": "done"},),
+    )
+
+    assert link.additional_destinations == (destination,)
+    assert link.schedule_id == "job"
+    assert result.status is RunStatus.COMPLETED
+    assert result.tools_used == ["read_file"]
+    assert result.messages == [{"role": "assistant", "content": "done"}]

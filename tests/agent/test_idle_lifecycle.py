@@ -6,8 +6,6 @@ import asyncio
 
 import pytest
 
-from agent import test_migration_engine as engine_fixtures
-from agent.test_migration_engine import ScriptedProvider
 from nanobot.agent.idle_compaction import IdleCompactionPolicy
 from nanobot.agent.idle_lifecycle import IdleLifecycleIntegration
 from nanobot.agent.idle_runtime import IdleRuntimeBindingRegistry
@@ -16,6 +14,8 @@ from nanobot.providers.base import GenerationSettings
 from nanobot.session.manager import JsonlSessionStore
 from nanobot.session.source_store import SourceSessionStore
 from nanobot.utils.llm_runtime import LLMRuntime
+from tests.agent import test_migration_engine as engine_fixtures
+from tests.agent.test_migration_engine import ScriptedProvider
 
 engine_config = engine_fixtures.engine_config
 

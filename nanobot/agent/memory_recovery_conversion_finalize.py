@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import NoReturn, cast
 
 from nanobot.agent import memory_recovery as receipt_codec
 from nanobot.agent import memory_recovery_conversion as conversion
 from nanobot.agent import memory_recovery_conversion_apply as application
 from nanobot.agent import memory_recovery_conversion_runtime as preparation
 from nanobot.agent import memory_recovery_legacy_archive as archive
+from nanobot.agent import memory_recovery_quarantine_storage as quarantine
 from nanobot.agent import memory_recovery_storage as storage
 from nanobot.agent import memory_recovery_target_verify as verification
 from nanobot.agent import memory_recovery_transaction as transaction
@@ -30,7 +32,7 @@ class ConversionFinalizationError(RuntimeError):
         super().__init__("memory recovery conversion finalization is unavailable")
 
 
-def _fail() -> None:
+def _fail() -> NoReturn:
     raise ConversionFinalizationError() from None
 
 
@@ -68,51 +70,67 @@ def _decode(records: tuple[ManifestRecord, ...], captured: conversion.CapturedCo
 
 
 def _verify_archive(
+    authority: storage.WorkspaceMemoryAuthority,
     operation: storage.WorkspaceMemoryOperation,
-    receipt_snapshot: storage.MemoryTargetSnapshot,
+    receipt_snapshot: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
     prepared: conversion.PreparedConversionPayload,
+    *, read_only: bool = False,
 ) -> None:
-    if prepared.source.stat is None or prepared.backup is None or prepared.receipt is None:
-        _fail()
     old = prepared.source
     info = old.stat
+    if info is None or prepared.backup is None or prepared.receipt is None:
+        _fail()
     source_stat = storage.MemoryTargetStatIdentity(
         info.device, info.inode, info.mode, info.uid, info.gid, info.links,
         info.size, info.mtime_ns, info.ctime_ns,
     )
-    archive.archive_legacy_history_if_unchanged(
-        operation, receipt_snapshot, expected_source_stat=source_stat,
-        expected_digest=old.digest, expected_size=old.size,
-        backup_name=prepared.backup.basename,
-        expected_receipt_digest=prepared.receipt["blob_digest"],
-        expected_receipt_size=prepared.receipt["size"],
-    )
+    if read_only or type(receipt_snapshot) is quarantine.ValidatedQuarantineCopy:
+        application.require_conversion_receipt_binding(authority, receipt_snapshot)
+        anchor = authority.snapshot_target("history.jsonl")
+        archive.verify_legacy_backup_only(
+            operation, anchor, expected_source_stat=source_stat,
+            # Decoded/rebuilt prepared conversions require an existing source digest.
+            expected_digest=cast(str, old.digest), expected_size=old.size,
+            backup_name=prepared.backup.basename,
+        )
+        application.require_conversion_receipt_binding(authority, receipt_snapshot)
+    else:
+        archive.archive_legacy_history_if_unchanged(
+            # Earlier _bound_receipt and owner-issued snapshots establish this type.
+            operation, cast(storage.MemoryTargetSnapshot, receipt_snapshot), expected_source_stat=source_stat,
+            # Decoded/rebuilt prepared conversions require an existing source digest.
+            expected_digest=cast(str, old.digest), expected_size=old.size,
+            backup_name=prepared.backup.basename,
+            expected_receipt_digest=prepared.receipt["blob_digest"],
+            expected_receipt_size=prepared.receipt["size"],
+        )
 
 
 def _verify(
     authority: storage.WorkspaceMemoryAuthority,
     operation: storage.WorkspaceMemoryOperation,
-    receipt_snapshot: storage.MemoryTargetSnapshot,
-    receipt: dict,
+    receipt_snapshot: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+    receipt: receipt_codec.MemoryReceipt,
     tx_record: ManifestRecord,
     loaded_tx: transaction.CapturedTransactionPayload,
     captured: conversion.CapturedConversionPayload,
     prepared: conversion.PreparedConversionPayload,
     *,
     finalized: bool,
+    read_only: bool = False,
 ) -> None:
-    application._bound_receipt(authority, receipt_snapshot)
-    frozen_source = application._old_bytes(authority, prepared.source)
+    application.require_conversion_receipt_binding(authority, receipt_snapshot)
+    frozen_source = application.read_conversion_old_bytes(authority, prepared.source)
     if frozen_source is None:
         _fail()
-    frozen = {name: application._old_bytes(authority, prepared.targets[name]) for name in _TARGETS}
+    frozen = {name: application.read_conversion_old_bytes(authority, prepared.targets[name]) for name in _TARGETS}
     source_claim = prepared.source.to_payload()
     target_claims = {name: prepared.targets[name].to_payload() for name in _TARGETS}
     if prepared.disposition == "convert":
         claim = prepared.receipt
-        raw = receipt_snapshot.content
+        raw = application.receipt_evidence_bytes(receipt_snapshot)
         if (
-            raw is None or claim is None or prepared.backup is None
+            cast(object, raw) is None or claim is None or prepared.backup is None
             or prepared.transaction_captured_record_digest != tx_record.digest
             or claim["size"] != len(raw)
             or claim["blob_digest"] != hashlib.sha256(raw).hexdigest()
@@ -128,8 +146,8 @@ def _verify(
         )
         if prepared.outputs is None or prepared.canonical_row is None:
             _fail()
-        output = {name: application._output_bytes(authority, prepared.outputs[name]) for name in _TARGETS}
-        derived = preparation._output_bytes(prepared, frozen_source)
+        output = {name: application.read_conversion_output_bytes(authority, prepared.outputs[name]) for name in _TARGETS}
+        derived = preparation.derive_conversion_output_bytes(prepared, frozen_source)
         if any(output[name] != derived[name] for name in _TARGETS):
             _fail()
         row = derived["history.jsonl"].splitlines(keepends=True)[-1]
@@ -151,16 +169,16 @@ def _verify(
     if rebuilt.to_payload() != prepared.to_payload():
         _fail()
     for name in _TARGETS:
-        application._bound_receipt(authority, receipt_snapshot)
+        application.require_conversion_receipt_binding(authority, receipt_snapshot)
         snapshot = authority.snapshot_target(name)
-        application._status(snapshot, prepared.targets[name], frozen[name], output[name])
+        application.classify_conversion_target(snapshot, prepared.targets[name], frozen[name], output[name])
         if snapshot.content is not None:
             verification.durably_verify_target(operation, snapshot, output[name])
         elif output[name] is not None:
             _fail()
-    application._bound_receipt(authority, receipt_snapshot)
+    application.require_conversion_receipt_binding(authority, receipt_snapshot)
     if prepared.disposition == "preserve_nonempty_jsonl":
-        if not application._descriptor_matches(
+        if not application.conversion_snapshot_matches_descriptor(
             authority.snapshot_target("HISTORY.md"), prepared.source, frozen_source,
         ):
             _fail()
@@ -172,8 +190,8 @@ def _verify(
             _fail()
         # A terminal phase requires the helper's descriptor-bound, durable
         # backup-only proof, not merely absence of the old source name.
-        _verify_archive(operation, receipt_snapshot, prepared)
-        application._bound_receipt(authority, receipt_snapshot)
+        _verify_archive(authority, operation, receipt_snapshot, prepared, read_only=read_only)
+        application.require_conversion_receipt_binding(authority, receipt_snapshot)
         if authority.snapshot_target("HISTORY.md").exists:
             _fail()
     # Before archive, the source may have two links after a prior interrupted
@@ -198,12 +216,12 @@ def finalize_prepared_conversion(workspace: Path | str, *, workspace_id: str) ->
                 ):
                     _fail()
             raw = receipt_snapshot.content
-            receipt = receipt_codec._validate_payload(receipt_codec._decode(raw), raw)
+            receipt = receipt_codec.decode_memory_receipt_bytes(raw)
             captured_tx = transaction.capture_transaction_payload(
                 receipt, workspace_id=workspace_id,
                 workspace_identity=operation.workspace_identity,
             )
-            tx_records = application._chain(authority, "transactions", captured_tx.identity).load()
+            tx_records = application.open_conversion_manifest(authority, "transactions", captured_tx.identity).load()
             if len(tx_records) != 1 or tx_records[0].phase != "CAPTURED":
                 _fail()
             tx_record = tx_records[0]
@@ -212,9 +230,9 @@ def finalize_prepared_conversion(workspace: Path | str, *, workspace_id: str) ->
                 _fail()
             v1 = conversion.capture_conversion_payload(captured_tx.identity)
             captured = conversion.capture_receipt_tail_conversion_payload(captured_tx.identity)
-            if application._chain(authority, "conversions", v1.identity).load():
+            if application.open_conversion_manifest(authority, "conversions", v1.identity).load():
                 _fail()
-            manifest = application._chain(authority, "conversions", captured.identity)
+            manifest = application.open_conversion_manifest(authority, "conversions", captured.identity)
             records = manifest.load()
             prepared, jsonl, cursors, finalized = _decode(records, captured)
             _verify(
@@ -222,7 +240,7 @@ def finalize_prepared_conversion(workspace: Path | str, *, workspace_id: str) ->
                 captured, prepared, finalized=finalized is not None,
             )
             if prepared.disposition == "convert":
-                _verify_archive(operation, receipt_snapshot, prepared)
+                _verify_archive(authority, operation, receipt_snapshot, prepared)
                 if authority.snapshot_target("HISTORY.md").exists:
                     _fail()
             _verify(
@@ -236,7 +254,7 @@ def finalize_prepared_conversion(workspace: Path | str, *, workspace_id: str) ->
                     jsonl_applied_record_digest=records[2].digest,
                     cursors_applied_record_digest=records[3].digest,
                 )
-                application._bound_receipt(authority, receipt_snapshot)
+                application.require_conversion_receipt_binding(authority, receipt_snapshot)
                 manifest.append(
                     predecessor_digest=records[3].digest, phase="LEGACY_FINALIZED",
                     payload=payload.to_payload(),
@@ -254,7 +272,7 @@ def finalize_prepared_conversion(workspace: Path | str, *, workspace_id: str) ->
                     captured, prepared, jsonl, cursors, finalized,
                     finalized_record_digest=records[4].digest,
                 )
-                application._bound_receipt(authority, receipt_snapshot)
+                application.require_conversion_receipt_binding(authority, receipt_snapshot)
                 manifest.append(
                     predecessor_digest=records[4].digest, phase="COMPLETE",
                     payload=payload.to_payload(),
@@ -274,4 +292,31 @@ def finalize_prepared_conversion(workspace: Path | str, *, workspace_id: str) ->
         _fail()
 
 
-__all__ = ["ConversionFinalizationError", "finalize_prepared_conversion"]
+def decode_conversion_finalization_evidence(records: tuple[ManifestRecord, ...], captured: conversion.CapturedConversionPayload) -> tuple[conversion.PreparedConversionPayload, conversion.JsonlAppliedConversionPayload, conversion.CursorsAppliedConversionPayload, conversion.LegacyFinalizedConversionPayload | None]:
+    """Decode the existing conversion chain and ordered predecessor claims."""
+    return _decode(records, captured)
+
+
+def require_conversion_finalization_binding(
+    authority: storage.WorkspaceMemoryAuthority,
+    operation: storage.WorkspaceMemoryOperation,
+    receipt_snapshot: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+    receipt: receipt_codec.MemoryReceipt,
+    tx_record: ManifestRecord,
+    loaded_tx: transaction.CapturedTransactionPayload,
+    captured: conversion.CapturedConversionPayload,
+    prepared: conversion.PreparedConversionPayload,
+    *,
+    finalized: bool,
+    read_only: bool = False,
+) -> None:
+    """Require the unchanged receipt, targets, blobs and archive proof binding."""
+    return _verify(authority, operation, receipt_snapshot, receipt, tx_record, loaded_tx, captured, prepared, finalized=finalized, read_only=read_only)
+
+
+__all__ = [
+    "ConversionFinalizationError",
+    "finalize_prepared_conversion",
+    "decode_conversion_finalization_evidence",
+    "require_conversion_finalization_binding",
+]

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import multiprocessing
 import os
+import pickle
 import stat
 import threading
 from dataclasses import replace
@@ -19,6 +22,7 @@ from nanobot.cron.occurrence_store import (
     OccurrenceAlreadyCompletedError,
     OccurrenceConflictError,
     OccurrenceCorruptError,
+    OccurrenceExecutionBusyError,
     OccurrenceOwnershipError,
     OccurrencePersistenceError,
     OccurrenceReconciliationRequiredError,
@@ -51,15 +55,41 @@ def _claim_in_subprocess(root: str, ready: object, outcomes: object, owner: str)
 def _complete_in_fork(store: CronOccurrenceStore, claim: object, outcomes: object) -> None:
     """Try to use a fork-inherited in-memory claim from a new process."""
     try:
-        store.complete(claim, {"status": "forked"})  # type: ignore[arg-type]
+        _complete(store, claim, {"status": "forked"})  # type: ignore[arg-type]
     except OccurrenceOwnershipError:
         outcomes.put("rejected")  # type: ignore[union-attr]
     else:
         outcomes.put("accepted")  # type: ignore[union-attr]
 
 
+def _use_fence_in_fork(store, claim, fence, outcomes, release) -> None:
+    try:
+        store.begin_execution(claim, fence)
+    except OccurrenceOwnershipError:
+        outcomes.put("rejected")
+    else:
+        outcomes.put("accepted")
+    release.wait()
+
+
 def _store(tmp_path: Path) -> CronOccurrenceStore:
     return CronOccurrenceStore(tmp_path / "private-occurrences", namespace=NAMESPACE)
+
+
+def test_qualified_module_capture_retains_in_place_flock_patches(tmp_path: Path, monkeypatch) -> None:
+    store = _store(tmp_path)
+    module = occurrence_store._fcntl
+    original = module.flock
+    calls = []
+
+    def observed(fd, operation):
+        calls.append(operation)
+        return original(fd, operation)
+
+    monkeypatch.setattr(module, "flock", observed)
+    monkeypatch.setattr(occurrence_store, "_fcntl", None)
+    _claim(store)
+    assert module.LOCK_EX in calls and module.LOCK_UN in calls
 
 
 def _claim(store: CronOccurrenceStore, *, owner: str = "worker-a", revision: int = 7,
@@ -72,6 +102,15 @@ def _claim(store: CronOccurrenceStore, *, owner: str = "worker-a", revision: int
         destination_policy=DESTINATION_POLICY,
         owner=owner,
     )
+
+
+def _complete(store: CronOccurrenceStore, claim, completion: dict[str, object]):
+    async def execute():
+        with store.acquire_execution_fence(claim) as fence:
+            store.begin_execution(claim, fence)
+            return store.complete(claim, completion, fence)
+
+    return asyncio.run(execute())
 
 
 def _wire_for_claim(store: CronOccurrenceStore, *, completion: dict[str, object] | None = None,
@@ -208,7 +247,7 @@ def test_concurrent_open_does_not_invalidate_live_owner_claim(tmp_path: Path) ->
     ]
     assert observer.get(claim.occurrence_id).state == "claimed"
 
-    completed = store.complete(claim, {"status": "ok", "result": "computed once"})
+    completed = _complete(store, claim, {"status": "ok", "result": "computed once"})
     assert completed.state == "completed"
     assert observer.get(claim.occurrence_id).completion == {"result": "computed once", "status": "ok"}
 
@@ -232,8 +271,8 @@ def test_reopen_requires_reconciliation_and_stale_owner_cannot_mutate_successor(
     assert successor.owner == "recovery-worker"
 
     with pytest.raises(OccurrenceOwnershipError):
-        original_store.complete(original, {"status": "ok"})
-    completed = reopened.complete(successor, {"status": "ok", "result": "reconciled"})
+        _complete(original_store, original, {"status": "ok"})
+    completed = _complete(reopened, successor, {"status": "ok", "result": "reconciled"})
     assert completed.generation == 2
     assert completed.state == "completed"
 
@@ -249,21 +288,23 @@ def test_corrupt_record_fails_closed_and_is_not_replaced(tmp_path: Path) -> None
     assert record_path.read_text(encoding="utf-8") == "{not valid json"
 
 
-def test_completion_is_idempotent_only_for_identical_canonical_content(tmp_path: Path) -> None:
+async def test_completion_is_idempotent_only_for_identical_canonical_content(tmp_path: Path) -> None:
     store = _store(tmp_path)
     claim = _claim(store)
-    first = store.complete(claim, {"status": "ok", "result": {"count": 1}})
-    duplicate = store.complete(claim, {"result": {"count": 1}, "status": "ok"})
-    assert duplicate == first
+    with store.acquire_execution_fence(claim) as fence:
+        store.begin_execution(claim, fence)
+        first = store.complete(claim, {"status": "ok", "result": {"count": 1}}, fence)
+        duplicate = store.complete(claim, {"result": {"count": 1}, "status": "ok"}, fence)
+        assert duplicate == first
 
-    with pytest.raises(OccurrenceConflictError, match="completion"):
-        store.complete(claim, {"status": "error", "result": {"count": 1}})
+        with pytest.raises(OccurrenceConflictError, match="completion"):
+            store.complete(claim, {"status": "error", "result": {"count": 1}}, fence)
 
     with pytest.raises(OccurrenceAlreadyCompletedError):
         _claim(store, revision=7)
 
 
-def test_completed_retry_reverifies_durability_after_replace_directory_fsync_failure(
+async def test_completed_retry_reverifies_durability_after_replace_directory_fsync_failure(
     tmp_path: Path,
 ) -> None:
     store = _store(tmp_path)
@@ -272,18 +313,20 @@ def test_completed_retry_reverifies_durability_after_replace_directory_fsync_fai
 
     # The temp file fsync succeeds but the post-replace directory fsync fails.
     # The record may be visible, yet the caller receives no delivery authority.
-    with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=[None, OSError("directory")]):
-        with pytest.raises(OccurrencePersistenceError):
-            store.complete(claim, completion)
-    assert store.get(claim.occurrence_id).state == "completed"
+    with store.acquire_execution_fence(claim) as fence:
+        store.begin_execution(claim, fence)
+        with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=[None, OSError("directory")]):
+            with pytest.raises(OccurrencePersistenceError):
+                store.complete(claim, completion, fence)
+        assert store.get(claim.occurrence_id).state == "completed"
 
-    # An identical retry must fsync and verify the existing completed record;
-    # merely returning the visible JSON would incorrectly authorize delivery.
-    with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=OSError("still not durable")):
-        with pytest.raises(OccurrencePersistenceError):
-            store.complete(claim, completion)
+        # An identical retry must fsync and verify the existing completed record;
+        # merely returning the visible JSON would incorrectly authorize delivery.
+        with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=OSError("still not durable")):
+            with pytest.raises(OccurrencePersistenceError):
+                store.complete(claim, completion, fence)
 
-    assert store.complete(claim, completion).state == "completed"
+        assert store.complete(claim, completion, fence).state == "completed"
     reopened = CronOccurrenceStore(store.root, namespace=NAMESPACE)
     assert reopened.get(claim.occurrence_id).completion == completion
 
@@ -307,7 +350,7 @@ def test_encoded_record_limit_applies_before_claim_completion_and_reclaim_writes
     completed_wire = _wire_for_claim(completion_store, completion=completion)
     with patch("nanobot.cron.occurrence_store._MAX_RECORD_BYTES", len(completed_wire) - 1):
         with pytest.raises(OccurrenceConflictError, match="encoded record"):
-            completion_store.complete(completion_claim, completion)
+            _complete(completion_store, completion_claim, completion)
     assert completion_store.get(completion_claim.occurrence_id).state == "claimed"
 
     reclaimed_wire = _wire_for_claim(
@@ -335,8 +378,8 @@ def test_only_the_exact_process_local_issued_claim_can_complete(tmp_path: Path) 
     store = _store(tmp_path)
     claim = _claim(store)
     with pytest.raises(OccurrenceOwnershipError, match="issued"):
-        store.complete(replace(claim), {"status": "forged"})
-    assert store.complete(claim, {"status": "ok"}).state == "completed"
+        _complete(store, replace(claim), {"status": "forged"})
+    assert _complete(store, claim, {"status": "ok"}).state == "completed"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="fork inheritance is POSIX-only")
@@ -352,7 +395,7 @@ def test_fork_inherited_claim_cannot_complete(tmp_path: Path) -> None:
     child.join(timeout=15)
     assert child.exitcode == 0
     assert outcomes.get(timeout=3) == "rejected"
-    assert store.complete(claim, {"status": "parent"}).state == "completed"
+    assert _complete(store, claim, {"status": "parent"}).state == "completed"
 
 
 def test_reclaim_issues_a_new_local_claim_object(tmp_path: Path) -> None:
@@ -366,11 +409,13 @@ def test_reclaim_issues_a_new_local_claim_object(tmp_path: Path) -> None:
         resolution="confirmed_not_started",
     )
     with pytest.raises(OccurrenceOwnershipError, match="issued"):
-        store.complete(replace(successor), {"status": "forged"})
-    assert store.complete(successor, {"status": "ok"}).generation == 2
+        _complete(store, replace(successor), {"status": "forged"})
+    assert _complete(store, successor, {"status": "ok"}).generation == 2
 
 
-def test_write_and_replace_failures_do_not_return_execution_or_delivery_authority(tmp_path: Path) -> None:
+async def test_write_and_replace_failures_do_not_return_execution_or_delivery_authority(
+    tmp_path: Path,
+) -> None:
     store = _store(tmp_path)
     with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=OSError("fsync failed")):
         with pytest.raises(OccurrencePersistenceError):
@@ -378,14 +423,16 @@ def test_write_and_replace_failures_do_not_return_execution_or_delivery_authorit
 
     durable_store = _store(tmp_path / "second")
     claim = _claim(durable_store)
-    with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=OSError("fsync failed")):
-        with pytest.raises(OccurrencePersistenceError):
-            durable_store.complete(claim, {"status": "ok"})
-    assert durable_store.get(claim.occurrence_id).state == "claimed"
+    with durable_store.acquire_execution_fence(claim) as fence:
+        durable_store.begin_execution(claim, fence)
+        with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=OSError("fsync failed")):
+            with pytest.raises(OccurrencePersistenceError):
+                durable_store.complete(claim, {"status": "ok"}, fence)
+        assert durable_store.get(claim.occurrence_id).state == "claimed"
 
-    with patch("nanobot.cron.occurrence_store.os.rename", side_effect=OSError("replace failed")):
-        with pytest.raises(OccurrencePersistenceError):
-            durable_store.complete(claim, {"status": "ok"})
+        with patch("nanobot.cron.occurrence_store.os.rename", side_effect=OSError("replace failed")):
+            with pytest.raises(OccurrencePersistenceError):
+                durable_store.complete(claim, {"status": "ok"}, fence)
     assert durable_store.get(claim.occurrence_id).state == "claimed"
 
 
@@ -561,3 +608,165 @@ def test_root_symlink_and_unqualified_platform_fail_closed(tmp_path: Path) -> No
     with patch.object(occurrence_store, "_fcntl", None, create=True):
         with pytest.raises(OccurrencePersistenceError, match="qualified POSIX"):
             _store(tmp_path / "unsupported")
+
+
+async def test_execution_fence_blocks_exact_reconciliation_and_other_occurrences_do_not_contend(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    first = _claim(store)
+    second = _claim(store, fire_time_ms=1_700_000_060_000)
+    with store.acquire_execution_fence(first) as first_fence:
+        store.begin_execution(first, first_fence)
+        with pytest.raises(OccurrenceExecutionBusyError, match="live execution"):
+            store.reclaim_after_reconciliation(
+                first.occurrence_id,
+                owner="recovery",
+                expected_owner=first.owner,
+                expected_generation=first.generation,
+                resolution="confirmed_not_started",
+            )
+        with store.acquire_execution_fence(second) as second_fence:
+            store.begin_execution(second, second_fence)
+            assert second_fence.active and second_fence.started
+        unchanged = store.get(first.occurrence_id)
+        assert (unchanged.owner, unchanged.generation, unchanged.state) == ("worker-a", 1, "claimed")
+
+    successor = store.reclaim_after_reconciliation(
+        first.occurrence_id,
+        owner="recovery",
+        expected_owner=first.owner,
+        expected_generation=first.generation,
+        resolution="confirmed_not_started",
+    )
+    assert successor.generation == 2
+
+
+async def test_fence_capability_rejects_copy_serialization_wrong_task_store_and_inactive_use(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    claim = _claim(store)
+    fence = store.acquire_execution_fence(claim)
+    with pytest.raises(TypeError, match="copied"):
+        copy.copy(fence)
+    with pytest.raises(TypeError, match="serialized"):
+        pickle.dumps(fence)
+
+    async def wrong_task() -> None:
+        with pytest.raises(OccurrenceOwnershipError, match="transferred"):
+            store.begin_execution(claim, fence)
+
+    await asyncio.create_task(wrong_task())
+    foreign = CronOccurrenceStore(store.root, namespace=NAMESPACE)
+    with pytest.raises(OccurrenceOwnershipError):
+        foreign.begin_execution(claim, fence)
+    store.begin_execution(claim, fence)
+    store.release_execution_fence(fence)
+    assert not fence.active
+    with pytest.raises(OccurrenceOwnershipError, match="inactive"):
+        store.complete(claim, {"status": "ok"}, fence)
+
+
+@pytest.mark.parametrize("boundary", ["file", "root"])
+async def test_execution_lock_fsync_failure_and_existing_residue_retry_grant_no_fence(
+    tmp_path: Path,
+    boundary: str,
+) -> None:
+    store = _store(tmp_path)
+    claim = _claim(store)
+    lock_path = store.root / f".execution.{claim.occurrence_id}.lock"
+    original_fsync = os.fsync
+    failures = 0
+
+    def fail_boundary(fd: int) -> None:
+        nonlocal failures
+        is_root = _same_inode(fd, store.root)
+        if (boundary == "root" and is_root) or (
+            boundary == "file" and stat.S_ISREG(os.fstat(fd).st_mode)
+        ):
+            failures += 1
+            raise OSError(f"{boundary} fsync failed")
+        original_fsync(fd)
+
+    with patch("nanobot.cron.occurrence_store.os.fsync", side_effect=fail_boundary):
+        for _ in range(2):
+            with pytest.raises(OccurrencePersistenceError, match="execution lock"):
+                store.acquire_execution_fence(claim)
+            assert store._issued_fences == {}
+            assert lock_path.exists()
+    assert failures == 2
+    assert lock_path.exists()
+    assert stat.S_IMODE(lock_path.stat().st_mode) == 0o600
+    assert lock_path.stat().st_nlink == 1
+    with store.acquire_execution_fence(claim) as fence:
+        store.begin_execution(claim, fence)
+    assert lock_path.exists()
+    assert sorted(path.name for path in store.root.glob(".execution.*.lock")) == [lock_path.name]
+
+
+@pytest.mark.parametrize("unsafe", ["mode", "hardlink", "fifo", "symlink"])
+def test_constructor_rejects_unsafe_execution_lock_entries(tmp_path: Path, unsafe: str) -> None:
+    store = _store(tmp_path)
+    claim = _claim(store)
+    name = f".execution.{claim.occurrence_id}.lock"
+    path = store.root / name
+    path.write_bytes(b"")
+    path.chmod(0o600)
+    if unsafe == "mode":
+        path.chmod(0o640)
+    elif unsafe == "hardlink":
+        os.link(path, tmp_path / "execution-lock-alias")
+    else:
+        path.unlink()
+        if unsafe == "fifo":
+            os.mkfifo(path, 0o600)
+        else:
+            target = tmp_path / "execution-lock-target"
+            target.write_bytes(b"")
+            target.chmod(0o600)
+            path.symlink_to(target)
+    with pytest.raises(OccurrenceCorruptError, match="execution lock"):
+        CronOccurrenceStore(store.root, namespace=NAMESPACE)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="fork inheritance is POSIX-only")
+async def test_fork_child_drops_inherited_fence_without_unlocking_or_retaining_parent_lock(
+    tmp_path: Path,
+) -> None:
+    if "fork" not in multiprocessing.get_all_start_methods():
+        pytest.skip("fork is unavailable on this interpreter")
+    store = _store(tmp_path)
+    claim = _claim(store)
+    context = multiprocessing.get_context("fork")
+    outcomes = context.Queue()
+    release = context.Event()
+    fence = store.acquire_execution_fence(claim)
+    store.begin_execution(claim, fence)
+    child = context.Process(
+        target=_use_fence_in_fork,
+        args=(store, claim, fence, outcomes, release),
+    )
+    child.start()
+    assert outcomes.get(timeout=3) == "rejected"
+    observer = CronOccurrenceStore(store.root, namespace=NAMESPACE)
+    with pytest.raises(OccurrenceExecutionBusyError):
+        observer.reclaim_after_reconciliation(
+            claim.occurrence_id,
+            owner="recovery",
+            expected_owner=claim.owner,
+            expected_generation=claim.generation,
+            resolution="confirmed_compensated",
+        )
+    store.release_execution_fence(fence)
+    successor = observer.reclaim_after_reconciliation(
+        claim.occurrence_id,
+        owner="recovery",
+        expected_owner=claim.owner,
+        expected_generation=claim.generation,
+        resolution="confirmed_compensated",
+    )
+    assert successor.generation == 2
+    release.set()
+    child.join(timeout=10)
+    assert child.exitcode == 0

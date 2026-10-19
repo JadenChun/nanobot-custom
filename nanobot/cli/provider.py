@@ -36,11 +36,9 @@ _OAUTH_PROVIDER_DEFAULT_MODELS: dict[str, str] = {
 
 class _OAuthToken(Protocol):
     access: str | None
+    refresh: str
+    expires: int
     account_id: str | None
-
-
-class _GetOAuthToken(Protocol):
-    def __call__(self, *, proxy: str | None = None) -> _OAuthToken | None: ...
 
 
 class _LoginOAuthInteractive(Protocol):
@@ -50,19 +48,21 @@ class _LoginOAuthInteractive(Protocol):
         print_fn: Callable[[str], None],
         prompt_fn: Callable[[str], str],
         proxy: str | None = None,
+        storage: object | None = None,
     ) -> _OAuthToken | None: ...
 
 
-class _OAuthProviderConfig(Protocol):
-    token_filename: str
+class AcquisitionOnlyStorage:
+    """Satisfy oauth-cli-kit without granting it persistent storage authority."""
 
+    def save(self, token: object) -> None:
+        del token
 
-class _TokenStorage(Protocol):
-    def get_token_path(self) -> Path: ...
+    def load(self) -> None:
+        return None
 
-
-class _FileTokenStorageFactory(Protocol):
-    def __call__(self, *, token_filename: str) -> _TokenStorage: ...
+    def get_token_path(self) -> Path:
+        raise RuntimeError("acquisition-only storage has no path")
 
 
 def _required_module_attribute(module_name: str, attribute: str) -> object:
@@ -74,31 +74,11 @@ def _required_module_attribute(module_name: str, attribute: str) -> object:
         raise ImportError(f"{module_name}.{attribute} is unavailable") from exc
 
 
-def _load_openai_oauth_client() -> tuple[_GetOAuthToken, _LoginOAuthInteractive]:
+def _load_openai_oauth_client() -> _LoginOAuthInteractive:
     """Load the untyped OAuth client behind a typed boundary."""
-    return (
-        cast(_GetOAuthToken, _required_module_attribute("oauth_cli_kit", "get_token")),
-        cast(
-            _LoginOAuthInteractive,
-            _required_module_attribute("oauth_cli_kit", "login_oauth_interactive"),
-        ),
-    )
-
-
-def _load_openai_oauth_storage() -> tuple[_OAuthProviderConfig, _FileTokenStorageFactory]:
-    """Load the untyped OAuth storage API behind a typed boundary."""
-    return (
-        cast(
-            _OAuthProviderConfig,
-            _required_module_attribute(
-                "oauth_cli_kit.providers",
-                "OPENAI_CODEX_PROVIDER",
-            ),
-        ),
-        cast(
-            _FileTokenStorageFactory,
-            _required_module_attribute("oauth_cli_kit.storage", "FileTokenStorage"),
-        ),
+    return cast(
+        _LoginOAuthInteractive,
+        _required_module_attribute("oauth_cli_kit", "login_oauth_interactive"),
     )
 
 
@@ -217,48 +197,87 @@ def provider_logout(
     handler()
 
 
+@provider_app.command("reimport")
+def provider_reimport(
+    provider: str = typer.Argument(
+        ...,
+        help="Credential source to reimport (openai-codex or github-copilot)",
+    ),
+) -> None:
+    """Explicitly replace the canonical credential from a read-only legacy source."""
+    from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
+
+    spec = _resolve_oauth_provider(provider)
+    if spec.name == "openai_codex":
+        from nanobot.providers.codex_auth import reimport_codex
+
+        token = reimport_codex()
+    elif spec.name == "github_copilot":
+        from nanobot.providers.copilot_auth import reimport_copilot
+
+        token = reimport_copilot()
+    else:
+        console.print(f"[red]Reimport is not supported for {spec.label}[/red]")
+        raise typer.Exit(1)
+    if token is None:
+        console.print("[yellow]! No importable credential was found[/yellow]")
+        raise typer.Exit(1)
+    invalidate_oauth_model_catalog(spec.name)
+    console.print(f"[green]✓ Reimported {spec.label} credential[/green]")
+
+
 def _login_openai_codex() -> None:
     try:
         from nanobot.config.loader import load_config, resolve_config_env_vars
+        from nanobot.providers.codex_auth import get_codex_authority
+        from nanobot.providers.oauth_credentials import OAuthToken as CanonicalToken
 
-        get_token, login_oauth_interactive = _load_openai_oauth_client()
+        login_oauth_interactive = _load_openai_oauth_client()
         proxy = None
         try:
             proxy = resolve_config_env_vars(load_config()).providers.openai_codex.proxy or None
         except ValueError as e:
             console.print(f"[red]{e}[/red]")
             raise typer.Exit(1) from e
-        token = None
-        with suppress(Exception):
-            token = get_token(proxy=proxy)
-        if not (token and token.access):
-            console.print("[cyan]Starting interactive OAuth login...[/cyan]\n")
-            token = login_oauth_interactive(
-                print_fn=lambda s: console.print(s),
-                prompt_fn=lambda s: typer.prompt(s),
-                proxy=proxy,
-            )
+        authority = get_codex_authority()
+        generation = authority.begin_login()
+        console.print("[cyan]Starting interactive OAuth login...[/cyan]\n")
+        capture = AcquisitionOnlyStorage()
+        token = login_oauth_interactive(
+            print_fn=lambda s: console.print(s),
+            prompt_fn=lambda s: typer.prompt(s),
+            proxy=proxy,
+            storage=capture,
+        )
         if not (token and token.access):
             console.print("[red]✗ Authentication failed[/red]")
             raise typer.Exit(1)
-        console.print(
-            f"[green]✓ Authenticated with OpenAI Codex[/green]  [dim]{token.account_id}[/dim]"
+        authority.commit_login(
+            CanonicalToken(token.access, token.refresh, token.expires, token.account_id),
+            generation,
         )
+        from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
+
+        invalidate_oauth_model_catalog("openai_codex")
+        console.print("[green]✓ Authenticated with OpenAI Codex[/green]")
     except ImportError:
         console.print(f"[red]{OAUTH_CLI_KIT_MISSING_MESSAGE}[/red]")
         raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        console.print(f"[red]Authentication error ({type(exc).__name__})[/red]")
+        raise typer.Exit(1) from exc
 
 
 def _logout_openai_codex() -> None:
     """Clear local OAuth credentials for OpenAI Codex."""
-    try:
-        provider_config, storage_factory = _load_openai_oauth_storage()
-    except ImportError:
-        console.print(f"[red]{OAUTH_CLI_KIT_MISSING_MESSAGE}[/red]")
-        raise typer.Exit(1)
+    from nanobot.providers.codex_auth import logout_codex
+    from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
-    storage = storage_factory(token_filename=provider_config.token_filename)
-    _delete_oauth_files(storage.get_token_path(), _PROVIDER_DISPLAY["openai_codex"])
+    logout_codex()
+    invalidate_oauth_model_catalog("openai_codex")
+    console.print("[green]✓ Logged out from OpenAI Codex[/green]")
 
 
 def _login_xai_grok() -> None:
@@ -310,40 +329,12 @@ def _logout_xai_grok() -> None:
 
 def _logout_github_copilot() -> None:
     """Clear local OAuth credentials for GitHub Copilot."""
-    try:
-        from nanobot.providers.github_copilot_provider import get_storage
-    except ImportError:
-        console.print(f"[red]{OAUTH_CLI_KIT_MISSING_MESSAGE}[/red]")
-        raise typer.Exit(1)
+    from nanobot.providers.copilot_auth import logout_copilot
+    from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
 
-    storage = get_storage()
-    _delete_oauth_files(storage.get_token_path(), _PROVIDER_DISPLAY["github_copilot"])
-
-
-def _delete_oauth_files(token_path: Path, provider_label: str) -> None:
-    """Delete OAuth token and lock files, reporting the result."""
-    removed_paths: list[Path] = []
-    skipped: list[tuple[Path, OSError]] = []
-    for path in (token_path, token_path.with_suffix(".lock")):
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            continue
-        except OSError as exc:
-            skipped.append((path, exc))
-            continue
-        removed_paths.append(path)
-
-    if not removed_paths and not skipped:
-        console.print(f"[yellow]! No local OAuth credentials found for {provider_label}[/yellow]")
-        return
-
-    if removed_paths:
-        console.print(f"[green]✓ Logged out from {provider_label}[/green]")
-        for path in removed_paths:
-            console.print(f"[dim]Removed: {path}[/dim]")
-    for path, exc in skipped:
-        console.print(f"[yellow]! Could not remove {path}: {exc}[/yellow]")
+    logout_copilot()
+    invalidate_oauth_model_catalog("github_copilot")
+    console.print("[green]✓ Logged out from GitHub Copilot[/green]")
 
 
 def _login_github_copilot() -> None:
@@ -351,16 +342,16 @@ def _login_github_copilot() -> None:
         from nanobot.providers.github_copilot_provider import login_github_copilot
 
         console.print("[cyan]Starting GitHub Copilot device flow...[/cyan]\n")
-        token = login_github_copilot(
+        login_github_copilot(
             print_fn=lambda s: console.print(s),
             prompt_fn=lambda s: typer.prompt(s),
         )
-        account = token.account_id or "GitHub"
-        console.print(
-            f"[green]✓ Authenticated with GitHub Copilot[/green]  [dim]{account}[/dim]"
-        )
+        from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
+
+        invalidate_oauth_model_catalog("github_copilot")
+        console.print("[green]✓ Authenticated with GitHub Copilot[/green]")
     except Exception as e:
-        console.print(f"[red]Authentication error: {e}[/red]")
+        console.print(f"[red]Authentication error ({type(e).__name__})[/red]")
         raise typer.Exit(1)
 
 

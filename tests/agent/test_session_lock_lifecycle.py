@@ -2,19 +2,37 @@ from __future__ import annotations
 
 import asyncio
 import gc
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+from nanobot.agent.loop import AgentLoop
+from tests.agent.p6_admitted_fixtures import AgentInputs
+from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
+from tests.agent.p6_admitted_fixtures import admitted_sync as admitted_sync
 
-def _make_loop(loop_factory):
+
+def _make_loop(inputs: AgentInputs) -> AgentLoop:
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    return loop_factory(provider=provider)
+    return AgentLoop(
+        bus=inputs.bus,
+        provider=provider,
+        workspace=inputs.config.workspace_path,
+        model="test-model",
+        session_manager=inputs.sessions,
+        tool_registry=inputs.tools,
+        cron_service=inputs.cron,
+        turn_delivery_factory=inputs.delivery,
+        tools_config=inputs.config.tools,
+        restrict_to_workspace=True,
+        enable_legacy_auto_compact=False,
+    )
 
 
-def test_idle_agent_session_locks_are_released(loop_factory):
-    loop = _make_loop(loop_factory)
+def test_idle_agent_session_locks_are_released(tmp_path: Path, admitted_sync):
+    loop = admitted_sync(tmp_path, _make_loop)
 
     for index in range(1000):
         lock = loop._get_session_lock(f"api:temporary-{index}")
@@ -26,8 +44,8 @@ def test_idle_agent_session_locks_are_released(loop_factory):
 
 
 @pytest.mark.asyncio
-async def test_waiter_keeps_agent_session_lock_alive(loop_factory):
-    loop = _make_loop(loop_factory)
+async def test_waiter_keeps_agent_session_lock_alive(tmp_path: Path, admitted_async):
+    loop = await admitted_async(tmp_path, _make_loop)
     owner_lock = loop._get_session_lock("api:shared")
     await owner_lock.acquire()
     waiter_started = asyncio.Event()

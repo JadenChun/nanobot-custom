@@ -10,10 +10,90 @@ import pytest
 
 from nanobot.agent import memory_recovery_conversion_apply as apply
 from nanobot.agent import memory_recovery_conversion_runtime as prepare
+from nanobot.agent import memory_recovery_quarantine_storage as quarantine
 from nanobot.agent import memory_recovery_target_mutation as mutation
+from nanobot.agent import memory_recovery_transaction_prepare as transaction_prepare
 from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
 
 _WORKSPACE_ID = "a" * 32
+
+
+@pytest.mark.parametrize("owner,name,private", [
+    (apply, "receipt_evidence_bytes", "_receipt_bytes"),
+    (apply, "receipt_evidence_stat", "_receipt_stat"),
+    (transaction_prepare, "receipt_snapshot_stat", "_receipt_stat"),
+])
+@pytest.mark.parametrize("raises", [False, True])
+def test_receipt_owner_wrapper_dynamic_one_call_identity(
+    monkeypatch: pytest.MonkeyPatch, owner, name: str, private: str, raises: bool,
+) -> None:
+    wrapper = getattr(owner, name)
+    evidence = object()
+    result = object()
+    sentinel = RuntimeError("synthetic receipt seam")
+    calls = []
+
+    def helper(*args, **kwargs):
+        calls.append((args, kwargs))
+        if raises:
+            raise sentinel
+        return result
+
+    monkeypatch.setattr(owner, private, helper)
+    if raises:
+        with pytest.raises(RuntimeError) as failure:
+            wrapper(evidence)
+        assert failure.value is sentinel
+    else:
+        assert wrapper(evidence) is result
+    assert len(calls) == 1
+    assert calls[0][0] == (evidence,)
+    assert calls[0][0][0] is evidence
+    assert calls[0][1] == {}
+
+
+def test_private_receipt_copy_getters_are_live_and_ordered(monkeypatch: pytest.MonkeyPatch) -> None:
+    evidence = object.__new__(quarantine.ValidatedQuarantineCopy)
+    raw = b"synthetic receipt"
+    evidence._raw = raw
+    evidence._original = tuple(range(9))
+    calls = []
+    sentinel = RuntimeError("later getter")
+
+    def current(self):
+        assert self is evidence
+        calls.append("current")
+        if len(calls) == 2:
+            raise sentinel
+
+    monkeypatch.setattr(quarantine.ValidatedQuarantineCopy, "require_current", current)
+    assert apply._receipt_bytes(evidence) is raw
+    with pytest.raises(RuntimeError) as failure:
+        apply._receipt_stat(evidence)
+    assert failure.value is sentinel
+    assert calls == ["current", "current"]
+
+
+def test_private_receipt_stat_fallback_preserves_invalid_and_subclass_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CopySubclass(quarantine.ValidatedQuarantineCopy):
+        pass
+
+    calls = []
+    result = {"synthetic": 1}
+
+    def stat(evidence):
+        calls.append(evidence)
+        return result
+
+    monkeypatch.setattr(transaction_prepare, "_receipt_stat", stat)
+    for evidence in (object(), object.__new__(CopySubclass)):
+        assert apply._receipt_stat(evidence) is result
+        assert calls[-1] is evidence
+        with pytest.raises(apply.ConversionApplyError):
+            apply._receipt_bytes(evidence)
+    assert len(calls) == 2
 
 
 def _workspace(tmp_path: Path, *, jsonl: bytes | None = None) -> Path:

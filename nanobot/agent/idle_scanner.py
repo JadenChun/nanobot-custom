@@ -13,10 +13,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import monotonic
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 
 from nanobot.agent.idle_compaction import (
     IdleAuxiliaryLimits,
@@ -149,7 +150,7 @@ class IdleScannerCapture:
     checkpoint: IdleCheckpointCapture
     binding: IdleRuntimeBinding
     blocker: IdleBlockerSnapshot
-    summary_adapter: object = field(repr=False, compare=False)
+    summary_adapter: IdleSummaryAdapter = field(repr=False, compare=False)
     root_authority: SourceRootAuthority = field(repr=False, compare=False)
     _publication: _PublicationState = field(repr=False, compare=False, default_factory=_PublicationState)
 
@@ -160,6 +161,27 @@ class IdleScannerCapture:
     @property
     def i2_capture(self) -> IdleCheckpointCapture:
         return self.checkpoint
+
+    def require_publication_available(self) -> None:
+        """Refuse reuse without consuming an attempt before its remaining checks."""
+
+        if self._publication.consumed:
+            raise IdleScannerPublicationConflict("idle publication was already consumed")
+
+    def consume_publication(self) -> None:
+        """Consume the attempt at the scanner's existing pre-I2 boundary."""
+
+        self._publication.consumed = True
+
+    def record_publication_completion(self) -> None:
+        """Record normal I2 return, not independent admission or durability proof."""
+
+        self._publication.completed = True
+
+    def publication_returned_normally(self) -> bool:
+        """Observe normal return when cancellation reaches the registry await."""
+
+        return self._publication.completed
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,17 +291,17 @@ class IdleCompactionScanner:
         binding_registry: IdleRuntimeBindingRegistry | None = None,
         blocker_authority: IdleBlockerAuthority | object | None = None,
         summary_adapter: IdleSummaryAdapter | object | None = None,
-        summary_adapter_factory: object | None = None,
-        summary_factory: object | None = None,
+        summary_adapter_factory: Callable[[IdleRuntimeBinding], IdleSummaryAdapter | Awaitable[IdleSummaryAdapter]] | None = None,
+        summary_factory: Callable[[IdleRuntimeBinding], IdleSummaryAdapter | Awaitable[IdleSummaryAdapter]] | None = None,
         policy: IdleCompactionPolicy | IdleRuntimeLimits | IdleCompactionConfig | None = None,
         limits: IdleCompactionPolicy | IdleRuntimeLimits | IdleCompactionConfig | None = None,
         config: IdleCompactionPolicy | IdleRuntimeLimits | IdleCompactionConfig | None = None,
         discovery: SourceDiscoveryCursor | None = None,
         discovery_limits: SourceDiscoveryLimits | None = None,
-        coordinator: IdleCompactionCoordinator[object, object] | None = None,
-        utc_clock: object | None = None,
-        clock: object | None = None,
-        monotonic_clock: object | None = None,
+        coordinator: IdleCompactionCoordinator[object, object] | IdleCompactionCoordinator[IdleScannerCapture, IdleScannerComputation] | None = None,
+        utc_clock: Callable[[], datetime] | None = None,
+        clock: Callable[[], datetime] | None = None,
+        monotonic_clock: Callable[[], float] | None = None,
     ) -> None:
         if type(source_store) is not SourceSessionStore:
             raise TypeError("source_store must be an exact SourceSessionStore")
@@ -303,7 +325,7 @@ class IdleCompactionScanner:
             raise ValueError("choose summary_adapter or summary_adapter_factory")
         if discovery is not None and type(discovery) is not SourceDiscoveryCursor:
             raise TypeError("discovery must be an exact SourceDiscoveryCursor")
-        if discovery is not None and discovery._backend is not source_store._backend:
+        if discovery is not None and not discovery.matches_source_store(source_store):
             raise ValueError("discovery and source_store must share the exact backend")
         self._root_authority: SourceRootAuthority | None = None
         if self._enabled:
@@ -314,8 +336,7 @@ class IdleCompactionScanner:
         if discovery is None and discovery_limits is not None:
             if self._root_authority is None:
                 raise IdleScannerIneligible("source-root authority is unavailable")
-            created = SourceDiscoveryCursor(
-                source_store._backend,
+            created = source_store.create_discovery_cursor_with_root(
                 limits=discovery_limits,
                 root_authority=self._root_authority,
             )
@@ -348,7 +369,7 @@ class IdleCompactionScanner:
             )
 
     @property
-    def coordinator(self) -> IdleCompactionCoordinator[object, object]:
+    def coordinator(self) -> IdleCompactionCoordinator[object, object] | IdleCompactionCoordinator[IdleScannerCapture, IdleScannerComputation]:
         return self._coordinator
 
     @property
@@ -428,14 +449,14 @@ class IdleCompactionScanner:
             return None
         return snapshot if type(snapshot) is IdleBlockerSnapshot and snapshot.clear else None
 
-    async def _resolve_adapter(self, binding: IdleRuntimeBinding) -> object:
+    async def _resolve_adapter(self, binding: IdleRuntimeBinding) -> IdleSummaryAdapter:
         if self._summary_factory is None:
             adapter = self._summary_adapter
         else:
             try:
-                adapter = self._summary_factory(binding)  # type: ignore[misc]
+                adapter = self._summary_factory(binding)
                 if inspect.isawaitable(adapter):
-                    adapter = await cast(Any, adapter)
+                    adapter = await adapter
             except Exception:
                 raise IdleScannerIneligible("I3c adapter is unavailable") from None
         if type(adapter) is not IdleSummaryAdapter or not callable(getattr(adapter, "summarize", None)):
@@ -483,7 +504,7 @@ class IdleCompactionScanner:
         ):
             return None
         try:
-            self._root_authority.require_current(self._source._backend)
+            self._source.require_current_root_authority(self._root_authority)
             binding = await self._registry.resolve_current_async(
                 key,
                 root_authority=self._root_authority,
@@ -532,8 +553,8 @@ class IdleCompactionScanner:
             return None
         except Exception:
             try:
-                if self._root_authority is not None:
-                    self._root_authority.require_current(self._source._backend)
+                if cast(object, self._root_authority) is not None:
+                    self._source.require_current_root_authority(self._root_authority)
             except SourceRootAuthorityError:
                 self._invalidate_root()
             return None
@@ -546,19 +567,19 @@ class IdleCompactionScanner:
     ) -> IdleComputation[IdleScannerComputation]:
         if type(captured) is not IdleScannerCapture:
             raise IdleScannerError("invalid I3d capture")
-        item = cast(IdleScannerCapture, captured)
+        item = captured
         summarize = getattr(item.summary_adapter, "summarize", None)
         if not callable(summarize):
             raise IdleScannerError("I3c adapter is unavailable")
         if item.root_authority is not self._root_authority:
             raise IdleScannerIneligible("source-root authority changed")
-        item.root_authority.require_current(self._source._backend)
+        self._source.require_current_root_authority(item.root_authority)
         self._validate_adapter_binding(item.summary_adapter, item.binding)
         # I3c owns its request reservation and provider dispatch bounds, but
         # its configured ceilings must remain within the coordinator's
         # immutable limits.  Binding validation performed immediately above
         # rechecks those ceilings after capture and before any request work.
-        deadline_value = self._monotonic_clock()
+        deadline_value = cast(object, self._monotonic_clock())
         if (
             isinstance(deadline_value, bool)
             or not isinstance(deadline_value, (int, float))
@@ -569,7 +590,7 @@ class IdleCompactionScanner:
         result = summarize(item.checkpoint, item.binding, deadline=deadline)
         if not inspect.isawaitable(result):
             raise IdleScannerError("I3c adapter did not return an awaitable")
-        result = await cast(Any, result)
+        result = await cast(Awaitable[object], result)
         if type(result) is not IdleSummaryResult:
             raise IdleScannerError("I3c result is malformed")
         if result.status in {"timeout", "budget_exceeded", "unknown_usage"}:
@@ -679,9 +700,10 @@ class IdleCompactionScanner:
             )
         ):
             return False
-        checkpoint = proposal.checkpoint
+        checkpoint = cast(object, proposal.checkpoint)
         if not isinstance(checkpoint, dict):
             return False
+        checkpoint = cast(dict[object, object], checkpoint)
         try:
             validated = validate_context_checkpoint(
                 checkpoint,
@@ -714,8 +736,9 @@ class IdleCompactionScanner:
         try:
             from nanobot.session.checkpoint_dependencies import derive_summary_references
 
+            # The checkpoint validator above checked the reference list's elements.
             if derive_summary_references(proof, captured.checkpoint.snapshot) != tuple(
-                checkpoint.get("artifact_references", ())
+                cast(Sequence[str], checkpoint.get("artifact_references", ()))
             ):
                 return False
         except Exception:
@@ -737,8 +760,9 @@ class IdleCompactionScanner:
             return False
         usage_map = checkpoint.get("auxiliary_usage")
         measured = proposal.measured_usage
-        if not isinstance(usage_map, dict) or not isinstance(measured, object):
+        if not isinstance(usage_map, dict):
             return False
+        usage_map = cast(dict[object, object], usage_map)
         expected_usage = {
             "calls": result.usage.calls,
             "tokens": measured.total_tokens,
@@ -766,13 +790,13 @@ class IdleCompactionScanner:
     ) -> bool:
         if type(captured) is not IdleScannerCapture or type(candidate) is not IdleScannerComputation:
             return False
-        item = cast(IdleScannerCapture, captured)
-        result = cast(IdleScannerComputation, candidate)
+        item = captured
+        result = candidate
         try:
             limits = self._policy.auxiliary_limits
             if item.root_authority is not self._root_authority:
                 return False
-            item.root_authority.require_current(self._source._backend)
+            self._source.require_current_root_authority(item.root_authority)
             if _adapter_binding(item.summary_adapter) is not item.binding:
                 return False
             return self._validate_result(item, result, limits)
@@ -796,7 +820,7 @@ class IdleCompactionScanner:
         if captured.root_authority is not self._root_authority:
             raise IdleScannerPublicationConflict("idle source-root authority changed")
         try:
-            captured.root_authority.require_current(self._source._backend)
+            self._source.require_current_root_authority(captured.root_authority)
         except SourceRootAuthorityError:
             self._invalidate_root()
             raise IdleScannerPublicationConflict("idle source-root pathname changed") from None
@@ -804,8 +828,7 @@ class IdleCompactionScanner:
             self._validate_adapter_binding(captured.summary_adapter, binding)
         except IdleScannerIneligible:
             raise IdleScannerPublicationConflict("idle adapter authority changed") from None
-        if captured._publication.consumed:
-            raise IdleScannerPublicationConflict("idle publication was already consumed")
+        IdleScannerCapture.require_publication_available(captured)
         if not _elapsed_idle(
             captured.checkpoint.token,
             ttl_seconds=self._policy.idle_ttl_seconds,
@@ -820,7 +843,7 @@ class IdleCompactionScanner:
         # Consume the one-shot proposal before entering I2.  Mark completion
         # only after I2 returns normally; a write-then-raise must remain a
         # failed attempt even when the underlying replacement was durable.
-        captured._publication.consumed = True
+        IdleScannerCapture.consume_publication(captured)
         policy = binding.policy_binding
         if type(policy) is not IdlePolicyBinding:
             raise IdleScannerPublicationConflict("idle policy binding is unavailable")
@@ -838,7 +861,7 @@ class IdleCompactionScanner:
         # This boundary is intentionally after the synchronous I2 callback
         # returns and before control reaches the registry await.  It survives
         # a callback that cancels its own task immediately after the write.
-        captured._publication.completed = True
+        IdleScannerCapture.record_publication_completion(captured)
         return result
 
     async def _publish(self, key: str, captured: object, computation: object) -> object:
@@ -848,8 +871,8 @@ class IdleCompactionScanner:
             or type(computation) is not IdleScannerComputation
         ):
             raise IdleScannerPublicationConflict("idle publication authority is unavailable")
-        item = cast(IdleScannerCapture, captured)
-        proposal = cast(IdleScannerComputation, computation)
+        item = captured
+        proposal = computation
 
         def callback(binding: IdleRuntimeBinding) -> object:
             return self._publish_sync(key, item, proposal, binding)
@@ -864,12 +887,12 @@ class IdleCompactionScanner:
         except (IdleRuntimeStaleError, IdleCheckpointConflict, IdleCheckpointError):
             try:
                 if self._root_authority is not None:
-                    self._root_authority.require_current(self._source._backend)
+                    self._source.require_current_root_authority(self._root_authority)
             except SourceRootAuthorityError:
                 self._invalidate_root()
             raise IdleScannerPublicationConflict("idle publication lost authority") from None
         except asyncio.CancelledError:
-            if item._publication.completed:
+            if IdleScannerCapture.publication_returned_normally(item):
                 # The durable callback returned normally; cancellation was
                 # delivered only after the committed completion boundary.
                 return None
@@ -877,7 +900,7 @@ class IdleCompactionScanner:
         except Exception as exc:
             try:
                 if self._root_authority is not None:
-                    self._root_authority.require_current(self._source._backend)
+                    self._source.require_current_root_authority(self._root_authority)
             except SourceRootAuthorityError:
                 self._invalidate_root()
                 raise IdleScannerPublicationConflict("idle source-root pathname changed") from None

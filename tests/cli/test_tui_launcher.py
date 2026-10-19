@@ -1,5 +1,7 @@
 import hashlib
 import io
+import json
+import socket
 import subprocess
 import zipfile
 from pathlib import Path
@@ -23,6 +25,69 @@ from nanobot.cli.tui_launcher import (
     resolve_tui_command,
 )
 from nanobot.config.schema import Config, ModelPresetConfig
+
+
+@pytest.fixture
+def admitted_tui_config(tmp_path, monkeypatch):
+    """Positive entry-point fixture; receipt admission and config binding stay real."""
+    from nanobot.config import loader
+
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({
+        "agents": {"defaults": {"workspace": str(tmp_path / "workspace")}},
+    }), encoding="utf-8")
+    config = loader.load_config(path)
+    assert config.runtime_data_dir == tmp_path
+    monkeypatch.setattr(loader, "_current_config_path", path)
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "absent-home"))
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+
+    def denied(*_args, **_kwargs):
+        pytest.fail("TUI entry tests must not start external resources")
+
+    monkeypatch.setattr(subprocess.Popen, "__init__", denied)
+    for name in ("connect", "connect_ex", "bind", "listen", "sendto"):
+        monkeypatch.setattr(socket.socket, name, denied)
+    for name in ("getaddrinfo", "create_connection"):
+        monkeypatch.setattr(socket, name, denied)
+    monkeypatch.setattr("nanobot.runtime_composition.RuntimeComposition.acquire", denied)
+    return config
+
+
+def test_native_tui_entry_checks_startup_receipt_before_launch(monkeypatch, tmp_path):
+    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from nanobot.config import loader
+
+    config_path = tmp_path / "config.json"
+    workspace = tmp_path / "workspace"
+    config_path.write_text(json.dumps({
+        "agents": {"defaults": {"workspace": str(workspace)}},
+    }), encoding="utf-8")
+    pending_receipt = workspace / "memory" / ".consolidation.pending.json"
+    pending_receipt.parent.mkdir(parents=True)
+    pending_receipt.write_text("{broken", encoding="utf-8")
+
+    original_load = loader.load_config
+    loaded = []
+
+    def load(*args, **kwargs):
+        loaded.append(True)
+        return original_load(*args, **kwargs)
+
+    monkeypatch.setattr(loader, "load_config", load)
+    original_config = config_path.read_bytes()
+    original_receipt = pending_receipt.read_bytes()
+
+    with pytest.raises(StartupReceiptAdmissionError):
+        agent(
+            message=None, session_id=None, workspace=None, config=str(config_path),
+            markdown=True, logs=False, log_file=None, classic=False, theme="auto",
+        )
+
+    assert loaded == [True]
+    assert config_path.read_bytes() == original_config
+    assert pending_receipt.read_bytes() == original_receipt
+    assert set(workspace.rglob("*")) == {pending_receipt.parent, pending_receipt}
 
 
 def _release_archive(
@@ -387,8 +452,9 @@ def test_source_checkout_requires_project_and_tui_markers(
 def test_interactive_agent_uses_native_tui(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    admitted_tui_config,
 ) -> None:
-    config = Config()
+    config = admitted_tui_config
     config_path = tmp_path / "config.json"
     launched: dict[str, object] = {}
 
@@ -426,8 +492,9 @@ def test_interactive_agent_uses_native_tui(
 def test_interactive_agent_does_not_silently_fall_back(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    admitted_tui_config,
 ) -> None:
-    config = Config()
+    config = admitted_tui_config
     output: list[str] = []
 
     def unavailable(*_args: object, **_kwargs: object) -> int:
@@ -462,8 +529,9 @@ def test_interactive_agent_does_not_silently_fall_back(
 def test_native_tui_rejects_a_classic_session_selector(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    admitted_tui_config,
 ) -> None:
-    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: Config())
+    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: admitted_tui_config)
     monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: tmp_path / "config.json")
     monkeypatch.setattr("nanobot.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr("nanobot.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
@@ -483,8 +551,9 @@ def test_native_tui_rejects_a_classic_session_selector(
 
 def test_default_agent_does_not_fall_back_outside_a_terminal(
     monkeypatch: pytest.MonkeyPatch,
+    admitted_tui_config,
 ) -> None:
-    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: Config())
+    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: admitted_tui_config)
     monkeypatch.setattr("nanobot.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: False))
     monkeypatch.setattr("nanobot.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
 
@@ -513,8 +582,9 @@ def test_classic_options_require_an_explicit_classic_prompt(
     markdown: bool,
     logs: bool,
     option: str,
+    admitted_tui_config,
 ) -> None:
-    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: Config())
+    monkeypatch.setattr("nanobot.cli.agent._load_runtime_config", lambda *_args: admitted_tui_config)
     monkeypatch.setattr("nanobot.cli.agent.sys.stdin", SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr("nanobot.cli.agent.sys.stdout", SimpleNamespace(isatty=lambda: True))
 

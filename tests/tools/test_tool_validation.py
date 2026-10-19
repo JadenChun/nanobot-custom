@@ -1,4 +1,5 @@
 import shlex
+import socket
 import subprocess
 import sys
 from typing import Any
@@ -256,7 +257,11 @@ def test_exec_extract_absolute_paths_ignores_urls() -> None:
         'python3 -c "import urllib.request; print(urllib.request.urlopen(\'http://example.com\').read()[:100])"',
     ],
 )
-def test_exec_guard_allows_public_urls(tmp_path, command: str) -> None:
+def test_exec_guard_allows_public_urls(tmp_path, command: str, monkeypatch) -> None:
+    # Guard classification must not depend on a live public DNS resolver.
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *_args, **_kwargs: [
+        (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 443)),
+    ])
     tool = ExecTool(restrict_to_workspace=True)
     error = tool._guard_command(command, str(tmp_path))
     assert error is None

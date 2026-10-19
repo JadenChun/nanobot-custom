@@ -2,16 +2,22 @@
 
 import asyncio
 import importlib
+import json
 import signal
 import sys
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from types import FrameType
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import typer
 from rich.console import Console
 
 from nanobot import __logo__
+from nanobot.agent.memory_recovery_startup_admission import (
+    admitted_startup_mutation,
+    require_startup_receipt_admission,
+)
 from nanobot.cli.log_control import (
     clear_compatibility_log_file,
     configure_agent_runtime_logs,
@@ -22,6 +28,17 @@ from nanobot.cli.runtime_config import (
     _model_display,
     _print_agent_start_error,
 )
+from nanobot.config.paths import get_default_sessions_root
+
+if TYPE_CHECKING:
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.agent.tools.mcp import MCPProvider
+    from nanobot.agent.tools.registry import ToolRegistry
+    from nanobot.agent.turn_delivery import TurnDeliveryFactory
+    from nanobot.bus.queue import MessageBus
+    from nanobot.config.schema import Config
+    from nanobot.cron.service import CronService
+    from nanobot.session.manager import SessionManager
 
 console = Console()
 
@@ -52,6 +69,31 @@ def _classic_dependency(name: str) -> Any:
     if name in globals():
         return globals()[name]
     return __getattr__(name)
+
+
+def _warn_deprecated_config_keys(config_path: str | None) -> None:
+    """Retain the fork's agent-CLI hints for ignored or relocated config keys."""
+    from nanobot.config.loader import get_config_path
+
+    path = Path(config_path).expanduser().resolve() if config_path else get_config_path()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if not isinstance(raw, dict):
+        return
+    agents = cast(dict[object, object], raw).get("agents")
+    defaults = cast(dict[object, object], agents).get("defaults") if isinstance(agents, dict) else None
+    if not isinstance(defaults, dict):
+        return
+    if "memoryWindow" in defaults:
+        console.print(
+            "[dim]Hint: `memoryWindow` in your config is no longer used "
+            "and can be safely removed.[/dim]"
+        )
+    for key in ("contextWindowTokens", "maxInputTokens"):
+        if key in defaults:
+            console.print(f"[dim]Hint: `{key}` has moved to `maxTokens.input`.[/dim]")
 
 
 def agent(
@@ -87,9 +129,14 @@ def agent(
     ),
 ):
     """Chat in the terminal or send one message non-interactively."""
-    from nanobot.migration_guard import require_runtime_ready
-    require_runtime_ready()
     runtime_config = _load_runtime_config(config, workspace)
+    _warn_deprecated_config_keys(config)
+    sessions_root = (
+        runtime_config.runtime_data_dir / "sessions"
+        if runtime_config.runtime_data_dir is not None
+        else get_default_sessions_root()
+    )
+    require_startup_receipt_admission(runtime_config.workspace_path, sessions_root=sessions_root)
     theme = theme.strip().lower()
     if theme not in {"auto", "dark", "light"}:
         raise typer.BadParameter("must be auto, dark, or light", param_hint="--theme")
@@ -127,27 +174,21 @@ def agent(
                 raise typer.Exit(exit_code)
             return
 
-    from nanobot.agent.hooks import create_file_edit_activity_hook
-    from nanobot.agent.tools.mcp import MCPProvider
-    from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.bus.outbound_events import (
         StreamDeltaEvent,
         StreamedResponseEvent,
         StreamEndEvent,
     )
-    from nanobot.bus.queue import MessageBus
     from nanobot.cli import terminal as cli_terminal
     from nanobot.cli.stream import ThinkingSpinner
-    from nanobot.cron.service import CronService
-    from nanobot.providers.factory import make_provider
-    from nanobot.providers.image_generation import image_gen_provider_configs
+    from nanobot.providers.factory import make_provider, validate_provider_setup
     from nanobot.utils.helpers import sanitize_surrogates as _sanitize_surrogates
     from nanobot.utils.restart import (
         format_restart_completed_message,
         should_show_cli_restart_notice,
     )
 
-    agent_loop_class = _classic_dependency("AgentLoop")
+    agent_loop_class: "type[AgentLoop]" = _classic_dependency("AgentLoop")
     stream_renderer_class = _classic_dependency("StreamRenderer")
     consume_restart_notice_from_env = _classic_dependency("consume_restart_notice_from_env")
     is_default_workspace = _classic_dependency("is_default_workspace")
@@ -156,40 +197,48 @@ def agent(
     session_id = session_id or "cli:direct"
 
     try:
-        provider = make_provider(runtime_config)
-    except ValueError as exc:
-        _print_agent_start_error(exc)
-        raise typer.Exit(1) from exc
+        # Reject local setup errors before acquiring durable runtime resources.
+        # Provider clients themselves are still created by the owned graph below.
+        validate_provider_setup(runtime_config)
+        from nanobot.runtime_composition import RuntimeComposition, RuntimeFactories
 
-    sync_workspace_templates(runtime_config.workspace_path)
+        defaults = RuntimeFactories.defaults()
 
-    bus = MessageBus()
+        def build_agent(
+            config: "Config",
+            bus: "MessageBus",
+            sessions: "SessionManager",
+            tools: "ToolRegistry",
+            mcp: "MCPProvider",
+            cron: "CronService",
+            delivery: "TurnDeliveryFactory",
+        ) -> "AgentLoop":
+            value = agent_loop_class.from_config(
+                config,
+                bus,
+                tool_registry=tools,
+                provider=make_provider(config),
+                session_manager=sessions,
+                cron_service=cron,
+                turn_delivery_factory=delivery,
+                enable_legacy_auto_compact=False,
+            )
+            value.bus = bus
+            value.sessions = sessions
+            value.turn_delivery_factory = delivery
+            return value
 
-    # Preserve existing single-workspace installs, but keep custom workspaces clean.
-    if is_default_workspace(runtime_config.workspace_path):
-        _migrate_cron_store(runtime_config)
-
-    # Create cron service with workspace-scoped store
-    cron_store_path = runtime_config.workspace_path / "cron" / "jobs.json"
-    cron = CronService(cron_store_path)
-    tools = ToolRegistry()
-    mcp_provider = MCPProvider.from_config(runtime_config, tools)
-
-    configure_agent_runtime_logs(show_console=logs, log_file=log_file)
-    if logs:
-        console.print("[dim]Runtime logs enabled (--logs). Use --no-logs to hide internal logs.[/dim]")
-    if log_file:
-        console.print(f"[dim]Logging to {log_file}[/dim]")
-
-    try:
-        agent_loop = agent_loop_class.from_config(
+        composition = RuntimeComposition.define(
             runtime_config,
-            bus,
-            provider=provider,
-            cron_service=cron,
-            image_generation_provider_configs=image_gen_provider_configs(runtime_config),
-            hook_factories=[create_file_edit_activity_hook],
-            tool_registry=tools,
+            sessions_root=sessions_root,
+            factories=RuntimeFactories(
+                defaults.bus,
+                defaults.tools,
+                defaults.mcp,
+                defaults.cron,
+                build_agent,
+            ),
+            startup_receipt_admitted=True,
         )
     except ValueError as exc:
         clear_compatibility_log_file()
@@ -198,21 +247,34 @@ def agent(
     except BaseException:
         clear_compatibility_log_file()
         raise
-    restart_notice = consume_restart_notice_from_env()
-    if restart_notice and should_show_cli_restart_notice(restart_notice, session_id):
-        cli_terminal._print_agent_response(
-            format_restart_completed_message(restart_notice.started_at_raw),
-            render_markdown=False,
-        )
+    def _prepare_acquired_runtime() -> None:
+        with admitted_startup_mutation(
+            runtime_config.workspace_path,
+            sessions_root=sessions_root,
+        ):
+            sync_workspace_templates(runtime_config.workspace_path)
+            if is_default_workspace(runtime_config.workspace_path):
+                _migrate_cron_store(runtime_config)
+        configure_agent_runtime_logs(show_console=logs, log_file=log_file)
+        if logs:
+            console.print(
+                "[dim]Runtime logs enabled (--logs). Use --no-logs to hide internal logs.[/dim]"
+            )
+        if log_file:
+            console.print(f"[dim]Logging to {log_file}[/dim]")
+        restart_notice = consume_restart_notice_from_env()
+        if restart_notice and should_show_cli_restart_notice(restart_notice, session_id):
+            cli_terminal._print_agent_response(
+                format_restart_completed_message(restart_notice.started_at_raw),
+                render_markdown=False,
+            )
 
     async def _close_runtime() -> None:
-        try:
-            await agent_loop.aclose()
-        finally:
-            await mcp_provider.aclose()
+        await composition.aclose()
 
     # Shared reference for progress callbacks
     _thinking: ThinkingSpinner | None = None
+    runtime: Any | None = None
 
     def _make_progress(
         renderer: Any | None = None,
@@ -226,7 +288,8 @@ def agent(
             reasoning: bool = False,
             **_kwargs: Any,
         ) -> None:
-            ch = agent_loop.channels_config
+            assert runtime is not None
+            ch = runtime.agent.channels_config
 
             if _kwargs.get("reasoning_end"):
                 if ch and not ch.show_reasoning:
@@ -254,14 +317,17 @@ def agent(
     if message is not None:
         # Single message mode — direct call, no bus needed
         async def run_once() -> None:
+            nonlocal runtime
             try:
-                await mcp_provider.connect()
+                runtime = await composition.acquire()
+                _prepare_acquired_runtime()
+                await runtime.mcp.connect()
                 renderer = stream_renderer_class(
                     render_markdown=markdown,
                     bot_name=runtime_config.agents.defaults.bot_name,
                     bot_icon=runtime_config.agents.defaults.bot_icon,
                 )
-                response = await agent_loop.process_direct(
+                response = await runtime.agent.process_direct(
                     message,
                     session_id,
                     on_progress=_make_progress(renderer),
@@ -290,14 +356,6 @@ def agent(
         # Interactive mode — route through bus like other channels
         from nanobot.bus.events import InboundMessage
 
-        cli_terminal._init_prompt_session()
-        _model, _preset_tag = _model_display(runtime_config)
-        _icon = runtime_config.agents.defaults.bot_icon or __logo__
-        console.print(
-            f"{_icon} Interactive mode [bold blue]({_model})[/bold blue]{_preset_tag} "
-            "— type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit\n"
-        )
-
         if ":" in session_id:
             cli_channel, cli_chat_id = session_id.split(":", 1)
         else:
@@ -320,8 +378,19 @@ def agent(
             signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
         async def run_interactive() -> None:
-            await mcp_provider.connect()
-            bus_task = asyncio.create_task(agent_loop.run())
+            nonlocal runtime
+            runtime = await composition.acquire()
+            acquired_runtime = runtime
+            _prepare_acquired_runtime()
+            cli_terminal._init_prompt_session()
+            _model, _preset_tag = _model_display(runtime_config)
+            _icon = runtime_config.agents.defaults.bot_icon or __logo__
+            console.print(
+                f"{_icon} Interactive mode [bold blue]({_model})[/bold blue]{_preset_tag} "
+                "— type [bold]exit[/bold] or [bold]Ctrl+C[/bold] to quit\n"
+            )
+            await runtime.mcp.connect()
+            bus_task = asyncio.create_task(runtime.agent.run())
             turn_done = asyncio.Event()
             turn_done.set()
             turn_response: list[Any] = []
@@ -331,7 +400,9 @@ def agent(
             async def _consume_outbound() -> None:
                 while True:
                     try:
-                        msg = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+                        msg = await asyncio.wait_for(
+                            acquired_runtime.bus.consume_outbound(), timeout=1.0,
+                        )
                         event = msg.event
 
                         if isinstance(event, StreamDeltaEvent):
@@ -362,7 +433,7 @@ def agent(
                         if await cli_terminal._maybe_print_interactive_progress(
                             msg,
                             None,
-                            agent_loop.channels_config,
+                            acquired_runtime.agent.channels_config,
                             renderer,
                             reasoning_buffer,
                         ):
@@ -414,7 +485,7 @@ def agent(
                             bot_icon=runtime_config.agents.defaults.bot_icon,
                         )
 
-                        await bus.publish_inbound(
+                        await runtime.bus.publish_inbound(
                             InboundMessage(
                                 channel=cli_channel,
                                 sender_id="user",
@@ -456,7 +527,7 @@ def agent(
                         console.print("\nGoodbye!")
                         break
             finally:
-                agent_loop.stop()
+                runtime.agent.stop()
                 outbound_task.cancel()
                 await asyncio.gather(bus_task, outbound_task, return_exceptions=True)
                 await _close_runtime()

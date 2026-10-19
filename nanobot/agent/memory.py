@@ -13,7 +13,7 @@ import os
 import re
 import threading
 import weakref
-from contextlib import nullcontext, suppress
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +26,11 @@ from nanobot.agent.memory_recovery import (
     MEMORY_RECEIPT_FILENAME,
     require_memory_receipt_recovery,
 )
-from nanobot.agent.memory_recovery_storage import open_workspace_memory_lock
+from nanobot.agent.memory_recovery_startup_admission import (
+    admitted_startup_mutation,
+    require_startup_receipt_admission,
+)
+from nanobot.config.paths import get_default_sessions_root
 from nanobot.events import NO_EVENTS, ContextCompactionEvent, EventSink
 from nanobot.llm_usage.context import llm_usage_source
 from nanobot.providers.base import LLMUsage, ProviderCallContext, ProviderConversationState
@@ -56,12 +60,9 @@ from nanobot.utils.workspace_prompts import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.agent.tools.base import Tool
     from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.utils.llm_runtime import LLMRuntime
-
-
-def _is_windows() -> bool:
-    return os.name == "nt"
 
 
 # ---------------------------------------------------------------------------
@@ -83,22 +84,13 @@ class MemoryStore:
         r"^\[\d{4}-\d{2}-\d{2}[^\]]*\]\s+[A-Z][A-Z0-9_]*(?:\s+\[tools:\s*[^\]]+\])?:"
     )
 
-    def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY):
-        # A pending legacy receipt is owned by the recovery package.  Validate
-        # it before any workspace mutation; Package B will apply or otherwise
-        # resolve the receipt.
-        require_memory_receipt_recovery(
-            Path(workspace) / "memory" / MEMORY_RECEIPT_FILENAME,
-        )
-        # The gate requires an existing workspace.  Preserve the historical
-        # behavior of creating it when absent, after the read-only preflight.
-        ensure_dir(workspace)
-        memory_gate = (
-            nullcontext(None)
-            if _is_windows()
-            else open_workspace_memory_lock(workspace)
-        )
-        with memory_gate as memory_lock:
+    def __init__(self, workspace: Path, max_history_entries: int = _DEFAULT_MAX_HISTORY,
+                 *, sessions_root: Path | None = None):
+        workspace = Path(workspace).expanduser().resolve(strict=False)
+        root = (Path(sessions_root).expanduser().resolve(strict=False)
+                if sessions_root is not None else get_default_sessions_root())
+        require_startup_receipt_admission(workspace, sessions_root=root)
+        with admitted_startup_mutation(workspace, sessions_root=root) as memory_lock:
             # A cooperating writer may have published a receipt while this
             # constructor waited for the shared gate.
             require_memory_receipt_recovery(
@@ -118,6 +110,8 @@ class MemoryStore:
             self._malformed_entry_logged = False  # rate-limit bad history shape warning
             self._oversize_logged = False  # rate-limit oversized-entry warning
             self._dream_prompt_oversize_logged = False
+            # Values retain only tools, never the issued registry weak key.
+            self._dream_tool_bindings: weakref.WeakKeyDictionary[ToolRegistry, dict[str, Tool]] = weakref.WeakKeyDictionary()
             self._append_lock = threading.Lock()  # serialize cursor allocation + append
             self._git = GitStore(workspace, tracked_files=[
                 "SOUL.md", "USER.md", "memory/MEMORY.md", "memory/.dream_cursor",
@@ -321,6 +315,7 @@ class MemoryStore:
         *,
         max_chars: int | None = None,
         session_key: str | None = None,
+        source: str | None = None,
     ) -> int:
         """Append *entry* to history.jsonl and return its auto-incrementing cursor.
 
@@ -335,7 +330,13 @@ class MemoryStore:
         applied as a final safety net: individual callers should cap their own
         content more tightly; this default only exists to catch unintentional
         large writes (e.g. an LLM echoing its input back as a "summary").
+
+        The optional caller-provided source is stored as JSONL metadata rather
+        than added to the content Dream may consume. Existing embedded source
+        markers remain untrusted text and cannot override this metadata.
         """
+        if source is not None and not isinstance(cast(object, source), str):
+            raise TypeError("history source must be a string or None")
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         raw = entry.rstrip()
         content = self._normalize_history_entry(entry, max_chars=max_chars)
@@ -352,6 +353,8 @@ class MemoryStore:
             record = {"cursor": cursor, "timestamp": ts, "content": content}
             if session_key:
                 record["session_key"] = session_key
+            if source:
+                record["source"] = source
             with open(self.history_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
             self._cursor_file.write_text(str(cursor), encoding="utf-8")
@@ -649,7 +652,46 @@ class MemoryStore:
             extra_write_allowed_files=editable_files,
             file_states=file_states,
         ))
+        self._record_dream_tools(tools)
         return tools
+
+    def _record_dream_tools(self, tools: ToolRegistry) -> None:
+        self._dream_tool_bindings[tools] = {
+            name: tool for name in tools.tool_names if (tool := tools.get(name)) is not None
+        }
+
+    def owns_dream_tools(self, tools: ToolRegistry, workspace: Path) -> bool:
+        """Verify live factory issuance for this store, not equivalent tool names."""
+        from nanobot.agent.tools.registry import ToolRegistry
+
+        # Weak-key lookup itself permits overloaded equality on subclass keys.
+        # Factory issuance uses the exact concrete registry and object identity.
+        if type(tools) is not ToolRegistry:
+            return False
+        snapshot = self._dream_tool_bindings.get(tools)
+        if snapshot is None or workspace.resolve(strict=False) != self.workspace:
+            return False
+        return all(
+            (tool := tools.get(name)) is not None
+            and tool.name == name and snapshot.get(name) is tool
+            for name in tools.tool_names
+        )
+
+    def filter_dream_tools(
+        self, tools: ToolRegistry, disabled: frozenset[str], workspace: Path,
+    ) -> ToolRegistry | None:
+        """Issue only a verified registry's current permitted subset."""
+        from nanobot.agent.tools.registry import ToolRegistry
+
+        if not self.owns_dream_tools(tools, workspace):
+            return None
+        filtered = ToolRegistry()
+        for name in tools.tool_names:
+            tool = tools.get(name)
+            if name not in disabled and tool is not None:
+                filtered.register(tool)
+        self._record_dream_tools(filtered)
+        return filtered
 
     @staticmethod
     def dream_run_completed(

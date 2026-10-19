@@ -13,6 +13,7 @@ from nanobot.session.summary import SessionSummaryCheckpoint
 
 def host():
     loop = object.__new__(AgentLoop)
+    loop.auto_compact = None
     loop.sessions = SimpleNamespace(save=Mock(), source_backend=lambda key: None)
     loop.runtime_event_publisher = SimpleNamespace(session_turn_persisted=AsyncMock())
     return loop

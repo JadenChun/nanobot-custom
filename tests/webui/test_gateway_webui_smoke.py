@@ -17,6 +17,7 @@ import websockets
 
 from nanobot.session.manager import SessionManager
 from nanobot.session.recovery import PENDING_USER_TURN_KEY, RUNTIME_CHECKPOINT_KEY
+from nanobot.session.runtime_authority import DurableSessionAuthority, OfflineSessionOperator
 
 _BOOTSTRAP_SECRET = "smoke-secret"
 
@@ -35,6 +36,8 @@ def _write_smoke_config(path: Path, *, workspace: Path, ws_port: int, gateway_po
                 "provider": "custom",
                 "model": "custom/smoke-model",
                 "maxToolIterations": 1,
+                "idleCompactAfterMinutes": 0,
+                "idleCompaction": {"enabled": False},
                 "dream": {"enabled": False},
             }
         },
@@ -58,6 +61,13 @@ def _write_smoke_config(path: Path, *, workspace: Path, ws_port: int, gateway_po
             "port": gateway_port,
             "heartbeat": {"enabled": False},
         },
+        "tools": {
+            "agentBrowser": {"enabled": False},
+            "agentDevice": {"enabled": False},
+            "desktopUse": {"enabled": False},
+            "mcpServers": {},
+        },
+        "artifacts": {"enabled": False},
     }
     path.write_text(json.dumps(config), encoding="utf-8")
 
@@ -69,9 +79,7 @@ def _start_gateway(config_path: Path, log_path: Path) -> subprocess.Popen[bytes]
             [
                 sys.executable,
                 "-m",
-                "nanobot",
-                "gateway",
-                "--config",
+                "tests.webui.p6_gateway_smoke_fixture",
                 str(config_path),
             ],
             cwd=Path(__file__).resolve().parents[2],
@@ -302,31 +310,21 @@ def test_gateway_restart_restores_a_completed_answer_without_replaying_model(
     }
     sessions.save(session, fsync=True)
 
+    async def bootstrap_copied_legacy_session() -> None:
+        lease = await OfflineSessionOperator(
+            workspace, copied_sessions_root=sessions_root,
+        ).acquire()
+        try:
+            lease.manager.bootstrap_existing_sessions(offline_copy=True)
+        finally:
+            assert lease.close is not None
+            await lease.close()
+
+    asyncio.run(bootstrap_copied_legacy_session())
+
     second = _start_gateway(config_path, second_log)
     try:
         bootstrap = _wait_for_bootstrap(base_url, second, second_log)
-        deadline = time.monotonic() + 20
-        restored = None
-        while time.monotonic() < deadline:
-            restored = SessionManager(
-                workspace,
-                sessions_root=sessions_root,
-            ).get_or_create("websocket:recovery-smoke")
-            if any(
-                message.get("content") == "restored without another model request"
-                for message in restored.messages
-            ):
-                break
-            time.sleep(0.1)
-        else:
-            logs = second_log.read_text(encoding="utf-8", errors="replace")
-            raise AssertionError(f"answer was not recovered after restart\n{logs}")
-
-        assert restored is not None
-        assert PENDING_USER_TURN_KEY not in restored.metadata
-        assert RUNTIME_CHECKPOINT_KEY not in restored.metadata
-        assert restored.metadata["webui_recovery"]["reason"] == "answer_restored"
-
         async def assert_attach_state() -> None:
             ws_url = f'{bootstrap["ws_url"]}?token={bootstrap["token"]}&client_id=recovery-smoke'
             async with websockets.connect(ws_url) as ws:
@@ -339,3 +337,20 @@ def test_gateway_restart_restores_a_completed_answer_without_replaying_model(
         asyncio.run(assert_attach_state())
     finally:
         _stop_gateway(second)
+
+    async def assert_durable_recovery() -> None:
+        # Inspect persisted state only after the gateway releases its writer lease.
+        lease = await DurableSessionAuthority(workspace, sessions_root=sessions_root).acquire()
+        try:
+            restored = lease.manager.read_session_snapshot("websocket:recovery-smoke")
+            assert restored is not None
+            assert any(message.get("content") == "restored without another model request"
+                       for message in restored.messages)
+            assert PENDING_USER_TURN_KEY not in restored.metadata
+            assert RUNTIME_CHECKPOINT_KEY not in restored.metadata
+            assert restored.metadata["webui_recovery"]["reason"] == "answer_restored"
+        finally:
+            assert lease.close is not None
+            await lease.close()
+
+    asyncio.run(assert_durable_recovery())

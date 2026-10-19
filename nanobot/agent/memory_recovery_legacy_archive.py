@@ -13,6 +13,7 @@ import hashlib
 import os
 import re
 import stat
+from typing import NoReturn
 
 from nanobot.agent import memory_recovery_storage as storage
 
@@ -33,7 +34,7 @@ class LegacyHistoryArchiveUncertainError(storage.MemoryStorageError):
         RuntimeError.__init__(self, "legacy history archive outcome is uncertain")
 
 
-def _fail(code: str) -> None:
+def _fail(code: str) -> NoReturn:
     raise storage.MemoryStorageError(code) from None
 
 
@@ -42,10 +43,20 @@ def _capabilities() -> None:
     if (
         os.name != "posix"
         or any(not isinstance(getattr(os, flag, None), int) for flag in ("O_NOFOLLOW", "O_NONBLOCK"))
-        or not required <= getattr(os, "supports_dir_fd", set())
-        or os.link not in getattr(os, "supports_follow_symlinks", set())
-        or os.stat not in getattr(os, "supports_follow_symlinks", set())
-        or os.listdir not in getattr(os, "supports_fd", set())
+        or not required <= getattr(os, "supports_dir_fd", set[object]())
+        or os.link not in getattr(os, "supports_follow_symlinks", set[object]())
+        or os.stat not in getattr(os, "supports_follow_symlinks", set[object]())
+        or os.listdir not in getattr(os, "supports_fd", set[object]())
+    ):
+        _fail("unavailable")
+
+
+def _read_capabilities() -> None:
+    if (
+        os.name != "posix"
+        or any(not isinstance(getattr(os, flag, None), int) for flag in ("O_NOFOLLOW", "O_NONBLOCK"))
+        or not {os.open, os.stat} <= getattr(os, "supports_dir_fd", set[object]())
+        or os.stat not in getattr(os, "supports_follow_symlinks", set[object]())
     ):
         _fail("unavailable")
 
@@ -221,6 +232,57 @@ def choose_legacy_backup_name(
             os.close(parent_fd)
 
 
+def verify_legacy_backup_only(
+    operation: storage.WorkspaceMemoryOperation,
+    history_anchor_snapshot: storage.MemoryTargetSnapshot,
+    *,
+    expected_source_stat: storage.MemoryTargetStatIdentity,
+    expected_digest: str,
+    expected_size: int,
+    backup_name: str,
+) -> str:
+    """Prove the archived one-link backup without archive application or replay."""
+    if type(backup_name) is not str or _BACKUP.fullmatch(backup_name) is None:
+        _fail("invalid")
+    _validate_evidence(expected_source_stat, expected_digest, expected_size)
+    _read_capabilities()
+    try:
+        with _scope(operation, history_anchor_snapshot, for_archive=True) as scope:
+            scope.require_current()
+            parent_fd = scope.duplicate_dir_fd()
+            try:
+                def check_anchor() -> None:
+                    scope.require_current()
+                    current = scope.snapshot_target()
+                    if (current.content != history_anchor_snapshot.content
+                            or current.stat_identity != history_anchor_snapshot.stat_identity):
+                        _fail("conflict")
+
+                check_anchor()
+                if _stat(parent_fd, _SOURCE) is not None:
+                    _fail("conflict")
+                _read_entry(parent_fd, backup_name, expected_source_stat, expected_digest,
+                            expected_size, 1, initial=False)
+                check_anchor()
+                try:
+                    os.fsync(parent_fd)
+                except OSError:
+                    _fail("durability")
+                check_anchor()
+                if _stat(parent_fd, _SOURCE) is not None:
+                    _fail("conflict")
+                _read_entry(parent_fd, backup_name, expected_source_stat, expected_digest,
+                            expected_size, 1, initial=False)
+                check_anchor()
+                return backup_name
+            finally:
+                os.close(parent_fd)
+    except storage.MemoryStorageError:
+        raise
+    except (OSError, TypeError, ValueError):
+        _fail("io")
+
+
 def archive_legacy_history_if_unchanged(
     operation: storage.WorkspaceMemoryOperation,
     history_anchor_snapshot: storage.MemoryTargetSnapshot,
@@ -331,6 +393,7 @@ def archive_legacy_history_if_unchanged(
                         expected_size, 1, initial=False,
                     )
                     return backup_name
+                backup_info: os.stat_result | None = None
                 for _ in range(2):
                     source_info = _read_entry(
                         parent_fd, _SOURCE, expected_source_stat, expected_digest,
@@ -345,6 +408,8 @@ def archive_legacy_history_if_unchanged(
                     if _ == 0:
                         require_anchor_current()
                         os.fsync(parent_fd)
+                if backup_info is None:
+                    _fail("conflict")
                 backup_fd = os.open(
                     backup_name,
                     os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0),
@@ -408,4 +473,5 @@ __all__ = [
     "LegacyHistoryArchiveUncertainError",
     "choose_legacy_backup_name",
     "archive_legacy_history_if_unchanged",
+    "verify_legacy_backup_only",
 ]

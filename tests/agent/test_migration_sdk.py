@@ -5,8 +5,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from agent import test_migration_engine as engine_fixtures
-from agent.test_migration_engine import ScriptedProvider
 from nanobot.agent.hook import AgentHook, AgentRunHookContext
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.base import Tool
@@ -15,6 +13,8 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.nanobot import Nanobot
 from nanobot.providers.base import LLMResponse, LLMUsage, ToolCallRequest
 from nanobot.sdk.types import result_from_turn
+from tests.agent import test_migration_engine as engine_fixtures
+from tests.agent.test_migration_engine import ScriptedProvider
 
 from .test_migration_canonical_admission import host
 
@@ -230,7 +230,17 @@ async def test_from_config_real_runner_keeps_default_trace_private_and_sanitizes
     monkeypatch.setattr("nanobot.config.loader.load_config", lambda _path: engine_config)
     monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda _config: provider)
 
-    bot = Nanobot.from_config(workspace=engine_config.workspace_path)
+    from nanobot.session.manager import SessionManager
+    from nanobot.session.runtime_authority import BorrowedSessionAuthority
+
+    manager = SessionManager(
+        engine_config.workspace_path,
+    )
+    bot = Nanobot.from_config(
+        workspace=engine_config.workspace_path,
+        session_authority=BorrowedSessionAuthority(manager),
+    )
+    await bot._ensure_runtime()
     tool = _SdkTraceTool()
     bot._loop.tools.register(tool)
     try:

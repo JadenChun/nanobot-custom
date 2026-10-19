@@ -1,601 +1,398 @@
-"""Test MemoryStore.consolidate() handles non-string tool call arguments.
+"""Fail-closed storage-free summary coverage with historical Q1 lineage."""
 
-Regression test for https://github.com/HKUDS/nanobot/issues/1042
-When memory consolidation receives dict values instead of strings from the LLM
-tool call response, it should serialize them to JSON instead of raising TypeError.
-"""
-
+import asyncio
 import json
-from pathlib import Path
-from unittest.mock import AsyncMock
+from copy import deepcopy
 
 import pytest
 
-from nanobot.agent.memory import MemoryConsolidator, MemoryStore
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.agent.memory import Consolidator, MemoryStore
+from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
+from tests.agent.p6_memory_contract_fixtures import SummaryProvider, file_snapshot, summary_runtime
 
 
-def _make_messages(message_count: int = 30):
-    """Create a list of mock messages."""
-    return [
-        {"role": "user", "content": f"msg{i}", "timestamp": "2026-01-01 00:00"}
-        for i in range(message_count)
-    ]
+def _make_messages(message_count=60):
+    return [{"role": "user", "content": f"msg{i}", "timestamp": "2026-01-01 00:00"}
+            for i in range(message_count)]
 
 
-def _make_tool_response(history_entry, memory_update):
-    """Create an LLMResponse with a save_memory tool call."""
-    return LLMResponse(
-        content=None,
-        tool_calls=[
-            ToolCallRequest(
-                id="call_1",
-                name="save_memory",
-                arguments={
-                    "history_entry": history_entry,
-                    "memory_update": memory_update,
-                },
-            )
-        ],
-    )
+def _tool(arguments):
+    return LLMResponse(content=None, tool_calls=[ToolCallRequest(
+        id="call_1", name="save_memory", arguments=arguments,
+    )])
 
 
-class ScriptedProvider(LLMProvider):
-    def __init__(self, responses: list[LLMResponse]):
-        super().__init__()
-        self._responses = list(responses)
-        self.calls = 0
-
-    async def chat(self, *args, **kwargs) -> LLMResponse:
-        self.calls += 1
-        if self._responses:
-            return self._responses.pop(0)
-        return LLMResponse(content="", tool_calls=[])
-
-    def get_default_model(self) -> str:
-        return "test-model"
-
-
-class TestMemoryConsolidationTypeHandling:
-    """Test that consolidation handles various argument types correctly."""
-
-    @pytest.mark.asyncio
-    async def test_string_arguments_work(self, tmp_path: Path) -> None:
-        """Normal case: LLM returns string arguments."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-        provider.chat = AsyncMock(
-            return_value=_make_tool_response(
-                history_entry="[2026-01-01] User discussed testing.",
-                memory_update="# Memory\nUser likes testing.",
-            )
+async def _checked(tmp_path, responses, summaries, *, messages=None, previous=None,
+                   cap=256, preexisting=False):
+    store = MemoryStore(tmp_path, sessions_root=tmp_path / "sessions")
+    if preexisting:
+        store.memory_file.write_bytes(b"M0\n")
+        store.history_file.write_bytes(b'{"preexisting":"history"}\n')
+        (store.memory_dir / ".cursor").write_bytes(b"3\n")
+        (store.memory_dir / ".dream_cursor").write_bytes(b"2\n")
+        # This operation has no store dependency, even if a later constructor
+        # would require offline receipt reconciliation. No recovery guard runs.
+        (store.memory_dir / ".consolidation.pending.json").write_bytes(b'{"pending":"preserve"}\n')
+    before_files = file_snapshot(tmp_path)
+    source = messages if messages is not None else _make_messages()
+    before_source, before_responses = deepcopy(source), deepcopy(responses)
+    provider = SummaryProvider(responses)
+    runtime = summary_runtime(provider)
+    results = []
+    for index, summary in enumerate(summaries):
+        prior = previous[index] if previous is not None else None
+        result = await Consolidator.summarize_source_chunk(
+            source, prior, runtime=runtime, max_output_tokens=cap,
         )
-        provider.chat_with_retry = provider.chat
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is True
-        assert store.history_file.exists()
-        assert "[2026-01-01] User discussed testing." in store.history_file.read_text()
-        assert "User likes testing." in store.memory_file.read_text()
-
-    @pytest.mark.asyncio
-    async def test_dict_arguments_serialized_to_json(self, tmp_path: Path) -> None:
-        """Issue #1042: LLM returns dict instead of string — must not raise TypeError."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-        provider.chat = AsyncMock(
-            return_value=_make_tool_response(
-                history_entry={"timestamp": "2026-01-01", "summary": "User discussed testing."},
-                memory_update={"facts": ["User likes testing"], "topics": ["testing"]},
-            )
-        )
-        provider.chat_with_retry = provider.chat
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is True
-        assert store.history_file.exists()
-        history_content = store.history_file.read_text()
-        parsed = json.loads(history_content.strip())
-        assert parsed["summary"] == "User discussed testing."
-
-        memory_content = store.memory_file.read_text()
-        parsed_mem = json.loads(memory_content)
-        assert "User likes testing" in parsed_mem["facts"]
-
-    @pytest.mark.asyncio
-    async def test_string_arguments_as_raw_json(self, tmp_path: Path) -> None:
-        """Some providers return arguments as a JSON string instead of parsed dict."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-
-        response = LLMResponse(
-            content=None,
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_1",
-                    name="save_memory",
-                    arguments=json.dumps({
-                        "history_entry": "[2026-01-01] User discussed testing.",
-                        "memory_update": "# Memory\nUser likes testing.",
-                    }),
-                )
-            ],
-        )
-        provider.chat = AsyncMock(return_value=response)
-        provider.chat_with_retry = provider.chat
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is True
-        assert "User discussed testing." in store.history_file.read_text()
-
-    @pytest.mark.asyncio
-    async def test_no_tool_call_returns_false(self, tmp_path: Path) -> None:
-        """When LLM doesn't use the save_memory tool, return False."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-        provider.chat = AsyncMock(
-            return_value=LLMResponse(content="I summarized the conversation.", tool_calls=[])
-        )
-        provider.chat_with_retry = provider.chat
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is False
-        assert not store.history_file.exists()
-
-    @pytest.mark.asyncio
-    async def test_skips_when_message_chunk_is_empty(self, tmp_path: Path) -> None:
-        """Consolidation should be a no-op when the selected chunk is empty."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-        provider.chat_with_retry = provider.chat
-        messages: list[dict] = []
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is True
-        provider.chat.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_list_arguments_extracts_first_dict(self, tmp_path: Path) -> None:
-        """Some providers return arguments as a list - extract first element if it's a dict."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-
-        response = LLMResponse(
-            content=None,
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_1",
-                    name="save_memory",
-                    arguments=[{
-                        "history_entry": "[2026-01-01] User discussed testing.",
-                        "memory_update": "# Memory\nUser likes testing.",
-                    }],
-                )
-            ],
-        )
-        provider.chat = AsyncMock(return_value=response)
-        provider.chat_with_retry = provider.chat
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is True
-        assert "User discussed testing." in store.history_file.read_text()
-        assert "User likes testing." in store.memory_file.read_text()
-
-    @pytest.mark.asyncio
-    async def test_list_arguments_empty_list_returns_false(self, tmp_path: Path) -> None:
-        """Empty list arguments should return False."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-
-        response = LLMResponse(
-            content=None,
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_1",
-                    name="save_memory",
-                    arguments=[],
-                )
-            ],
-        )
-        provider.chat = AsyncMock(return_value=response)
-        provider.chat_with_retry = provider.chat
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_list_arguments_non_dict_content_returns_false(self, tmp_path: Path) -> None:
-        """List with non-dict content should return False."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-
-        response = LLMResponse(
-            content=None,
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_1",
-                    name="save_memory",
-                    arguments=["string", "content"],
-                )
-            ],
-        )
-        provider.chat = AsyncMock(return_value=response)
-        provider.chat_with_retry = provider.chat
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_missing_history_entry_returns_false_without_writing(self, tmp_path: Path) -> None:
-        """Do not persist partial results when required fields are missing."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(
-            return_value=LLMResponse(
-                content=None,
-                tool_calls=[
-                    ToolCallRequest(
-                        id="call_1",
-                        name="save_memory",
-                        arguments={"memory_update": "# Memory\nOnly memory update"},
-                    )
-                ],
-            )
-        )
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is False
-        assert not store.history_file.exists()
-        assert not store.memory_file.exists()
-
-    @pytest.mark.asyncio
-    async def test_missing_memory_update_returns_false_without_writing(self, tmp_path: Path) -> None:
-        """Do not append history if memory_update is missing."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(
-            return_value=LLMResponse(
-                content=None,
-                tool_calls=[
-                    ToolCallRequest(
-                        id="call_1",
-                        name="save_memory",
-                        arguments={"history_entry": "[2026-01-01] Partial output."},
-                    )
-                ],
-            )
-        )
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is False
-        assert not store.history_file.exists()
-        assert not store.memory_file.exists()
-
-    @pytest.mark.asyncio
-    async def test_null_required_field_returns_false_without_writing(self, tmp_path: Path) -> None:
-        """Null required fields should be rejected before persistence."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(
-            return_value=_make_tool_response(
-                history_entry=None,
-                memory_update="# Memory\nUser likes testing.",
-            )
-        )
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is False
-        assert not store.history_file.exists()
-        assert not store.memory_file.exists()
-
-    @pytest.mark.asyncio
-    async def test_empty_history_entry_returns_false_without_writing(self, tmp_path: Path) -> None:
-        """Empty history entries should be rejected to avoid blank archival records."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(
-            return_value=_make_tool_response(
-                history_entry="   ",
-                memory_update="# Memory\nUser likes testing.",
-            )
-        )
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is False
-        assert not store.history_file.exists()
-        assert not store.memory_file.exists()
-
-    @pytest.mark.asyncio
-    async def test_retries_transient_error_then_succeeds(self, tmp_path: Path, monkeypatch) -> None:
-        store = MemoryStore(tmp_path)
-        provider = ScriptedProvider([
-            LLMResponse(content="503 server error", finish_reason="error"),
-            _make_tool_response(
-                history_entry="[2026-01-01] User discussed testing.",
-                memory_update="# Memory\nUser likes testing.",
-            ),
-        ])
-        messages = _make_messages(message_count=60)
-        delays: list[int] = []
-
-        async def _fake_sleep(delay: int) -> None:
-            delays.append(delay)
-
-        monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", _fake_sleep)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is True
-        assert provider.calls == 2
-        assert delays == [1]
-
-    @pytest.mark.asyncio
-    async def test_consolidation_delegates_to_provider_defaults(self, tmp_path: Path) -> None:
-        """Consolidation no longer passes generation params — the provider owns them."""
-        store = MemoryStore(tmp_path)
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(
-            return_value=_make_tool_response(
-                history_entry="[2026-01-01] User discussed testing.",
-                memory_update="# Memory\nUser likes testing.",
-            )
-        )
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is True
-        provider.chat_with_retry.assert_awaited_once()
-        _, kwargs = provider.chat_with_retry.await_args
+        assert result.status == ("complete" if summary is not None else "invalid_response")
+        assert result.summary == summary
+        assert result.calls == 1
+        assert provider.calls == index + 1  # No automatic retry consumes the next response.
+        assert len(provider.responses) == len(responses) - index - 1
+        assert file_snapshot(tmp_path) == before_files
+        assert source == before_source
+        payload = json.loads(provider.prompts[index][1]["content"])
+        assert payload == {"previous_summary": prior, "events": before_source}
+        kwargs = provider.kwargs[index]
+        assert kwargs["tools"] is None
         assert kwargs["model"] == "test-model"
-        assert "temperature" not in kwargs
-        assert "max_tokens" not in kwargs
-        assert "reasoning_effort" not in kwargs
-
-    @pytest.mark.asyncio
-    async def test_consolidator_forwards_configured_output_cap(self, tmp_path: Path) -> None:
-        """MemoryConsolidator uses max_tokens.output, not target ratio, as the response cap."""
-        provider = AsyncMock()
-        consolidator = MemoryConsolidator(
-            workspace=tmp_path,
-            provider=provider,
-            model="test-model",
-            sessions=AsyncMock(),
-            context_window_tokens=120000,
-            build_messages=lambda **_kwargs: [],
-            get_tool_definitions=lambda: [],
-            max_completion_tokens=8192,
-            consolidation_target_ratio=0.3,
-        )
-        consolidator.store.consolidate = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        messages = _make_messages(message_count=3)
-
-        result = await consolidator.consolidate_messages(messages)
-
-        assert result is True
-        consolidator.store.consolidate.assert_awaited_once_with(
-            messages,
-            provider,
-            "test-model",
-            max_output_tokens=8192,
-        )
-
-    @pytest.mark.asyncio
-    async def test_tool_choice_fallback_on_unsupported_error(self, tmp_path: Path) -> None:
-        """Forced tool_choice rejected by provider -> retry with auto and succeed."""
-        store = MemoryStore(tmp_path)
-        error_resp = LLMResponse(
-            content="Error calling LLM: BadRequestError: "
-            "The tool_choice parameter does not support being set to required or object",
-            finish_reason="error",
-            tool_calls=[],
-        )
-        ok_resp = _make_tool_response(
-            history_entry="[2026-01-01] Fallback worked.",
-            memory_update="# Memory\nFallback OK.",
-        )
-
-        call_log: list[dict] = []
-
-        async def _tracking_chat(**kwargs):
-            call_log.append(kwargs)
-            return error_resp if len(call_log) == 1 else ok_resp
-
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(side_effect=_tracking_chat)
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(
-            messages,
-            provider,
-            "test-model",
-            max_output_tokens=8192,
-        )
-
-        assert result is True
-        assert len(call_log) == 2
-        assert call_log[0]["tool_choice"] == "required"
-        assert call_log[1]["tool_choice"] == "auto"
-        assert call_log[0]["max_tokens"] == 8192
-        assert call_log[1]["max_tokens"] == 8192
-        assert "Fallback worked." in store.history_file.read_text()
-
-    @pytest.mark.asyncio
-    async def test_tool_choice_fallback_cached_per_provider(self, tmp_path: Path) -> None:
-        """After one detected fallback, subsequent calls skip the forced attempt."""
-        store = MemoryStore(tmp_path)
-        error_resp = LLMResponse(
-            content="Error calling LLM: BadRequestError: "
-            "The tool_choice parameter does not support being set to required or object",
-            finish_reason="error",
-            tool_calls=[],
-        )
-
-        def _ok() -> LLMResponse:
-            return _make_tool_response(
-                history_entry="[2026-01-01] Cached fallback.",
-                memory_update="# Memory\nCached.",
-            )
-
-        call_log: list[dict] = []
-
-        async def _tracking_chat(**kwargs):
-            call_log.append(kwargs)
-            # First call: forced -> error; second call: auto -> ok (learn).
-            # All subsequent calls: auto -> ok (cache hit, no forced attempt).
-            if len(call_log) == 1:
-                return error_resp
-            return _ok()
-
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(side_effect=_tracking_chat)
-        messages = _make_messages(message_count=60)
-
-        assert await store.consolidate(messages, provider, "test-model") is True
-        assert await store.consolidate(messages, provider, "test-model") is True
-        assert await store.consolidate(messages, provider, "test-model") is True
-
-        # First call: forced ("required"). After fallback learned, all remaining calls: "auto".
-        tool_choices = [c["tool_choice"] for c in call_log]
-        assert len(tool_choices) == 4, tool_choices  # 1 forced + 1 auto-retry + 2 cached-auto
-        assert tool_choices[0] == "required"
-        assert tool_choices[1] == "auto"
-        assert tool_choices[2] == "auto"
-        assert tool_choices[3] == "auto"
-        assert ("AsyncMock", "test-model") in store._forced_tool_choice_unsupported
-
-    @pytest.mark.asyncio
-    async def test_tool_choice_detection_ignores_unrelated_errors(self, tmp_path: Path) -> None:
-        """An unrelated 'does not support' error must not trigger tool_choice fallback."""
-        store = MemoryStore(tmp_path)
-        unrelated_err = LLMResponse(
-            content="Error: this model does not support reasoning_effort",
-            finish_reason="error",
-            tool_calls=[],
-        )
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(return_value=unrelated_err)
-        messages = _make_messages(message_count=10)
-
-        result = await store.consolidate(messages, provider, "m")
-
-        # Exactly one call — no retry, because the error is unrelated to tool_choice.
-        assert provider.chat_with_retry.await_count == 1
-        assert result is False
-        assert not store._forced_tool_choice_unsupported
-
-    @pytest.mark.asyncio
-    async def test_tool_choice_fallback_auto_no_tool_call(self, tmp_path: Path) -> None:
-        """Forced rejected, auto retry also produces no tool call -> return False."""
-        store = MemoryStore(tmp_path)
-        error_resp = LLMResponse(
-            content="Error: tool_choice must be none or auto",
-            finish_reason="error",
-            tool_calls=[],
-        )
-        no_tool_resp = LLMResponse(
-            content="Here is a summary.",
-            finish_reason="stop",
-            tool_calls=[],
-        )
-
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(side_effect=[error_resp, no_tool_resp])
-        messages = _make_messages(message_count=60)
-
-        result = await store.consolidate(messages, provider, "test-model")
-
-        assert result is False
+        assert kwargs["temperature"] == 0.25
+        assert kwargs["reasoning_effort"] == "none"
+        assert kwargs["max_tokens"] == cap
+        assert "tool_choice" not in kwargs
+        context = provider.contexts[index]
+        assert context.conversation_state is None
+        assert context.request_limits.total_tokens == 8192
+        assert context.request_limits.completion_reserve_tokens == cap
+        assert "[RAW]" not in str(result)
+        results.append(result)
+    assert responses == before_responses
+    if not preexisting:
         assert not store.history_file.exists()
-
-    @pytest.mark.asyncio
-    async def test_raw_archive_after_consecutive_failures(self, tmp_path: Path) -> None:
-        """After 3 consecutive failures, raw-archive messages and return True."""
-        store = MemoryStore(tmp_path)
-        no_tool = LLMResponse(content="No tool call.", finish_reason="stop", tool_calls=[])
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(return_value=no_tool)
-        messages = _make_messages(message_count=10)
-
-        assert await store.consolidate(messages, provider, "m") is False
-        assert await store.consolidate(messages, provider, "m") is False
-        assert await store.consolidate(messages, provider, "m") is True
-
-        assert store.history_file.exists()
-        content = store.history_file.read_text()
-        assert "[RAW]" in content
-        assert "10 messages" in content
-        assert "msg0" in content
         assert not store.memory_file.exists()
+    return store, provider, results
 
-    @pytest.mark.asyncio
-    async def test_length_finish_reason_counts_toward_raw_archive(self, tmp_path: Path) -> None:
-        """Length failures keep the existing fail-then-raw-archive behavior."""
-        store = MemoryStore(tmp_path)
-        length_resp = LLMResponse(content="", finish_reason="length", tool_calls=[])
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(return_value=length_resp)
-        messages = _make_messages(message_count=10)
 
-        assert await store.consolidate(messages, provider, "m", max_output_tokens=256) is False
-        assert await store.consolidate(messages, provider, "m", max_output_tokens=256) is False
-        assert await store.consolidate(messages, provider, "m", max_output_tokens=256) is True
+@pytest.mark.asyncio
+@pytest.mark.parametrize("preexisting", [False, True])
+async def test_plain_text_source_summary_is_storage_free(tmp_path, preexisting):
+    text = "[2026-01-01] User discussed testing."
+    _, provider, results = await _checked(tmp_path, [LLMResponse(content=text)], [text],
+                                         preexisting=preexisting)
+    assert results[0].summary == text
+    assert len(json.loads(provider.prompts[0][1]["content"])["events"]) == 60
 
-        assert provider.chat_with_retry.await_count == 3
-        for call in provider.chat_with_retry.await_args_list:
-            assert call.kwargs["max_tokens"] == 256
 
-        assert store.history_file.exists()
-        content = store.history_file.read_text()
-        assert "[RAW]" in content
-        assert "10 messages" in content
-        assert "msg0" in content
-        assert not store.memory_file.exists()
+@pytest.mark.asyncio
+async def test_tool_dict_output_is_rejected_without_coercion(tmp_path):
+    arguments = {"history_entry": {"timestamp": "2026-01-01", "summary": "User discussed testing."},
+                 "memory_update": {"facts": ["User likes testing"], "topics": ["testing"]}}
+    raw = json.dumps(arguments)
+    _, _, results = await _checked(tmp_path, [_tool(arguments), LLMResponse(content=raw)], [None, raw])
+    assert results[0].summary is None and results[1].summary == raw
 
-    @pytest.mark.asyncio
-    async def test_raw_archive_counter_resets_on_success(self, tmp_path: Path) -> None:
-        """A successful consolidation resets the failure counter."""
-        store = MemoryStore(tmp_path)
-        no_tool = LLMResponse(content="Nope.", finish_reason="stop", tool_calls=[])
-        ok_resp = _make_tool_response(
-            history_entry="[2026-01-01] OK.",
-            memory_update="# Memory\nOK.",
-        )
-        messages = _make_messages(message_count=10)
 
-        provider = AsyncMock()
-        provider.chat_with_retry = AsyncMock(return_value=no_tool)
-        assert await store.consolidate(messages, provider, "m") is False
-        assert await store.consolidate(messages, provider, "m") is False
-        assert store._consecutive_failures == 2
+@pytest.mark.asyncio
+async def test_tool_raw_json_output_is_rejected_without_parsing(tmp_path):
+    raw = json.dumps({"history_entry": "[2026-01-01] User discussed testing.",
+                     "memory_update": "# Memory\nUser likes testing."})
+    _, _, results = await _checked(tmp_path, [_tool(raw), LLMResponse(content=raw)], [None, raw])
+    assert results[1].summary == raw
 
-        provider.chat_with_retry = AsyncMock(return_value=ok_resp)
-        assert await store.consolidate(messages, provider, "m") is True
-        assert store._consecutive_failures == 0
 
-        provider.chat_with_retry = AsyncMock(return_value=no_tool)
-        assert await store.consolidate(messages, provider, "m") is False
-        assert store._consecutive_failures == 1
+@pytest.mark.asyncio
+async def test_plain_text_no_tool_summary_succeeds(tmp_path):
+    text = "I summarized the conversation."
+    store, _, results = await _checked(tmp_path, [LLMResponse(content=text)], [text])
+    assert results[0].status == "complete"
+    assert not store.history_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_empty_source_is_rejected_before_transport(tmp_path):
+    store = MemoryStore(tmp_path, sessions_root=tmp_path / "sessions")
+    before = file_snapshot(tmp_path)
+    provider = SummaryProvider([LLMResponse(content="must not run")])
+    with pytest.raises(ValueError, match="source evidence"):
+        await Consolidator.summarize_source_chunk([], None, runtime=summary_runtime(provider))
+    assert provider.calls == 0
+    assert file_snapshot(tmp_path) == before
+    assert not store.history_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_tool_list_of_dict_output_is_rejected(tmp_path):
+    _, _, results = await _checked(tmp_path, [_tool([{
+        "history_entry": "[2026-01-01] User discussed testing.",
+        "memory_update": "# Memory\nUser likes testing.",
+    }])], [None])
+    assert results[0].status == "invalid_response"
+
+
+@pytest.mark.asyncio
+async def test_tool_empty_list_output_is_rejected(tmp_path):
+    _, _, results = await _checked(tmp_path, [_tool([])], [None])
+    assert results[0].summary is None
+
+
+@pytest.mark.asyncio
+async def test_tool_non_dict_list_output_is_rejected(tmp_path):
+    _, _, results = await _checked(tmp_path, [_tool(["string", "content"])], [None])
+    assert results[0].summary is None
+
+
+@pytest.mark.asyncio
+async def test_tool_missing_history_output_is_rejected_without_writing(tmp_path):
+    store, _, results = await _checked(tmp_path, [_tool({"memory_update": "# Memory\nOnly memory update"})],
+                                       [None])
+    assert results[0].status == "invalid_response"
+    assert not store.history_file.exists()
+    assert not store.memory_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_tool_missing_memory_output_is_rejected_without_writing(tmp_path):
+    text = "[2026-01-01] Partial output."
+    store, _, results = await _checked(tmp_path, [_tool({"history_entry": text}), LLMResponse(content=text)],
+                                       [None, text])
+    assert results[0].summary is None and results[1].summary == text
+    assert not store.history_file.exists()
+    assert not store.memory_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_null_summary_content_is_rejected_without_writing(tmp_path):
+    store, _, results = await _checked(tmp_path, [
+        _tool({"history_entry": None, "memory_update": "# Memory\nUser likes testing."}),
+        LLMResponse(content=None),
+    ], [None, None])
+    assert all(result.status == "invalid_response" for result in results)
+    assert not store.history_file.exists()
+    assert not store.memory_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_blank_summary_content_is_rejected_without_writing(tmp_path):
+    store, _, results = await _checked(tmp_path, [
+        _tool({"history_entry": "   ", "memory_update": "# Memory\nUser likes testing."}),
+        LLMResponse(content="   "),
+    ], [None, None])
+    assert all(result.summary is None for result in results)
+    assert not store.history_file.exists()
+    assert not store.memory_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_transient_source_summary_failure_is_single_attempt(tmp_path, monkeypatch):
+    delays = []
+
+    async def sleep(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", sleep)
+    text = "[2026-01-01] User discussed testing."
+    _, provider, results = await _checked(tmp_path, [
+        LLMResponse(content="503 server error", finish_reason="error"), LLMResponse(content=text),
+    ], [None, text])
+    assert [result.status for result in results] == ["invalid_response", "complete"]
+    assert provider.calls == 2
+    assert delays == []
+
+
+@pytest.mark.asyncio
+async def test_source_summary_uses_captured_runtime_and_bounded_request(tmp_path):
+    store = MemoryStore(tmp_path, sessions_root=tmp_path / "sessions")
+    before = file_snapshot(tmp_path)
+    provider = SummaryProvider([LLMResponse(content="facts")])
+    provider.generation = GenerationSettings(max_tokens=8192, temperature=0.25, reasoning_effort="high")
+    runtime = summary_runtime(provider)
+    provider.generation = GenerationSettings(max_tokens=99, temperature=0.9, reasoning_effort="low")
+    result = await Consolidator.summarize_source_chunk(_make_messages(), None, runtime=runtime,
+                                                      max_output_tokens=256)
+    assert result.status == "complete" and result.summary == "facts" and result.calls == 1
+    assert provider.calls == 1
+    kwargs = provider.kwargs[0]
+    assert kwargs["model"] == "test-model"
+    assert kwargs["temperature"] == 0.25
+    assert kwargs["max_tokens"] == 256
+    assert kwargs["reasoning_effort"] == "none"
+    assert kwargs["tools"] is None
+    assert provider.contexts[0].conversation_state is None
+    assert provider.contexts[0].request_limits.total_tokens == 8192
+    assert provider.contexts[0].request_limits.completion_reserve_tokens == 256
+    assert file_snapshot(tmp_path) == before
+    assert not store.memory_file.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cap", [1, 256, 2048])
+async def test_source_summary_validates_bounded_output_cap(tmp_path, cap):
+    _, provider, results = await _checked(tmp_path, [LLMResponse(content="x")], ["x"], cap=cap)
+    assert results[0].status == "complete"
+    assert provider.kwargs[0]["max_tokens"] == cap
+    assert provider.contexts[0].request_limits.completion_reserve_tokens == cap
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cap", [0, -1, 2049, 8192, True])
+async def test_invalid_summary_output_cap_has_zero_transport(tmp_path, cap):
+    MemoryStore(tmp_path, sessions_root=tmp_path / "sessions")
+    before = file_snapshot(tmp_path)
+    provider = SummaryProvider([LLMResponse(content="must not run")])
+    with pytest.raises(ValueError, match="limits"):
+        await Consolidator.summarize_source_chunk(_make_messages(), None, runtime=summary_runtime(provider),
+                                                  max_output_tokens=cap)
+    assert provider.calls == 0
+    assert file_snapshot(tmp_path) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout", [0, -1, 60.01])
+async def test_invalid_summary_timeout_has_zero_transport(tmp_path, timeout):
+    MemoryStore(tmp_path, sessions_root=tmp_path / "sessions")
+    before = file_snapshot(tmp_path)
+    provider = SummaryProvider([LLMResponse(content="must not run")])
+    with pytest.raises(ValueError, match="limits"):
+        await Consolidator.summarize_source_chunk(_make_messages(), None, runtime=summary_runtime(provider),
+                                                  timeout_seconds=timeout)
+    assert provider.calls == 0
+    assert file_snapshot(tmp_path) == before
+
+
+@pytest.mark.asyncio
+async def test_summary_timeout_cancels_the_single_transport(tmp_path):
+    class WaitingProvider(SummaryProvider):
+        async def chat(self, messages, **kwargs):
+            self.calls += 1
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled = True
+
+    MemoryStore(tmp_path, sessions_root=tmp_path / "sessions")
+    before = file_snapshot(tmp_path)
+    provider = WaitingProvider([])
+    provider.cancelled = False
+    result = await Consolidator.summarize_source_chunk(_make_messages(), None,
+        runtime=summary_runtime(provider), timeout_seconds=0.01, max_output_tokens=256)
+    assert result.status == "timeout" and result.summary is None and result.calls == 1
+    assert provider.calls == 1 and provider.cancelled
+    assert file_snapshot(tmp_path) == before
+
+
+@pytest.mark.asyncio
+async def test_tool_choice_error_does_not_retry_auxiliary_summary(tmp_path):
+    _, provider, results = await _checked(tmp_path, [
+        LLMResponse(content="tool_choice required is unsupported", finish_reason="error"),
+        LLMResponse(content="Fallback worked."),
+    ], [None, "Fallback worked."])
+    assert results[0].summary is None and results[1].summary == "Fallback worked."
+    assert all("tool_choice" not in kwargs for kwargs in provider.kwargs)
+
+
+@pytest.mark.asyncio
+async def test_repeated_stateless_summary_calls_have_no_tool_fallback_learning(tmp_path):
+    _, provider, results = await _checked(tmp_path, [
+        LLMResponse(content="tool_choice required is unsupported", finish_reason="error"),
+        LLMResponse(content="summary2"), LLMResponse(content="summary3"),
+    ], [None, "summary2", "summary3"], previous=[None, "explicit prior2", "explicit prior3"])
+    assert [result.status for result in results] == ["invalid_response", "complete", "complete"]
+    assert provider.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_unrelated_error_is_single_attempt_invalid_summary(tmp_path):
+    _, provider, results = await _checked(tmp_path, [
+        LLMResponse(content="reasoning_effort is unsupported", finish_reason="error"),
+    ], [None])
+    assert results[0].status == "invalid_response" and provider.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_error_then_explicit_plain_summary_calls_are_independent(tmp_path):
+    store, _, results = await _checked(tmp_path, [
+        LLMResponse(content="tool_choice required is unsupported", finish_reason="error"),
+        LLMResponse(content="Here is a summary."),
+    ], [None, "Here is a summary."])
+    assert results[1].summary == "Here is a summary."
+    assert not store.history_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_repeated_invalid_summaries_never_raw_archive(tmp_path):
+    store, provider, results = await _checked(tmp_path, [
+        _tool({"history_entry": "No tool call."}),
+        LLMResponse(content="503", finish_reason="error"), _tool([]),
+        LLMResponse(content="No tool call."),
+    ], [None, None, None, "No tool call."], messages=_make_messages(10))
+    assert [result.status for result in results[:3]] == ["invalid_response"] * 3
+    assert results[3].summary == "No tool call."
+    assert provider.calls == 4
+    assert not store.memory_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_length_summaries_never_publish_raw_fallback(tmp_path):
+    store, provider, results = await _checked(tmp_path, [
+        LLMResponse(content="partial", finish_reason="length") for _ in range(3)
+    ], [None, None, None], messages=_make_messages(10))
+    assert [result.status for result in results] == ["invalid_response"] * 3
+    assert provider.calls == 3
+    for kwargs in provider.kwargs:
+        assert kwargs["max_tokens"] == 256
+    assert not store.memory_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_independent_summary_success_has_no_failure_counter_policy(tmp_path):
+    _, provider, results = await _checked(tmp_path, [_tool([]), LLMResponse(content="OK."), _tool([])],
+                                         [None, "OK.", None])
+    assert [result.status for result in results] == ["invalid_response", "complete", "invalid_response"]
+    assert [result.summary for result in results] == [None, "OK.", None]
+    assert provider.calls == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", [{"summary": "facts"}, ["facts"], "x" * 64001, "word " * 5000])
+async def test_nonstring_or_oversized_plain_summary_is_rejected(tmp_path, content):
+    _, _, results = await _checked(tmp_path, [LLMResponse(content=content)], [None])
+    assert results[0].status == "invalid_response"
+
+
+@pytest.mark.asyncio
+async def test_original_source_shapes_remain_data_not_executable_calls(tmp_path):
+    source = [
+        {"role": "user", "content": {"summary": "User discussed testing."}},
+        {"role": "assistant", "content": [{"type": "text", "text": "User likes testing"}],
+         "tool_calls": [{"id": "old", "type": "function", "function": {
+             "name": "save_memory", "arguments": json.dumps({"history_entry": "data"}),
+         }}]},
+        {"role": "tool", "tool_call_id": "old", "content": '{"facts":["testing"]}'},
+    ]
+    _, provider, results = await _checked(tmp_path, [LLMResponse(content="facts")], ["facts"],
+                                         messages=source, previous=["prior summary"])
+    assert results[0].summary == "facts"
+    assert [message["role"] for message in provider.prompts[0]] == ["system", "user"]
+    assert not any(message.get("tool_calls") for message in provider.prompts[0])
+
+
+@pytest.mark.asyncio
+async def test_preexisting_targets_survive_success_and_invalid_output(tmp_path):
+    _, provider, results = await _checked(tmp_path, [
+        _tool({"history_entry": "must not write"}), LLMResponse(content="facts"),
+        LLMResponse(content="partial", finish_reason="length"),
+    ], [None, "facts", None], preexisting=True)
+    assert [result.status for result in results] == ["invalid_response", "complete", "invalid_response"]
+    assert provider.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_summary_cancellation_propagates_without_storage_effects(tmp_path):
+    MemoryStore(tmp_path, sessions_root=tmp_path / "sessions")
+    before = file_snapshot(tmp_path)
+    provider = SummaryProvider([asyncio.CancelledError()])
+    with pytest.raises(asyncio.CancelledError):
+        await Consolidator.summarize_source_chunk(_make_messages(), None,
+            runtime=summary_runtime(provider), max_output_tokens=256)
+    assert provider.calls == 1
+    assert file_snapshot(tmp_path) == before

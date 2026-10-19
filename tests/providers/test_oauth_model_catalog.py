@@ -191,16 +191,18 @@ def test_openai_codex_catalog_uses_account_catalog_and_filters_hidden_models(
             follow_redirects=kwargs["follow_redirects"],
         )
 
-    class Storage:
-        def load(self) -> SimpleNamespace:
-            return SimpleNamespace(access="secret", account_id="account-42")
-
-        def get_token_path(self) -> Path:
-            return tmp_path / "auth" / "openai-codex.json"
-
     monkeypatch.setattr(
-        "nanobot.providers.openai_codex_provider.FileTokenStorage",
-        lambda **_kwargs: Storage(),
+        "nanobot.providers.openai_codex_provider.get_codex_credential_view",
+        lambda **_kwargs: SimpleNamespace(
+            generation="generation-codex",
+            token=SimpleNamespace(access="secret", account_id="account-42"),
+        ),
+    )
+    monkeypatch.setattr(
+        "nanobot.providers.openai_codex_provider.get_codex_authority",
+        lambda: SimpleNamespace(
+            get_view_or_import=lambda: SimpleNamespace(generation="generation-codex")
+        ),
     )
     monkeypatch.setattr(
         "nanobot.providers.openai_codex_provider.get_codex_token",
@@ -288,16 +290,21 @@ def test_github_copilot_catalog_only_lists_compatible_chat_models(
             follow_redirects=kwargs["follow_redirects"],
         )
 
-    class Storage:
-        def load(self) -> SimpleNamespace:
-            return SimpleNamespace(access="github-secret", account_id="octocat")
-
-        def get_token_path(self) -> Path:
-            return tmp_path / "auth" / "github-copilot.json"
-
     monkeypatch.setattr(
-        "nanobot.providers.github_copilot_provider.get_storage",
-        lambda: Storage(),
+        "nanobot.providers.github_copilot_provider.get_copilot_authority",
+        lambda: SimpleNamespace(
+            get_view_or_import=lambda: SimpleNamespace(
+                generation="generation-copilot",
+                token=SimpleNamespace(account_id="octocat"),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "nanobot.providers.github_copilot_provider.get_copilot_bearer_view",
+        lambda **_kwargs: SimpleNamespace(
+            bearer="copilot-secret",
+            endpoint="https://api.individual.githubcopilot.com",
+        ),
     )
     monkeypatch.setattr("nanobot.providers.github_copilot_provider.httpx.Client", fake_client)
 
@@ -310,16 +317,15 @@ def test_github_copilot_catalog_only_lists_compatible_chat_models(
     ]
     assert catalog.models[0].context_window == 200_000
     assert catalog.models[0].reasoning_efforts == ("low", "high")
-    assert len(captured) == 2
-    assert captured[0].headers["Authorization"] == "token github-secret"
-    assert captured[1].headers["Authorization"] == "Bearer copilot-secret"
-    assert str(captured[1].url) == "https://api.individual.githubcopilot.com/models"
+    assert len(captured) == 1
+    assert captured[0].headers["Authorization"] == "Bearer copilot-secret"
+    assert str(captured[0].url) == "https://api.individual.githubcopilot.com/models"
     assert get_oauth_model_catalog("github_copilot").source == "cache"
     assert get_oauth_model_catalog(
         "github_copilot",
         proxy="http://proxy.example:8080",
     ).source == "remote"
-    assert len(captured) == 4
+    assert len(captured) == 2
 
 
 def test_catalog_single_flights_concurrent_refreshes() -> None:
@@ -347,6 +353,88 @@ def test_catalog_single_flights_concurrent_refreshes() -> None:
     assert {result.models[0].id for result in results} == {"provider/remote"}
     assert [result.source for result in results].count("remote") == 1
     assert [result.source for result in results].count("cache") == 7
+
+
+def test_codex_catalog_never_publishes_a_models_after_a_to_b_to_c_churn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.providers import openai_codex_provider as provider
+
+    current = {"generation": "a"}
+
+    def view(generation: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            generation=generation,
+            token=SimpleNamespace(access=f"access-{generation}", account_id=f"account-{generation}"),
+        )
+
+    authority = SimpleNamespace(
+        get_view_or_import=lambda: view(current["generation"]),
+    )
+    monkeypatch.setattr(provider, "get_codex_authority", lambda: authority)
+    monkeypatch.setattr(
+        provider,
+        "get_codex_credential_view",
+        lambda **_kwargs: view(current["generation"]),
+    )
+
+    def fetch(_proxy: str | None, *, token: object) -> tuple[ProviderModelSpec, ...]:
+        generation = str(getattr(token, "access")).removeprefix("access-")
+        if generation == "a":
+            current["generation"] = "b"
+            current["generation"] = "c"
+        return (ProviderModelSpec(id=f"openai-codex/model-{generation}", label=generation),)
+
+    monkeypatch.setattr(provider, "_fetch_openai_codex_models", fetch)
+
+    stale = provider.get_openai_codex_model_catalog()
+    fresh = provider.get_openai_codex_model_catalog()
+
+    assert stale.source == "fallback"
+    assert all(model.id != "openai-codex/model-a" for model in stale.models)
+    assert fresh.source == "remote"
+    assert [model.id for model in fresh.models] == ["openai-codex/model-c"]
+
+
+def test_copilot_catalog_never_publishes_a_models_after_a_to_b_to_c_churn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.providers import github_copilot_provider as provider
+
+    current = {"generation": "a"}
+
+    def view(generation: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            generation=generation,
+            token=SimpleNamespace(account_id=f"account-{generation}"),
+        )
+
+    authority = SimpleNamespace(get_view_or_import=lambda: view(current["generation"]))
+    monkeypatch.setattr(provider, "get_copilot_authority", lambda: authority)
+
+    def fetch(
+        _proxy: str | None, *, expected_generation: str | None = None
+    ) -> tuple[ProviderModelSpec, ...]:
+        assert expected_generation is not None
+        if expected_generation == "a":
+            current["generation"] = "b"
+            current["generation"] = "c"
+        return (
+            ProviderModelSpec(
+                id=f"github-copilot/model-{expected_generation}",
+                label=expected_generation,
+            ),
+        )
+
+    monkeypatch.setattr(provider, "_fetch_github_copilot_models", fetch)
+
+    stale = provider.get_github_copilot_model_catalog()
+    fresh = provider.get_github_copilot_model_catalog()
+
+    assert stale.source == "fallback"
+    assert all(model.id != "github-copilot/model-a" for model in stale.models)
+    assert fresh.source == "remote"
+    assert [model.id for model in fresh.models] == ["github-copilot/model-c"]
 
 
 def test_catalog_invalidation_discards_an_inflight_account_refresh() -> None:

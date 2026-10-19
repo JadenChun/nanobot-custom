@@ -31,21 +31,75 @@ def test_staging_fields_survive_store_and_action_decoding():
 
 @pytest.mark.parametrize("execution_mode", ["session_bound", "legacy_fresh"])
 def test_service_serializer_preserves_identifiers_and_destinations(tmp_path, execution_mode):
+    import hashlib
     import json
+    import os
 
+    from nanobot.cron.action_store import CronActionStore
+    from nanobot.cron.definition_store import CronDefinitionStore
     from nanobot.cron.service import CronService
-    from nanobot.cron.types import CronJobState, CronPayload, CronRunRecord, CronSchedule, CronStore
+    from nanobot.cron.types import CronJobState, CronPayload, CronRunRecord, CronSchedule
     job = CronJob(id='job', name='fixture', schedule=CronSchedule(kind='every', every_ms=1000),
                   payload=CronPayload(kind='system_event', deliver=False, execution_mode=execution_mode,
                                       additional_destinations=[CronDestination('telegram', '42')]),
                   state=CronJobState(last_run_status='completed', run_history=[
                       CronRunRecord(run_at_ms=1, status='ok', run_id='run',
                                     run_status='completed', occurrence_id='occurrence')]))
-    service = CronService(tmp_path / 'jobs.json')
-    service._store = CronStore(jobs=[job])
-    service._save_store()
-    stored = json.loads(service.store_path.read_text())['jobs'][0]
-    assert CronJob.from_store_dict(stored) == job
+    # C1 owns stopped-writer serialization evidence; C2/C3 never publish jobs.json.
+    original = job.to_store_dict()
+    assert CronJob.from_store_dict(original) == job
+    root = tmp_path / 'cron'
+    root.mkdir(mode=0o700)
+    source = json.dumps({'version': 1, 'jobs': [original]}, separators=(',', ':')).encode()
+    source_path = root / 'jobs.json'
+    source_path.write_bytes(source)
+    os.chmod(source_path, 0o600)
+    namespace = 'cron:serializer-preservation'
+    converted = CronActionStore.convert_legacy(root, namespace=namespace)
+    digest = hashlib.sha256(source).hexdigest()
+    assert converted.jobs_backup_digest == digest
+    backup = root / 'legacy-backups' / f'{digest}.bin'
+    assert source_path.read_bytes() == source
+    assert backup.read_bytes() == source
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() == digest
+    assert hashlib.sha256(backup.read_bytes()).hexdigest() == digest
+
+    # Reopen C1: compare all defaults and nested state/history, not fixture JSON alone.
+    candidate = CronActionStore(root, namespace=namespace).replay().candidate
+    assert candidate is not None and candidate['kind'] == 'legacy_cron_snapshot_candidate'
+    stored = candidate['jobs'][0]
+    assert len(stored['jobInstanceId']) == 64 and int(stored['jobInstanceId'], 16) >= 0
+    assert len(stored['definitionRevision']) == 64 and int(stored['definitionRevision'], 16) >= 0
+    decoded = CronJob.from_store_dict(stored)
+    decoded.job_instance_id = job.job_instance_id
+    decoded.definition_revision = job.definition_revision
+    assert decoded == job
+    evidence = candidate['legacy_conversion_evidence']
+    assert evidence['identity_jobs_digest'] == evidence['jobs_backup_digest'] == digest
+    complete = json.loads((root / 'conversion-complete.json').read_text())
+    assert complete['conversion_evidence'] == evidence
+
+    # Real definition successor/checkpoint/reopen preserves definition fields only.
+    service = CronService(source_path, definition_store=CronDefinitionStore(CronActionStore(root, namespace=namespace)))
+    projection = service.list_jobs()[0]
+    assert projection.id == job.id and projection.name == job.name
+    assert projection.enabled == job.enabled and projection.schedule == job.schedule
+    assert projection.payload == job.payload
+    assert projection.delete_after_run == job.delete_after_run
+    assert projection.job_instance_id == stored['jobInstanceId']
+    assert projection.definition_revision == stored['definitionRevision']
+    assert projection.state == CronJobState()
+    assert projection.created_at_ms == projection.updated_at_ms == 0
+    successor = CronActionStore(root, namespace=namespace).replay().candidate
+    assert successor is not None and successor['kind'] == 'cron_definition_candidate_v2'
+    assert successor['legacy_conversion_evidence'] == evidence
+    assert not {'state', 'createdAtMs', 'updatedAtMs'} & successor['definitions'][0].keys()
+    reopened = CronService(source_path, definition_store=CronDefinitionStore(CronActionStore(root, namespace=namespace)))
+    assert reopened.list_jobs() == [projection]
+    assert source_path.read_bytes() == backup.read_bytes() == source
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() == digest
+    assert hashlib.sha256(backup.read_bytes()).hexdigest() == digest
+    assert json.loads((root / 'conversion-complete.json').read_text()) == complete
 
 
 def test_staging_preparation_is_idempotent_and_preserves_delivery_and_state():

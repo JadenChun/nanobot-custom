@@ -5,7 +5,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from agent.test_source_summary import SummaryProvider, runtime
 from nanobot.agent.context_governance import (
     ContextGovernanceConfig,
     ContextGovernor,
@@ -22,6 +21,7 @@ from nanobot.session.source import SourceValidationError
 from nanobot.session.source_projection import RuntimeNode, project_source, source_nodes
 from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
 from nanobot.session.turn_writer import SourceTurnWriter
+from tests.agent.test_source_summary import SummaryProvider, runtime
 
 
 @pytest.fixture

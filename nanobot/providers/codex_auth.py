@@ -5,15 +5,27 @@ from __future__ import annotations
 import base64
 import json
 import os
+import stat
 import time
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import httpx
 from oauth_cli_kit.models import OAuthToken
 from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
+
+from nanobot.providers.oauth_credentials import (
+    CredentialError,
+    CredentialStatus,
+    CredentialView,
+    OAuthCredentialCoordinator,
+)
+from nanobot.providers.oauth_credentials import (
+    OAuthToken as CanonicalToken,
+)
 
 _REFRESH_EARLY_SECONDS = 300
 DEFAULT_CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
@@ -24,39 +36,83 @@ class CodexUsageError(RuntimeError):
     """Raised when the Codex OAuth usage endpoint cannot be read."""
 
 
-def get_token(min_ttl_seconds: int = 60) -> OAuthToken:
-    """Load a usable Codex token from Nanobot or official Codex auth storage."""
-    token_path = _nanobot_token_path()
-    token = _load_nanobot_token(token_path)
-    now_ms = _now_ms()
-    if token and token.expires - now_ms > min_ttl_seconds * 1000:
-        return token
+def get_token(min_ttl_seconds: int = 60, proxy: str | None = None) -> OAuthToken:
+    """Load or refresh the canonical Codex credential under its process lock."""
+    authority = get_codex_authority()
 
-    auth_path = _official_codex_auth_path()
-    official = _load_official_codex_token(auth_path)
-    if official:
-        _save_nanobot_token(token_path, official)
-        if official.expires - now_ms > min_ttl_seconds * 1000:
-            return official
-        token = official
+    def refresh(current: CanonicalToken) -> CanonicalToken:
+        token = _refresh_token(current.refresh, current.account_id, proxy=proxy)
+        return _to_canonical(token)
 
-    if token and token.refresh:
-        refreshed = _refresh_token(token.refresh, token.account_id)
-        _save_nanobot_token(token_path, refreshed)
-        if auth_path.exists():
-            _write_official_codex_auth(auth_path, refreshed)
-        return refreshed
+    try:
+        return _to_oauth(authority.refresh_codex(min_ttl_seconds, refresh).token)
+    except Exception as exc:
+        raise RuntimeError("OpenAI Codex OAuth credential is unavailable.") from exc
 
-    if token:
-        raise RuntimeError(
-            "Codex access token is expired and no refresh token is available. "
-            "Run `codex login` on a machine with a browser and copy its auth file to this host."
-        )
 
-    raise RuntimeError(
-        "OAuth credentials not found. Run `codex login` locally and copy "
-        "`~/.codex/auth.json` (or `$CODEX_HOME/auth.json`) to this machine."
-    )
+def get_codex_credential_view(
+    min_ttl_seconds: int = 60, proxy: str | None = None
+) -> CredentialView:
+    authority = get_codex_authority()
+
+    def refresh(current: CanonicalToken) -> CanonicalToken:
+        return _to_canonical(_refresh_token(current.refresh, current.account_id, proxy=proxy))
+
+    return authority.refresh_codex(min_ttl_seconds, refresh)
+
+
+def get_codex_authority() -> OAuthCredentialCoordinator:
+    path = _canonical_codex_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path = path.parent.resolve(strict=True) / path.name
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        info = None
+    if info is not None:
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            raise CredentialError("invalid credential store")
+    if os.name != "nt":
+        path.parent.chmod(0o700)
+    return OAuthCredentialCoordinator(path, "codex", importer=_import_codex_token)
+
+
+def get_codex_login_status() -> CredentialStatus:
+    return get_codex_authority().peek_status()
+
+
+def logout_codex() -> None:
+    get_codex_authority().logout()
+    from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
+
+    invalidate_oauth_model_catalog("openai_codex")
+
+
+def reimport_codex() -> OAuthToken | None:
+    authority = get_codex_authority()
+    generation = authority.begin_login()
+    token = authority.explicit_reimport(generation)
+    if token is not None:
+        from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
+
+        invalidate_oauth_model_catalog("openai_codex")
+    return None if token is None else _to_oauth(token)
+
+
+def _to_canonical(token: OAuthToken) -> CanonicalToken:
+    return CanonicalToken(token.access, token.refresh, token.expires, token.account_id)
+
+
+def _to_oauth(token: CanonicalToken) -> OAuthToken:
+    return OAuthToken(token.access, token.refresh, token.expires_at_ms, token.account_id)
+
+
+def _import_codex_token() -> CanonicalToken | None:
+    # Both official Codex and oauth-cli-kit remain read-only migration sources.
+    token = _load_official_codex_token(_official_codex_auth_path())
+    if token is None:
+        token = _load_nanobot_token(_legacy_oauth_token_path())
+    return None if token is None else _to_canonical(token)
 
 
 def get_codex_usage() -> dict[str, Any]:
@@ -68,7 +124,8 @@ def get_codex_usage() -> dict[str, Any]:
             usage_url,
             headers={
                 "Authorization": f"Bearer {token.access}",
-                "ChatGPT-Account-ID": token.account_id,
+                # The Codex coordinator rejects tokens without an account ID.
+                "ChatGPT-Account-ID": cast(str, token.account_id),
                 "originator": "codex_cli_rs",
                 "Accept": "application/json",
             },
@@ -90,7 +147,8 @@ def get_codex_usage() -> dict[str, Any]:
         raise CodexUsageError("Codex returned an invalid quota response.") from exc
     if not isinstance(payload, dict):
         raise CodexUsageError("Codex returned an unexpected quota response.")
-    return payload
+    # httpx's default JSON decoder produces string-keyed objects.
+    return cast(dict[str, object], payload)
 
 
 def format_codex_usage(payload: dict[str, Any]) -> str:
@@ -104,8 +162,8 @@ def format_codex_usage(payload: dict[str, Any]) -> str:
         return "\n".join(lines)
 
     windows = (
-        ("Primary", _first_value(rate_limit, "primary_window", "primary")),
-        ("Secondary", _first_value(rate_limit, "secondary_window", "secondary")),
+        ("Primary", _first_value(cast(dict[object, object], rate_limit), "primary_window", "primary")),
+        ("Secondary", _first_value(cast(dict[object, object], rate_limit), "secondary_window", "secondary")),
     )
     rendered = 0
     for label, window in windows:
@@ -113,13 +171,13 @@ def format_codex_usage(payload: dict[str, Any]) -> str:
             continue
         details: list[str] = []
         reset_detail: str | None = None
-        used = _first_value(window, "used_percent", "usedPercent")
+        used = _first_value(cast(dict[object, object], window), "used_percent", "usedPercent")
         used_number = _as_number(used)
         if used_number is not None:
             remaining = max(0.0, 100.0 - used_number)
             details.append(f"{remaining:g}% remaining")
 
-        reset_at = _as_timestamp(_first_value(window, "reset_at", "resetsAt"))
+        reset_at = _as_timestamp(_first_value(cast(dict[object, object], window), "reset_at", "resetsAt"))
         if reset_at is not None:
             reset_time = datetime.fromtimestamp(reset_at, tz=MALAYSIA_TIMEZONE).strftime(
                 "%Y-%m-%d %H:%M MYT"
@@ -137,7 +195,9 @@ def format_codex_usage(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _first_value(payload: dict[str, Any], *keys: str) -> Any:
+def _first_value(
+    payload: Mapping[str, object] | Mapping[object, object], *keys: str
+) -> object:
     for key in keys:
         value = payload.get(key)
         if value is not None:
@@ -145,7 +205,7 @@ def _first_value(payload: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _as_number(value: Any) -> float | None:
+def _as_number(value: object) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -158,14 +218,26 @@ def _as_number(value: Any) -> float | None:
     return None
 
 
-def _as_timestamp(value: Any) -> float | None:
+def _as_timestamp(value: object) -> float | None:
     timestamp = _as_number(value)
     if timestamp is None:
         return None
     return timestamp / 1000 if timestamp > 10_000_000_000 else timestamp
 
 
-def _nanobot_token_path() -> Path:
+def _canonical_codex_path() -> Path:
+    override = os.environ.get("NANOBOT_CODEX_AUTH_PATH")
+    if override:
+        return Path(os.path.abspath(os.fspath(Path(override).expanduser())))
+    home = Path(os.environ.get("HOME", str(Path.home())))
+    return Path(os.path.abspath(os.fspath(home / ".nanobot" / "auth" / "openai-codex.json")))
+
+
+# Compatibility name for callers that only need the active Nanobot path.
+_nanobot_token_path = _canonical_codex_path
+
+
+def _legacy_oauth_token_path() -> Path:
     override = os.environ.get("OAUTH_CLI_KIT_TOKEN_PATH")
     if override:
         return Path(override)
@@ -212,7 +284,7 @@ def _load_official_codex_token(path: Path) -> OAuthToken | None:
         return None
 
     token_block = payload.get("tokens")
-    data = token_block if isinstance(token_block, dict) else payload
+    data = cast(dict[object, object], token_block) if isinstance(token_block, dict) else payload
     access = _clean_str(data.get("access_token"))
     refresh = _clean_str(data.get("refresh_token"))
     account_id = _clean_str(data.get("account_id")) or _account_id_from_access_token(access)
@@ -226,45 +298,12 @@ def _load_official_codex_token(path: Path) -> OAuthToken | None:
     return OAuthToken(access=access, refresh=refresh or "", expires=expires, account_id=account_id)
 
 
-def _save_nanobot_token(path: Path, token: OAuthToken) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "access": token.access,
-        "refresh": token.refresh,
-        "expires": token.expires,
-        "account_id": token.account_id,
-    }
-    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)
-    except Exception:
-        pass
-
-
-def _write_official_codex_auth(path: Path, token: OAuthToken) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload: dict[str, Any] = {}
-    if path.exists():
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            payload = {}
-    tokens = payload.get("tokens")
-    if not isinstance(tokens, dict):
-        tokens = {}
-    tokens["access_token"] = token.access
-    tokens["refresh_token"] = token.refresh
-    tokens["account_id"] = token.account_id
-    payload["tokens"] = tokens
-    payload["last_refresh"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
-    path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)
-    except Exception:
-        pass
-
-
-def _refresh_token(refresh_token: str, account_id: str | None) -> OAuthToken:
+def _refresh_token(
+    refresh_token: str, account_id: str | None, *, proxy: str | None = None
+) -> OAuthToken:
+    client_kwargs: dict[str, Any] = {"timeout": 30.0}
+    if proxy:
+        client_kwargs.update(proxy=proxy, trust_env=False)
     response = httpx.post(
         OPENAI_CODEX_PROVIDER.token_url,
         data={
@@ -273,7 +312,7 @@ def _refresh_token(refresh_token: str, account_id: str | None) -> OAuthToken:
             "client_id": OPENAI_CODEX_PROVIDER.client_id,
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
-        timeout=30.0,
+        **client_kwargs,
     )
     if response.status_code != 200:
         raise RuntimeError(f"Token refresh failed: {response.status_code} {response.text}")
@@ -300,7 +339,7 @@ def _refresh_token(refresh_token: str, account_id: str | None) -> OAuthToken:
     )
 
 
-def _coerce_expires_ms(raw: Any, access_token: str | None, last_refresh: Any | None = None, *, duration: bool = False) -> int | None:
+def _coerce_expires_ms(raw: object, access_token: str | None, last_refresh: object = None, *, duration: bool = False) -> int | None:
     if isinstance(raw, int):
         return raw if raw > 10_000_000_000 else (_now_ms() if duration else 0) + raw * 1000
     if isinstance(raw, float):
@@ -347,13 +386,13 @@ def _account_id_from_access_token(access_token: str | None) -> str | None:
     payload = _decode_jwt_payload(access_token)
     auth_block = payload.get(OPENAI_CODEX_PROVIDER.jwt_claim_path or "")
     if isinstance(auth_block, dict):
-        account_id = _clean_str(auth_block.get(OPENAI_CODEX_PROVIDER.account_id_claim or ""))
+        account_id = _clean_str(cast(dict[object, object], auth_block).get(OPENAI_CODEX_PROVIDER.account_id_claim or ""))
         if account_id:
             return account_id
     return None
 
 
-def _decode_jwt_payload(token: str | None) -> dict[str, Any]:
+def _decode_jwt_payload(token: str | None) -> dict[str, object]:
     if not token:
         return {}
     parts = token.split(".")
@@ -365,10 +404,11 @@ def _decode_jwt_payload(token: str | None) -> dict[str, Any]:
         payload = json.loads(payload_bytes.decode("utf-8"))
     except Exception:
         return {}
-    return payload if isinstance(payload, dict) else {}
+    # The default decoder creates string-keyed objects; retain the shape guard.
+    return cast(dict[str, object], payload) if isinstance(payload, dict) else {}
 
 
-def _clean_str(value: Any) -> str | None:
+def _clean_str(value: object) -> str | None:
     if isinstance(value, str):
         text = value.strip()
         return text or None

@@ -10,7 +10,7 @@ import uuid
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from loguru import logger
 
@@ -22,6 +22,7 @@ from nanobot.agent.skills import BUILTIN_SKILLS_DIR, SkillsLoader
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.context import current_request_context
+from nanobot.agent.tools.file_state import FileStates
 from nanobot.agent.tools.filesystem import (
     EditFileTool,
     ListDirTool,
@@ -31,7 +32,7 @@ from nanobot.agent.tools.filesystem import (
 )
 from nanobot.agent.tools.mcp import (
     MCPConnection,
-    _close_mcp_connections,
+    close_mcp_connections,
     connect_mcp_servers,
     is_read_only_mcp_tool,
 )
@@ -47,6 +48,7 @@ from nanobot.agent.write_guard import FileLockRegistry, WriteScope
 from nanobot.config.schema import (
     AgentBrowserConfig,
     AgentDeviceConfig,
+    MCPServerConfig,
 )
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 from nanobot.providers.base import LLMProvider
@@ -55,7 +57,10 @@ from nanobot.session.source_request import SourceTranscript
 from nanobot.utils.llm_runtime import LLMRuntime
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from nanobot.agent.tools.shell import ExecToolConfig
+    from nanobot.session.artifact_reader import ArtifactReader as _ArtifactReader
     from nanobot.session.turn_writer import SourceTurnWriter
 
 # Legacy explore/crawler tools call the manager directly.  Keep their bridge
@@ -66,12 +71,12 @@ _CURRENT_TURN_CONTEXT: contextvars.ContextVar[TurnContext | None] = contextvars.
 )
 
 
-def set_current_turn_context(context: TurnContext) -> contextvars.Token:
+def set_current_turn_context(context: TurnContext) -> contextvars.Token[TurnContext | None]:
     """Bind a turn context for legacy foreground tools in this task."""
     return _CURRENT_TURN_CONTEXT.set(context)
 
 
-def reset_current_turn_context(token: contextvars.Token) -> None:
+def reset_current_turn_context(token: contextvars.Token[TurnContext | None]) -> None:
     """Restore the previous task-local foreground context."""
     _CURRENT_TURN_CONTEXT.reset(token)
 
@@ -79,6 +84,14 @@ def reset_current_turn_context(token: contextvars.Token) -> None:
 def current_turn_context() -> TurnContext | None:
     """Return the task-local turn context, if one is active."""
     return _CURRENT_TURN_CONTEXT.get()
+
+
+class _ReadToolArguments(TypedDict):
+    workspace: Path
+    allowed_dir: Path | None
+    extra_read_allowed_dirs: list[Path] | None
+    resource_policy: ResourceAccessPolicy
+    file_states: FileStates
 
 
 class _DelegationHook(AgentHook):
@@ -117,7 +130,7 @@ class ForegroundAgentManager:
         context_paths: list[Path] | None = None,
         context_manager: ContextRepoManager | None = None,
         restrict_to_workspace: bool = False,
-        mcp_servers: dict | None = None,
+        mcp_servers: dict[str, MCPServerConfig] | None = None,
         max_parallel_explore_agents: int = 2,
         max_calls_per_turn: int = 6,
         max_worker_calls_per_turn: int = 2,
@@ -311,11 +324,14 @@ class ForegroundAgentManager:
 
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = self._extra_read_dirs(allowed_dir)
-        fs_kwargs = {
+        fs_kwargs: _ReadToolArguments = {
             "workspace": self.workspace,
             "allowed_dir": allowed_dir,
             "extra_read_allowed_dirs": extra_read,
             "resource_policy": self.resource_policy,
+            # Delegates have independent transcripts; a parent's cached read
+            # must never replace their first read with an unchanged-file stub.
+            "file_states": FileStates(),
         }
         tools.register(ReadFileTool(**fs_kwargs))
         tools.register(ListDirTool(**fs_kwargs))
@@ -360,6 +376,7 @@ class ForegroundAgentManager:
         # not inherit shell, browser, device, web, MCP, message, cron, or
         # delegation capabilities from the main/role registries.
         tools = ToolRegistry()
+        file_states = FileStates()
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = self._extra_read_dirs(allowed_dir)
         extra_write = self._extra_write_dirs(allowed_dir)
@@ -368,12 +385,14 @@ class ForegroundAgentManager:
             allowed_dir=allowed_dir,
             extra_read_allowed_dirs=extra_read,
             resource_policy=self.resource_policy,
+            file_states=file_states,
         ))
         tools.register(ListDirTool(
             workspace=self.workspace,
             allowed_dir=allowed_dir,
             extra_read_allowed_dirs=extra_read,
             resource_policy=self.resource_policy,
+            file_states=file_states,
         ))
         lock_owner = f"foreground-worker:{call_id}"
         tools.register(WriteFileTool(
@@ -381,6 +400,7 @@ class ForegroundAgentManager:
             allowed_dir=allowed_dir,
             extra_write_allowed_dirs=extra_write,
             resource_policy=self.resource_policy,
+            file_states=file_states,
             lock_registry=self._file_lock_registry,
             lock_owner=lock_owner,
             allowed_write_scope=list(scopes),
@@ -390,6 +410,7 @@ class ForegroundAgentManager:
             allowed_dir=allowed_dir,
             extra_write_allowed_dirs=extra_write,
             resource_policy=self.resource_policy,
+            file_states=file_states,
             lock_registry=self._file_lock_registry,
             lock_owner=lock_owner,
             allowed_write_scope=list(scopes),
@@ -446,7 +467,9 @@ class ForegroundAgentManager:
                          if turn_context is not None and turn_context.source_writer is not None else None)
         child_grants = None
         child_context = turn_context
-        child_reader_factory = None
+        child_factory: Callable[
+            [SourceTurnWriter, bool, ReadFileTool], _ArtifactReader | None,
+        ] | None = None
         if source_writer is not None:
             parent_reader = turn_context.artifact_reader if turn_context is not None else None
             if artifact_references:
@@ -468,6 +491,7 @@ class ForegroundAgentManager:
                     if not isolated:
                         return None
                     return ArtifactReader(writer, "isolated_stream", parent_reader.store, read_file)
+                child_factory = child_reader_factory
             if turn_context is not None:
                 child_context = replace(
                     turn_context,
@@ -501,7 +525,7 @@ class ForegroundAgentManager:
             turn_context=child_context,
             source_writer=source_writer,
             artifact_grants=child_grants,
-            artifact_reader_factory=child_reader_factory,
+            artifact_reader_factory=child_factory,
             hook=_DelegationHook(role, call_id),
             concurrent_tools=role in {"planner", "reviewer", "explorer"},
             fail_on_tool_error=True,
@@ -718,7 +742,7 @@ End with exactly:
         if isinstance(nested, ToolOutcome):
             return nested
         text = nested
-        empty = {
+        empty: dict[str, str | bool | list[str]] = {
             "summary": text[:500],
             "findings": [],
             "references": [],
@@ -736,9 +760,9 @@ End with exactly:
         parsed = dict(empty)
         parsed["summary"] = str(payload.get("summary") or "").strip()
         for key in ("findings", "references", "open_questions", "searched_areas"):
-            value = payload.get(key) or []
+            value: object = payload.get(key) or []
             parsed[key] = (
-                [str(item).strip() for item in value if str(item).strip()]
+                [str(item).strip() for item in cast(list[object], value) if str(item).strip()]
                 if isinstance(value, list)
                 else []
             )
@@ -825,7 +849,7 @@ with exact source URLs, visible dates, limitations, and uncertainty."""
         connections, self._mcp_connections = self._mcp_connections, {}
         self._mcp_connected = False
         self._read_only_mcp_tools = ToolRegistry()
-        await _close_mcp_connections(connections)
+        await close_mcp_connections(connections)
 
 
 __all__ = ["ForegroundAgentManager"]

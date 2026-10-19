@@ -27,7 +27,7 @@ class KeyPoolCoordinator:
         now = self._clock()
         ready = [slot for slot, expiry in enumerate(self._cooldowns) if expiry <= now]
         cooling = [slot for slot, expiry in enumerate(self._cooldowns) if expiry > now]
-        result = []
+        result: list[int] = []
         preferred = self._preferred
         if preferred is not None and preferred in ready:
             result.append(preferred)

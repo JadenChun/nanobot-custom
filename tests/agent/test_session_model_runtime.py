@@ -3,7 +3,6 @@ import asyncio
 import pytest
 
 from nanobot.agent.loop import AgentLoop
-from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ModelPresetConfig
 from nanobot.nanobot import Nanobot
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
@@ -14,6 +13,12 @@ from nanobot.session.model_selection import (
     model_preset_from_metadata,
 )
 from nanobot.utils.llm_runtime import LLMRuntime
+from tests.agent.p6_admitted_fixtures import (
+    AgentInputs,
+)
+from tests.agent.p6_admitted_fixtures import (
+    admitted_async as admitted_async,
+)
 
 
 class RecordingProvider(LLMProvider):
@@ -33,7 +38,7 @@ class RecordingProvider(LLMProvider):
 
 
 @pytest.mark.asyncio
-async def test_sessions_run_concurrently_with_isolated_model_presets(tmp_path) -> None:
+async def test_sessions_run_concurrently_with_isolated_model_presets(admitted_async, tmp_path) -> None:
     base = RecordingProvider("base-model")
     fast = RecordingProvider("fast-model")
     deep = RecordingProvider("deep-model")
@@ -56,15 +61,22 @@ async def test_sessions_run_concurrently_with_isolated_model_presets(tmp_path) -
             signature=(name, preset.model),
         )
 
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=base,
-        workspace=tmp_path,
-        model="base-model",
-        context_window_tokens=8_000,
-        model_presets=presets,
-        preset_snapshot_loader=load_preset,
-    )
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus,
+            provider=base,
+            workspace=inputs.config.workspace_path,
+            model="base-model",
+            context_window_tokens=8_000,
+            model_presets=presets,
+            preset_snapshot_loader=load_preset,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            enable_legacy_auto_compact=False,
+        )
+
+    loop = await admitted_async(tmp_path, build, keys=("sdk:fast", "sdk:deep", "sdk:removed-preset", "sdk:queued"))
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
     loop.set_session_model_preset("sdk:fast", "fast")
     loop.set_session_model_preset("sdk:deep", "deep")
@@ -107,15 +119,22 @@ async def test_sessions_run_concurrently_with_isolated_model_presets(tmp_path) -
 
 
 @pytest.mark.asyncio
-async def test_removed_session_model_preset_falls_back_and_clears_metadata(tmp_path) -> None:
+async def test_removed_session_model_preset_falls_back_and_clears_metadata(admitted_async, tmp_path) -> None:
     base = RecordingProvider("base-model")
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=base,
-        workspace=tmp_path,
-        model="base-model",
-        context_window_tokens=16_000,
-    )
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus,
+            provider=base,
+            workspace=inputs.config.workspace_path,
+            model="base-model",
+            context_window_tokens=16_000,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            enable_legacy_auto_compact=False,
+        )
+
+    loop = await admitted_async(tmp_path, build, keys=("sdk:fast", "sdk:deep", "sdk:removed-preset", "sdk:queued"))
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
     session_key = "sdk:removed-preset"
     session = loop.sessions.get_or_create(session_key)
@@ -133,7 +152,7 @@ async def test_removed_session_model_preset_falls_back_and_clears_metadata(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_streamed_sdk_resolves_session_runtime_after_lock_admission(tmp_path) -> None:
+async def test_streamed_sdk_resolves_session_runtime_after_lock_admission(admitted_async, tmp_path) -> None:
     base = RecordingProvider("base-model")
     fast = RecordingProvider("fast-model")
     deep = RecordingProvider("deep-model")
@@ -152,29 +171,41 @@ async def test_streamed_sdk_resolves_session_runtime_after_lock_admission(tmp_pa
             signature=(name, preset.model),
         )
 
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=base,
-        workspace=tmp_path,
-        model="base-model",
-        context_window_tokens=8_000,
-        model_presets=presets,
-        preset_snapshot_loader=load_preset,
-    )
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus,
+            provider=base,
+            workspace=inputs.config.workspace_path,
+            model="base-model",
+            context_window_tokens=8_000,
+            model_presets=presets,
+            preset_snapshot_loader=load_preset,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            enable_legacy_auto_compact=False,
+        )
+
+    loop = await admitted_async(tmp_path, build, keys=("sdk:fast", "sdk:deep", "sdk:removed-preset", "sdk:queued"))
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
     session_key = "sdk:queued"
     loop.set_session_model_preset(session_key, "fast")
 
     lock = loop._session_locks.setdefault(session_key, asyncio.Lock())
-    await lock.acquire()
+    run = None
     try:
-        run = await Nanobot(loop).run_streamed("hello", session_key=session_key)
-        loop.set_session_model_preset(session_key, "deep")
-    finally:
-        lock.release()
+        await lock.acquire()
+        try:
+            run = await Nanobot(loop).run_streamed("hello", session_key=session_key)
+            loop.set_session_model_preset(session_key, "deep")
+        finally:
+            lock.release()
 
-    events = [event async for event in run.stream_events()]
-    result = await run.wait()
+        events = [event async for event in run.stream_events()]
+        result = await run.wait()
+    finally:
+        if run is not None:
+            await run.aclose()
 
     assert result.content == "reply from deep-model"
     assert fast.calls == []
@@ -186,18 +217,25 @@ async def test_streamed_sdk_resolves_session_runtime_after_lock_admission(tmp_pa
 
 @pytest.mark.parametrize("custom_value", ["legacy-tag", 7])
 @pytest.mark.asyncio
-async def test_sdk_custom_model_preset_metadata_does_not_select_runtime(
+async def test_sdk_custom_model_preset_metadata_does_not_select_runtime(admitted_async,
     tmp_path,
     custom_value,
 ) -> None:
     base = RecordingProvider("base-model")
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=base,
-        workspace=tmp_path,
-        model="base-model",
-        context_window_tokens=16_000,
-    )
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus,
+            provider=base,
+            workspace=inputs.config.workspace_path,
+            model="base-model",
+            context_window_tokens=16_000,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            enable_legacy_auto_compact=False,
+        )
+
+    loop = await admitted_async(tmp_path, build, borrowed=True)
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
     bot = Nanobot(loop)
 
@@ -227,18 +265,25 @@ async def test_sdk_custom_model_preset_metadata_does_not_select_runtime(
 
 @pytest.mark.parametrize("invalid_value", [{"invalid": True}, "  "])
 @pytest.mark.asyncio
-async def test_sdk_invalid_internal_model_preset_metadata_fails_explicitly(
+async def test_sdk_invalid_internal_model_preset_metadata_fails_explicitly(admitted_async,
     tmp_path,
     invalid_value,
 ) -> None:
     base = RecordingProvider("base-model")
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=base,
-        workspace=tmp_path,
-        model="base-model",
-        context_window_tokens=8_000,
-    )
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus,
+            provider=base,
+            workspace=inputs.config.workspace_path,
+            model="base-model",
+            context_window_tokens=8_000,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            enable_legacy_auto_compact=False,
+        )
+
+    loop = await admitted_async(tmp_path, build, borrowed=True)
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
     bot = Nanobot(loop)
 
@@ -252,3 +297,50 @@ async def test_sdk_invalid_internal_model_preset_metadata_fails_explicitly(
         await bot.run("hello", session_key="sdk:invalid-internal-metadata")
 
     assert base.calls == []
+
+
+@pytest.mark.asyncio
+async def test_admitted_fixture_async_body_failure_closes_on_owner_loop(tmp_path) -> None:
+    from pathlib import Path
+
+    from nanobot import migration_guard
+    from nanobot.config import loader
+    from nanobot.runtime_composition import RuntimeState
+    from tests.agent.p6_admitted_fixtures import AdmittedGraphs
+
+    original_guard = migration_guard.require_runtime_ready
+    original_home = Path.home()
+    original_path = loader._current_config_path
+    provider = RecordingProvider("base-model")
+
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="base-model", context_window_tokens=8_000,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            enable_legacy_auto_compact=False,
+        )
+
+    with pytest.MonkeyPatch.context() as patches:
+        graphs = AdmittedGraphs(tmp_path, patches)
+        owner_loop = asyncio.get_running_loop()
+        with pytest.raises(RuntimeError, match="intentional body failure"):
+            try:
+                loop = await graphs.acquire(tmp_path, build, borrowed=True)
+                await Nanobot(loop).sessions.ingest("sdk:caller-owned", [], save=True)
+                raise RuntimeError("intentional body failure")
+            finally:
+                await graphs.close()
+        graph = graphs.graphs[0][0]
+        assert graph.state is RuntimeState.CLOSED
+        assert graph._owner_loop is owner_loop
+        assert loop._closed
+        # Borrowed teardown closes graph effects, not caller-owned files/manager.
+        assert not loop.sessions.has_managed_authority
+        loop.sessions.invalidate("sdk:caller-owned")
+        assert loop.sessions.read_session_file("sdk:caller-owned") is not None
+    assert migration_guard.require_runtime_ready is original_guard
+    assert loader._current_config_path == original_path
+    assert Path.home() == original_home

@@ -239,7 +239,7 @@ def _make_provider_core(
                 provider_name=provider_name,
             )
         keys = p.effective_keys if p else []
-        if keys and (len(keys) > 1 or p.rate_limit > 0):
+        if keys and p is not None and (len(keys) > 1 or p.rate_limit > 0):
             from nanobot.providers.pooled_provider import PooledProvider
             provider = PooledProvider([make_leaf(key) for key in keys], keys, p.rate_limit)
         else:

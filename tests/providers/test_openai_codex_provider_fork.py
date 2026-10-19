@@ -4,10 +4,7 @@ import json
 
 import pytest
 
-from nanobot.providers.openai_codex_provider import (
-    _convert_messages,
-    _normalize_codex_id,
-)
+from nanobot.providers.openai_responses.converters import convert_messages as _convert_messages
 
 
 def test_convert_messages_normalizes_long_tool_call_ids() -> None:
@@ -43,7 +40,8 @@ def test_convert_messages_normalizes_long_tool_call_ids() -> None:
 
 
 def test_normalize_codex_id_hashes_unsafe_values() -> None:
-    normalized = _normalize_codex_id("call_bad+/value", "call_")
+    _, items = _convert_messages([{"role": "tool", "tool_call_id": "call_bad+/value", "content": "ok"}])
+    normalized = items[0]["call_id"]
 
     assert normalized.startswith("call_")
     assert len(normalized) <= 64
@@ -51,8 +49,8 @@ def test_normalize_codex_id_hashes_unsafe_values() -> None:
 
 
 @pytest.mark.asyncio
-async def test_consume_sse_path_stores_safe_ids() -> None:
-    from nanobot.providers.openai_codex_provider import _consume_sse
+async def test_consume_sse_path_stores_exact_native_ids() -> None:
+    from nanobot.providers.openai_responses.parsing import consume_sse
 
     raw_call = "call_" + "x" * 90
     raw_item = "item_" + "y" * 90
@@ -91,10 +89,10 @@ async def test_consume_sse_path_stores_safe_ids() -> None:
             for line in lines:
                 yield line
 
-    _, tool_calls, finish_reason, _image_calls = await _consume_sse(_Response())
+    _, tool_calls, finish_reason = await consume_sse(_Response())
 
     assert finish_reason == "stop"
     assert len(tool_calls) == 1
     call_id, item_id = tool_calls[0].id.split("|", 1)
-    assert len(call_id) <= 64
-    assert len(item_id) <= 64
+    assert call_id == raw_call
+    assert item_id == raw_item

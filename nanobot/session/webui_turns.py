@@ -203,6 +203,7 @@ async def maybe_generate_webui_title(
     model: str,
     target_session_key: str | None = None,
     runtime: LLMRuntime | None = None,
+    allow_projected_target_create: bool = False,
 ) -> bool:
     """Generate and persist a short title for WebUI-owned sessions.
 
@@ -211,12 +212,18 @@ async def maybe_generate_webui_title(
     so pass ``target_session_key`` to project the title onto that per-chat
     session instead of storing it on the shared one.
     """
-    routed_session = sessions.get_or_create(session_key)
+    routed_session = sessions.read_session_snapshot(session_key)
+    if routed_session is None:
+        return False
     target_is_routed = target_session_key is None or target_session_key == session_key
     if target_is_routed or target_session_key is None:
         target_session = routed_session
     else:
-        target_session = sessions.get_or_create(target_session_key)
+        target_session = sessions.read_session_snapshot(target_session_key)
+        if target_session is None:
+            if not allow_projected_target_create:
+                return False
+            target_session = Session(target_session_key)
     if (
         routed_session.metadata.get(WEBUI_SESSION_METADATA_KEY) is not True
         and target_session.metadata.get(WEBUI_SESSION_METADATA_KEY) is not True
@@ -229,10 +236,13 @@ async def maybe_generate_webui_title(
         cleaned_current_title = clean_generated_title(current_title)
         if cleaned_current_title:
             if cleaned_current_title != current_title:
-                target_session.metadata[WEBUI_TITLE_METADATA_KEY] = cleaned_current_title
-                sessions.save(target_session)
+                sessions.upsert_session_metadata(
+                    target_session.key, {WEBUI_TITLE_METADATA_KEY: cleaned_current_title}
+                )
             return False
-        target_session.metadata.pop(WEBUI_TITLE_METADATA_KEY, None)
+        sessions.upsert_session_metadata(
+            target_session.key, {}, removals=(WEBUI_TITLE_METADATA_KEY,)
+        )
 
     if target_is_routed:
         user_text, assistant_text = _title_inputs(routed_session)
@@ -294,20 +304,18 @@ async def maybe_generate_webui_title(
                 **request_kwargs,
             )
     except Exception:
-        logger.debug("Failed to generate webui session title for {}", session_key, exc_info=True)
+        logger.debug("WebUI title generation failed")
         return False
 
     title = clean_generated_title(response.content)
     if not title or title.lower().startswith("error"):
-        logger.debug(
-            "WebUI title generation returned no usable title for {} (finish_reason={})",
-            session_key,
-            response.finish_reason,
-        )
+        logger.debug("WebUI title generation returned no usable title")
         return False
-    target_session.metadata[WEBUI_TITLE_METADATA_KEY] = title
-    sessions.save(target_session)
-    return True
+    return sessions.upsert_session_metadata(
+        target_session.key,
+        {WEBUI_TITLE_METADATA_KEY: title},
+        create_if_absent=allow_projected_target_create and not target_is_routed,
+    )
 
 
 async def maybe_generate_webui_title_after_turn(
@@ -324,6 +332,8 @@ async def maybe_generate_webui_title_after_turn(
     if channel != "websocket" or metadata.get(WEBUI_SESSION_METADATA_KEY) is not True:
         return False
     origin_session_key = f"{channel}:{chat_id}"
+    projected = origin_session_key != session_key
+    allow_create = projected and sessions.read_session_metadata(session_key) is not None
     return await maybe_generate_webui_title(
         sessions=sessions,
         session_key=session_key,
@@ -333,6 +343,7 @@ async def maybe_generate_webui_title_after_turn(
             origin_session_key if origin_session_key != session_key else None
         ),
         runtime=runtime,
+        allow_projected_target_create=allow_create,
     )
 
 

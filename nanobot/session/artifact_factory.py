@@ -12,7 +12,7 @@ import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Iterable, cast
 
 from nanobot.agent.tools.filesystem import ReadFileTool
 from nanobot.security.workspace_access import current_tool_workspace
@@ -39,6 +39,9 @@ class ArtifactLocationValidator:
 
     root: Path
     forbidden_roots: tuple[Path, ...]
+
+    def with_root(self, root: Path | str) -> ArtifactLocationValidator:
+        return ArtifactLocationValidator(_absolute_path(root), self.forbidden_roots)
 
     def with_roots(self, roots: Iterable[Path | str]) -> ArtifactLocationValidator:
         return ArtifactLocationValidator(
@@ -113,7 +116,7 @@ def _git_ancestors(path: Path) -> tuple[Path, ...]:
 def _path_items(value: object) -> tuple[Path, ...]:
     if not isinstance(value, (list, tuple)):
         return ()
-    return tuple(item for item in value if isinstance(item, Path))
+    return tuple(item for item in cast(list[object] | tuple[object, ...], value) if isinstance(item, Path))
 
 
 class ConfiguredArtifactReaderFactory:
@@ -156,37 +159,64 @@ class ConfiguredArtifactReaderFactory:
     def settings(self) -> ArtifactStoreSettings:
         return self._settings
 
+    def with_root(self, root: Path | str) -> ConfiguredArtifactReaderFactory:
+        """Retain captured quotas/policy while selecting an explicit copied root."""
+        selected = self._location_validator.with_root(root)
+        selected.revalidate()
+        factory = object.__new__(ConfiguredArtifactReaderFactory)
+        factory._settings = ArtifactStoreSettings(
+            selected.root,
+            self._settings.max_blob_bytes,
+            self._settings.max_namespace_bytes,
+        )
+        factory._location_validator = selected
+        return factory
+
     @staticmethod
     def _source_checkout() -> Path:
         return Path(__file__).resolve().parents[2]
 
     @staticmethod
-    def _reader_roots(writer: SourceTurnWriter, read_file: ReadFileTool) -> tuple[Path, ...]:
-        backend = writer.store._backend
-        roots = [backend.workspace, backend.sessions_dir, backend.sessions_dir.parent]
-        for name in ("_workspace", "_allowed_dir"):
-            value = getattr(read_file, name, None)
-            if isinstance(value, Path):
-                roots.append(value)
-        roots.extend(_path_items(getattr(read_file, "_extra_read_allowed_dirs", ())))
-        roots.extend(_path_items(getattr(read_file, "_extra_write_allowed_dirs", ())))
-        roots.extend(_path_items(getattr(read_file, "_extra_read_allowed_files", ())))
-        policy = read_file._resource_policy
-        if policy is not None:
-            roots.extend(policy.extra_read_dirs())
-            roots.extend(policy.extra_write_dirs())
-            manager = policy.context_manager
-            roots.extend(target.path for target in manager.target_repos())
-        access = current_tool_workspace(
-            read_file._workspace,
-            restrict_to_workspace=read_file._restrict_to_workspace,
-            sandbox_restricts_workspace=read_file._sandbox_restricts_workspace,
+    def read_policy_roots(read_file: ReadFileTool) -> tuple[Path, ...]:
+        """Return the captured tool's current readable/writeable resource roots."""
+        return ReadFileTool.collect_artifact_policy_roots(
+            read_file,
+            select_path_items=lambda: _path_items,
+            select_workspace_access=lambda: current_tool_workspace,
         )
-        if access.project_path is not None:
-            roots.append(access.project_path)
-        if access.allowed_root is not None:
-            roots.append(access.allowed_root)
-        return tuple(roots)
+
+    @classmethod
+    def _reader_roots(cls, writer: SourceTurnWriter, read_file: ReadFileTool) -> tuple[Path, ...]:
+        location = writer.store.select_artifact_location_metadata()
+        return (
+            location.workspace,
+            location.sessions_dir,
+            location.sessions_dir.parent,
+            *cls.read_policy_roots(read_file),
+        )
+
+    def create_store(
+        self,
+        *,
+        workspace_id: str,
+        session_key: str,
+        incarnation: str,
+        generation: int,
+        forbidden_roots: Iterable[Path | str] = (),
+    ) -> PrivateArtifactStore:
+        """Create one exact configured store while retaining captured policy and quotas."""
+        location_validator = self._location_validator.with_roots(forbidden_roots)
+        location_validator.revalidate()
+        return PrivateArtifactStore(
+            self._settings.root,
+            workspace_id=workspace_id,
+            session_key=session_key,
+            incarnation=incarnation,
+            generation=generation,
+            max_blob_bytes=self._settings.max_blob_bytes,
+            max_namespace_bytes=self._settings.max_namespace_bytes,
+            location_validator=location_validator.revalidate,
+        )
 
     def __call__(
         self,
@@ -194,25 +224,44 @@ class ConfiguredArtifactReaderFactory:
         isolated: bool,
         read_file: ReadFileTool,
     ) -> ArtifactReader | None:
+        return self.create_reader(writer, isolated, read_file)
+
+    def create_reader(
+        self,
+        writer: SourceTurnWriter,
+        isolated: bool,
+        read_file: ReadFileTool,
+        *,
+        store: PrivateArtifactStore | None = None,
+    ) -> ArtifactReader | None:
+        """Create a reader, optionally retaining an already-transactional exact store."""
         if type(read_file) is not ReadFileTool:
             return None
         try:
             location_validator = self._location_validator.with_roots(
                 self._reader_roots(writer, read_file)
             )
-            location_validator.revalidate()
             state = writer.owner.read_snapshot().state
-            backend = writer.store._backend
-            store = PrivateArtifactStore(
-                self._settings.root,
-                workspace_id=backend.sessions_dir.name,
-                session_key=state.session_key,
-                incarnation=state.incarnation,
-                generation=state.generation,
-                max_blob_bytes=self._settings.max_blob_bytes,
-                max_namespace_bytes=self._settings.max_namespace_bytes,
-                location_validator=location_validator.revalidate,
-            )
+            location = writer.store.select_artifact_location_metadata()
+            if store is None:
+                store = self.create_store(
+                    workspace_id=location.workspace_id,
+                    session_key=state.session_key,
+                    incarnation=state.incarnation,
+                    generation=state.generation,
+                    forbidden_roots=self._reader_roots(writer, read_file),
+                )
+            elif (
+                type(store) is not PrivateArtifactStore
+                or store.root != self._settings.root
+                or store.workspace_id != location.workspace_id
+                or store.session_key != state.session_key
+                or store.incarnation != state.incarnation
+                or store.generation != state.generation
+                or store.max_blob_bytes != self._settings.max_blob_bytes
+                or store.max_namespace_bytes != self._settings.max_namespace_bytes
+            ):
+                return None
             return ArtifactReader(
                 writer,
                 "isolated_stream" if isolated else "root_history",

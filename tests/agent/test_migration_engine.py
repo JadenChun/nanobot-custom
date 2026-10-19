@@ -7,6 +7,7 @@ import pytest
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import TraceMode, TurnRequest
+from nanobot.bus.events import InboundMessage
 from nanobot.config.schema import Config
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
 
@@ -25,6 +26,35 @@ class ScriptedProvider(LLMProvider):
 
     def get_default_model(self):
         return 'synthetic-model'
+
+
+@pytest.mark.parametrize("adapter", ["classic", "sdk", "bus"])
+async def test_representative_adapters_delegate_exactly_one_execute_turn(
+    engine_config, adapter,
+):
+    provider = ScriptedProvider([LLMResponse(content=f"{adapter} result")])
+    loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    original = loop.execute_turn
+    loop.execute_turn = AsyncMock(wraps=original)  # type: ignore[method-assign]
+    try:
+        if adapter == "classic":
+            response = await loop.process_direct("one", session_key="cli:one")
+            assert response is not None and response.content == "classic result"
+        elif adapter == "sdk":
+            from nanobot.nanobot import Nanobot
+
+            result = await Nanobot(loop).run("one", session_key="sdk:one")
+            assert result.content == "sdk result"
+        else:
+            await loop._dispatch(InboundMessage(
+                channel="telegram",
+                sender_id="user",
+                chat_id="one",
+                content="one",
+            ))
+        loop.execute_turn.assert_awaited_once()  # type: ignore[attr-defined]
+    finally:
+        await loop.aclose()
 
 
 @pytest.fixture

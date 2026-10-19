@@ -347,14 +347,14 @@ class TestSyncWorkspaceTemplates:
         content = (workspace / "AGENTS.md").read_text()
         assert content == "existing content"
 
-    def test_does_not_create_tools_md(self, tmp_path):
-        """Tool contract is injected internally, not copied into user workspaces."""
+    def test_creates_tools_md(self, tmp_path):
+        """New workspaces receive the bundled, user-editable tool notes."""
         workspace = tmp_path / "workspace"
 
         added = sync_workspace_templates(workspace, silent=True)
 
-        assert "TOOLS.md" not in added
-        assert not (workspace / "TOOLS.md").exists()
+        assert "TOOLS.md" in added
+        assert (workspace / "TOOLS.md").read_text(encoding="utf-8").strip()
 
     def test_preserves_existing_tools_md_without_overwriting(self, tmp_path):
         """Legacy user workspaces may have TOOLS.md; sync should leave it untouched."""
@@ -1061,34 +1061,35 @@ class TestMainMenuUpdate:
         assert onboard_wizard._configure_quick_start_provider(config) is False
         assert "primary" not in config.model_presets
 
-    def test_quick_start_openai_codex_login_reuses_existing_token(self, monkeypatch):
-        """Quick Start should not open a new login flow when Codex is already authenticated."""
+    def test_quick_start_openai_codex_login_is_always_explicit(
+        self, monkeypatch, tmp_path
+    ):
         import oauth_cli_kit
 
         config = Config()
         config.providers.openai.api_key = "${UNRELATED_MISSING_KEY}"
         config.providers.openai_codex.proxy = "${CODEX_PROXY}"
-        token = SimpleNamespace(access="existing-token", account_id="account-123")
-        token_proxies: list[str | None] = []
         login_calls: list[object] = []
 
         monkeypatch.setenv("CODEX_PROXY", "http://127.0.0.1:8080")
         monkeypatch.delenv("UNRELATED_MISSING_KEY", raising=False)
-        monkeypatch.setattr(
-            oauth_cli_kit,
-            "get_token",
-            lambda **kwargs: token_proxies.append(kwargs.get("proxy")) or token,
-        )
+        monkeypatch.setenv("NANOBOT_CODEX_AUTH_PATH", str(tmp_path / "codex.json"))
         monkeypatch.setattr(
             oauth_cli_kit,
             "login_oauth_interactive",
-            lambda **kwargs: login_calls.append(kwargs),
+            lambda **kwargs: login_calls.append(kwargs)
+            or SimpleNamespace(
+                access="fresh-token",
+                refresh="refresh-token",
+                expires=9_999_999_999_999,
+                account_id="account-123",
+            ),
         )
         monkeypatch.setattr(onboard_wizard.console, "print", lambda *args, **kwargs: None)
 
         assert onboard_wizard._quick_start_oauth_login(config, "openai_codex") is True
-        assert token_proxies == ["http://127.0.0.1:8080"]
-        assert login_calls == []
+        assert len(login_calls) == 1
+        assert login_calls[0]["proxy"] == "http://127.0.0.1:8080"
         assert config.providers.openai.api_key == "${UNRELATED_MISSING_KEY}"
         assert config.providers.openai_codex.proxy == "${CODEX_PROXY}"
 
@@ -1096,7 +1097,7 @@ class TestMainMenuUpdate:
         import oauth_cli_kit
 
         messages: list[str] = []
-        monkeypatch.delattr(oauth_cli_kit, "get_token")
+        monkeypatch.delattr(oauth_cli_kit, "login_oauth_interactive")
         monkeypatch.setattr(
             onboard_wizard.console,
             "print",
@@ -1110,7 +1111,7 @@ class TestMainMenuUpdate:
         ]
 
     def test_quick_start_openai_codex_runs_interactive_login_for_bad_cached_token(
-        self, monkeypatch
+        self, monkeypatch, tmp_path
     ):
         """A malformed cached token should fall back to the interactive OAuth flow."""
         import oauth_cli_kit
@@ -1130,6 +1131,8 @@ class TestMainMenuUpdate:
             assert kwargs["proxy"] == "http://127.0.0.1:8080"
             return SimpleNamespace(
                 access="fresh-token",
+                refresh="refresh-token",
+                expires=9_999_999_999_999,
                 account_id="[red]account-123[/red]",
             )
 
@@ -1139,6 +1142,7 @@ class TestMainMenuUpdate:
             lambda **_kwargs: SimpleNamespace(account_id="missing-access"),
         )
         monkeypatch.setattr(oauth_cli_kit, "login_oauth_interactive", fake_login)
+        monkeypatch.setenv("NANOBOT_CODEX_AUTH_PATH", str(tmp_path / "codex.json"))
         monkeypatch.setattr(
             onboard_wizard,
             "_get_questionary",
@@ -1156,18 +1160,15 @@ class TestMainMenuUpdate:
             args == ("[bold]Open the browser[/bold]",) and kwargs == {"markup": False}
             for args, kwargs in printed
         )
-        assert any(r"\[red]account-123\[/red]" in str(args[0]) for args, _kwargs in printed)
+        assert all("account-123" not in str(args[0]) for args, _kwargs in printed)
 
     def test_quick_start_codex_auth_check_ignores_unrelated_missing_env(self, monkeypatch):
         """OAuth readiness should depend only on the Codex proxy and token."""
-        import oauth_cli_kit
-
         config = Config()
         config.providers.anthropic.api_key = "${UNRELATED_MISSING_KEY}"
         monkeypatch.delenv("UNRELATED_MISSING_KEY", raising=False)
         monkeypatch.setattr(
-            oauth_cli_kit,
-            "get_token",
+            "nanobot.providers.codex_auth.get_token",
             lambda **kwargs: SimpleNamespace(access="existing-token"),
         )
 
@@ -1178,11 +1179,8 @@ class TestMainMenuUpdate:
 
     def test_quick_start_codex_auth_check_rejects_malformed_token(self, monkeypatch):
         """A malformed cached token should report not-ready instead of crashing."""
-        import oauth_cli_kit
-
         monkeypatch.setattr(
-            oauth_cli_kit,
-            "get_token",
+            "nanobot.providers.codex_auth.get_token",
             lambda **_kwargs: SimpleNamespace(account_id="missing-access"),
         )
 
@@ -1340,7 +1338,7 @@ class TestMainMenuUpdate:
         assert onboard_wizard._configure_quick_start(config) is False
 
         assert config.model_dump(by_alias=True) == original
-        assert getattr(config.channels, "websocket", None) is None
+        assert config.channels.websocket == {"enabled": False}
 
     def test_quick_start_provider_choice_asks_for_model_id(self, monkeypatch):
         """Known providers should ask users for the model instead of fetching one."""
@@ -1619,7 +1617,7 @@ class TestMainMenuUpdate:
         )
 
         assert onboard_wizard._enable_quick_start_websocket_defaults(config) is False
-        assert getattr(config.channels, "websocket", None) is None
+        assert config.channels.websocket == {"enabled": False}
 
     def test_quick_start_websocket_requires_password(self, monkeypatch):
         """Accepting WebSocket with an empty password should not enable the channel."""
@@ -1644,7 +1642,7 @@ class TestMainMenuUpdate:
         )
 
         assert onboard_wizard._enable_quick_start_websocket_defaults(config) is False
-        assert getattr(config.channels, "websocket", None) is None
+        assert config.channels.websocket == {"enabled": False}
 
     def test_quick_start_requires_api_key_before_setting_defaults(self, monkeypatch):
         """Quick Start should not create a ready-looking config without an API key."""

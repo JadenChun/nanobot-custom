@@ -1715,6 +1715,20 @@ HTTP/SSE MCP connections use the same process-wide proxy environment behavior as
 
 ### `tools.web`
 
+`tools.web.fetch.blockedHosts` is an optional list of hostnames that must not be
+fetched directly (for example, `["facebook.com", "tiktok.com"]` for sites requiring
+an authenticated browsing workflow). The legacy comma-separated environment
+variable `NANOBOT_WEB_FETCH_BLOCKED_HOSTS` remains supported and adds to this list.
+Matching covers each exact host and its subdomains, ignores case and trailing
+DNS dots, and applies before DNS/request access to both initial URLs and every
+redirect. Entries must be plain hostnames, not URLs or wildcard patterns; invalid
+entries fail closed. This routing restriction does not grant any SSRF exception.
+
+When either list is nonempty, `web_fetch` uses local extraction even if
+`useJinaReader` is enabled, because redirects followed by a remote reader cannot
+be checked against the configured host policy. With no blocked hosts configured,
+the existing Jina/readability behavior is unchanged.
+
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `enable` | boolean | `true` | Enable or disable all built-in web tools (`web_search` + `web_fetch`) |
@@ -2120,6 +2134,14 @@ For API keys, tokens, and other secrets, see [Environment Variables for Secrets]
 | `tools.webuiAllowRemotePackageInstall` | `false` | When `false`, the WebUI can install missing optional packages only from a browser opened on the same machine as nanobot. Set to `true` only when a trusted remote admin is allowed to install Python packages into this nanobot environment. |
 | `tools.ssrfWhitelist` | `[]` | CIDR ranges exempted from the shared SSRF guard used by web fetches and HTTP/SSE MCP connections. Prefer exact host CIDRs such as `192.168.1.50/32`; broad ranges increase SSRF exposure. |
 | `channels.*.allowFrom` | omitted | Access control per channel. Omit to use pairing-only mode; set `["*"]` to allow everyone; or list specific user IDs. See [Pairing](#pairing) for details. |
+
+Shell commands and interactive exec sessions default to noninteractive Git:
+`GIT_TERMINAL_PROMPT=0` and
+`GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=10"`.
+An existing `GIT_SSH_COMMAND` in Nanobot's environment is preserved, including an
+explicitly empty value. This narrowly scoped passthrough does not copy unrelated
+environment variables or secrets into shell commands. Explicitly allowlisted Git
+environment settings take precedence over these defaults.
 
 **Docker security**: The official Docker image runs as a non-root user (`nanobot`, UID 1000) with bubblewrap pre-installed. The default `docker-compose.yml` drops all Linux capabilities except the `CHOWN`, `SETGID`, and `SETUID` capabilities required by the root entrypoint to initialize bind-mount ownership and become UID 1000. It enables `no-new-privileges` so the final non-root process cannot regain those bootstrap capabilities, and keeps Docker's default AppArmor/seccomp profiles enabled. If you enable `"tools.exec.sandbox": "bwrap"` inside Docker, start Compose with `docker-compose.bwrap.yml` as an additional override so bubblewrap can create nested namespaces. The host must also allow unprivileged user namespaces; the override cannot bypass a host-level namespace restriction.
 

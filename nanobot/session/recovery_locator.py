@@ -12,6 +12,7 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NoReturn
 
 _ERROR_MESSAGE = "session recovery candidate is unavailable"
 _WORKSPACE_ID_RE = re.compile(rb"[0-9a-f]{32}(?:\n)?\Z")
@@ -53,7 +54,7 @@ class RecoveryCandidate:
         return True
 
 
-def _fail() -> None:
+def _fail() -> NoReturn:
     raise RecoveryLocatorError() from None
 
 
@@ -61,19 +62,19 @@ def _require_descriptor_support() -> None:
     required_flags = ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK")
     if any(not isinstance(getattr(os, flag, None), int) for flag in required_flags):
         _fail()
-    if os.open not in getattr(os, "supports_dir_fd", set()):
+    if os.open not in getattr(os, "supports_dir_fd", set[object]()):
         _fail()
-    if os.stat not in getattr(os, "supports_dir_fd", set()):
+    if os.stat not in getattr(os, "supports_dir_fd", set[object]()):
         _fail()
-    if os.stat not in getattr(os, "supports_follow_symlinks", set()):
+    if os.stat not in getattr(os, "supports_follow_symlinks", set[object]()):
         _fail()
-    if os.listdir not in getattr(os, "supports_fd", set()):
+    if os.listdir not in getattr(os, "supports_fd", set[object]()):
         _fail()
     if not callable(getattr(os, "geteuid", None)):
         _fail()
 
 
-def _path_input(value: Path) -> Path:
+def _path_input(value: object) -> Path:
     if not isinstance(value, Path) or not value.is_absolute():
         _fail()
     if ".." in value.parts or len(value.parts) > _MAX_PATH_COMPONENTS + 1:
@@ -334,7 +335,7 @@ def _close_owned(fds: list[int]) -> None:
 def locate_recovery_candidate(
     workspace: Path,
     external_sessions_root: Path,
-    session_key: str,
+    session_key: object,
 ) -> RecoveryCandidate:
     """Locate an existing canonical JSONL entry without reading or changing it.
 
@@ -450,7 +451,7 @@ def locate_recovery_candidate(
 
         stem = JsonlSessionStore.storage_key(session_key)
         decoded = JsonlSessionStore.decode_storage_key(stem)
-        if decoded != session_key or JsonlSessionStore.storage_key(decoded) != stem:
+        if decoded is None or decoded != session_key or JsonlSessionStore.storage_key(decoded) != stem:
             _fail()
         session_name = f"{stem}.jsonl"
         session_info = os.stat(

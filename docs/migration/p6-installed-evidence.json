@@ -1,0 +1,1838 @@
+{
+  "version": 1,
+  "date": "2026-10-02",
+  "status": "HOST_QUALIFICATION_ACCEPTED",
+  "root_verdict": "PASS",
+  "fresh_review": "PASS_NO_FINDINGS",
+  "full_p6": "NOT_ACCEPTED",
+  "p5": "DONE_ACCEPTED",
+  "p6_a": "ACCEPTED_UNCHANGED",
+  "runtime": "NOT_READY_NOT_AUTHORIZED",
+  "d9": "NOT_AUTHORIZED",
+  "p7_h1_p8": "NOT_DELIVERED",
+  "bundle": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY",
+  "host": {
+    "python": "3.13.2 (v3.13.2:4f8bb3947cf, Feb  4 2025, 11:51:10) [Clang 15.0.0 (clang-1500.3.9.4)]",
+    "python_executable": "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13",
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "input_hashes": {
+      "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-a.Xq8IyRdH/dist/nanobot_ai-0.3.0-py3-none-any.whl": {
+        "sha256": "3c72e14e4358f33368904c9bad138c4c301889a70b7acaf3d12665df17fb26ff",
+        "size": 5464430
+      },
+      "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-a.Xq8IyRdH/dirty-source.tar.gz": {
+        "sha256": "fa582770bac7d9dd328558082f874ccefdf6eb1d5a069d51a8ea8194b85c4378",
+        "size": 7293993
+      },
+      "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-a.Xq8IyRdH/source-manifest.json": {
+        "sha256": "2a7a25356f9f8ef6de52eaa40ce4e10ac2f04f773f5cc1c2d60b45b1ddadcdd2",
+        "size": 329632
+      }
+    },
+    "subset": [
+      "core",
+      "api",
+      "dev"
+    ],
+    "network_acquisition": "public PyPI; separate from offline application checks"
+  },
+  "selected_subset": [
+    "core",
+    "api",
+    "dev"
+  ],
+  "production_subset": "UNQUALIFIED_NOT_SELECTED",
+  "wheel_count": 114,
+  "wheelhouse": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/wheelhouse",
+  "hash_requirements": {
+    "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/requirements-hashed.txt",
+    "sha256": "c0232f91228f055db3c89d9318684a182a0ae9712e9a7e3cec8a18302daaf589",
+    "size": 11032,
+    "mode": "0400"
+  },
+  "wheel_files": [
+    {
+      "file": "aiohappyeyeballs-2.7.1-py3-none-any.whl",
+      "sha256": "9243213661e29250eb41368e5daa826fc017156c3b8a11440826b2e3ed376472",
+      "size": 15038,
+      "name": "aiohappyeyeballs",
+      "version": "2.7.1"
+    },
+    {
+      "file": "aiohttp-3.14.3-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "11fb37ef075669eee52ab1928fbf6e1741fada40409fa309ebde9607a962aebf",
+      "size": 509190,
+      "name": "aiohttp",
+      "version": "3.14.3"
+    },
+    {
+      "file": "aiosignal-1.4.0-py3-none-any.whl",
+      "sha256": "053243f8b92b990551949e63930a839ff0cf0b0ebbe0597b0f3fb19e1a0fe82e",
+      "size": 7490,
+      "name": "aiosignal",
+      "version": "1.4.0"
+    },
+    {
+      "file": "annotated_doc-0.0.5-py3-none-any.whl",
+      "sha256": "117bac03a25ede5df5440e855b32d556049ca169ead221505badf432fed4b101",
+      "size": 5302,
+      "name": "annotated-doc",
+      "version": "0.0.5"
+    },
+    {
+      "file": "annotated_types-0.8.0-py3-none-any.whl",
+      "sha256": "f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0",
+      "size": 13427,
+      "name": "annotated-types",
+      "version": "0.8.0"
+    },
+    {
+      "file": "anthropic-0.125.0-py3-none-any.whl",
+      "sha256": "3486013602eca76d8b12540764e53654f02cf4951110bca86cf06e67428a9f21",
+      "size": 1184067,
+      "name": "anthropic",
+      "version": "0.125.0"
+    },
+    {
+      "file": "anyio-4.15.1-py3-none-any.whl",
+      "sha256": "6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101",
+      "size": 132079,
+      "name": "anyio",
+      "version": "4.15.1"
+    },
+    {
+      "file": "attrs-26.1.0-py3-none-any.whl",
+      "sha256": "c647aa4a12dfbad9333ca4e71fe62ddc36f4e63b2d260a37a8b83d2f043ac309",
+      "size": 67548,
+      "name": "attrs",
+      "version": "26.1.0"
+    },
+    {
+      "file": "basedpyright-1.40.1-py3-none-any.whl",
+      "sha256": "222dc0382caf9816eb23a27cb7059fa96356ddc500b3b7b306072848fd650244",
+      "size": 13689276,
+      "name": "basedpyright",
+      "version": "1.40.1"
+    },
+    {
+      "file": "bidict-0.24.1-py3-none-any.whl",
+      "sha256": "fd3eaa737917d8a14f4baa391670c433c4e3f6f5fd2cd99d4bf436437f432364",
+      "size": 36175,
+      "name": "bidict",
+      "version": "0.24.1"
+    },
+    {
+      "file": "certifi-2026.7.22-py3-none-any.whl",
+      "sha256": "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775",
+      "size": 136983,
+      "name": "certifi",
+      "version": "2026.7.22"
+    },
+    {
+      "file": "cffi-2.1.1-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "19ee6127ee34de7d83ce3d371ebc5ed91addbdcc39f9ab15ce4eb35a4e534971",
+      "size": 184764,
+      "name": "cffi",
+      "version": "2.1.1"
+    },
+    {
+      "file": "chardet-5.2.0-py3-none-any.whl",
+      "sha256": "e1cf59446890a00105fe7b7912492ea04b6e6f06d4b742b2c788469e34c82970",
+      "size": 199385,
+      "name": "chardet",
+      "version": "5.2.0"
+    },
+    {
+      "file": "charset_normalizer-3.5.2-cp313-cp313-macosx_10_13_universal2.whl",
+      "sha256": "6045373d5a89a5ec71afde535db987ca28e76dfa276c2d4c818265b375d4b055",
+      "size": 366626,
+      "name": "charset-normalizer",
+      "version": "3.5.2"
+    },
+    {
+      "file": "click-8.5.0-py3-none-any.whl",
+      "sha256": "255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360",
+      "size": 125251,
+      "name": "click",
+      "version": "8.5.0"
+    },
+    {
+      "file": "coverage-7.16.2-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "0993d0e90858c03943d3cb152e068a20dd4707924deec84dd2230261baae3b1b",
+      "size": 224368,
+      "name": "coverage",
+      "version": "7.16.2"
+    },
+    {
+      "file": "croniter-6.2.4-py3-none-any.whl",
+      "sha256": "8ef3d544107a5c05a150a2d78f8bf5a8eb9c5c4d93405a736b824109574e3f4d",
+      "size": 46677,
+      "name": "croniter",
+      "version": "6.2.4"
+    },
+    {
+      "file": "cryptography-50.0.2-cp311-abi3-macosx_11_0_arm64.whl",
+      "sha256": "fa8f5efb344d6908a1ce62f4a24e2e5780f825d6f53f5f50ec5ffacac72936cb",
+      "size": 3914904,
+      "name": "cryptography",
+      "version": "50.0.2"
+    },
+    {
+      "file": "cssselect-1.3.0-py3-none-any.whl",
+      "sha256": "56d1bf3e198080cc1667e137bc51de9cadfca259f03c2d4e09037b3e01e30f0d",
+      "size": 18786,
+      "name": "cssselect",
+      "version": "1.3.0"
+    },
+    {
+      "file": "ddgs-9.16.0-py3-none-any.whl",
+      "sha256": "175d9198c958a263f51a06a54368ba0b41294942c0cd29f4aa71be03dbcd5f4a",
+      "size": 47580,
+      "name": "ddgs",
+      "version": "9.16.0"
+    },
+    {
+      "file": "defusedxml-0.7.1-py2.py3-none-any.whl",
+      "sha256": "a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61",
+      "size": 25604,
+      "name": "defusedxml",
+      "version": "0.7.1"
+    },
+    {
+      "file": "distro-1.9.0-py3-none-any.whl",
+      "sha256": "7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2",
+      "size": 20277,
+      "name": "distro",
+      "version": "1.9.0"
+    },
+    {
+      "file": "docstring_parser-0.18.0-py3-none-any.whl",
+      "sha256": "b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b",
+      "size": 22484,
+      "name": "docstring_parser",
+      "version": "0.18.0"
+    },
+    {
+      "file": "dulwich-0.25.2-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "26bfe8c35680dd0cf71ce724e0f00401a439a332e8bd90a82e556ab2cb3a68e6",
+      "size": 1318305,
+      "name": "dulwich",
+      "version": "0.25.2"
+    },
+    {
+      "file": "et_xmlfile-2.0.0-py3-none-any.whl",
+      "sha256": "7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa",
+      "size": 18059,
+      "name": "et_xmlfile",
+      "version": "2.0.0"
+    },
+    {
+      "file": "execnet-2.1.2-py3-none-any.whl",
+      "sha256": "67fba928dd5a544b783f6056f449e5e3931a5c378b128bc18501f7ea79e296ec",
+      "size": 40708,
+      "name": "execnet",
+      "version": "2.1.2"
+    },
+    {
+      "file": "filelock-4.0.9-py3-none-any.whl",
+      "sha256": "9287fd61b99a806e5202be29a83034c0808a1b9830e820537c2f5773981f7eeb",
+      "size": 110368,
+      "name": "filelock",
+      "version": "4.0.9"
+    },
+    {
+      "file": "frozenlist-1.8.0-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "f21f00a91358803399890ab167098c131ec2ddd5f8f5fd5fe9c9f2c6fcd91e40",
+      "size": 49417,
+      "name": "frozenlist",
+      "version": "1.8.0"
+    },
+    {
+      "file": "h11-0.16.0-py3-none-any.whl",
+      "sha256": "63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86",
+      "size": 37515,
+      "name": "h11",
+      "version": "0.16.0"
+    },
+    {
+      "file": "httpcore-1.0.9-py3-none-any.whl",
+      "sha256": "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55",
+      "size": 78784,
+      "name": "httpcore",
+      "version": "1.0.9"
+    },
+    {
+      "file": "httpcore2-2.13.1-py3-none-any.whl",
+      "sha256": "e1e05d4f25f7d7d496bfb96748f6f4b67657b03da069b3a68c36069f3db73d0a",
+      "size": 83423,
+      "name": "httpcore2",
+      "version": "2.13.1"
+    },
+    {
+      "file": "httpx-0.28.1-py3-none-any.whl",
+      "sha256": "d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad",
+      "size": 73517,
+      "name": "httpx",
+      "version": "0.28.1"
+    },
+    {
+      "file": "httpx2-2.13.1-py3-none-any.whl",
+      "sha256": "6dff50fabc270ee5fd25d845d0b078ed20564579744d6d962850975996d2f9a4",
+      "size": 95597,
+      "name": "httpx2",
+      "version": "2.13.1"
+    },
+    {
+      "file": "httpx_sse-0.4.3-py3-none-any.whl",
+      "sha256": "0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc",
+      "size": 8960,
+      "name": "httpx-sse",
+      "version": "0.4.3"
+    },
+    {
+      "file": "idna-3.20-py3-none-any.whl",
+      "sha256": "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c",
+      "size": 69583,
+      "name": "idna",
+      "version": "3.20"
+    },
+    {
+      "file": "iniconfig-2.3.0-py3-none-any.whl",
+      "sha256": "f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12",
+      "size": 7484,
+      "name": "iniconfig",
+      "version": "2.3.0"
+    },
+    {
+      "file": "jinja2-3.1.6-py3-none-any.whl",
+      "sha256": "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67",
+      "size": 134899,
+      "name": "Jinja2",
+      "version": "3.1.6"
+    },
+    {
+      "file": "jiter-0.17.0-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "ec89771f4272b989487a6364e519db6bbaba323e8bbf949ac89a45ea9c18b7a3",
+      "size": 321425,
+      "name": "jiter",
+      "version": "0.17.0"
+    },
+    {
+      "file": "json_repair-0.63.5-py3-none-any.whl",
+      "sha256": "0e39b3066f7829b4bd7fc614e463cfd4ff7a4c46f82f5b65431fc11e29a74c81",
+      "size": 51334,
+      "name": "json_repair",
+      "version": "0.63.5"
+    },
+    {
+      "file": "jsonschema-4.26.0-py3-none-any.whl",
+      "sha256": "d489f15263b8d200f8387e64b4c3a75f06629559fb73deb8fdfb525f2dab50ce",
+      "size": 90630,
+      "name": "jsonschema",
+      "version": "4.26.0"
+    },
+    {
+      "file": "jsonschema_specifications-2025.9.1-py3-none-any.whl",
+      "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe",
+      "size": 18437,
+      "name": "jsonschema-specifications",
+      "version": "2025.9.1"
+    },
+    {
+      "file": "loguru-0.7.3-py3-none-any.whl",
+      "sha256": "31a33c10c8e1e10422bfd431aeb5d351c7cf7fa671e3c4df004162264b28220c",
+      "size": 61595,
+      "name": "loguru",
+      "version": "0.7.3"
+    },
+    {
+      "file": "lxml-6.1.3-cp313-cp313-macosx_10_13_universal2.whl",
+      "sha256": "3a48093cdb058a93af842ede9703520e810b05dcd0fc6d7190a06376c3bfb6bd",
+      "size": 8590357,
+      "name": "lxml",
+      "version": "6.1.3"
+    },
+    {
+      "file": "lxml_html_clean-0.4.5-py3-none-any.whl",
+      "sha256": "c76fcadd1e5bfb9b8bafc2200d51e4e78eb0dad67f56881c21dfb6484c7e7746",
+      "size": 14573,
+      "name": "lxml_html_clean",
+      "version": "0.4.5"
+    },
+    {
+      "file": "markdown_it_py-4.2.0-py3-none-any.whl",
+      "sha256": "9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a",
+      "size": 91687,
+      "name": "markdown-it-py",
+      "version": "4.2.0"
+    },
+    {
+      "file": "markupsafe-3.0.3-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "116bb52f642a37c115f517494ea5feb03889e04df47eeff5b130b1808ce7c219",
+      "size": 12029,
+      "name": "MarkupSafe",
+      "version": "3.0.3"
+    },
+    {
+      "file": "mcp-1.30.0-py3-none-any.whl",
+      "sha256": "666edb5009503e1047c9d60346a756f94b261f05cc2625f23d41c728ffc484d0",
+      "size": 234581,
+      "name": "mcp",
+      "version": "1.30.0"
+    },
+    {
+      "file": "mdurl-0.1.2-py3-none-any.whl",
+      "sha256": "84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8",
+      "size": 9979,
+      "name": "mdurl",
+      "version": "0.1.2"
+    },
+    {
+      "file": "msgpack-1.2.3-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "db84203b13aecc222f465061397fdd5b53b7ae73d2c95ffc1c8dc5be0153a709",
+      "size": 89955,
+      "name": "msgpack",
+      "version": "1.2.3"
+    },
+    {
+      "file": "multidict-6.9.1-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "e5ccad4b7bac125722f48d6f862bed3b514d8526deea06316bb72f152cd30a7c",
+      "size": 57357,
+      "name": "multidict",
+      "version": "6.9.1"
+    },
+    {
+      "file": "nanobot_ai-0.3.0-py3-none-any.whl",
+      "sha256": "3c72e14e4358f33368904c9bad138c4c301889a70b7acaf3d12665df17fb26ff",
+      "size": 5464430,
+      "name": "nanobot-ai",
+      "version": "0.3.0"
+    },
+    {
+      "file": "nodejs_wheel_binaries-24.19.0-py2.py3-none-macosx_13_0_arm64.whl",
+      "sha256": "e12cbfd69089504e42fb14194ce734a9dcf3eb38c820ca63dd511d36fb964e9c",
+      "size": 56047203,
+      "name": "nodejs-wheel-binaries",
+      "version": "24.19.0"
+    },
+    {
+      "file": "oauth_cli_kit-0.1.6-py3-none-any.whl",
+      "sha256": "d4a73beae7333ae642a9e5766ab0a04de53279667fefdf064c23db77a3494e7f",
+      "size": 11490,
+      "name": "oauth-cli-kit",
+      "version": "0.1.6"
+    },
+    {
+      "file": "openai-3.23.0-py3-none-any.whl",
+      "sha256": "7fbec2e50a05ac0fa858629505688e5998fd82245058390ac1b6d98960174bd5",
+      "size": 2118825,
+      "name": "openai",
+      "version": "3.23.0"
+    },
+    {
+      "file": "openpyxl-3.1.5-py2.py3-none-any.whl",
+      "sha256": "5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2",
+      "size": 250910,
+      "name": "openpyxl",
+      "version": "3.1.5"
+    },
+    {
+      "file": "packaging-26.3-py3-none-any.whl",
+      "sha256": "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c",
+      "size": 129956,
+      "name": "packaging",
+      "version": "26.3"
+    },
+    {
+      "file": "pillow-12.3.0-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "d69141514cc30b774ceea5e3ed3a6635c8d8a96edf664689b890f4089111fb35",
+      "size": 4780109,
+      "name": "pillow",
+      "version": "12.3.0"
+    },
+    {
+      "file": "platformdirs-4.12.2-py3-none-any.whl",
+      "sha256": "29dbf06d96c500bc6bdbce75fb0a14d63279c93b1842f97e72a135b33e856983",
+      "size": 32457,
+      "name": "platformdirs",
+      "version": "4.12.2"
+    },
+    {
+      "file": "pluggy-1.6.0-py3-none-any.whl",
+      "sha256": "e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746",
+      "size": 20538,
+      "name": "pluggy",
+      "version": "1.6.0"
+    },
+    {
+      "file": "primp-2.0.1-cp310-abi3-macosx_11_0_arm64.whl",
+      "sha256": "ca21c764f17ba42dde38c29d6a1f01970d39fa5f4793b0fe702006bd71b7a16a",
+      "size": 6020705,
+      "name": "primp",
+      "version": "2.0.1"
+    },
+    {
+      "file": "prompt_toolkit-3.0.53-py3-none-any.whl",
+      "sha256": "01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2",
+      "size": 392288,
+      "name": "prompt_toolkit",
+      "version": "3.0.53"
+    },
+    {
+      "file": "propcache-0.5.4-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "44149f46500a0a41b95b4d99c2e586a77319539730607b9892974a092788b111",
+      "size": 51425,
+      "name": "propcache",
+      "version": "0.5.4"
+    },
+    {
+      "file": "pycparser-3.0-py3-none-any.whl",
+      "sha256": "b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992",
+      "size": 48172,
+      "name": "pycparser",
+      "version": "3.0"
+    },
+    {
+      "file": "pydantic-2.13.5-py3-none-any.whl",
+      "sha256": "346a034f080da3755d8e9cb5e00e8b07de1d39e4f6e2c87d8ab7cafa0b269a73",
+      "size": 472589,
+      "name": "pydantic",
+      "version": "2.13.5"
+    },
+    {
+      "file": "pydantic_core-2.46.5-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "f332f0e72a5a0400141f830744e141bf9f97917878dbe968669e8a7fefea78ff",
+      "size": 1922768,
+      "name": "pydantic_core",
+      "version": "2.46.5"
+    },
+    {
+      "file": "pydantic_settings-2.15.0-py3-none-any.whl",
+      "sha256": "0ba092c291c94baceb5eff768aa0d56400a457585bc0175925a5a5510303da42",
+      "size": 69413,
+      "name": "pydantic-settings",
+      "version": "2.15.0"
+    },
+    {
+      "file": "pygments-2.21.0-py3-none-any.whl",
+      "sha256": "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9",
+      "size": 1250147,
+      "name": "Pygments",
+      "version": "2.21.0"
+    },
+    {
+      "file": "pyjwt-2.15.1-py3-none-any.whl",
+      "sha256": "42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193",
+      "size": 33860,
+      "name": "PyJWT",
+      "version": "2.15.1"
+    },
+    {
+      "file": "pymupdf-1.28.2-cp310-abi3-macosx_11_0_arm64.whl",
+      "sha256": "7113846b35dbf0a033f088e4f4fb543dabeb4b0b12c112966a1ca1ee2d5eacae",
+      "size": 23875605,
+      "name": "pymupdf",
+      "version": "1.28.2"
+    },
+    {
+      "file": "pypdf-5.9.0-py3-none-any.whl",
+      "sha256": "be10a4c54202f46d9daceaa8788be07aa8cd5ea8c25c529c50dd509206382c35",
+      "size": 313193,
+      "name": "pypdf",
+      "version": "5.9.0"
+    },
+    {
+      "file": "pytest-9.1.1-py3-none-any.whl",
+      "sha256": "37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c",
+      "size": 386536,
+      "name": "pytest",
+      "version": "9.1.1"
+    },
+    {
+      "file": "pytest_asyncio-1.4.0-py3-none-any.whl",
+      "sha256": "933ca923a23075a87fb7070c0ec272a6848489824d887c85c812670932835aa1",
+      "size": 16930,
+      "name": "pytest-asyncio",
+      "version": "1.4.0"
+    },
+    {
+      "file": "pytest_cov-6.3.0-py3-none-any.whl",
+      "sha256": "440db28156d2468cafc0415b4f8e50856a0d11faefa38f30906048fe490f1749",
+      "size": 25115,
+      "name": "pytest-cov",
+      "version": "6.3.0"
+    },
+    {
+      "file": "pytest_xdist-3.8.0-py3-none-any.whl",
+      "sha256": "202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88",
+      "size": 46396,
+      "name": "pytest-xdist",
+      "version": "3.8.0"
+    },
+    {
+      "file": "python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+      "sha256": "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427",
+      "size": 229892,
+      "name": "python-dateutil",
+      "version": "2.9.0.post0"
+    },
+    {
+      "file": "python_docx-1.2.0-py3-none-any.whl",
+      "sha256": "3fd478f3250fbbbfd3b94fe1e985955737c145627498896a8a6bf81f4baf66c7",
+      "size": 252987,
+      "name": "python-docx",
+      "version": "1.2.0"
+    },
+    {
+      "file": "python_dotenv-1.2.4-py3-none-any.whl",
+      "sha256": "42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc",
+      "size": 23266,
+      "name": "python-dotenv",
+      "version": "1.2.4"
+    },
+    {
+      "file": "python_engineio-4.14.0-py3-none-any.whl",
+      "sha256": "9f0fe275fb7d67bfc1a632421adf22949fd4843bd9c458c004b0a89cede302a2",
+      "size": 60291,
+      "name": "python-engineio",
+      "version": "4.14.0"
+    },
+    {
+      "file": "python_multipart-0.0.32-py3-none-any.whl",
+      "sha256": "ff6d3f776f16878c894e52e107296ffc890e913c611b1a4ec6c44e2821fe2e23",
+      "size": 30042,
+      "name": "python-multipart",
+      "version": "0.0.32"
+    },
+    {
+      "file": "python_pptx-1.0.2-py3-none-any.whl",
+      "sha256": "160838e0b8565a8b1f67947675886e9fea18aa5e795db7ae531606d68e785cba",
+      "size": 472788,
+      "name": "python-pptx",
+      "version": "1.0.2"
+    },
+    {
+      "file": "python_socketio-5.17.0-py3-none-any.whl",
+      "sha256": "b5826fd2f8aa02e11347816349b74ac6b53e8a4f4e4b1cf1388e1aff19b7f3f4",
+      "size": 82548,
+      "name": "python-socketio",
+      "version": "5.17.0"
+    },
+    {
+      "file": "pyyaml-6.0.3-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "2283a07e2c21a2aa78d9c4442724ec1eb15f5e42a723b99cb3d822d48f5f7ad1",
+      "size": 173252,
+      "name": "PyYAML",
+      "version": "6.0.3"
+    },
+    {
+      "file": "qrcode-8.2-py3-none-any.whl",
+      "sha256": "16e64e0716c14960108e85d853062c9e8bba5ca8252c0b4d0231b9df4060ff4f",
+      "size": 45986,
+      "name": "qrcode",
+      "version": "8.2"
+    },
+    {
+      "file": "questionary-2.1.1-py3-none-any.whl",
+      "sha256": "a51af13f345f1cdea62347589fbb6df3b290306ab8930713bfae4d475a7d4a59",
+      "size": 36753,
+      "name": "questionary",
+      "version": "2.1.1"
+    },
+    {
+      "file": "readability_lxml-0.9-py3-none-any.whl",
+      "sha256": "f43cf9ee74a15996581ae9ba1968d224d54344f6d134738bd0a5d5ea4b3ef55f",
+      "size": 26463,
+      "name": "readability-lxml",
+      "version": "0.9"
+    },
+    {
+      "file": "referencing-0.37.0-py3-none-any.whl",
+      "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231",
+      "size": 26766,
+      "name": "referencing",
+      "version": "0.37.0"
+    },
+    {
+      "file": "regex-2026.9.29-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "c90fcf7804ea0a54b896ce0f2b9565350220b8d4890fd0db461a476a4c687963",
+      "size": 293472,
+      "name": "regex",
+      "version": "2026.9.29"
+    },
+    {
+      "file": "requests-2.34.2-py3-none-any.whl",
+      "sha256": "2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0",
+      "size": 73075,
+      "name": "requests",
+      "version": "2.34.2"
+    },
+    {
+      "file": "rich-14.3.4-py3-none-any.whl",
+      "sha256": "07e7adb4690f68864777b1450859253bed81a99a31ac321ac1817b2313558952",
+      "size": 310480,
+      "name": "rich",
+      "version": "14.3.4"
+    },
+    {
+      "file": "rpds_py-2026.6.3-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "f4d78253f6996be4901669ad25319f842f740eccf4d58e3c7f3dd39e6dde1d8f",
+      "size": 338203,
+      "name": "rpds-py",
+      "version": "2026.6.3"
+    },
+    {
+      "file": "ruff-0.16.10-py3-none-macosx_11_0_arm64.whl",
+      "sha256": "3031a4a2e8e7b8a46f70be45f198c35a11ece509a94b80334d8d397a33c67550",
+      "size": 9774282,
+      "name": "ruff",
+      "version": "0.16.10"
+    },
+    {
+      "file": "setproctitle-1.3.8-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "d63adfa4be8f9dbac4be6b359e2a8eb15a733545ef613d02a12ae27a4d40e975",
+      "size": 13116,
+      "name": "setproctitle",
+      "version": "1.3.8"
+    },
+    {
+      "file": "shellingham-1.5.4-py2.py3-none-any.whl",
+      "sha256": "7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686",
+      "size": 9755,
+      "name": "shellingham",
+      "version": "1.5.4"
+    },
+    {
+      "file": "simple_websocket-1.1.0-py3-none-any.whl",
+      "sha256": "4af6069630a38ed6c561010f0e11a5bc0d4ca569b36306eb257cd9a192497c8c",
+      "size": 13842,
+      "name": "simple-websocket",
+      "version": "1.1.0"
+    },
+    {
+      "file": "six-1.17.0-py2.py3-none-any.whl",
+      "sha256": "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274",
+      "size": 11050,
+      "name": "six",
+      "version": "1.17.0"
+    },
+    {
+      "file": "sniffio-1.3.1-py3-none-any.whl",
+      "sha256": "2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2",
+      "size": 10235,
+      "name": "sniffio",
+      "version": "1.3.1"
+    },
+    {
+      "file": "socksio-1.0.0-py3-none-any.whl",
+      "sha256": "95dc1f15f9b34e8d7b16f06d74b8ccf48f609af32ab33c608d08761c5dcbb1f3",
+      "size": 12763,
+      "name": "socksio",
+      "version": "1.0.0"
+    },
+    {
+      "file": "sse_starlette-3.5.0-py3-none-any.whl",
+      "sha256": "3e6e1070df3f0f5d9cea81496de92dbb72f6721871d99748ece67441dd8b7997",
+      "size": 17407,
+      "name": "sse-starlette",
+      "version": "3.5.0"
+    },
+    {
+      "file": "starlette-1.7.0-py3-none-any.whl",
+      "sha256": "67f8e99895493dd2911a03f11314af6ceebeae4e704bb9f43dfc6a9db151c93e",
+      "size": 78980,
+      "name": "starlette",
+      "version": "1.7.0"
+    },
+    {
+      "file": "tiktoken-0.14.0-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "cbe2cc3bba939bcdaf103e03df9d5039d33887080b315624be28ec69059e5f94",
+      "size": 1038820,
+      "name": "tiktoken",
+      "version": "0.14.0"
+    },
+    {
+      "file": "truststore-0.10.4-py3-none-any.whl",
+      "sha256": "adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981",
+      "size": 18660,
+      "name": "truststore",
+      "version": "0.10.4"
+    },
+    {
+      "file": "typer-0.27.2-py3-none-any.whl",
+      "sha256": "b3a5fc4342d5fc8fda8fc3010b1cf117e9249aab7fae800c2eff62fd3842d97d",
+      "size": 123130,
+      "name": "typer",
+      "version": "0.27.2"
+    },
+    {
+      "file": "typing_extensions-4.16.0-py3-none-any.whl",
+      "sha256": "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8",
+      "size": 45571,
+      "name": "typing_extensions",
+      "version": "4.16.0"
+    },
+    {
+      "file": "typing_inspection-0.4.4-py3-none-any.whl",
+      "sha256": "65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147",
+      "size": 14750,
+      "name": "typing-inspection",
+      "version": "0.4.4"
+    },
+    {
+      "file": "tzdata-2026.4-py2.py3-none-any.whl",
+      "sha256": "c2169a8b0a7a5e9674da5a135ccdfb2b3e671b333ed9fed17b41f73c34476e81",
+      "size": 347494,
+      "name": "tzdata",
+      "version": "2026.4"
+    },
+    {
+      "file": "tzlocal-5.4.4-py3-none-any.whl",
+      "sha256": "aae09f0126a8a86fa736be266eb4a471380d26a0de3bc14844e7821fee3e2a15",
+      "size": 18115,
+      "name": "tzlocal",
+      "version": "5.4.4"
+    },
+    {
+      "file": "urllib3-2.8.0-py3-none-any.whl",
+      "sha256": "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+      "size": 135717,
+      "name": "urllib3",
+      "version": "2.8.0"
+    },
+    {
+      "file": "uvicorn-0.54.0-py3-none-any.whl",
+      "sha256": "505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf",
+      "size": 87427,
+      "name": "uvicorn",
+      "version": "0.54.0"
+    },
+    {
+      "file": "watchfiles-1.3.0-cp310-abi3-macosx_11_0_arm64.whl",
+      "sha256": "bbc1198edfdc90fda0600f825aa94150f428dfcbf8138746f55998e0e660d64c",
+      "size": 397647,
+      "name": "watchfiles",
+      "version": "1.3.0"
+    },
+    {
+      "file": "wcwidth-0.9.1-cp310-abi3-macosx_11_0_arm64.whl",
+      "sha256": "40d936d72c9bdc10df43f93a8be502bc5024b487259139f66a328722c07f34a9",
+      "size": 609038,
+      "name": "wcwidth",
+      "version": "0.9.1"
+    },
+    {
+      "file": "websockets-16.1.1-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "cd2ca96a082a36964aca83e992f72abeb61b7306c1a6cba4c7d06a7b93750cac",
+      "size": 177530,
+      "name": "websockets",
+      "version": "16.1.1"
+    },
+    {
+      "file": "wsproto-1.3.2-py3-none-any.whl",
+      "sha256": "61eea322cdf56e8cc904bd3ad7573359a242ba65688716b0710a5eb12beab584",
+      "size": 24405,
+      "name": "wsproto",
+      "version": "1.3.2"
+    },
+    {
+      "file": "xlsxwriter-3.2.9-py3-none-any.whl",
+      "sha256": "9a5db42bc5dff014806c58a20b9eae7322a134abb6fce3c92c181bfb275ec5b3",
+      "size": 175315,
+      "name": "xlsxwriter",
+      "version": "3.2.9"
+    },
+    {
+      "file": "yarl-1.25.1-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "0f12afda4eea8c8994a76d4df1875c765194f5fbe8a9d197929ea303caee29ec",
+      "size": 103677,
+      "name": "yarl",
+      "version": "1.25.1"
+    }
+  ],
+  "qualified_outcomes": {
+    "offline_install": "PASS",
+    "pip_check": "PASS",
+    "installed_origins": "PASS",
+    "package_bytes": {
+      "outcome": "PASS",
+      "files": 1274,
+      "mismatches": 0
+    },
+    "cli_help": {
+      "help": 0,
+      "gateway": 0,
+      "agent": 0,
+      "webui": 0,
+      "serve": 0
+    },
+    "guard_negative_foreground": {
+      "gateway": "MigrationIncompleteError",
+      "agent": "MigrationIncompleteError",
+      "serve": "MigrationIncompleteError",
+      "webui": "MigrationIncompleteError",
+      "negative_state_root_remains_absent": true
+    },
+    "crawler_entrypoint_import": "PASS",
+    "crawler_optional_worker": "NOT_INSTALLED_UNQUALIFIED",
+    "exact_docx": "PASS_ROOT_AUTHORIZED_LOOPBACK_ONLY_INSTALLED_API_FIXTURE",
+    "strict_basedpyright": "FAIL"
+  },
+  "installed_origin_paths": {
+    "nanobot": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/__init__.py",
+    "nanobot.agent.loop": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/agent/loop.py",
+    "nanobot.config.schema": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/config/schema.py",
+    "nanobot.cli.entry": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/cli/entry.py",
+    "nanobot.api.server": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/api/server.py",
+    "nanobot.crawler.worker": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/crawler/worker.py"
+  },
+  "sys_path": [
+    "/Library/Frameworks/Python.framework/Versions/3.13/lib/python313.zip",
+    "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13",
+    "/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/lib-dynload",
+    "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages"
+  ],
+  "declared_extras": [
+    "api",
+    "azure",
+    "bedrock",
+    "crawler-worker",
+    "desktop",
+    "dev",
+    "documents",
+    "langfuse",
+    "olostep",
+    "pdf"
+  ],
+  "packaged_channel_manifests": {
+    "dingtalk": {
+      "name": "dingtalk",
+      "display_name": "DingTalk",
+      "runtime": "nanobot.channels.dingtalk.runtime:DingTalkChannel",
+      "connector": null,
+      "dependencies": [
+        "dingtalk-stream>=0.24.0,<1.0.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "discord": {
+      "name": "discord",
+      "display_name": "Discord",
+      "runtime": "nanobot.channels.discord.runtime:DiscordChannel",
+      "connector": null,
+      "dependencies": [
+        "discord.py>=2.5.2,<3.0.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "email": {
+      "name": "email",
+      "display_name": "Email",
+      "runtime": "nanobot.channels.email.runtime:EmailChannel",
+      "connector": null,
+      "dependencies": [],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "feishu": {
+      "name": "feishu",
+      "display_name": "Feishu",
+      "runtime": "nanobot.channels.feishu.runtime:FeishuChannel",
+      "connector": "nanobot.channels.feishu.connect:FeishuConnectStore",
+      "dependencies": [
+        "lark-oapi>=1.5.0,<2.0.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.tsx"
+    },
+    "matrix": {
+      "name": "matrix",
+      "display_name": "Matrix",
+      "runtime": "nanobot.channels.matrix.runtime:MatrixChannel",
+      "connector": null,
+      "dependencies": [
+        "matrix-nio[e2e]>=0.25.2; sys_platform != 'win32'",
+        "matrix-nio>=0.25.2; sys_platform == 'win32'",
+        "aiohttp>=3.9.0,<4.0.0",
+        "mistune>=3.0.0,<4.0.0",
+        "nh3>=0.2.17,<1.0.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "mattermost": {
+      "name": "mattermost",
+      "display_name": "Mattermost",
+      "runtime": "nanobot.channels.mattermost.runtime:MattermostChannel",
+      "connector": null,
+      "dependencies": [],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "mochat": {
+      "name": "mochat",
+      "display_name": "MoChat",
+      "runtime": "nanobot.channels.mochat.runtime:MochatChannel",
+      "connector": null,
+      "dependencies": [
+        "python-socketio>=5.16.0,<6.0.0",
+        "msgpack>=1.1.0,<2.0.0"
+      ],
+      "default_enabled": false,
+      "webui": null
+    },
+    "msteams": {
+      "name": "msteams",
+      "display_name": "Microsoft Teams",
+      "runtime": "nanobot.channels.msteams.runtime:MSTeamsChannel",
+      "connector": null,
+      "dependencies": [
+        "PyJWT>=2.0,<3.0",
+        "cryptography>=41.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "napcat": {
+      "name": "napcat",
+      "display_name": "NapCat",
+      "runtime": "nanobot.channels.napcat.runtime:NapcatChannel",
+      "connector": null,
+      "dependencies": [
+        "aiohttp>=3.9.0,<4.0.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "qq": {
+      "name": "qq",
+      "display_name": "QQ",
+      "runtime": "nanobot.channels.qq.runtime:QQChannel",
+      "connector": null,
+      "dependencies": [
+        "aiohttp>=3.9.0,<4.0.0",
+        "qq-botpy>=1.2.0,<2.0.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "signal": {
+      "name": "signal",
+      "display_name": "Signal",
+      "runtime": "nanobot.channels.signal.runtime:SignalChannel",
+      "connector": null,
+      "dependencies": [],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "slack": {
+      "name": "slack",
+      "display_name": "Slack",
+      "runtime": "nanobot.channels.slack.runtime:SlackChannel",
+      "connector": null,
+      "dependencies": [
+        "aiohttp>=3.9.0,<4.0.0",
+        "slack-sdk>=3.39.0,<4.0.0",
+        "slackify-markdown>=0.2.0,<1.0.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "telegram": {
+      "name": "telegram",
+      "display_name": "Telegram",
+      "runtime": "nanobot.channels.telegram.runtime:TelegramChannel",
+      "connector": null,
+      "dependencies": [
+        "python-telegram-bot[socks,webhooks]>=22.6,<23.0",
+        "socksio>=1.0.0,<2.0.0",
+        "python-socks[asyncio]>=2.8.0,<3.0.0; sys_platform != 'win32'"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "websocket": {
+      "name": "websocket",
+      "display_name": "WebSocket",
+      "runtime": "nanobot.channels.websocket.runtime:WebSocketChannel",
+      "connector": null,
+      "dependencies": [],
+      "default_enabled": true,
+      "webui": "webui/index.ts"
+    },
+    "wecom": {
+      "name": "wecom",
+      "display_name": "WeCom",
+      "runtime": "nanobot.channels.wecom.runtime:WecomChannel",
+      "connector": null,
+      "dependencies": [
+        "wecom-aibot-sdk-python>=0.1.7,<0.2.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    },
+    "weixin": {
+      "name": "weixin",
+      "display_name": "WeChat",
+      "runtime": "nanobot.channels.weixin.runtime:WeixinChannel",
+      "connector": "nanobot.channels.weixin.connect:WeixinConnectStore",
+      "dependencies": [
+        "qrcode[pil]>=8.0",
+        "pycryptodome>=3.20.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.tsx"
+    },
+    "whatsapp": {
+      "name": "whatsapp",
+      "display_name": "WhatsApp",
+      "runtime": "nanobot.channels.whatsapp.runtime:WhatsAppChannel",
+      "connector": null,
+      "dependencies": [
+        "neonize>=0.3.18.post0,<0.4.0",
+        "segno>=1.6.1,<2.0.0"
+      ],
+      "default_enabled": false,
+      "webui": "webui/index.ts"
+    }
+  },
+  "discovered_skills": [
+    {
+      "name": "mobile-dogfood",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/mobile-dogfood/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "memory",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/memory/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "desktop-use",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/desktop-use/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "image-generation",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/image-generation/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "update-setup",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/update-setup/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "summarize",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/summarize/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "clawhub",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/clawhub/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "skill-creator",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/skill-creator/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "video-understanding",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/video-understanding/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "github",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/github/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "my",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/my/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "tmux",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/tmux/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "webapp-testing",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/webapp-testing/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "weather",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/weather/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "cron",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/cron/SKILL.md",
+      "source": "builtin"
+    },
+    {
+      "name": "mobile-app-testing",
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nanobot/skills/mobile-app-testing/SKILL.md",
+      "source": "builtin"
+    }
+  ],
+  "installed_distribution_count": 115,
+  "profiles": {
+    "offline": "(version 1) (allow default) (deny file-read* (subpath \"/Users/jaden\")) (allow file-read-metadata (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate\") (literal \"/Users/jaden/Documents/github\") (literal \"/Users/jaden/Documents\") (literal \"/Users/jaden\")) (allow file-read* (subpath \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY\") (subpath \"/tmp/nanobot-p6-completion.DSvCbT/installed\")) (deny file-write*) (allow file-write* (subpath \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY\") (subpath \"/tmp/nanobot-p6-completion.DSvCbT/installed\") (literal \"/dev/null\")) (deny network*) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/bin/python\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/bin/nanobot\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/bin/basedpyright\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nodejs_wheel/bin/node\"))",
+    "typing": "(version 1) (allow default) (deny file-read* (subpath \"/Users/jaden\")) (allow file-read-metadata (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate\") (literal \"/Users/jaden/Documents/github\") (literal \"/Users/jaden/Documents\") (literal \"/Users/jaden\")) (allow file-read* (subpath \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY\") (subpath \"/tmp/nanobot-p6-completion.DSvCbT/installed\")) (deny file-write*) (allow file-write* (subpath \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY\") (subpath \"/tmp/nanobot-p6-completion.DSvCbT/installed\") (literal \"/dev/null\")) (deny network*) (deny process-exec) (allow process-exec (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/bin/python\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/bin/nanobot\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/bin/basedpyright\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nodejs_wheel/bin/node\"))",
+    "docx_loopback": "(version 1) (allow default) (deny file-read* (subpath \"/Users/jaden\")) (allow file-read-metadata (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate\") (literal \"/Users/jaden/Documents/github\") (literal \"/Users/jaden/Documents\") (literal \"/Users/jaden\")) (allow file-read* (subpath \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY\") (subpath \"/tmp/nanobot-p6-completion.DSvCbT/installed\")) (deny file-write*) (allow file-write* (subpath \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY\") (subpath \"/tmp/nanobot-p6-completion.DSvCbT/installed\") (literal \"/dev/null\")) (deny network*) (allow network-inbound (local ip \"localhost:*\")) (allow network-outbound (remote ip \"localhost:*\")) (deny process-fork) (deny process-exec) (allow process-exec (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/bin/python\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13\") (literal \"/Library/Frameworks/Python.framework/Versions/3.13/Resources/Python.app/Contents/MacOS/Python\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/bin/nanobot\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/bin/basedpyright\") (literal \"/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/env/lib/python3.13/site-packages/nodejs_wheel/bin/node\"))"
+  },
+  "docx_setup": {
+    "public_seam": "nanobot.config.loader.set_config_path",
+    "instance_path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/docx-instance/config.json",
+    "config_loaded": false,
+    "home_reassigned": false,
+    "test_and_conftest_unchanged": true,
+    "source_provenance": {
+      "files": {
+        "conftest.py": "3c8b64a3253ce00c8975f1e2e2193f82aef6dba5b0009b879e3f87cdc7fb6c92",
+        "pyproject.toml": "9d99c2b43d52f1f915273b16963e44fd500e17b56cb2127d57aef681e8c0f0d4",
+        "tests/test_api_attachment.py": "e9cebc1f0dca133a2a344753afd4d548e49e25d2a6fca2eab441891e1bff3d1e"
+      },
+      "no_nanobot_source_in_test_root": true
+    },
+    "sys_path_contains_frozen_source": false,
+    "pure_socket_probe": "127.0.0.1 bind PASS;1.1.1.1:443 PermissionError",
+    "scope": "One exact mock-agent test only; no live channel/service/startup and no operator-loader qualification"
+  },
+  "strict_diagnostics": {
+    "summary": {
+      "filesAnalyzed": 463,
+      "errorCount": 7420,
+      "warningCount": 0,
+      "informationCount": 0,
+      "timeInSec": 15.588
+    },
+    "exit_code": 1,
+    "counts_by_rule": {
+      "reportUnknownArgumentType": 1347,
+      "reportUnknownVariableType": 911,
+      "reportUnknownMemberType": 1558,
+      "reportArgumentType": 995,
+      "reportPrivateUsage": 745,
+      "reportUnnecessaryIsInstance": 227,
+      "reportAttributeAccessIssue": 376,
+      "reportUnknownParameterType": 194,
+      "reportMissingTypeArgument": 14,
+      "reportAbstractUsage": 11,
+      "reportAssignmentType": 65,
+      "reportOptionalMemberAccess": 181,
+      "reportCallIssue": 3,
+      "reportUnusedExcept": 1,
+      "reportIncompatibleMethodOverride": 87,
+      "reportRedeclaration": 3,
+      "reportPossiblyUnboundVariable": 194,
+      "reportUnnecessaryCast": 18,
+      "reportReturnType": 55,
+      "reportUnnecessaryComparison": 35,
+      "reportUnusedFunction": 16,
+      "reportDeprecated": 19,
+      "reportIndexIssue": 98,
+      "reportOptionalSubscript": 51,
+      "reportGeneralTypeIssues": 20,
+      "reportOptionalOperand": 3,
+      "reportOperatorIssue": 3,
+      "reportConstantRedefinition": 2,
+      "reportUnknownLambdaType": 12,
+      "reportMissingImports": 56,
+      "reportUntypedBaseClass": 2,
+      "reportUntypedFunctionDecorator": 5,
+      "reportMissingParameterType": 103,
+      "reportUnusedImport": 2,
+      "reportUnusedVariable": 4,
+      "reportMissingTypeStubs": 2,
+      "reportIncompatibleVariableOverride": 1,
+      "reportUnnecessaryContains": 1
+    },
+    "counts_by_package": {
+      "nanobot/_integration_diagnostics.py": 68,
+      "nanobot/_migration_preflight.py": 13,
+      "nanobot/agent": 2342,
+      "nanobot/api": 5,
+      "nanobot/channels": 1608,
+      "nanobot/cli": 106,
+      "nanobot/config": 51,
+      "nanobot/context_repo": 58,
+      "nanobot/crawler": 35,
+      "nanobot/cron": 851,
+      "nanobot/nanobot.py": 10,
+      "nanobot/providers": 462,
+      "nanobot/runtime_composition.py": 32,
+      "nanobot/sdk": 2,
+      "nanobot/session": 1672,
+      "nanobot/skills": 76,
+      "nanobot/utils": 28,
+      "nanobot/webui": 1
+    },
+    "direct_missing_import_count": 56,
+    "missing_import_messages": {
+      "Import \"dingtalk_stream\" could not be resolved": 1,
+      "Import \"dingtalk_stream.chatbot\" could not be resolved": 1,
+      "Import \"discord.abc\" could not be resolved": 2,
+      "Import \"lark_oapi.api.im.v1.model\" could not be resolved": 1,
+      "Import \"lark_oapi\" could not be resolved": 2,
+      "Import \"lark_oapi.ws.client\" could not be resolved": 2,
+      "Import \"lark_oapi.core.const\" could not be resolved": 1,
+      "Import \"lark_oapi.api.application.v6.model.get_application_request\" could not be resolved": 1,
+      "Import \"lark_oapi.api.im.v1\" could not be resolved": 9,
+      "Import \"lark_oapi.api.cardkit.v1\" could not be resolved": 3,
+      "Import \"nh3\" could not be resolved": 1,
+      "Import \"mistune\" could not be resolved": 1,
+      "Import \"nio\" could not be resolved": 1,
+      "Import \"nio.crypto.attachments\" could not be resolved": 1,
+      "Import \"nio.exceptions\" could not be resolved": 1,
+      "Import \"botpy\" could not be resolved": 1,
+      "Import \"botpy.gateway\" could not be resolved": 1,
+      "Import \"botpy.http\" could not be resolved": 1,
+      "Import \"slack_sdk.socket_mode.async_client\" could not be resolved": 1,
+      "Import \"slack_sdk.socket_mode.request\" could not be resolved": 1,
+      "Import \"slack_sdk.socket_mode.response\" could not be resolved": 1,
+      "Import \"slack_sdk.socket_mode.websockets\" could not be resolved": 1,
+      "Import \"slack_sdk.web.async_client\" could not be resolved": 1,
+      "Import \"slackify_markdown\" could not be resolved": 1,
+      "Import \"telegram.error\" could not be resolved": 2,
+      "Import \"telegram.ext\" could not be resolved": 1,
+      "Import \"telegram.request\" could not be resolved": 1,
+      "Import \"wecom_aibot_sdk\" could not be resolved": 1,
+      "Import \"Crypto.Cipher\" could not be resolved": 2,
+      "Import \"magic\" could not be resolved": 1,
+      "Import \"neonize.aioze.client\" could not be resolved": 1,
+      "Import \"neonize.aioze.events\" could not be resolved": 1,
+      "Import \"neonize.utils.jid\" could not be resolved": 1,
+      "Import \"segno\" could not be resolved": 1,
+      "Import \"neonize.utils.enum\" could not be resolved": 1,
+      "Import \"crawl4ai\" could not be resolved": 3,
+      "Import \"azure.identity.aio\" could not be resolved": 1,
+      "Import \"boto3\" could not be resolved": 1,
+      "Import \"langfuse.openai\" could not be resolved": 1
+    },
+    "other_diagnostic_count": 7364,
+    "interpretation": "FAIL. Direct unresolved imports include uninstalled packaged-channel SDKs and nonselected crawler/azure/bedrock/langfuse extras. Other diagnostics include actual argument, optional-access, override and strict unknown/private-usage reports; unknown-type cascades may also result from optional imports. No all-extras comparison, causality claim or broad fixes."
+  },
+  "scope_before_publication": {
+    "baseline_file_count": 1866,
+    "candidate_changed_from_root_baseline": [],
+    "frozen_files_checked": 1865,
+    "frozen_source_changed": [],
+    "guard_sha256": "5a653ef73328b4840d31a7737fc3d0a79fbf631bf648fd3ebf9793cbee012d74",
+    "write_scope": [
+      "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY",
+      "/tmp/nanobot-p6-completion.DSvCbT/installed"
+    ],
+    "protected_original_access": "NONE",
+    "reduced_worker_isolation": "Existing idle GPT-6.1 Sol Medium review node reused capacity-only; previous graph closed; fresh integrated review required."
+  },
+  "publication_write_set": [
+    "docs/migration/p6-installed-checkpoint.md",
+    "docs/migration/p6-installed-evidence.json",
+    "docs/migration/p6-release-rehearsal.md",
+    "docs/migration/p6-p7-handoff-manifest.md"
+  ],
+  "retained_records": {
+    "worker/agent-help.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/agent-help.json",
+      "sha256": "3e65a4c86cba2730ed05c09ea0f9651fb3d122ce00bca588c389ddd0aaabb155",
+      "size": 7336,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 0.5611862910154741,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/agent-help.json"
+    },
+    "worker/basedpyright-version.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/basedpyright-version.json",
+      "sha256": "5d60a65dad67e3b776f51c17fa3feec2ea23d5f07ff4cd66708acd90c519a1c5",
+      "size": 4075,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 2.5309606659866404,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/basedpyright-version.json"
+    },
+    "worker/compose_publication.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/compose_publication-amendment.py",
+      "sha256": "cfedbd752ce0f3ba67017785a0d3996fbf45348bb0c934506484519e411f30d4",
+      "size": 6080,
+      "mode": "0400"
+    },
+    "worker/create-env.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/create-env.json",
+      "sha256": "4278103b54191c8a9866d37e8fae9b27eeb2ea42b1c7ed32d15496a59068de4e",
+      "size": 1446,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 1.4050975829886738,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/create-env.json"
+    },
+    "worker/dependency-freeze.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/dependency-freeze.json",
+      "sha256": "84bcd93e1b2a65d572ebd6afd70dde5ceef1c5448c84dd6bc992f1b6dbc1560c",
+      "size": 1374295,
+      "mode": "0400"
+    },
+    "worker/docx-copied-inputs.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/docx-copied-inputs.json",
+      "sha256": "b1c41c119d6cfeedf12a811eede475100a1cb9e0ee4185cbc09da901deeaed52",
+      "size": 343,
+      "mode": "0400"
+    },
+    "worker/docx-profile-probe.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/docx-profile-probe.json",
+      "sha256": "8cc37edef1e0da0b586ac284b70e77e48c3679325606b57c359c5bd37e42717d",
+      "size": 4374,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 0.037200374994426966,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/docx-profile-probe.json"
+    },
+    "worker/docx_runner.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/docx_runner.py",
+      "sha256": "b564f8d7374769e6120750441a171103524366514bd955df8c5ba7de88f362dc",
+      "size": 1234,
+      "mode": "0400"
+    },
+    "worker/evidence-index.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/evidence-index.json",
+      "sha256": "230fa685364a6a237a3bbd2e6638a3ee5b4fd98e2facd7829fc406eeb4da3a10",
+      "size": 5585,
+      "mode": "0400"
+    },
+    "worker/exact-docx-home-denial-red.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/exact-docx-home-denial-red.json",
+      "sha256": "1976637be42694c96ea935d0f237abbc5d4eaa7c10fe3d44869652b4437ec7ba",
+      "size": 38120,
+      "mode": "0400",
+      "exit_code": 1,
+      "elapsed_seconds": 1.7624994160141796,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/exact-docx-home-denial-red.json"
+    },
+    "worker/exact-docx.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/exact-docx.json",
+      "sha256": "ed0536715eecb0b52add8afab4466a0fb762d5cc757f64c60274cd2e267ef843",
+      "size": 6441,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 0.6031735829892568,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/exact-docx.json"
+    },
+    "worker/gateway-help.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/gateway-help.json",
+      "sha256": "3899f4c77222c7d0a43009c542e32a64f241119c6bf00a621cf2c9b75c6e868d",
+      "size": 7700,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 1.0971165829978418,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/gateway-help.json"
+    },
+    "worker/guard-negative-agent.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/guard-negative-agent.json",
+      "sha256": "22f6e50048273ae2977806d20e4f24b796276417d3dbc4714d195800a12bb2c9",
+      "size": 7893,
+      "mode": "0400",
+      "exit_code": 1,
+      "elapsed_seconds": 0.5138377499824855,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/guard-negative-agent.json"
+    },
+    "worker/guard-negative-gateway.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/guard-negative-gateway.json",
+      "sha256": "8def8bb501a649395d679c907fc76055d015e8aba378f5abed95b0949c234557",
+      "size": 7917,
+      "mode": "0400",
+      "exit_code": 1,
+      "elapsed_seconds": 0.5361854170041624,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/guard-negative-gateway.json"
+    },
+    "worker/guard-negative-no-state.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/guard-negative-no-state.json",
+      "sha256": "fea1d8401b15008f7c480ca37cd48bbd743f1da17a734d3566fc3be580c26a3f",
+      "size": 160,
+      "mode": "0400"
+    },
+    "worker/guard-negative-serve.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/guard-negative-serve.json",
+      "sha256": "f78ab69d2bf538a52658f5d536cc3eccc9215312fe463a322052e1bbfc62adc1",
+      "size": 7804,
+      "mode": "0400",
+      "exit_code": 1,
+      "elapsed_seconds": 0.539579833013704,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/guard-negative-serve.json"
+    },
+    "worker/guard-negative-webui.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/guard-negative-webui.json",
+      "sha256": "6361d228f95e281078a1261ccf6076502ab0118018ccd4488a611688bfe372c8",
+      "size": 7827,
+      "mode": "0400",
+      "exit_code": 1,
+      "elapsed_seconds": 0.4937352910055779,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/guard-negative-webui.json"
+    },
+    "worker/help.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/help.json",
+      "sha256": "cc8c7d01ba0078a6fc1a6eeeb63d27d58692d90e2604b0da203728cef9889016",
+      "size": 8667,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 0.7700765419867821,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/help.json"
+    },
+    "worker/inputs-host.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/inputs-host.json",
+      "sha256": "2ccff11d037cff82dc54b54e7505c46bdbe266b4cfa1334b4b41e2eac9ae426b",
+      "size": 1135,
+      "mode": "0400"
+    },
+    "worker/installed-freeze.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/installed-freeze.json",
+      "sha256": "c7d221dd375ca1e0d7ebb6e846033621c4ac6b8e8ae49ec7a7c64e01ab9a2ed7",
+      "size": 7416,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 0.1815452919981908,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/installed-freeze.json"
+    },
+    "worker/installed-probe-expectation-red.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/installed-probe-expectation-red.json",
+      "sha256": "19466a54758d4adc2643feaafdf4a6be7759f218c5aa064272b7b71e02a4480a",
+      "size": 4471,
+      "mode": "0400",
+      "exit_code": 1,
+      "elapsed_seconds": 2.306346500001382,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/installed-probe-expectation-red.json"
+    },
+    "worker/installed-probe-profile-red.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/installed-probe-profile-red.json",
+      "sha256": "602634b14a8d924bd950f691b0ba0644cef84716315c1ac12b77ef286fa9c7ba",
+      "size": 3318,
+      "mode": "0400",
+      "exit_code": 1,
+      "elapsed_seconds": 0.01651158300228417,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/installed-probe-profile-red.json"
+    },
+    "worker/installed-probe.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/installed-probe.json",
+      "sha256": "533f1197c391f171f1a33b72bb79f2d5cbd8c0a51898aa41c11cc7c37a40d377",
+      "size": 2353595,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 1.0933768750110175,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/installed-probe.json"
+    },
+    "worker/installed_probe.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/installed_probe.py",
+      "sha256": "fdf5a8bf307b99fbf621fd9c803d2ccd0c9c82e9c4e04398b7ec1d67fa1eb5cb",
+      "size": 2730,
+      "mode": "0400"
+    },
+    "worker/offline-install-profile-red.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/offline-install-profile-red.json",
+      "sha256": "e3a30decc5646462e588ec0110df674e5716c5ece9eb4d3697920ff2b1f4d11a",
+      "size": 1914,
+      "mode": "0400",
+      "exit_code": 65,
+      "elapsed_seconds": 0.00604050001129508,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/offline-install-profile-red.json"
+    },
+    "worker/offline-install.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/offline-install.json",
+      "sha256": "4bed622b99e7557cd17d9d188583bf967a8d57aebaa9c35aed6568f748108a30",
+      "size": 28246,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 10.782241833017906,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/offline-install.json"
+    },
+    "worker/pip-check.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/pip-check.json",
+      "sha256": "88c869a8985b6700299b931636e9ae17337df6f0229b0224c584efabeec2f5b1",
+      "size": 1476,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 0.325044291006634,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/pip-check.json"
+    },
+    "worker/pip-version.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/pip-version.json",
+      "sha256": "9d38cc4cb7da4ace181bd52f0d5b3fd2417bbd4340a194130ad2e1384f30e415",
+      "size": 1564,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 0.12321408299612813,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/pip-version.json"
+    },
+    "worker/profiles.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/profiles.json",
+      "sha256": "c8e553bd3c790bd6abaafb90268e6ea646660826a2fa11dfc601a51665de765a",
+      "size": 5141,
+      "mode": "0400"
+    },
+    "worker/qualify_installed.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/qualify_installed.py",
+      "sha256": "82270aaf7e731d0280f04482cbba9bd0330e0ae5934c29312a5e720daf82adb3",
+      "size": 4979,
+      "mode": "0400"
+    },
+    "worker/root-docx-runner.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/root-docx-runner.py",
+      "sha256": "fa8de3f948fcece5ea9ced1471ef96152bd9a1f555225cbac7a97025e79f22c9",
+      "size": 1262,
+      "mode": "0400"
+    },
+    "worker/run_checks.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/run_checks.py",
+      "sha256": "08d3fee1fede157525b99cba562db3ec1d14670d5b1063c6fcbeb82df5554b1c",
+      "size": 4093,
+      "mode": "0400"
+    },
+    "worker/scope-check.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/scope-check.json",
+      "sha256": "fef34f545a10016e4c63ecf71cf0922bed41e0960f5e0b271b9ef1c14571aab6",
+      "size": 601,
+      "mode": "0400"
+    },
+    "worker/serve-help.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/serve-help.json",
+      "sha256": "f9747af52715c897165cea7f7539dd76d09b417100c96fc3e4de90753bbdd391",
+      "size": 6048,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 0.5407443330041133,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/serve-help.json"
+    },
+    "worker/socket_probe.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/socket_probe.py",
+      "sha256": "698b0e98a276558711c03950b8df44dbcbc6d73aa00faab4b902270d84c83a8b",
+      "size": 383,
+      "mode": "0400"
+    },
+    "worker/strict-basedpyright.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/strict-basedpyright.json",
+      "sha256": "5f5e648ec7b7f0ceea7638667fe3aee21afa0df18d533bcdded1efabb2459505",
+      "size": 5705936,
+      "mode": "0400",
+      "exit_code": 1,
+      "elapsed_seconds": 16.028414375003194,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/strict-basedpyright.json"
+    },
+    "worker/strict-summary.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/strict-summary.json",
+      "sha256": "76abb4b46c942399ff99f5efd1afdf73955dd24e7b66a56237aa45f30bbf262a",
+      "size": 40380,
+      "mode": "0400"
+    },
+    "worker/summarize_evidence.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/summarize_evidence.py",
+      "sha256": "04df23242587b0b3d9f4dc012eeeab1f46f8ade6d9ef9c6698e733b45c0fde73",
+      "size": 4249,
+      "mode": "0400"
+    },
+    "worker/webui-help.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/webui-help.json",
+      "sha256": "c4ae8e336095eb9563b6da2aaae971c58cbf46e83cc948eeac661c60f72556b4",
+      "size": 6508,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 0.5359360000002198,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/webui-help.json"
+    },
+    "worker/wheel-acquisition.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/wheel-acquisition.json",
+      "sha256": "4b266c487cf36cdef37dcd2b8d08484f40e6731e64723477d640dd56a6fc91e2",
+      "size": 39488,
+      "mode": "0400",
+      "exit_code": 0,
+      "elapsed_seconds": 14.775305624993052,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/wheel-acquisition.json"
+    },
+    "worker/worker-report.md": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/worker/worker-report.md",
+      "sha256": "12f69260b3689fe7dbedbd7a23d8f05b792e42b891c65077165b8be935bb0c35",
+      "size": 8808,
+      "mode": "0400"
+    },
+    "root/root-exact-docx.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-exact-docx.json",
+      "sha256": "2156d879ca7df1e11367e8e98a4db363c14c37d649ab1e081e8a9e57eceda67a",
+      "size": 6534,
+      "mode": "0400",
+      "exit_code": 0,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-exact-docx.json"
+    },
+    "root/root-installed-bytecheck-final.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-installed-bytecheck-final.json",
+      "sha256": "c0c6c43dbe4bc0a03864333dca94f6d7625dc85602237863724a2643c735d85c",
+      "size": 1664,
+      "mode": "0400",
+      "exit_code": 1,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-installed-bytecheck-final.json"
+    },
+    "root/root-installed-bytecheck-qualified.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-installed-bytecheck-qualified.json",
+      "sha256": "a8a0d70eee332cb1fd3bc55c500d44c5ec50be782c57eb519d02a99d51e10930",
+      "size": 2548,
+      "mode": "0400",
+      "exit_code": 0,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-installed-bytecheck-qualified.json"
+    },
+    "root/root-installed-bytecheck.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-installed-bytecheck.json",
+      "sha256": "07b65ca6b435bb1c9cab011c14288355a3a3d07b5210d259b282b91446722539",
+      "size": 1620,
+      "mode": "0400",
+      "exit_code": 71,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-installed-bytecheck.json"
+    },
+    "root/root-installed-pip-check-qualified.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-installed-pip-check-qualified.json",
+      "sha256": "e24897c846d34473df4d0598177e7b68b77eec610dc2196c0388fb0a853f63fc",
+      "size": 1497,
+      "mode": "0400",
+      "exit_code": 0,
+      "raw_output_retained_in": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-installed-pip-check-qualified.json"
+    },
+    "root/root-wheelhouse-check.json": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-wheelhouse-check.json",
+      "sha256": "9e1c2a5bddc86ca6a440f17eb154ee4cdb09c141e767d5216d6afcba2229592a",
+      "size": 219,
+      "mode": "0400"
+    },
+    "root/root-docx-run.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-docx-run.py",
+      "sha256": "d625cfe0396d0ecf75aa293933572c4b7a2eaba7320a2494eca972f81ac3ac45",
+      "size": 848,
+      "mode": "0400"
+    }
+,
+    "root/root-installed-bytecheck.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-installed-bytecheck.py",
+      "sha256": "388105373af13c904121b8ba974bc9cc1130f53c9b1c7719f8d4c1cd24a6a2bb",
+      "size": 1172,
+      "mode": "0400"
+    }
+,
+    "root/root-installed-run.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-installed-run.py",
+      "sha256": "bcd78e02956001b83531c78a4122888bef4c1ef1a91b2e99a813cd8929be9eca",
+      "size": 1472,
+      "mode": "0400"
+    }
+,
+    "root/root-wheelhouse-check.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-wheelhouse-check.py",
+      "sha256": "d420e84a1cd54b3f14dcf8ecc5dc6f73a592e9483324dfd91b63713c2cbed3a1",
+      "size": 1179,
+      "mode": "0400"
+    }
+,
+    "root/root-docx-runner.py": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/root/root-docx-runner.py",
+      "sha256": "fa8de3f948fcece5ea9ced1471ef96152bd9a1f555225cbac7a97025e79f22c9",
+      "size": 1262,
+      "mode": "0400"
+    }
+,
+    "contracts/installed-contract.md": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/contracts/installed-contract.md",
+      "sha256": "3d2ebde4dca3e07fbfdbd14e0e520c0cc14ef21ae5abcfc8e6debdc69f4b6b05",
+      "size": 4880,
+      "mode": "0400"
+    },
+    "contracts/publication-contract.md": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/contracts/publication-contract.md",
+      "sha256": "a1a4e6e085a92f3b34cb4930e7c9ee0646427770bdb2a97eeab94927df245fcf",
+      "size": 3397,
+      "mode": "0400"
+    },
+    "contracts/gate-analysis.md": {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/contracts/gate-analysis.md",
+      "sha256": "fb08ca661cb9d9e96b5dcdfc4c00fdef8fc0cdf80d4a54c241fe66c631e22669",
+      "size": 13557,
+      "mode": "0400"
+    }
+  },
+  "final_acceptance_evidence": {
+    "fresh_review": {
+      "sha256": "27fafa1cb9b702e36a2b5b5b22cddf022eefedbeb28de6fb01f184f6e3da95ff",
+      "retained_path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/final-acceptance/review-report.md",
+      "size": 9111,
+      "raw_text": "# Fresh integrated P6 installed-publication review\n\n## Findings\n\nNo material findings in the bounded installed-contract/publication-contract package. Recommendation: **PASS for host installation qualification publication only**. Root owns acceptance; this recommendation does not accept full P6, production closure, current-state rehearsal or runtime activation.\n\nThis fresh read-only review used the candidate checkout only, with explicit command working directories. No application runtime imports, tests, builds, installs, network, operator/state operations, candidate writes, recursive agents or protected-original access occurred. The sole authored output is this report. Read AGENTS.md and all three .agent rules, both task contracts and review contract, baseline, gate analysis, actual four publication files, relevant plan sections7\u201310, P6-A boundaries and P5 rollback/reference-instance runbook. Applied the orchestrate-development fresh-review/verification rules for capacity-forced reduced isolation and cross-boundary installed-publication provenance. No new architectural decision was required.\n\n## Acceptance coverage\n\n**AC1 \u2014 covered for macOS arm64/Python3.13.2 core+api+dev only.** Raw create-env/pip-version/acquisition/freeze records bind new environment and public PyPI wheel-only acquisition separately from offline checks. Literal isolated pip argv, sanitized environment and privacy profile are retained. Acquisition exits0 and uses `download --only-binary=:all: --index-url https://pypi.org/simple` against the accepted local wheel with `[api,dev]`, not dependency sdists. Independently checked all114 wheel file hashes/sizes/0400 modes, exact wheelhouse membership, each full METADATA against the retained freeze, and all114 requirement lines against the freeze. Requirements hash is `c0232f91228f055db3c89d9318684a182a0ae9712e9a7e3cec8a18302daaf589`. This is platform-resolved host qualification, not all-extras/channel or production reproducibility.\n\n**AC2 \u2014 covered for the same host/subset.** Accepted wheel input is SHA256 `3c72e14e4358f33368904c9bad138c4c301889a70b7acaf3d12665df17fb26ff`, archive `fa582770bac7d9dd328558082f874ccefdf6eb1d5a069d51a8ea8194b85c4378`, manifest `2a7a25356f9f8ef6de52eaa40ce4e10ac2f04f773f5cc1c2d60b45b1ddadcdd2`. Raw offline install uses `--no-index --require-hashes --find-links` and exits0 under network denial; worker and separately retained root pip checks exit0 with no broken requirements. Installed probe records115 distributions, site-packages roots/files/direct-url provenance and isolated external-cwd origins, with no editable direct URLs or frozen/source sys.path. I independently compared all1274 installed package members to the accepted wheel: zero mismatches/symlinks. All687 wheel package members also present in frozen source match it; the built frontend additions remain qualified by preserved P6-A build evidence rather than invented source equivalence. Independently compared all1865 manifest source members to archive and disposable frozen typing source: zero mismatches. Metadata/entrypoint/version binding remains0.3.0; guard/custom skills/scripts/frontend bytes remain intact.\n\n**AC3 \u2014 covered for no-effect imports/help and negative startup only.** Raw installed probe imports nanobot, agent.loop, config.schema, cli.entry, api.server and crawler.worker from fresh site-packages, inventories17 manifests,10 extras and16 skills, and explicitly reports missing Crawl4AI worker runtime. Public channel inventory deliberately projects selected manifest fields; full raw manifests remain retained, including dependency declarations. No packaged channel inventory is treated as enablement or dependency closure. Five help commands exit0. Four actual unmodified foreground gateway/agent/serve/webui commands exit1 with MigrationIncompleteError and absent disposable negative state root. Ordinary profiles deny network/process-fork/non-allowlisted exec and home reads, with exact ancestor metadata and private bundle allowances. Typing uses its separately recorded finite interpreter/node execution profile. Root byte/pip rechecks use separately retained, narrower credential/state exclusions, not falsely presented as identical full-home application profiles. No positive service startup, loader qualification or guard bypass is claimed.\n\n**AC4 \u2014 diagnostic completion covered; strict result FAIL.** Retained literal BasedPyright command is `env/bin/basedpyright --pythonpath env/bin/python --outputjson`, from disposable byte-identical frozen source with unchanged strict pyproject and declared isolated dev tool. Independently parsed the raw output:463 files,7420 diagnostics/errors,0 warnings/information, exit1; exactly56 reportMissingImports and7364 other diagnostics. Published rule/package counts and interpretation agree. Missing optional/channel environments can cause cascades, but publication does not dismiss all other diagnostics or claim full all-extras CI PASS. No source repair/import silencing/config weakening occurred.\n\nThe separately authorized DOCX extension is correctly bounded: worker and root retained exact one-node outcomes each show1 passed, independently and never summed. Actual test/root conftest/pyproject bytes match frozen source and current unchanged candidate. Installed `set_config_path` only assigns the explicit disposable instance path, avoiding default-home upload state without Config/load_config/config creation/HOME reassignment or fixture/app/assertion changes. Isolated `-I` installed origins/no-source paths are recorded before/after pytest. Separate localhost-only profile and socket probe bind127.0.0.1 while rejecting1.1.1.1:443. This qualifies a mock-agent fixture listener only, not real service or actual operator init-only loader policy.\n\n**AC5 \u2014 covered for scoped evidence/publication.** Independently verified all55 durable retained evidence records' exact hashes/sizes/0400 modes against the actual public JSON, plus retained closure wheels/requirements. Literal commands, environments, profiles, raw outputs, helpers/contracts/gate analysis and root records are bound. Red sandbox parser/launcher/initial helper expectation/DOCX home-denial outcomes remain red with their actual nonzero exits; no retroactive green or summation. Current artifacts preserve root failed launcher and qualified checks separately. Full P6, runtime/D9, background and later-stage limits are explicit. Publication remains pending root/fresh review as required rather than self-accepted.\n\n## Scope and publication integration\n\nIndependently hashed all1866 root-baseline files: only existing rehearsal and handoff changed. Candidate rg inventory adds exactly installed-checkpoint.md and installed-evidence.json; no other new nonignored source file. The complete rehearsal historical prefix is byte-identical to rehearsal-before.md. Handoff diff changes only current installed/P6 qualification paragraphs; reference-config/fallback/old-reader/activation/operator prerequisites remain intact. Guard hash is `5a653ef73328b4840d31a7737fc3d0a79fbf631bf648fd3ebf9793cbee012d74`. P5/P6-A/runtime/default/test/source bytes are preserved. Private installation evidence is separate from the frozen accepted source and old bundles. Capacity-only completed-P5 medium-node reuse is disclosed and this fresh integrated review supplies independent context, not substitute acceptance authority.\n\n## Gaps and residual gates\n\nNo missing evidence prevents this bounded publication recommendation. I did not rerun application checks by design; root independently owns rerun evidence and final acceptance. Read-only metadata/hash inspection cannot establish universal absence of every possible side effect; claims appropriately rely on retained OS profiles, literal commands, raw denied attempts and scope checks, not a live-operation claim.\n\n**Full P6 remains IN_PROGRESS / NOT_ACCEPTED.** Unresolved strict diagnostics/full all-extras/channel environment; native Windows/Linux/Python3.11/3.14/actual production target; selected production/channel/crawler/browser dependency and platform inventory; actual operator init-only loader authority; truthful stopped source/copy/reference-config/backups/artifact-read-root provenance; genuine old immutable rollback artifact/reader; positive guarded-service policy and remaining release rehearsal still need owning evidence/authority. No synthetic operator/state rehearsal occurred. Current legacy parsing is not old-release-reader equivalence, DOCX explicit instance binding is not operator-loader qualification, and guard-negative startup is not positive runtime admission. Runtime NOT_READY/NOT_AUTHORIZED, D9 NOT_AUTHORIZED, P7/H1/P8 NOT_DELIVERED and background work off remain unchanged. P6 completion, when separately achieved, would still not authorize P7/D9/canary or guard removal.\n\n## Recommendation\n\n**PASS \u2014 bounded host installed qualification and four-document publication, subject to root final acceptance.** No corrective source/document request. **NOT_ACCEPTED \u2014 full P6/production release; NOT_AUTHORIZED \u2014 runtime/D9/live activation.**\n"
+    },
+    "root_verdict": {
+      "sha256": "d45da84b87d002c437db7e06fa5b1c60eac5316cd9a883674b534fb91faa907f",
+      "retained_path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/final-acceptance/root-verdict.md",
+      "size": 3290,
+      "raw_text": "# Root P6 host qualification verdict\n\n2026-10-02. VERDICT: PASS for bounded host installation evidence/publication,\nAC1\u2013AC5. Full P6 VERDICT: NOT_ACCEPTED; user request to complete P6 is not yet met.\n\nRoot independently verified 114 wheelhouse files/hashes/requirements, reran installed\nsite-packages/version provenance and all 1274 package byte bindings to the accepted\nwheel, reran installed pip check under OS network denial, and repeated the exact\nunchanged DOCX node with public explicit disposable instance binding under the\nseparate authorized loopback-only profile. The DOCX source/conftest/pyproject are\nbyte-identical to the frozen source; no source sys.path, home/config load or live\nAPI/channel is qualified. Root scope and retained-evidence checks pass. Fresh\nindependent review finds no material findings and recommends PASS AC1\u2013AC5.\n\nEvidence under /tmp/nanobot-p6-completion.DSvCbT: root-wheelhouse-check.json,\nroot-installed-bytecheck-qualified.json, root-installed-pip-check-qualified.json,\nroot-exact-docx.json, root-publication-scope.json, root-evidence-check.json,\nreview-report.md; raw evidence also retained privately in the installed bundle.\n\nAC1/AC2 PASS host-only core/api/dev acquisition/hash freeze/offline install and\ninstalled origins/bytes. AC3 PASS installed imports/help/assets/inventory and\nguard-negative startup, not positive service startup. AC4 PASS for truthful execution\nand recording of diagnostics/exact DOCX: strict typing itself FAILS with 7420 errors,\n56 direct missing imports and 7364 other diagnostics; not a full all-extras CI\nregression verdict and not dismissed as all missing dependencies. AC5 PASS for\nbounded publication scope, exact retained evidence and explicit limitations.\n\nOnly two new installed qualification documents and current status in two existing\nP6 documents change. Historical rehearsal prefix and operational safety/authorization\npolicy are preserved. The current DOCX/type/CLI qualification paragraph is updated\ntruthfully; no operational requirement is waived. Runtime/guard/defaults, unrelated\nuser changes, P5 and P6-A bytes remain unchanged. Reduced worker isolation from\ncapacity-only reuse is disclosed; fresh GPT-6.1 Sol Medium review completed.\n\nFinal metadata reconciliation only is authorized: retain this verdict, review and\npre-final root scope/evidence checks exactly; mark host evidence ACCEPTED while\nfull P6 remains IN_PROGRESS / NOT_ACCEPTED. Root will recheck the final publication.\n\nRemaining gates: full extras/channel typing environment and unresolved strict\ndiagnostics; production Python/OS/enabled-channel/plugin/crawler dependency profile;\nnative Windows/Linux/Python3.11/3.14/target evidence; actual init-only operator-loader\npolicy; approved previous immutable release plus truthful stopped copied-state/\nreference config/backups/artifact read-root provenance and genuine old-reader\nrollback; guarded service/rehearsal policy. Live inventory and P7/D9 decisions are\nseparate authority; no service/guard/background activation, live state, deployment,\ncredentials, original workspace access or commit is authorized/performed.\n\nDo not call P6 complete, silently weaken its gates, or expand into broad runtime\ntyping changes without a bounded accepted follow-on contract and missing inputs.\n"
+    },
+    "root_scope_pre_final": {
+      "sha256": "7c5ff5645ebd77e8a947c461623baba1d2bd3fb77a3043173b648c89bb3130e9",
+      "retained_path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/final-acceptance/root-publication-scope.json",
+      "size": 1029,
+      "raw": {
+        "result": "PASS",
+        "changed": [
+          "docs/migration/p6-p7-handoff-manifest.md",
+          "docs/migration/p6-release-rehearsal.md"
+        ],
+        "added": [
+          "docs/migration/p6-installed-checkpoint.md",
+          "docs/migration/p6-installed-evidence.json"
+        ],
+        "removed": [],
+        "all_runtime_guard_defaults_P5_P6_A_and_unrelated_files_unchanged": true,
+        "historical_rehearsal_and_operational_handoff_policy_preserved": true,
+        "diff_check": {
+          "argv": [
+            "git",
+            "diff",
+            "--check"
+          ],
+          "exit_code": 0,
+          "output": ""
+        },
+        "final_hashes": {
+          "docs/migration/p6-installed-checkpoint.md": "19f6f4f5677127c01935e627e01590e18d860637377efd3d9d8e3fe98b65cf9a",
+          "docs/migration/p6-installed-evidence.json": "f9a26b78f50a762807342d293e23aae1f87dda481744624cf67168fd36252b80",
+          "docs/migration/p6-p7-handoff-manifest.md": "fe36b3dfc415104ffb614ff2a9e2b87d4d796623e798a2c278d6770956f3622e",
+          "docs/migration/p6-release-rehearsal.md": "227cf5f728c60d059ce7855c466a3895e80893d0c91331483eeb351b728785d5"
+        }
+      }
+    },
+    "root_evidence_pre_final": {
+      "sha256": "6b94e58689f1f5216c2613161fd1ccd5bb8ea78b090f857b195c8739b544bc2f",
+      "retained_path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-installed.c7OniRNY/evidence/final-acceptance/root-evidence-check.json",
+      "size": 341,
+      "raw": {
+        "result": "PASS",
+        "retained_records_exact_and_readonly": 55,
+        "wheel_inventory_exact": 114,
+        "strict_diagnostic_count_exact": 7420,
+        "strict_FAIL_and_full_P6_limits_preserved": true,
+        "DOCX_inputs_exact": true,
+        "relative_links_exist": 23,
+        "evidence_sha256": "f9a26b78f50a762807342d293e23aae1f87dda481744624cf67168fd36252b80"
+      }
+    },
+    "final_root_publication_recheck": "NOT_YET_PERFORMED"
+  }
+,
+  "preparation_errors": "Retained separate failed sandbox parser/launcher/skill-helper/home-denial records; none relabeled PASS. These are not source fixes.",
+  "worker_topology": "Capacity-only reuse of completed P5 GPT-6.1 Sol Medium node; reduced isolation disclosed; no recursive delegation or model substitution; fresh integrated review required.",
+  "acceptance_authority": "Root bounded host PASS and fresh integrated review PASS/no findings; final root publication recheck not yet performed; full P6 NOT_ACCEPTED",
+  "residual_gates": [
+    "Strict diagnostics unresolved and full all-extras/channel typing environment",
+    "Native Windows/Linux/Python3.11/3.14/actual production target",
+    "Selected production/channel/crawler/browser closure and platform inventory",
+    "Actual operator init-only loader requirement",
+    "Truthful stopped copied-state/reference-config/backup/artifact read-root provenance",
+    "Genuine old immutable rollback reader artifact",
+    "Positive guarded-service policy/rehearsal and remaining P6 checks",
+    "Separate P7/D9 operator/canary authority"
+  ]
+}

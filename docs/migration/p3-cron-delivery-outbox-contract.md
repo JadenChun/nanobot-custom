@@ -138,9 +138,15 @@ returns the original claim after reproving the durable record. Another process
 which sees a claimed destination receives a reconciliation-required or stale
 revision error and never executes it.
 
-`mark_sending(claim)` durably changes the retained attempt to `sending` and
-keeps the same capability for settlement. `settle(claim, result)` consumes
-that capability. A strict receipt is required for `confirmed_delivered`,
+`acquire_send_fence(claim)` obtains the permanent destination lock and issues
+a nonserializable `DeliverySendFence` bound to the exact store object, claim
+object and frozen fields, process, asyncio task, root binding, and lock
+descriptor/inode. Copies, reconstruction, serialization, foreign
+stores/tasks/processes, stale claims, released fences, and fork-child use fail
+closed. `mark_sending(claim, fence)` requires that exact active fence, durably
+changes the retained attempt to `sending`, and marks the fence started.
+`settle(claim, result, fence=fence)` requires the same active started fence and
+consumes the claim. A strict receipt is required for `confirmed_delivered`,
 which produces `delivered`; `confirmed_not_sent` produces `pending` so a
 future revision may explicitly claim a new attempt; `permanent_not_sent`
 produces `failed`; and `unknown` produces `uncertain` with reconciliation
@@ -150,8 +156,13 @@ revision does not invalidate it. If persistence of the sending fence fails,
 the claim is invalidated and no send authority is returned. A settled claim
 never grants reinvocation.
 
-`resolve_after_reconciliation` is a trusted store-only transition and does
-not perform the external fence. It requires the exact predecessor outbox,
+`resolve_after_reconciliation` always obtains that same destination OS lock
+nonblockingly before its first durable predecessor read and retains it through
+publication and reproof. A live sender or reconciler raises
+`DeliverySendBusyError`, mutates nothing, and cannot create successor
+authority. `evidence_ref` and `predecessor_fenced_ref` remain required
+audit/external evidence and never substitute for the current OS lock. It
+requires the exact predecessor outbox,
 destination, attempt, and owner, the expected revision, the stable attempt
 `action_id`, its canonical request digest, a bounded `evidence_ref`, and a
 bounded `predecessor_fenced_ref`. An exact action retry reproves the durable
@@ -202,6 +213,17 @@ record replacement, and unsafe staging entries fail closed. Windows import
 succeeds, but construction raises a clear unsupported-platform persistence
 error when the required POSIX primitives are unavailable.
 
+Each destination also has a permanent
+`.send.<64-lowercase-hex-destination-id>.lock` file which is never unlinked.
+Every acquisition, including an existing residue after a failed creation
+acknowledgement, validates descriptor/path/root binding, fsyncs the lock
+descriptor, revalidates, fsyncs the held root descriptor, revalidates again,
+and only then attempts `flock(LOCK_EX|LOCK_NB)`. Lock order is destination
+send fence followed by the ordinary `.lock`; the reverse order is forbidden
+and the ordinary outbox lock is never retained across a network await. A fork
+child closes inherited send-lock and root descriptors without `LOCK_UN`, so it
+neither unlocks nor prolongs its parent's open-file-description ownership.
+
 E2 acceptance evidence covers deterministic destination ordering and IDs,
 false delivery and zero-work records, immutable old policy, provenance
 absence, idempotent preparation and post-rename durability reproof, two
@@ -244,9 +266,27 @@ empty media. `ConfirmedDelivered` requires a nonempty finite JSON receipt;
 `ConfirmedNotSent`, `PermanentNotSent`, and `UnknownOutcome` each carry a
 bounded reason code. Unknown or malformed sender returns are rejected.
 
-`dispatch()` first asks E2 to durably mark the issued claim as `sending`.
-Only that successful acknowledgement permits request construction and the
-single `sender.send()` call. The outbox lock is not held while the sender is
+The integrated dormant transport is intentionally Telegram-only.
+`CronChannelSender` resolves the exact frozen channel and calls its explicit
+receipt-capable text API directly; it does not publish to the message bus,
+route through the channel manager's ordinary send/retry path, or infer success
+from queued work. Telegram provider acceptance is delivery evidence, not proof
+that a user read the message. Complete receipts are bounded, content-free, and
+bound to the exact channel, target, action ID, request digest, message count,
+and ordered provider message/chat identifiers. A partial acknowledged prefix
+or any ambiguous/malformed provider outcome becomes uncertain and requires
+reconciliation. A missing or unsupported receipt-capable dormant transport is
+classified `permanent_not_sent`; it is never handed to an ordinary channel
+fallback. Telegram keeps bundles locally ordered per target, including through
+cancellation cleanup, but that in-process target lock is not a distributed
+ordering guarantee across processes or hosts.
+
+`dispatch()` first acquires E2's destination send fence and then durably marks
+the issued claim as `sending`. Only that successful acknowledgement permits
+request construction and the single `sender.send()` call. The exact fence
+remains held through request construction, the coalesced provider await,
+cancellation/timeout cleanup and complete sender-task join, durable settlement
+or settlement failure, and release. The outbox lock is not held while the sender is
 awaited, so a sender can independently read the outbox. Results settle as
 `confirmed_delivered`, `confirmed_not_sent`, `permanent_not_sent`, or
 `unknown`, producing the corresponding E2 destination state. Timeout,
@@ -277,16 +317,36 @@ and process ID. Shallow store copies and fork-inherited registries therefore
 get isolated registries, while E2's exact-store and process claim checks reject
 inherited claims before a copied or forked adapter can invoke a sender.
 
+The persistent destination fence is the cross-process authority; registry
+coalescing remains an in-process optimization and never substitutes for it.
+Process death releases the kernel lock but leaves claimed, sending, or
+uncertain durable state requiring explicit operator evidence. There is no
+lease, timeout, takeover, inferred resolution, or automatic retry.
+
 These APIs expose preparation, detached reads and status, claims, dispatch,
-and reconciliation-required inspection only. There is no scheduler, timer,
-channel/provider factory, bus, CLI, tool, or real sender wiring in E3.
+reconciliation-required inspection, and exact reconciliation forwarding
+through the runtime/service. E2 still acquires the lock internally; callers
+never provide the capability. The Telegram receipt adapter and exact resolver
+remain explicitly composed test/dormant authorities: there is no scheduler,
+timer, bus, CLI, tool, automatic channel-manager composition, or production
+delivery activation.
 
 ## Remaining E3 activation gates
 
-This package accepts the fake-sender dormant substrate and its deterministic
-durability tests. Production activation still requires the stopped-writer and
-process/turn lifecycle fence, real transport and operator reconciliation
-evidence, channel/provider ownership, media and result-mode support, and an
-explicit migration-guard decision. Those gates remain closed; E3 does not
+This package accepts the fake-sender substrate plus the explicitly resolved
+dormant Telegram receipt transport. Production activation still requires
+composition ownership, operator reconciliation evidence, qualification of
+other channels, media and result-mode support, and an explicit migration-guard
+decision. A provider
+effect detached from the local await at abrupt process death can still exist
+even though the kernel lock is released, so durable uncertain state and
+external evidence remain mandatory. Those gates remain closed; E3 does not
 arm scheduling, invoke a channel, publish to a bus, or make external delivery
 available merely by being importable or injected for tests.
+
+Independent integrated verification selections passed **135**
+delivery/fence/receipt tests, **91** occurrence/canonical-result/
+canonical-execution/visible-link/execution-owner regressions, and **178**
+Telegram regressions. Scoped Ruff, compileall, and `git diff --check` passed;
+`basedpyright` was unavailable and was not installed. These selections overlap
+and are intentionally not summed.

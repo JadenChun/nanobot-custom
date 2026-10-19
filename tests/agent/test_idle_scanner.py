@@ -13,11 +13,7 @@ from pathlib import Path
 
 import pytest
 from filelock import FileLock
-from session.test_artifact_reader import setup_read
-from session.test_idle_checkpoint import _hold_artifact_store
 
-from agent.test_idle_summary import _adapter, _Attempt, _authority, _limits, _Provider
-from agent.test_source_dependency_compaction import _record_retrieval
 from nanobot.agent.idle_compaction import IdleCompactionPolicy
 from nanobot.agent.idle_runtime import IdleRuntimeBindingRegistry
 from nanobot.agent.idle_scanner import (
@@ -34,6 +30,10 @@ from nanobot.session.manager import JsonlSessionStore
 from nanobot.session.source_discovery import SourceDiscoveryLimits
 from nanobot.session.source_store import SourceSessionStore
 from nanobot.utils.llm_runtime import LLMRuntime
+from tests.agent.test_idle_summary import _adapter, _Attempt, _authority, _limits, _Provider
+from tests.agent.test_source_dependency_compaction import _record_retrieval
+from tests.session.test_artifact_reader import setup_read
+from tests.session.test_idle_checkpoint import _hold_artifact_store
 
 
 def _enabled_policy(*, max_auxiliary_tokens: int = 1000) -> IdleCompactionPolicy:

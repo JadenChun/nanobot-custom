@@ -13,12 +13,34 @@ from nanobot.cron.action_store import CronActionStore
 from nanobot.cron.definition_store import (
     CronDefinition,
     CronDefinitionAction,
+    CronDefinitionCandidate,
     CronDefinitionStore,
     DefinitionStoreConflictError,
     DefinitionStoreValidationError,
 )
 
 NAMESPACE = "cron:definition-store-tests"
+
+
+@pytest.mark.parametrize("fields,message", [
+    ({"definitions": (None,)}, "cron definition action requires a CronDefinition"),
+    ({"applied_action_ids": ("invalid/id",)}, "cron definition candidate action id is invalid"),
+    ({"applied_action_ids": ("duplicate", "duplicate")}, "cron definition candidate contains duplicate action ids"),
+    ({"legacy_conversion_evidence": []}, "legacy conversion evidence must be a JSON object"),
+    ({"scheduling_version": 3}, "invalid scheduling version"),
+])
+def test_candidate_early_field_errors_precede_invalid_commits(fields, message):
+    candidate = CronDefinitionCandidate(scheduling_commits=(None,), **fields)
+    with pytest.raises(DefinitionStoreValidationError, match="^" + message + "$"):
+        candidate._validated()
+
+
+def test_wire_duplicate_action_ids_precede_invalid_commits():
+    wire = {"schema_version": 2, "kind": "cron_definition_candidate_v2",
+            "definitions": [], "applied_action_ids": ["duplicate", "duplicate"],
+            "scheduling_commits": [None]}
+    with pytest.raises(DefinitionStoreValidationError, match="^cron definition candidate contains duplicate action ids$"):
+        CronDefinitionCandidate._from_wire(wire)
 
 
 def _digest(label: str) -> str:
@@ -60,6 +82,72 @@ def _definition(job_id: str, *, name: str) -> CronDefinition:
         _definition_data(job_id, name=name),
         job_instance_id=_digest(f"instance:{job_id}"),
     )
+
+
+@pytest.mark.parametrize("record_type", [CronDefinition, CronDefinitionAction, CronDefinitionCandidate])
+def test_owned_wire_decoder_matches_validated_parser_and_detached_output(record_type):
+    definition = _definition("decode", name="owner operation")
+    expected = {
+        CronDefinition: definition,
+        CronDefinitionAction: CronDefinitionAction.create(definition),
+        CronDefinitionCandidate: CronDefinitionCandidate((definition,)),
+    }[record_type]
+    wire = expected.to_wire()
+
+    decoded = record_type.decode_wire(wire)
+
+    assert decoded == record_type._from_wire(wire) == expected
+    assert decoded is not expected and decoded.to_wire() == wire
+    wire.clear()
+    assert decoded.to_wire() == expected.to_wire()
+
+
+@pytest.mark.parametrize("record_type", [CronDefinition, CronDefinitionAction, CronDefinitionCandidate])
+@pytest.mark.parametrize("wire", [None, [], {}, {7: "non-string-key"}])
+def test_owned_wire_decoder_preserves_invalid_wire_error_type_and_text(record_type, wire):
+    options = {"label": "captured definition"} if record_type is CronDefinition else {}
+    with pytest.raises(DefinitionStoreValidationError) as original:
+        record_type._from_wire(wire, **options)
+
+    with pytest.raises(DefinitionStoreValidationError) as owned:
+        record_type.decode_wire(wire, **options)
+
+    assert type(owned.value) is type(original.value)
+    assert str(owned.value) == str(original.value)
+
+
+@pytest.mark.parametrize("record_type", [CronDefinition, CronDefinitionAction, CronDefinitionCandidate])
+def test_owned_wire_decoder_preserves_subclass_private_seam_and_exception_instance(record_type, monkeypatch):
+    class Derived(record_type):
+        pass
+
+    wire = object()
+    calls = []
+    expected = record_type._from_wire({
+        CronDefinition: _definition("seam", name="private parser").to_wire(),
+        CronDefinitionAction: CronDefinitionAction.create(_definition("seam", name="private parser")).to_wire(),
+        CronDefinitionCandidate: CronDefinitionCandidate().to_wire(),
+    }[record_type])
+    options = {"label": "checked seam"} if record_type is CronDefinition else {}
+
+    def decode(owner, value, **kwargs):
+        calls.append((owner, value, kwargs))
+        return expected
+
+    monkeypatch.setattr(record_type, "_from_wire", classmethod(decode))
+    assert Derived.decode_wire(wire, **options) is expected
+    assert calls == [(Derived, wire, options)]
+    failure = RuntimeError("private parser failure")
+
+    def fail(owner, value, **kwargs):
+        calls.append((owner, value, kwargs))
+        raise failure
+
+    monkeypatch.setattr(record_type, "_from_wire", classmethod(fail))
+    with pytest.raises(RuntimeError) as error:
+        Derived.decode_wire(wire, **options)
+    assert error.value is failure
+    assert calls == [(Derived, wire, options), (Derived, wire, options)]
 
 
 def _store(tmp_path: Path) -> CronDefinitionStore:
@@ -120,7 +208,12 @@ def test_definition_action_candidate_contains_no_runtime_state_and_keeps_stable_
 
     settled = store.checkpoint(replay)
     assert settled.pending_actions == ()
-    assert settled.candidate == replay.candidate
+    assert replay.candidate.scheduling_commits == ()
+    assert settled.candidate.definitions == replay.candidate.definitions
+    assert settled.candidate.applied_action_ids == replay.candidate.applied_action_ids
+    assert settled.candidate.legacy_conversion_evidence == replay.candidate.legacy_conversion_evidence
+    assert len(settled.candidate.scheduling_commits) == 1
+    assert settled.candidate.scheduling_commits[0]["schedule"] == created.definition["schedule"]
 
 
 def test_update_and_delete_require_exact_instance_and_revision(tmp_path: Path) -> None:
@@ -247,5 +340,8 @@ def test_converted_embedded_operations_are_materialized_once_without_runtime_sta
 
     settled = store.checkpoint(first)
     assert settled.pending_actions == ()
-    assert settled.candidate == first.candidate
+    assert settled.candidate.definitions == first.candidate.definitions
+    assert settled.candidate.applied_action_ids == first.candidate.applied_action_ids
+    assert settled.candidate.legacy_conversion_evidence == first.candidate.legacy_conversion_evidence
+    assert first.candidate.scheduling_commits == settled.candidate.scheduling_commits == ()
     assert store.action_store.replay().candidate["legacy_conversion_evidence"] == original_evidence

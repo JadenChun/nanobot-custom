@@ -18,7 +18,7 @@ from nanobot.session.source_projection import (
     eligible_boundaries,
     source_nodes,
 )
-from nanobot.session.source_request import SourceTranscript
+from nanobot.session.source_request import RequestNode, SourceTranscript
 from nanobot.session.source_store import SourceSnapshot
 
 if TYPE_CHECKING:
@@ -174,7 +174,7 @@ class SourceCompactionCandidate:
         if not checkpoint.checkpoint_id or not checkpoint.summary.strip():
             raise SourceValidationError('Replacement checkpoint must contain a summary')
         covered = {event['_event_id'] for event in self._events()[:boundary]}
-        rebuilt = []
+        rebuilt: list[RequestNode] = []
         inserted = False
         for node in self.transcript.nodes:
             replace_node = isinstance(node, CheckpointNode) or (

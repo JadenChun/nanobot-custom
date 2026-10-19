@@ -76,7 +76,8 @@ async def _close_mcp_connection(name: str, connection: MCPConnection) -> None:
         logger.debug("MCP server '{}' cleanup error (can be ignored)", name)
 
 
-async def _close_mcp_connections(connections: Mapping[str, MCPConnection]) -> None:
+async def close_mcp_connections(connections: Mapping[str, MCPConnection]) -> None:
+    """Close owned connections, settling the group before propagating cancellation."""
     cancellation: asyncio.CancelledError | None = None
     for name, connection in connections.items():
         try:
@@ -1457,7 +1458,7 @@ async def connect_mcp_servers(
         for name in attempted_names:
             _unregister_server_tools(registry, name)
         try:
-            await _close_mcp_connections(server_stacks)
+            await close_mcp_connections(server_stacks)
         except BaseException as cleanup_exc:
             logger.debug("MCP batch rollback cleanup error (can be ignored): {}", cleanup_exc)
         raise
@@ -1589,7 +1590,7 @@ class MCPProvider:
             try:
                 connected = await connect_mcp_servers(missing_servers, self._registry)
                 if self._closing:
-                    await _close_mcp_connections(connected)
+                    await close_mcp_connections(connected)
                     return
                 self._connections.update(connected)
                 self._record_connection_result(missing_servers, connected)
@@ -1681,7 +1682,7 @@ class MCPProvider:
                     self._set_runtime_status(to_connect, "failed")
                     raise
                 if self._closing:
-                    await _close_mcp_connections(connected)
+                    await close_mcp_connections(connected)
                     return self._closing_result()
                 self._connections.update(connected)
                 self._record_connection_result(to_connect, connected)
@@ -1793,7 +1794,7 @@ class MCPProvider:
                 self._registry,
             )
             if self._closing:
-                await _close_mcp_connections(connected)
+                await close_mcp_connections(connected)
                 return None
             self._connections.update(connected)
             self._record_connection_result({server_name}, connected)
@@ -1821,7 +1822,7 @@ class MCPProvider:
             self._runtime_statuses.clear()
             for name in self._servers:
                 _unregister_server_tools(self._registry, name)
-            await _close_mcp_connections(connections)
+            await close_mcp_connections(connections)
 
 
 def _server_signature(cfg: Any) -> Any:

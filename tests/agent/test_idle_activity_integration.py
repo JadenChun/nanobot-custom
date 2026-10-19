@@ -5,8 +5,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent import test_migration_engine as engine_fixtures
-from agent.test_migration_engine import ScriptedProvider
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import RunStatus, TurnSource
@@ -14,6 +12,8 @@ from nanobot.bus.events import InboundMessage
 from nanobot.providers.base import LLMResponse
 from nanobot.session.recovery import RECOVERY_INBOUND_METADATA_KEY
 from nanobot.triggers.local_session_turns import LOCAL_TRIGGER_META
+from tests.agent import test_migration_engine as engine_fixtures
+from tests.agent.test_migration_engine import ScriptedProvider
 
 engine_config = engine_fixtures.engine_config
 
@@ -413,7 +413,8 @@ async def test_activity_identity_is_not_created_when_pending_enqueue_fails(engin
     loop._pending_queues[key] = pending
     dispatched = asyncio.Event()
 
-    async def observe_dispatch(_message):
+    async def observe_dispatch(_message, *, _compact_settlement=None):
+        assert _compact_settlement is None
         dispatched.set()
 
     loop._dispatch = observe_dispatch  # type: ignore[method-assign]

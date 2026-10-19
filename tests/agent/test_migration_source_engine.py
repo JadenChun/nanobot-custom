@@ -4,13 +4,13 @@ from unittest.mock import Mock
 
 import pytest
 
-from agent import test_migration_engine as engine_fixtures
-from agent.test_migration_engine import ScriptedProvider
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import HistoryMode, TraceMode, TurnRequest
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.session.source import validate_execution_links
+from tests.agent import test_migration_engine as engine_fixtures
+from tests.agent.test_migration_engine import ScriptedProvider
 
 engine_config = engine_fixtures.engine_config
 
@@ -449,8 +449,8 @@ async def test_source_runtime_continuations_preserve_replay_provenance(engine_co
 
 @pytest.mark.parametrize('mode', ['error', 'max_iterations'])
 async def test_legacy_terminal_replay_keeps_existing_replacement_behavior(mode):
-    from agent.runner_helpers import make_run_spec
     from nanobot.agent.runner import AgentRunner
+    from tests.agent.runner_helpers import make_run_spec
 
     provider = ScriptedProvider([LLMResponse(content='failure', finish_reason='error')])
     result = await AgentRunner().run(make_run_spec(provider,
@@ -881,13 +881,12 @@ async def test_read_receipts_distinguish_repeated_provider_call_ids(engine_confi
 async def test_engine_reads_attested_artifact_after_restart_only_with_history_access(engine_config, tmp_path, fresh, disabled):
     import hashlib
 
-    from session.test_artifact import fixture
-
     from nanobot.agent.runner import AgentRunner
     from nanobot.session.artifact import parse_artifact_descriptor
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.artifact_store import PrivateArtifactStore
     from nanobot.session.source_store import SourceSessionStore
+    from tests.session.test_artifact import fixture
 
     (engine_config.workspace_path / 'file').write_text('historical artifact evidence')
     first = ScriptedProvider([LLMResponse(content=None, tool_calls=[
@@ -1187,13 +1186,12 @@ async def test_engine_retrieval_pressure_checkpoint_restarts_with_admission(engi
     """A real retrieval receipt survives pressure compaction into the next invocation."""
     import hashlib
 
-    from session.test_artifact import fixture
-
     from nanobot.agent.runner import AgentRunner
     from nanobot.session.artifact import parse_artifact_descriptor
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.artifact_store import PrivateArtifactStore
     from nanobot.session.source_store import SourceSessionStore
+    from tests.session.test_artifact import fixture
 
     covered_result = 'covered retrieval result content for engine restart ' * 800
     checkpoint_summary = 'checkpoint summary for engine restart admission'
@@ -1205,8 +1203,10 @@ async def test_engine_retrieval_pressure_checkpoint_restarts_with_admission(engi
         )]),
         LLMResponse(content='read complete'),
     ])
+    # Seed the large raw result with enough room for the offline byte fallback.
+    # The pressure phase below still exercises the unchanged 12k compaction bound.
     first = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=first_provider,
-                                  context_window_tokens=64_000)
+                                  context_window_tokens=128_000)
     backend = upgrade(first, key)
     try:
         result = await first.execute_turn(TurnRequest(content='read file', session_key=key))

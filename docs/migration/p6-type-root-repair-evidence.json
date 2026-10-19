@@ -1,0 +1,401 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-02",
+  "stage": "P6 source declaration roots and provider call parity",
+  "bounded_repair_verdict": "ACCEPTED_ROOT_PASS",
+  "fresh_review": "GPT-6.1 Sol Medium PASS/no actionable findings",
+  "full_strict_gate": "FAIL",
+  "full_P6": "NOT_ACCEPTED",
+  "runtime_D9": "NOT_AUTHORIZED",
+  "dependency_environment": "p6-full-environment.xcmuciq3;210 wheels;unchanged strict Python3.11 policy on macOS arm64/Python3.13",
+  "guard_and_pyproject_unchanged": true,
+  "source_scope": {
+    "scope_verdict": "PASS",
+    "changed_files": [
+      "nanobot/agent/memory_recovery_conversion.py",
+      "nanobot/agent/memory_recovery_conversion_apply.py",
+      "nanobot/agent/memory_recovery_conversion_finalize.py",
+      "nanobot/agent/memory_recovery_conversion_runtime.py",
+      "nanobot/agent/memory_recovery_coordinator.py",
+      "nanobot/agent/memory_recovery_legacy_archive.py",
+      "nanobot/agent/memory_recovery_manifest.py",
+      "nanobot/agent/memory_recovery_transaction_prepare.py",
+      "nanobot/providers/legacy_fallback_provider.py",
+      "nanobot/providers/pooled_provider.py",
+      "nanobot/session/session_mode.py",
+      "tests/agent/test_memory_receipt_recovery.py"
+    ],
+    "new_files": [
+      "tests/providers/test_provider_wrapper_call_contract.py"
+    ],
+    "unrelated_baseline_files_unchanged": 1858,
+    "normalized_AST_equality": {
+      "nanobot/agent/memory_recovery_conversion.py": "8632519491238f9de4016a07148ae9ce5dcdbcb64403f789dd764a4160824c49",
+      "nanobot/agent/memory_recovery_manifest.py": "181f57b9e2efc88a8cafe3efa687fd88d3584ea7b2095eeb11030db115e4ee01",
+      "nanobot/agent/memory_recovery_transaction_prepare.py": "4a891f37aba71f0eb043e0d42f950f562ee1ff92b6864c24e4461568344c8e47",
+      "nanobot/agent/memory_recovery_conversion_apply.py": "906da2befc56e3590391377692568ba1fe9ae33f59a60f38995e553fc7e254b4",
+      "nanobot/agent/memory_recovery_conversion_runtime.py": "5ff2c98113b51c364ba90d2a2546e31496d0b81906ec997285ab84aed52c7e61",
+      "nanobot/agent/memory_recovery_conversion_finalize.py": "c1257fff4634e72ea431089c647b509b685b33cfd41c4d10e99e97409b1d9a7b",
+      "nanobot/agent/memory_recovery_coordinator.py": "79cf91420101d7976219627eb4d3ac104263958424a0e8b1db37d75906ea20bd",
+      "nanobot/agent/memory_recovery_legacy_archive.py": "4e36b970ddf0c26cfab5f203b35465b40e94be0a6d927b34f5682bd5cd490b06",
+      "nanobot/session/session_mode.py": "0169edeaf03ca5de3dcda0d4bf66fbeb3e8a2b197191303252b7e97ced1f31ef"
+    },
+    "diff_sha256": "84c5290f1e0a19b0eba94d71d1161af7671c2185d9e81c047ad21b00d777df0a",
+    "source_hashes": {
+      "nanobot/agent/memory_recovery_conversion.py": "e16d5f553a6600c6b6b517d825d2dd41d3c80c8c6b443679dae1f92c3b9f16b4",
+      "nanobot/agent/memory_recovery_conversion_apply.py": "141b1d1f8b2e726c0327527f4484d289ba4976cd7853abae6012aa82755fb892",
+      "nanobot/agent/memory_recovery_conversion_finalize.py": "52e0f04f01e79b121694b41b372e40dea80e60b8380a02c5a32362a049d8f914",
+      "nanobot/agent/memory_recovery_conversion_runtime.py": "9bcbe4228a08fdd0234607fb6341e09a5a3991102d57da467cf631b8cd3e6ecc",
+      "nanobot/agent/memory_recovery_coordinator.py": "f1257914e0b7af8436c2d9adcd38ebff5324ad6c3080949861d39ae1a8f5cd58",
+      "nanobot/agent/memory_recovery_legacy_archive.py": "27c315a2e5aa48a3f4ebd33f46ef6e695226619fb81f356089cbde0d5db42e89",
+      "nanobot/agent/memory_recovery_manifest.py": "320d343133adbcf88be55d3be67c6a4f2f179c44bd732c9c634bbc16b1a734c0",
+      "nanobot/agent/memory_recovery_transaction_prepare.py": "f8aea2a8bddcd7ccd5b06b59571ad86013c150ea4283c4463344d546c2a50e74",
+      "nanobot/providers/legacy_fallback_provider.py": "684e4adad329232e86bc2c66b84e793ae5dd74484c0cbbc3c6d49aa7b9463164",
+      "nanobot/providers/pooled_provider.py": "5694b1d82541eb26d762dd3ecb00b90b20ceaf32df2ab029095a9c31a99a0ad6",
+      "nanobot/session/session_mode.py": "9b7a9c4d16b769dbfa51982894e05814715c2d54022acb8c9beba4230c860de0",
+      "tests/agent/test_memory_receipt_recovery.py": "830c34ed623889caeeb0162b69385a39db61bed92930748cc1fa918b90acd504",
+      "tests/providers/test_provider_wrapper_call_contract.py": "ec99e402820d3929bc3f2095745b65ce344317db40ef837f339cbcabcb4431e3"
+    },
+    "guard_unchanged": true,
+    "pyproject_unchanged": true,
+    "full_P6": "NOT_ACCEPTED"
+  },
+  "typing_comparison": {
+    "before_summary": {
+      "filesAnalyzed": 463,
+      "errorCount": 5970,
+      "warningCount": 0,
+      "informationCount": 0,
+      "timeInSec": 17.031
+    },
+    "after_summary": {
+      "filesAnalyzed": 463,
+      "errorCount": 4815,
+      "warningCount": 0,
+      "informationCount": 0,
+      "timeInSec": 16.895
+    },
+    "net_removed_diagnostics": 1155,
+    "removed_signatures": 1218,
+    "introduced_signatures": 63,
+    "introduced_outside_owned_files": 0,
+    "remaining_by_rule": {
+      "reportUnknownArgumentType": 1016,
+      "reportUnknownVariableType": 618,
+      "reportUnknownMemberType": 695,
+      "reportArgumentType": 317,
+      "reportPrivateUsage": 745,
+      "reportUnnecessaryIsInstance": 227,
+      "reportAttributeAccessIssue": 371,
+      "reportUnknownParameterType": 79,
+      "reportMissingTypeArgument": 14,
+      "reportAbstractUsage": 11,
+      "reportAssignmentType": 65,
+      "reportOptionalMemberAccess": 120,
+      "reportCallIssue": 3,
+      "reportUnusedExcept": 1,
+      "reportIncompatibleMethodOverride": 83,
+      "reportRedeclaration": 3,
+      "reportPossiblyUnboundVariable": 104,
+      "reportUnnecessaryCast": 18,
+      "reportReturnType": 20,
+      "reportUnnecessaryComparison": 35,
+      "reportUnusedFunction": 16,
+      "reportDeprecated": 19,
+      "reportGeneralTypeIssues": 20,
+      "reportOperatorIssue": 3,
+      "reportConstantRedefinition": 2,
+      "reportUnknownLambdaType": 12,
+      "reportMissingParameterType": 101,
+      "reportUnusedImport": 2,
+      "reportMissingTypeStubs": 5,
+      "reportIndexIssue": 55,
+      "reportOptionalSubscript": 29,
+      "reportUnusedVariable": 4,
+      "reportIncompatibleVariableOverride": 1,
+      "reportUnnecessaryContains": 1
+    },
+    "remaining_by_package": {
+      "_integration_diagnostics.py": 68,
+      "_migration_preflight.py": 13,
+      "agent": 2084,
+      "api": 5,
+      "channels": 56,
+      "cli": 106,
+      "config": 51,
+      "context_repo": 58,
+      "crawler": 24,
+      "cron": 851,
+      "nanobot.py": 10,
+      "providers": 439,
+      "runtime_composition.py": 32,
+      "sdk": 2,
+      "session": 911,
+      "skills": 76,
+      "utils": 28,
+      "webui": 1
+    },
+    "full_strict_gate": "FAIL",
+    "full_P6": "NOT_ACCEPTED",
+    "interpretation": "Static multiset comparison ignoring source line shifts; not a count of independent runtime defects."
+  },
+  "root_validation": {
+    "session_recovery": {
+      "record": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-session-recovery.json",
+      "collected_cases_passed": 409
+    },
+    "provider": {
+      "record": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-provider-contract.json",
+      "collected_cases_passed": 207
+    },
+    "note": "Disjoint root selections; worker/root reruns are never summed. Three inapplicable parameter combinations return without assertions, not independent exercised behavior."
+  },
+  "failed_history": "Initial pytest temp alias and Ruff launcher profiles failed; exact-path corrections preserved old records. Recovery lexical-alias test failed both after annotations and independently pre-edit; corrected canonical equality/samefile/symlink assertions retain migration/backup checks. Provider test-first red19failed/36passed;all raw failures retained separately.",
+  "unchanged_runtime_boundaries": [
+    "Session/recovery executable AST preserved modulo typed declarations and equivalent journal dict constructors",
+    "No persistence/schema/lock/recovery-policy change",
+    "No provider routing/retry/cooldown/state/generation rewrite",
+    "No live state/config/credentials or channel/provider/listener/desktop activation",
+    "No commit/deployment/guard removal"
+  ],
+  "release_limit": "Source-only repair qualification. Earlier P6-A artifact remains immutable historical evidence; corrected full source must be frozen/built/installed once remaining strict gates pass. Native platforms, production profile, stopped copies/backups, actual loader policy and approved old rollback reader/rehearsal remain open.",
+  "retained_records": [
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/baseline.json",
+      "sha256": "770187af6327d795dff9cfb27ba0801acaba813e5ff2053b0b75181068825f59",
+      "size": 208505
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/provider-contract-green.json",
+      "sha256": "6c3c81b7c516188b79c53e916c4e8dfa5e0bcea43f755accf4c488142aec8e92",
+      "size": 217380
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/provider-contract-lint.json",
+      "sha256": "74ee2f38621f033c75cf6fdbce23dac9a0b6f44309928f60a05158a6a5d90c5c",
+      "size": 216808
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/provider-contract-red.json",
+      "sha256": "db4bb1fcf233f912f253bd2ed58a97f5be0ed2f5db2548ec2de3904f5043e88c",
+      "size": 236770
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/provider-contract-type.json",
+      "sha256": "e334f097ad503d67403d5d99fe6092ae6a0f20d82791084c5749205a6b4977d8",
+      "size": 3640952
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/recovery-after.json",
+      "sha256": "3a9af70b11ac7fa74898622ff1b1fd3a6e034b94170c8055417701c46ec85a2c",
+      "size": 3615835
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/recovery-before.json",
+      "sha256": "de2117b5404643ba9a582268a65cdbfc653d4e028d5120551080376856940e5c",
+      "size": 3887476
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/recovery-corrected-lint.json",
+      "sha256": "40530c182f90b08bdad1abf3317b0127dbff8eb3dbaf940e23899577126593e0",
+      "size": 217014
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/recovery-corrected-node.json",
+      "sha256": "e3192afc6874885154cf075f545d4218595adc96597140ddb573040cc5d85e28",
+      "size": 216838
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/recovery-corrected-tests.json",
+      "sha256": "9149f1e9e03c5a8d5295ba94be3fbc638d6cbb1e2921743014c7fa59cf7f41fd",
+      "size": 217393
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/recovery-lint-2.json",
+      "sha256": "8ed5ecfdfe75d07651f5867b35bb0b5302b6dba76d291eddbda036a48ac48ef6",
+      "size": 216954
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/recovery-lint.json",
+      "sha256": "96eb90d90e1a2fc8dfb4adf2552210626bba9f713d13d02997b02c9df845802b",
+      "size": 217343
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/recovery-tests-2.json",
+      "sha256": "8b5af6287a1ff1f4e6b456827e748fa4bd9ea9178d544ef4a33faea4e6f9603b",
+      "size": 219456
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/recovery-tests.json",
+      "sha256": "b7e99673c9258d5d60fb52f892f42937c7ea43c695475839b3beef60d7a5700e",
+      "size": 224432
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/replay-recovery-baseline.py",
+      "sha256": "5923559faa1d1279dc3bf259d046ed25775686e312f2bb7bf1e4de291ca594b5",
+      "size": 1634
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/retain.py",
+      "sha256": "1a4b37a2e67b1b4899ea56bfe59b692e029fa561cc1d597a295b394d24224fae",
+      "size": 3853
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/review-report.md",
+      "sha256": "bef7c6fbb6bf86d4522d34cf19174b7d6a5a61cd1e52f666ff95fa8b45e52329",
+      "size": 1982
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-incremental.diff",
+      "sha256": "84c5290f1e0a19b0eba94d71d1161af7671c2185d9e81c047ad21b00d777df0a",
+      "size": 34992
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-integrated-type.json",
+      "sha256": "a2be98b62b5d06f6f01f6b222cb3141315bd812a3e2daa2a0e252e9bf6fbfc98",
+      "size": 3631319
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-provider-contract.json",
+      "sha256": "28c543db9dd381e67dfbe2513d6bd442c000729191a803a94b790f8baab3c48c",
+      "size": 217379
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-recovery-baseline.json",
+      "sha256": "f87e8d4fba1194053d0ed4a00d371645dd8685f923a1fc6ff92bc061146fd045",
+      "size": 218877
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-scope-check.json",
+      "sha256": "d348b68065c12f35cfd04da32c01ca337227819b6450ec9208da85690e85a392",
+      "size": 3716
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-scope-check.py",
+      "sha256": "a027335f293e5f6994f18e9864a2208aad8de6234afd2af285ae19de6e7e581f",
+      "size": 4953
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-session-recovery.json",
+      "sha256": "3a7fba235182860b325b2159a12f9178a0f8de34953792d9854b642ad03ac765",
+      "size": 217885
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-typing-comparison.json",
+      "sha256": "faa727202520e220ef104270e21b7f682e5127c6fa6738c8bc548a1d08f229f9",
+      "size": 14229
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/root-typing-comparison.py",
+      "sha256": "24f8dcddef044d2db51d389cd0160a679fa0ab9adec56ff90097670d3fe9794e",
+      "size": 2279
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/session-declarations-1.json",
+      "sha256": "73b5684fa48a0b1826be3af4f6379924ef9dc60eaa7ad96c9fcbb3e09232e28c",
+      "size": 3924014
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/session-declarations-2.json",
+      "sha256": "6e2ac7a086141889e550628d2f6f4083ab09960c1b24172262bd431b8d36debf",
+      "size": 3647135
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/session-declarations-lint-1.json",
+      "sha256": "50c9f7e7ae46e04ec2664f0eebfc99a1669baebd305ed4d151a3069feab7ebd8",
+      "size": 216952
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/session-declarations-lint-2.json",
+      "sha256": "b56a14d1c930bd878f04e7f55551dbf00b57f4c38121a3b8a7a2e079f80812d6",
+      "size": 216563
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/session-declarations-tests-1.json",
+      "sha256": "bc6cd0418ce5edfdfa63c2e4381a268f417bf45eb432ee611227d3c8763c67bc",
+      "size": 224246
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/session-declarations-tests-2.json",
+      "sha256": "15518a0776aaa869ca7b41ea914000bf7f0110f0bae6102c483dc3baa7394567",
+      "size": 217010
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/validate-initial.py",
+      "sha256": "59ff030ed969889c93804b1a4910a257ed060d6a9f1970c8d92cd293bd5689f4",
+      "size": 3930
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/evidence/validate.py",
+      "sha256": "7a050575119eba219c00c4e12c0b17ae575c19a9cf148d2d428a791ddebbf36c",
+      "size": 3997
+    }
+  ],
+  "retained_scoped_source": [
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/agent/memory_recovery_conversion.py",
+      "sha256": "e16d5f553a6600c6b6b517d825d2dd41d3c80c8c6b443679dae1f92c3b9f16b4",
+      "size": 61847
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/agent/memory_recovery_conversion_apply.py",
+      "sha256": "141b1d1f8b2e726c0327527f4484d289ba4976cd7853abae6012aa82755fb892",
+      "size": 14799
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/agent/memory_recovery_conversion_finalize.py",
+      "sha256": "52e0f04f01e79b121694b41b372e40dea80e60b8380a02c5a32362a049d8f914",
+      "size": 13563
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/agent/memory_recovery_conversion_runtime.py",
+      "sha256": "9bcbe4228a08fdd0234607fb6341e09a5a3991102d57da467cf631b8cd3e6ecc",
+      "size": 16415
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/agent/memory_recovery_coordinator.py",
+      "sha256": "f1257914e0b7af8436c2d9adcd38ebff5324ad6c3080949861d39ae1a8f5cd58",
+      "size": 8042
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/agent/memory_recovery_legacy_archive.py",
+      "sha256": "27c315a2e5aa48a3f4ebd33f46ef6e695226619fb81f356089cbde0d5db42e89",
+      "size": 18435
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/agent/memory_recovery_manifest.py",
+      "sha256": "320d343133adbcf88be55d3be67c6a4f2f179c44bd732c9c634bbc16b1a734c0",
+      "size": 18681
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/agent/memory_recovery_transaction_prepare.py",
+      "sha256": "f8aea2a8bddcd7ccd5b06b59571ad86013c150ea4283c4463344d546c2a50e74",
+      "size": 20829
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/providers/legacy_fallback_provider.py",
+      "sha256": "684e4adad329232e86bc2c66b84e793ae5dd74484c0cbbc3c6d49aa7b9463164",
+      "size": 10215
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/providers/pooled_provider.py",
+      "sha256": "5694b1d82541eb26d762dd3ecb00b90b20ceaf32df2ab029095a9c31a99a0ad6",
+      "size": 11103
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/nanobot/session/session_mode.py",
+      "sha256": "9b7a9c4d16b769dbfa51982894e05814715c2d54022acb8c9beba4230c860de0",
+      "size": 133106
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/tests/agent/test_memory_receipt_recovery.py",
+      "sha256": "830c34ed623889caeeb0162b69385a39db61bed92930748cc1fa918b90acd504",
+      "size": 19047
+    },
+    {
+      "path": "/Users/jaden/Documents/github/nanobot-harness-candidate/.assets/releases/p6-repair.9nRouv/scoped-source/tests/providers/test_provider_wrapper_call_contract.py",
+      "sha256": "ec99e402820d3929bc3f2095745b65ce344317db40ef837f339cbcabcb4431e3",
+      "size": 7532
+    }
+  ]
+}

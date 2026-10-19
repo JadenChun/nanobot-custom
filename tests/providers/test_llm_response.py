@@ -61,3 +61,29 @@ class TestShouldExecuteTools:
         resp = _response(anomalous_reason)
         assert resp.has_tool_calls is True
         assert resp.should_execute_tools is False
+
+
+@pytest.mark.parametrize("field", ["provider", "account", "endpoint", "protocol", "model"])
+@pytest.mark.parametrize("invalid", [None, "", 0, False, [], {}])
+def test_transport_receipt_rejects_invalid_constructor_field(field, invalid):
+    from nanobot.providers.base import ProviderConversationTransportReceipt
+
+    values = dict(provider="fixture", account="digest", endpoint="endpoint",
+                  protocol="responses", model="model")
+    values[field] = invalid
+    with pytest.raises(ValueError) as caught:
+        ProviderConversationTransportReceipt(**values)
+    assert str(caught.value) == f"{field} must be a non-empty string"
+
+
+def test_transport_receipt_preserves_nonempty_string_values_and_private_record():
+    from nanobot.providers.base import ProviderConversationTransportReceipt
+
+    class StringValue(str):
+        pass
+
+    values = dict(provider=StringValue("fixture"), account="digest", endpoint=" ",
+                  protocol="responses", model="model")
+    receipt = ProviderConversationTransportReceipt(**values)
+    assert receipt.to_private_record() == values
+    assert all(getattr(receipt, name) is value for name, value in values.items())

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from copy import deepcopy
 from datetime import datetime, timezone
+from typing import cast
 from uuid import uuid4
 
 from loguru import logger
@@ -22,8 +23,8 @@ from nanobot.session.artifact_store import ArtifactStorageError
 from nanobot.session.execution_owner import ExecutionOwnershipError
 from nanobot.session.manager import SessionWriteConflict
 from nanobot.session.source_projection import ArtifactProjectionBinding, SourceNode, source_nodes
-from nanobot.session.source_request import SourceTranscript
-from nanobot.session.source_store import SourceSessionStore, SourceSnapshot
+from nanobot.session.source_request import RequestNode, SourceTranscript
+from nanobot.session.source_store import SourceSnapshot
 
 OFFLOAD_CHARACTERS = 16_000
 PREVIEW_CHARACTERS = 1_200
@@ -51,9 +52,9 @@ def render_artifact_projection(node: SourceNode, descriptor: ArtifactDescriptor)
 def _bound_descriptor(snapshot: SourceSnapshot,
                       binding: ArtifactProjectionBinding) -> ArtifactDescriptor:
     metadata = snapshot.header.get('metadata')
-    manifest = metadata.get('artifact_manifest') if isinstance(metadata, dict) else None
-    rows = manifest.get('descriptors') if isinstance(manifest, dict) else None
-    raw = rows.get(binding.artifact_id) if isinstance(rows, dict) else None
+    manifest = cast(dict[object, object], metadata).get('artifact_manifest') if isinstance(metadata, dict) else None
+    rows = cast(dict[object, object], manifest).get('descriptors') if isinstance(manifest, dict) else None
+    raw = cast(dict[object, object], rows).get(binding.artifact_id) if isinstance(rows, dict) else None
     if raw is None:
         raise ArtifactValidationError('Artifact projection descriptor is unavailable')
     descriptor = parse_artifact_descriptor(raw)
@@ -112,7 +113,7 @@ class ArtifactProjector:
         represented = [positions.get(node.event_id, -1) for node in transcript.nodes if isinstance(node, SourceNode)]
         if any(index < 0 for index in represented) or represented != sorted(set(represented)):
             raise ArtifactValidationError('Artifact projection is not in canonical source order')
-        inline = []
+        inline: list[RequestNode] = []
         candidates: dict[str, ArtifactDescriptor] = {}
         for node in transcript.nodes:
             if not isinstance(node, SourceNode):
@@ -160,10 +161,10 @@ class ArtifactProjector:
         fallback = SourceTranscript(tuple(inline))
         if not candidates:
             return fallback
-        source = SourceSessionStore(reader.writer.store._backend, artifact_store=reader.store)
+        source = reader.writer.store.with_artifact_store(reader.store)
         expected = snapshot.state
         current = snapshot
-        rendered = []
+        rendered: list[RequestNode] = []
         try:
             with reader.store.transaction() as blobs:
                 for node in inline:

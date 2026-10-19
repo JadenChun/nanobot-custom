@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import tempfile
+import os as os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -48,6 +47,8 @@ from nanobot.utils.artifacts import (
 from nanobot.utils.helpers import detect_image_mime
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from nanobot.agent.tools.context import ToolContext
     from nanobot.config.schema import ImageConfig, ProviderConfig
 
@@ -92,6 +93,12 @@ class ImageGenerationToolConfig(Base):
 class ImageGenerationTool(Tool):
     """Generate persistent image artifacts through the configured image provider."""
 
+    if TYPE_CHECKING:
+        @property
+        def parameters(self) -> dict[str, Any]:
+            ...
+
+
     config_key = "image_generation"
 
     @classmethod
@@ -127,6 +134,25 @@ class ImageGenerationTool(Tool):
         self.provider_configs = dict(provider_configs or {})
         if provider_config is not None and "openrouter" not in self.provider_configs:
             self.provider_configs["openrouter"] = provider_config
+
+    @staticmethod
+    def replacement_for(
+        previous: ImageGenerationTool | None,
+        *,
+        workspace: str | Path,
+        config: ImageGenerationToolConfig,
+        provider_configs: dict[str, ProviderConfig],
+        legacy_config: ImageConfig | None,
+        make_writer: Callable[[], WriteFileTool],
+    ) -> ImageGenerationTool | None:
+        """Construct the canonical reload replacement using the existing writer when present."""
+        writer = previous._write_tool if previous else make_writer()
+        return (
+            ImageGenerationTool(
+                workspace=workspace, config=config, provider_configs=provider_configs,
+                legacy_config=legacy_config, write_tool=writer,
+            ) if config.enabled else None
+        )
 
     @property
     def name(self) -> str:
@@ -183,7 +209,7 @@ class ImageGenerationTool(Tool):
             raise ImageGenerationError(f"reference image not found: {value}") from exc
         if not resolved.is_file():
             raise ImageGenerationError(f"reference image is not a file: {value}")
-        resolved = self._write_tool._resolve_read(str(resolved))
+        resolved = self._write_tool.resolve_read_path(str(resolved))
         raw = resolved.read_bytes()
         if detect_image_mime(raw) is None:
             raise ImageGenerationError(f"unsupported reference image: {value}")
@@ -205,7 +231,7 @@ class ImageGenerationTool(Tool):
         **kwargs: Any,
     ) -> str:
         requested = 1 if count is None else count
-        if isinstance(requested, bool) or not isinstance(requested, int) or not 1 <= requested <= self.config.max_images_per_turn:
+        if isinstance(requested, bool) or not isinstance(cast(object, requested), int) or not 1 <= requested <= self.config.max_images_per_turn:
             return ToolResult.error("Error: count is outside tools.imageGeneration.maxImagesPerTurn")
         if output_path is not None and requested != 1:
             return ToolResult.error("Error: output_path requires count=1")
@@ -216,6 +242,7 @@ class ImageGenerationTool(Tool):
             client = self._provider_client()
             if client is None:
                 return ToolResult.error(f"Error: unsupported image generation provider '{self.config.provider}'")
+            response = None
             while len(artifacts) < requested:
                 response = await client.generate(
                     prompt=prompt,
@@ -238,8 +265,11 @@ class ImageGenerationTool(Tool):
                     artifacts.append(artifact)
                     if len(artifacts) >= requested:
                         break
+            # requested is positive and artifacts start empty: a successful loop
+            # always has a provider response, including multi-image responses.
+            assert response is not None
             result = json.loads(generated_image_tool_result(artifacts))
-            if destination is not None:
+            if destination is not None and output_path is not None:
                 await self._publish_output(output_path, destination, Path(artifacts[0]["path"]))
                 result.update(path=str(destination), size_bytes=destination.stat().st_size)
                 if self.config.provider == "codex_cli":
@@ -250,7 +280,7 @@ class ImageGenerationTool(Tool):
             retained = f"; retained artifacts: {json.dumps(artifacts)}" if artifacts else ""
             return ToolResult.error(f"Error: {exc}{retained}")
 
-    def _output_destination(self, value: str) -> Path:
+    def _output_request(self, value: str) -> str:
         if not value.strip():
             raise ImageGenerationError("output_path must not be empty")
         requested = Path(value).expanduser()
@@ -260,32 +290,24 @@ class ImageGenerationTool(Tool):
             requested = generated / requested.name
         elif requested.is_relative_to(workspace) and not requested.is_relative_to(generated):
             requested = generated / requested.name
-        return self._write_tool._resolve_write(str(requested))
+        return str(requested)
+
+    def _output_destination(self, value: str) -> Path:
+        return self._write_tool.resolve_write_path(self._output_request(value))
 
     async def _publish_output(self, value: str, destination: Path, artifact: Path) -> None:
-        async with self._write_tool._mutation_guard(destination):
-            if self._output_destination(value) != destination:
-                raise ImageGenerationError("output destination changed during generation")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            temporary = None
-            try:
-                with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as stream:
-                    temporary = Path(stream.name)
-                    stream.write(artifact.read_bytes())
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary, destination)
-                self._write_tool._record_touch(destination)
-            finally:
-                if temporary is not None:
-                    temporary.unlink(missing_ok=True)
+        await self._write_tool.publish_binary_output(
+            destination,
+            destination_request=lambda: str(self._output_destination(value)),
+            read_bytes=artifact.read_bytes,
+            destination_changed_error=lambda: ImageGenerationError(
+                "output destination changed during generation"
+            ),
+        )
 
     async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> Any:
-        token = self._write_tool._lock_owner_var.set(context.lock_owner or context.run_id)
-        try:
+        async with self._write_tool.execution_owner_scope(context.lock_owner or context.run_id):
             return await self.execute(**kwargs)
-        finally:
-            self._write_tool._lock_owner_var.reset(token)
 
 
 async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> dict[str, Any]:
@@ -315,15 +337,13 @@ async def reload_image_generation_tool(state: Any, registry: ToolRegistry) -> di
     if previous is None and dependencies is None and getattr(state, "resource_policy", None) is not None:
         return {"ok": False, "requires_restart": True,
                 "message": "Image reload requires the owning tool construction dependencies."}
-    writer = previous._write_tool if previous else WriteFileTool.create(ToolContext(
-        config=config.tools, workspace=str(state.workspace), fork_dependencies=dependencies,
-        file_state_store=getattr(state, "_file_state_store", None),
-    ))
-    next_tool = (
-        ImageGenerationTool(
-            workspace=state.workspace, config=tool_config, provider_configs=provider_configs,
-            legacy_config=effective.legacy, write_tool=writer,
-        ) if tool_config.enabled else None
+    next_tool = ImageGenerationTool.replacement_for(
+        previous, workspace=state.workspace, config=tool_config, provider_configs=provider_configs,
+        legacy_config=effective.legacy,
+        make_writer=lambda: WriteFileTool.create(ToolContext(
+            config=config.tools, workspace=str(state.workspace), fork_dependencies=dependencies,
+            file_state_store=getattr(state, "_file_state_store", None),
+        )),
     )
 
     state.tools_config.image_generation = tool_config

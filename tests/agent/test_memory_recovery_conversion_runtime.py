@@ -95,12 +95,31 @@ def test_convert_stages_tail_and_only_prepares(
 
 def test_preserve_nonempty_leaves_history_and_has_no_rows(tmp_path: Path) -> None:
     memory, _ = _workspace(tmp_path, jsonl=b'{"cursor":999}\n')
-    before = (memory / "HISTORY.md").stat()
+    history_path = memory / "HISTORY.md"
+    before_content = history_path.read_bytes()
+    before = history_path.stat()
+    before_identity_and_metadata = (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
     record = _prepare(tmp_path)
     assert record.payload["disposition"] == "preserve_nonempty_jsonl"
     assert record.payload["outputs"] is None
     assert record.payload["backup"] is None
-    assert (memory / "HISTORY.md").stat() == before
+    after = history_path.stat()
+    assert history_path.read_bytes() == before_content
+    assert (
+        after.st_dev,
+        after.st_ino,
+        after.st_mode,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    ) == before_identity_and_metadata
     assert _prepare(tmp_path).digest == record.digest
 
 

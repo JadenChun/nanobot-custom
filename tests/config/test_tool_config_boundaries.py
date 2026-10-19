@@ -36,3 +36,28 @@ def test_builtin_tool_configs_do_not_depend_on_config_schema_base():
                 violations.append(str(path.relative_to(repo)))
 
     assert violations == []
+
+
+def test_tool_first_import_preserves_schema_rebuild_and_historical_aliases():
+    code = """
+from nanobot.agent.tools.web import WebToolsConfig
+from nanobot.config.schema import Config, ToolsConfig, WebToolsConfig as HistoricalWebToolsConfig
+assert HistoricalWebToolsConfig is WebToolsConfig
+assert ToolsConfig.model_rebuild(force=True) is True
+assert Config.model_rebuild(force=True) is True
+config = Config()
+assert type(config.tools.web) is WebToolsConfig
+assert config.channels.websocket == {"enabled": False}
+assert config.artifacts.enabled is False
+assert config.agents.defaults.idle_compaction.enabled is False
+assert config.tools.model_dump(by_alias=True)["imageGeneration"]["configurationSource"] == "legacy"
+print("ok")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "ok"

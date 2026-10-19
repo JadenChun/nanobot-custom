@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import base64
 import html as html_lib
+import importlib
 import io
 import ipaddress
 import json
@@ -16,7 +17,7 @@ import socket
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypedDict, cast, overload
 from urllib.parse import urlparse
 
 from nanobot.agent.tools.process import await_owned_cleanup
@@ -27,6 +28,11 @@ DEFAULT_TCP_PORT = 18791
 DEFAULT_MAX_HTML_CHARS = 12000
 MAX_SCREENSHOT_BYTES = 180 * 1024
 MAX_REQUEST_BYTES = 64 * 1024
+
+
+class _CrawlSelectorOptions(TypedDict, total=False):
+    css_selector: str
+
 
 _VIEWPORT_HTML_JS = r"""
 return (() => {
@@ -127,7 +133,8 @@ class Crawl4AIWorker:
     def _validate_browser_setup(self) -> None:
         """Fail early for missing dependencies/profile without launching Chromium."""
         try:
-            import crawl4ai  # noqa: F401
+            # This is a presence probe; SDK classes are loaded only when needed.
+            importlib.import_module("crawl4ai")
         except ImportError as exc:  # pragma: no cover - deployment smoke test
             raise RuntimeError(
                 "crawl4ai is not installed; install nanobot-ai[crawler-worker]"
@@ -333,6 +340,14 @@ class Crawl4AIWorker:
         return value
 
     @staticmethod
+    @overload
+    def _selector(value: Any, *, required: Literal[True]) -> str: ...
+
+    @staticmethod
+    @overload
+    def _selector(value: Any, *, required: bool) -> str | None: ...
+
+    @staticmethod
     def _selector(value: Any, *, required: bool) -> str | None:
         if value is None and not required:
             return None
@@ -355,10 +370,10 @@ class Crawl4AIWorker:
         execution = getattr(result, "js_execution_result", None)
         if not isinstance(execution, dict):
             return ""
-        results = execution.get("results")
+        results = cast(dict[object, object], execution).get("results")
         if not isinstance(results, list):
             return ""
-        for value in reversed(results):
+        for value in reversed(cast(list[object], results)):
             if isinstance(value, str) and value.startswith(
                 '<section data-crawl4ai-viewport="true">'
             ):
@@ -375,8 +390,8 @@ class Crawl4AIWorker:
     ) -> dict[str, Any]:
         viewport_html = Crawl4AIWorker._viewport_html(result)
         html = viewport_html or result.cleaned_html or ""
-        media = result.media if isinstance(getattr(result, "media", None), dict) else {}
-        images = media.get("images") if isinstance(media.get("images"), list) else []
+        media = cast(dict[object, object], result.media) if isinstance(getattr(result, "media", None), dict) else {}
+        images = cast(list[object], media.get("images")) if isinstance(media.get("images"), list) else []
         if images:
             media_lines = [
                 '<section data-crawl4ai-media="images" aria-label="Extracted image metadata">'
@@ -390,7 +405,7 @@ class Crawl4AIWorker:
                     ("alt", "alt", 500),
                     ("desc", "data-description", 800),
                 ):
-                    value = image.get(source_key)
+                    value = cast(dict[object, object], image).get(source_key)
                     if isinstance(value, str) and value.strip():
                         escaped = html_lib.escape(value.strip()[:limit], quote=True)
                         attributes.append(f'{output_key}="{escaped}"')
@@ -468,10 +483,10 @@ class Crawl4AIWorker:
         execution = getattr(result, "js_execution_result", None)
         if not isinstance(execution, dict):
             return None
-        values = execution.get("results")
+        values = cast(dict[object, object], execution).get("results")
         if not isinstance(values, list):
             return None
-        for value in reversed(values):
+        for value in reversed(cast(list[object], values)):
             if (
                 isinstance(value, str)
                 and value.strip()
@@ -551,12 +566,17 @@ class Crawl4AIWorker:
         from crawl4ai import CacheMode, CrawlerRunConfig
 
         scripts = [js_code, _VIEWPORT_HTML_JS] if js_code else [_VIEWPORT_HTML_JS]
+        # Omit an unset selector to retain the SDK's default without passing
+        # None through its string-only keyword annotation.
+        selector_options: _CrawlSelectorOptions = {}
+        if selector is not None:
+            selector_options["css_selector"] = selector
         config = CrawlerRunConfig(
             cache_mode=CacheMode.BYPASS,
             session_id=session_id,
             js_only=js_only,
             js_code=scripts,
-            css_selector=selector,
+            **selector_options,
             page_timeout=timeout_seconds * 1000,
             delay_before_return_html=wait_ms / 1000,
             wait_until="domcontentloaded",
@@ -811,12 +831,13 @@ class Crawl4AIWorker:
             if not raw or len(raw) > MAX_REQUEST_BYTES:
                 raise WorkerRequestError("request is empty or too large")
             try:
-                request = json.loads(raw.decode("utf-8"))
+                request: object = json.loads(raw.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise WorkerRequestError("request must be one JSON object") from exc
             if not isinstance(request, dict):
                 raise WorkerRequestError("request must be a JSON object")
-            response = await self.dispatch(request)
+            # The default JSON decoder constructs only string-keyed object dictionaries.
+            response = await self.dispatch(cast(dict[str, Any], request))
         except WorkerRequestError as exc:
             response = {"ok": False, "error": str(exc)[:400]}
         except Exception as exc:  # pragma: no cover - final containment boundary
@@ -846,7 +867,10 @@ class Crawl4AIWorker:
             try:
                 loop.add_signal_handler(sig, stop_event.set)
             except NotImplementedError:  # Windows event loop
-                signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop_event.set))
+                def request_stop(*_: object) -> asyncio.Handle:
+                    return loop.call_soon_threadsafe(stop_event.set)
+
+                signal.signal(sig, request_stop)
         try:
             async with server:
                 await stop_event.wait()

@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent.runner_helpers import make_run_spec
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.policy import ToolPolicy, ToolPolicyDecision
 from nanobot.agent.progress_hook import AgentProgressHook
@@ -15,6 +14,7 @@ from nanobot.bus.outbound_events import ProgressEvent, StreamDeltaEvent, StreamE
 from nanobot.config.schema import AgentDefaults
 from nanobot.events import EventSink
 from nanobot.providers.base import LLMResponse, ToolCallRequest
+from tests.agent.runner_helpers import make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 

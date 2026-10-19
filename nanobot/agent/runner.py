@@ -53,6 +53,7 @@ from nanobot.session.source import SourceValidationError
 from nanobot.session.source_projection import RuntimeNode
 from nanobot.session.source_request import SourceRequestLedger, SourceRequestTicket
 from nanobot.session.summary import SessionSummaryCheckpoint
+from nanobot.session.turn_writer import SourceInjectionBinding, SourceTurnWriter
 from nanobot.utils.helpers import (
     build_assistant_message,
     estimate_message_tokens,
@@ -71,11 +72,12 @@ from nanobot.utils.runtime import (
 )
 
 if TYPE_CHECKING:
+    from nanobot.agent.busy_steering import BusySteering
     from nanobot.agent.tools.filesystem import ReadFileTool
     from nanobot.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.source_request import SourceTranscript
-    from nanobot.session.turn_writer import SourceTurnWriter
+
 
 @dataclass(frozen=True)
 class RecordedResponse:
@@ -156,6 +158,7 @@ class AgentRunSpec:
         [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None
     ] | None = field(default=None, repr=False)
     artifact_handoff_collector: object | None = field(default=None, repr=False)
+    busy_steering: BusySteering | None = field(default=None, repr=False)
 
 
 @dataclass(slots=True)
@@ -229,6 +232,7 @@ class AgentRunner:
         wait_at_terminal: bool = False,
         source: SourceRequestLedger | None = None,
         assistant_event_id: str | None = None,
+        allow_busy_steering: bool = True,
     ) -> tuple[bool, int]:
         """Drain pending injections. Returns (should_continue, updated_cycles).
 
@@ -238,9 +242,29 @@ class AgentRunner:
         caller continues the iteration loop.  Otherwise return (False, cycles).
         """
         injections: list[dict[str, Any]] = []
+        source_event_ids: list[str | None] = []
         real_injection = False
+
+        def accept_injections(items: list[SourceInjectionBinding | dict[str, object]]) -> None:
+            for item in items:
+                if isinstance(item, SourceInjectionBinding):
+                    if spec.source_writer is None:
+                        raise SourceValidationError('Source injection requires its active writer')
+                    binding = spec.source_writer.validate_injection_binding(item)
+                    injections.append(dict(binding.message))
+                    source_event_ids.append(binding.event_id)
+                else:
+                    injections.append(item)
+                    source_event_ids.append(None)
+
         if injection_cycles < _MAX_INJECTION_CYCLES:
-            injections = await self._drain_injections(spec)
+            if spec.busy_steering is not None:
+                if allow_busy_steering:
+                    for binding in spec.busy_steering.drain(limit=_MAX_INJECTIONS_PER_TURN):
+                        injections.append(dict(binding.message))
+                        source_event_ids.append(binding.source_event_id)
+            else:
+                accept_injections(await self._drain_injections(spec))
             real_injection = bool(injections)
         if not injections and allow_continuation and assistant_message is not None:
             continuation = self._build_continuation_message(spec)
@@ -250,12 +274,14 @@ class AgentRunner:
             not injections
             and wait_at_terminal
             and injection_cycles < _MAX_INJECTION_CYCLES
+            and spec.busy_steering is None
         ):
-            injections = await self._drain_injections(spec, terminal=True)
+            accept_injections(await self._drain_injections(spec, terminal=True))
             real_injection = bool(injections)
         if not injections:
             return False, injection_cycles
-        if real_injection and source is not None:
+        if real_injection and source is not None and (
+                len(source_event_ids) != len(injections) or any(identity is None for identity in source_event_ids)):
             raise SourceValidationError('Source user injection requires a durable event binding')
         if real_injection:
             injection_cycles += 1
@@ -281,8 +307,9 @@ class AgentRunner:
         if source is None:
             self._append_injected_messages(messages, injections)
         else:
-            for message in injections:
-                self._append_bound_message(messages, message, source)
+            for index, message in enumerate(injections):
+                self._append_bound_message(messages, message, source,
+                    source_event_ids[index] if real_injection else None)
         if real_injection:
             logger.info(
                 "Injected {} follow-up message(s) {} ({}/{})",
@@ -311,7 +338,7 @@ class AgentRunner:
         spec: AgentRunSpec,
         *,
         terminal: bool = False,
-    ) -> list[dict[str, Any]]:
+    ) -> list[SourceInjectionBinding | dict[str, object]]:
         """Drain pending user messages via the injection callback.
 
         Returns normalized user messages (capped by
@@ -344,9 +371,16 @@ class AgentRunner:
             return []
         if not items:
             return []
-        injected_messages: list[dict[str, Any]] = []
+        injected_messages: list[SourceInjectionBinding | dict[str, object]] = []
         for item in items:
             if item is None:
+                continue
+            if isinstance(item, SourceInjectionBinding):
+                if spec.source_writer is None:
+                    raise SourceValidationError('Source injection requires its active writer')
+                binding = spec.source_writer.validate_injection_binding(item)
+                if self._has_injection_content(binding.message.get("content")):
+                    injected_messages.append(binding)
                 continue
             if isinstance(item, dict):
                 message_item = cast(dict[str, Any], item)
@@ -383,6 +417,12 @@ class AgentRunner:
             else None
         )
         try:
+            if spec.busy_steering is not None:
+                if spec.injection_callback is not None or spec.terminal_injection_callback is not None:
+                    raise ValueError("durable busy steering is exclusive with generic injection callbacks")
+                spec.busy_steering.validate_context(spec.turn_context, spec.source_writer)
+                if spec.source_writer is not None and spec.source_transcript is None:
+                    raise ValueError("durable busy steering requires a source transcript")
             if (spec.source_writer is not None and (spec.turn_context is None
                     or spec.turn_context.execution_owner is not spec.source_writer.owner)):
                 raise ValueError("Source recording requires the same dispatch owner")
@@ -597,6 +637,12 @@ class AgentRunner:
         governance_config = request_state.config
 
         for iteration in range(spec.max_iterations):
+            if spec.busy_steering is not None:
+                drained, injection_cycles = await self._try_drain_injections(
+                    spec, messages, None, injection_cycles, source=request_state.source,
+                    phase="before model dispatch",
+                )
+                had_injections = had_injections or drained
             context = AgentHookContext(
                 iteration=iteration,
                 messages=messages,
@@ -799,6 +845,7 @@ class AgentRunner:
                 _drained, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles, source=request_state.source,
                     phase="after tool execution",
+                    allow_busy_steering=iteration + 1 < spec.max_iterations,
                 )
                 if _drained:
                     had_injections = True
@@ -925,6 +972,7 @@ class AgentRunner:
                 conversation_state=conversation_state,
                 phase="after final response",
                 iteration=iteration,
+                allow_busy_steering=iteration + 1 < spec.max_iterations,
                 allow_continuation=(
                     response.finish_reason not in {"refusal", "content_filter"}
                 ),
@@ -966,6 +1014,7 @@ class AgentRunner:
                 should_continue, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles, source=request_state.source,
                     phase="after LLM error",
+                    allow_busy_steering=iteration + 1 < spec.max_iterations,
                 )
                 if should_continue:
                     had_injections = True
@@ -991,6 +1040,7 @@ class AgentRunner:
                 should_continue, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles, source=request_state.source,
                     phase="after empty response",
+                    allow_busy_steering=iteration + 1 < spec.max_iterations,
                 )
                 if should_continue:
                     had_injections = True
@@ -1049,6 +1099,7 @@ class AgentRunner:
             drained_after_max_iterations, injection_cycles = await self._try_drain_injections(
                 spec, messages, None, injection_cycles, source=request_state.source,
                 phase="after max_iterations",
+                allow_busy_steering=False,
             )
             if drained_after_max_iterations:
                 had_injections = True
@@ -1188,6 +1239,11 @@ class AgentRunner:
         self._settle_source_ticket(state, ticket, response, malformed=malformed, no_tools=no_tools)
         return recorded
 
+    @staticmethod
+    def _check_busy_stop(spec: AgentRunSpec) -> None:
+        if spec.turn_context is not None and spec.turn_context.busy_turn is not None:
+            spec.turn_context.busy_turn.check_stop()
+
     async def _request_model(
         self,
         spec: AgentRunSpec,
@@ -1200,6 +1256,7 @@ class AgentRunner:
         source_view: SourceTranscript | None = None,
         transcript: list[dict[str, Any]] | None,
     ) -> tuple[RecordedResponse, LLMUsage]:
+        self._check_busy_stop(spec)
         source_view = self._source_view(request_state, messages, source_view)
         timeout_s = self._resolve_llm_timeout_s(spec)
         tool_definitions = spec.tools.get_definitions()
@@ -1212,6 +1269,7 @@ class AgentRunner:
         )
         source_view = self._source_view(request_state, messages, request_state.source_view)
 
+        self._check_busy_stop(spec)
         ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
         kwargs = self._build_request_kwargs(
             spec,
@@ -1343,6 +1401,7 @@ class AgentRunner:
                 await coro if outer_timeout_s is None
                 else await asyncio.wait_for(coro, timeout=outer_timeout_s)
             )
+            self._check_busy_stop(spec)
         except asyncio.CancelledError:
             if ticket is not None and request_state.source is not None:
                 request_state.source.discard(ticket)
@@ -1597,6 +1656,7 @@ class AgentRunner:
         transcript: list[dict[str, Any]] | None = None,
         source_view: SourceTranscript | None = None,
     ) -> RecordedResponse:
+        self._check_busy_stop(spec)
         source_view = self._source_view(request_state, messages, source_view)
         messages, provider_context = await self.context_governor.prepare_request(
             request_state,
@@ -1606,6 +1666,7 @@ class AgentRunner:
             source_view=source_view,
         )
         source_view = self._source_view(request_state, messages, request_state.source_view)
+        self._check_busy_stop(spec)
         ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
         kwargs = self._build_request_kwargs(
             spec,
@@ -1623,6 +1684,7 @@ class AgentRunner:
                 if timeout_s is None
                 else await asyncio.wait_for(coro, timeout=timeout_s)
             )
+            self._check_busy_stop(spec)
         except asyncio.TimeoutError:
             response = LLMResponse(
                 content=f"Error calling LLM: timed out after {timeout_s:g}s",

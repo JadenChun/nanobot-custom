@@ -803,3 +803,49 @@ def test_borrowed_error_is_fixed_and_content_free(tmp_path: Path) -> None:
     assert str(raised.value) == "memory recovery authority is borrowed"
     operation.__exit__(None, None, None)
     authority.close()
+
+
+def test_operation_failed_registration_restores_new_unregistered_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        operation = authority.operation()
+        original_register = authority._register_operation
+
+        def failed_register(current: storage.WorkspaceMemoryOperation) -> None:
+            original_register(current)
+            raise RuntimeError("registration failure")
+
+        with monkeypatch.context() as failure:
+            failure.setattr(authority, "_register_operation", failed_register)
+            with pytest.raises(RuntimeError, match="registration failure"):
+                operation.__enter__()
+        assert operation not in authority._borrowers
+        assert operation._state == operation._NEW
+        assert operation._registered is False
+        assert operation._epoch is None
+        assert operation._workspace_identity is None
+        with operation:
+            operation.require_current()
+
+
+def test_operation_constructor_cannot_select_another_authority_binder(tmp_path: Path) -> None:
+    first_path = tmp_path / "first"
+    second_path = tmp_path / "second"
+    first_path.mkdir()
+    second_path.mkdir()
+    with storage.WorkspaceMemoryAuthority(first_path) as first:
+        with storage.WorkspaceMemoryAuthority(second_path) as second:
+            with pytest.raises(TypeError):
+                storage.WorkspaceMemoryOperation(
+                    first, _capability=storage._OPERATION_CAPABILITY,
+                    _issued_epoch=first._activation_epoch, _thread=threading.current_thread(),
+                    _bind_actions=second._bind_operation_actions,
+                )
+            assert not first._borrowers
+            assert not second._borrowers
+            with first.operation() as operation:
+                assert operation._authority is first
+                assert operation in first._borrowers
+                assert operation not in second._borrowers
+                operation.require_current()

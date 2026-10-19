@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, cast
 
@@ -16,16 +17,38 @@ def convert_messages(
     messages: list[dict[str, Any]],
     *,
     preserve_reasoning: bool = False,
+    normalize_ids: bool = True,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Convert Chat Completions messages to Responses API input items.
 
     Returns ``(system_prompt, input_items)`` where *system_prompt* is extracted
     from any ``system`` role message and *input_items* is the Responses API
-    ``input`` array.
+    ``input`` array. Portable reconstruction normalizes IDs; exact native
+    pending deltas must explicitly pass ``normalize_ids=False``.
     """
     system_prompt = ""
     input_items: list[dict[str, Any]] = []
     used_item_ids: set[str] = set()
+    call_ids: dict[str, str] = {}
+    if normalize_ids:
+        # Reserve every safe raw call ID before allocating hashes, including
+        # outputs that precede their declaration and later safe-ID collisions.
+        raw_call_ids: list[str] = []
+        for msg in messages:
+            if msg.get("role") == "tool":
+                raw_call_ids.append(split_tool_call_id(msg.get("tool_call_id"))[0])
+            elif msg.get("role") == "assistant":
+                raw_calls: list[object] = msg.get("tool_calls", []) or []
+                for raw in raw_calls:
+                    tool_call = _as_json_object(raw)
+                    if tool_call is not None:
+                        raw_call_ids.append(split_tool_call_id(tool_call.get("id"))[0])
+        used_call_ids = {raw for raw in raw_call_ids if _is_safe_id(raw)}
+        for raw in raw_call_ids:
+            if raw not in call_ids:
+                call_ids[raw] = raw if _is_safe_id(raw) else _unique_item_id(
+                    normalize_portable_id(raw, "call_"), used_call_ids,
+                )
 
     for idx, msg in enumerate(messages):
         role = msg.get("role")
@@ -60,11 +83,15 @@ def convert_messages(
                     continue
                 fn = _as_json_object(tool_call.get("function")) or {}
                 call_id, item_id = split_tool_call_id(tool_call.get("id"))
-                response_item_id = _unique_item_id(item_id or f"fc_{idx}", used_item_ids)
+                response_item_id = item_id or f"fc_{idx}"
+                if normalize_ids:
+                    response_item_id = _unique_item_id(
+                        normalize_portable_id(response_item_id, "fc_"), used_item_ids,
+                    )
                 input_items.append({
                     "type": "function_call",
                     "id": response_item_id,
-                    "call_id": call_id or f"call_{idx}",
+                    "call_id": call_ids.get(call_id, call_id) if normalize_ids else call_id,
                     "name": fn.get("name"),
                     "arguments": tool_arguments_json_for_replay(fn.get("arguments")),
                 })
@@ -72,6 +99,8 @@ def convert_messages(
 
         if role == "tool":
             call_id, _ = split_tool_call_id(msg.get("tool_call_id"))
+            if normalize_ids:
+                call_id = call_ids[call_id]
             output = convert_tool_output(content)
             input_items.append({"type": "function_call_output", "call_id": call_id, "output": output})
 
@@ -203,11 +232,36 @@ def _unique_item_id(item_id: str, used: set[str]) -> str:
         return item_id
 
     suffix = 2
-    while f"{item_id}_{suffix}" in used:
+    while _suffixed_id(item_id, suffix) in used:
         suffix += 1
-    unique = f"{item_id}_{suffix}"
+    unique = _suffixed_id(item_id, suffix)
     used.add(unique)
     return unique
+
+
+def _suffixed_id(item_id: str, suffix: int) -> str:
+    tail = f"_{suffix}"
+    return item_id[:64 - len(tail)] + tail
+
+
+def _is_safe_id(value: str) -> bool:
+    return bool(value) and len(value) <= 64 and all(
+        ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-" for ch in value
+    )
+
+
+def normalize_portable_id(value: object, prefix: str) -> str:
+    """Preserve safe ASCII IDs; hash other portable IDs deterministically.
+
+    This string-only edge is not a parser for opaque provider-native IDs.
+    """
+    if not isinstance(value, str):
+        raise TypeError("portable Responses ID must be a string")
+    if prefix not in {"call_", "fc_", "msg_"}:
+        raise ValueError("unsupported portable Responses ID prefix")
+    if _is_safe_id(value):
+        return value
+    return prefix + hashlib.sha256(value.encode("utf-8")).hexdigest()[:64 - len(prefix)]
 
 
 def split_tool_call_id(tool_call_id: Any) -> tuple[str, str | None]:

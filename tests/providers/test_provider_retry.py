@@ -1,9 +1,10 @@
 import asyncio
 import copy
+from unittest.mock import AsyncMock
 
 import pytest
 
-from nanobot.events import RetryStatusEvent
+from nanobot.events import EventSink, RetryStatusEvent
 from nanobot.providers.base import (
     RETRY_AFTER_BUFFER,
     GenerationSettings,
@@ -12,6 +13,7 @@ from nanobot.providers.base import (
     ProviderCallContext,
     ProviderConversationState,
 )
+from nanobot.providers.request_budget import ProviderRequestLimits
 
 
 class ScriptedProvider(LLMProvider):
@@ -441,8 +443,8 @@ async def test_non_transient_error_with_images_retries_without_images() -> None:
 
 
 @pytest.mark.asyncio
-async def test_successful_image_retry_mutates_original_messages_in_place() -> None:
-    """Successful no-image retry should update the caller's message history."""
+async def test_successful_image_retry_preserves_original_messages() -> None:
+    """A transport fallback must not rewrite the caller's source history."""
     provider = ScriptedProvider([
         LLMResponse(content="model does not support images", finish_reason="error"),
         LLMResponse(content="ok, no image"),
@@ -452,7 +454,8 @@ async def test_successful_image_retry_mutates_original_messages_in_place() -> No
     response = await provider.chat_with_retry(messages=messages)
 
     assert response.content == "ok, no image"
-    content = messages[0]["content"]
+    assert messages == _IMAGE_MSG
+    content = provider.last_kwargs["messages"][0]["content"]
     assert isinstance(content, list)
     assert all(block.get("type") != "image_url" for block in content)
     assert any("not delivered" in (block.get("text") or "").lower() for block in content)
@@ -508,6 +511,7 @@ async def test_image_retry_discards_provider_state_with_images(
         LLMResponse(content="ok, no image"),
     ])
     messages = copy.deepcopy(messages)
+    original_messages = copy.deepcopy(messages)
     state = ProviderConversationState(
         kind="openai_responses",
         provider="openai:test",
@@ -530,7 +534,8 @@ async def test_image_retry_discards_provider_state_with_images(
     assert isinstance(retry_context, ProviderCallContext)
     assert retry_context.conversation_state is None
     assert retry_context.session_id == "webui:cache-test"
-    public_content = messages[0]["content"]
+    assert messages == original_messages
+    public_content = provider.last_kwargs["messages"][0]["content"]
     if isinstance(public_content, list):
         assert all(block.get("type") != "image_url" for block in public_content)
 
@@ -548,6 +553,127 @@ async def test_non_transient_error_without_images_no_retry() -> None:
 
     assert provider.calls == 1
     assert response.finish_reason == "error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("outcome", ["stop", "error", "cancel"])
+@pytest.mark.parametrize("state_images", ["pending", "payload"])
+async def test_image_retry_preserves_history_state_and_limits(stream, outcome, state_images):
+    class RecordingProvider(ScriptedProvider):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.requests = []
+
+        async def chat_with_context(self, *, provider_context, **kwargs):
+            self.requests.append((copy.deepcopy(kwargs["messages"]), provider_context))
+            return await self.chat(**kwargs)
+
+        async def chat_stream_with_context(self, *, provider_context, **kwargs):
+            self.requests.append((copy.deepcopy(kwargs["messages"]), provider_context))
+            return await self.chat_stream(**kwargs)
+
+    terminal = asyncio.CancelledError() if outcome == "cancel" else LLMResponse(
+        content="terminal", finish_reason=outcome,
+    )
+    provider = RecordingProvider([
+        LLMResponse(content="image rejected", finish_reason="error"), terminal,
+    ])
+    messages = copy.deepcopy(_IMAGE_MSG)
+    original = copy.deepcopy(messages)
+    state = ProviderConversationState(
+        kind="openai_responses", provider="fixture", model="test-model", version=1,
+        payload={"items": [{"type": "input_image", "image_url": "private-image"}]}
+        if state_images == "payload" else {},
+        pending_messages=copy.deepcopy(messages) if state_images == "pending" else [],
+    )
+    original_state = copy.deepcopy(state)
+    context = ProviderCallContext(
+        conversation_state=state, session_id="test-session", context_window_tokens=8192,
+        request_limits=ProviderRequestLimits(total_tokens=8192, completion_reserve_tokens=128),
+        events=EventSink(publish=AsyncMock()),
+    )
+    call = provider.chat_stream_with_retry if stream else provider.chat_with_retry
+    if outcome == "cancel":
+        with pytest.raises(asyncio.CancelledError):
+            await call(messages=messages, provider_context=context)
+    else:
+        assert await call(messages=messages, provider_context=context) is terminal
+    assert provider.calls == 2
+    assert messages == original
+    assert state == original_state
+    first_messages, first_context = provider.requests[0]
+    retry_messages, retry_context = provider.requests[1]
+    assert first_messages == original
+    assert first_context is context
+    assert not LLMProvider._contains_image_content(retry_messages)
+    assert retry_context.conversation_state is None
+    assert retry_context.request_limits is context.request_limits
+    assert retry_context.session_id == context.session_id
+    assert retry_context.context_window_tokens == context.context_window_tokens
+    assert retry_context.events is context.events
+    assert "/media/test.png" not in repr(retry_messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("callback", ["on_content_delta", "on_thinking_delta", "on_tool_call_delta"])
+async def test_image_retry_never_replays_after_delivered_delta(callback):
+    terminal = LLMResponse(content="image rejected", finish_reason="error")
+
+    class DeliveringProvider(ScriptedProvider):
+        async def chat_stream(self, **kwargs):
+            await kwargs[callback]({"name": "read_file"} if callback == "on_tool_call_delta" else "partial")
+            return await super().chat_stream(**kwargs)
+
+    provider = DeliveringProvider([terminal])
+    messages = copy.deepcopy(_IMAGE_MSG)
+    delivered = AsyncMock()
+    response = await provider.chat_stream_with_retry(messages=messages, **{callback: delivered})
+    assert response is terminal
+    assert provider.calls == 1
+    delivered.assert_awaited_once()
+    assert messages == _IMAGE_MSG
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("error,status,payload_notice", [
+    ("opaque failure", 413, True),
+    ("payload too large", None, True),
+    ("Request Entity Too Large", None, True),
+    ("unsupported image", 400, False),
+])
+async def test_image_retry_notice_is_specific_and_path_free(stream, error, status, payload_notice):
+    provider = ScriptedProvider([
+        LLMResponse(content=error, finish_reason="error", error_status_code=status),
+        LLMResponse(content="ok"),
+    ])
+    messages = copy.deepcopy(_IMAGE_MSG)
+    call = provider.chat_stream_with_retry if stream else provider.chat_with_retry
+    assert (await call(messages=messages)).content == "ok"
+    assert provider.calls == 2
+    assert messages == _IMAGE_MSG
+    sent = provider.last_kwargs["messages"]
+    placeholder = sent[0]["content"][1]["text"]
+    assert "not delivered" in placeholder
+    assert "do not describe or reference it" in placeholder
+    assert ("payload too large" in placeholder) is payload_notice
+    assert "/media/test.png" not in repr(sent)
+
+
+@pytest.mark.asyncio
+async def test_image_retry_does_not_remove_images_from_later_provider_request():
+    messages = copy.deepcopy(_IMAGE_MSG)
+    first = ScriptedProvider([
+        LLMResponse(content="image rejected", finish_reason="error"),
+        LLMResponse(content="fallback"),
+    ])
+    second = ScriptedProvider([LLMResponse(content="image accepted")])
+    assert (await first.chat_with_retry(messages=messages)).content == "fallback"
+    assert (await second.chat_with_retry(messages=messages)).content == "image accepted"
+    assert first.calls == 2 and second.calls == 1
+    assert second.last_kwargs["messages"] == _IMAGE_MSG
+    assert LLMProvider._contains_image_content(second.last_kwargs["messages"])
 
 
 @pytest.mark.asyncio

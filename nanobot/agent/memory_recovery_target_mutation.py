@@ -12,7 +12,7 @@ import errno
 import os
 import secrets
 import stat
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from nanobot.agent import memory_recovery_storage as storage
 
@@ -40,8 +40,8 @@ def _check_capabilities() -> None:
     flags = ("O_NOFOLLOW", "O_NONBLOCK")
     if os.name != "posix" or any(not isinstance(getattr(os, name, None), int) for name in flags):
         _fail("unavailable")
-    dir_fd = getattr(os, "supports_dir_fd", set())
-    follow_symlinks = getattr(os, "supports_follow_symlinks", set())
+    dir_fd = getattr(os, "supports_dir_fd", set[object]())
+    follow_symlinks = getattr(os, "supports_follow_symlinks", set[object]())
     if not {os.open, os.stat, os.rename} <= dir_fd or os.stat not in follow_symlinks:
         _fail("unavailable")
     if not callable(getattr(os, "fchmod", None)):
@@ -299,7 +299,7 @@ def replace_target_if_unchanged(
         or type(new_bytes) is not bytes
         or len(new_bytes) > _MAX_TARGET_BYTES
         or snapshot.name not in _TARGET_NAMES
-        or snapshot.name == _RECEIPT_NAME
+        or cast(object, snapshot.name) == _RECEIPT_NAME
     ):
         _fail("invalid")
     _check_capabilities()

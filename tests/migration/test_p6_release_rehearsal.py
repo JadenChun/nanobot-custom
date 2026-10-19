@@ -10,6 +10,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts.p6_release_rehearsal import (
     ReleaseArtifactError,
@@ -39,6 +40,27 @@ _PACKAGE_MEMBERS = (
 )
 
 
+def test_candidate_ci_trigger_preserves_native_matrix_and_strict_policy() -> None:
+    root = Path(__file__).resolve().parents[2]
+    workflow = yaml.load((root / ".github/workflows/ci.yml").read_text(), Loader=yaml.BaseLoader)
+    events = workflow["on"]
+    assert "workflow_dispatch" in events
+    assert events["push"]["branches"] == [
+        "main", "staging", "codex/upstream-migration", "codex/harness-migration-candidate",
+    ]
+    matrix = workflow["jobs"]["test"]["strategy"]["matrix"]["include"]
+    assert [(row["os"], row["python-version"]) for row in matrix] == [
+        ("ubuntu-latest", "3.11"), ("ubuntu-latest", "3.14"), ("windows-latest", "3.14"),
+    ]
+    assert workflow["jobs"]["windows_process"]["runs-on"] == "windows-latest"
+    steps = workflow["jobs"]["test"]["steps"]
+    assert any(step.get("run") == "uv run --no-sync basedpyright" for step in steps)
+    assert any(step.get("run") == "uv sync --all-extras --dev" for step in steps)
+    assert any(step.get("run") == "uv run --no-sync python -m scripts.install_channel_dependencies --all-channels" for step in steps)
+    assert all(job["runs-on"] in {"ubuntu-latest", "windows-latest", "${{ matrix.os }}"}
+               for job in workflow["jobs"].values())
+
+
 def _write_zip(
     path: Path,
     members: tuple[str, ...],
@@ -65,6 +87,21 @@ def _write_sdist(path: Path, members: tuple[str, ...]) -> None:
             info = tarfile.TarInfo(member)
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
+
+
+def test_sdist_include_entries_are_exact_project_roots() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    pyproject = tomllib.loads((project_root / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["tool"]["hatch"]["build"]["targets"]["sdist"]["include"] == [
+        "/nanobot/",
+        "/nanobot/web/dist/",
+        "/hatch_build.py",
+        "/README.md",
+        "/LICENSE",
+        "/THIRD_PARTY_NOTICES.md",
+        "/pyproject.toml",
+    ]
 
 
 def test_archive_inventory_covers_wheel_and_sdist_assets(tmp_path: Path) -> None:

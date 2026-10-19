@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import ssl
 import sys
@@ -11,6 +12,25 @@ from pathlib import Path
 import certifi
 import pytest
 from loguru import logger
+
+
+@pytest.fixture(autouse=True)
+def _isolate_active_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default runtime paths must never resolve into the operator's live home.
+
+    Tests can override the public config path themselves. Register the original
+    binding with monkeypatch so both the default and test-specific changes are
+    restored, including an originally unbound loader.
+    """
+    from nanobot.config import loader
+
+    monkeypatch.setattr(loader, "_current_config_path", loader._current_config_path)
+    reference = tmp_path.parent / f"{tmp_path.name}-test-config" / "config.json"
+    reference.parent.mkdir()
+    reference.write_text(json.dumps({
+        "agents": {"defaults": {"workspace": str(tmp_path / "workspace")}},
+    }), encoding="utf-8")
+    loader.set_config_path(reference)
 
 
 @pytest.fixture(autouse=True)
@@ -33,15 +53,16 @@ def _isolate_sessions_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> I
     runtime_root = tmp_path.parent / f"{tmp_path.name}-runtime-root"
     legacy_root = tmp_path.parent / f"{tmp_path.name}-legacy-sessions-root"
 
-    def runtime_subdir(name: str) -> Path:
-        path = runtime_root / name
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+    def sessions_root() -> Path:
+        # Admission must observe the intended root without creating it.
+        return runtime_root / "sessions"
 
-    monkeypatch.setattr(
-        "nanobot.session.manager.get_runtime_subdir",
-        runtime_subdir,
-    )
+    for target in (
+        "nanobot.config.paths.get_default_sessions_root",
+        "nanobot.agent.memory.get_default_sessions_root",
+        "nanobot.session.manager.get_default_sessions_root",
+    ):
+        monkeypatch.setattr(target, sessions_root)
     monkeypatch.setattr(
         "nanobot.session.manager.get_legacy_sessions_dir",
         lambda: legacy_root,

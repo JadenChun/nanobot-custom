@@ -15,7 +15,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from session.test_idle_checkpoint import _artifact_source
 
 import nanobot.agent.idle_summary as idle_summary_module
 from nanobot.agent.idle_runtime import IdleRuntimeBindingRegistry
@@ -42,6 +41,7 @@ from nanobot.session.idle_checkpoint import IdlePolicyBinding
 from nanobot.session.manager import JsonlSessionStore, Session
 from nanobot.session.source import new_source_event
 from nanobot.utils.llm_runtime import LLMRuntime
+from tests.session.test_idle_checkpoint import _artifact_source
 
 
 class _Provider(LLMProvider):
@@ -77,6 +77,7 @@ class _Attempt:
         self.requests = []
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.cancelled = asyncio.Event()
         self.wait = False
 
     def measure_request(self, messages, *, max_output_tokens, safety_buffer):  # type: ignore[no-untyped-def]
@@ -106,6 +107,7 @@ class _Attempt:
                 await self.release.wait()
             except asyncio.CancelledError:
                 # Exercise the adapter's cancellation-safe join path.
+                self.cancelled.set()
                 await self.release.wait()
         output = self.outputs.pop(0) if self.outputs else "summary"
         if isinstance(output, BaseException):
@@ -275,6 +277,321 @@ def test_raw_transport_cannot_bypass_sealing_or_copy_boundary(tmp_path: Path) ->
     ).issue(binding, attempt)
     with pytest.raises(TypeError):
         copy(qualified)
+
+
+@pytest.mark.parametrize("owner,name", [
+    (idle_summary_module.IdleSummaryQualifiedTransport, name) for name in (
+        "require_for_authority", "require_registry_relationship", "require_current_binding",
+        "require_live_adapter_identity", "require_adapter_identity", "initialize_registry_authority",
+    )
+] + [
+    (IdleSummaryTransportRegistry, name) for name in (
+        "validate_transport", "require_adapter_identity", "initialize_transport_authority",
+        "admit_transport_request", "record_transport_reservation", "matches_transport_authority",
+        "matches_transport_pid", "matches_transport_source",
+    )
+] + [(IdleSummaryRequest, "claim_transport_reservation")])
+def test_transport_owner_operation_exists(owner: type, name: str) -> None:
+    assert callable(getattr(owner, name))
+
+
+@pytest.mark.parametrize("mismatch", ["registry", "source", "binding", None])
+def test_transport_authority_relationship_short_circuits_before_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mismatch: str | None,
+) -> None:
+    source, _, registry, binding, _ = _authority(tmp_path, [{"role": "user", "content": "x"}])
+    transport_registry = IdleSummaryTransportRegistry(binding_registry=registry, source_store=source)
+    capability = transport_registry.issue(binding, _Attempt())
+    validate = Mock()
+    monkeypatch.setattr(transport_registry, "_validate_capability", validate)
+    if mismatch is not None:
+        with pytest.raises(IdleSummaryCapabilityError, match="foreign to this authority"):
+            idle_summary_module._qualified_transport(
+                capability, binding_registry=object() if mismatch == "registry" else registry,
+                source_store=object() if mismatch == "source" else source,
+                binding=object() if mismatch == "binding" else binding,
+            )
+        validate.assert_not_called()
+    else:
+        assert idle_summary_module._qualified_transport(
+            capability, binding_registry=registry, source_store=source, binding=binding,
+        ) is capability
+        validate.assert_called_once_with(capability)
+
+
+@pytest.mark.parametrize("failure_type", [None, RuntimeError, KeyboardInterrupt, SystemExit, GeneratorExit, BaseException])
+def test_transport_raw_accessor_order_and_exception_boundary(failure_type: type | None) -> None:
+    accessed: list[str] = []
+    failure = failure_type("synthetic accessor fault") if failure_type is not None else None
+    values = {name: getattr(_Attempt, name) for name in (
+        "provider_name", "transport", "model", "runtime_fingerprint", "context_window_tokens", "attempt_once",
+    )}
+
+    class Raw:
+        def __getattribute__(self, name: str):
+            accessed.append(name)
+            if name == "model" and failure is not None:
+                raise failure
+            return values[name]
+
+    if failure is None:
+        raw = Raw()
+        assert IdleSummaryTransportRegistry._validate_raw(raw) is raw
+        assert accessed == list(values)
+    else:
+        expected = failure_type if failure_type in (KeyboardInterrupt, SystemExit, GeneratorExit) else IdleSummaryCapabilityError
+        with pytest.raises(expected) as caught:
+            IdleSummaryTransportRegistry._validate_raw(Raw())
+        assert accessed == ["provider_name", "transport", "model"]
+        if expected is IdleSummaryCapabilityError:
+            assert str(caught.value) == "raw one-attempt adapter is invalid"
+            assert caught.value.__cause__ is None
+        else:
+            assert caught.value is failure
+
+
+@pytest.mark.parametrize("mismatch", [None, "provider_name", "transport", "model", "context_window_tokens", "runtime_fingerprint"])
+def test_transport_live_identity_reads_current_fields_and_first_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mismatch: str | None,
+) -> None:
+    source, _, registry, binding, _ = _authority(tmp_path, [{"role": "user", "content": "x"}])
+    transport_registry = IdleSummaryTransportRegistry(binding_registry=registry, source_store=source)
+    capability = transport_registry.issue(binding, _Attempt())
+    order = ["provider_name", "transport", "model", "context_window_tokens", "runtime_fingerprint"]
+    accessed: list[str] = []
+    for name in order:
+        object.__setattr__(capability, "_" + name, -1 if name == "context_window_tokens" else "stale")
+
+    class Raw:
+        def __getattribute__(self, name: str):
+            accessed.append(name)
+            value = getattr(_Attempt, name)
+            if name == mismatch:
+                return -2 if name == "context_window_tokens" else "different"
+            # Mutate the live frozen capability BEFORE its corresponding read.
+            object.__setattr__(capability, "_" + name, value)
+            return value
+
+    monkeypatch.setattr(transport_registry, "_validate_raw", Mock(return_value=Raw()))
+    if mismatch is None:
+        transport_registry._validate_capability(capability)
+        assert accessed == order
+    else:
+        with pytest.raises(IdleSummaryCapabilityError, match="identity changed"):
+            transport_registry._validate_capability(capability)
+        assert accessed == order[:order.index(mismatch) + 1]
+    transport_registry._validate_raw.assert_called_once_with(capability._raw)
+
+
+@pytest.mark.parametrize("fault", [None, "process", "validate", "claim"])
+def test_transport_original_dynamic_seams_and_fault_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None,
+) -> None:
+    source, _, registry, binding, _ = _authority(tmp_path, [{"role": "user", "content": "x"}])
+    raw = _Attempt()
+    transport_registry = IdleSummaryTransportRegistry(binding_registry=registry, source_store=source)
+    capability = transport_registry.issue(binding, raw)
+    request = IdleSummaryRequest(({"role": "user", "content": "x"},), raw.measure_request(
+        ({"role": "user", "content": "x"},), max_output_tokens=1, safety_buffer=0,
+    ))
+    events: list[str] = []
+    failure = RuntimeError("synthetic seam fault")
+    for name, label in (("_check_process", "process"), ("_validate_capability", "validate"), ("_claim_request", "claim")):
+        original = getattr(transport_registry, name)
+
+        def seam(*args, original=original, label=label):
+            events.append(label)
+            if fault == label:
+                raise failure
+            return original(*args)
+
+        monkeypatch.setattr(transport_registry, name, seam)
+    if fault is None:
+        capability._admit_request(request)
+        assert events == ["claim", "validate", "process"]
+        assert request._reservation.claimed is True
+    else:
+        with pytest.raises(RuntimeError) as caught:
+            capability._admit_request(request)
+        assert caught.value is failure
+        assert events == ["claim", "validate", "process"][:["claim", "validate", "process"].index(fault) + 1]
+        assert request._reservation.claimed is False
+    assert raw.requests == []
+
+
+@pytest.mark.parametrize("failure_type", [None, AttributeError, RuntimeError, KeyboardInterrupt, SystemExit, GeneratorExit])
+def test_transport_binding_registry_read_stays_within_stale_refusal(
+    tmp_path: Path, failure_type: type | None,
+) -> None:
+    source, _, registry, binding, _ = _authority(tmp_path, [{"role": "user", "content": "x"}])
+    raw = _Attempt()
+    failure = failure_type("synthetic binding registry access") if failure_type is not None else None
+    activated = [False]
+
+    class HostileRegistry(IdleSummaryTransportRegistry):
+        def __getattribute__(self, name: str):
+            if name == "_binding_registry" and activated[0] and failure is not None:
+                raise failure
+            return object.__getattribute__(self, name)
+
+    transport_registry = HostileRegistry(binding_registry=registry, source_store=source)
+    capability = transport_registry.issue(binding, raw)
+    request = IdleSummaryRequest(({"role": "user", "content": "x"},), raw.measure_request(
+        ({"role": "user", "content": "x"},), max_output_tokens=1, safety_buffer=0,
+    ))
+    if failure_type is None:
+        del transport_registry._binding_registry
+    activated[0] = True
+    system = failure_type in (KeyboardInterrupt, SystemExit, GeneratorExit)
+    expected = failure_type if system else IdleSummaryCapabilityError
+    with pytest.raises(expected) as caught:
+        capability._admit_request(request)
+    if system:
+        assert caught.value is failure
+    else:
+        assert str(caught.value) == "qualified transport binding is stale"
+        assert caught.value.__cause__ is None
+        assert caught.value.__suppress_context__ is True
+        if failure is None:
+            assert isinstance(caught.value.__context__, AttributeError)
+        else:
+            assert caught.value.__context__ is failure
+    assert request._reservation.claimed is False
+    assert transport_registry._issued_requests == {}
+    assert raw.requests == []
+
+
+@pytest.mark.parametrize("kind", ["missing", "malformed", "copied", "hostile", "system"])
+def test_transport_reservation_malformed_and_hostile_owner(
+    tmp_path: Path, kind: str,
+) -> None:
+    source, _, registry, binding, _ = _authority(tmp_path, [{"role": "user", "content": "x"}])
+    raw = _Attempt()
+    transport_registry = IdleSummaryTransportRegistry(binding_registry=registry, source_store=source)
+    capability = transport_registry.issue(binding, raw)
+    request = IdleSummaryRequest(({"role": "user", "content": "x"},), raw.measure_request(
+        ({"role": "user", "content": "x"},), max_output_tokens=1, safety_buffer=0,
+    ))
+    failure = KeyboardInterrupt("synthetic") if kind == "system" else BaseException("synthetic")
+    reads: list[str] = []
+
+    class Hostile:
+        @property
+        def owner(self):
+            reads.append("owner")
+            if len(reads) == 2:
+                raise failure
+            return lambda: request
+
+    if kind == "missing":
+        request = object.__new__(IdleSummaryRequest)
+    elif kind == "copied":
+        request = copy(request)
+    else:
+        object.__setattr__(request, "_reservation", object() if kind == "malformed" else Hostile())
+    expected = KeyboardInterrupt if kind == "system" else IdleSummaryCapabilityError
+    with pytest.raises(expected) as caught:
+        capability._admit_request(request)
+    if kind in ("hostile", "system"):
+        assert reads == ["owner", "owner"]
+    if kind == "system":
+        assert caught.value is failure
+    elif kind != "copied":
+        assert str(caught.value) == "transport reservation request is invalid"
+        assert caught.value.__cause__ is None
+    assert transport_registry._issued_requests == {} and raw.requests == []
+
+
+@pytest.mark.parametrize("entry", ["matching", "collision", "dead"])
+def test_transport_reservation_registry_entry_precedes_claimed_bit(tmp_path: Path, entry: str) -> None:
+    source, _, registry, binding, _ = _authority(tmp_path, [{"role": "user", "content": "x"}])
+    raw = _Attempt()
+    transport_registry = IdleSummaryTransportRegistry(binding_registry=registry, source_store=source)
+    capability = transport_registry.issue(binding, raw)
+    request = IdleSummaryRequest(({"role": "user", "content": "x"},), raw.measure_request(
+        ({"role": "user", "content": "x"},), max_output_tokens=1, safety_buffer=0,
+    ))
+    reservation = request._reservation
+    reservation.claimed = True
+    other = idle_summary_module._IdleSummaryRequestReservation()
+    reference = weakref.ref(reservation if entry == "matching" else other)
+    transport_registry._issued_requests[id(reservation)] = reference
+    if entry == "dead":
+        del other
+        gc.collect()
+    with pytest.raises(IdleSummaryCapabilityError, match="collided" if entry == "collision" else "more than once"):
+        capability._admit_request(request)
+    assert transport_registry._issued_requests == ({} if entry == "dead" else {id(reservation): reference})
+    assert raw.requests == []
+
+
+@pytest.mark.parametrize("entry", ["matching", "unrelated", "dead"])
+def test_transport_weak_cleanup_uses_replaced_current_table(tmp_path: Path, entry: str) -> None:
+    source, _, registry, binding, _ = _authority(tmp_path, [{"role": "user", "content": "x"}])
+    raw = _Attempt()
+    transport_registry = IdleSummaryTransportRegistry(binding_registry=registry, source_store=source)
+    capability = transport_registry.issue(binding, raw)
+    request = IdleSummaryRequest(({"role": "user", "content": "x"},), raw.measure_request(
+        ({"role": "user", "content": "x"},), max_output_tokens=1, safety_buffer=0,
+    ))
+    capability._admit_request(request)
+    reservation_id = id(request._reservation)
+    original_table = transport_registry._issued_requests
+    original_reference = original_table[reservation_id]
+    other = idle_summary_module._IdleSummaryRequestReservation()
+    reference = original_reference if entry == "matching" else weakref.ref(other)
+    transport_registry._issued_requests = {reservation_id: reference}
+    if entry == "dead":
+        del other
+        gc.collect()
+    del request
+    gc.collect()
+    assert original_reference() is None
+    assert original_table == {reservation_id: original_reference}
+    assert transport_registry._issued_requests == ({reservation_id: reference} if entry == "unrelated" else {})
+    assert raw.requests == []
+
+
+def test_transport_owner_wrong_seals_are_effect_free(tmp_path: Path) -> None:
+    source, _, registry, binding, _ = _authority(tmp_path, [{"role": "user", "content": "x"}])
+    raw = _Attempt()
+    transport_registry = IdleSummaryTransportRegistry(binding_registry=registry, source_store=source)
+    capability = transport_registry.issue(binding, raw)
+    request = IdleSummaryRequest(({"role": "user", "content": "x"},), raw.measure_request(
+        ({"role": "user", "content": "x"},), max_output_tokens=1, safety_buffer=0,
+    ))
+    authority = capability._authority
+    for operation, args, error in (
+        (transport_registry.initialize_transport_authority, (object(), capability), "cannot be reconstructed"),
+        (capability.initialize_registry_authority, (object(), object()), "cannot be reconstructed"),
+        (request.claim_transport_reservation, (object(), transport_registry), "reservation request is invalid"),
+        (transport_registry.record_transport_reservation, (object(), request, request._reservation, request), "reservation request is invalid"),
+    ):
+        with pytest.raises(IdleSummaryCapabilityError, match=error):
+            operation(*args)
+        assert capability._authority is authority
+        assert request._reservation.claimed is False
+        assert transport_registry._issued_requests == {} and raw.requests == []
+
+
+def test_transport_constructor_reinitialization_frozen_copy_and_aliases(tmp_path: Path) -> None:
+    source, _, registry, binding, _ = _authority(tmp_path, [{"role": "user", "content": "x"}])
+    raw = _Attempt()
+    transport_registry = IdleSummaryTransportRegistry(binding_registry=registry, source_store=source)
+    capability = transport_registry.issue(binding, raw)
+    assert IdleSummaryTransportRegistry.qualify is IdleSummaryTransportRegistry.issue
+    assert idle_summary_module.QualifiedIdleSummaryAttempt is type(capability)
+    assert idle_summary_module.IdleQualifiedSummaryProvider is type(capability)
+    with pytest.raises(AttributeError):
+        capability._authority = object()
+    with pytest.raises(TypeError):
+        copy(capability)
+    with pytest.raises(IdleSummaryCapabilityError, match="cannot be reconstructed"):
+        capability.__init__(object(), transport_registry, binding, raw, capability._pid)
+    replacement = IdleSummaryTransportRegistry(binding_registry=registry, source_store=source)
+    capability.__init__(idle_summary_module._TRANSPORT_SEAL, replacement, binding, raw, capability._pid)
+    assert capability._registry is replacement and capability._authority is replacement._authority
+    replacement._validate_capability(capability)
 
 
 def test_constructor_rejects_measurement_identity_not_matching_binding_runtime(tmp_path: Path) -> None:
@@ -1587,11 +1904,19 @@ async def test_deadline_cancellation_joins_attempt_and_discards_result(tmp_path:
     source, _, registry, binding, capture = _authority(tmp_path, [{"role": "user", "content": "x"}])
     attempt = _Attempt()
     attempt.wait = True
-    adapter = _adapter(attempt, source, registry, binding, _limits(max_wall_seconds=0.02))
-    asyncio.get_running_loop().call_later(0.03, attempt.release.set)
-    result = await adapter.summarize(
-        capture, binding, deadline=asyncio.get_running_loop().time() + 0.02
+    # Freeze the injected budget clock during synchronous preparation so this
+    # test exercises an in-flight timeout, not pre-dispatch machine load.
+    adapter = _adapter(
+        attempt, source, registry, binding, _limits(max_wall_seconds=0.02), clock=lambda: 0.0,
     )
+    task = asyncio.create_task(adapter.summarize(capture, binding, deadline=0.02))
+    try:
+        await asyncio.wait_for(attempt.cancelled.wait(), timeout=5)
+        assert attempt.started.is_set() and not task.done()
+    finally:
+        attempt.release.set()
+        await asyncio.gather(task, return_exceptions=True)
+    result = task.result()
     assert result.status == "timeout" and result.proposal is None
     assert len(attempt.requests) == 1
     assert attempt.release.is_set()
@@ -1736,3 +2061,183 @@ async def test_accounting_sink_marks_only_terminal_snapshot_exact(tmp_path: Path
     assert snapshots and snapshots[-1] == result.accounting
     assert result.accounting.exact is True
     assert all(snapshot.exact is False for snapshot in snapshots[:-1])
+
+
+@pytest.mark.parametrize("failure_at", [None, "attempts", "provider_state", "request", "finish_reason", "tool_calls", "content"])
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt, SystemExit, GeneratorExit])
+def test_hostile_response_access_order_precedes_exact_rejection(failure_at, error_type) -> None:
+    order = ["attempts", "provider_state", "request", "finish_reason", "tool_calls", "content"]
+    accessed = []
+    failure = error_type("private accessor detail")
+
+    class HostileResponse:
+        def __getattribute__(self, name):
+            accessed.append(name)
+            if name == failure_at:
+                raise failure
+            return None
+
+    expected_error = error_type if failure_at is not None and error_type is not RuntimeError else idle_summary_module.IdleSummaryError
+    with pytest.raises(expected_error) as caught:
+        idle_summary_module._validate_response_content(
+            HostileResponse(), request=Mock(), transport=Mock(), limits=_limits()
+        )
+    expected_order = order if failure_at is None else order[:order.index(failure_at) + 1]
+    assert accessed == expected_order
+    if expected_error is idle_summary_module.IdleSummaryError:
+        assert str(caught.value) == "summary attempt response is malformed"
+        assert caught.value.__cause__ is None
+    else:
+        assert caught.value is failure
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("awaitable", [False, True])
+async def test_dependency_verifier_accepts_sync_and_awaitable_bound_results(tmp_path: Path, awaitable: bool) -> None:
+    _, policy, _, binding, capture = _authority(tmp_path, [{"role": "user", "content": "x"}])
+    references = ("artifact:test",)
+    calls = []
+    verification = IdleDependencyVerification(
+        capture, binding, references, policy.fingerprint, binding.artifact_namespace
+    )
+
+    class Verifier:
+        def verify(self, **kwargs):
+            calls.append(kwargs)
+            if awaitable:
+                async def complete():
+                    return verification
+                return complete()
+            return verification
+
+    await _verify_dependencies_async(
+        Verifier(), capture=capture, binding=binding, references=references,
+        deadline=asyncio.get_running_loop().time() + 2,
+        clock=asyncio.get_running_loop().time,
+    )
+    assert calls == [{"capture": capture, "binding": binding, "references": references}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", [None, "expiry", "clock", "accounting", "sink", "admit", "invoke"])
+async def test_claim_dispatch_phase_order_and_fault_seams(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str | None,
+) -> None:
+    source, _, registry, binding, capture = _authority(
+        tmp_path, [{"role": "user", "content": "x"}]
+    )
+    events: list[str] = []
+    snapshots: list[IdleSummaryAttemptAccounting] = []
+    references: list[weakref.ReferenceType[IdleSummaryRequest]] = []
+    now = [1.0]
+    claimed = [False]
+    raw_calls = [0]
+    accounting_failed = [False]
+
+    class SynchronousEntryAttempt(_Attempt):
+        def attempt_once(self, request: IdleSummaryRequest):
+            raw_calls[0] += 1
+            events.append("raw")
+            return super().attempt_once(request)
+
+    attempt = SynchronousEntryAttempt()
+    transport_registry = IdleSummaryTransportRegistry(
+        binding_registry=registry, source_store=source,
+    )
+    transport = transport_registry.issue(binding, attempt)
+    original_claim = IdleSummaryTransportRegistry._claim_request
+    original_admit = idle_summary_module.IdleSummaryQualifiedTransport._admit_request
+    original_invoke = idle_summary_module.IdleSummaryQualifiedTransport._invoke_admitted
+    original_publish = IdleSummaryAdapter._publish_accounting
+
+    def claim(owner, capability, request: IdleSummaryRequest) -> None:
+        original_claim(owner, capability, request)
+        events.append("claim")
+        references.append(weakref.ref(request))
+        # Check consumption under the still-current binding, retaining no payload.
+        temporary_request = references[-1]()
+        assert temporary_request is request
+        with pytest.raises(IdleSummaryCapabilityError, match="more than once"):
+            original_claim(owner, capability, temporary_request)
+        del temporary_request
+        claimed[0] = True
+        if fault == "expiry":
+            now[0] = 11.0
+
+    def clock() -> float:
+        if claimed[0]:
+            events.append("clock")
+            if fault == "clock":
+                raise RuntimeError("second deadline fault")
+        return now[0]
+
+    def observe(snapshot: IdleSummaryAttemptAccounting) -> None:
+        snapshots.append(snapshot)
+        if snapshot.dispatched_calls and "accounting" not in events:
+            events.append("accounting")
+            if fault == "sink":
+                raise RuntimeError("dispatch sink fault")
+
+    def publish(owner, ledger, *, terminal: bool = False):
+        snapshot = original_publish(owner, ledger, terminal=terminal)
+        if fault == "accounting" and snapshot.dispatched_calls and not accounting_failed[0]:
+            accounting_failed[0] = True
+            raise RuntimeError("on_started fault after dispatch accounting")
+        return snapshot
+
+    def admit(owner, request: IdleSummaryRequest) -> None:
+        if fault == "admit":
+            events.append("admit-fault")
+            raise RuntimeError("admission fault")
+        original_admit(owner, request)
+
+    def invoke(owner, request: IdleSummaryRequest):
+        if fault == "invoke":
+            events.append("invoke-fault")
+            raise RuntimeError("invocation fault")
+        return original_invoke(owner, request)
+
+    monkeypatch.setattr(IdleSummaryTransportRegistry, "_claim_request", claim)
+    monkeypatch.setattr(idle_summary_module.IdleSummaryQualifiedTransport, "_admit_request", admit)
+    monkeypatch.setattr(idle_summary_module.IdleSummaryQualifiedTransport, "_invoke_admitted", invoke)
+    monkeypatch.setattr(IdleSummaryAdapter, "_publish_accounting", publish)
+    adapter = IdleSummaryAdapter(
+        transport, _limits(max_wall_seconds=20.0), request_measurer=attempt,
+        binding_registry=registry, clock=clock, accounting_sink=observe,
+    )
+    result = await adapter.summarize(capture, binding, deadline=10.0)
+    reservation = result.requests[0].total_reservation_tokens
+    if fault in (None, "sink"):
+        assert events[:4] == ["claim", "clock", "accounting", "raw"]
+        assert raw_calls == [1]
+        assert result.status == "complete" and result.proposal is not None
+        assert result.accounting.exact is True and result.usage_exact is True
+    else:
+        assert raw_calls == [0] and attempt.requests == []
+        assert result.status == ("timeout" if fault == "expiry" else "failed")
+        assert result.proposal is None and result.measured_usage is None
+        dispatched = int(fault in ("accounting", "invoke"))
+        assert result.accounting == IdleSummaryAttemptAccounting(
+            1, reservation, dispatched, 0, dispatched, False,
+        )
+        assert result.usage_exact is False
+        assert result.usage == result.reserved_usage
+        assert result.reserved_usage.calls == 1 and result.reserved_usage.tokens == reservation
+        if fault == "admit":
+            assert events == ["admit-fault"] and references == []
+        elif fault in ("expiry", "clock"):
+            assert events == ["claim", "clock"]
+            assert all(snapshot.dispatched_calls == 0 for snapshot in snapshots)
+        elif fault == "accounting":
+            assert events == ["claim", "clock", "accounting"]
+        else:
+            assert events == ["claim", "clock", "accounting", "invoke-fault"]
+    assert snapshots[-1] == adapter.last_accounting == result.accounting
+    attempt.requests.clear()
+    # Let wait_for's completed callback/exception frames leave the ready queue.
+    settled = asyncio.Event()
+    asyncio.get_running_loop().call_soon(settled.set)
+    await settled.wait()
+    gc.collect()
+    assert all(reference() is None for reference in references)
+    assert transport_registry._issued_requests == {}

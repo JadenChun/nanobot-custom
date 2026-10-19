@@ -5,12 +5,12 @@ from __future__ import annotations
 import difflib
 import re
 import shlex
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from nanobot.agent.tools.filesystem import _find_match
+from nanobot.agent.tools.filesystem import find_edit_match as _find_match
 from nanobot.context_repo import ContextRepoManager
 from nanobot.providers.base import ToolCallRequest
 
@@ -55,7 +55,9 @@ class DelegatedReadOnlyPolicy(ToolPolicy):
     main-agent approval cannot turn a read-only delegate into a writer.
     """
 
-    allowed_tools: Collection[str] = field(default_factory=frozenset)
+    allowed_tools: Collection[str] = field(
+        default_factory=cast("Callable[[], frozenset[str]]", frozenset),
+    )
     role: str = "read_only"
     # Accepted for construction compatibility with generic policy factories.
     # It must not affect evaluation.
@@ -86,7 +88,7 @@ class DelegatedReadOnlyPolicy(ToolPolicy):
                 # and therefore fails closed for every call.
                 self.allowed_tools = frozenset()
         self.allowed_tools = frozenset(
-            name for name in self.allowed_tools if isinstance(name, str) and name
+            name for name in self.allowed_tools if isinstance(cast(object, name), str) and name
         )
 
     async def evaluate(
@@ -105,7 +107,7 @@ class DelegatedReadOnlyPolicy(ToolPolicy):
             reason = self._blocked_reason(tool_call)
             if reason:
                 reasons.append(reason)
-                if isinstance(tool_call.name, str) and tool_call.name not in blocked_tools:
+                if isinstance(cast(object, tool_call.name), str) and tool_call.name not in blocked_tools:
                     blocked_tools.append(tool_call.name)
 
         if not reasons:
@@ -130,7 +132,7 @@ class DelegatedReadOnlyPolicy(ToolPolicy):
         )
 
     def _blocked_reason(self, tool_call: ToolCallRequest) -> str | None:
-        name = tool_call.name if isinstance(tool_call.name, str) else ""
+        name = tool_call.name if isinstance(cast(object, tool_call.name), str) else ""
         if name not in self.allowed_tools:
             return f"tool {name or '<unknown>'!r} is not permitted"
         if name in self._NEVER_READ_ONLY:
@@ -143,27 +145,27 @@ class DelegatedReadOnlyPolicy(ToolPolicy):
         if name == "agent_browser":
             from nanobot.agent.tools.agent_browser import classify_browser_action
 
-            if arguments.get("working_dir") is not None:
+            if cast(dict[object, object], arguments).get("working_dir") is not None:
                 return "agent_browser caller working_dir override is not permitted"
-            args = arguments.get("args")
+            args = cast(dict[object, object], arguments).get("args")
             if not isinstance(args, (list, tuple)):
                 return "agent_browser action is unknown"
-            if classify_browser_action(args) != "read_navigation":
+            if classify_browser_action(cast(list[object] | tuple[object, ...], args)) != "read_navigation":
                 return "agent_browser action is state-changing or unknown"
         elif name == "agent_device":
             from nanobot.agent.tools.agent_device import classify_device_action
 
-            if arguments.get("working_dir") is not None:
+            if cast(dict[object, object], arguments).get("working_dir") is not None:
                 return "agent_device caller working_dir override is not permitted"
-            args = arguments.get("args")
+            args = cast(dict[object, object], arguments).get("args")
             if not isinstance(args, (list, tuple)):
                 return "agent_device action is unknown"
-            if classify_device_action(args) != "read_navigation":
+            if classify_device_action(cast(list[object] | tuple[object, ...], args)) != "read_navigation":
                 return "agent_device action is state-changing or unknown"
         elif name == "social_crawl":
             from nanobot.agent.tools.social_crawl import classify_crawler_action
 
-            action = arguments.get("action")
+            action = cast(dict[object, object], arguments).get("action")
             if not isinstance(action, str):
                 return "social_crawl action is unknown"
             if classify_crawler_action(action) != "read_navigation":
@@ -260,7 +262,7 @@ class RiskyActionPolicy(ToolPolicy):
             # same run-wide approval as other side effects.
             from nanobot.agent.tools.agent_browser import classify_browser_action
 
-            args = tool_call.arguments.get("args") or []
+            args: object = tool_call.arguments.get("args") or []
             if classify_browser_action(args) != "read_navigation":
                 return "perform a state-changing browser action"
         if tool_call.name == "agent_device":

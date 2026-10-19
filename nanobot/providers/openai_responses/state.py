@@ -73,6 +73,7 @@ def prepare_responses_input(
     _, delta_items = convert_messages(
         state.pending_messages,
         preserve_reasoning=preserve_reasoning,
+        normalize_ids=False,
     )
     logger.debug(
         "Replaying Responses state: prior_items={} pending_messages={}",

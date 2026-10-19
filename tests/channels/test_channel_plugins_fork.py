@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from nanobot.bus.events import OutboundMessage
-from nanobot.bus.outbound_events import ProgressEvent
+from nanobot.bus.outbound_events import (
+    ProgressEvent,
+    StreamDeltaEvent,
+    StreamedResponseEvent,
+    outbound_message_for_event,
+)
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.channels.manager import ChannelManager
@@ -62,11 +67,20 @@ def _make_entry_point(name: str, cls: type):
     return ep
 
 
+def _package_descriptor(channel_cls: type[BaseChannel]):
+    from nanobot.channels.plugin import ChannelPlugin
+
+    return ChannelPlugin(
+        name=channel_cls.name,
+        display_name=channel_cls.display_name,
+        runtime=f"{__name__}:{channel_cls.__name__}",
+    )
+
+
 def _make_dispatch_manager(*, task_update_mode: str) -> ChannelManager:
     """Build a real manager with channel discovery disabled for dispatch tests."""
     config = Config.model_validate({"channels": {"taskUpdateMode": task_update_mode}})
-    with patch.object(ChannelManager, "_init_channels"):
-        return ChannelManager(config, MessageBus())
+    return ChannelManager(config, MessageBus())
 
 
 # ---------------------------------------------------------------------------
@@ -106,15 +120,14 @@ def test_channels_config_rejects_invalid_task_update_mode():
 
 
 def test_config_migrates_legacy_send_progress_to_task_update_mode():
-    from nanobot.config.schema import Config
+    verbose = Config.model_validate({"channels": {"sendProgress": True}})
+    result = Config.model_validate({"channels": {"sendProgress": False}})
 
-    verbose = Config._migrate_config({"channels": {"sendProgress": True}})
-    result = Config._migrate_config({"channels": {"sendProgress": False}})
-
-    assert verbose["channels"]["taskUpdateMode"] == "verbose"
-    assert "sendProgress" not in verbose["channels"]
-    assert result["channels"]["taskUpdateMode"] == "result"
-    assert "sendProgress" not in result["channels"]
+    assert verbose.channels.task_update_mode == "verbose"
+    assert verbose.channels.send_progress is True
+    assert result.channels.task_update_mode == "result"
+    assert result.channels.send_progress is False
+    assert result.model_dump(by_alias=True)["channels"]["sendProgress"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -124,25 +137,41 @@ def test_config_migrates_legacy_send_progress_to_task_update_mode():
 _EP_TARGET = "importlib.metadata.entry_points"
 
 
-def test_discover_plugins_loads_entry_points():
+def test_discover_plugins_loads_package_descriptors():
+    from nanobot.channels.registry import discover_plugins
+
+    plugin = _package_descriptor(_FakePlugin)
+    with (
+        patch("nanobot.channels.registry._channel_package_names", return_value=["fakeplugin"]),
+        patch("nanobot.channels.registry.load_channel_package", return_value=plugin),
+    ):
+        result = discover_plugins()
+
+    assert result == {"fakeplugin": plugin}
+
+
+def test_legacy_entry_points_are_not_auto_loaded():
     from nanobot.channels.registry import discover_plugins
 
     ep = _make_entry_point("line", _FakePlugin)
-    with patch(_EP_TARGET, return_value=[ep]):
-        result = discover_plugins()
-
-    assert "line" in result
-    assert result["line"] is _FakePlugin
+    with (
+        patch("nanobot.channels.registry._channel_package_names", return_value=[]),
+        patch(_EP_TARGET, return_value=[ep]) as entry_points,
+    ):
+        assert discover_plugins() == {}
+    entry_points.assert_not_called()
 
 
 def test_discover_plugins_handles_load_error():
     from nanobot.channels.registry import discover_plugins
 
-    def _boom():
+    def _boom(_name):
         raise RuntimeError("broken")
 
-    ep = SimpleNamespace(name="broken", load=_boom)
-    with patch(_EP_TARGET, return_value=[ep]):
+    with (
+        patch("nanobot.channels.registry._channel_package_names", return_value=["broken"]),
+        patch("nanobot.channels.registry.load_channel_package", side_effect=_boom),
+    ):
         result = discover_plugins()
 
     assert "broken" not in result
@@ -153,66 +182,60 @@ def test_discover_plugins_handles_load_error():
 # ---------------------------------------------------------------------------
 
 def test_discover_all_includes_builtins():
-    from nanobot.channels.registry import discover_all, discover_channel_names
+    from nanobot.channels.registry import discover_all, discover_plugins
 
-    with patch(_EP_TARGET, return_value=[]):
-        result = discover_all()
+    result = discover_all()
 
     # discover_all() only returns channels that are actually available (dependencies installed)
-    # discover_channel_names() returns all built-in channel names
+    # discover_plugins() returns dependency-free package descriptors.
     # So we check that all actually loaded channels are in the result
     for name in result:
-        assert name in discover_channel_names()
+        assert name in discover_plugins()
 
 
-def test_discover_all_includes_external_plugin():
+def test_discover_all_loads_package_runtime():
     from nanobot.channels.registry import discover_all
 
-    ep = _make_entry_point("line", _FakePlugin)
-    with patch(_EP_TARGET, return_value=[ep]):
+    with patch(
+        "nanobot.channels.registry.discover_plugins",
+        return_value={"fakeplugin": _package_descriptor(_FakePlugin)},
+    ):
         result = discover_all()
 
-    assert "line" in result
-    assert result["line"] is _FakePlugin
+    assert result == {"fakeplugin": _FakePlugin}
 
 
-def test_discover_all_builtin_shadows_plugin():
+def test_discover_all_builtin_ignores_legacy_entry_point():
     from nanobot.channels.registry import discover_all
+    from nanobot.channels.telegram.runtime import TelegramChannel
 
     ep = _make_entry_point("telegram", _FakeTelegram)
-    with patch(_EP_TARGET, return_value=[ep]):
+    with patch(_EP_TARGET, return_value=[ep]) as entry_points:
         result = discover_all()
 
-    assert "telegram" in result
-    assert result["telegram"] is not _FakeTelegram
+    assert result["telegram"] is TelegramChannel
+    entry_points.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
 # Manager _init_channels with dict config (plugin scenario)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.asyncio
-async def test_manager_loads_plugin_from_dict_config():
+async def test_manager_loads_plugin_from_dict_config(monkeypatch):
     """ChannelManager should instantiate a plugin channel from a raw dict config."""
     from nanobot.channels.manager import ChannelManager
 
-    fake_config = SimpleNamespace(
-        channels=ChannelsConfig.model_validate({
+    fake_config = Config.model_validate({
+        "channels": {
             "fakeplugin": {"enabled": True, "allowFrom": ["*"]},
-        }),
-        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
-    )
+        },
+    })
 
-    with patch(
-        "nanobot.channels.registry.discover_all",
-        return_value={"fakeplugin": _FakePlugin},
-    ):
-        mgr = ChannelManager.__new__(ChannelManager)
-        mgr.config = fake_config
-        mgr.bus = MessageBus()
-        mgr.channels = {}
-        mgr._dispatch_task = None
-        mgr._init_channels()
+    monkeypatch.setattr(
+        "nanobot.channels.registry.discover_plugins",
+        lambda enabled_names=None: {"fakeplugin": _package_descriptor(_FakePlugin)},
+    )
+    mgr = await ChannelManager(fake_config, MessageBus()).acquire()
 
     assert "fakeplugin" in mgr.channels
     assert isinstance(mgr.channels["fakeplugin"], _FakePlugin)
@@ -235,7 +258,7 @@ def test_channels_login_uses_discovered_plugin_class(monkeypatch):
             seen["config"] = self.config
             return True
 
-    monkeypatch.setattr("nanobot.config.loader.load_config", lambda: Config())
+    monkeypatch.setattr("nanobot.config.loader.load_config", lambda _path=None: Config())
     monkeypatch.setattr(
         "nanobot.channels.registry.discover_all",
         lambda: {"fakeplugin": _LoginPlugin},
@@ -247,25 +270,18 @@ def test_channels_login_uses_discovered_plugin_class(monkeypatch):
     assert seen["force"] is True
 
 
-@pytest.mark.asyncio
-async def test_manager_skips_disabled_plugin():
-    fake_config = SimpleNamespace(
-        channels=ChannelsConfig.model_validate({
+def test_manager_skips_disabled_plugin(monkeypatch):
+    fake_config = Config.model_validate({
+        "channels": {
             "fakeplugin": {"enabled": False},
-        }),
-        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
-    )
+        },
+    })
 
-    with patch(
-        "nanobot.channels.registry.discover_all",
-        return_value={"fakeplugin": _FakePlugin},
-    ):
-        mgr = ChannelManager.__new__(ChannelManager)
-        mgr.config = fake_config
-        mgr.bus = MessageBus()
-        mgr.channels = {}
-        mgr._dispatch_task = None
-        mgr._init_channels()
+    monkeypatch.setattr(
+        "nanobot.channels.registry.discover_plugins",
+        lambda enabled_names=None: {"fakeplugin": _package_descriptor(_FakePlugin)},
+    )
+    mgr = ChannelManager(fake_config, MessageBus())
 
     assert "fakeplugin" not in mgr.channels
 
@@ -276,7 +292,7 @@ async def test_manager_skips_disabled_plugin():
 
 def test_builtin_channel_default_config():
     """Built-in channels expose default_config() returning a dict with 'enabled': False."""
-    from nanobot.channels.telegram import TelegramChannel
+    from nanobot.channels.telegram.runtime import TelegramChannel
     cfg = TelegramChannel.default_config()
     assert isinstance(cfg, dict)
     assert cfg["enabled"] is False
@@ -285,7 +301,7 @@ def test_builtin_channel_default_config():
 
 def test_builtin_channel_init_from_dict():
     """Built-in channels accept a raw dict and convert to Pydantic internally."""
-    from nanobot.channels.telegram import TelegramChannel
+    from nanobot.channels.telegram.runtime import TelegramChannel
     bus = MessageBus()
     ch = TelegramChannel({"enabled": False, "token": "test-tok", "allowFrom": ["*"]}, bus)
     assert ch.config.token == "test-tok"
@@ -446,8 +462,8 @@ async def test_send_with_retry_no_retry_when_max_is_zero():
 
 @pytest.mark.asyncio
 async def test_send_with_retry_calls_send_delta():
-    """_send_with_retry should call send_delta when metadata has _stream_delta."""
-    send_delta_called = False
+    """_send_with_retry should deliver typed stream deltas with their routing data."""
+    calls = []
 
     class _StreamingChannel(BaseChannel):
         name = "streaming"
@@ -462,9 +478,12 @@ async def test_send_with_retry_calls_send_delta():
         async def send(self, msg: OutboundMessage) -> None:
             pass  # Should not be called
 
-        async def send_delta(self, chat_id: str, delta: str, metadata: dict | None = None) -> None:
-            nonlocal send_delta_called
-            send_delta_called = True
+        async def send_delta(
+            self, chat_id: str, delta: str, metadata: dict | None = None,
+            *, stream_id: str | None = None, stream_end: bool = False,
+            resuming: bool = False,
+        ) -> None:
+            calls.append((chat_id, delta, stream_id, stream_end, resuming, metadata))
 
     fake_config = SimpleNamespace(
         channels=ChannelsConfig(send_max_retries=3),
@@ -477,18 +496,25 @@ async def test_send_with_retry_calls_send_delta():
     mgr.channels = {"streaming": _StreamingChannel(fake_config, mgr.bus)}
     mgr._dispatch_task = None
 
-    msg = OutboundMessage(
-        channel="streaming", chat_id="123", content="test delta",
-        metadata={"_stream_delta": True}
+    msg = outbound_message_for_event(
+        channel="streaming", chat_id="123",
+        event=StreamDeltaEvent(content="test delta", stream_id="stream-1"),
+        metadata={"origin": "test"},
     )
     await mgr._send_with_retry(mgr.channels["streaming"], msg)
 
-    assert send_delta_called is True
+    assert len(calls) == 1
+    chat_id, delta, stream_id, stream_end, resuming, metadata = calls[0]
+    assert (chat_id, delta, stream_id, stream_end, resuming) == (
+        "123", "test delta", "stream-1", False, False,
+    )
+    assert metadata["origin"] == "test"
+    assert metadata["_delivery_id"]
 
 
 @pytest.mark.asyncio
 async def test_send_with_retry_skips_send_when_streamed():
-    """_send_with_retry should not call send when metadata has _streamed flag."""
+    """_send_with_retry should not duplicate an already streamed response."""
     send_called = False
     send_delta_called = False
 
@@ -521,10 +547,8 @@ async def test_send_with_retry_skips_send_when_streamed():
     mgr.channels = {"streamed": _StreamedChannel(fake_config, mgr.bus)}
     mgr._dispatch_task = None
 
-    # _streamed means message was already sent via send_delta, so skip send
-    msg = OutboundMessage(
-        channel="streamed", chat_id="123", content="test",
-        metadata={"_streamed": True}
+    msg = outbound_message_for_event(
+        channel="streamed", chat_id="123", event=StreamedResponseEvent(),
     )
     await mgr._send_with_retry(mgr.channels["streamed"], msg)
 
@@ -693,9 +717,14 @@ class _StartableChannel(BaseChannel):
         pass
 
 
+def _lifecycle_manager() -> ChannelManager:
+    """Use real manager state without discovering external channel runtimes."""
+    return ChannelManager(Config(), MessageBus())
+
+
 @pytest.mark.asyncio
-async def test_validate_allow_from_raises_on_empty_list():
-    """_validate_allow_from should raise SystemExit when allow_from is empty list."""
+async def test_validate_allow_from_allows_non_telegram_empty_list():
+    """Non-Telegram channels retain their existing empty allow_from policy."""
     fake_config = SimpleNamespace(
         channels=ChannelsConfig(),
         providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
@@ -706,10 +735,7 @@ async def test_validate_allow_from_raises_on_empty_list():
     mgr.channels = {"test": _ChannelWithAllowFrom(fake_config, None, [])}
     mgr._dispatch_task = None
 
-    with pytest.raises(SystemExit) as exc_info:
-        mgr._validate_allow_from()
-
-    assert "empty allowFrom" in str(exc_info.value)
+    mgr._validate_allow_from()
 
 
 @pytest.mark.asyncio
@@ -795,16 +821,8 @@ async def test_enabled_channels_returns_channel_names():
 @pytest.mark.asyncio
 async def test_stop_all_cancels_dispatcher_and_stops_channels():
     """stop_all should cancel the dispatch task and stop all channels."""
-    fake_config = SimpleNamespace(
-        channels=ChannelsConfig(),
-        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
-    )
-
-    mgr = ChannelManager.__new__(ChannelManager)
-    mgr.config = fake_config
-    mgr.bus = MessageBus()
-
-    ch = _StartableChannel(fake_config, mgr.bus)
+    mgr = _lifecycle_manager()
+    ch = _StartableChannel(mgr.config, mgr.bus)
     mgr.channels = {"startable": ch}
 
     # Create a real cancelled task
@@ -815,7 +833,12 @@ async def test_stop_all_cancels_dispatcher_and_stops_channels():
     dispatch_task = asyncio.create_task(dummy_task())
     mgr._dispatch_task = dispatch_task
 
-    await mgr.stop_all()
+    try:
+        await mgr.stop_all()
+    finally:
+        if not dispatch_task.done():
+            dispatch_task.cancel()
+            await asyncio.gather(dispatch_task, return_exceptions=True)
 
     # Task should be cancelled
     assert dispatch_task.cancelled()
@@ -852,8 +875,9 @@ async def test_start_channel_logs_error_on_failure():
 
     ch = _FailingChannel(fake_config, mgr.bus)
 
-    # Should not raise, just log error
-    await mgr._start_channel("failing", ch)
+    with pytest.raises(RuntimeError, match="connection failed"):
+        await mgr._start_channel("failing", ch)
+    assert mgr._channel_errors["failing"] == "Channel failed to start. Check gateway logs."
 
 
 @pytest.mark.asyncio
@@ -872,19 +896,11 @@ async def test_stop_all_handles_channel_exception():
         async def send(self, msg: OutboundMessage) -> None:
             pass
 
-    fake_config = SimpleNamespace(
-        channels=ChannelsConfig(),
-        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
-    )
+    mgr = _lifecycle_manager()
+    mgr.channels = {"stopfailing": _StopFailingChannel(mgr.config, mgr.bus)}
 
-    mgr = ChannelManager.__new__(ChannelManager)
-    mgr.config = fake_config
-    mgr.bus = MessageBus()
-    mgr.channels = {"stopfailing": _StopFailingChannel(fake_config, mgr.bus)}
-    mgr._dispatch_task = None
-
-    # Should not raise even if channel.stop() raises
-    await mgr.stop_all()
+    with pytest.raises(RuntimeError, match="stop failed"):
+        await mgr.stop_all()
 
 
 @pytest.mark.asyncio
@@ -910,37 +926,18 @@ async def test_start_all_no_channels_logs_warning():
 @pytest.mark.asyncio
 async def test_start_all_creates_dispatch_task():
     """start_all should create the dispatch task when channels exist."""
-    fake_config = SimpleNamespace(
-        channels=ChannelsConfig(),
-        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
-    )
-
-    mgr = ChannelManager.__new__(ChannelManager)
-    mgr.config = fake_config
-    mgr.bus = MessageBus()
-
-    ch = _StartableChannel(fake_config, mgr.bus)
+    mgr = _lifecycle_manager()
+    ch = _StartableChannel(mgr.config, mgr.bus)
     mgr.channels = {"startable": ch}
-    mgr._dispatch_task = None
-
-    # Cancel immediately after start to avoid running forever
-    async def cancel_after_start():
-        await asyncio.sleep(0.01)
-        if mgr._dispatch_task:
-            mgr._dispatch_task.cancel()
-
-    cancel_task = asyncio.create_task(cancel_after_start())
 
     try:
         await mgr.start_all()
-    except asyncio.CancelledError:
-        pass
+        assert ch.started is True
+        assert mgr._dispatch_task is not None
+        assert not mgr._dispatch_task.done()
     finally:
-        cancel_task.cancel()
-        try:
-            await cancel_task
-        except asyncio.CancelledError:
-            pass
+        await mgr.stop_all()
 
-    # Dispatch task should have been created
-    assert mgr._dispatch_task is not None
+    # The dispatcher catches cancellation while draining its own outbound tasks.
+    assert mgr._dispatch_task.done()
+    assert ch.stopped is True

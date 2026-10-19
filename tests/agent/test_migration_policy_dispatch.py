@@ -4,13 +4,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent.runner_helpers import make_run_spec
 from nanobot.agent.policy import DelegatedReadOnlyPolicy
 from nanobot.agent.runner import AgentRunner
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import LLMResponse, ToolCallRequest
+from tests.agent.runner_helpers import make_run_spec
 
 
 class RecordingTool(Tool):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -117,3 +118,46 @@ def test_semantic_storyboard_text_contains_semantic_summary():
     assert "SEMANTIC VIDEO STORYBOARD" in storyboard
     assert "overall_summary: The app opens and shows a reminder flow." in storyboard
     assert "summary=Opening screen introduces the reminder form." in storyboard
+
+
+def test_event_selection_preserves_endpoints_and_frame_limit():
+    module = _load_module()
+    events = module._build_events(
+        30.0, [2.0, 2.1, 10.0, 21.0],
+        min_spacing_seconds=0.75, max_gap_seconds=6.0, max_frames=5,
+    )
+    assert len(events) == 5
+    assert events[0] == {"time": 0.0, "reason": "start", "priority": 3}
+    assert events[-1] == {"time": 29.95, "reason": "end", "priority": 3}
+    assert all(left["time"] < right["time"] for left, right in zip(events, events[1:]))
+
+
+def test_main_writes_storyboards_and_reuses_cache(tmp_path, monkeypatch, capsys):
+    module = _load_module()
+    video = tmp_path / "demo.mp4"
+    video.write_bytes(b"offline fixture")
+    output = tmp_path / "storyboard"
+    monkeypatch.setattr(module.sys, "argv", [
+        "extract_keyframes.py", str(video), "--output-dir", str(output),
+        "--no-ocr", "--no-semantic",
+    ])
+    monkeypatch.setattr(module.shutil, "which", lambda name: None)
+    monkeypatch.setattr(module, "_probe_duration", lambda path: 3.0)
+    monkeypatch.setattr(module, "_detect_scene_times", lambda path, threshold: [1.0])
+    extracted = []
+
+    def extract(path, timestamp, target, width):
+        extracted.append(timestamp)
+        target.write_bytes(b"offline frame")
+
+    monkeypatch.setattr(module, "_extract_frame", extract)
+    assert module.main() == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "ok"
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["frame_count"] == len(extracted) == 3
+    assert manifest["semantic_storyboard"]["generator"] == "fallback"
+    for name in ("storyboard.md", "storyboard.txt", "semantic-storyboard.md", "semantic-storyboard.txt"):
+        assert (output / name).read_text().strip()
+    assert module.main() == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "cached"
+    assert len(extracted) == 3

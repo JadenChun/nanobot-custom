@@ -682,7 +682,8 @@ class WebUICommandRouter:
                     else False
                 ),
             )
-            self._workspaces.persist_scope(chat_id, scope)
+            if temporary_policy is None:
+                self._workspaces.persist_scope(chat_id, scope)
             accepted = True
         finally:
             if not accepted and queued_owner is not None:

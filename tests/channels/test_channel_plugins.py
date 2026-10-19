@@ -313,7 +313,9 @@ def test_descriptor_defaults_cover_onboarding_fields_without_runtime_import():
     assert channel_default_config(email)["smtpPort"] == 587
 
 
-def test_channel_manager_delegates_instance_expansion_to_channel(monkeypatch: pytest.MonkeyPatch):
+async def test_channel_manager_delegates_instance_expansion_to_channel(
+    monkeypatch: pytest.MonkeyPatch,
+):
     _stub_channel_registry(monkeypatch, _channel_plugin(_FakeMultiChannel))
 
     cfg = Config.model_validate({
@@ -341,14 +343,14 @@ def test_channel_manager_delegates_instance_expansion_to_channel(monkeypatch: py
         }
     })
 
-    manager = ChannelManager(cfg, MessageBus())
+    manager = await ChannelManager(cfg, MessageBus()).acquire()
 
     assert set(manager.channels) == {"multi", "multi.product"}
     assert manager.channels["multi"].name == "multi"
     assert manager.channels["multi.product"].name == "multi.product"
 
 
-def test_channel_manager_loads_descriptor_but_not_disabled_runtime(monkeypatch):
+async def test_channel_manager_loads_descriptor_but_not_disabled_runtime(monkeypatch):
     load_calls: list[str] = []
     plugin = ChannelPlugin(
         name="fakeplugin",
@@ -373,7 +375,7 @@ def test_channel_manager_loads_descriptor_but_not_disabled_runtime(monkeypatch):
         lambda _name: load_calls.append("descriptor") or plugin,
     )
 
-    manager = ChannelManager(config, MessageBus())
+    manager = await ChannelManager(config, MessageBus()).acquire()
 
     assert manager.channels == {}
     assert load_calls == ["descriptor"]
@@ -508,7 +510,7 @@ async def test_single_channel_enable_applies_defaults_before_hot_reload(
     assert manager.channels["singleplugin"].retries == 3
 
 
-def test_channel_manager_preserves_single_instance_plugin_owned_instances(monkeypatch):
+async def test_channel_manager_preserves_single_instance_plugin_owned_instances(monkeypatch):
     _stub_channel_registry(monkeypatch, _channel_plugin(_FakePlugin))
     config = Config.model_validate({
         "channels": {
@@ -519,7 +521,7 @@ def test_channel_manager_preserves_single_instance_plugin_owned_instances(monkey
         }
     })
 
-    manager = ChannelManager(config, MessageBus())
+    manager = await ChannelManager(config, MessageBus()).acquire()
 
     assert set(manager.channels) == {"fakeplugin"}
     assert manager.channels["fakeplugin"].config["instances"] == ["plugin-owned-value"]
@@ -894,7 +896,7 @@ def test_discover_enabled_warns_for_enabled_package_import_errors():
 # Manager _init_channels with dict config
 # ---------------------------------------------------------------------------
 
-def test_manager_loads_plugin_from_dict_config(monkeypatch):
+async def test_manager_loads_plugin_from_dict_config(monkeypatch):
     """ChannelManager should instantiate a channel package from a raw dict config."""
     from nanobot.channels.manager import ChannelManager
 
@@ -905,13 +907,13 @@ def test_manager_loads_plugin_from_dict_config(monkeypatch):
     })
     _stub_channel_registry(monkeypatch, _channel_plugin(_FakePlugin))
 
-    mgr = ChannelManager(fake_config, MessageBus())
+    mgr = await ChannelManager(fake_config, MessageBus()).acquire()
 
     assert "fakeplugin" in mgr.channels
     assert isinstance(mgr.channels["fakeplugin"], _FakePlugin)
 
 
-def test_manager_does_not_install_manifest_dependencies_at_startup(monkeypatch):
+async def test_manager_does_not_install_manifest_dependencies_at_startup(monkeypatch):
     plugin = _channel_plugin(
         _FakePlugin,
         dependencies=("fake-sdk>=1",),
@@ -935,7 +937,7 @@ def test_manager_does_not_install_manifest_dependencies_at_startup(monkeypatch):
         }
     })
 
-    manager = ChannelManager(config, MessageBus())
+    manager = await ChannelManager(config, MessageBus()).acquire()
 
     assert installs == []
     assert manager.channels == {}
@@ -946,7 +948,7 @@ def test_manager_does_not_install_manifest_dependencies_at_startup(monkeypatch):
     )
 
 
-def test_manager_dependency_check_is_stable_and_does_not_run_subprocess(monkeypatch):
+async def test_manager_dependency_check_is_stable_and_does_not_run_subprocess(monkeypatch):
     plugin = _channel_plugin(
         _FakePlugin,
         dependencies=("fake-sdk>=1",),
@@ -967,7 +969,7 @@ def test_manager_dependency_check_is_stable_and_does_not_run_subprocess(monkeypa
         }
     })
 
-    manager = ChannelManager(config, MessageBus())
+    manager = await ChannelManager(config, MessageBus()).acquire()
 
     assert manager.channels == {}
     assert manager.get_status()["fakeplugin"] == {
@@ -983,7 +985,7 @@ def test_manager_dependency_check_is_stable_and_does_not_run_subprocess(monkeypa
     }
 
 
-def test_manager_keeps_websocket_disabled_when_config_is_legacy_or_omitted():
+async def test_manager_keeps_websocket_disabled_when_config_is_legacy_or_omitted():
     from nanobot.channels.manager import ChannelManager
 
     class _FakeWebSocket(_FakePlugin):
@@ -1000,13 +1002,15 @@ def test_manager_keeps_websocket_disabled_when_config_is_legacy_or_omitted():
 
     plugin = _channel_plugin(_FakeWebSocket, default_enabled=True)
     with patch("nanobot.channels.registry.discover_plugins", return_value={"websocket": plugin}):
-        mgr = ChannelManager(Config(), MessageBus(), webui_static_dist=False)
+        mgr = await ChannelManager(
+            Config(), MessageBus(), webui_static_dist=False,
+        ).acquire()
 
     assert "websocket" not in mgr.channels
     assert mgr.get_status() == {}
 
 
-def test_manager_respects_explicitly_disabled_websocket_config():
+async def test_manager_respects_explicitly_disabled_websocket_config():
     from nanobot.channels.manager import ChannelManager
 
     config = Config.model_validate({"channels": {"websocket": {"enabled": False}}})
@@ -1017,7 +1021,9 @@ def test_manager_respects_explicitly_disabled_websocket_config():
         default_enabled=True,
     )
     with patch("nanobot.channels.registry.discover_plugins", return_value={"websocket": plugin}):
-        mgr = ChannelManager(config, MessageBus(), webui_static_dist=False)
+        mgr = await ChannelManager(
+            config, MessageBus(), webui_static_dist=False,
+        ).acquire()
 
     assert "websocket" not in mgr.channels
 
@@ -2835,20 +2841,14 @@ def test_requirement_installed_validates_requested_extras(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_manager_skips_disabled_channel_package(monkeypatch):
-    fake_config = SimpleNamespace(
-        channels=ChannelsConfig.model_validate({
+    fake_config = Config.model_validate({
+        "channels": {
             "fakeplugin": {"enabled": False},
-        }),
-        providers=SimpleNamespace(groq=SimpleNamespace(api_key="")),
-    )
+        },
+    })
 
     _stub_channel_registry(monkeypatch, _channel_plugin(_FakePlugin))
-    mgr = ChannelManager.__new__(ChannelManager)
-    mgr.config = fake_config
-    mgr.bus = MessageBus()
-    mgr.channels = {}
-    mgr._dispatch_task = None
-    mgr._init_channels()
+    mgr = await ChannelManager(fake_config, MessageBus()).acquire()
 
     assert "fakeplugin" not in mgr.channels
 
@@ -3582,8 +3582,9 @@ async def test_start_channel_logs_error_on_failure():
 
     ch = _FailingChannel(fake_config, mgr.bus)
 
-    # Should not raise, just log error
-    await mgr._start_channel("failing", ch)
+    with pytest.raises(RuntimeError, match="connection failed"):
+        await mgr._start_channel("failing", ch)
+    assert mgr._channel_errors["failing"] == "Channel failed to start. Check gateway logs."
     assert mgr.channels == {}
     assert mgr._dispatch_task is None
 
@@ -3618,8 +3619,8 @@ async def test_stop_all_handles_channel_exception():
     mgr._stopping_channels = set()
     mgr._dispatch_task = None
 
-    # Should not raise even if channel.stop() raises
-    await mgr.stop_all()
+    with pytest.raises(RuntimeError, match="stop failed"):
+        await mgr.stop_all()
     assert list(mgr.channels) == ["stopfailing"]
     assert mgr._dispatch_task is None
 

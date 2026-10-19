@@ -6,10 +6,12 @@ import hashlib
 import os
 import stat
 from pathlib import Path
+from typing import NoReturn, cast
 
 from nanobot.agent import memory_recovery as receipt_codec
 from nanobot.agent import memory_recovery_conversion as conversion
 from nanobot.agent import memory_recovery_conversion_runtime as preparation
+from nanobot.agent import memory_recovery_quarantine_storage as quarantine
 from nanobot.agent import memory_recovery_storage as storage
 from nanobot.agent import memory_recovery_target_mutation as mutation
 from nanobot.agent import memory_recovery_target_verify as verification
@@ -27,7 +29,7 @@ class ConversionApplyError(RuntimeError):
         super().__init__("memory recovery conversion application is unavailable")
 
 
-def _fail() -> None:
+def _fail() -> NoReturn:
     raise ConversionApplyError() from None
 
 
@@ -109,16 +111,73 @@ def _status(
     return "output"
 
 
+def require_conversion_receipt_binding(
+    authority: storage.WorkspaceMemoryAuthority,
+    receipt_snapshot: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+) -> None:
+    """Check the conversion receipt snapshot or current quarantine-copy binding."""
+
+    _bound_receipt(authority, receipt_snapshot)
+
+
 def _bound_receipt(
     authority: storage.WorkspaceMemoryAuthority,
-    receipt_snapshot: storage.MemoryTargetSnapshot,
+    receipt_snapshot: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
 ) -> None:
+    if type(receipt_snapshot) is quarantine.ValidatedQuarantineCopy:
+        receipt_snapshot.require_current()
+        if authority.snapshot_target(_RECEIPT).exists:
+            _fail()
+        return
+    if type(receipt_snapshot) is not storage.MemoryTargetSnapshot:
+        _fail()
     current = authority.snapshot_target(_RECEIPT)
     if (
         current.content != receipt_snapshot.content
         or current.stat_identity != receipt_snapshot.stat_identity
     ):
         _fail()
+
+
+def _receipt_bytes(
+    evidence: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+) -> bytes:
+    if type(evidence) is quarantine.ValidatedQuarantineCopy:
+        return evidence.raw_bytes
+    if type(evidence) is not storage.MemoryTargetSnapshot or evidence.name != _RECEIPT or evidence.content is None:
+        _fail()
+    return evidence.content
+
+
+def _receipt_stat(
+    evidence: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+) -> dict[str, int | None]:
+    if type(evidence) is quarantine.ValidatedQuarantineCopy:
+        values = evidence.original_stat
+        if len(values) != 9:
+            _fail()
+        return dict(zip(
+            ("device", "inode", "mode", "uid", "gid", "links", "size", "mtime_ns", "ctime_ns"),
+            values, strict=True,
+        ))
+    from nanobot.agent import memory_recovery_transaction_prepare as preparation
+    # Supported consumers validate exact snapshot/copy evidence before projection.
+    # The cast is inert: private fallback calls retain their original delegation.
+    return preparation.receipt_snapshot_stat(cast(storage.MemoryTargetSnapshot, evidence))
+
+
+def receipt_evidence_bytes(
+    evidence: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+) -> bytes:
+    """Project existing receipt evidence; this acquires no new authority."""
+    return _receipt_bytes(evidence)
+
+
+def receipt_evidence_stat(
+    evidence: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+) -> dict[str, int | None]:
+    """Project existing receipt evidence; this acquires no new authority."""
+    return _receipt_stat(evidence)
 
 
 def apply_prepared_conversion_targets(workspace: Path | str, *, workspace_id: str) -> ManifestRecord:
@@ -140,9 +199,7 @@ def apply_prepared_conversion_targets(workspace: Path | str, *, workspace_id: st
                 ):
                     _fail()
             raw_receipt = receipt_snapshot.content
-            receipt = receipt_codec._validate_payload(
-                receipt_codec._decode(raw_receipt), raw_receipt
-            )
+            receipt = receipt_codec.decode_memory_receipt_bytes(raw_receipt)
             captured_tx = transaction.capture_transaction_payload(
                 receipt, workspace_id=workspace_id, workspace_identity=operation.workspace_identity
             )
@@ -158,7 +215,7 @@ def apply_prepared_conversion_targets(workspace: Path | str, *, workspace_id: st
             if _chain(authority, "conversions", v1.identity).load():
                 _fail()
             manifest = _chain(authority, "conversions", v2.identity)
-            records = manifest.load()
+            records: tuple[ManifestRecord, ...] = manifest.load()
             if not 2 <= len(records) <= 4 or [record.phase for record in records] != [
                 "CAPTURED", "CONVERSION_PREPARED", "JSONL_APPLIED", "CURSORS_APPLIED"
             ][: len(records)]:
@@ -210,7 +267,7 @@ def apply_prepared_conversion_targets(workspace: Path | str, *, workspace_id: st
                 output = {
                     name: _output_bytes(authority, prepared.outputs[name]) for name in _TARGETS
                 }
-                derived = preparation._output_bytes(prepared, frozen_source)
+                derived = preparation.derive_conversion_output_bytes(prepared, frozen_source)
                 if any(output[name] != derived[name] for name in _TARGETS):
                     _fail()
                 row = derived["history.jsonl"].splitlines(keepends=True)[-1]
@@ -229,7 +286,8 @@ def apply_prepared_conversion_targets(workspace: Path | str, *, workspace_id: st
                 output = dict(frozen)
             else:
                 _fail()
-            if rebuilt.to_payload() != records[1].payload:
+            # load supplies ManifestRecords; the unchanged 2–4 guard proves index 1 safe.
+            if rebuilt.to_payload() != cast(tuple[ManifestRecord, ...], records)[1].payload:
                 _fail()
 
             def observe() -> tuple[dict[str, storage.MemoryTargetSnapshot], dict[str, str]]:
@@ -303,7 +361,9 @@ def apply_prepared_conversion_targets(workspace: Path | str, *, workspace_id: st
             phase = conversion.cursors_applied_conversion_payload(v2, prepared, jsonl)
             observe()
             return manifest.append(
-                predecessor_digest=records[2].digest,
+                # load/append supply ManifestRecords; length 4 returned and length 2
+                # appended once, so the unchanged paths prove index 2 safe.
+                predecessor_digest=cast(tuple[ManifestRecord, ...], records)[2].digest,
                 phase="CURSORS_APPLIED", payload=phase.to_payload(),
             )
     except ConversionApplyError:
@@ -312,4 +372,53 @@ def apply_prepared_conversion_targets(workspace: Path | str, *, workspace_id: st
         _fail()
 
 
-__all__ = ["ConversionApplyError", "apply_prepared_conversion_targets"]
+def open_conversion_manifest(
+    authority: storage.WorkspaceMemoryAuthority, kind: str, identity: str
+) -> MemoryRecoveryManifest:
+    """Open the existing owner-bound recovery evidence namespace."""
+    return _chain(authority, kind, identity)
+
+
+def read_conversion_old_bytes(
+    authority: storage.WorkspaceMemoryAuthority, descriptor: conversion.OldFileDescriptor
+) -> bytes | None:
+    """Read and check frozen original bytes through the held authority."""
+    return _old_bytes(authority, descriptor)
+
+
+def conversion_snapshot_matches_descriptor(
+    snapshot: storage.MemoryTargetSnapshot,
+    old: conversion.OldFileDescriptor,
+    frozen: bytes | None,
+) -> bool:
+    """Compare a conversion snapshot with its frozen descriptor and bytes."""
+    return _descriptor_matches(snapshot, old, frozen)
+
+
+def read_conversion_output_bytes(
+    authority: storage.WorkspaceMemoryAuthority, descriptor: conversion.NewFileDescriptor
+) -> bytes | None:
+    """Read and check a conversion output blob through the held authority."""
+    return _output_bytes(authority, descriptor)
+
+
+def classify_conversion_target(
+    snapshot: storage.MemoryTargetSnapshot,
+    old: conversion.OldFileDescriptor,
+    frozen: bytes | None,
+    output: bytes | None,
+) -> str:
+    """Require an original or authorized-output conversion target identity."""
+    return _status(snapshot, old, frozen, output)
+
+
+__all__ = [
+    "ConversionApplyError",
+    "apply_prepared_conversion_targets",
+    "require_conversion_receipt_binding",
+    "open_conversion_manifest",
+    "read_conversion_old_bytes",
+    "conversion_snapshot_matches_descriptor",
+    "read_conversion_output_bytes",
+    "classify_conversion_target",
+]

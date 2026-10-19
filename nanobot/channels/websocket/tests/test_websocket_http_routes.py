@@ -1,8 +1,7 @@
-"""End-to-end tests for the embedded webui's HTTP routes on the WebSocket channel."""
+"""In-process tests for the embedded WebUI's HTTP routes on the WebSocket channel."""
 
 import asyncio
 import json
-import random
 import socket
 import time
 from contextlib import suppress
@@ -31,6 +30,7 @@ from .ws_test_client import InProcessHttpChannel
 from .ws_test_client import http_get as _http_get
 
 _PORT = 29900
+_IN_PROCESS_PORTS = iter(range(30_000, 65_536))
 
 
 @pytest.fixture(autouse=True)
@@ -56,16 +56,9 @@ class _MatrixChannel(BaseChannel):
         pass
 
 
-def _free_port() -> int:
-    for _ in range(100):
-        port = random.randint(30_000, 60_000)
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind(("127.0.0.1", port))
-            except OSError:
-                continue
-            return port
-    raise RuntimeError("could not find a free localhost port")
+def _next_in_process_port() -> int:
+    """Allocate a unique registry key, not a native listening socket."""
+    return next(_IN_PROCESS_PORTS)
 
 
 def _make_handler(
@@ -223,6 +216,74 @@ def _stub_matrix_feature(
         )
 
 
+def test_in_process_ports_are_unique_without_socket_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse_socket(*args: object, **kwargs: object) -> None:
+        raise AssertionError("logical HTTP route IDs must not probe native sockets")
+
+    monkeypatch.setattr(socket, "socket", refuse_socket)
+    ports = [_next_in_process_port() for _ in range(5)]
+    assert ports == list(range(ports[0], ports[0] + 5))
+    assert len(set(ports)) == 5
+    assert all(30_000 <= port <= 65_535 for port in ports)
+
+
+@pytest.mark.asyncio
+async def test_in_process_routes_keep_separate_owners_and_cleanup(
+    bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from . import ws_test_client
+
+    first_port, second_port = _next_in_process_port(), _next_in_process_port()
+    first = _ch(
+        bus, session_manager=_seed_session(tmp_path / "first", key="websocket:first"),
+        port=first_port,
+    )
+    second = _ch(
+        bus, session_manager=_seed_session(tmp_path / "second", key="websocket:second"),
+        port=second_port,
+    )
+
+    def refuse_network(*args: object, **kwargs: object) -> None:
+        raise AssertionError("in-process HTTP routes must not fall back to network clients")
+
+    monkeypatch.setattr(httpx, "AsyncClient", refuse_network)
+    first_task = asyncio.create_task(first.start())
+    second_task = asyncio.create_task(second.start())
+    try:
+        first_token = first.gateway.tokens.issue_api_token(300)
+        second_token = second.gateway.tokens.issue_api_token(300)
+        first_auth = {"Authorization": f"Bearer {first_token}"}
+        second_auth = {"Authorization": f"Bearer {second_token}"}
+        first_url = f"http://127.0.0.1:{first_port}/api/sessions"
+        second_url = f"http://127.0.0.1:{second_port}/api/sessions"
+        first_response, second_response = await asyncio.gather(
+            _http_get(first_url, headers=first_auth),
+            _http_get(second_url, headers=second_auth),
+        )
+        assert first_port != second_port
+        assert first_response.status_code == second_response.status_code == 200
+        assert [row["key"] for row in first_response.json()["sessions"]] == ["websocket:first"]
+        assert [row["key"] for row in second_response.json()["sessions"]] == ["websocket:second"]
+        assert (await _http_get(first_url, headers=second_auth)).status_code == 401
+        assert (await _http_get(second_url, headers=first_auth)).status_code == 401
+        await first.stop()
+        await first_task
+        assert first_port not in ws_test_client._IN_PROCESS_HTTP_CHANNELS
+        assert ws_test_client._IN_PROCESS_HTTP_CHANNELS[second_port] is second
+        remaining = await _http_get(second_url, headers=second_auth)
+        assert remaining.status_code == 200
+        assert [row["key"] for row in remaining.json()["sessions"]] == ["websocket:second"]
+    finally:
+        await first.stop()
+        await second.stop()
+        await first_task
+        await second_task
+    assert first_port not in ws_test_client._IN_PROCESS_HTTP_CHANNELS
+    assert second_port not in ws_test_client._IN_PROCESS_HTTP_CHANNELS
+
+
 @pytest.mark.asyncio
 async def test_bootstrap_returns_token_for_localhost(
     bus: MagicMock, tmp_path: Path
@@ -313,7 +374,7 @@ async def test_sessions_list_and_thread_restore_transcript_without_canonical_fil
     )
     assert not sm._get_session_path(key).exists()
 
-    port = _free_port()
+    port = _next_in_process_port()
     channel = _ch(bus, session_manager=sm, port=port)
     server_task = asyncio.create_task(channel.start())
     try:
@@ -347,6 +408,7 @@ async def test_session_automations_route_filters_by_webui_session(
 ) -> None:
     cron = CronService(tmp_path / "cron" / "jobs.json")
     hourly = CronSchedule(kind="every", every_ms=3_600_000)
+    visible_jobs: list[CronJob] = []
     pending_job_id = ""
     for name, message, to in (
         ("Morning check", "Check the project status", "abc"),
@@ -361,8 +423,9 @@ async def test_session_automations_route_filters_by_webui_session(
             origin_chat_id=to,
         )
         if name == "Morning check":
+            visible_jobs.append(job)
             pending_job_id = job.id
-    cron.add_job(
+    legacy_job = cron.add_job(
         name="Legacy same target",
         schedule=hourly,
         message="Legacy job should be migrated",
@@ -371,6 +434,7 @@ async def test_session_automations_route_filters_by_webui_session(
         to="abc",
         session_key="websocket:abc",
     )
+    visible_jobs.append(legacy_job)
     cron.register_system_job(
         CronJob(
             id="heartbeat",
@@ -402,13 +466,16 @@ async def test_session_automations_route_filters_by_webui_session(
 
         assert resp.status_code == 200
         body = resp.json()
-        assert [job["name"] for job in body["jobs"]] == ["Morning check", "Legacy same target"]
-        job = body["jobs"][0]
+        expected_jobs = sorted(visible_jobs, key=lambda job: job.id)
+        assert [job["id"] for job in body["jobs"]] == [job.id for job in expected_jobs]
+        assert [job["name"] for job in body["jobs"]] == [job.name for job in expected_jobs]
+        by_id = {job["id"]: job for job in body["jobs"]}
+        job = by_id[pending_job_id]
         assert job["schedule"]["kind"] == "every"
         assert job["schedule"]["every_ms"] == 3_600_000
         assert job["payload"]["message"] == "Check the project status"
         assert job["state"]["pending"] is True
-        assert body["jobs"][1]["state"]["pending"] is False
+        assert by_id[legacy_job.id]["state"]["pending"] is False
     finally:
         await channel.stop()
         await server_task
@@ -469,7 +536,7 @@ async def test_session_automations_route_ignores_unified_owner(
 async def test_session_automations_route_lists_local_triggers(
     bus: MagicMock, tmp_path: Path
 ) -> None:
-    port = _free_port()
+    port = _next_in_process_port()
     base_url = f"http://127.0.0.1:{port}"
     trigger_store = LocalTriggerStore(tmp_path)
     trigger = trigger_store.create(
@@ -648,7 +715,7 @@ async def test_webui_skill_management_routes(
     monkeypatch.setattr("nanobot.webui.ws_http.set_webui_skill_enabled", set_enabled)
     monkeypatch.setattr("nanobot.webui.ws_http.delete_webui_skill", delete)
 
-    port = _free_port()
+    port = _next_in_process_port()
     channel = _ch(
         bus,
         session_manager=_seed_session(tmp_path),
@@ -755,7 +822,7 @@ async def test_webui_skills_marketplace_routes_search_and_install(
     monkeypatch.setattr("nanobot.webui.ws_http.marketplace_skill_trends", trends)
     monkeypatch.setattr("nanobot.webui.ws_http.install_marketplace_skill", install_mock)
 
-    port = _free_port()
+    port = _next_in_process_port()
     channel = _ch(
         bus,
         session_manager=_seed_session(tmp_path),
@@ -853,7 +920,7 @@ async def test_webui_skill_install_rejects_overlapping_requests(
         bus,
         session_manager=_seed_session(tmp_path),
         workspace_path=tmp_path,
-        port=_free_port(),
+        port=_next_in_process_port(),
     )
     first = asyncio.create_task(
         _webui_mutate(
@@ -894,7 +961,7 @@ async def test_webui_skill_delete_remains_local_only(
         bus,
         session_manager=_seed_session(tmp_path),
         workspace_path=tmp_path,
-        port=_free_port(),
+        port=_next_in_process_port(),
     )
     response = await _webui_mutate(
         channel,
@@ -938,7 +1005,7 @@ async def test_webui_skill_install_honors_remote_install_opt_in(
         bus,
         session_manager=_seed_session(tmp_path),
         workspace_path=tmp_path,
-        port=_free_port(),
+        port=_next_in_process_port(),
     )
     policy = load_config(channel.gateway.settings.config.path)
     policy.tools.webui_allow_remote_package_install = True
@@ -1036,6 +1103,10 @@ async def test_nanobot_feature_routes_require_token_and_enable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"channels": {"websocket": {"enabled": True}}}),
+        encoding="utf-8",
+    )
     _stub_matrix_feature(monkeypatch, config_path, channels=["matrix", "websocket"])
     channel = _ch(bus, session_manager=_seed_session(tmp_path), port=29916)
     server_task = asyncio.create_task(channel.start())
@@ -1066,6 +1137,7 @@ async def test_nanobot_feature_routes_require_token_and_enable(
         assert body["last_action"]["message"] == "Enabled channel 'matrix'"
         assert body["restart_required_sections"] == ["runtime"]
 
+        before_websocket_disable = config_path.read_bytes()
         disabled_websocket = await _webui_mutate(
             channel,
             "settings.feature.disable",
@@ -1073,7 +1145,7 @@ async def test_nanobot_feature_routes_require_token_and_enable(
         )
         assert disabled_websocket.status_code == 400
         assert "cannot be disabled from WebUI" in disabled_websocket.text
-        assert "websocket" not in json.loads(config_path.read_text(encoding="utf-8"))["channels"]
+        assert config_path.read_bytes() == before_websocket_disable
 
         disabled = await _webui_mutate(
             channel,
@@ -1100,7 +1172,7 @@ async def test_nanobot_feature_route_reports_live_channel_failure(
 ) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(
-        json.dumps({"channels": {"matrix": {"enabled": True}}}),
+        json.dumps({"channels": {"matrix": {"enabled": True}, "websocket": {"enabled": True}}}),
         encoding="utf-8",
     )
     _stub_matrix_feature(monkeypatch, config_path, channels=["matrix", "websocket"])
@@ -1147,6 +1219,52 @@ async def test_nanobot_feature_route_reports_live_channel_failure(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_nanobot_feature_route_uses_explicit_saved_activation(
+    bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, enabled: bool,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"channels": {"websocket": {"enabled": enabled}, "matrix": {"enabled": True}}}),
+        encoding="utf-8",
+    )
+    _stub_matrix_feature(monkeypatch, config_path, channels=["matrix", "websocket"])
+    before = config_path.read_bytes()
+    port = _next_in_process_port()
+    channel = _ch(
+        bus, session_manager=_seed_session(tmp_path), port=port,
+        channel_runtime_status=lambda: {
+            "websocket": {"owner": "websocket", "state": "running", "running": True},
+            "matrix": {"owner": "matrix", "state": "failed", "running": False},
+        },
+    )
+    server_task = asyncio.create_task(channel.start())
+    try:
+        token = channel.gateway.tokens.issue_api_token(300)
+        response = await _http_get(
+            f"http://127.0.0.1:{port}/api/settings/nanobot-features",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        features = {feature["name"]: feature for feature in body["features"]}
+        websocket = features["websocket"]
+        assert websocket["enabled"] is enabled
+        assert websocket["running"] is enabled
+        assert websocket["ready"] is enabled
+        assert websocket["runtime_status"] == ("running" if enabled else "stopped")
+        assert features["matrix"]["enabled"] is True
+        assert features["matrix"]["running"] is False
+        assert features["matrix"]["ready"] is False
+        assert features["matrix"]["runtime_status"] == "failed"
+        assert body["enabled_count"] == int(enabled)
+        assert config_path.read_bytes() == before
+    finally:
+        await channel.stop()
+        await server_task
+
+
+@pytest.mark.asyncio
 async def test_pairing_routes_require_token_and_approve_or_deny(
     bus: MagicMock,
     tmp_path: Path,
@@ -1174,7 +1292,7 @@ async def test_pairing_routes_require_token_and_approve_or_deny(
         lambda code: denied.append(code) or code == "ABCD-EFGH",
     )
 
-    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
+    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_next_in_process_port())
     token = channel.gateway.tokens.issue_api_token(300)
 
     denied_response = await channel.gateway.http.settings_routes.dispatch(
@@ -1243,7 +1361,7 @@ async def test_nanobot_feature_remote_install_requires_opt_in(
         installed=False,
         install_calls=install_calls,
     )
-    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
+    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_next_in_process_port())
     blocked = await _webui_mutate(
         channel,
         "settings.feature.enable",
@@ -1286,7 +1404,7 @@ async def test_nanobot_feature_local_install_allowed_by_default(
         installed=False,
         install_calls=install_calls,
     )
-    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
+    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_next_in_process_port())
     response = await _webui_mutate(
         channel,
         "settings.feature.enable",
@@ -1326,7 +1444,7 @@ async def test_nanobot_feature_channel_action_can_apply_without_restart(
     channel = _ch(
         bus,
         session_manager=_seed_session(tmp_path),
-        port=_free_port(),
+        port=_next_in_process_port(),
         channel_feature_action=channel_feature_action,
     )
     response = await _webui_mutate(
@@ -1363,7 +1481,7 @@ async def test_channel_connect_runtime_import_error_is_not_reported_as_unsupport
         "nanobot.webui.settings_routes.load_channel_plugin",
         lambda _name: FakePlugin(),
     )
-    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
+    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_next_in_process_port())
     response = await _webui_mutate(
         channel,
         "settings.channel.connect.start",
@@ -1450,7 +1568,7 @@ async def test_feishu_connect_routes_write_config_and_hot_reload(
     channel = _ch(
         bus,
         session_manager=_seed_session(tmp_path),
-        port=_free_port(),
+        port=_next_in_process_port(),
         channel_feature_action=channel_feature_action,
     )
     started = await _webui_mutate(
@@ -1630,7 +1748,7 @@ async def test_channel_configure_route_saves_discord_config_and_hot_reloads(
     channel = _ch(
         bus,
         session_manager=_seed_session(tmp_path),
-        port=_free_port(),
+        port=_next_in_process_port(),
         channel_feature_action=channel_feature_action,
     )
     response = await _webui_mutate(
@@ -1689,7 +1807,7 @@ async def test_channel_configure_route_preserves_existing_channel_values(
     loader.save_config(config, config_path)
     monkeypatch.setattr(loader, "_current_config_path", config_path)
 
-    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
+    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_next_in_process_port())
     response = await _webui_mutate(
         channel,
         "settings.channel.configure",
@@ -1747,7 +1865,7 @@ async def test_channel_configure_route_saves_matrix_device_id_without_replacing_
     loader.save_config(config, config_path)
     monkeypatch.setattr(loader, "_current_config_path", config_path)
 
-    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
+    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_next_in_process_port())
     response = await _webui_mutate(
         channel,
         "settings.channel.configure",
@@ -1779,7 +1897,7 @@ async def test_channel_configure_route_saves_mattermost_setup(
     loader.save_config(Config(), config_path)
     monkeypatch.setattr(loader, "_current_config_path", config_path)
 
-    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
+    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_next_in_process_port())
     response = await _webui_mutate(
         channel,
         "settings.channel.configure",
@@ -1817,7 +1935,7 @@ async def test_nanobot_feature_loopback_reverse_proxy_install_requires_opt_in(
         installed=False,
         install_calls=install_calls,
     )
-    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
+    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_next_in_process_port())
     forwarded_headers = {
         "Host": "nanobot.example",
         "X-Forwarded-For": "203.0.113.42",
@@ -1863,7 +1981,7 @@ async def test_nanobot_feature_remote_enable_without_install_is_allowed(
         installed=True,
         install_calls=install_calls,
     )
-    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
+    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_next_in_process_port())
     response = await _webui_mutate(
         channel,
         "settings.feature.enable",
@@ -1891,7 +2009,7 @@ async def test_nanobot_feature_remote_disable_does_not_need_install_policy(
     )
     _stub_matrix_feature(monkeypatch, config_path, deps=["matrix-nio>=0.25.2"], installed=False)
 
-    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_free_port())
+    channel = _ch(bus, session_manager=_seed_session(tmp_path), port=_next_in_process_port())
     response = await _webui_mutate(
         channel,
         "settings.feature.disable",
@@ -2296,7 +2414,7 @@ async def test_session_delete_removes_transcript_without_canonical_file(
     webui_path = tmp_path / "webui" / f"{SessionManager.safe_key(key)}.jsonl"
     assert webui_path.is_file()
 
-    channel = _ch(bus, session_manager=sm, port=_free_port())
+    channel = _ch(bus, session_manager=sm, port=_next_in_process_port())
     server_task = asyncio.create_task(channel.start())
     try:
         response = await _webui_mutate(
@@ -2320,7 +2438,7 @@ async def test_session_delete_removes_unpersisted_new_chat(
     sm = SessionManager(tmp_path / "sessions")
     project = tmp_path / "project"
     project.mkdir()
-    channel = _ch(bus, session_manager=sm, workspace_path=tmp_path, port=_free_port())
+    channel = _ch(bus, session_manager=sm, workspace_path=tmp_path, port=_next_in_process_port())
     connection = AsyncMock()
     connection.remote_address = ("127.0.0.1", 50123)
 
@@ -2359,7 +2477,7 @@ async def test_session_delete_removes_unpersisted_new_chat(
 async def test_webui_automations_route_lists_all_jobs_and_allows_user_actions(
     bus: MagicMock, tmp_path: Path
 ) -> None:
-    port = _free_port()
+    port = _next_in_process_port()
     base_url = f"http://127.0.0.1:{port}"
     cron = CronService(tmp_path / "cron" / "jobs.json")
     user_job = cron.add_job(
@@ -2602,7 +2720,7 @@ async def test_webui_automations_route_lists_all_jobs_and_allows_user_actions(
 async def test_webui_automations_route_manages_local_triggers(
     bus: MagicMock, tmp_path: Path
 ) -> None:
-    port = _free_port()
+    port = _next_in_process_port()
     base_url = f"http://127.0.0.1:{port}"
     trigger_store = LocalTriggerStore(tmp_path)
     trigger = trigger_store.create(
@@ -2725,7 +2843,7 @@ async def test_session_delete_blocks_and_cascades_local_triggers(
     bus: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path)
-    port = _free_port()
+    port = _next_in_process_port()
     sm = _seed_session(tmp_path, key="websocket:doomed")
     trigger_store = LocalTriggerStore(tmp_path)
     trigger = trigger_store.create(
@@ -2948,7 +3066,7 @@ async def test_sessions_list_negotiates_gzip_across_repeated_headers(
     bus: MagicMock, tmp_path: Path
 ) -> None:
     sm = _seed_many(tmp_path, [f"websocket:gzip-{index:03d}" for index in range(80)])
-    port = _free_port()
+    port = _next_in_process_port()
     channel = _ch(bus, session_manager=sm, workspace_path=tmp_path, port=port)
     server_task = asyncio.create_task(channel.start())
     try:
@@ -2991,7 +3109,7 @@ async def test_webui_thread_complete_transcript_skips_session_history_read(
         side_effect=AssertionError("complete transcripts must not read canonical history")
     )
     monkeypatch.setattr(sm, "read_session_file", read_session_file)
-    port = _free_port()
+    port = _next_in_process_port()
     channel = _ch(
         bus,
         session_manager=sm,
@@ -3034,7 +3152,7 @@ async def test_webui_thread_negotiates_gzip_for_large_payloads(
             "text": "compress me " * 1_000,
         },
     )
-    port = _free_port()
+    port = _next_in_process_port()
     channel = _ch(bus, session_manager=sm, workspace_path=tmp_path, port=port)
     server_task = asyncio.create_task(channel.start())
     try:

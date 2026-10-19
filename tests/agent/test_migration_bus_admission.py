@@ -16,6 +16,8 @@ def bus_host(tmp_path):
     loop._recovery_admission = None
     loop._pending_queues = {}
     loop._pending_republish = {}
+    loop._busy_consumers = {}
+    loop._stopped_pending_followup_ids = {}
     loop._active_tasks = {}
     loop._discarding_sessions = set()
     loop._preserve_inflight_turns_on_shutdown = True
@@ -35,6 +37,7 @@ def message(content='task'):
 
 async def test_bus_scope_is_locked_preserves_envelope_and_drains_once(tmp_path):
     loop, delivery, coordinator = bus_host(tmp_path)
+    loop.sessions.get_or_create('telegram:42')
     msg = message()
     msg.require_existing_session = True
     msg.input_role = 'system'
@@ -254,7 +257,13 @@ async def test_redirected_cancel_uses_effective_key_and_compact_completes(tmp_pa
     await loop.approval_admission.store(session_key='cron:job', channel='telegram', chat_id='42', summary='task')
     loop._preserve_inflight_turns_on_shutdown = False
     keys = []
-    loop.sessions = SimpleNamespace(get_or_create=lambda key: keys.append(key) or object(), save=Mock(), source_backend=lambda key: None)
+    get_or_create = loop.sessions.get_or_create
+
+    def observed_get_or_create(key):
+        keys.append(key)
+        return get_or_create(key)
+
+    monkeypatch.setattr(loop.sessions, 'get_or_create', observed_get_or_create)
     loop._clear_pending_user_turn = Mock()
     monkeypatch.setattr(module, 'restore_runtime_checkpoint', lambda session: True)
     loop._process_turn.side_effect = asyncio.CancelledError()

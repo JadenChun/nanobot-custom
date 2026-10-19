@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from nanobot.session.source import SourceValidationError
 from nanobot.session.source_projection import (
@@ -61,7 +61,8 @@ class SourceRequestLedger:
 
     @staticmethod
     def validate_transcript(transcript: SourceTranscript) -> None:
-        source_ids, runtime_ids = set(), set()
+        source_ids: set[str] = set()
+        runtime_ids: set[str] = set()
         checkpoints = 0
         for node in transcript.nodes:
             if isinstance(node, SourceNode):
@@ -72,9 +73,9 @@ class SourceRequestLedger:
 
                     binding = node.artifact
                     if (type(binding) is not ArtifactProjectionBinding or binding.event_id != node.event_id
-                            or not isinstance(binding.artifact_id, str)
-                            or not isinstance(binding.execution_id, str) or not binding.execution_id
-                            or binding.block_index is not None or not isinstance(binding.content_sha256, str)
+                            or not isinstance(cast(object, binding.artifact_id), str)
+                            or not isinstance(cast(object, binding.execution_id), str) or not binding.execution_id
+                            or binding.block_index is not None or not isinstance(cast(object, binding.content_sha256), str)
                             or len(binding.content_sha256) != 64
                             or any(c not in '0123456789abcdef' for c in binding.content_sha256)):
                         raise SourceValidationError('Invalid source artifact projection binding')
@@ -84,12 +85,12 @@ class SourceRequestLedger:
                 if not node.node_id or node.node_id in runtime_ids:
                     raise SourceValidationError('Duplicate or missing runtime request identity')
                 runtime_ids.add(node.node_id)
-            elif isinstance(node, CheckpointNode):
+            elif isinstance(cast(object, node), CheckpointNode):
                 checkpoints += 1
                 from nanobot.session.artifact import parse_artifact_reference
 
                 if (type(node.artifact_references) is not tuple
-                        or any(not isinstance(value, str) for value in node.artifact_references)
+                        or any(not isinstance(cast(object, value), str) for value in node.artifact_references)
                         or node.artifact_references != tuple(sorted(set(node.artifact_references)))):
                     raise SourceValidationError('Invalid checkpoint request dependencies')
                 for reference in node.artifact_references:
@@ -146,7 +147,7 @@ class SourceRequestLedger:
         # nodes, never from matching message content or transcript positions.
         if view.nodes[:len(self._transcript.nodes)] != self._transcript.nodes:
             raise SourceValidationError('Request view changed the active projection')
-        extensions = []
+        extensions: list[RuntimeNode] = []
         for node in view.nodes[len(self._transcript.nodes):]:
             if not isinstance(node, RuntimeNode):
                 raise SourceValidationError('Request extensions must be runtime instructions')

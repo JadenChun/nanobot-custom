@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from nanobot.session.artifact import ArtifactValidationError, published_artifacts
 from nanobot.session.artifact_reader import ArtifactReader
 from nanobot.session.source_projection import CheckpointNode, SourceNode
 from nanobot.session.source_request import SourceTranscript
 from nanobot.session.source_store import SourceSnapshot
+
+if TYPE_CHECKING:
+    from nanobot.session.artifact import ArtifactDescriptor
+    from nanobot.session.source_request import RequestNode
 
 
 @dataclass
@@ -36,7 +41,7 @@ class CheckpointAdmission:
             raise ArtifactValidationError('Checkpoint dependencies lack an admitted verifier')
         manifests = {item.reference: item for item in
                      published_artifacts(snapshot, workspace_id=reader.store.workspace_id)}
-        descriptors = []
+        descriptors: list[ArtifactDescriptor] = []
         for reference in sorted(references):
             descriptor = manifests.get(reference)
             if descriptor is None:
@@ -82,7 +87,7 @@ class CheckpointAdmission:
         newest = next((event['_event_id'] for event in reversed(snapshot.events)
                        if event.get('role') == 'user' and event.get('_parent_stream_id') is None
                        and not event.get('_command')), None)
-        nodes = []
+        nodes: list[RequestNode] = []
         inserted = False
         for node in full.nodes:
             if isinstance(node, SourceNode) and node.event_id in covered:

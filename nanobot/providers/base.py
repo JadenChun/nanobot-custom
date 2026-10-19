@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -20,6 +20,7 @@ import json_repair
 from loguru import logger
 
 from nanobot.events import NO_EVENTS, EventSink, RetryStatusEvent, RetryWaitEvent
+from nanobot.providers.image_history import recent_image_messages
 from nanobot.providers.request_budget import (
     FinalizedRequestBudgetExceeded,
     ProviderRequestLimits,
@@ -48,7 +49,9 @@ def track_stream_delivery(kwargs: dict[str, Any], delivered: list[bool]) -> None
     for name in ("on_content_delta", "on_thinking_delta", "on_tool_call_delta"):
         callback = kwargs.get(name)
         if callback is not None:
-            async def track(*args, _callback=callback, **kw):
+            # Generic adapter boundary: preserve arbitrary callback payloads.
+            async def track(*args: object, _callback: Callable[..., Awaitable[None]] = callback,
+                            **kw: object) -> None:
                 delivered[0] = True
                 await _callback(*args, **kw)
             kwargs[name] = track
@@ -325,13 +328,15 @@ class ProviderConversationTransportReceipt:
     model: str
 
     def __post_init__(self) -> None:
-        for name, value in (
+        # Keep defensive constructor validation at the runtime object boundary.
+        candidates = tuple[tuple[str, object], ...]((
             ("provider", self.provider),
             ("account", self.account),
             ("endpoint", self.endpoint),
             ("protocol", self.protocol),
             ("model", self.model),
-        ):
+        ))
+        for name, value in candidates:
             if not isinstance(value, str) or not value:
                 raise ValueError(f"{name} must be a non-empty string")
 
@@ -746,6 +751,15 @@ _SYNTHETIC_USER_CONTENT = "(conversation continued)"
 class LLMProvider(ABC):
     """Base class for LLM providers."""
 
+    if TYPE_CHECKING:
+        # A writable declaration permits wrapper descriptors without introducing
+        # a runtime base descriptor: initialization still calls virtual setters.
+        @property
+        def generation(self) -> GenerationSettings: ...
+
+        @generation.setter
+        def generation(self, value: GenerationSettings) -> None: ...
+
     _CHAT_RETRY_DELAYS = (1, 2, 4)
     _PERSISTENT_MAX_DELAY = 60
     _PERSISTENT_IDENTICAL_ERROR_LIMIT = 10
@@ -830,7 +844,7 @@ class LLMProvider(ABC):
         self.api_key = api_key
         self.api_base = api_base
         self.provider_name = provider_name
-        self.generation: GenerationSettings = GenerationSettings()
+        self.generation = GenerationSettings()
         self._llm_call_observer: LLMCallObserver | None = None
 
     def set_llm_call_observer(self, observer: LLMCallObserver | None) -> None:
@@ -1387,7 +1401,9 @@ class LLMProvider(ABC):
         return merged
 
     @staticmethod
-    def _strip_image_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+    def _strip_image_content(
+        messages: list[dict[str, Any]], *, payload_too_large: bool = False,
+    ) -> list[dict[str, Any]] | None:
         """Replace image_url blocks with text placeholder. Returns None if no images found."""
         found = False
         result: list[dict[str, Any]] = []
@@ -1400,7 +1416,8 @@ class LLMProvider(ABC):
                     if block is not None and block.get("type") == "image_url":
                         placeholder = (
                             "[Image not delivered to model — "
-                            "do not describe or reference it]"
+                            + ("request payload too large; " if payload_too_large else "")
+                            + "do not describe or reference it]"
                         )
                         new_content.append({"type": "text", "text": placeholder})
                         found = True
@@ -1639,6 +1656,17 @@ class LLMProvider(ABC):
             stream=True,
         )
 
+    @staticmethod
+    def _prepare_image_history(
+        messages: list[dict[str, object]], context: ProviderCallContext | None,
+    ) -> tuple[list[dict[str, object]], ProviderCallContext | None]:
+        prepared = recent_image_messages(messages)
+        if prepared != messages and context is not None:
+            # A native prefix may still contain the superseded images.
+            # Rebuild portable input while retaining limits and routing.
+            context = replace(context, conversation_state=None)
+        return prepared, context
+
     async def chat_stream_with_retry(
         self,
         messages: list[dict[str, Any]],
@@ -1659,6 +1687,7 @@ class LLMProvider(ABC):
         on_retry_status: RetryStatusCallback | None = None,
     ) -> LLMResponse:
         """Call chat_stream() with retry on transient provider failures."""
+        messages, provider_context = self._prepare_image_history(messages, provider_context)
         if max_tokens is self._SENTINEL or max_tokens is None:
             max_tokens = self.generation.max_tokens
         if temperature is self._SENTINEL or temperature is None:
@@ -1718,6 +1747,7 @@ class LLMProvider(ABC):
         ``_build_kwargs`` never sees ``None`` for ``max_tokens`` / ``temperature``
         (which would crash ``max(1, max_tokens)``).
         """
+        messages, provider_context = self._prepare_image_history(messages, provider_context)
         if max_tokens is self._SENTINEL or max_tokens is None:
             max_tokens = self.generation.max_tokens
         if temperature is self._SENTINEL or temperature is None:
@@ -1972,7 +2002,13 @@ class LLMProvider(ABC):
                 identical_error_count = 1 if error_key else 0
 
             if not self.is_transient_response(response):
-                stripped = self._strip_image_content(kw["messages"])
+                payload_too_large = response.error_status_code == 413 or any(
+                    marker in (response.content or "").lower()
+                    for marker in ("payload too large", "request entity too large")
+                )
+                stripped = self._strip_image_content(
+                    kw["messages"], payload_too_large=payload_too_large,
+                )
                 provider_context = kw.get("provider_context")
                 stripped_context: ProviderCallContext | None = None
                 if isinstance(provider_context, ProviderCallContext):
@@ -2002,10 +2038,8 @@ class LLMProvider(ABC):
                     if stripped_context is not None:
                         retry_kw["provider_context"] = stripped_context
                     result = await call(**retry_kw)
-                    # Permanently strip images from the original messages so
-                    # subsequent iterations do not repeat the error-retry cycle.
-                    if result.finish_reason != "error":
-                        self._strip_image_content_inplace(original_messages)
+                    # Omission belongs to this transport attempt, not the source
+                    # history shared with later requests or other providers.
                     await _finish_retry_status(
                         "recovered" if result.finish_reason != "error" else "cleared",
                         result,

@@ -27,6 +27,9 @@ from nanobot.bus.queue import MessageBus
 from nanobot.session import turn_continuation
 from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
 from nanobot.session.manager import Session, SessionManager
+from nanobot.session.pending_followups import decode_pending_followups
+from nanobot.session.persistence_metadata import SOURCE_PENDING_FOLLOWUPS_METADATA_KEY
+from nanobot.session.source import validate_execution_links
 from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
 from nanobot.webui.session_identity import webui_chat_id, webui_session_key
 
@@ -494,6 +497,11 @@ class RecoveryCoordinator:
             if not self._needs_recovery(metadata) and not unfinished:
                 continue
             session = self.sessions.get_or_create(key)
+            if self.sessions.source_backend(key) is not None:
+                # Canonical input has its own owner-fenced journal. Never pass
+                # its source through the legacy checkpoint/save machinery.
+                await self._requeue_pending_followups(session)
+                continue
             try:
                 await self._recover_session(session, route[1])
                 await self._requeue_pending_followups(session)
@@ -536,6 +544,8 @@ class RecoveryCoordinator:
 
     @staticmethod
     def _needs_recovery(metadata: Mapping[str, Any]) -> bool:
+        if SOURCE_PENDING_FOLLOWUPS_METADATA_KEY in metadata:
+            return True
         if metadata.get(PENDING_USER_TURN_KEY) is True:
             return True
         if isinstance(metadata.get(RUNTIME_CHECKPOINT_KEY), dict):
@@ -812,7 +822,24 @@ class RecoveryCoordinator:
 
     async def _requeue_pending_followups(self, session: Session) -> None:
         """Return durable live-turn follow-ups to the bus after a restart."""
-        for message in pending_followups(session):
+        backend = self.sessions.source_backend(session.key)
+        if backend is not None:
+            snapshot = backend.source.load_source_snapshot(session.key)
+            metadata = snapshot.header["metadata"]
+            messages = decode_pending_followups(
+                metadata.get(SOURCE_PENDING_FOLLOWUPS_METADATA_KEY, []), session.key,
+            )
+            checkpoint = backend.get_runtime_checkpoint_path(session.key)
+            if (
+                "execution_lease" in metadata
+                or "execution_recovery_required" in metadata
+                or validate_execution_links(snapshot.events)
+                or checkpoint.exists() or checkpoint.is_symlink()
+            ):
+                return
+        else:
+            messages = pending_followups(session)
+        for message in messages:
             await self.bus.publish_inbound(message)
 
     @staticmethod

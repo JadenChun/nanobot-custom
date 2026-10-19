@@ -50,7 +50,7 @@ class _ProducerAdapter:
 # This is deliberately private and immutable.  New producers require an
 # explicit adapter audit; no tool property, class name, plugin registration,
 # or runtime flag can add an entry.
-_PRODUCER_ADAPTERS: Final = MappingProxyType({
+_PRODUCER_ADAPTERS: Final[MappingProxyType[type[Tool], _ProducerAdapter]] = MappingProxyType({
     ReadFileTool: _ProducerAdapter("builtin_read_file_text", FilesystemReadReceipt),
     GrepTool: _ProducerAdapter("builtin_grep_file_text", FilesystemReadReceipt),
 })

@@ -1,4 +1,7 @@
-"""Tests for subagent tool registration and wiring."""
+"""Dormant subagent adapter wiring and acquired loop compatibility.
+
+Injected runners/tools below do not enable the retired background tool scope.
+"""
 
 import asyncio
 import time
@@ -8,12 +11,53 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nanobot.agent.context import TranscriptInput
+from nanobot.agent.loop import AgentLoop
+from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.context import RequestContext
+from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import RunPolicyContext, TurnContext
 from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import GenerationSettings
 from nanobot.utils.llm_runtime import LLMRuntime
+from tests.agent import p6_admitted_fixtures
+
+admitted_async = p6_admitted_fixtures.admitted_async
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
+
+
+def _isolate_adapter(manager):
+    manager._build_tools = MagicMock(side_effect=lambda **_kwargs: ToolRegistry())
+    manager._build_subagent_prompt = MagicMock(return_value="isolated adapter test")
+
+
+async def _make_loop(tmp_path, admitted_async, *, keys=(), max_iterations=None):
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
+    provider.supports_bound_conversation_state.return_value = False
+    provider.can_resume_conversation_state.return_value = False
+
+    def build(inputs):
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="test-model", max_iterations=max_iterations,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            session_ttl_minutes=0,
+        )
+
+    loop = await admitted_async(tmp_path, build, keys=keys)
+    assert not loop.tools.has("spawn")
+    return loop
+
+
+def _run_context(loop):
+    return TurnContext(policy=RunPolicyContext(
+        workspace=loop.workspace,
+        context_manager=loop._fork_dependencies.resource_policy.context_manager,
+    ))
 
 
 def _runtime(provider: MagicMock, model: str = "test-model") -> LLMRuntime:
@@ -40,6 +84,7 @@ async def test_run_inline_returns_result_without_announcement(tmp_path):
         tool_events=[],
     ))
     manager._announce_result = AsyncMock()
+    _isolate_adapter(manager)
 
     result = await manager.run_inline(
         task="review this",
@@ -66,6 +111,7 @@ async def test_run_inline_returns_structured_error(tmp_path):
         bus=MessageBus(),
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
     )
+    _isolate_adapter(manager)
     manager.runner.run = AsyncMock(return_value=SimpleNamespace(
         stop_reason="error",
         final_content=None,
@@ -86,9 +132,9 @@ async def test_run_inline_returns_structured_error(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_subagent_exec_tool_receives_allowed_env_keys(tmp_path):
-    """allowed_env_keys from ExecToolConfig must be forwarded to the subagent's ExecTool."""
-    from nanobot.agent.subagent import SubagentManager, SubagentStatus
+async def test_retired_subagent_exec_config_does_not_enable_tool_scope(tmp_path):
+    """Keep configuration compatibility without granting retired shell access."""
+    from nanobot.agent.subagent import SubagentManager
     from nanobot.agent.tools.shell import ExecToolConfig
     from nanobot.bus.queue import MessageBus
     from nanobot.config.schema import ToolsConfig
@@ -102,34 +148,10 @@ async def test_subagent_exec_tool_receives_allowed_env_keys(tmp_path):
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         tools_config=ToolsConfig(exec=ExecToolConfig(allowed_env_keys=["GOPATH", "JAVA_HOME"])),
     )
-    mgr._announce_result = AsyncMock()
-
-    async def fake_run(spec):
-        exec_tool = spec.tools.get("exec")
-        assert exec_tool is not None
-        assert exec_tool.allowed_env_keys == ["GOPATH", "JAVA_HOME"]
-        return SimpleNamespace(
-            stop_reason="done",
-            final_content="done",
-            error=None,
-            tool_events=[],
-        )
-
-    mgr.runner.run = AsyncMock(side_effect=fake_run)
-
-    status = SubagentStatus(
-        task_id="sub-1", label="label", task_description="do task", started_at=time.monotonic()
-    )
-    await mgr._run_subagent(
-        "sub-1",
-        "do task",
-        "label",
-        {"channel": "test", "chat_id": "c1"},
-        status,
-        _runtime(provider),
-    )
-
-    mgr.runner.run.assert_awaited_once()
+    assert mgr._subagent_tools_config().exec.allowed_env_keys == ["GOPATH", "JAVA_HOME"]
+    with pytest.raises(ValueError, match="Unsupported runtime tool scope"):
+        mgr._build_tools()
+    await mgr.close()
 
 
 @pytest.mark.asyncio
@@ -148,6 +170,7 @@ async def test_subagent_uses_configured_max_iterations(tmp_path):
         max_iterations=37,
     )
     mgr._announce_result = AsyncMock()
+    _isolate_adapter(mgr)
 
     async def fake_run(spec):
         assert spec.max_iterations == 37
@@ -173,6 +196,11 @@ async def test_subagent_uses_configured_max_iterations(tmp_path):
     )
 
     mgr.runner.run.assert_awaited_once()
+    # The adapter catches runner exceptions, including assertions in fake_run.
+    # Check the forwarded spec and success outside that catch boundary too.
+    assert mgr.runner.run.await_args.args[0].max_iterations == 37
+    assert status.phase == "done"
+    await mgr.close()
 
 
 @pytest.mark.asyncio
@@ -190,6 +218,7 @@ async def test_spawn_forwards_temperature_to_run_spec(tmp_path):
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
     )
     mgr._announce_result = AsyncMock()
+    _isolate_adapter(mgr)
 
     parent_runtime = _runtime(provider)
     seen = {}
@@ -228,6 +257,7 @@ async def test_background_spawn_waits_for_concurrency_capacity(tmp_path):
         max_concurrent_subagents=1,
     )
     mgr._announce_result = AsyncMock()
+    _isolate_adapter(mgr)
 
     first_entered = asyncio.Event()
     second_entered = asyncio.Event()
@@ -327,6 +357,7 @@ async def test_inline_spawn_waits_for_concurrency_capacity(tmp_path):
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         max_concurrent_subagents=1,
     )
+    _isolate_adapter(manager)
     first_entered = asyncio.Event()
     second_entered = asyncio.Event()
     release_first = asyncio.Event()
@@ -392,6 +423,7 @@ async def test_runner_executes_inline_spawn_batch_concurrently(tmp_path):
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
         max_concurrent_subagents=2,
     )
+    _isolate_adapter(manager)
     both_entered = asyncio.Event()
     release = asyncio.Event()
     entered: list[str] = []
@@ -460,6 +492,7 @@ async def test_cancel_by_session_cancels_inline_subagent(tmp_path):
         bus=MessageBus(),
         max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
     )
+    _isolate_adapter(manager)
     entered = asyncio.Event()
 
     async def fake_run(spec):
@@ -513,50 +546,25 @@ def test_subagent_default_max_iterations_matches_agent_defaults(tmp_path):
     assert mgr.max_iterations == AgentDefaults().max_tool_iterations
 
 
-def test_agent_loop_passes_max_iterations_to_subagents(tmp_path):
+@pytest.mark.asyncio
+async def test_agent_loop_passes_max_iterations_to_subagents(tmp_path, admitted_async):
     """AgentLoop's configured limit should be shared with spawned subagents."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-
-    loop = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-        max_iterations=42,
-    )
+    loop = await _make_loop(tmp_path, admitted_async, max_iterations=42)
 
     assert loop.subagents.max_iterations == 42
 
 
 @pytest.mark.asyncio
-async def test_agent_loop_syncs_updated_max_iterations_before_run(tmp_path):
+async def test_agent_loop_syncs_updated_max_iterations_before_run(tmp_path, admitted_async):
     """Runtime max_iterations changes should be reflected before tool execution."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-
-    loop = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-        max_iterations=42,
-    )
+    loop = await _make_loop(tmp_path, admitted_async, max_iterations=42)
     loop.tools.get_definitions = MagicMock(return_value=[])
 
     async def fake_run(spec):
         assert spec.max_iterations == 55
         assert loop.subagents.max_iterations == 55
-        return SimpleNamespace(
-            stop_reason="done",
+        return AgentRunResult(
+            stop_reason="completed",
             final_content="done",
             error=None,
             tool_events=[],
@@ -572,22 +580,16 @@ async def test_agent_loop_syncs_updated_max_iterations_before_run(tmp_path):
     await loop._run_agent_loop(
         TranscriptInput(history=[], current_message=None),
         runtime=loop.llm_runtime(),
+        run_context=_run_context(loop),
     )
 
     loop.runner.run.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_drain_pending_no_block_when_no_subagents(tmp_path):
+async def test_drain_pending_no_block_when_no_subagents(tmp_path, admitted_async):
     """_drain_pending should not block when no sub-agents are running."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-
-    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+    loop = await _make_loop(tmp_path, admitted_async)
 
     pending_queue: asyncio.Queue = asyncio.Queue()
     injection_callback = None
@@ -597,8 +599,8 @@ async def test_drain_pending_no_block_when_no_subagents(tmp_path):
         nonlocal injection_callback, terminal_injection_callback
         injection_callback = spec.injection_callback
         terminal_injection_callback = spec.terminal_injection_callback
-        return SimpleNamespace(
-            stop_reason="done",
+        return AgentRunResult(
+            stop_reason="completed",
             final_content="done",
             error=None,
             tool_events=[],
@@ -615,6 +617,7 @@ async def test_drain_pending_no_block_when_no_subagents(tmp_path):
     await loop._run_agent_loop(
         TranscriptInput(history=[{"role": "user", "content": "test"}], current_message=None),
         runtime=runtime,
+        run_context=_run_context(loop),
         session=None,
         request_context=RequestContext(channel="test", chat_id="c1", runtime=runtime),
         pending_queue=pending_queue,
@@ -629,27 +632,19 @@ async def test_drain_pending_no_block_when_no_subagents(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_terminal_drain_timeout(tmp_path):
+async def test_terminal_drain_timeout(tmp_path, admitted_async):
     """The terminal drain should return empty after its shared timeout expires."""
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
-    from nanobot.session.manager import Session
-
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-
-    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+    loop = await _make_loop(tmp_path, admitted_async, keys=("test:drain-timeout",))
 
     pending_queue: asyncio.Queue = asyncio.Queue()
-    session = Session(key="test:drain-timeout")
+    session = loop.sessions.get_or_create("test:drain-timeout")
     terminal_injection_callback = None
 
     async def fake_runner_run(spec):
         nonlocal terminal_injection_callback
         terminal_injection_callback = spec.terminal_injection_callback
-        return SimpleNamespace(
-            stop_reason="done",
+        return AgentRunResult(
+            stop_reason="completed",
             final_content="done",
             error=None,
             tool_events=[],
@@ -674,6 +669,7 @@ async def test_terminal_drain_timeout(tmp_path):
     await loop._run_agent_loop(
         TranscriptInput(history=[{"role": "user", "content": "test"}], current_message=None),
         runtime=runtime,
+        run_context=_run_context(loop),
         session=session,
         request_context=RequestContext(
             channel="test",
@@ -704,28 +700,20 @@ async def test_terminal_drain_timeout(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_terminal_drain_reuses_one_timeout_budget(tmp_path):
+async def test_terminal_drain_reuses_one_timeout_budget(tmp_path, admitted_async):
     """Repeated terminal rendezvous calls share one 300-second deadline."""
-    from nanobot.agent.loop import AgentLoop
     from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
-    from nanobot.session.manager import Session
 
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=MagicMock(),
-        workspace=tmp_path,
-        model="test-model",
-    )
+    loop = await _make_loop(tmp_path, admitted_async, keys=("test:shared-deadline",))
     pending_queue: asyncio.Queue[InboundMessage] = asyncio.Queue()
-    session = Session(key="test:shared-deadline")
+    session = loop.sessions.get_or_create("test:shared-deadline")
     terminal_injection_callback = None
 
     async def fake_runner_run(spec):
         nonlocal terminal_injection_callback
         terminal_injection_callback = spec.terminal_injection_callback
-        return SimpleNamespace(
-            stop_reason="done",
+        return AgentRunResult(
+            stop_reason="completed",
             final_content="done",
             error=None,
             tool_events=[],
@@ -748,6 +736,7 @@ async def test_terminal_drain_reuses_one_timeout_budget(tmp_path):
     await loop._run_agent_loop(
         TranscriptInput(history=[{"role": "user", "content": "test"}], current_message=None),
         runtime=loop.llm_runtime(),
+        run_context=_run_context(loop),
         session=session,
         pending_queue=pending_queue,
     )

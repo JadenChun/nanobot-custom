@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, cast
 
 from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
@@ -12,6 +12,7 @@ from nanobot.agent.tools.crawler import CrawlResearchTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.delegation import DelegateTaskTool, PlanTaskTool, ReviewWorkTool
 from nanobot.agent.tools.desktop_use import DesktopUseTool
+from nanobot.agent.tools.exec_session import ExecSessionTool, ListExecSessionsTool
 from nanobot.agent.tools.explore import ExploreTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.image_generation import ImageGenerationTool
@@ -38,9 +39,9 @@ class ToolFactory:
 def construct_core_tools(ctx: ToolContext) -> list[Tool]:
     """Construct the complete set before mutating the destination registry."""
     deps = ctx.fork_dependencies
-    if deps is None or deps.foreground_manager is None:
+    if deps is None or cast(object, deps.foreground_manager) is None:
         raise ValueError("Foreground tool construction requires foreground_manager dependencies")
-    if deps.resource_policy is None or deps.file_locks is None:
+    if cast(object, deps.resource_policy) is None or cast(object, deps.file_locks) is None:
         raise ValueError("Foreground tool construction requires resource policy and file locks")
     entries: list[ToolFactory] = []
 
@@ -49,7 +50,8 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
 
     for name, cls in (("read_file", ReadFileTool), ("write_file", WriteFileTool),
                       ("edit_file", EditFileTool), ("list_dir", ListDirTool),
-                      ("exec", ExecTool), ("web_search", WebSearchTool),
+                      ("exec", ExecTool), ("exec_session", ExecSessionTool),
+                      ("list_exec_sessions", ListExecSessionsTool), ("web_search", WebSearchTool),
                       ("web_fetch", WebFetchTool), ("message", MessageTool),
                       ("cron", CronTool), ("generate_image", ImageGenerationTool)):
         upstream(name, cls)
@@ -77,7 +79,7 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
                       ("trend_vpn_browser_fetch", TrendVpnBrowserFetchTool),
                       ("trend_vpn_session_close", TrendVpnSessionCloseTool)):
         entries.append(ToolFactory(name, vpn_tools_enabled, cls))
-    result = []
+    result: list[Tool] = []
     for entry in entries:
         if not entry.enabled():
             continue

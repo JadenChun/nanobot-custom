@@ -24,13 +24,13 @@ import os
 import secrets
 import struct
 import threading
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence, Set
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Protocol, cast
+from typing import NoReturn, Protocol, TypeVar, cast
 
-from nanobot.agent.idle_compaction import IdleCompactionCoordinator, IdleCompactionPolicy
+from nanobot.agent.idle_compaction import IdleCompactionPolicy
 from nanobot.config.schema import IdleCompactionConfig
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.session.idle_checkpoint import IdlePolicyBinding
@@ -38,6 +38,17 @@ from nanobot.session.model_selection import model_preset_from_metadata
 from nanobot.session.source_root import SourceRootAuthority
 from nanobot.session.source_store import SourceSessionStore, SourceSnapshot, SourceState
 from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
+
+_ResultT = TypeVar("_ResultT")
+
+
+class _IdleCoordinatorLifecycle(Protocol):
+    """Only the lifecycle operations consumed by this registry."""
+
+    def foreground_admitted(self, session_key: str) -> Awaitable[None] | None: ...
+
+    def aclose(self) -> Awaitable[None] | None: ...
+
 
 _PROCESS_KEY = secrets.token_bytes(32)
 
@@ -109,14 +120,30 @@ class OpaqueFingerprint:
     def __str__(self) -> str:
         return "<opaque-fingerprint>"
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("opaque fingerprints cannot be serialized")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> OpaqueFingerprint:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("opaque fingerprints cannot be copied")
 
-    def __copy__(self) -> OpaqueFingerprint:
+    def __copy__(self) -> NoReturn:
         raise TypeError("opaque fingerprints cannot be copied")
+
+    @staticmethod
+    def combine_binding(
+        source_fingerprint: OpaqueFingerprint,
+        runtime_fingerprint: OpaqueFingerprint,
+        config_fingerprint: OpaqueFingerprint,
+    ) -> OpaqueFingerprint:
+        """Compose existing binding material without returning raw digest bytes."""
+        return _opaque_digest(
+            (
+                "binding",
+                source_fingerprint._digest,
+                runtime_fingerprint._digest,
+                config_fingerprint._digest,
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -135,7 +162,7 @@ class IdleSummaryProjectionConfig:
             raise ValueError("summary_version must be a positive integer")
         if type(self.projection_version) is not int or self.projection_version <= 0:
             raise ValueError("projection_version must be a positive integer")
-        if not isinstance(self.projection_scope, str) or not self.projection_scope.strip():
+        if not isinstance(cast(object, self.projection_scope), str) or not self.projection_scope.strip():
             raise ValueError("projection_scope must be a non-empty string")
         for name in ("max_input_tokens", "max_output_tokens", "max_chunks"):
             value = getattr(self, name)
@@ -193,7 +220,7 @@ class IdleRuntimeLimits:
         ):
             raise ValueError("initial_backoff_seconds cannot exceed max_backoff_seconds")
         if self.summary_model_preset is not None and (
-            not isinstance(self.summary_model_preset, str) or not self.summary_model_preset.strip()
+            not isinstance(cast(object, self.summary_model_preset), str) or not self.summary_model_preset.strip()
         ):
             raise ValueError("summary_model_preset must be a non-empty preset name or None")
 
@@ -249,20 +276,20 @@ class IdleWorkspaceBinding:
     artifact_namespace: object | None = None
 
     def __post_init__(self) -> None:
-        if self.workspace is not None and not isinstance(self.workspace, Path):
+        if self.workspace is not None and not isinstance(cast(object, self.workspace), Path):
             raise TypeError("workspace must be a pathlib.Path or None")
 
     def __repr__(self) -> str:
         return "<idle-workspace-binding>"
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("workspace bindings cannot be serialized")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> IdleWorkspaceBinding:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("workspace bindings cannot be copied")
 
 
-def _finite_non_negative(value: float | int, name: str) -> None:
+def _finite_non_negative(value: object, name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError(f"{name} must be a finite number")
     if value < 0:
@@ -367,7 +394,7 @@ def _encode_material(
         try:
             encoded_items: list[tuple[bytes, bytes]] = []
             payload_size = 0
-            for key, item in value.items():
+            for key, item in cast(Mapping[object, object], value).items():
                 encoded_key = _encode_material(
                     key,
                     active=active,
@@ -398,9 +425,9 @@ def _encode_material(
     if isinstance(value, (tuple, list)):
         active.add(identity)
         try:
-            encoded_values: list[bytes] = []
+            encoded_sequence: list[bytes] = []
             payload_size = 0
-            for item in value:
+            for item in cast(Sequence[object], value):
                 encoded = _encode_material(
                     item,
                     active=active,
@@ -410,20 +437,20 @@ def _encode_material(
                 item_size = len(encoded) + 9
                 if item_size > _MAX_MATERIAL_BYTES or payload_size > _MAX_MATERIAL_BYTES - item_size:
                     raise _MaterialEncodingError("fingerprint material is too large")
-                encoded_values.append(encoded)
+                encoded_sequence.append(encoded)
                 payload_size += item_size
             return _join_material(
-                b"t" if type(value) is tuple else b"l",
-                [_length_prefixed(b"e", encoded) for encoded in encoded_values],
+                b"t" if type(cast(object, value)) is tuple else b"l",
+                [_length_prefixed(b"e", encoded) for encoded in encoded_sequence],
             )
         finally:
             active.remove(identity)
     if isinstance(value, (set, frozenset)):
         active.add(identity)
         try:
-            encoded_values: list[bytes] = []
+            encoded_set: list[bytes] = []
             payload_size = 0
-            for item in value:
+            for item in cast(Set[object], value):
                 encoded = _encode_material(
                     item,
                     active=active,
@@ -433,12 +460,12 @@ def _encode_material(
                 item_size = len(encoded) + 9
                 if item_size > _MAX_MATERIAL_BYTES or payload_size > _MAX_MATERIAL_BYTES - item_size:
                     raise _MaterialEncodingError("fingerprint material is too large")
-                encoded_values.append(encoded)
+                encoded_set.append(encoded)
                 payload_size += item_size
-            encoded_values.sort()
+            encoded_set.sort()
             return _join_material(
-                b"u" if type(value) is set else b"v",
-                [_length_prefixed(b"e", encoded) for encoded in encoded_values],
+                b"u" if type(cast(object, value)) is set else b"v",
+                [_length_prefixed(b"e", encoded) for encoded in encoded_set],
             )
         finally:
             active.remove(identity)
@@ -487,14 +514,14 @@ def _runtime_material(runtime: LLMRuntime) -> object:
     )
 
 
-def _source_material(source: SourceSessionStore, snapshot: SourceSnapshot) -> tuple[object, ...]:
+def _source_material(source: SourceSessionStore, snapshot: SourceSnapshot) -> tuple[str, str, int, int, str, str, str | None, str]:
     state = getattr(snapshot, "state", None)
     if type(state) is not SourceState:
         raise IdleRuntimeBindingError("source snapshot has invalid state")
     key = _required_string(getattr(state, "session_key", None), "session_key")
     header = getattr(snapshot, "header", None)
     if isinstance(header, Mapping):
-        header_key = header.get("key")
+        header_key = cast(Mapping[object, object], header).get("key")
         if header_key is not None and header_key != key:
             raise IdleRuntimeBindingError("source snapshot header identity changed")
     incarnation = _required_string(getattr(state, "incarnation", None), "incarnation")
@@ -505,9 +532,9 @@ def _source_material(source: SourceSessionStore, snapshot: SourceSnapshot) -> tu
     if type(generation) is not int or generation < 0:
         raise IdleRuntimeBindingError("source snapshot has invalid generation")
     store_identity = _required_string(getattr(state, "store_identity", None), "store_identity")
-    if source._store_identity != store_identity:
+    if source.store_identity_differs(store_identity):
         raise IdleRuntimeBindingError("source snapshot belongs to a different source store")
-    root_identity = str(source._backend.sessions_dir.resolve(strict=False))
+    root_identity = source.resolved_runtime_source_root()
     checkpoint_id = state.checkpoint_id
     checkpoint_fingerprint = _required_string(
         getattr(state, "checkpoint_fingerprint", None), "checkpoint_fingerprint"
@@ -534,13 +561,13 @@ def _snapshot_metadata(snapshot: object) -> Mapping[object, object]:
     header = getattr(snapshot, "header", None)
     if not isinstance(header, Mapping):
         raise IdleRuntimeBindingError("source snapshot has no authoritative header")
-    metadata = header.get("metadata")
+    metadata = cast(Mapping[object, object], header).get("metadata")
     if not isinstance(metadata, Mapping):
         raise IdleRuntimeBindingError("source snapshot has no authoritative metadata")
     return cast(Mapping[object, object], metadata)
 
 
-def _snapshot_identity(source: SourceSessionStore, snapshot: SourceSnapshot) -> tuple[object, ...]:
+def _snapshot_identity(source: SourceSessionStore, snapshot: SourceSnapshot) -> tuple[str, str, int, int, str, str, str | None, str]:
     material = _source_material(source, snapshot)
     return material
 
@@ -581,8 +608,6 @@ def _snapshot_runtime_selected(
         snapshot_value = preset_snapshots[matches[0]] if len(matches) == 1 else None
     if type(snapshot_value) is not ProviderSnapshot:
         raise IdleRuntimeResolutionError("authoritative source preset is unavailable")
-    resolver_failed = False
-    candidate: object | None = None
     try:
         candidate = preset_resolver.resolve_qualified_preset(name, snapshot_value)
         runtime = _coerce_runtime(candidate, name)
@@ -591,12 +616,12 @@ def _snapshot_runtime_selected(
     except Exception:
         # A resolver may wrap provider/configuration details in its exception;
         # dormant authority reports only a content-free admission failure.
-        resolver_failed = True
-    if resolver_failed:
-        raise IdleRuntimeResolutionError(
-            "injected preset resolver rejected the qualified snapshot"
-        )
-    return name, runtime
+        pass
+    else:
+        return name, runtime
+    raise IdleRuntimeResolutionError(
+        "injected preset resolver rejected the qualified snapshot"
+    )
 
 
 def _coerce_runtime(candidate: object, name: str) -> LLMRuntime:
@@ -605,7 +630,7 @@ def _coerce_runtime(candidate: object, name: str) -> LLMRuntime:
             raise IdleRuntimeResolutionError("resolved runtime preset does not match source selection")
         return candidate if candidate.model_preset == name else replace(candidate, model_preset=name)
     if type(candidate) is ProviderSnapshot:
-        snapshot = cast(ProviderSnapshot, candidate)
+        snapshot = candidate
         if snapshot.model_preset not in (None, name):
             raise IdleRuntimeResolutionError("resolved snapshot preset does not match source selection")
         return runtime_from_provider_snapshot(replace(snapshot, model_preset=name))
@@ -615,7 +640,7 @@ def _coerce_runtime(candidate: object, name: str) -> LLMRuntime:
 @dataclass(frozen=True, slots=True)
 class _BindingMaterial:
     source: SourceSessionStore
-    identity: tuple[object, ...]
+    identity: tuple[str, str, int, int, str, str, str | None, str]
     selected_preset: str | None
     foreground_runtime: LLMRuntime
     auxiliary_runtime: LLMRuntime
@@ -757,16 +782,74 @@ class IdleRuntimeBinding:
             material.fingerprint,
         )
 
+    @classmethod
+    def from_registry_material(
+        cls,
+        arguments: Callable[[], tuple[object, int, _BindingMaterial]],
+    ) -> IdleRuntimeBinding:
+        """Construct, but do not register, using the registry's live arguments."""
+        # Lookup precedes owner argument reads; keep the original private seam.
+        issue = cls._issue
+        authority, registry_pid, material = arguments()
+        return issue(authority=authority, registry_pid=registry_pid, material=material)
+
+    def matches_registry_material(
+        self,
+        *,
+        authority: Callable[[], object],
+        registry_pid: Callable[[], int],
+        current_lookup: Callable[[], Callable[[str], IdleRuntimeBinding | None]],
+        material: _BindingMaterial,
+    ) -> bool:
+        """Compare owned fields; lazy suppliers retain live registry read order."""
+        return (
+            self._authority is authority()
+            and self._pid == registry_pid()
+            # Obtain the live .get before reading the binding's key, as before.
+            and current_lookup()(self._session_key) is self
+            and self._source is material.source
+            and (
+                self._session_key,
+                self._incarnation,
+                self._revision,
+                self._generation,
+                self._store_identity,
+                self._root_identity,
+                self._checkpoint_id,
+                self._checkpoint_fingerprint,
+            )
+            == material.identity
+            and self._selected_preset == material.selected_preset
+            and self._runtime_epoch == material.runtime_epoch
+            and self._config_epoch == material.config_epoch
+            and self._source_fingerprint == material.source_fingerprint
+            and self._runtime_fingerprint == material.runtime_fingerprint
+            and self._config_fingerprint == material.config_fingerprint
+            and self._fingerprint == material.fingerprint
+        )
+
+    def validate_registry_identity(
+        self,
+        *,
+        authority: Callable[[], object],
+        registry_pid: Callable[[], int],
+    ) -> None:
+        """Retain identity refusals; current-table admission remains the registry's job."""
+        if self._authority is not authority():
+            raise IdleRuntimeBindingError("foreign or reconstructed idle runtime binding")
+        if self._pid != registry_pid():
+            raise IdleRuntimeStaleError("idle runtime binding is stale")
+
     def __repr__(self) -> str:
         return "<IdleRuntimeBinding opaque>"
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("idle runtime bindings cannot be serialized")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> IdleRuntimeBinding:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("idle runtime bindings cannot be copied")
 
-    def __copy__(self) -> IdleRuntimeBinding:
+    def __copy__(self) -> NoReturn:
         raise TypeError("idle runtime bindings cannot be copied")
 
     @property
@@ -904,7 +987,7 @@ class _SourceCapture:
     snapshot: SourceSnapshot
 
     def __post_init__(self) -> None:
-        if self.authority is None or not isinstance(self.source, SourceSessionStore):
+        if self.authority is None or not isinstance(cast(object, self.source), SourceSessionStore):
             raise IdleRuntimeBindingError("invalid sealed source capture")
         if type(self.snapshot) is not SourceSnapshot:
             raise IdleRuntimeBindingError("invalid sealed source capture")
@@ -944,7 +1027,7 @@ class _EventLoopGate:
                 "idle runtime authority is bound to its creating event loop"
             )
 
-    def sync(self, callback: Callable[[], object]) -> object:
+    def sync(self, callback: Callable[[], _ResultT]) -> _ResultT:
         self.check_context()
         if self.owner_task is not None:
             raise IdleRuntimeCrossContextError(
@@ -962,7 +1045,7 @@ class _EventLoopGate:
                 self.sync_active = False
 
     @asynccontextmanager
-    async def acquire(self):
+    async def acquire(self) -> AsyncGenerator[None, None]:
         self.check_context()
         async with self.lock:
             with self.sync_lock:
@@ -1013,7 +1096,7 @@ class IdleRuntimeBindingRegistry:
         policy_binding: IdlePolicyBinding | None = None,
         idle_policy_binding: IdlePolicyBinding | None = None,
         policy: IdlePolicyBinding | None = None,
-        coordinator: IdleCompactionCoordinator[object, object] | None = None,
+        coordinator: _IdleCoordinatorLifecycle | None = None,
         owns_coordinator: bool | None = None,
         own_coordinator: bool | None = None,
         runtime_epoch: int = 0,
@@ -1093,7 +1176,7 @@ class IdleRuntimeBindingRegistry:
             raise ValueError("policy_binding and policy must refer to the same object")
         self._policy_binding = chosen_policy or policy
         if self._policy_binding is not None and not isinstance(
-            self._policy_binding, IdlePolicyBinding
+            cast(object, self._policy_binding), IdlePolicyBinding
         ):
             raise TypeError("policy_binding must be an IdlePolicyBinding")
 
@@ -1108,14 +1191,14 @@ class IdleRuntimeBindingRegistry:
                 raise TypeError("preset_resolver requires preset_snapshots")
         if preset_snapshots is not None:
             for key, value in preset_snapshots.items():
-                if not isinstance(key, str) or not key.strip() or type(value) is not ProviderSnapshot:
+                if not isinstance(cast(object, key), str) or not key.strip() or type(value) is not ProviderSnapshot:
                     raise TypeError("preset_snapshots must map names to ProviderSnapshot values")
             self._preset_snapshots: dict[str, ProviderSnapshot] = dict(preset_snapshots)
         else:
             self._preset_snapshots = {}
         if preset_runtimes is not None:
             for key, value in preset_runtimes.items():
-                if not isinstance(key, str) or not key.strip():
+                if not isinstance(cast(object, key), str) or not key.strip():
                     raise TypeError("preset_runtimes keys must be non-empty strings")
                 if not isinstance(value, LLMRuntime) and type(value) is not ProviderSnapshot:
                     raise TypeError("preset_runtimes values must be LLMRuntime or ProviderSnapshot")
@@ -1158,7 +1241,7 @@ class IdleRuntimeBindingRegistry:
     def __repr__(self) -> str:
         return "<IdleRuntimeBindingRegistry opaque>"
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("idle runtime registries cannot be serialized")
 
     @property
@@ -1338,16 +1421,16 @@ class IdleRuntimeBindingRegistry:
     ) -> _BindingMaterial:
         chosen_foreground = self._foreground_runtime
         chosen_auxiliary = self._auxiliary_runtime
-        if not isinstance(chosen_foreground, LLMRuntime):
+        if not isinstance(cast(object, chosen_foreground), LLMRuntime):
             raise TypeError("foreground_runtime must be an LLMRuntime")
-        if not isinstance(chosen_auxiliary, LLMRuntime):
+        if not isinstance(cast(object, chosen_auxiliary), LLMRuntime):
             raise TypeError("auxiliary_runtime must be an LLMRuntime")
         chosen_summary = self._summary_projection
         chosen_limits = self._limits
         chosen_policy = self._policy_binding
         if chosen_policy is None:
             raise IdleRuntimeBindingError("an explicit IdlePolicyBinding is required")
-        if not isinstance(chosen_policy, IdlePolicyBinding):
+        if not isinstance(cast(object, chosen_policy), IdlePolicyBinding):
             raise TypeError("policy_binding must be an IdlePolicyBinding")
         selected, resolved_foreground = _snapshot_runtime_selected(
             capture.snapshot,
@@ -1377,13 +1460,8 @@ class IdleRuntimeBindingRegistry:
                 self._policy_material(chosen_policy),
             )
         )
-        fingerprint = _opaque_digest(
-            (
-                "binding",
-                source_fingerprint._digest,
-                runtime_fingerprint._digest,
-                config_fingerprint._digest,
-            )
+        fingerprint = OpaqueFingerprint.combine_binding(
+            source_fingerprint, runtime_fingerprint, config_fingerprint,
         )
         return _BindingMaterial(
             self._source,
@@ -1404,38 +1482,20 @@ class IdleRuntimeBindingRegistry:
         )
 
     def _binding_matches(self, binding: IdleRuntimeBinding, material: _BindingMaterial) -> bool:
-        return (
-            binding._authority is self._authority
-            and binding._pid == self._pid
-            and self._current.get(binding._session_key) is binding
-            and binding._source is material.source
-            and (
-                binding._session_key,
-                binding._incarnation,
-                binding._revision,
-                binding._generation,
-                binding._store_identity,
-                binding._root_identity,
-                binding._checkpoint_id,
-                binding._checkpoint_fingerprint,
-            )
-            == material.identity
-            and binding._selected_preset == material.selected_preset
-            and binding._runtime_epoch == material.runtime_epoch
-            and binding._config_epoch == material.config_epoch
-            and binding._source_fingerprint == material.source_fingerprint
-            and binding._runtime_fingerprint == material.runtime_fingerprint
-            and binding._config_fingerprint == material.config_fingerprint
-            and binding._fingerprint == material.fingerprint
+        return IdleRuntimeBinding.matches_registry_material(
+            binding,
+            authority=lambda: self._authority,
+            registry_pid=lambda: self._pid,
+            current_lookup=lambda: self._current.get,
+            material=material,
         )
 
     def _validate_binding(self, binding: IdleRuntimeBinding) -> None:
         if type(binding) is not IdleRuntimeBinding:
             raise IdleRuntimeBindingError("invalid idle runtime binding")
-        if binding._authority is not self._authority:
-            raise IdleRuntimeBindingError("foreign or reconstructed idle runtime binding")
-        if binding._pid != self._pid:
-            raise IdleRuntimeStaleError("idle runtime binding is stale")
+        IdleRuntimeBinding.validate_registry_identity(
+            binding, authority=lambda: self._authority, registry_pid=lambda: self._pid,
+        )
 
     def _retire_current_locked(self, session_key: str | None = None) -> None:
         if session_key is None:
@@ -1459,10 +1519,8 @@ class IdleRuntimeBindingRegistry:
             return current
         if current is not None:
             self._retire_current_locked(session_key)
-        binding = IdleRuntimeBinding._issue(
-            authority=self._authority,
-            registry_pid=self._pid,
-            material=material,
+        binding = IdleRuntimeBinding.from_registry_material(
+            lambda: (self._authority, self._pid, material),
         )
         self._current[session_key] = binding
         self._issued_count += 1
@@ -1473,11 +1531,8 @@ class IdleRuntimeBindingRegistry:
         session_key: str,
     ) -> IdleRuntimeBinding:
         """Load the current source by key and issue or reuse one binding."""
-        return cast(
-            IdleRuntimeBinding,
-            self._gate.sync(
-                lambda: self._issue_locked(self._require_session_key(session_key))
-            ),
+        return self._gate.sync(
+            lambda: self._issue_locked(self._require_session_key(session_key))
         )
 
     def _revalidate_locked(
@@ -1580,8 +1635,8 @@ class IdleRuntimeBindingRegistry:
     def replace_runtimes(
         self,
         *,
-        foreground_runtime: LLMRuntime,
-        auxiliary_runtime: LLMRuntime,
+        foreground_runtime: object,
+        auxiliary_runtime: object,
     ) -> int:
         """Replace explicitly captured runtimes and retire the old epoch."""
         if not isinstance(foreground_runtime, LLMRuntime):
@@ -1597,7 +1652,7 @@ class IdleRuntimeBindingRegistry:
             self._retire_current_locked()
             return self._runtime_epoch
 
-        return cast(int, self._gate.sync(update))
+        return self._gate.sync(update)
 
     def replace_config(
         self,
@@ -1629,14 +1684,14 @@ class IdleRuntimeBindingRegistry:
             if workspace_binding is not None:
                 self._workspace_binding = workspace_binding
             if policy_binding is not None:
-                if not isinstance(policy_binding, IdlePolicyBinding):
+                if not isinstance(cast(object, policy_binding), IdlePolicyBinding):
                     raise TypeError("policy_binding must be an IdlePolicyBinding")
                 self._policy_binding = policy_binding
             self._config_epoch += 1
             self._retire_current_locked()
             return self._config_epoch
 
-        return cast(int, self._gate.sync(update))
+        return self._gate.sync(update)
 
     async def foreground_admitted(self, session_key: str) -> None:
         """Invalidate idle admission then notify an injected coordinator."""
@@ -1660,11 +1715,11 @@ class IdleRuntimeBindingRegistry:
     async def publish_if_current(
         self,
         binding: IdleRuntimeBinding,
-        sync_callback: Callable[[IdleRuntimeBinding], object],
+        sync_callback: Callable[[IdleRuntimeBinding], _ResultT],
         *,
         session_key: str | None = None,
         root_authority: SourceRootAuthority | None = None,
-    ) -> object:
+    ) -> _ResultT:
         """Reload/revalidate and invoke one non-awaitable callback under the gate."""
         key = self._require_session_key(
             binding.session_key if session_key is None else session_key
@@ -1695,7 +1750,7 @@ class IdleRuntimeBindingRegistry:
         self._gate.sync(dormant)
 
     @asynccontextmanager
-    async def publication_gate(self):
+    async def publication_gate(self) -> AsyncGenerator[IdleRuntimeBindingRegistry, None]:
         """Serialize short current-resolution/publication sections."""
         self._ensure_open()
         async with self._gate.acquire():

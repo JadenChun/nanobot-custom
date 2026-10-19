@@ -12,7 +12,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import TypeAlias
+from typing import NoReturn, TypeAlias, cast
 
 from nanobot.agent import memory_recovery_storage as storage
 
@@ -71,7 +71,7 @@ class MemoryManifestError(RuntimeError):
         super().__init__(self._MESSAGES[code])
 
 
-def _fail(code: str) -> None:
+def _fail(code: str) -> NoReturn:
     raise MemoryManifestError(code) from None
 
 
@@ -126,41 +126,40 @@ def _validate_payload(payload: object, *, code: str) -> bytes:
         if nodes > MAX_NODES:
             _fail(code)
 
-        value_type = type(value)
-        if value_type is dict:
-            marker = id(value)
+        if type(value) is dict:
+            marker = id(cast(dict[object, object], value))
             if marker in active:
                 _fail(code)
             active.add(marker)
             try:
-                for key, child in value.items():
+                for key, child in cast(dict[object, object], value).items():
                     if type(key) is not str:
                         _fail(code)
                     _check_string(key, MAX_KEY_BYTES, code=code)
                     visit(child, depth + 1)
             finally:
                 active.remove(marker)
-        elif value_type is list:
-            marker = id(value)
+        elif type(value) is list:
+            marker = id(cast(list[object], value))
             if marker in active:
                 _fail(code)
             active.add(marker)
             try:
-                for child in value:
+                for child in cast(list[object], value):
                     visit(child, depth + 1)
             finally:
                 active.remove(marker)
-        elif value_type is str:
+        elif type(value) is str:
             _check_string(value, MAX_STRING_BYTES, code=code)
-        elif value is None or value_type is bool:
+        elif value is None or type(value) is bool:
             return
-        elif value_type is int:
+        elif type(value) is int:
             if value < MIN_INT or value > MAX_INT:
                 _fail(code)
         else:
             _fail(code)
 
-    visit(payload, 1)
+    visit(cast(dict[object, object], payload), 1)
     try:
         return json.dumps(
             payload,
@@ -180,7 +179,7 @@ def _identity_from_payload(kind: str, payload_bytes: bytes) -> str:
     ).hexdigest()
 
 
-def derive_manifest_identity(kind: str, captured_payload: dict[str, JsonValue]) -> str:
+def derive_manifest_identity(kind: str, captured_payload: object) -> str:
     """Return the domain-separated identity for one captured payload."""
 
     kind = _validate_kind(kind)
@@ -195,7 +194,7 @@ def _canonical_record_bytes(
     sequence: int,
     predecessor_digest: str | None,
     phase: str,
-    payload: dict[str, JsonValue],
+    payload: object,
     code: str,
 ) -> bytes:
     try:
@@ -248,7 +247,7 @@ class ManifestRecord:
             _fail("corrupt")
         if type(value) is not dict:  # pragma: no cover - construction validates this.
             _fail("corrupt")
-        return copy.deepcopy(value)
+        return copy.deepcopy(cast(dict[str, JsonValue], value))
 
 
 def _parse_record(
@@ -271,9 +270,10 @@ def _parse_record(
         )
     except (UnicodeDecodeError, json.JSONDecodeError, UnicodeError, ValueError, RecursionError):
         _fail("corrupt")
-    if type(record) is not dict or frozenset(record) != _ENVELOPE_FIELDS:
+    if type(record) is not dict or frozenset(cast(dict[object, object], record)) != _ENVELOPE_FIELDS:
         _fail("corrupt")
 
+    record = cast(dict[str, object], record)
     version = record.get("version")
     record_kind = record.get("kind")
     record_identity = record.get("identity")
@@ -350,7 +350,7 @@ class MemoryRecoveryManifest:
     """A wrapper that follows one immutable evidence chain."""
 
     def __init__(self, namespace: storage.ImmutableEvidenceNamespace) -> None:
-        if not isinstance(namespace, storage.ImmutableEvidenceNamespace):
+        if not isinstance(cast(object, namespace), storage.ImmutableEvidenceNamespace):
             _fail("invalid")
         try:
             kind = namespace.kind

@@ -35,7 +35,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import monotonic
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, NoReturn, Protocol, cast, overload
 from uuid import uuid4
 
 from nanobot.agent.idle_compaction import IdleAuxiliaryUsage
@@ -50,14 +50,14 @@ from nanobot.session.checkpoint_dependencies import (
 from nanobot.session.context_checkpoint import validate_context_checkpoint
 from nanobot.session.idle_checkpoint import (
     IdleCheckpointCapture,
-    _validate_capture_attestation,
+    IdleSourceIdentityObservation,
     project_idle_root_nodes,
 )
 from nanobot.session.idle_compaction import capture_idle_token
 from nanobot.session.source import SourceValidationError, prefix_digest
 from nanobot.session.source_compaction import SourceCompactionCandidate
 from nanobot.session.source_projection import CheckpointNode, source_nodes
-from nanobot.session.source_request import SourceTranscript
+from nanobot.session.source_request import RequestNode, SourceTranscript
 from nanobot.utils.helpers import truncate_text_to_tokens
 
 if TYPE_CHECKING:
@@ -135,7 +135,7 @@ class IdleSummaryLimits:
                 raise ValueError(f"{name} must be a positive integer")
         if (
             isinstance(self.max_wall_seconds, bool)
-            or not isinstance(self.max_wall_seconds, (int, float))
+            or not isinstance(cast(object, self.max_wall_seconds), (int, float))
             or not math.isfinite(self.max_wall_seconds)
             or self.max_wall_seconds <= 0
         ):
@@ -347,6 +347,22 @@ class IdleSummaryRequest:
         if any(type(message) is not dict for message in self.messages):
             raise ValueError("summary request messages must be dictionaries")
 
+    def claim_transport_reservation(
+        self, seal: object, registry: IdleSummaryTransportRegistry,
+    ) -> None:
+        if seal is not _TRANSPORT_SEAL:
+            raise IdleSummaryCapabilityError("transport reservation request is invalid")
+        try:
+            reservation = self._reservation
+            owner = reservation.owner() if reservation.owner is not None else None
+        except (KeyboardInterrupt, SystemExit, GeneratorExit):
+            raise
+        except BaseException:
+            raise IdleSummaryCapabilityError("transport reservation request is invalid") from None
+        IdleSummaryTransportRegistry.record_transport_reservation(
+            registry, _TRANSPORT_SEAL, self, reservation, owner,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class IdleSummaryAttemptResponse:
@@ -363,7 +379,7 @@ class IdleSummaryAttemptResponse:
     def __post_init__(self) -> None:
         if type(self.request) is not IdleSummaryRequestReceipt:
             raise ValueError("attempt request receipt is invalid")
-        if not isinstance(self.finish_reason, str):
+        if not isinstance(cast(object, self.finish_reason), str):
             raise ValueError("attempt finish reason is invalid")
         if type(self.tool_calls) is not tuple:
             raise ValueError("attempt tool calls must be a tuple")
@@ -507,35 +523,46 @@ class IdleSummaryTransportRegistry:
 
     def _validate_capability(self, capability: IdleSummaryQualifiedTransport) -> None:
         self._check_process()
-        if (
-            type(capability) is not IdleSummaryQualifiedTransport
-            or capability._registry is not self
-            or capability._authority is not self._authority
-            or capability._pid != self._pid
-            or capability._source_store is not self._source_store
-        ):
+        if type(capability) is not IdleSummaryQualifiedTransport:
             raise IdleSummaryCapabilityError("qualified transport capability is foreign")
-        if (
-            type(capability._binding) is not IdleRuntimeBinding
-            or capability._binding.source_store is not self._source_store
-        ):
-            raise IdleSummaryCapabilityError("qualified transport source binding changed")
+        IdleSummaryQualifiedTransport.require_registry_relationship(capability, self)
         try:
-            self._binding_registry.require_current(
-                capability._binding,
-                capability._binding.session_key,
-            )
+            IdleSummaryQualifiedTransport.require_current_binding(capability, self._binding_registry)
         except Exception:
             raise IdleSummaryCapabilityError("qualified transport binding is stale") from None
-        raw = self._validate_raw(capability._raw)
-        if (
-            raw.provider_name != capability.provider_name
-            or raw.transport != capability.transport
-            or raw.model != capability.model
-            or raw.context_window_tokens != capability.context_window_tokens
-            or raw.runtime_fingerprint != capability.runtime_fingerprint
-        ):
-            raise IdleSummaryCapabilityError("qualified transport identity changed")
+        IdleSummaryQualifiedTransport.require_live_adapter_identity(capability, self)
+
+    def validate_transport(self, capability: IdleSummaryQualifiedTransport) -> None:
+        self._validate_capability(capability)
+
+    def matches_transport_authority(self, authority: object) -> bool:
+        return authority is self._authority
+
+    def matches_transport_pid(self, pid: int) -> bool:
+        return not (pid != self._pid)
+
+    def matches_transport_source(self, source_store: object) -> bool:
+        return source_store is self._source_store
+
+    def require_adapter_identity(
+        self, raw: object, capability: IdleSummaryQualifiedTransport,
+    ) -> None:
+        adapter = self._validate_raw(raw)
+        IdleSummaryQualifiedTransport.require_adapter_identity(capability, adapter)
+
+    def initialize_transport_authority(
+        self, seal: object, capability: IdleSummaryQualifiedTransport,
+    ) -> None:
+        if seal is not _TRANSPORT_SEAL:
+            raise IdleSummaryCapabilityError("qualified transport cannot be reconstructed")
+        IdleSummaryQualifiedTransport.initialize_registry_authority(
+            capability, _TRANSPORT_SEAL, self._authority,
+        )
+
+    def admit_transport_request(
+        self, capability: IdleSummaryQualifiedTransport, request: IdleSummaryRequest,
+    ) -> None:
+        self._claim_request(capability, request)
 
     def _claim_request(
         self,
@@ -545,13 +572,14 @@ class IdleSummaryTransportRegistry:
         self._validate_capability(capability)
         if type(request) is not IdleSummaryRequest:
             raise IdleSummaryCapabilityError("transport reservation request is invalid")
-        try:
-            reservation = request._reservation
-            owner = reservation.owner() if reservation.owner is not None else None
-        except (KeyboardInterrupt, SystemExit, GeneratorExit):
-            raise
-        except BaseException:
-            raise IdleSummaryCapabilityError("transport reservation request is invalid") from None
+        IdleSummaryRequest.claim_transport_reservation(request, _TRANSPORT_SEAL, self)
+
+    def record_transport_reservation(
+        self, seal: object, request: IdleSummaryRequest,
+        reservation: _IdleSummaryRequestReservation, owner: object,
+    ) -> None:
+        if seal is not _TRANSPORT_SEAL:
+            raise IdleSummaryCapabilityError("transport reservation request is invalid")
         if type(reservation) is not _IdleSummaryRequestReservation:
             raise IdleSummaryCapabilityError("transport reservation request is invalid")
         if owner is not request:
@@ -605,7 +633,7 @@ class IdleSummaryQualifiedTransport:
         if seal is not _TRANSPORT_SEAL:
             raise IdleSummaryCapabilityError("qualified transport cannot be reconstructed")
         object.__setattr__(self, "_registry", registry)
-        object.__setattr__(self, "_authority", registry._authority)
+        IdleSummaryTransportRegistry.initialize_transport_authority(registry, _TRANSPORT_SEAL, self)
         object.__setattr__(self, "_binding", binding)
         object.__setattr__(self, "_raw", raw)
         object.__setattr__(self, "_pid", pid)
@@ -619,13 +647,13 @@ class IdleSummaryQualifiedTransport:
     def __repr__(self) -> str:
         return "<idle-summary-qualified-transport opaque>"
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("qualified transports cannot be serialized")
 
-    def __copy__(self) -> IdleSummaryQualifiedTransport:
+    def __copy__(self) -> NoReturn:
         raise TypeError("qualified transports cannot be copied")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> IdleSummaryQualifiedTransport:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("qualified transports cannot be copied")
 
     @property
@@ -660,20 +688,84 @@ class IdleSummaryQualifiedTransport:
     def runtime_fingerprint(self) -> str:
         return self._runtime_fingerprint
 
+    def require_for_authority(
+        self, binding_registry: IdleRuntimeBindingRegistry, source_store: object,
+        binding: IdleRuntimeBinding | None,
+    ) -> None:
+        if (
+            self.binding_registry is not binding_registry
+            or not self._matches_source_operand(source_store)
+            or binding is not None
+            and self.binding is not binding
+        ):
+            raise IdleSummaryCapabilityError("qualified transport is foreign to this authority")
+        IdleSummaryTransportRegistry.validate_transport(self._registry, self)
+
+    def _matches_source_operand(self, source_store: object) -> bool:
+        """Accept raw compatibility operands or an opaque capture identity read."""
+        if type(source_store) is IdleSourceIdentityObservation:
+            return IdleSourceIdentityObservation.matches_source(source_store, self.source_store)
+        return self.source_store is source_store
+
+    def require_registry_relationship(self, registry: IdleSummaryTransportRegistry) -> None:
+        if (
+            self._registry is not registry
+            or not IdleSummaryTransportRegistry.matches_transport_authority(registry, self._authority)
+            or not IdleSummaryTransportRegistry.matches_transport_pid(registry, self._pid)
+            or not IdleSummaryTransportRegistry.matches_transport_source(registry, self._source_store)
+        ):
+            raise IdleSummaryCapabilityError("qualified transport capability is foreign")
+        if (
+            type(self._binding) is not IdleRuntimeBinding
+            or not IdleSummaryTransportRegistry.matches_transport_source(registry, self._binding.source_store)
+        ):
+            raise IdleSummaryCapabilityError("qualified transport source binding changed")
+
+    def require_current_binding(self, binding_registry: IdleRuntimeBindingRegistry) -> None:
+        binding_registry.require_current(self._binding, self._binding.session_key)
+
+    def require_live_adapter_identity(self, registry: IdleSummaryTransportRegistry) -> None:
+        IdleSummaryTransportRegistry.require_adapter_identity(registry, self._raw, self)
+
+    def require_adapter_identity(self, raw: IdleSummaryAttemptCapability) -> None:
+        if (
+            raw.provider_name != self.provider_name
+            or raw.transport != self.transport
+            or raw.model != self.model
+            or raw.context_window_tokens != self.context_window_tokens
+            or raw.runtime_fingerprint != self.runtime_fingerprint
+        ):
+            raise IdleSummaryCapabilityError("qualified transport identity changed")
+
+    def initialize_registry_authority(self, seal: object, authority: object) -> None:
+        if seal is not _TRANSPORT_SEAL:
+            raise IdleSummaryCapabilityError("qualified transport cannot be reconstructed")
+        object.__setattr__(self, "_authority", authority)
+
     def attempt_once(self, request: IdleSummaryRequest) -> Awaitable[IdleSummaryAttemptResponse]:
         self._admit_request(request)
         return self._invoke_admitted(request)
 
+    def invoke_accounted(
+        self,
+        request: IdleSummaryRequest,
+        *,
+        before_dispatch: Callable[[], None],
+    ) -> Awaitable[IdleSummaryAttemptResponse]:
+        self._admit_request(request)
+        before_dispatch()
+        return self._invoke_admitted(request)
+
     def _admit_request(self, request: IdleSummaryRequest) -> None:
         """Validate and claim a request before dispatch accounting advances."""
-        self._registry._claim_request(self, request)
+        IdleSummaryTransportRegistry.admit_transport_request(self._registry, self, request)
 
     def _invoke_admitted(self, request: IdleSummaryRequest) -> Awaitable[IdleSummaryAttemptResponse]:
         """Invoke the raw adapter after the sealed admission has succeeded."""
         result = self._raw.attempt_once(request)
         if not inspect.isawaitable(result):
             raise IdleSummaryError("qualified transport did not return an awaitable")
-        return cast(Awaitable[IdleSummaryAttemptResponse], result)
+        return result
 
 
 # Public aliases retain discoverable names for integration callers while the
@@ -698,12 +790,12 @@ class IdleDependencyVerification:
         if type(self.binding) is not IdleRuntimeBinding:
             raise ValueError("dependency binding is invalid")
         if type(self.references) is not tuple or any(
-            not isinstance(reference, str) or not reference for reference in self.references
+            not isinstance(cast(object, reference), str) or not reference for reference in self.references
         ):
             raise ValueError("dependency references are invalid")
         if self.references != tuple(sorted(set(self.references))):
             raise ValueError("dependency references must be sorted and unique")
-        if not isinstance(self.policy_fingerprint, str) or not self.policy_fingerprint:
+        if not isinstance(cast(object, self.policy_fingerprint), str) or not self.policy_fingerprint:
             raise ValueError("dependency policy fingerprint is invalid")
 
 
@@ -716,7 +808,7 @@ class IdleSummaryDependencyVerifier(Protocol):
         capture: IdleCheckpointCapture,
         binding: IdleRuntimeBinding,
         references: tuple[str, ...],
-    ) -> IdleDependencyVerification: ...
+    ) -> IdleDependencyVerification | Awaitable[IdleDependencyVerification]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -920,7 +1012,7 @@ def _binding_runtime_identity(binding: IdleRuntimeBinding) -> tuple[str, str, in
     try:
         runtime = binding.auxiliary_runtime
         provider_name = getattr(runtime.provider, "provider_name")
-        model = runtime.model
+        model = cast(object, runtime.model)
         context_window_tokens = runtime.context_window_tokens
         if (
             not isinstance(provider_name, str)
@@ -967,15 +1059,10 @@ def _qualified_transport(
 ) -> IdleSummaryQualifiedTransport:
     if type(transport) is not IdleSummaryQualifiedTransport:
         raise IdleSummaryCapabilityError("sealed qualified transport is required")
-    capability = cast(IdleSummaryQualifiedTransport, transport)
-    if (
-        capability.binding_registry is not binding_registry
-        or capability.source_store is not source_store
-        or binding is not None
-        and capability.binding is not binding
-    ):
-        raise IdleSummaryCapabilityError("qualified transport is foreign to this authority")
-    capability._registry._validate_capability(capability)
+    capability = transport
+    IdleSummaryQualifiedTransport.require_for_authority(
+        capability, binding_registry, source_store, binding,
+    )
     return capability
 
 
@@ -993,7 +1080,7 @@ def _usage_from_response(value: object) -> IdleSummaryMeasuredUsage | None:
     if value is None:
         return None
     if type(value) is IdleSummaryMeasuredUsage:
-        measured = cast(IdleSummaryMeasuredUsage, value)
+        measured = value
         try:
             values = (
                 measured.input_tokens,
@@ -1015,7 +1102,7 @@ def _usage_from_response(value: object) -> IdleSummaryMeasuredUsage | None:
             raise IdleSummaryError("summary attempt usage is invalid") from None
     if type(value) is not LLMUsage:
         raise IdleSummaryError("summary attempt usage is malformed")
-    usage = cast(LLMUsage, value)
+    usage = value
     try:
         raw_values = (
             usage.input_tokens,
@@ -1139,12 +1226,12 @@ def _validate_response_content(
     limits: IdleSummaryLimits,
 ) -> str:
     try:
-        attempts = response.attempts
-        provider_state = response.provider_state
-        response_request = response.request
-        finish_reason = response.finish_reason
-        tool_calls = response.tool_calls
-        summary = response.content
+        attempts: object = getattr(response, "attempts")
+        provider_state: object = getattr(response, "provider_state")
+        response_request: object = getattr(response, "request")
+        finish_reason: object = getattr(response, "finish_reason")
+        tool_calls: object = getattr(response, "tool_calls")
+        summary: object = getattr(response, "content")
     except (KeyboardInterrupt, SystemExit, GeneratorExit):
         raise
     except BaseException:
@@ -1226,7 +1313,7 @@ def _checkpoint_from_capture(
             (node.event_id for node in reversed(canonical) if node.message.get("role") == "user"),
             None,
         )
-        transcript_nodes = [previous] if previous is not None else []
+        transcript_nodes: list[RequestNode] = [previous] if previous is not None else []
         transcript_nodes.extend(
             node
             for node in canonical
@@ -1259,10 +1346,10 @@ def _validate_capture_binding(
         raise IdleSummaryBindingError("exact I3b IdleRuntimeBinding is required")
     if type(binding_registry) is not IdleRuntimeBindingRegistry:
         raise IdleSummaryBindingError("exact I3b binding registry is required")
-    actual_capture = cast(IdleCheckpointCapture, capture)
-    actual_binding = cast(IdleRuntimeBinding, binding)
+    actual_capture = capture
+    actual_binding = binding
     try:
-        _validate_capture_attestation(actual_capture)
+        IdleCheckpointCapture.require_attestation(actual_capture)
     except (AttributeError, RecursionError, SourceValidationError, TypeError, ValueError):
         raise IdleSummaryBindingError("capture attestation is invalid") from None
     try:
@@ -1281,7 +1368,7 @@ def _validate_capture_binding(
         raise IdleSummaryBindingError("capture token cannot be revalidated") from None
     if current_token is None or current_token != token:
         raise IdleSummaryBindingError("capture token and detached source changed")
-    if actual_binding.source_store is not actual_capture._source:
+    if not IdleCheckpointCapture.matches_binding(actual_capture, actual_binding):
         raise IdleSummaryBindingError("capture and binding use different source stores")
     if (
         token.session_key != actual_binding.session_key
@@ -1304,7 +1391,7 @@ def _validate_capture_binding(
     ):
         raise IdleSummaryBindingError("capture and binding source identity changed")
     policy = actual_binding.policy_binding
-    if policy is None or actual_capture.policy_fingerprint != policy.fingerprint:
+    if cast(object, policy) is None or actual_capture.policy_fingerprint != policy.fingerprint:
         raise IdleSummaryBindingError("capture and binding policy fingerprint changed")
     if actual_capture.runtime_fingerprint != identity.runtime_fingerprint:
         raise IdleSummaryBindingError("capture and qualified runtime fingerprint changed")
@@ -1317,27 +1404,54 @@ def _validate_capture_binding(
     ):
         raise IdleSummaryBindingError("qualified measurer does not match binding runtime")
     dependencies = actual_capture.dependencies
-    if dependencies is not None and (
-        dependencies._source is not actual_binding.source_store
-        or dependencies._policy_fingerprint != policy.fingerprint
-    ):
+    if dependencies is not None and dependencies.differs_from_summary_binding(actual_binding, policy):
         raise IdleSummaryBindingError("capture dependency capability changed")
     return actual_capture, actual_binding
 
 
+@overload
 def _verify_dependencies(
-    verifier: object | None,
+    verifier: IdleSummaryDependencyVerifier | None,
     *,
     capture: IdleCheckpointCapture,
     binding: IdleRuntimeBinding,
     references: tuple[str, ...],
-) -> None:
+    _defer_invocation: Literal[False] = False,
+) -> None: ...
+
+
+@overload
+def _verify_dependencies(
+    verifier: IdleSummaryDependencyVerifier | None,
+    *,
+    capture: IdleCheckpointCapture,
+    binding: IdleRuntimeBinding,
+    references: tuple[str, ...],
+    _defer_invocation: Literal[True],
+) -> Callable[[], object] | None: ...
+
+
+def _verify_dependencies(
+    verifier: IdleSummaryDependencyVerifier | None,
+    *,
+    capture: IdleCheckpointCapture,
+    binding: IdleRuntimeBinding,
+    references: tuple[str, ...],
+    _defer_invocation: bool = False,
+) -> Callable[[], object] | None:
     if not references:
         return
     if verifier is None or not callable(getattr(verifier, "verify", None)):
         raise IdleSummaryDependencyError("dependent summary requires an injected verifier")
+
+    def invoke() -> object:
+        # Lookup stays live, inside the sync call or the async driver's owned task.
+        return verifier.verify(capture=capture, binding=binding, references=references)
+
+    if _defer_invocation:
+        return invoke
     try:
-        result = verifier.verify(capture=capture, binding=binding, references=references)
+        result = invoke()
     except Exception:
         raise IdleSummaryDependencyError("summary dependency verification failed") from None
     _validate_dependency_result(result, capture=capture, binding=binding, references=references)
@@ -1388,7 +1502,7 @@ async def _join_owned_task(task: asyncio.Task[object]) -> None:
 
 
 async def _verify_dependencies_async(
-    verifier: object | None,
+    verifier: IdleSummaryDependencyVerifier | None,
     *,
     capture: IdleCheckpointCapture,
     binding: IdleRuntimeBinding,
@@ -1396,13 +1510,14 @@ async def _verify_dependencies_async(
     deadline: float,
     clock: Callable[[], float],
 ) -> None:
-    if not references:
+    invocation = _verify_dependencies(
+        verifier, capture=capture, binding=binding, references=references, _defer_invocation=True,
+    )
+    if invocation is None:
         return
-    if verifier is None or not callable(getattr(verifier, "verify", None)):
-        raise IdleSummaryDependencyError("dependent summary requires an injected verifier")
 
     async def invoke() -> object:
-        result = verifier.verify(capture=capture, binding=binding, references=references)
+        result = invocation()
         if inspect.isawaitable(result):
             return await cast(Awaitable[object], result)
         return result
@@ -1454,7 +1569,7 @@ class IdleSummaryAdapter:
             raise IdleSummaryCapabilityError("monotonic clock is invalid")
         if accounting_sink is not None and not callable(accounting_sink):
             raise IdleSummaryCapabilityError("accounting sink is invalid")
-        actual_registry = cast(IdleRuntimeBindingRegistry, binding_registry)
+        actual_registry = binding_registry
         self._binding_registry = actual_registry
         self._transport = _qualified_transport(
             transport,
@@ -1536,7 +1651,7 @@ class IdleSummaryAdapter:
         return self._publish_accounting(ledger, terminal=True)
 
     def _now(self) -> float:
-        value = self._clock()
+        value = cast(object, self._clock())
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
             raise IdleSummaryError("monotonic clock returned an invalid value")
         return float(value)
@@ -1682,7 +1797,7 @@ class IdleSummaryAdapter:
                 raise IdleSummaryError("canonical summary evidence is invalid") from None
             prepared = _PreparedCall(boundary, evidence, payload, references)
             self._require_current(binding)
-            self._require_transport_current(binding, capture._source)
+            self._require_transport_current(binding, capture.observe_source_identity())
             await _verify_dependencies_async(
                 self._dependency_verifier,
                 capture=capture,
@@ -1692,16 +1807,16 @@ class IdleSummaryAdapter:
                 clock=self._now,
             )
             self._require_current(binding)
-            self._require_transport_current(binding, capture._source)
+            self._require_transport_current(binding, capture.observe_source_identity())
             prepared = self._measure(
                 prepared,
                 deadline,
                 measurement_cache,
                 binding=binding,
-                source_store=capture._source,
+                source_store=capture.observe_source_identity(),
             )
             self._require_current(binding)
-            self._require_transport_current(binding, capture._source)
+            self._require_transport_current(binding, capture.observe_source_identity())
             receipt = cast(IdleSummaryRequestReceipt, prepared.receipt)
             if (
                 receipt.input_tokens > self._limits.max_input_tokens
@@ -1838,12 +1953,13 @@ class IdleSummaryAdapter:
         async def invoke() -> IdleSummaryAttemptResponse:
             if deadline - self._now() <= 0:
                 raise IdleSummaryTimeoutError("summary deadline elapsed before dispatch")
-            self._transport._admit_request(request)
-            if deadline - self._now() <= 0:
-                raise IdleSummaryTimeoutError("summary deadline elapsed before dispatch")
-            on_started()
-            result = self._transport._invoke_admitted(request)
-            return cast(IdleSummaryAttemptResponse, await result)
+            def before_dispatch() -> None:
+                if deadline - self._now() <= 0:
+                    raise IdleSummaryTimeoutError("summary deadline elapsed before dispatch")
+                on_started()
+
+            result = self._transport.invoke_accounted(request, before_dispatch=before_dispatch)
+            return await result
 
         task = asyncio.create_task(invoke())
         try:
@@ -1853,7 +1969,8 @@ class IdleSummaryAdapter:
             request = None  # type: ignore[assignment]
             raise IdleSummaryTimeoutError("summary deadline elapsed") from None
         except asyncio.CancelledError:
-            if task.done() and not asyncio.current_task().cancelling():
+            current = asyncio.current_task()
+            if task.done() and current is not None and not current.cancelling():
                 request = None  # type: ignore[assignment]
                 raise _IdleSummaryAttemptCancelledError("summary attempt cancelled") from None
             await _join_owned_task(task)
@@ -1950,7 +2067,7 @@ class IdleSummaryAdapter:
             _qualified_transport(
                 self._transport,
                 binding_registry=self._binding_registry,
-                source_store=actual_capture._source,
+                source_store=actual_capture.observe_source_identity(),
                 binding=actual_binding,
             )
             candidate, previous_checkpoint = _checkpoint_from_capture(actual_capture)
@@ -1992,7 +2109,7 @@ class IdleSummaryAdapter:
                 if boundary <= cursor:
                     continue
                 self._require_current(actual_binding)
-                self._require_transport_current(actual_binding, actual_capture._source)
+                self._require_transport_current(actual_binding, actual_capture.observe_source_identity())
                 prepared = self._prepare_payload(
                     candidate,
                     boundary,
@@ -2016,30 +2133,30 @@ class IdleSummaryAdapter:
                     self._finalize_accounting(ledger)
                     raise
                 self._require_current(actual_binding)
-                self._require_transport_current(actual_binding, actual_capture._source)
+                self._require_transport_current(actual_binding, actual_capture.observe_source_identity())
                 try:
                     prepared = self._measure(
                         prepared,
                         operation_deadline,
                         measurement_cache,
                         binding=actual_binding,
-                        source_store=actual_capture._source,
+                        source_store=actual_capture.observe_source_identity(),
                     )
                 except IdleSummaryTimeoutError:
                     return self._failure(
                         "timeout", requests=requests, ledger=ledger, measured=measured_total
                     )
                 self._require_current(actual_binding)
-                self._require_transport_current(actual_binding, actual_capture._source)
+                self._require_transport_current(actual_binding, actual_capture.observe_source_identity())
                 receipt = cast(IdleSummaryRequestReceipt, prepared.receipt)
-                if prepared.receipt.input_tokens > self._limits.max_input_tokens:
+                if receipt.input_tokens > self._limits.max_input_tokens:
                     continue
                 if (
-                    prepared.receipt.total_reservation_tokens
+                    receipt.total_reservation_tokens
                     > self._measurement_identity.context_window_tokens
                 ):
                     continue
-                if prepared.receipt.total_reservation_tokens > (
+                if receipt.total_reservation_tokens > (
                     self._limits.max_total_tokens - ledger.reserved_tokens
                 ):
                     continue
@@ -2053,7 +2170,7 @@ class IdleSummaryAdapter:
             if self._now() >= operation_deadline:
                 return self._failure("timeout", requests=requests, ledger=ledger, measured=measured_total)
             self._require_current(actual_binding)
-            self._require_transport_current(actual_binding, actual_capture._source)
+            self._require_transport_current(actual_binding, actual_capture.observe_source_identity())
             receipt = cast(IdleSummaryRequestReceipt, chosen.receipt)
             request = IdleSummaryRequest(chosen.payload, receipt)
             ledger.reserve(receipt)
@@ -2111,7 +2228,7 @@ class IdleSummaryAdapter:
             if measured_total.total_tokens > self._limits.max_total_tokens:
                 return self._failure("budget_exceeded", requests=requests, ledger=ledger, measured=measured_total)
             try:
-                self._require_transport_current(actual_binding, actual_capture._source)
+                self._require_transport_current(actual_binding, actual_capture.observe_source_identity())
             except IdleSummaryBindingError:
                 request = None  # type: ignore[assignment]
                 return self._failure("stale_binding", requests=requests, ledger=ledger, measured=measured_total)
@@ -2126,7 +2243,7 @@ class IdleSummaryAdapter:
                 request = None  # type: ignore[assignment]
                 return self._failure("invalid_response", requests=requests, ledger=ledger, measured=measured_total)
             try:
-                self._require_transport_current(actual_binding, actual_capture._source)
+                self._require_transport_current(actual_binding, actual_capture.observe_source_identity())
             except IdleSummaryBindingError:
                 request = None  # type: ignore[assignment]
                 return self._failure("stale_binding", requests=requests, ledger=ledger, measured=measured_total)
@@ -2185,7 +2302,7 @@ class IdleSummaryAdapter:
                 source_revision=captured.state.revision,
                 parent_checkpoint_id=captured.state.checkpoint_id,
             )
-            if rebuilt is None:
+            if cast(object, rebuilt) is None:
                 raise IdleSummaryError("summary rebuild failed")
         except (SourceValidationError, KeyError, TypeError, ValueError):
             return self._failure("invalid_proposal", requests=requests, ledger=ledger, measured=measured_total)
@@ -2193,7 +2310,7 @@ class IdleSummaryAdapter:
         if self._now() >= operation_deadline:
             return self._failure("timeout", requests=requests, ledger=ledger, measured=measured_total)
         try:
-            self._require_transport_current(actual_binding, actual_capture._source)
+            self._require_transport_current(actual_binding, actual_capture.observe_source_identity())
         except IdleSummaryBindingError:
             return self._failure("stale_binding", requests=requests, ledger=ledger, measured=measured_total)
         if self._now() >= operation_deadline:
@@ -2202,7 +2319,7 @@ class IdleSummaryAdapter:
         if not accounting.exact or measured_total is None:
             return self._failure("unknown_usage", requests=requests, ledger=ledger, measured=measured_total)
         try:
-            self._require_transport_current(actual_binding, actual_capture._source)
+            self._require_transport_current(actual_binding, actual_capture.observe_source_identity())
         except IdleSummaryBindingError:
             return self._failure("stale_binding", requests=requests, ledger=ledger, measured=measured_total)
         usage = IdleAuxiliaryUsage(calls=accounting.dispatched_calls, tokens=measured_total.total_tokens)

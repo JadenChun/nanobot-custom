@@ -6,10 +6,12 @@ import contextvars
 import difflib
 import mimetypes
 import os
+import tempfile
+from collections.abc import AsyncGenerator, Callable
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol, Self, cast
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext
@@ -24,6 +26,25 @@ from nanobot.agent.tools.schema import (
 from nanobot.config_base import Base
 from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.utils.helpers import build_image_content_blocks, detect_image_mime
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+    from nanobot.agent.write_guard import FileLockRegistry, WriteScope
+    from nanobot.context_repo.policy import ResourceAccessPolicy
+    from nanobot.security.workspace_access import ToolWorkspace
+    from nanobot.session.artifact import ArtifactDescriptor
+    from nanobot.session.artifact_reader import ArtifactReader
+    from nanobot.session.artifact_store import ArtifactBlobTransaction, PrivateArtifactStore
+    from nanobot.session.source_store import ArtifactSourceLocation, SourceSnapshot
+
+
+class _ArtifactWorkspaceResolver(Protocol):
+    def __call__(
+        self, workspace: Path | None, /, *,
+        restrict_to_workspace: bool, sandbox_restricts_workspace: bool,
+    ) -> "ToolWorkspace": ...
 
 
 def _resolve_path(
@@ -78,15 +99,15 @@ class _FsTool(Tool):
         restrict_to_workspace: bool | None = None,
         sandbox_restricts_workspace: bool = False,
         extra_read_allowed_files: list[Path] | None = None,
-        resource_policy: Any | None = None,
-        lock_registry: Any | None = None,
+        resource_policy: "ResourceAccessPolicy | None" = None,
+        lock_registry: "FileLockRegistry | None" = None,
         lock_owner: str | None = None,
-        allowed_write_scope: Any | None = None,
+        allowed_write_scope: "Iterable[WriteScope] | None" = None,
     ):
         self._resource_policy = resource_policy
         self._lock_registry = lock_registry
         self._lock_owner = lock_owner or "agent:unknown"
-        self._allowed_write_scope = tuple(allowed_write_scope or ())
+        self._allowed_write_scope: "tuple[WriteScope, ...]" = tuple(allowed_write_scope or ())
         self._lock_owner_var = contextvars.ContextVar(f"{type(self).__name__}_owner", default=self._lock_owner)
         self._workspace = workspace
         self._allowed_dir = allowed_dir
@@ -123,6 +144,15 @@ class _FsTool(Tool):
     def set_lock_owner(self, owner: str) -> None:
         self._lock_owner = owner
         self._lock_owner_var.set(owner)
+
+    @asynccontextmanager
+    async def execution_owner_scope(self, owner: str) -> AsyncGenerator[None]:
+        """Scope the caller's lock identity to the current asynchronous task."""
+        token = self._lock_owner_var.set(owner)
+        try:
+            yield
+        finally:
+            self._lock_owner_var.reset(token)
 
     async def execute_with_context(self, context: Any, **kwargs: Any) -> Any:
         """Use the current turn's lock owner without mutating shared tool state."""
@@ -166,7 +196,7 @@ class _FsTool(Tool):
             await self._release_lock(path)
 
     @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
+    def create(cls, ctx: ToolContext) -> Self:
         from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 
         agent_workspace = Path(ctx.workspace)
@@ -291,6 +321,14 @@ class _FsTool(Tool):
             raise PermissionError(scope_error)
         return resolved
 
+    def resolve_read_path(self, path: str) -> Path:
+        """Resolve a read request through the filesystem owner's existing policy."""
+        return self._resolve_read(path)
+
+    def resolve_write_path(self, path: str) -> Path:
+        """Resolve a write request through the filesystem owner's existing policy."""
+        return self._resolve_write(path)
+
     def _resolve(self, path: str, action: str = "read") -> Path:
         resolved = self._resolve_read(path)
         if self._resource_policy and action != "read":
@@ -376,6 +414,12 @@ def _builtin_skill_read_path(path: str) -> Path | None:
 )
 class ReadFileTool(_FsTool):
     """Read file contents with optional line-based pagination."""
+
+    if TYPE_CHECKING:
+        @property
+        def parameters(self) -> dict[str, Any]:
+            ...
+
     _scopes = {"core", "subagent", "memory"}
 
     _MAX_CHARS = 128_000
@@ -397,6 +441,109 @@ class ReadFileTool(_FsTool):
     @property
     def read_only(self) -> bool:
         return True
+
+    def collect_artifact_policy_roots(
+        self, *,
+        select_path_items: Callable[[], Callable[[object], tuple[Path, ...]]],
+        select_workspace_access: Callable[[], _ArtifactWorkspaceResolver],
+    ) -> tuple[Path, ...]:
+        """Observe current root metadata with the caller's original late-bound helpers."""
+        roots: list[Path] = []
+        for name in ("_workspace", "_allowed_dir"):
+            value = getattr(self, name, None)
+            if isinstance(value, Path):
+                roots.append(value)
+        roots.extend(select_path_items()(getattr(self, "_extra_read_allowed_dirs", ())))
+        roots.extend(select_path_items()(getattr(self, "_extra_write_allowed_dirs", ())))
+        roots.extend(select_path_items()(getattr(self, "_extra_read_allowed_files", ())))
+        policy = self._resource_policy
+        if policy is not None:
+            roots.extend(policy.extra_read_dirs())
+            roots.extend(policy.extra_write_dirs())
+            manager = policy.context_manager
+            roots.extend(path for path in (target.path for target in manager.target_repos())
+                         if path is not None)
+        access = select_workspace_access()(
+            self._workspace,
+            restrict_to_workspace=self._restrict_to_workspace,
+            sandbox_restricts_workspace=self._sandbox_restricts_workspace,
+        )
+        if access.project_path is not None:
+            roots.append(access.project_path)
+        if access.allowed_root is not None:
+            roots.append(access.allowed_root)
+        return tuple(roots)
+
+    @staticmethod
+    def validate_artifact_private_location(
+        *,
+        reader: "ArtifactReader",
+        source_location: "ArtifactSourceLocation",
+        select_workspace_access: Callable[[], _ArtifactWorkspaceResolver],
+        media_root: Callable[[], Path],
+        validation_error: Callable[[str], Exception],
+    ) -> None:
+        """Reject readable private locations; return no read or write authority."""
+        access = select_workspace_access()(reader.read_file._workspace,
+            restrict_to_workspace=reader.read_file._restrict_to_workspace,
+            sandbox_restricts_workspace=reader.read_file._sandbox_restricts_workspace)
+        roots = [source_location.workspace.resolve(), media_root().resolve(),
+                 *[root.resolve() for root in reader.read_file._extra_read_allowed_dirs]]
+        if reader.read_file._workspace is not None:
+            roots.append(reader.read_file._workspace.resolve())
+        if reader.read_file._resource_policy is not None:
+            roots.extend(root.resolve() for root in reader.read_file._resource_policy.extra_read_dirs())
+        if any(reader.store.root == root or reader.store.root.is_relative_to(root) for root in roots):
+            raise validation_error('Artifact store must be outside readable roots')
+        if access.project_path is not None:
+            root = access.project_path.resolve()
+            if reader.store.root == root or reader.store.root.is_relative_to(root):
+                raise validation_error('Artifact store is inside the active project')
+        if any(path.resolve().is_relative_to(reader.store.root)
+               for path in reader.read_file._extra_read_allowed_files):
+            raise validation_error('Artifact store has a public file allowlist')
+
+    def revalidate_artifact_source(self, receipt: "FilesystemReadReceipt") -> None:
+        """Recheck an attested source against current policy without reading text."""
+        from nanobot.agent.tools.read_provenance import revalidate_read_receipt
+
+        access = current_tool_workspace(
+            self._workspace,
+            restrict_to_workspace=self._restrict_to_workspace,
+            sandbox_restricts_workspace=self._sandbox_restricts_workspace,
+        )
+        revalidate_read_receipt(
+            receipt,
+            workspace=access.project_path,
+            policy=self._resource_policy,
+            resolve_read=self._resolve_read,
+        )
+
+    def verify_artifact_evidence(
+        self,
+        descriptor: "ArtifactDescriptor",
+        snapshot: "SourceSnapshot",
+        blobs: "ArtifactBlobTransaction",
+        *,
+        store: "PrivateArtifactStore",
+    ) -> "FilesystemReadReceipt":
+        """Verify published evidence under held transactions; never grant a read."""
+        from nanobot.session.artifact_verification import verify_published_artifact
+
+        access = current_tool_workspace(
+            self._workspace,
+            restrict_to_workspace=self._restrict_to_workspace,
+            sandbox_restricts_workspace=self._sandbox_restricts_workspace,
+        )
+        return verify_published_artifact(
+            descriptor,
+            snapshot,
+            blobs,
+            store=store,
+            workspace=access.project_path,
+            policy=self._resource_policy,
+            resolve_read=self._resolve_read,
+        )
 
     async def execute(self, path: str | None = None, offset: int = 1,
                       limit: int | None = None, pages: str | None = None,
@@ -720,6 +867,12 @@ class ReadFileTool(_FsTool):
 )
 class WriteFileTool(_FsTool):
     """Write content to a file."""
+
+    if TYPE_CHECKING:
+        @property
+        def parameters(self) -> dict[str, Any]:
+            ...
+
     _scopes = {"core", "subagent", "memory"}
 
     @property
@@ -734,6 +887,32 @@ class WriteFileTool(_FsTool):
             "directories as needed. For code changes or partial edits, prefer "
             "apply_patch; use edit_file only for small exact replacements."
         )
+
+    async def publish_binary_output(
+        self,
+        destination: Path,
+        *,
+        destination_request: Callable[[], str],
+        read_bytes: Callable[[], bytes],
+        destination_changed_error: Callable[[], Exception],
+    ) -> None:
+        """Publish generated bytes atomically after rechecking the locked destination."""
+        async with self._mutation_guard(destination):
+            if self._resolve_write(destination_request()) != destination:
+                raise destination_changed_error()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as stream:
+                    temporary = Path(stream.name)
+                    stream.write(read_bytes())
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, destination)
+                self._record_touch(destination)
+            finally:
+                if temporary is not None:
+                    temporary.unlink(missing_ok=True)
 
     async def execute(self, path: str | None = None, content: str | None = None, **kwargs: Any) -> str:
         try:
@@ -1042,6 +1221,12 @@ def _best_window(old_text: str, content: str) -> tuple[float, int, list[str], li
 )
 class EditFileTool(_FsTool):
     """Edit a file by replacing text with fallback matching."""
+
+    if TYPE_CHECKING:
+        @property
+        def parameters(self) -> dict[str, Any]:
+            ...
+
     _scopes = {"core", "subagent", "memory"}
 
     _MAX_EDIT_FILE_SIZE = 1024 * 1024 * 1024  # 1 GiB
@@ -1273,6 +1458,12 @@ class EditFileTool(_FsTool):
 )
 class ListDirTool(_FsTool):
     """List directory contents with optional recursion."""
+
+    if TYPE_CHECKING:
+        @property
+        def parameters(self) -> dict[str, Any]:
+            ...
+
     _scopes = {"core", "subagent"}
 
     _DEFAULT_MAX = 200
@@ -1389,7 +1580,7 @@ def _find_match(content: str, old_text: str) -> tuple[str | None, int]:
     stripped_old = [line.strip() for line in old_lines]
     content_lines = content.splitlines()
 
-    candidates = []
+    candidates: list[str] = []
     for i in range(len(content_lines) - len(stripped_old) + 1):
         window = content_lines[i : i + len(stripped_old)]
         if [line.strip() for line in window] == stripped_old:
@@ -1398,6 +1589,11 @@ def _find_match(content: str, old_text: str) -> tuple[str | None, int]:
     if candidates:
         return candidates[0], len(candidates)
     return None, 0
+
+
+def find_edit_match(content: str, old_text: str) -> tuple[str | None, int]:
+    """Match LF-normalized edit text using the live exact/line-trimmed matcher."""
+    return _find_match(content, old_text)
 
 
 class SearchFilesTool(_FsTool):
@@ -1480,7 +1676,7 @@ class SearchFilesTool(_FsTool):
                 return "Error: search query must be a non-empty string"
             if len(query) > self._MAX_QUERY_CHARS:
                 return f"Error: search query exceeds {self._MAX_QUERY_CHARS} characters"
-            if not isinstance(path, str) or not path:
+            if not isinstance(cast(object, path), str) or not path:
                 return "Error: search path must be a non-empty directory path"
 
             root = self._resolve(path, "list")
@@ -1490,11 +1686,11 @@ class SearchFilesTool(_FsTool):
                 return f"Error: Not a directory: {path}"
 
             result_limit = max_results or self._DEFAULT_MAX_RESULTS
-            if isinstance(result_limit, bool) or not isinstance(result_limit, int):
+            if isinstance(result_limit, bool) or not isinstance(cast(object, result_limit), int):
                 return "Error: max_results must be an integer"
             result_limit = max(1, min(result_limit, self._MAX_RESULTS))
             output_limit = max_output_chars or self._DEFAULT_MAX_OUTPUT_CHARS
-            if isinstance(output_limit, bool) or not isinstance(output_limit, int):
+            if isinstance(output_limit, bool) or not isinstance(cast(object, output_limit), int):
                 return "Error: max_output_chars must be an integer"
             output_limit = max(1_000, min(output_limit, self._MAX_OUTPUT_CHARS))
             needle = query if case_sensitive else query.casefold()

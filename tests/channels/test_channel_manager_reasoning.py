@@ -69,7 +69,7 @@ def manager() -> ChannelManager:
     return mgr
 
 
-def test_websocket_gateway_uses_configured_workspace_restriction(tmp_path, monkeypatch):
+async def test_websocket_gateway_uses_configured_workspace_restriction(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "nanobot.webui.workspaces.read_webui_default_access_mode",
         lambda: "default",
@@ -87,7 +87,9 @@ def test_websocket_gateway_uses_configured_workspace_restriction(tmp_path, monke
         }
     )
 
-    mgr = ChannelManager(config, MessageBus(), webui_static_dist=False)
+    mgr = await ChannelManager(
+        config, MessageBus(), webui_static_dist=False,
+    ).acquire()
     channel = mgr.channels["websocket"]
 
     scope = channel.gateway.workspaces.default_scope()

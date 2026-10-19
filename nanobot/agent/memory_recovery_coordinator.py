@@ -7,6 +7,7 @@ locks; inspection leases are released before invoking a stage.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NoReturn
 
 from nanobot.agent import memory_recovery as receipt_codec
 from nanobot.agent import memory_recovery_conversion as conversion
@@ -41,7 +42,7 @@ class OfflineMemoryRecoveryError(RuntimeError):
         super().__init__("memory recovery unavailable")
 
 
-def _fail() -> None:
+def _fail() -> NoReturn:
     raise OfflineMemoryRecoveryError() from None
 
 
@@ -55,7 +56,7 @@ def _inspect(
         snapshot = authority.snapshot_target(".consolidation.pending.json")
         if snapshot.content != receipt_bytes:
             _fail()
-        receipt = receipt_codec._validate_payload(receipt_codec._decode(receipt_bytes), receipt_bytes)
+        receipt = receipt_codec.decode_memory_receipt_bytes(receipt_bytes)
         captured = transaction.capture_transaction_payload(
             receipt, workspace_id=workspace_id, workspace_identity=operation.workspace_identity,
         )
@@ -89,9 +90,9 @@ def _inspect(
         # The locator authenticates path/marker identity, not the JSONL header
         # or the pending receipt's event range. Reject a mismatched source
         # before conversion can touch the live history targets.
-        transaction_prepare._session_records(source_bytes, session_key)
+        transaction_prepare.parse_recovery_session_records(source_bytes, session_key)
         if len(tx) <= 1:
-            transaction_prepare._source_proposal(source_bytes, receipt)
+            transaction_prepare.derive_recovery_source_proposal(source_bytes, receipt)
         return tx, cv
 
 

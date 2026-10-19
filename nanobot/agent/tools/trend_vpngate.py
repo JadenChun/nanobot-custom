@@ -15,9 +15,9 @@ import ipaddress
 import re
 import ssl
 from dataclasses import dataclass
+from typing import cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-
 
 DEFAULT_API_URL = "https://www.vpngate.net/api/iphone/"
 MAX_API_BYTES = 32 * 1024 * 1024
@@ -100,11 +100,11 @@ def _decode_profile(encoded: str) -> str:
 def parse_api_response(text: str, *, max_candidates: int = 8) -> list[VpnGateCandidate]:
     """Parse the official CSV API and return ranked, bounded candidates."""
 
-    if not isinstance(text, str) or not text.strip():
+    if not isinstance(cast(object, text), str) or not text.strip():
         raise VpnGateDiscoveryError("VPN Gate returned an empty relay list")
     if len(text.encode("utf-8", errors="replace")) > MAX_API_BYTES:
         raise VpnGateDiscoveryError("VPN Gate relay list is too large")
-    if not isinstance(max_candidates, int) or isinstance(max_candidates, bool):
+    if not isinstance(cast(object, max_candidates), int) or isinstance(max_candidates, bool):
         raise VpnGateDiscoveryError("max_candidates must be an integer")
     if not 1 <= max_candidates <= 16:
         raise VpnGateDiscoveryError("max_candidates must be between 1 and 16")

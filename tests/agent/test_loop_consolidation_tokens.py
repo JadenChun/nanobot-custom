@@ -3,17 +3,20 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nanobot.agent.loop import AgentLoop
-from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import (
     GenerationSettings,
     LLMResponse,
     ProviderConversationState,
 )
 from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
+from tests.agent import p6_admitted_fixtures
+
+admitted_async = p6_admitted_fixtures.admitted_async
 
 
-def _make_loop(
+async def _make_loop(
     tmp_path,
+    admitted_async,
     *,
     estimated_tokens: int,
     context_window_tokens: int,
@@ -27,12 +30,17 @@ def _make_loop(
     provider.chat_with_retry = AsyncMock(return_value=_response)
     provider.chat_stream_with_retry = AsyncMock(return_value=_response)
 
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-        context_window_tokens=context_window_tokens,
+    def build(inputs):
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="test-model", context_window_tokens=context_window_tokens,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            enable_legacy_auto_compact=False,
+        )
+
+    loop = await admitted_async(
+        tmp_path, build, keys=("cli:test", "cli:native"),
     )
     loop.tools.get_definitions = MagicMock(return_value=[])
     loop.consolidator._SAFETY_BUFFER = 0
@@ -40,9 +48,9 @@ def _make_loop(
 
 
 @pytest.mark.asyncio
-async def test_runner_pressure_commits_summary_and_current_delta(tmp_path) -> None:
-    loop = _make_loop(
-        tmp_path, estimated_tokens=100, context_window_tokens=1_624, max_tokens=100,
+async def test_runner_pressure_commits_summary_and_current_delta(tmp_path, admitted_async) -> None:
+    loop = await _make_loop(
+        tmp_path, admitted_async, estimated_tokens=100, context_window_tokens=1_624, max_tokens=100,
     )
     loop.provider.can_resume_conversation_state.return_value = False
     loop.schedule_background = lambda coro: coro.close()  # type: ignore[method-assign]
@@ -93,9 +101,9 @@ async def test_runner_pressure_commits_summary_and_current_delta(tmp_path) -> No
 
 @pytest.mark.asyncio
 async def test_native_provider_compaction_commits_portable_terminal_checkpoint(
-    tmp_path,
+    tmp_path, admitted_async,
 ) -> None:
-    loop = _make_loop(tmp_path, estimated_tokens=100, context_window_tokens=2_000)
+    loop = await _make_loop(tmp_path, admitted_async, estimated_tokens=100, context_window_tokens=2_000)
     session = loop.sessions.get_or_create("cli:native")
     session.messages = [
         {"role": "user", "content": "accepted history"},

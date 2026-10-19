@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
 _MARKER_PREFIX = "<!-- nanobot-consolidation:"
 _MARKER_SUFFIX = " -->"
@@ -22,9 +22,9 @@ def classify_history_marker_frame(
     followed by the frame as the staging append routine writes it.
     """
     if (
-        not isinstance(existing_history, bytes)
-        or not isinstance(marker_id, str)
-        or not isinstance(history_entry, str)
+        not isinstance(cast(object, existing_history), bytes)
+        or not isinstance(cast(object, marker_id), str)
+        or not isinstance(cast(object, history_entry), str)
         or not marker_id
         or not history_entry.rstrip()
         or any(
@@ -77,11 +77,12 @@ def classify_history_marker_frame(
 
         position = marker_positions[0]
         at_record_start = position == 0 or text[:position].endswith("\n\n")
-        frame_ends_at_eof = position + len(expected_frame) == len(existing_history)
+        byte_position = len(text[:position].encode("utf-8"))
+        frame_ends_at_eof = byte_position + len(expected_frame) == len(existing_history)
         if (
             not at_record_start
             or not frame_ends_at_eof
-            or not existing_history.startswith(expected_frame, position)
+            or not existing_history.startswith(expected_frame, byte_position)
         ):
             raise ValueError(_INVALID_FRAME_MESSAGE)
         return "present", None

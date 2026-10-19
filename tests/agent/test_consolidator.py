@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nanobot.agent.loop import AgentLoop
 from nanobot.agent.memory import (
     _HISTORY_ENTRY_HARD_CAP,
     Consolidator,
@@ -27,8 +28,58 @@ from nanobot.session.manager import Session
 from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT, is_summary_checkpoint
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.prompt_templates import render_template
+from tests.agent import p6_admitted_fixtures
+
+admitted_async = p6_admitted_fixtures.admitted_async
 
 _ARCHIVE_PROMPT = render_template("agent/consolidator_archive.md", strip=True)
+
+
+async def _acquired_loop(tmp_path, admitted_async, provider, key, *, unified_session=False):
+    def build(inputs):
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="test-model", context_window_tokens=128_000,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            unified_session=unified_session, enable_legacy_auto_compact=False,
+        )
+
+    return await admitted_async(tmp_path, build, keys=(key,))
+
+
+@pytest.mark.parametrize("request_mode", ["ordinary", "ephemeral", "dream"])
+@pytest.mark.parametrize("valid_summary", [False, True])
+async def test_saved_summary_replay_does_not_require_background_compaction(
+    tmp_path, admitted_async, mock_provider, request_mode, valid_summary,
+):
+    key = "dream:summary" if request_mode == "dream" else "cli:summary"
+    mock_provider.estimate_prompt_tokens.return_value = (100, "test")
+    mock_provider.chat_with_retry.return_value = LLMResponse(content="answer", finish_reason="stop")
+    loop = await _acquired_loop(tmp_path, admitted_async, mock_provider, key)
+    assert loop.auto_compact is None
+    loop.consolidator.archive_session = AsyncMock(side_effect=AssertionError("unexpected archive"))
+    session = loop.sessions.get_or_create(key)
+    session.metadata["_last_summary"] = {
+        "text": "SAVED_CHECKPOINT_MARKER" if valid_summary else 42,
+        "last_active": "invalid date uses the existing validated fallback",
+    }
+    loop.sessions.save(session)
+    loop.sessions.invalidate(key)
+
+    for _ in range(2):
+        response = await loop.process_direct(
+            "next question", session_key=key, ephemeral=request_mode == "ephemeral",
+        )
+        assert response.content == "answer"
+        messages = mock_provider.chat_with_retry.call_args.kwargs["messages"]
+        assert ("SAVED_CHECKPOINT_MARKER" in str(messages)) is (
+            valid_summary and request_mode == "ordinary"
+        )
+
+    assert mock_provider.chat_with_retry.await_count == 2
+    loop.consolidator.archive_session.assert_not_awaited()
+    assert loop.auto_compact is None
 
 
 @pytest.fixture
@@ -660,14 +711,14 @@ class TestCompactIdleSession:
 
     @pytest.mark.asyncio
     async def test_next_turn_rebuilds_context_after_idle_compaction(
-        self, loop_factory, mock_provider,
+        self, tmp_path, admitted_async, mock_provider,
     ):
         mock_provider.can_resume_conversation_state.return_value = True
         mock_provider.estimate_prompt_tokens.return_value = (100, "test")
         mock_provider.chat_with_retry.return_value = LLMResponse(
             content="Archived conversation summary.", finish_reason="stop",
         )
-        loop = loop_factory(provider=mock_provider)
+        loop = await _acquired_loop(tmp_path, admitted_async, mock_provider, "cli:idle-resume")
         try:
             session = loop.sessions.get_or_create("cli:idle-resume")
             for i in range(10):
@@ -1322,15 +1373,17 @@ class TestCompactIdleSession:
     @pytest.mark.asyncio
     async def test_reuses_real_prefix_for_unified_session_workspace(
         self,
-        loop_factory,
+        admitted_async,
         mock_provider,
         tmp_path,
     ):
-        project = tmp_path / "project"
+        loop = await _acquired_loop(
+            tmp_path, admitted_async, mock_provider, UNIFIED_SESSION_KEY, unified_session=True,
+        )
+        project = loop.workspace / "project"
         project.mkdir()
-        (tmp_path / "AGENTS.md").write_text("GLOBAL_WORKSPACE_MARKER", encoding="utf-8")
+        (loop.workspace / "AGENTS.md").write_text("GLOBAL_WORKSPACE_MARKER", encoding="utf-8")
         (project / "AGENTS.md").write_text("PROJECT_WORKSPACE_MARKER", encoding="utf-8")
-        loop = loop_factory(provider=mock_provider, unified_session=True)
         runtime = loop.llm_runtime()
         runtime.provider.chat_with_retry.return_value = LLMResponse(
             content="Summary.",

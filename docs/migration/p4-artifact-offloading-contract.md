@@ -1,9 +1,11 @@
 # P4 tool-output offloading implementation contract
 
-Status: partially implemented; model-facing offloading and dependency-aware source
-summaries are implemented, while runtime activation remains pending. This contract refines the accepted
+Status: **P4 accepted 2026-09-30** under the
+[final P4 closure checkpoint](p4-closure-checkpoint.md). Runtime activation
+remains a separate P5+ gate. This contract refines the accepted
 [context design](../context-management-migration-design.md); it does not authorize
-runtime activation or change migration completion scope. Source pressure compaction,
+runtime activation, guard removal, cron scheduling, deployment, live traffic/state
+migration, or Windows/release qualification. Source pressure compaction,
 scoped retrieval, and artifact-backed request and summary projections are implemented.
 The reviewed producer set is limited to qualified built-in `read_file` and
 single-file `grep` text output; other producer adapters and the remaining
@@ -613,7 +615,49 @@ and `tests/agent/test_migration_source_engine.py::test_engine_offloads_large_rea
 No additional real `ReadArtifactTool` wiring is added in this generic boundary
 test.
 
-This controlled failure is a safety qualification only. It does not complete
-general tool-output offloading, long-running context success, producer-adapter
-coverage, artifact rematerialization, or any remaining migration gate; it does
-not widen the accepted producer set or amend this contract's scope.
+At that historical package checkpoint, this controlled failure was a safety
+qualification only and did not complete general tool-output offloading,
+long-running context success, producer-adapter coverage, or artifact
+rematerialization. The later P4-H section and final closure checkpoint supersede
+the rematerialization-open statement without widening the accepted producer set
+or amending this contract's scope.
+
+## Canonical artifact rematerialization (P4-H)
+
+`ArtifactRematerializer` is a dormant, explicit invocation API. It accepts one
+exact admitted `ArtifactReader`, an opaque published reference, and the caller's
+captured `SourceState`; it never refreshes that state. Recovery selects the
+descriptor only from the current manifest and reconstructs bytes only through
+the exact retained canonical source binding. Native stream scope, the qualified
+producer receipt, current repository/read policy, live dispatch ownership,
+workspace/session/incarnation/generation/store identity, UTF-8 length and digest
+are revalidated before locking, inside the store-first read-only source
+transaction, and again after installation.
+
+The blob transaction installs only an absent immutable name. A valid existing
+blob reports `already_present`; corrupt or mismatching evidence is never repaired,
+deleted, overwritten or quarantined. Typed content-free failures distinguish
+corruption, limits, pre-install I/O and uncertain post-link durability. An exact
+retry either installs from canonical inline bytes or verifies and reuses the one
+valid blob. A pre-link crash residue is adopted only when it is the sole private,
+one-link runtime stage and its complete UTF-8 bytes, length and digest match the
+requested descriptor; it is recovered before quota accounting. Unknown, corrupt,
+unrelated or multiple stages remain untouched and fail closed. Post-link crash
+staging remains recoverable. Two spawned installers serialize to one `installed`
+and one `already_present` result.
+
+The source context is read-only and retains the existing execution/session locks
+while yielding a detached exact snapshot. Tests compare the complete session JSONL
+before and after recovery, prove stale state and forged references fail closed,
+prove corrupt evidence remains untouched, and show a schema-v2 dependency is
+admitted only after explicit recovery. Existing inline fallback and checkpoint
+rejection remain unchanged. There is no call site from normal reads, projection,
+checkpoint validation, startup, the agent loop, CLI or configuration.
+
+P4-H validation passed 185 focused artifact/source/checkpoint tests, 107 artifact
+integration tests and all 862 session tests. Scoped Ruff, session compilation and
+diff checks passed; BasedPyright was not installed in the available Python
+environments. Rematerialization remains an explicit dormant API with no
+production caller. Producer-set expansion, migration-guard removal, runtime
+activation, deployment, live traffic/state migration, and Windows/release
+qualification are not authorized by P4 acceptance.

@@ -11,14 +11,13 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn, SupportsIndex, cast
 
 from nanobot.session.artifact import (
     ArtifactDescriptor,
     ArtifactValidationError,
     parse_artifact_reference,
 )
-from nanobot.session.execution_owner import execution_transaction
 
 if TYPE_CHECKING:
     from nanobot.session.artifact_reader import ArtifactReader
@@ -28,6 +27,15 @@ if TYPE_CHECKING:
 
 _MAX_ARTIFACT_REFERENCES = 16
 _CAPABILITY = object()
+
+
+def _parse_grant_references(references: object) -> tuple[str, ...]:
+    if not isinstance(references, list) or len(cast(list[object], references)) > _MAX_ARTIFACT_REFERENCES:
+        raise ArtifactValidationError("Invalid artifact reference grant set")
+    parsed = tuple(parse_artifact_reference(value) for value in cast(list[object], references))
+    if len(set(parsed)) != len(parsed):
+        raise ArtifactValidationError("Artifact references must be unique")
+    return parsed
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +80,10 @@ class ArtifactGrantSet:
         self._reader: ArtifactReader | None = None
         self._closed = False
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("ArtifactGrantSet cannot be serialized")
 
-    def __reduce_ex__(self, protocol: int) -> object:
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
         _ = protocol
         raise TypeError("ArtifactGrantSet cannot be serialized")
 
@@ -118,12 +126,8 @@ class ArtifactGrantSet:
 
     @staticmethod
     def _references(references: object) -> tuple[str, ...]:
-        if not isinstance(references, list) or len(references) > _MAX_ARTIFACT_REFERENCES:
-            raise ArtifactValidationError("Invalid artifact reference grant set")
-        parsed = tuple(parse_artifact_reference(value) for value in references)
-        if len(set(parsed)) != len(parsed):
-            raise ArtifactValidationError("Artifact references must be unique")
-        return parsed
+        # Retain the existing class hook and late-bound subclass overrides.
+        return _parse_grant_references(references)
 
     @classmethod
     def issue_downward(
@@ -139,17 +143,16 @@ class ArtifactGrantSet:
         child = cls(_CAPABILITY, child_writer)
         if not identifiers:
             return child
-        parent._validate_grant_issuer()
+        parent.require_grant_issuer()
         grants: list[_Grant] = []
         with parent.store.transaction() as blobs:
-            with execution_transaction(parent.writer.store._backend, parent.writer.owner.key, parent.writer.owner):
+            with parent.writer.store.execution_transaction(parent.writer.owner.key, parent.writer.owner):
                 parent.writer.owner.validate_dispatch()
                 snapshot = parent.writer.owner.read_snapshot()
                 for identifier in identifiers:
-                    descriptor = parent._descriptor_for_id(identifier, snapshot)
                     # Only native evidence is eligible.  A child cannot pass a
                     # received grant on to another child.
-                    parent._verify_descriptor(descriptor, snapshot, blobs, require_native=True)
+                    descriptor = parent.verify_native_artifact(identifier, snapshot, blobs)
                     grants.append(_Grant(
                         child,
                         "downward",
@@ -199,7 +202,7 @@ class ArtifactGrantSet:
             direct = False
         if not direct:
             raise ArtifactValidationError("Artifact grant stream relation changed")
-        reader._verify_descriptor(descriptor, snapshot, blobs, require_native=False)
+        reader.verify_received_descriptor(descriptor, snapshot, blobs)
 
     def accept_handoff(
         self,
@@ -212,11 +215,11 @@ class ArtifactGrantSet:
         if reader is None:
             raise ArtifactValidationError("Artifact handoff has no admitted reader")
         self._validate_reader(reader)
-        if not isinstance(receipt, ArtifactHandoffReceipt):
+        if not isinstance(cast(object, receipt), ArtifactHandoffReceipt):
             raise ArtifactValidationError("Invalid artifact handoff receipt")
-        if not isinstance(parent_result_event_id, str) or not parent_result_event_id:
+        if not isinstance(cast(object, parent_result_event_id), str) or not parent_result_event_id:
             raise ArtifactValidationError("Artifact handoff has no durable parent result")
-        descriptors = receipt._preflight_for_parent(_CAPABILITY, reader)
+        descriptors = receipt.preflight_for_parent(_CAPABILITY, reader)
         current_ids = {grant.descriptor.artifact_id for grant in self._grants}
         ids = [descriptor.artifact_id for descriptor in descriptors]
         if len(descriptors) > _MAX_ARTIFACT_REFERENCES or len(set(ids)) != len(ids):
@@ -225,7 +228,7 @@ class ArtifactGrantSet:
             raise ArtifactValidationError("Artifact handoff exceeds invocation limit")
         minted: list[_Grant] = []
         with reader.store.transaction() as blobs:
-            with execution_transaction(reader.writer.store._backend, reader.writer.owner.key, reader.writer.owner):
+            with reader.writer.store.execution_transaction(reader.writer.owner.key, reader.writer.owner):
                 reader.writer.owner.validate_dispatch()
                 snapshot = reader.writer.owner.read_snapshot()
                 parent_result = next(
@@ -239,7 +242,7 @@ class ArtifactGrantSet:
                 ):
                     raise ArtifactValidationError("Artifact handoff has no durable parent result")
                 for descriptor in descriptors:
-                    reader._verify_descriptor(descriptor, snapshot, blobs, require_native=False)
+                    reader.verify_received_descriptor(descriptor, snapshot, blobs)
                     event = next(event for event in snapshot.events if event.get("_event_id") == descriptor.event_id)
                     if event.get("_parent_stream_id") != reader.writer.stream_id:
                         raise ArtifactValidationError("Artifact handoff is not from a direct child")
@@ -257,7 +260,7 @@ class ArtifactGrantSet:
                 new_grants = (*self._grants, *minted)
                 self._grants = new_grants
                 try:
-                    receipt._consume_after_validation(_CAPABILITY)
+                    receipt.consume_after_validation(_CAPABILITY)
                 except BaseException:
                     self._grants = previous_grants
                     raise
@@ -283,19 +286,48 @@ class ArtifactHandoffReceipt:
         self._sealed = False
         self._consumed = False
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("ArtifactHandoffReceipt cannot be serialized")
 
-    def __reduce_ex__(self, protocol: int) -> object:
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
         _ = protocol
         raise TypeError("ArtifactHandoffReceipt cannot be serialized")
+
+    def verify_child_evidence(
+        self,
+        reader: ArtifactReader,
+        snapshot: SourceSnapshot,
+        blobs: ArtifactBlobTransaction,
+        *,
+        event_ids: set[object],
+    ) -> tuple[ArtifactDescriptor, ...]:
+        """Verify retained native evidence without sealing or consuming this receipt."""
+        if not self._tool_events or not set(self._tool_events) <= event_ids:
+            raise ArtifactValidationError("Artifact handoff result was not retained")
+        verified: list[ArtifactDescriptor] = []
+        for descriptor in self._descriptors:
+            reader.verify_published(descriptor, snapshot, blobs)
+            verified.append(descriptor)
+        return tuple(verified)
 
     def _record_tool_event(self, capability: object, writer: SourceTurnWriter, event_id: str) -> None:
         if capability is not _CAPABILITY or writer is not self._collector.reader.writer:
             raise ArtifactValidationError("Artifact handoff result is not durable")
-        if not isinstance(event_id, str) or not event_id:
+        if not isinstance(cast(object, event_id), str) or not event_id:
             raise ArtifactValidationError("Artifact handoff result identity is invalid")
         self._tool_events.append(event_id)
+
+    def record_tool_event(self, capability: object, writer: SourceTurnWriter, event_id: str) -> None:
+        """Retain the guarded durable-result hook, including late-bound overrides."""
+        self._record_tool_event(capability, writer, event_id)
+
+    def copy_tool_events_from(
+        self, capability: object, receipts: list[ArtifactHandoffReceipt],
+    ) -> None:
+        """Copy ordered merge evidence under the constructor's runtime capability."""
+        if capability is not _CAPABILITY:
+            raise ArtifactValidationError("Artifact handoff is unavailable")
+        self._tool_events = [event for receipt in receipts for event in receipt._tool_events]
 
     def belongs_to(self, collector: ArtifactHandoffCollector) -> bool:
         """Return whether this unconsumed receipt came from ``collector``."""
@@ -314,6 +346,10 @@ class ArtifactHandoffReceipt:
         if capability is not _CAPABILITY or not self._tool_events:
             raise ArtifactValidationError("Artifact handoff was not durably recorded")
         self._sealed = True
+
+    def seal_after_completion(self, capability: object) -> None:
+        """Use the original seal hook after successful durable-child verification."""
+        self._seal(capability)
 
     def _preflight_for_parent(
         self,
@@ -334,10 +370,24 @@ class ArtifactHandoffReceipt:
             raise ArtifactValidationError("Artifact handoff is unavailable")
         self._consumed = True
 
+    def preflight_for_parent(
+        self, capability: object, parent: ArtifactReader,
+    ) -> tuple[ArtifactDescriptor, ...]:
+        """Use the guarded, one-shot direct-parent preflight without minting a grant."""
+        return self._preflight_for_parent(capability, parent)
+
+    def consume_after_validation(self, capability: object) -> None:
+        """Retain the original consumption fault seam and caller rollback order."""
+        self._consume_after_validation(capability)
+
     def _invalidate(self, capability: object) -> None:
         if capability is not _CAPABILITY:
             raise ArtifactValidationError("Artifact handoff is unavailable")
         self._consumed = True
+
+    def invalidate_after_merge(self, capability: object) -> None:
+        """Retain the original invalidation hook after a merged receipt is sealed."""
+        self._invalidate(capability)
 
 
 class ArtifactHandoffCollector:
@@ -356,21 +406,20 @@ class ArtifactHandoffCollector:
     def select(self, references: object) -> ArtifactHandoffReceipt:
         if self._closed:
             raise ArtifactValidationError("Artifact handoff is unavailable")
-        identifiers = ArtifactGrantSet._references(references)
+        identifiers = _parse_grant_references(references)
         if not identifiers:
             raise ArtifactValidationError("Artifact handoff requires at least one reference")
         if self._selected.intersection(identifiers) or len(self._selected) + len(identifiers) > _MAX_ARTIFACT_REFERENCES:
             raise ArtifactValidationError("Artifact handoff references must be unique and bounded")
         descriptors: list[ArtifactDescriptor] = []
         with self.reader.store.transaction() as blobs:
-            with execution_transaction(self.reader.writer.store._backend, self.reader.writer.owner.key,
+            with self.reader.writer.store.execution_transaction(self.reader.writer.owner.key,
                                        self.reader.writer.owner):
                 self.reader.writer.owner.validate_dispatch()
                 snapshot = self.reader.writer.owner.read_snapshot()
                 for identifier in identifiers:
-                    descriptor = self.reader._descriptor_for_id(identifier, snapshot)
                     # Handoff never accepts an inbound parent grant.
-                    self.reader._verify_descriptor(descriptor, snapshot, blobs, require_native=True)
+                    descriptor = self.reader.verify_native_artifact(identifier, snapshot, blobs)
                     if descriptor.stream_id != self.reader.writer.stream_id:
                         raise ArtifactValidationError("Artifact handoff requires child-produced evidence")
                     descriptors.append(descriptor)
@@ -384,7 +433,7 @@ class ArtifactHandoffCollector:
     def record(self, receipt: ArtifactHandoffReceipt, event_id: str) -> None:
         if receipt not in self._receipts or self._closed:
             raise ArtifactValidationError("Artifact handoff is unavailable")
-        receipt._record_tool_event(_CAPABILITY, self.reader.writer, event_id)
+        receipt.record_tool_event(_CAPABILITY, self.reader.writer, event_id)
 
     def finalize(self, *, stop_reason: str) -> ArtifactHandoffReceipt | None:
         if self._closed:
@@ -394,28 +443,26 @@ class ArtifactHandoffCollector:
             return None
         writer = self.reader.writer
         with self.reader.store.transaction() as blobs:
-            with execution_transaction(writer.store._backend, writer.owner.key, writer.owner):
+            with writer.store.execution_transaction(writer.owner.key, writer.owner):
                 writer.owner.validate_dispatch()
                 snapshot = writer.owner.read_snapshot()
                 stream = [event for event in snapshot.events if event.get("_stream_id") == writer.stream_id]
                 if not stream or stream[-1].get("role") != "assistant" or stream[-1].get("tool_calls"):
                     raise ArtifactValidationError("Artifact handoff has no successful child terminal event")
-                event_ids = {event.get("_event_id") for event in stream}
+                event_ids: set[object] = {event.get("_event_id") for event in stream}
                 descriptors: list[ArtifactDescriptor] = []
                 for receipt in self._receipts:
-                    if not receipt._tool_events or not set(receipt._tool_events) <= event_ids:
-                        raise ArtifactValidationError("Artifact handoff result was not retained")
-                    for descriptor in receipt._descriptors:
-                        self.reader._verify_descriptor(descriptor, snapshot, blobs, require_native=True)
-                        descriptors.append(descriptor)
+                    descriptors.extend(receipt.verify_child_evidence(
+                        self.reader, snapshot, blobs, event_ids=event_ids,
+                    ))
                 blobs.assert_reachable()
                 writer.owner.validate_dispatch()
         # Merge receipts into one one-shot authority for the parent tool result.
         merged = ArtifactHandoffReceipt(_CAPABILITY, self, tuple(descriptors))
-        merged._tool_events = [event for receipt in self._receipts for event in receipt._tool_events]
-        merged._seal(_CAPABILITY)
+        merged.copy_tool_events_from(_CAPABILITY, self._receipts)
+        merged.seal_after_completion(_CAPABILITY)
         for receipt in self._receipts:
-            receipt._invalidate(_CAPABILITY)
+            receipt.invalidate_after_merge(_CAPABILITY)
         return merged
 
 

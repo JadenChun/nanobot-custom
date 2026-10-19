@@ -73,8 +73,9 @@ def create_webui_chat_fork(
 
         fork_title = clean_generated_title(title)
         if fork_title:
-            forked.metadata[WEBUI_TITLE_METADATA_KEY] = fork_title
-            session_manager.save(forked, fsync=True)
+            session_manager.upsert_session_metadata(
+                target_key, {WEBUI_TITLE_METADATA_KEY: fork_title}, fsync=True
+            )
     except Exception:
         delete_webui_transcript(target_key)
         session_manager.delete_session(target_key)
@@ -118,8 +119,8 @@ async def handle_webui_fork_chat(
             await channel.send_webui_protocol_error(connection, "invalid fork source or index")
             return
         fork_id, fork_key = forked
-    except Exception as exc:
-        logger.warning("fork_chat failed: {}", exc)
+    except Exception:
+        logger.warning("fork_chat failed")
         await channel.send_webui_protocol_error(connection, "fork_chat_failed")
         return
 

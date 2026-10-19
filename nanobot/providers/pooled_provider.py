@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import secrets
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 
 from nanobot.events import RetryStatusEvent
 from nanobot.providers.base import (
+    GenerationSettings,
+    LLMCallObserver,
     LLMProvider,
     LLMResponse,
     ProviderCallContext,
     ProviderConversationState,
+    RetryEventCallback,
+    RetryStatusCallback,
 )
 from nanobot.providers.key_pool import KeyPoolCoordinator
 
@@ -74,50 +79,51 @@ def _rotation_cooldown(response: LLMResponse) -> float | None:
 class PooledProvider(LLMProvider):
     """Keep each credential/client immutable; state remains owned by its leaf."""
 
-    def __init__(self, leaves: list[LLMProvider], keys: list[str], rate_limit: int = 0):
+    def __init__(self, leaves: list[LLMProvider], keys: list[str], rate_limit: int = 0) -> None:
         if not leaves or len(leaves) != len(keys):
             raise ValueError('Each key pool slot requires exactly one provider leaf')
-        self._leaves = tuple(leaves)
+        self._leaves: tuple[LLMProvider, ...] = tuple(leaves)
         generation = leaves[0].generation
         super().__init__(api_key=leaves[0].api_key, api_base=leaves[0].api_base,
                          provider_name=leaves[0].provider_name)
         self.generation = generation
-        self._owners = tuple(secrets.token_hex(32) for _ in keys)
-        self._pool = KeyPoolCoordinator(len(leaves), rate_limit)
+        self._owners: tuple[str, ...] = tuple(secrets.token_hex(32) for _ in keys)
+        self._pool: KeyPoolCoordinator = KeyPoolCoordinator(len(leaves), rate_limit)
 
     @property
-    def generation(self):
+    def generation(self) -> GenerationSettings:
         return self._leaves[0].generation
 
     @generation.setter
-    def generation(self, value):
+    def generation(self, value: GenerationSettings) -> None:
         for leaf in self._leaves:
             leaf.generation = value
 
     def get_default_model(self) -> str:
         return self._leaves[0].get_default_model()
 
-    def set_llm_call_observer(self, observer):
+    def set_llm_call_observer(self, observer: LLMCallObserver | None) -> None:
         super().set_llm_call_observer(observer)
         for leaf in self._leaves:
             leaf.set_llm_call_observer(observer)
 
-    def supports_native_compaction(self, model=None) -> bool:
+    def supports_native_compaction(self, model: str | None = None) -> bool:
         return any(leaf.supports_native_compaction(model) for leaf in self._leaves)
 
-    def _leaf_state(self, slot: int, state: ProviderConversationState | None, model):
+    def _leaf_state(self, slot: int, state: ProviderConversationState | None,
+                    model: str | None) -> ProviderConversationState | None:
         if state is None or state.payload.get(_OWNER) != self._owners[slot]:
             return None
         clean = replace(state, payload=deepcopy({key: value for key, value in state.payload.items() if key != _OWNER}),
                         pending_messages=deepcopy(state.pending_messages))
         return clean if self._leaves[slot].can_resume_conversation_state(clean, model) else None
 
-    def can_resume_conversation_state(self, state: ProviderConversationState, model=None) -> bool:
+    def can_resume_conversation_state(self, state: ProviderConversationState, model: str | None = None) -> bool:
         return any(self._leaf_state(slot, state, model) is not None for slot in range(len(self._leaves)))
 
     def _tag_response(self, slot: int, response: LLMResponse) -> LLMResponse:
         """Keep pool ownership while removing leaf-bound continuation metadata."""
-        states = {}
+        states: dict[str, ProviderConversationState] = {}
         for field in ('provider_state', 'provider_compaction_state'):
             state = getattr(response, field)
             if state is not None:
@@ -131,18 +137,23 @@ class PooledProvider(LLMProvider):
                 )
         return replace(response, **states) if states else response
 
-    async def _attempt(self, kwargs, *, stream, observed, stopped, attempts=None):
+    async def _attempt(self, kwargs: dict[str, Any], *, stream: bool, observed: bool,
+                       stopped: list[bool | Literal['exhausted']],
+                       attempts: list[int] | None = None) -> LLMResponse:
         order = self._pool.request_order()
         call_kwargs = dict(kwargs)
         delivered = False
         for name in ('on_content_delta', 'on_thinking_delta', 'on_tool_call_delta'):
-            callback = call_kwargs.get(name)
+            callback: Callable[..., Awaitable[None]] | None = call_kwargs.get(name)
             if callback is not None:
-                async def track(*args, _callback=callback, **kw):
+                async def track(*args: Any, _callback: Callable[..., Awaitable[None]] = callback,
+                                **kw: Any) -> None:
                     nonlocal delivered
                     delivered = True
                     await _callback(*args, **kw)
                 call_kwargs[name] = track
+        slot: int | None = None
+        response: LLMResponse | None = None
         for slot in order:
             leaf = self._leaves[slot]
             local = dict(call_kwargs)
@@ -174,6 +185,9 @@ class PooledProvider(LLMProvider):
                 return response
             self._pool.failed(slot, cooldown)
         stopped[0] = "exhausted"
+        # Nonempty leaves create matching finite cooldowns; request_order's
+        # ready/cooling partition therefore visits at least one credential slot.
+        assert slot is not None and response is not None
         return self._tag_response(slot, response)
 
     async def chat_once(self, **kwargs: Any) -> LLMResponse:
@@ -189,28 +203,56 @@ class PooledProvider(LLMProvider):
                 self._pool.failed(slot, cooldown)
         return self._tag_response(slot, response)
 
-    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
+    @staticmethod
+    def _bind_positional_args(
+        args: tuple[object, ...], kwargs: dict[str, Any], *, stream: bool,
+    ) -> None:
+        # Match the base call order without materializing omitted defaults.
+        names = ('tools', 'model', 'max_tokens', 'temperature', 'reasoning_effort', 'tool_choice')
+        if stream:
+            names += ('on_content_delta', 'on_thinking_delta', 'on_tool_call_delta')
+        method = 'chat_stream' if stream else 'chat'
+        if len(args) > len(names):
+            raise TypeError(f'{method}() accepts at most {len(names) + 1} positional arguments')
+        for name in names[:len(args)]:
+            if name in kwargs:
+                raise TypeError(f"{method}() got multiple values for argument '{name}'")
+        kwargs.update(zip(names, args))
+
+    async def chat(
+        self, messages: list[dict[str, Any]], *args: object, **kwargs: Any,
+    ) -> LLMResponse:
+        self._bind_positional_args(args, kwargs, stream=False)
         kwargs["messages"] = messages
         return await self._attempt(kwargs, stream=False, observed=False, stopped=[False])
 
-    async def chat_with_context(self, *, provider_context, **kwargs):
+    async def chat_with_context(self, *, provider_context: ProviderCallContext,
+                                **kwargs: Any) -> LLMResponse:
         return await self.chat(provider_context=provider_context, **kwargs)
 
-    async def chat_stream(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
+    async def chat_stream(
+        self, messages: list[dict[str, Any]], *args: object, **kwargs: Any,
+    ) -> LLMResponse:
+        self._bind_positional_args(args, kwargs, stream=True)
         kwargs["messages"] = messages
         return await self._attempt(kwargs, stream=True, observed=False, stopped=[False])
 
-    async def chat_stream_with_context(self, *, provider_context, **kwargs):
+    async def chat_stream_with_context(self, *, provider_context: ProviderCallContext,
+                                       **kwargs: Any) -> LLMResponse:
         return await self.chat_stream(provider_context=provider_context, **kwargs)
 
-    async def _run_chat_with_retry(self, kw, original_messages, *, stream, retry_mode,
-                                   on_retry_wait, on_retry_exhausted, on_retry_status,
-                                   should_retry_guard=None, on_stream_recover=None):
-        stopped = [False]
-        attempts = [0]
-        async def call(**kwargs):
+    async def _run_chat_with_retry(self, kw: dict[str, Any], original_messages: list[dict[str, Any]],
+                                   *, stream: bool, retry_mode: str,
+                                   on_retry_wait: RetryEventCallback | None,
+                                   on_retry_exhausted: RetryEventCallback | None,
+                                   on_retry_status: RetryStatusCallback | None,
+                                   should_retry_guard: Callable[[], bool] | None = None,
+                                   on_stream_recover: Callable[[], Awaitable[None]] | None = None) -> LLMResponse:
+        stopped: list[bool | Literal['exhausted']] = [False]
+        attempts: list[int] = [0]
+        async def call(**kwargs: Any) -> LLMResponse:
             return await self._attempt(kwargs, stream=stream, observed=True, stopped=stopped, attempts=attempts)
-        async def status(event):
+        async def status(event: RetryStatusEvent) -> None:
             if stopped[0] != "exhausted" and on_retry_status:
                 await on_retry_status(event)
 

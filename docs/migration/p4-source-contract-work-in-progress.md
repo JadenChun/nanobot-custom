@@ -1,10 +1,16 @@
 # P4 source persistence work in progress
 
-The migration remains guarded and incomplete. Dormant source-event and context-
-checkpoint validation contracts, strict JSONL source transactions, and legacy
-session write protection are implemented. Governed execution does not yet use
-these transactions; execution ownership and mandatory runner persistence remain
-to implement.
+Current status: **P4 accepted 2026-09-30**. The
+[final P4 closure checkpoint](p4-closure-checkpoint.md) supersedes the open and
+partial status statements in this incremental package history. The migration
+remains guarded: P4 acceptance does not authorize runtime activation, guard
+removal, cron scheduling, deployment, live traffic/state migration, or
+Windows/release qualification. Idle I1/I2/I3 remains optional, dormant,
+disabled, and injection-only.
+
+The sections below preserve the historical implementation sequence. Statements
+that work "remains" or is "not wired yet" describe their package checkpoint,
+not the accepted final P4 state.
 
 ## Implemented contract
 

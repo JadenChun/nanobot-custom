@@ -76,6 +76,60 @@ def test_gate_requires_an_existing_workspace(tmp_path: Path) -> None:
     assert not missing.exists()
 
 
+def test_existing_only_gate_never_creates_missing_workspace_or_lock(tmp_path: Path) -> None:
+    missing = tmp_path / "missing"
+    with pytest.raises(storage.MemoryStorageError):
+        with storage.open_existing_workspace_memory_lock(missing):
+            pytest.fail("missing workspace accepted")
+    assert not missing.exists()
+    with pytest.raises(storage.MemoryStorageError) as failure:
+        with storage.open_existing_workspace_memory_lock(tmp_path):
+            pytest.fail("missing lock accepted")
+    assert failure.value.code == "missing"
+    assert list(tmp_path.iterdir()) == []
+    with storage.open_workspace_memory_lock(tmp_path):
+        pass
+    with storage.open_existing_workspace_memory_lock(tmp_path) as gate:
+        gate.require_current()
+    assert not (tmp_path / "memory").exists()
+
+
+def test_existing_only_authority_requires_complete_layout_without_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with storage.open_workspace_memory_lock(tmp_path):
+        pass
+    before = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
+    with pytest.raises(storage.MemoryStorageError):
+        with storage.open_existing_workspace_memory(tmp_path):
+            pytest.fail("incomplete layout accepted")
+    assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before
+    with storage.open_workspace_memory(tmp_path):
+        pass
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        pytest.fail("existing-only authority attempted a create or repair")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(storage, "_sync_directory_boundary", forbidden)
+        with storage.open_existing_workspace_memory(tmp_path) as authority:
+            with authority.operation() as operation:
+                operation.require_current()
+                with pytest.raises(storage.MemoryStorageError):
+                    authority.open_evidence_namespace("transactions", "a" * 64)
+
+
+def test_existing_only_gate_rejects_unsafe_lock(tmp_path: Path) -> None:
+    lock = tmp_path / ".memory-recovery.lock"
+    lock.write_bytes(b"private")
+    lock.chmod(0o644)
+    before = _snapshot(lock)
+    with pytest.raises(storage.MemoryStorageError):
+        with storage.open_existing_workspace_memory_lock(tmp_path):
+            pytest.fail("unsafe lock accepted")
+    assert _snapshot(lock) == before
+
+
 def test_gate_leaves_absent_and_ordinary_memory_layout_untouched(tmp_path: Path) -> None:
     tmp_path.chmod(0o755)
     lock_path = tmp_path / ".memory-recovery.lock"

@@ -17,7 +17,7 @@ import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, cast
 
 PENDING_MEMORY_RECEIPT_FILENAME = ".consolidation.pending.json"
 """The staging receipt filename, relative to ``workspace/memory``."""
@@ -95,8 +95,8 @@ class MemoryReceipt:
     start_offset: int | None = None
     end_offset: int | None = None
     session_generation: int | None = None
-    unknown_fields: Mapping[str, Any] = field(default_factory=dict)
-    raw_fields: Mapping[str, Any] = field(default_factory=dict)
+    unknown_fields: Mapping[str, Any] = field(default_factory=cast("Callable[[], dict[str, object]]", dict))
+    raw_fields: Mapping[str, Any] = field(default_factory=cast("Callable[[], dict[str, object]]", dict))
     raw_bytes: bytes = b""
 
     @property
@@ -179,7 +179,7 @@ def _decode(raw_bytes: bytes) -> dict[str, Any]:
         raise _invalid() from None
     if type(decoded) is not dict:
         raise _invalid()
-    return decoded
+    return cast(dict[str, object], decoded)
 
 
 def _check_aliases(payload: dict[str, Any]) -> None:
@@ -279,6 +279,12 @@ def _validate_payload(payload: dict[str, Any], raw_bytes: bytes) -> MemoryReceip
         raw_fields=MappingProxyType(copy.deepcopy(payload)),
         raw_bytes=bytes(raw_bytes),
     )
+
+
+def decode_memory_receipt_bytes(raw_bytes: bytes) -> MemoryReceipt:
+    """Decode and detach receipt data; does not establish filesystem provenance."""
+
+    return _validate_payload(_decode(raw_bytes), raw_bytes)
 
 
 def _canonical_receipt_path(path: Path) -> Path:
@@ -489,8 +495,7 @@ def parse_memory_receipt(path: Path) -> MemoryReceipt | None:
         raw_bytes = _read_owned_receipt(receipt_path)
         if raw_bytes is None:
             return None
-        payload = _decode(raw_bytes)
-        return _validate_payload(payload, raw_bytes)
+        return decode_memory_receipt_bytes(raw_bytes)
     except MemoryReceiptRecoveryRequiredError:
         raise
     except Exception:
@@ -524,6 +529,16 @@ parse_pending_memory_receipt = parse_memory_receipt
 preflight_pending_memory_receipt = preflight_memory_receipt
 
 
+def reject_duplicate_receipt_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Apply the existing duplicate-key rejection policy to JSON object pairs."""
+    return _reject_duplicate_keys(pairs)
+
+
+def reject_non_json_receipt_number(value: str) -> None:
+    """Reject the same non-JSON numeric constants as the existing receipt parser."""
+    return _reject_non_json_number(value)
+
+
 __all__ = [
     "MEMORY_RECEIPT_FILENAME",
     "MemoryReceipt",
@@ -535,10 +550,13 @@ __all__ = [
     "MemoryRecoveryRequiredError",
     "PENDING_MEMORY_RECEIPT_FILENAME",
     "LegacyMemoryReceipt",
+    "decode_memory_receipt_bytes",
     "parse_legacy_memory_receipt",
     "parse_memory_receipt",
     "parse_pending_memory_receipt",
     "preflight_memory_receipt",
     "preflight_pending_memory_receipt",
     "require_memory_receipt_recovery",
+    "reject_duplicate_receipt_keys",
+    "reject_non_json_receipt_number",
 ]

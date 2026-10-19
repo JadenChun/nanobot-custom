@@ -8,7 +8,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, is_dataclass
 from hashlib import sha256
 from math import isfinite
-from typing import Any, cast
+from typing import Any, NoReturn, SupportsIndex, cast
 
 from nanobot.providers.base import (
     LLMProvider,
@@ -43,13 +43,13 @@ def _canonical_value(value: object) -> object:
         return _canonical_value(asdict(value))
     if isinstance(value, Mapping):
         normalized: dict[str, object] = {}
-        for key, item in value.items():
+        for key, item in cast(Mapping[object, object], value).items():
             if not isinstance(key, str):
                 raise ValueError("binding mapping keys must be strings")
             normalized[key] = _canonical_value(item)
         return normalized
     if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
-        return [_canonical_value(item) for item in value]
+        return [_canonical_value(item) for item in cast(Sequence[object], value)]
     if value is None or isinstance(value, str | bool | int):
         return value
     if isinstance(value, float):
@@ -103,16 +103,16 @@ class ProviderStateSettlement:
         self._candidate_digest = _digest(candidate.to_private_record())
         self._settled = False
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("ProviderStateSettlement cannot be serialized")
 
-    def __reduce_ex__(self, protocol: int) -> object:
+    def __reduce_ex__(self, protocol: SupportsIndex) -> NoReturn:
         _ = protocol
         raise TypeError("ProviderStateSettlement cannot be serialized")
 
     def candidate_for_persistence(self) -> ProviderConversationState | None:
         """Return the exact detached candidate while this handle remains live."""
-        if self._settled or not self._controller._settlement_is_current(self):
+        if self._settled or not self._controller.is_current_settlement(self):
             return None
         return self._candidate
 
@@ -120,13 +120,38 @@ class ProviderStateSettlement:
         """Adopt the candidate after its caller-owned durable commit succeeds."""
         if self._settled:
             return False
-        return self._controller._commit_settlement(self, candidate)
+        return self._controller.commit_provider_settlement(self, candidate)
 
     def discard(self) -> bool:
         """Permanently reject this candidate without changing a newer one."""
         if self._settled:
             return False
-        return self._controller._discard_settlement(self)
+        return self._controller.discard_provider_settlement(self)
+
+    def matches_candidate(self, candidate: ProviderConversationState | None) -> bool:
+        """Observe exact candidate identity only; this is not settlement admission."""
+        return candidate is self._candidate
+
+    def matches_invocation(self, invocation: int) -> bool:
+        """Compare the owning invocation without returning the sealed token."""
+        return invocation == self._token
+
+    def is_unchanged_candidate(self, candidate: ProviderConversationState) -> bool:
+        """Retain the original ordered type/identity/digest validation and live reads."""
+        return not (
+            not isinstance(cast(object, candidate), ProviderConversationState)
+            or candidate is not self._candidate
+            or self._candidate_digest is None
+            or _digest(candidate.to_private_record()) != self._candidate_digest
+        )
+
+    def is_revoked(self) -> bool:
+        """Observe terminal local revocation; no candidate or authority is returned."""
+        return self._settled
+
+    def revoke(self) -> None:
+        """Irrevocably close only this handle through its existing owner operation."""
+        self._close()
 
     def _close(self) -> None:
         self._settled = True
@@ -418,7 +443,13 @@ class ProviderConversationStateController:
         if not self._state_has_known_context(self._state):
             self.invalidate()
             return independent_context
-        if not self._binding_matches(portable_prefix, binding, receipt):
+        # The active fields came from these locals and passed the non-None guard
+        # above; continuing cannot turn either original local into None.
+        if not self._binding_matches(
+            portable_prefix,
+            cast(ConversationRequestBinding, binding),
+            cast(ProviderConversationTransportReceipt, receipt),
+        ):
             self.invalidate()
             return independent_context
 
@@ -501,7 +532,7 @@ class ProviderConversationStateController:
         messages: list[dict[str, Any]] | None = None,
     ) -> bool:
         """Compatibility adapter for a completed settlement boundary."""
-        if not isinstance(settlement, ProviderStateSettlement):
+        if not isinstance(cast(object, settlement), ProviderStateSettlement):
             return False
         candidate = settlement.candidate_for_persistence()
         if candidate is None or not settlement.commit_persisted(candidate):
@@ -515,7 +546,7 @@ class ProviderConversationStateController:
         if settlement is None:
             self.invalidate()
             return True
-        if not isinstance(settlement, ProviderStateSettlement):
+        if not isinstance(cast(object, settlement), ProviderStateSettlement):
             return False
         return settlement.discard()
 
@@ -579,13 +610,36 @@ class ProviderConversationStateController:
         self._state = self.checkpoint(messages)
         return self._state
 
+    def is_current_settlement(self, settlement: ProviderStateSettlement) -> bool:
+        """Observe original current authority while rejecting a revoked handle."""
+        return (
+            self._settlement_is_current(settlement)
+            and not ProviderStateSettlement.is_revoked(settlement)
+        )
+
+    def commit_provider_settlement(
+        self,
+        settlement: ProviderStateSettlement,
+        candidate: ProviderConversationState,
+    ) -> bool:
+        """Adopt only a live handle through the existing exact-candidate guard."""
+        if ProviderStateSettlement.is_revoked(settlement):
+            return False
+        return self._commit_settlement(settlement, candidate)
+
+    def discard_provider_settlement(self, settlement: ProviderStateSettlement) -> bool:
+        """Discard a live handle without bypassing the existing invocation guard."""
+        if ProviderStateSettlement.is_revoked(settlement):
+            return False
+        return self._discard_settlement(settlement)
+
     def _settlement_is_current(self, settlement: ProviderStateSettlement) -> bool:
         """Return whether *settlement* is the sole live candidate authority."""
         return (
             self._provisional_settlement is settlement
-            and self._provisional_state is settlement._candidate
+            and ProviderStateSettlement.matches_candidate(settlement, self._provisional_state)
             and self._provisional_prefix is not None
-            and self._provisional_invocation == settlement._token
+            and ProviderStateSettlement.matches_invocation(settlement, self._provisional_invocation)
         )
 
     def _commit_settlement(
@@ -595,14 +649,9 @@ class ProviderConversationStateController:
     ) -> bool:
         """Adopt one exact, unchanged candidate through its live settlement."""
         if not self._settlement_is_current(settlement):
-            settlement._close()
+            settlement.revoke()
             return False
-        if (
-            not isinstance(candidate, ProviderConversationState)
-            or candidate is not settlement._candidate
-            or settlement._candidate_digest is None
-            or _digest(candidate.to_private_record()) != settlement._candidate_digest
-        ):
+        if not ProviderStateSettlement.is_unchanged_candidate(settlement, candidate):
             self.invalidate()
             return False
         assert self._provisional_prefix is not None
@@ -616,7 +665,7 @@ class ProviderConversationStateController:
     def _discard_settlement(self, settlement: ProviderStateSettlement) -> bool:
         """Invalidate only the active candidate associated with *settlement*."""
         if not self._settlement_is_current(settlement):
-            settlement._close()
+            settlement.revoke()
             return False
         self.invalidate()
         return True
@@ -624,7 +673,7 @@ class ProviderConversationStateController:
     def _clear_provisional_settlement(self) -> None:
         """Close and forget the active settlement without retaining its state."""
         if self._provisional_settlement is not None:
-            self._provisional_settlement._close()
+            self._provisional_settlement.revoke()
         self._provisional_settlement = None
         self._provisional_state = None
         self._provisional_prefix = None

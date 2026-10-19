@@ -11,16 +11,30 @@ import pytest
 
 from nanobot.agent.turn import TurnRequest, TurnResult, TurnSource
 from nanobot.nanobot import Nanobot, RunResult
+from tests.migration import p5_sdk_compat_fixtures as compat
+from tests.migration.p5_sdk_compat_fixtures import turn
+
+offline_sdk_positive = compat.offline_sdk_positive
+sdk_bot_factory = compat.sdk_bot_factory
+pytestmark = pytest.mark.usefixtures("offline_sdk_positive")
 
 
 def _write_config(tmp_path: Path, overrides: dict | None = None) -> Path:
     data = {
         "providers": {"openrouter": {"apiKey": "sk-test-key"}},
         "agents": {"defaults": {"model": "openai/gpt-4.1"}},
+        "tools": {"agentBrowser": {"enabled": False}, "agentDevice": {"enabled": False},
+                  "desktopUse": {"enabled": False}},
     }
     if overrides:
+        tool_overrides = overrides.get("tools", {})
         data.update(overrides)
-    config_path = tmp_path / "config.json"
+        data["tools"] = {"agentBrowser": {"enabled": False},
+                         "agentDevice": {"enabled": False},
+                         "desktopUse": {"enabled": False}, **tool_overrides}
+    config_dir = tmp_path.parent / f"{tmp_path.name}-instance"
+    config_dir.mkdir(exist_ok=True)
+    config_path = config_dir / "config.json"
     config_path.write_text(json.dumps(data))
     return config_path
 
@@ -30,19 +44,21 @@ def test_from_config_missing_file():
         Nanobot.from_config("/nonexistent/config.json")
 
 
-def test_from_config_creates_instance(tmp_path):
+async def test_from_config_creates_instance(tmp_path, sdk_bot_factory):
     config_path = _write_config(tmp_path)
-    bot = Nanobot.from_config(config_path, workspace=tmp_path)
-    assert bot._loop is not None
+    bot = await sdk_bot_factory(config_path, workspace=tmp_path)
+    assert bot._loop is not None  # explicit acquisition, not eager construction
     assert bot._loop.workspace == tmp_path
 
 
-def test_from_config_default_path():
+def test_from_config_default_path(tmp_path):
     from nanobot.config.schema import Config
 
     with patch("nanobot.config.loader.load_config") as mock_load, \
-         patch("nanobot.nanobot._make_provider") as mock_prov:
+         patch("nanobot.providers.factory.make_provider") as mock_prov:
         mock_load.return_value = Config()
+        mock_load.return_value.bind_source_path(tmp_path / "instance" / "config.json")
+        mock_load.return_value.agents.defaults.workspace = str(tmp_path / "workspace")
         mock_prov.return_value = MagicMock()
         mock_prov.return_value.get_default_model.return_value = "test"
         mock_prov.return_value.generation.max_tokens = 4096
@@ -51,9 +67,9 @@ def test_from_config_default_path():
 
 
 @pytest.mark.asyncio
-async def test_run_returns_result(tmp_path):
+async def test_run_returns_result(tmp_path, sdk_bot_factory):
     config_path = _write_config(tmp_path)
-    bot = Nanobot.from_config(config_path, workspace=tmp_path)
+    bot = await sdk_bot_factory(config_path, workspace=tmp_path)
 
     mock_response = TurnResult(
         run_id="run-1",
@@ -82,10 +98,10 @@ async def test_run_returns_result(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_with_hooks(tmp_path):
+async def test_run_with_hooks(tmp_path, sdk_bot_factory):
     from nanobot.agent.hook import AgentHook, AgentHookContext
     config_path = _write_config(tmp_path)
-    bot = Nanobot.from_config(config_path, workspace=tmp_path)
+    bot = await sdk_bot_factory(config_path, workspace=tmp_path)
 
     class TestHook(AgentHook):
         async def before_iteration(self, context: AgentHookContext) -> None:
@@ -102,9 +118,9 @@ async def test_run_with_hooks(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_hooks_restored_on_error(tmp_path):
+async def test_run_hooks_restored_on_error(tmp_path, sdk_bot_factory):
     config_path = _write_config(tmp_path)
-    bot = Nanobot.from_config(config_path, workspace=tmp_path)
+    bot = await sdk_bot_factory(config_path, workspace=tmp_path)
 
     from nanobot.agent.hook import AgentHook
 
@@ -117,28 +133,28 @@ async def test_run_hooks_restored_on_error(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_none_response(tmp_path):
+async def test_run_none_response(tmp_path, sdk_bot_factory):
     config_path = _write_config(tmp_path)
-    bot = Nanobot.from_config(config_path, workspace=tmp_path)
-    bot._loop.execute_turn = AsyncMock(return_value=None)
+    bot = await sdk_bot_factory(config_path, workspace=tmp_path)
+    bot._loop.execute_turn = AsyncMock(return_value=turn())
 
     result = await bot.run("hi")
     assert result.content == ""
 
 
-def test_workspace_override(tmp_path):
+async def test_workspace_override(tmp_path, sdk_bot_factory):
     config_path = _write_config(tmp_path)
     custom_ws = tmp_path / "custom_workspace"
     custom_ws.mkdir()
 
-    bot = Nanobot.from_config(config_path, workspace=custom_ws)
+    bot = await sdk_bot_factory(config_path, workspace=custom_ws)
     assert bot._loop.workspace == custom_ws
 
 
 @pytest.mark.asyncio
-async def test_run_custom_session_key(tmp_path):
+async def test_run_custom_session_key(tmp_path, sdk_bot_factory):
     config_path = _write_config(tmp_path)
-    bot = Nanobot.from_config(config_path, workspace=tmp_path)
+    bot = await sdk_bot_factory(config_path, workspace=tmp_path)
 
     mock_response = TurnResult(content="ok", final_content="ok", run_id="run-alice")
     bot._loop.execute_turn = AsyncMock(return_value=mock_response)
@@ -150,12 +166,12 @@ async def test_run_custom_session_key(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_hooks_are_isolated_for_concurrent_calls(tmp_path):
+async def test_run_hooks_are_isolated_for_concurrent_calls(tmp_path, sdk_bot_factory):
     config_path = _write_config(tmp_path)
-    bot = Nanobot.from_config(config_path, workspace=tmp_path)
+    bot = await sdk_bot_factory(config_path, workspace=tmp_path)
     seen: list[tuple[str, tuple[object, ...]]] = []
 
-    async def execute(request: TurnRequest) -> TurnResult:
+    async def execute(request: TurnRequest, **kwargs) -> TurnResult:
         seen.append((request.content, request.hooks))
         await asyncio.sleep(0)
         return TurnResult(content=request.content, final_content=request.content)
@@ -174,9 +190,9 @@ async def test_run_hooks_are_isolated_for_concurrent_calls(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_messages_are_opt_in_and_sanitized_detached_trace(tmp_path):
+async def test_run_messages_are_opt_in_and_sanitized_detached_trace(tmp_path, sdk_bot_factory):
     config_path = _write_config(tmp_path)
-    bot = Nanobot.from_config(config_path, workspace=tmp_path)
+    bot = await sdk_bot_factory(config_path, workspace=tmp_path)
     raw_messages = [
         {"role": "system", "content": "internal system prompt"},
         {

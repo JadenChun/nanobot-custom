@@ -252,6 +252,8 @@ async def _execute_tool_call(
         return payload, event
 
     await hook.before_execute_tool(context, tool_call, tool, params)
+    if turn_context is not None and turn_context.busy_turn is not None:
+        turn_context.busy_turn.check_stop()
     if turn_context is not None and turn_context.execution_owner is not None:
         turn_context.execution_owner.validate_dispatch()
     try:

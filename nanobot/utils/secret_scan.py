@@ -12,8 +12,7 @@ is never returned, logged, or written to error messages.
 from __future__ import annotations
 
 import re
-from typing import Any
-
+from typing import Any, cast
 
 SECRET_QUERY_PARAMS = frozenset({"access_token", "appsecret_proof", "client_secret"})
 
@@ -50,7 +49,7 @@ def find_secrets_in_blob(blob: str) -> list[dict[str, str]]:
     matched substring's prefix label), ``field``, ``fingerprint``. The full
     credential value is never included.
     """
-    if not isinstance(blob, str) or not blob:
+    if not isinstance(cast(object, blob), str) or not blob:
         return []
     hits: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -107,7 +106,7 @@ def find_secrets_in_blob(blob: str) -> list[dict[str, str]]:
 def find_secrets(value: Any) -> list[dict[str, str]]:
     """Find probable credentials anywhere in a payload (recursive)."""
     hits: list[dict[str, str]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[str] = set()
 
     def _emit(hit: dict[str, str], key: str) -> None:
         if key in seen:
@@ -115,9 +114,9 @@ def find_secrets(value: Any) -> list[dict[str, str]]:
         seen.add(key)
         hits.append(hit)
 
-    def _walk(node: Any, path: str) -> None:
+    def _walk(node: Any, path: object) -> None:
         if isinstance(node, dict):
-            for k, v in node.items():
+            for k, v in cast(dict[object, object], node).items():
                 child_path = f"{path}.{k}" if path else k
                 if (
                     isinstance(k, str)
@@ -131,7 +130,8 @@ def find_secrets(value: Any) -> list[dict[str, str]]:
                         _emit(
                             {
                                 "kind": "plaintext_pattern",
-                                "path": child_path,
+                                # A formatted path or the checked string key above.
+                                "path": cast(str, child_path),
                                 "field": "Authorization",
                                 "fingerprint": _fingerprint(
                                     m.group(1), prefix="Bearer "
@@ -143,7 +143,7 @@ def find_secrets(value: Any) -> list[dict[str, str]]:
                 _walk(v, child_path)
             return
         if isinstance(node, list):
-            for i, item in enumerate(node):
+            for i, item in enumerate(cast(list[object], node)):
                 _walk(item, f"{path}[{i}]")
             return
         if isinstance(node, str):

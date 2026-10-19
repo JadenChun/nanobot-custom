@@ -9,8 +9,14 @@ from pathlib import Path
 import pytest
 
 from nanobot.session.artifact import ArtifactValidationError, parse_artifact_descriptor
-from nanobot.session.artifact_store import ArtifactStorageError, PrivateArtifactStore
-from session.test_artifact import WORKSPACE, fixture
+from nanobot.session.artifact_store import (
+    ArtifactInstallCorruptionError,
+    ArtifactInstallIOError,
+    ArtifactInstallUncertainError,
+    ArtifactStorageError,
+    PrivateArtifactStore,
+)
+from tests.session.test_artifact import WORKSPACE, fixture
 
 
 def make_store(root):
@@ -39,6 +45,16 @@ def child_put(root, raw, queue):
             errors.append((type(exc).__name__, getattr(exc, 'errno', None), str(exc)))
             exc = exc.__context__
         queue.put(errors)
+
+
+def child_install_missing(root, raw, queue):
+    try:
+        store = make_store(Path(root))
+        with store.transaction() as transaction:
+            result = transaction.install_missing(parse_artifact_descriptor(raw), b'evidence')
+        queue.put(result.status)
+    except Exception as exc:
+        queue.put(type(exc).__name__)
 
 
 def child_put_with_namespace_quota(root, raw, content, queue):
@@ -367,6 +383,65 @@ def test_two_processes_reuse_one_complete_immutable_blob(blob_store):
         queue.close()
 
 
+def test_two_processes_install_missing_once_and_reuse(blob_store):
+    context = multiprocessing.get_context('spawn')
+    queue = context.Queue()
+    processes = [
+        context.Process(
+            target=child_install_missing,
+            args=(str(blob_store.root), descriptor().to_dict(), queue),
+        )
+        for _ in range(2)
+    ]
+    try:
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=15)
+            assert not process.is_alive() and process.exitcode == 0
+        assert sorted(queue.get(timeout=2) for _ in processes) == [
+            'already_present',
+            'installed',
+        ]
+        with blob_store.transaction() as transaction:
+            assert transaction.read_range(descriptor()) == b'evidence'
+    finally:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=2)
+        queue.close()
+
+
+def test_install_missing_never_repairs_corruption(blob_store):
+    with blob_store.transaction() as transaction:
+        assert transaction.install_missing(descriptor(), b'evidence').status == 'installed'
+    path = namespace(blob_store) / (descriptor().artifact_id + '.blob')
+    path.write_bytes(b'changed!')
+    with blob_store.transaction() as transaction:
+        with pytest.raises(ArtifactInstallCorruptionError):
+            transaction.install_missing(descriptor(), b'evidence')
+    assert path.read_bytes() == b'changed!'
+
+
+def test_install_missing_uncertain_retry_recovers_valid_link(blob_store, monkeypatch):
+    with blob_store.transaction() as transaction:
+        unlink = os.unlink
+
+        def fail_temporary(path, *args, **kwargs):
+            if str(path).startswith('.tmp-'):
+                raise OSError
+            return unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, 'unlink', fail_temporary)
+        with pytest.raises(ArtifactInstallUncertainError):
+            transaction.install_missing(descriptor(), b'evidence')
+    monkeypatch.undo()
+    with blob_store.transaction() as transaction:
+        assert transaction.install_missing(descriptor(), b'evidence').status == 'already_present'
+        assert transaction.read_range(descriptor()) == b'evidence'
+
+
 def child_crash_after_link(root, raw):
     store = make_store(Path(root))
     link = os.link
@@ -378,6 +453,38 @@ def child_crash_after_link(root, raw):
     os.link = crash
     with store.transaction() as transaction:
         transaction.put(parse_artifact_descriptor(raw), b'evidence')
+
+
+def child_install_crash_after_link(root, raw):
+    store = make_store(Path(root))
+    link = os.link
+
+    def crash(*args, **kwargs):
+        link(*args, **kwargs)
+        os._exit(24)
+
+    os.link = crash
+    with store.transaction() as transaction:
+        transaction.install_missing(parse_artifact_descriptor(raw), b'evidence')
+
+
+def child_install_crash_before_link(root, raw, namespace_limit):
+    store = PrivateArtifactStore(
+        Path(root),
+        workspace_id=WORKSPACE,
+        session_key='test:artifact',
+        incarnation='incarnation',
+        generation=2,
+        max_blob_bytes=8,
+        max_namespace_bytes=namespace_limit,
+    )
+
+    def crash(*args, **kwargs):
+        os._exit(25)
+
+    os.link = crash
+    with store.transaction() as transaction:
+        transaction.install_missing(parse_artifact_descriptor(raw), b'evidence')
 
 
 def test_actual_crash_between_link_and_unlink_recovers_only_verified_staging_link(blob_store):
@@ -400,6 +507,128 @@ def test_actual_crash_between_link_and_unlink_recovers_only_verified_staging_lin
         assert transaction.read_range(descriptor()) == b'evidence'
     assert not list(scope.glob('.tmp-*'))
     assert (scope / (descriptor().artifact_id + '.blob')).stat().st_nlink == 1
+
+
+def test_install_missing_recovers_actual_crash_after_link(blob_store):
+    context = multiprocessing.get_context('spawn')
+    process = context.Process(
+        target=child_install_crash_after_link,
+        args=(str(blob_store.root), descriptor().to_dict()),
+    )
+    try:
+        process.start()
+        process.join(timeout=15)
+        assert not process.is_alive() and process.exitcode == 24
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=2)
+    with blob_store.transaction() as transaction:
+        assert transaction.install_missing(descriptor(), b'evidence').status == 'already_present'
+        assert transaction.read_range(descriptor()) == b'evidence'
+    assert not list(namespace(blob_store).glob('.tmp-*'))
+
+
+@pytest.mark.parametrize('namespace_limit', [8, 64])
+def test_install_missing_recovers_actual_crash_before_link(tmp_path, namespace_limit):
+    root = tmp_path.resolve() / 'artifacts'
+    context = multiprocessing.get_context('spawn')
+    process = context.Process(
+        target=child_install_crash_before_link,
+        args=(str(root), descriptor().to_dict(), namespace_limit),
+    )
+    try:
+        process.start()
+        process.join(timeout=15)
+        assert not process.is_alive() and process.exitcode == 25
+    finally:
+        if process.is_alive():
+            process.terminate()
+            process.join(timeout=2)
+    store = PrivateArtifactStore(
+        root,
+        workspace_id=WORKSPACE,
+        session_key='test:artifact',
+        incarnation='incarnation',
+        generation=2,
+        max_blob_bytes=8,
+        max_namespace_bytes=namespace_limit,
+    )
+    scope = namespace(store)
+    stages = list(scope.glob('.tmp-*'))
+    assert len(stages) == 1 and stages[0].read_bytes() == b'evidence'
+    with store.transaction() as transaction:
+        assert transaction.install_missing(descriptor(), b'evidence').status == 'installed'
+        assert transaction.read_range(descriptor()) == b'evidence'
+    assert not list(scope.glob('.tmp-*'))
+    reopened = PrivateArtifactStore(
+        root,
+        workspace_id=WORKSPACE,
+        session_key='test:artifact',
+        incarnation='incarnation',
+        generation=2,
+        max_blob_bytes=8,
+        max_namespace_bytes=namespace_limit,
+    )
+    with reopened.transaction() as transaction:
+        assert transaction.read_range(descriptor()) == b'evidence'
+
+
+def test_install_missing_recovers_cleanup_failure_before_link(tmp_path, monkeypatch):
+    store = PrivateArtifactStore(
+        tmp_path.resolve() / 'artifacts',
+        workspace_id=WORKSPACE,
+        session_key='test:artifact',
+        incarnation='incarnation',
+        generation=2,
+        max_blob_bytes=8,
+        max_namespace_bytes=8,
+    )
+    unlink = os.unlink
+
+    def fail_unlink(path, *args, **kwargs):
+        if str(path).startswith('.tmp-'):
+            raise OSError
+        return unlink(path, *args, **kwargs)
+
+    with store.transaction() as transaction:
+        monkeypatch.setattr(os, 'link', lambda *args, **kwargs: (_ for _ in ()).throw(OSError()))
+        monkeypatch.setattr(os, 'unlink', fail_unlink)
+        with pytest.raises(ArtifactInstallIOError):
+            transaction.install_missing(descriptor(), b'evidence')
+    monkeypatch.undo()
+    assert len(list(namespace(store).glob('.tmp-*'))) == 1
+    with store.transaction() as transaction:
+        assert transaction.install_missing(descriptor(), b'evidence').status == 'installed'
+        assert transaction.read_range(descriptor()) == b'evidence'
+    assert not list(namespace(store).glob('.tmp-*'))
+
+
+@pytest.mark.parametrize(
+    'staged',
+    [
+        [b'evid'],
+        [b'changed!'],
+        [b'\xff' * 8],
+        [b'evidence', b'evidence'],
+        [b'evidence', b'changed!'],
+    ],
+)
+def test_unlinked_staging_ambiguity_is_preserved_and_rejected(blob_store, staged):
+    with blob_store.transaction():
+        pass
+    scope = namespace(blob_store)
+    paths = []
+    for index, content in enumerate(staged):
+        path = scope / ('.tmp-' + f'{index + 1:032x}')
+        path.write_bytes(content)
+        path.chmod(0o600)
+        paths.append(path)
+    with blob_store.transaction() as transaction:
+        with pytest.raises(ArtifactInstallCorruptionError):
+            transaction.install_missing(descriptor(), b'evidence')
+    assert [path.read_bytes() for path in paths] == staged
+    assert not list(scope.glob('*.blob'))
 
 
 def test_arbitrary_hardlink_is_not_treated_as_recoverable_staging(blob_store):

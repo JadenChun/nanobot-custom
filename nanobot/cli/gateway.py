@@ -6,12 +6,14 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Console
 
+from nanobot.agent.memory_recovery_startup_admission import require_startup_receipt_admission
 from nanobot.cli.log_control import replace_cli_console_sink
+from nanobot.config.paths import get_default_sessions_root
 from nanobot.config.schema import Config
 from nanobot.gateway import (
     GatewayAlreadyRunningError,
@@ -27,6 +29,9 @@ from nanobot.gateway.service import (
     ServiceManagerKind,
 )
 from nanobot.webui.build import BuildMode
+
+if TYPE_CHECKING:
+    from loguru import Record
 
 RuntimeConfigLoader = Callable[[str | None, str | None], Config]
 GatewayRunner = Callable[..., None]
@@ -65,6 +70,10 @@ def create_gateway_app(
     def configure_logging(verbose: bool) -> None:
         if not verbose:
             return
+        # Give the forwarded lambda its native Record input without changing the callback.
+        channel_filters: tuple[Callable[[Record], object]] = (
+            lambda record: record["extra"].setdefault("channel", "-") or True,
+        )
         replace_cli_console_sink(
             sys.stderr,
             format=(
@@ -75,7 +84,7 @@ def create_gateway_app(
             ),
             level="DEBUG",
             colorize=None,
-            filter=lambda record: record["extra"].setdefault("channel", "-") or True,
+            filter=channel_filters[0],
         )
 
     def instance_for_selectors(
@@ -101,6 +110,14 @@ def create_gateway_app(
         # `nanobot gateway` is often launched by tests, supervisors, or service managers.
         # The higher-level `nanobot webui` command owns interactive first-run guidance.
         return "warn"
+
+    def admit_config(cfg: Config) -> None:
+        root = (
+            cfg.runtime_data_dir / "sessions"
+            if cfg.runtime_data_dir is not None
+            else get_default_sessions_root()
+        )
+        require_startup_receipt_admission(cfg.workspace_path, sessions_root=root)
 
     def start_options(
         *,
@@ -162,8 +179,12 @@ def create_gateway_app(
         background: bool = typer.Option(False, "--background", help="Start as a background process"),
     ) -> None:
         """Start the nanobot gateway."""
-        from nanobot.migration_guard import require_runtime_ready
-        require_runtime_ready()
+        if background or ctx.invoked_subcommand in {
+            "restart", "install-service", "uninstall-service",
+        }:
+            from nanobot.migration_guard import require_runtime_ready
+
+            require_runtime_ready()
         if ctx.invoked_subcommand is not None:
             return
         if foreground and background:
@@ -171,6 +192,7 @@ def create_gateway_app(
             raise typer.Exit(1)
         if background:
             cfg = load_runtime_config(config, workspace)
+            admit_config(cfg)
             if validate_startup_config is not None:
                 validate_startup_config(cfg)
             if prepare_webui_bundle is not None:
@@ -240,6 +262,11 @@ def create_gateway_app(
             print_status(result.status)
             raise typer.Exit(1)
 
+        cfg = load_runtime_config(config, workspace)
+        admit_config(cfg)
+        unconfigured_provider_error = None
+        if validate_startup_config is not None:
+            unconfigured_provider_error = validate_startup_config(cfg)
         configure_logging(verbose)
         from nanobot.cli.log_control import (
             add_compatibility_log_file,
@@ -251,11 +278,7 @@ def create_gateway_app(
             add_compatibility_log_file(log_file)
             console.print(f"[dim]Logging to {log_file}[/dim]")
         try:
-            cfg = load_runtime_config(config, workspace)
             instance = instance_for_selectors(workspace=workspace, config=config)
-            unconfigured_provider_error = None
-            if validate_startup_config is not None:
-                unconfigured_provider_error = validate_startup_config(cfg)
             run_gateway_kwargs: dict[str, Any] = {
                 "port": port,
                 "webui_bundle_mode": interactive_build_mode(),
@@ -329,6 +352,7 @@ def create_gateway_app(
     ) -> None:
         """Restart the background gateway."""
         cfg = load_runtime_config(config, workspace)
+        admit_config(cfg)
         if validate_startup_config is not None:
             validate_startup_config(cfg)
         if prepare_webui_bundle is not None:
@@ -385,6 +409,10 @@ def create_gateway_app(
         dry_run: bool = typer.Option(False, "--dry-run", help="Print generated service without installing"),
     ) -> None:
         """Install a systemd user service or macOS LaunchAgent for the gateway."""
+        loaded_config = None
+        if not dry_run:
+            loaded_config = load_runtime_config(config, workspace)
+            admit_config(loaded_config)
         options = GatewayServiceOptions(
             start=start_options(
                 port=port,
@@ -392,6 +420,7 @@ def create_gateway_app(
                 workspace=workspace,
                 config=config,
                 log_file=log_file,
+                loaded_config=loaded_config,
             ),
             name=name,
             manager=manager,

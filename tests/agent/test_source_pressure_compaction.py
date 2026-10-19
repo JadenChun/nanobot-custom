@@ -5,8 +5,6 @@ from dataclasses import replace
 
 import pytest
 
-from agent.test_source_compaction_publication import state_for
-from agent.test_source_compaction_publication import store as store
 from nanobot.agent.context_governance import ContextGovernor, ContextWindowExceededError
 from nanobot.providers.base import LLMResponse, LLMUsage
 from nanobot.session.execution_owner import acquire_execution
@@ -15,6 +13,8 @@ from nanobot.session.source import SourceValidationError
 from nanobot.session.source_projection import RuntimeNode, source_nodes
 from nanobot.session.source_request import SourceRequestLedger, SourceTranscript
 from nanobot.session.turn_writer import SourceTurnWriter
+from tests.agent.test_source_compaction_publication import state_for
+from tests.agent.test_source_compaction_publication import store as store
 
 
 def pressure_state(writer, *, chunks=3, local=False):

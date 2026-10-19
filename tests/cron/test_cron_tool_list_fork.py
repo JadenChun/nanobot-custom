@@ -2,9 +2,14 @@
 
 from datetime import datetime, timezone
 
+import pytest
+
+from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.agent.tools.cron import CronTool
 from nanobot.cron.service import CronService
 from nanobot.cron.types import CronDestination, CronJobState, CronSchedule
+from tests.cron import p6_compat_fixtures as cases
+from tests.cron.stage3_fixtures import offline_denial  # noqa: F401
 
 
 def _make_tool(tmp_path) -> CronTool:
@@ -216,124 +221,110 @@ def test_list_at_job_shows_iso_timestamp(tmp_path) -> None:
 
 
 def test_list_shows_last_run_state(tmp_path) -> None:
-    tool = _make_tool(tmp_path)
-    job = tool._cron.add_job(
-        name="Stateful job",
-        schedule=CronSchedule(kind="cron", expr="0 9 * * *", tz="UTC"),
-        message="test",
-    )
-    # Simulate a completed run by updating state in the store
-    job.state.last_run_at_ms = 1773673200000
-    job.state.last_status = "ok"
-    tool._cron._save_store()
-
-    result = tool._list_jobs()
-    assert "Last run:" in result
-    assert "ok" in result
-    assert "(UTC)" in result
+    cases.definition_display(_make_tool(tmp_path / 'definition'), field='last')
 
 
 def test_list_shows_error_message(tmp_path) -> None:
-    tool = _make_tool(tmp_path)
-    job = tool._cron.add_job(
-        name="Failed job",
-        schedule=CronSchedule(kind="cron", expr="0 9 * * *", tz="UTC"),
-        message="test",
-    )
-    job.state.last_run_at_ms = 1773673200000
-    job.state.last_status = "error"
-    job.state.last_error = "timeout"
-    tool._cron._save_store()
-
-    result = tool._list_jobs()
-    assert "error" in result
-    assert "timeout" in result
+    cases.definition_display(_make_tool(tmp_path / 'definition'), field='error')
 
 
 def test_list_shows_next_run(tmp_path) -> None:
-    tool = _make_tool(tmp_path)
-    tool._cron.add_job(
-        name="Upcoming job",
-        schedule=CronSchedule(kind="cron", expr="0 9 * * *", tz="UTC"),
-        message="test",
-    )
-    result = tool._list_jobs()
-    assert "Next run:" in result
-    assert "(UTC)" in result
+    cases.definition_display(_make_tool(tmp_path / 'definition'), field='next')
 
 
-def test_add_cron_job_defaults_to_tool_timezone(tmp_path) -> None:
+async def test_add_cron_job_defaults_to_tool_timezone(tmp_path) -> None:
     tool = _make_tool_with_tz(tmp_path, "Asia/Shanghai")
-    tool.set_context("telegram", "chat-1")
-
-    result = tool._add_job("Morning standup", None, "0 8 * * *", None, None)
+    with request_context(RequestContext(channel="telegram", chat_id="chat-1", session_key="telegram:chat-1")):
+        result = await tool.execute(action="add", message="Morning standup", cron_expr="0 8 * * *")
 
     assert result.startswith("Created job")
-    job = tool._cron.list_jobs()[0]
+    job = CronService(tool._cron.store_path).list_jobs()[0]
     assert job.schedule.tz == "Asia/Shanghai"
 
 
-def test_add_cron_job_accepts_additional_destinations(tmp_path) -> None:
+async def test_add_cron_job_accepts_additional_destinations(tmp_path) -> None:
     tool = _make_tool_with_tz(tmp_path, "Asia/Kuala_Lumpur")
-    tool.set_context("telegram", "6344587670")
-
-    result = tool._add_job(
-        "Daily report",
-        None,
-        "0 8 * * *",
-        None,
-        None,
-        additional_destinations=[
-            {"channel": "telegram", "to": "-1001234567890"},
-        ],
-    )
+    with request_context(RequestContext(channel="telegram", chat_id="6344587670", session_key="telegram:6344587670")):
+        result = await tool.execute(
+            action="add", message="Daily report", cron_expr="0 8 * * *",
+            additional_destinations=[{"channel": "telegram", "to": "-1001234567890"}],
+        )
 
     assert result.startswith("Created job")
-    job = tool._cron.list_jobs()[0]
+    job = CronService(tool._cron.store_path).list_jobs()[0]
     assert job.payload.delivery_destinations() == [
         CronDestination(channel="telegram", to="6344587670"),
         CronDestination(channel="telegram", to="-1001234567890"),
     ]
-    assert "telegram:6344587670, telegram:-1001234567890" in tool._list_jobs()
+    assert "telegram:6344587670, telegram:-1001234567890" in await tool.execute(action="list")
 
 
-def test_add_cron_job_rejects_invalid_additional_destination(tmp_path) -> None:
+async def test_add_cron_job_rejects_invalid_additional_destination(tmp_path) -> None:
     tool = _make_tool(tmp_path)
-    tool.set_context("telegram", "6344587670")
+    before = tool._cron.action_store.replay()
+    with request_context(RequestContext(channel="telegram", chat_id="6344587670", session_key="telegram:6344587670")):
+        result = await tool.execute(
+            action="add", message="Daily report", every_seconds=60,
+            additional_destinations=[{"channel": "telegram", "to": ""}],
+        )
 
-    result = tool._add_job(
-        "Daily report",
-        60,
-        None,
-        None,
-        None,
-        additional_destinations=[{"channel": "telegram", "to": ""}],
-    )
-
+    assert tool._cron.action_store.replay() == before
+    assert CronService(tool._cron.store_path).list_jobs() == []
     assert result == "Error: each additional destination requires channel and to"
 
 
-def test_add_at_job_uses_default_timezone_for_naive_datetime(tmp_path) -> None:
-    tool = _make_tool_with_tz(tmp_path, "Asia/Shanghai")
-    tool.set_context("telegram", "chat-1")
+@pytest.mark.parametrize("destination", [{"channel": "", "to": "42"}, {"channel": "  ", "to": "42"}, {"channel": "telegram", "to": " \t"}])
+async def test_blank_destination_diagnostic_has_no_definition_effect(tmp_path, destination) -> None:
+    tool = _make_tool(tmp_path)
+    before = tool._cron.action_store.replay()
+    with request_context(RequestContext(channel="telegram", chat_id="42", session_key="telegram:42")):
+        result = await tool.execute(action="add", message="test", every_seconds=60, additional_destinations=[destination])
+    assert result == "Error: each additional destination requires channel and to"
+    assert tool._cron.action_store.replay() == before
+    assert CronService(tool._cron.store_path).list_jobs() == []
 
-    result = tool._add_job("Morning reminder", None, None, None, "2026-03-25T08:00:00")
+
+async def test_list_delivery_display_preserves_order_and_omits_silent_jobs(tmp_path) -> None:
+    tool = _make_tool(tmp_path)
+    job = tool._cron.add_job(
+        name="ordered", schedule=CronSchedule(kind="every", every_ms=60000), message="test",
+        deliver=True, channel="telegram", to="42",
+        additional_destinations=[CronDestination("slack", "C2"), CronDestination("telegram", "42"), CronDestination("telegram", "43")],
+        session_key="telegram:42", origin_channel="telegram", origin_chat_id="42",
+    )
+    before = tool._cron.action_store.replay()
+    # A mutated detached projection cannot control the list's real definition replay.
+    job.payload.additional_destinations.reverse()
+    result = await tool.execute(action="list")
+    assert "  Delivery: telegram:42, slack:C2, telegram:43" in result
+    assert tool._cron.action_store.replay() == before
+    silent = _make_tool(tmp_path / "silent")
+    silent._cron.add_job(
+        name="silent", schedule=CronSchedule(kind="every", every_ms=60000), message="test",
+        deliver=False, additional_destinations=[CronDestination("telegram", "42")],
+        session_key="telegram:42", origin_channel="telegram", origin_chat_id="42",
+    )
+    assert "Delivery:" not in await silent.execute(action="list")
+    empty = _make_tool(tmp_path / "empty")
+    assert await empty.execute(action="list") == "No scheduled jobs."
+
+
+async def test_add_at_job_uses_default_timezone_for_naive_datetime(tmp_path) -> None:
+    tool = _make_tool_with_tz(tmp_path, "Asia/Shanghai")
+    with request_context(RequestContext(channel="telegram", chat_id="chat-1", session_key="telegram:chat-1")):
+        result = await tool.execute(action="add", message="Morning reminder", at="2026-03-25T08:00:00")
 
     assert result.startswith("Created job")
-    job = tool._cron.list_jobs()[0]
+    job = CronService(tool._cron.store_path).list_jobs()[0]
     expected = int(datetime(2026, 3, 25, 0, 0, 0, tzinfo=timezone.utc).timestamp() * 1000)
     assert job.schedule.at_ms == expected
 
 
 def test_list_excludes_disabled_jobs(tmp_path) -> None:
     tool = _make_tool(tmp_path)
-    job = tool._cron.add_job(
-        name="Paused job",
-        schedule=CronSchedule(kind="cron", expr="0 9 * * *", tz="UTC"),
-        message="test",
-    )
-    tool._cron.enable_job(job.id, enabled=False)
-
-    result = tool._list_jobs()
-    assert "Paused job" not in result
-    assert result == "No scheduled jobs."
+    job = tool._cron.add_job('Disabled job', CronSchedule(kind='every', every_ms=60000), 'test', session_key='websocket:chat-1', origin_channel='websocket', origin_chat_id='chat-1')
+    disabled = tool._cron.enable_job(job.id, enabled=False, **cases.tokens(job))
+    assert disabled is not None and not disabled.enabled
+    assert tool._list_jobs() == 'No scheduled jobs.'
+    assert 'Disabled job' not in tool._list_jobs()
+    assert [item.id for item in tool._cron.list_jobs(include_disabled=True)] == [job.id]

@@ -79,20 +79,23 @@ async def test_web_fetch_result_contains_untrusted_flag():
 @pytest.mark.asyncio
 async def test_web_fetch_blocks_private_redirect_before_returning_image(monkeypatch):
     tool = WebFetchTool()
+    requested: list[str] = []
+    closed: list[bool] = []
 
     class FakeStreamResponse:
-        headers = {"content-type": "image/png"}
-        url = "http://127.0.0.1/secret.png"
-        content = b"\x89PNG\r\n\x1a\n"
+        status_code = 302
+        headers = {"location": "http://127.0.0.1/secret.png"}
+        url = "https://example.com/image.png"
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
+            closed.append(True)
             return False
 
         async def aread(self):
-            return self.content
+            pytest.fail("private redirect image must not be read")
 
         def raise_for_status(self):
             return None
@@ -107,14 +110,24 @@ async def test_web_fetch_blocks_private_redirect_before_returning_image(monkeypa
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        def stream(self, method, url, headers=None):
+        def stream(self, method, url, headers=None, *, follow_redirects):
+            assert method == "GET" and follow_redirects is False
+            assert url == "https://example.com/image.png"
+            requested.append(url)
             return FakeStreamResponse()
 
     monkeypatch.setattr("nanobot.agent.tools.web.httpx.AsyncClient", FakeClient)
 
-    with patch("nanobot.security.network.socket.getaddrinfo", _fake_resolve_public):
+    def resolve(hostname, *_args, **_kwargs):
+        # A literal loopback address cannot resolve to the public fixture address.
+        address = "127.0.0.1" if hostname == "127.0.0.1" else "93.184.216.34"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (address, 0))]
+
+    with patch("nanobot.security.network.socket.getaddrinfo", resolve):
         result = await tool.execute(url="https://example.com/image.png")
 
     data = json.loads(result)
     assert "error" in data
     assert "redirect blocked" in data["error"].lower()
+    assert requested == ["https://example.com/image.png"]
+    assert closed == [True]

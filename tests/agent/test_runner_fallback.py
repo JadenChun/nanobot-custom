@@ -964,9 +964,9 @@ class TestNoFallbackWhenContentStreamed:
         factory.assert_not_called()
 
 
-class TestFallbackOnStreamStalledAfterContent:
+class TestNoFallbackWhenStreamStalledAfterContent:
     @pytest.mark.asyncio
-    async def test_timeout_with_streamed_content_falls_back(self) -> None:
+    async def test_timeout_with_streamed_content_does_not_replay(self) -> None:
         primary = _FakeProvider(
             "primary",
             _make_response("stream stalled", finish_reason="error", error_kind="timeout"),
@@ -993,11 +993,46 @@ class TestFallbackOnStreamStalledAfterContent:
             on_content_delta=_delta,
             on_stream_recover=_recover,
         )
-        assert result.finish_reason == "stop"
-        assert result.content == "fallback ok"
-        factory.assert_called_once_with(_fallback("fallback-a"))
-        assert streamed == ["stream stalled", "fallback ok"]
-        assert recoveries == ["recover"]
+        assert result.finish_reason == "error"
+        assert result.content == "stream stalled"
+        factory.assert_not_called()
+        assert streamed == ["stream stalled"]
+        assert recoveries == []
+
+    @pytest.mark.parametrize(
+        ("delta_name", "payload"),
+        [
+            ("on_thinking_delta", "partial reasoning"),
+            ("on_tool_call_delta", {"id": "tool-1", "name": "read_file"}),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_delivered_non_text_delta_blocks_retry_and_failover(
+        self, delta_name: str, payload: Any,
+    ) -> None:
+        primary = _FakeProvider("primary")
+        factory = MagicMock()
+        delivered = AsyncMock()
+        recovered = AsyncMock()
+
+        async def _fail_after_delta(**kwargs: Any) -> LLMResponse:
+            await kwargs[delta_name](payload)
+            return _make_response("stream stalled", finish_reason="error", error_kind="timeout")
+
+        primary.chat_stream = AsyncMock(side_effect=_fail_after_delta)
+        fb = FallbackProvider(primary, [_fallback("fallback-a")], factory)
+
+        result = await fb.chat_stream_with_retry(
+            [{"role": "user", "content": "hi"}],
+            on_stream_recover=recovered,
+            **{delta_name: delivered},
+        )
+
+        assert result.finish_reason == "error"
+        primary.chat_stream.assert_awaited_once()
+        delivered.assert_awaited_once_with(payload)
+        recovered.assert_not_awaited()
+        factory.assert_not_called()
 
 
 class TestFailoverOnEmptyChoices:
@@ -1299,13 +1334,10 @@ class TestRetryBeforeFailover:
         factory.assert_called_once_with(fallback_a_preset)
 
     @pytest.mark.asyncio
-    async def test_stream_recovery_keeps_fallback_eligible(self) -> None:
+    async def test_stream_without_delivery_keeps_fallback_eligible_after_retries(self) -> None:
         primary = _FakeProvider(
             "primary",
-            responses=[
-                _make_response("partial", finish_reason="error", error_kind="timeout"),
-                *[_retryable_error() for _ in range(3)],
-            ],
+            responses=[_retryable_error() for _ in range(4)],
         )
         fallback = _FakeProvider("fallback", _make_response("fallback ok"))
         factory = MagicMock(return_value=fallback)
@@ -1322,8 +1354,8 @@ class TestRetryBeforeFailover:
 
         assert result.content == "fallback ok"
         assert len(primary.chat_stream_calls) == 4
-        assert [call.args[0] for call in streamed.await_args_list] == ["partial", "fallback ok"]
-        recovered.assert_awaited_once_with()
+        assert [call.args[0] for call in streamed.await_args_list] == ["fallback ok"]
+        recovered.assert_not_awaited()
         factory.assert_called_once_with(_fallback("fallback-a"))
 
     @pytest.mark.asyncio
@@ -1346,7 +1378,7 @@ class TestRetryBeforeFailover:
         factory.assert_called_once_with(_fallback("fallback-a"))
 
     @pytest.mark.asyncio
-    async def test_unrecovered_stream_keeps_non_timeout_fallback_blocked(self) -> None:
+    async def test_delivered_timeout_blocks_retry_and_fallback_without_recovery(self) -> None:
         primary = _FakeProvider(
             "primary",
             responses=[
@@ -1366,7 +1398,8 @@ class TestRetryBeforeFailover:
                 on_content_delta=streamed,
             )
 
-        assert result.content == "last error"
+        assert result.content == "partial"
+        assert len(primary.chat_stream_calls) == 1
         streamed.assert_awaited_once_with("partial")
         factory.assert_not_called()
 

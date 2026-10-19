@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent.runner_helpers import make_run_spec
 from nanobot.agent.context import TranscriptInput
 from nanobot.agent.context_governance import (
     BACKFILL_CONTENT,
@@ -29,6 +28,7 @@ from nanobot.providers.base import (
 )
 from nanobot.providers.conversation_state import ProviderConversationStateController
 from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
+from tests.agent.runner_helpers import make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 
@@ -1450,23 +1450,29 @@ async def test_runner_drops_orphan_tool_results_before_model_request():
 
 
 @pytest.mark.asyncio
-async def test_backfill_repairs_model_context_without_shifting_save_turn_boundary(tmp_path):
+async def test_backfill_repairs_model_context_without_shifting_save_turn_boundary(
+    tmp_path, monkeypatch,
+):
     """Historical backfill should not duplicate old tail messages on persist."""
     from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.events import InboundMessage
+    from nanobot.agent.turn import TurnRequest
     from nanobot.bus.queue import MessageBus
 
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     response = LLMResponse(content="new answer", tool_calls=[], usage=None)
     provider.chat_with_retry = AsyncMock(return_value=response)
     provider.chat_stream_with_retry = AsyncMock(return_value=response)
 
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     loop = AgentLoop(
         bus=MessageBus(),
         provider=provider,
-        workspace=tmp_path,
+        workspace=workspace,
         model="test-model",
+        sessions_root=tmp_path / "sessions",
     )
     loop.tools.get_definitions = MagicMock(return_value=[])
 
@@ -1489,9 +1495,7 @@ async def test_backfill_repairs_model_context_without_shifting_save_turn_boundar
     ]
     loop.sessions.save(session)
 
-    result = await loop._process_message(
-        InboundMessage(channel="cli", sender_id="user", chat_id="test", content="new prompt")
-    )
+    result = await loop.execute_turn(TurnRequest(content="new prompt", session_key="cli:test"))
 
     assert result is not None
     assert result.content == "new answer"

@@ -1,33 +1,32 @@
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from nanobot.cli import entry
-from nanobot.cli.entry import _agent_invocation_args, _native_tui_candidate
+from nanobot.cli.commands import app
 
 
-def test_root_command_routes_to_agent_without_copying_agent_options() -> None:
-    assert _agent_invocation_args([]) == []
-    assert _agent_invocation_args(["agent", "--theme", "dark"]) == ["--theme", "dark"]
-    assert _agent_invocation_args(["--workspace", "./project"]) == [
-        "--workspace",
-        "./project",
-    ]
-    assert _agent_invocation_args(["-mhello"]) == ["-mhello"]
+@pytest.mark.parametrize("args", [["--workspace", "./project"], ["-mhello"], ["-m", "hello"]])
+def test_agent_options_require_an_explicit_agent_subcommand(args) -> None:
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 2
+    assert "No such option" in result.output
 
 
 def test_root_metadata_and_subcommands_keep_the_root_cli() -> None:
     for args in (
         ["--help"],
         ["--version"],
-        ["--install-completion"],
-        ["gateway"],
-        ["webui"],
+        ["gateway", "--help"],
+        ["webui", "--help"],
     ):
-        assert _agent_invocation_args(args) is None
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 0, result.output
 
 
 def test_root_shell_completion_keeps_root_subcommands() -> None:
@@ -60,55 +59,55 @@ def test_root_shell_completion_keeps_root_subcommands() -> None:
     assert "not supported" not in result.stderr
 
 
-def test_root_alias_dispatches_the_shared_agent_command(monkeypatch) -> None:
-    calls: dict[str, object] = {}
-    monkeypatch.setattr(entry.sys, "argv", ["nanobot", "-m", "hello"])
-    monkeypatch.setattr(
-        entry,
-        "set_cli_process_identity",
-        lambda args: calls.__setitem__("identity", args),
-    )
-    monkeypatch.setattr(entry, "_configure_windows_console", lambda: None)
-    monkeypatch.setattr(
-        entry,
-        "_run_agent",
-        lambda args, *, prog_name: calls.update(args=args, prog_name=prog_name),
-    )
+@pytest.mark.parametrize("args", [[], ["agent", "-m", "hello"], ["gateway"], ["webui"]])
+def test_entry_dispatches_unchanged_arguments_after_console_setup(monkeypatch, args) -> None:
+    from nanobot.cli import commands
 
+    calls = []
+    monkeypatch.setattr(entry.sys, "argv", ["nanobot", *args])
+    monkeypatch.setattr(entry, "_configure_windows_console", lambda: calls.append("console"))
+    monkeypatch.setattr(commands, "app", lambda: calls.append(list(entry.sys.argv)))
     entry.main()
-
-    assert calls == {
-        "identity": ["agent", "-m", "hello"],
-        "args": ["-m", "hello"],
-        "prog_name": "nanobot",
-    }
+    assert calls == ["console", ["nanobot", *args]]
 
 
-def test_desktop_handled_bare_invocation_does_not_start_python(monkeypatch) -> None:
+def test_bare_invocation_does_not_discover_desktop_or_start_runtime(monkeypatch) -> None:
     from nanobot.cli import desktop_target
 
     monkeypatch.setattr(entry.sys, "argv", ["nanobot"])
-    monkeypatch.setattr(entry, "set_cli_process_identity", lambda _args: None)
-    monkeypatch.setattr(entry, "_configure_windows_console", lambda: None)
-    monkeypatch.setattr(desktop_target, "dispatch_bare_desktop_target", lambda _args: 0)
-    monkeypatch.setattr(
-        entry,
-        "_run_agent",
-        lambda *_args, **_kwargs: pytest.fail("Python agent must not start"),
-    )
-
-    entry.main()
+    monkeypatch.setattr(desktop_target, "dispatch_bare_desktop_target",
+                        lambda *_args: pytest.fail("desktop discovery must not start"))
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready",
+                        lambda: pytest.fail("bare help must not request runtime admission"))
+    with pytest.raises(SystemExit) as exc:
+        entry.main()
+    assert exc.value.code == 0
 
 
-def test_native_agent_invocations_use_the_lightweight_entrypoint() -> None:
-    assert _native_tui_candidate(["agent"])
-    assert _native_tui_candidate(["agent", "--session", "websocket:chat"])
-    assert _native_tui_candidate(["agent", "--theme=light"])
+@pytest.mark.parametrize("args", [
+    [], ["--session", "websocket:chat"], ["--theme=light"], ["--classic"],
+    ["--no-tui"], ["-m", "hello"], ["-mhello"], ["--message=hello"],
+])
+def test_explicit_agent_options_reach_real_session_preflight(tmp_path, args) -> None:
+    workspace = tmp_path / "workspace"
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({
+        "agents": {"defaults": {
+            "workspace": str(workspace),
+            "model": "ollama/llama3.2",
+            "provider": "ollama",
+            "sessionTtlMinutes": 15,
+        }},
+        "providers": {"ollama": {"apiBase": "http://localhost:11434/v1"}},
+    }), encoding="utf-8")
+    config_bytes = config_path.read_bytes()
 
+    result = CliRunner().invoke(app, ["agent", *args, "--config", str(config_path)])
 
-def test_classic_and_one_shot_agent_invocations_keep_the_full_cli_entrypoint() -> None:
-    assert not _native_tui_candidate(["agent", "--classic"])
-    assert not _native_tui_candidate(["agent", "-m", "hello"])
-    assert not _native_tui_candidate(["agent", "-mhello"])
-    assert not _native_tui_candidate(["agent", "--message=hello"])
-    assert not _native_tui_candidate(["status"])
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit)
+    assert result.exception.code == 1
+    assert "idle" in result.output.lower()
+    assert "No such option" not in result.output
+    assert config_path.read_bytes() == config_bytes
+    assert not workspace.exists()

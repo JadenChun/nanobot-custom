@@ -11,6 +11,7 @@ from nanobot.session.source import (
     new_source_event,
     prefix_digest,
     validate_closed_boundary,
+    validate_execution_links,
 )
 
 
@@ -119,3 +120,19 @@ def test_recursive_payload_is_content_free():
     payload["nested"] = payload
     with pytest.raises(SourceValidationError, match="^Invalid source representation$"):
         new_source_event(payload, run_id="run")
+
+
+@pytest.mark.parametrize("call", [None, [], {}, {"id": None}, {"id": 1}, {"id": ""}, {"id": " "}])
+def test_execution_call_identity_is_validated_before_use(call):
+    with pytest.raises(SourceValidationError, match="^Invalid source provider call identity$"):
+        validate_execution_links([
+            {"role": "assistant", "tool_calls": [call], "_execution_ids": ["execution"]},
+        ])
+
+
+@pytest.mark.parametrize("identities", [None, {}, [], [None], [False], [""], [" "]])
+def test_execution_identity_container_and_values_are_checked(identities):
+    with pytest.raises(SourceValidationError):
+        validate_execution_links([
+            {"role": "assistant", "tool_calls": [{"id": "provider"}], "_execution_ids": identities},
+        ])

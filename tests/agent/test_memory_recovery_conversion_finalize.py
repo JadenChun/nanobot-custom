@@ -17,6 +17,24 @@ from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
 _WORKSPACE_ID = "a" * 32
 
 
+def test_finalize_retains_none_receipt_private_seam(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    memory = _workspace(tmp_path)
+    calls = []
+
+    def missing(evidence):
+        calls.append(evidence)
+        return None
+
+    monkeypatch.setattr(apply, "_receipt_bytes", missing)
+    with pytest.raises(finalize.ConversionFinalizationError):
+        _finalize(tmp_path)
+    assert len(calls) == 1
+    assert (memory / "HISTORY.md").exists()
+    assert not (memory / "HISTORY.md.bak").exists()
+
+
 def _workspace(tmp_path: Path, *, jsonl: bytes | None = None) -> Path:
     memory = tmp_path / "memory"
     memory.mkdir()

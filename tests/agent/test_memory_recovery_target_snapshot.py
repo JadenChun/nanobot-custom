@@ -16,6 +16,141 @@ import pytest
 
 from nanobot.agent import memory_recovery_storage as storage
 
+
+def test_r2_new_snapshot_operations_refuse_before_raw_fields_and_keep_unbound_seam(monkeypatch):
+    raw = object.__new__(storage.MemoryTargetSnapshot)
+    authority = object.__new__(storage.WorkspaceMemoryAuthority)
+    for capability in (None, object()):
+        with pytest.raises(storage.MemoryStorageError) as raised:
+            raw.issuance_comparison(_capability=capability)
+        assert raised.value.code == "invalid"
+        with pytest.raises(storage.MemoryStorageError) as raised:
+            raw.qualify_for_authority(authority, 1, False, _capability=capability)
+        assert raised.value.code == "invalid"
+        with pytest.raises(storage.MemoryStorageError) as raised:
+            authority.require_issued_snapshot(raw, _capability=capability)
+        assert raised.value.code == "invalid"
+    with pytest.raises(AttributeError, match="_stat_identity"):
+        raw.issuance_comparison(_capability=storage._SNAPSHOT_CAPABILITY)
+    with pytest.raises(AttributeError, match="_authority"):
+        raw.qualify_for_authority(authority, 1, False, _capability=storage._SNAPSHOT_CAPABILITY)
+
+    class Snapshot(storage.MemoryTargetSnapshot):
+        def issuance_comparison(self, **kwargs):
+            raise AssertionError("new override must not replace original helper")
+
+    subclass = Snapshot("MEMORY.md", None, None, authority, 1,
+                        _capability=storage._SNAPSHOT_CAPABILITY)
+    assert storage._target_snapshot_seal(subclass) == ("MEMORY.md", None, None, 1)
+    with pytest.raises(storage.MemoryStorageError) as raised:
+        authority._validate_snapshot(subclass, 1, False)
+    assert raised.value.code == "invalid"
+    calls = []
+    monkeypatch.setattr(authority, "_require_issued_target_snapshot_locked", calls.append)
+    assert authority.require_issued_snapshot(raw, _capability=storage._SNAPSHOT_CAPABILITY) is None
+    assert calls == [raw]
+
+
+def test_r2_original_seal_stat_first_and_exact_nine_fields():
+    trace = []
+
+    class Identity:
+        def __getattribute__(self, name):
+            trace.append(name)
+            return {"device": 1, "inode": 2, "mode": 3, "uid": 4, "gid": 5,
+                    "links": 6, "size": 7, "mtime_ns": 8, "ctime_ns": 9}[name]
+
+    class Snapshot(storage.MemoryTargetSnapshot):
+        def __getattribute__(self, name):
+            trace.append(name)
+            return super().__getattribute__(name)
+
+    snapshot = object.__new__(Snapshot)
+    for field, value in (("_name", "MEMORY.md"), ("_content", b"bytes"),
+                         ("_stat_identity", Identity()), ("_epoch", 10)):
+        object.__setattr__(snapshot, field, value)
+    assert storage._target_snapshot_seal(snapshot) == (
+        "MEMORY.md", b"bytes", (1, 2, 3, 4, 5, 6, 7, 8, 9), 10,
+    )
+    assert trace == ["_stat_identity", "device", "inode", "mode", "uid", "gid", "links",
+                     "size", "mtime_ns", "ctime_ns", "_name", "_content", "_epoch"]
+    with pytest.raises(AttributeError, match="_stat_identity"):
+        storage._target_snapshot_seal(object.__new__(storage.MemoryTargetSnapshot))
+
+
+@pytest.mark.parametrize("fault", [RuntimeError("seal"), KeyboardInterrupt("seal")])
+def test_r2_original_dynamic_seal_registration_and_verification_order(fault, monkeypatch):
+    authority = object.__new__(storage.WorkspaceMemoryAuthority)
+    authority._pid = os.getpid()
+    authority._lifecycle_lock = threading.RLock()
+    authority._target_snapshot_issuance = {}
+    snapshot = storage.MemoryTargetSnapshot("MEMORY.md", None, None, authority, 1,
+                                            _capability=storage._SNAPSHOT_CAPABILITY)
+    calls = []
+    seal = ("patched", None, None, 99)
+
+    def compute(actual):
+        calls.append(actual)
+        assert not authority._target_snapshot_issuance
+        return seal
+
+    monkeypatch.setattr(storage, "_target_snapshot_seal", compute)
+    authority._register_target_snapshot_locked(snapshot)
+    assert calls == [snapshot]
+    assert authority._target_snapshot_issuance[id(snapshot)][1] is seal
+
+    def failure(actual):
+        calls.append(actual)
+        assert authority._target_snapshot_issuance[id(actual)][0]() is actual
+        raise fault
+
+    monkeypatch.setattr(storage, "_target_snapshot_seal", failure)
+    with pytest.raises(type(fault)) as raised:
+        authority._require_issued_target_snapshot_locked(snapshot)
+    assert raised.value is fault and calls == [snapshot, snapshot]
+    clone = storage.MemoryTargetSnapshot("MEMORY.md", None, None, authority, 1,
+                                        _capability=storage._SNAPSHOT_CAPABILITY)
+    with pytest.raises(storage.MemoryStorageError) as raised:
+        authority._require_issued_target_snapshot_locked(clone)
+    assert raised.value.code == "invalid" and calls == [snapshot, snapshot]
+    authority._target_snapshot_issuance.clear()
+
+    def registration_failure(actual):
+        assert actual is snapshot and not authority._target_snapshot_issuance
+        raise fault
+
+    monkeypatch.setattr(storage, "_target_snapshot_seal", registration_failure)
+    with pytest.raises(type(fault)) as raised:
+        authority._register_target_snapshot_locked(snapshot)
+    # The registration failure must come from its live seal before assignment.
+    assert raised.value is fault and not authority._target_snapshot_issuance
+
+
+def test_r2_original_snapshot_shape_short_circuit_and_issuance_before_receipt_uid(monkeypatch):
+    authority = object.__new__(storage.WorkspaceMemoryAuthority)
+    calls = []
+    fault = RuntimeError("issuance")
+
+    def issuance(snapshot):
+        calls.append("issuance")
+        raise fault
+
+    monkeypatch.setattr(authority, "_require_issued_target_snapshot_locked", issuance)
+    monkeypatch.setattr(storage, "_uid", lambda: calls.append("uid") or 1)
+    raw = object.__new__(storage.MemoryTargetSnapshot)
+    object.__setattr__(raw, "_authority", authority)
+    object.__setattr__(raw, "_epoch", 1)
+    object.__setattr__(raw, "_name", object())
+    with pytest.raises(storage.MemoryStorageError) as raised:
+        authority._validate_snapshot(raw, 1, False)
+    assert raised.value.code == "invalid" and not calls
+    identity = storage.MemoryTargetStatIdentity(1, 2, stat.S_IFREG | 0o600, 1, 1, 1, 1, 1, 1)
+    snapshot = storage.MemoryTargetSnapshot(".consolidation.pending.json", b"x", identity,
+                                            authority, 1, _capability=storage._SNAPSHOT_CAPABILITY)
+    with pytest.raises(RuntimeError) as raised:
+        authority._validate_snapshot(snapshot, 1, True)
+    assert raised.value is fault and calls == ["issuance"]
+
 _TARGET_NAMES = (
     "MEMORY.md",
     "history.jsonl",
@@ -619,3 +754,28 @@ def test_snapshot_rechecks_memory_directory_binding_after_read(
         if moved_memory.exists():
             moved_memory.rename(memory)
         authority.close()
+
+
+def test_snapshot_release_in_inherited_process_never_acquires_lifecycle_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        snapshot = authority.snapshot_target("MEMORY.md")
+        reference = authority._target_snapshot_issuance[id(snapshot)][0]
+        callback = reference.__callback__
+        assert callback is not None
+        original_lock = authority._lifecycle_lock
+
+        class InheritedLock:
+            def __enter__(self) -> None:
+                raise AssertionError("inherited lifecycle mutex acquired")
+
+            def __exit__(self, *args: object) -> None:
+                pass
+
+        with monkeypatch.context() as inherited:
+            inherited.setattr(authority, "_lifecycle_lock", InheritedLock())
+            inherited.setattr(storage.os, "getpid", lambda: authority._pid + 1)
+            callback(reference)
+        assert authority._lifecycle_lock is original_lock
+        assert id(snapshot) in authority._target_snapshot_issuance

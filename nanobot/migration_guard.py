@@ -1,11 +1,13 @@
-"""Activation boundary for the unfinished upstream migration candidate.
+"""Compatibility fence for legacy entrypoints without local runtime admission.
 
-P2-P5 must replace this boundary with verified policy and state adapters before
-runtime acceptance. There is deliberately no environment-variable bypass.
+Normal local foreground composition uses config-aware runtime preflight instead.
+This no-argument fence remains for legacy desktop and administrative paths that
+do not yet participate in that admission flow. There is deliberately no
+environment-variable bypass.
 """
 
 class MigrationIncompleteError(RuntimeError):
-    """Execution is unavailable until custom runtime contracts are integrated."""
+    """A legacy entrypoint has no applicable runtime admission contract."""
 
 
 def require_runtime_ready() -> None:

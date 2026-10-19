@@ -13,11 +13,280 @@ import threading
 import weakref
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from nanobot.agent import memory_recovery_storage as storage
+
+
+@pytest.mark.parametrize("fault", [RuntimeError("binder"), KeyboardInterrupt("binder")])
+def test_r2_operation_constructor_lookup_precedes_armed_hooks_fault(fault):
+    trace = []
+
+    class Authority(storage.WorkspaceMemoryAuthority):
+        def __getattribute__(self, name):
+            if name == "_bind_operation_actions":
+                trace.append("binder")
+                raise fault
+            return super().__getattribute__(name)
+
+    class Operation(storage.WorkspaceMemoryOperation):
+        def __getattribute__(self, name):
+            if name == "_hooks" and "_hooks" in vars(self):
+                trace.append("hooks")
+                raise AssertionError("later hooks fault")
+            return super().__getattribute__(name)
+
+    operation = object.__new__(Operation)
+    with pytest.raises(type(fault)) as raised:
+        Operation.__init__(operation, object.__new__(Authority),
+                           _capability=storage._OPERATION_CAPABILITY,
+                           _issued_epoch=1, _thread=threading.current_thread())
+    assert raised.value is fault
+    assert trace == ["binder"]
+    assert "_hooks" in vars(operation)
+    assert "_actions" not in vars(operation)
+
+
+def test_r2_operation_constructor_binder_changes_later_hooks():
+    changed, actions = object(), object()
+    trace = []
+    operation = object.__new__(storage.WorkspaceMemoryOperation)
+
+    class Authority(storage.WorkspaceMemoryAuthority):
+        @property
+        def _bind_operation_actions(self):
+            trace.append("lookup")
+            operation._hooks = changed
+
+            def bind(hooks):
+                trace.append("call")
+                assert hooks is changed
+                return actions
+
+            return bind
+
+    storage.WorkspaceMemoryOperation.__init__(
+        operation, object.__new__(Authority), _capability=storage._OPERATION_CAPABILITY,
+        _issued_epoch=1, _thread=threading.current_thread(),
+    )
+    assert operation._actions is actions
+    assert trace == ["lookup", "call"]
+
+
+@pytest.mark.parametrize("fault", [RuntimeError("binder"), KeyboardInterrupt("binder")])
+def test_r2_operation_bound_binder_lookup_precedes_missing_hooks(fault):
+    class Authority(storage.WorkspaceMemoryAuthority):
+        @property
+        def _bind_bound_actions(self):
+            raise fault
+
+    operation = object.__new__(storage.WorkspaceMemoryOperation)
+    operation._authority = object.__new__(Authority)
+    with pytest.raises(type(fault)) as raised:
+        operation._bind_bound_actions(object(), object(), object())
+    assert raised.value is fault
+    assert "_hooks" not in vars(operation)
+
+
+def test_r2_operation_bound_binder_side_effects_are_live_without_receipt_truthiness():
+    operation = object.__new__(storage.WorkspaceMemoryOperation)
+    hooks, bound_hooks, actions, name = object(), object(), object(), object()
+    trace = []
+
+    class Receipt:
+        def __bool__(self):
+            raise AssertionError("receipt must not be tested")
+
+    receipt = Receipt()
+
+    class Authority(storage.WorkspaceMemoryAuthority):
+        @property
+        def _bind_bound_actions(self):
+            trace.append("lookup")
+            operation._hooks = hooks
+            operation._epoch = 9
+
+            def bind(*args):
+                trace.append("call")
+                assert args == (hooks, bound_hooks, 9, receipt, name)
+                return actions
+
+            return bind
+
+    operation._authority = object.__new__(Authority)
+    assert operation._bind_bound_actions(bound_hooks, receipt, name) is actions
+    assert trace == ["lookup", "call"]
+
+
+@pytest.mark.parametrize("capability_name", ["_BOUND_TARGET_CAPABILITY", "_BOUND_RECEIPT_TARGET_CAPABILITY"])
+@pytest.mark.parametrize("fault", [RuntimeError("partial"), KeyboardInterrupt("partial")])
+@pytest.mark.parametrize("point", ["owner", "reread", "validator", "pid", "thread", "epoch",
+                                   "name", "content", "stat_identity", "binder"])
+def test_r2_bound_initialization_exact_failure_partial_state(
+    capability_name, fault, point, monkeypatch,
+):
+    trace = []
+    validator = object()
+    target = None
+
+    class Authority(storage.WorkspaceMemoryAuthority):
+        @property
+        def _validate_snapshot(self):
+            trace.append("validator")
+            if point == "validator":
+                raise fault
+            return validator
+
+    authority = object.__new__(Authority)
+
+    class Operation(storage.WorkspaceMemoryOperation):
+        def __getattribute__(self, name):
+            label = {"_authority": "owner", "_thread": "thread", "_epoch": "epoch",
+                     "_bind_bound_actions": "binder"}.get(name)
+            if label is not None:
+                trace.append(label)
+                if point == label:
+                    raise fault
+            return super().__getattribute__(name)
+
+    class Bound(storage.BoundMemoryTarget):
+        def __getattribute__(self, name):
+            if name == "_authority":
+                trace.append("reread")
+                if point == "reread":
+                    raise fault
+            return super().__getattribute__(name)
+
+    class Snapshot:
+        def __getattribute__(self, name):
+            if name in ("name", "content", "stat_identity"):
+                trace.append(name)
+                if point == name:
+                    raise fault
+            return super().__getattribute__(name)
+
+        name = "MEMORY.md"
+        content = None
+        stat_identity = None
+
+    def pid():
+        trace.append("pid")
+        if point == "pid":
+            raise fault
+        return 123
+
+    operation = object.__new__(Operation)
+    operation._authority = authority
+    operation._thread = threading.current_thread()
+    operation._epoch = 7
+    target = object.__new__(Bound)
+    monkeypatch.setattr(storage.os, "getpid", pid)
+    with pytest.raises(type(fault)) as raised:
+        Bound.__init__(target, operation, Snapshot(),
+                       _capability=getattr(storage, capability_name))
+    assert raised.value is fault
+    order = ["owner", "reread", "validator", "pid", "thread", "epoch", "name",
+             "content", "stat_identity", "binder"]
+    assert trace == order[:order.index(point) + 1]
+    assignments = ["_receipt_scope", "_operation", "_authority", "_validate_snapshot",
+                   "_snapshot", "_pid", "_thread", "_epoch", "_snapshot_name",
+                   "_snapshot_content", "_snapshot_stat_identity", "_state", "_registered",
+                   "_memory_fd", "_memory_identity"]
+    counts = {"owner": 2, "reread": 3, "validator": 3, "pid": 5, "thread": 6,
+              "epoch": 7, "name": 8, "content": 9, "stat_identity": 10, "binder": 15}
+    assert set(vars(target)) == set(assignments[:counts[point]])
+
+
+@pytest.mark.parametrize("capability_name", ["_BOUND_TARGET_CAPABILITY", "_BOUND_RECEIPT_TARGET_CAPABILITY"])
+def test_r2_bound_owner_setter_reread_and_cached_validator(capability_name, monkeypatch):
+    first = object.__new__(storage.WorkspaceMemoryAuthority)
+    second = object.__new__(storage.WorkspaceMemoryAuthority)
+    before, after, actions = object(), object(), object()
+    first._validate_snapshot = object()
+    second._validate_snapshot = before
+    operation = object.__new__(storage.WorkspaceMemoryOperation)
+    operation._authority = first
+    operation._thread = threading.current_thread()
+    operation._epoch = 7
+    operation._bind_bound_actions = lambda *args: actions
+
+    class Bound(storage.BoundMemoryTarget):
+        def __setattr__(self, name, value):
+            super().__setattr__(name, second if name == "_authority" else value)
+
+    target = Bound(operation, SimpleNamespace(name="MEMORY.md", content=None, stat_identity=None),
+                   _capability=getattr(storage, capability_name))
+    assert target._authority is second
+    assert target._validate_snapshot is before
+    monkeypatch.setattr(second, "_validate_snapshot", after)
+    assert target._validate_snapshot is before
+    assert target._actions is actions
+
+
+@pytest.mark.parametrize("fault", [RuntimeError("binder"), KeyboardInterrupt("binder")])
+def test_r2_bound_binder_lookup_precedes_receipt_and_name_fault(fault):
+    trace = []
+
+    class Operation(storage.WorkspaceMemoryOperation):
+        @property
+        def _bind_bound_actions(self):
+            trace.append("binder")
+            raise fault
+
+    class Bound(storage.BoundMemoryTarget):
+        def __getattribute__(self, name):
+            if name == "_receipt_scope" and "_snapshot_name" in vars(self):
+                trace.append("receipt")
+                raise AssertionError("later receipt fault")
+            return super().__getattribute__(name)
+
+    operation = object.__new__(Operation)
+    operation._authority = object.__new__(storage.WorkspaceMemoryAuthority)
+    operation._thread = threading.current_thread()
+    operation._epoch = 7
+    target = object.__new__(Bound)
+    with pytest.raises(type(fault)) as raised:
+        Bound.__init__(target, operation, SimpleNamespace(name="MEMORY.md", content=None,
+                                                        stat_identity=None),
+                       _capability=storage._BOUND_TARGET_CAPABILITY)
+    assert raised.value is fault
+    assert trace == ["binder"]
+    assert "_memory_identity" in vars(target) and "_actions" not in vars(target)
+
+
+def test_r2_bound_binder_changes_later_receipt_and_name_reads():
+    target = object.__new__(storage.BoundMemoryTarget)
+    actions, name = object(), object()
+    trace = []
+
+    class Operation(storage.WorkspaceMemoryOperation):
+        @property
+        def _bind_bound_actions(self):
+            trace.append("binder")
+            target._receipt_scope = "changed"
+            target._snapshot_name = name
+
+            def bind(hooks, receipt, actual_name):
+                trace.append("call")
+                assert hooks.bound is target
+                assert receipt == "changed" and actual_name is name
+                return actions
+
+            return bind
+
+    operation = object.__new__(Operation)
+    operation._authority = object.__new__(storage.WorkspaceMemoryAuthority)
+    operation._thread = threading.current_thread()
+    operation._epoch = 7
+    storage.BoundMemoryTarget.__init__(
+        target, operation, SimpleNamespace(name="MEMORY.md", content=None, stat_identity=None),
+        _capability=storage._BOUND_TARGET_CAPABILITY,
+    )
+    assert target._actions is actions
+    assert trace == ["binder", "call"]
 
 
 def _scope_capable() -> bool:
@@ -97,6 +366,34 @@ def test_scoped_parent_reads_snapshot_and_leaves_target_unchanged(tmp_path: Path
         before.st_mtime_ns,
     )
     assert stat.S_IMODE(memory.stat().st_mode) == 0o755
+
+
+def test_operation_workspace_is_lease_scoped_and_does_not_expose_authority(tmp_path: Path) -> None:
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        operation = authority.operation()
+        with pytest.raises(storage.MemoryStorageError) as inactive:
+            _ = operation.workspace
+        assert inactive.value.code == "closed"
+        with operation:
+            assert operation.workspace == authority.workspace == tmp_path.resolve()
+            assert isinstance(operation.workspace, Path)
+            assert not hasattr(operation, "authority")
+            failures = []
+
+            def read_from_other_thread() -> None:
+                try:
+                    _ = operation.workspace
+                except storage.MemoryStorageError as error:
+                    failures.append(error.code)
+
+            thread = threading.Thread(target=read_from_other_thread)
+            thread.start()
+            thread.join(timeout=2)
+            assert not thread.is_alive()
+            assert failures == ["closed"]
+        with pytest.raises(storage.MemoryStorageError) as closed:
+            _ = operation.workspace
+        assert closed.value.code == "closed"
 
 
 def test_parent_scope_blocks_operation_and_authority_close_until_exit(tmp_path: Path) -> None:
@@ -555,3 +852,92 @@ def test_scope_is_bound_to_its_captured_snapshot_name(tmp_path: Path) -> None:
                 assert bound.snapshot_target().content == b"legacy"
 
     assert target.read_bytes() == b"legacy"
+
+
+def test_parent_failed_registration_closes_duplicate_and_restores_new_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailedParents(set[storage.BoundMemoryTarget]):
+        def add(self, bound: storage.BoundMemoryTarget) -> None:
+            super().add(bound)
+            raise RuntimeError("parent registration failure")
+
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        snapshot = authority.snapshot_target("MEMORY.md")
+        with authority.operation() as operation:
+            bound = operation.borrow_target_parent(snapshot)
+            parents = operation._target_parent_borrowers
+            operation._target_parent_borrowers = FailedParents()
+            duplicates: list[int] = []
+            original_dup = storage.os.dup
+
+            def track_dup(fd: int) -> int:
+                duplicate = original_dup(fd)
+                duplicates.append(duplicate)
+                return duplicate
+
+            with monkeypatch.context() as failure:
+                failure.setattr(storage.os, "dup", track_dup)
+                with pytest.raises(RuntimeError, match="parent registration failure"):
+                    bound.__enter__()
+            assert len(duplicates) == 1
+            with pytest.raises(OSError):
+                os.fstat(duplicates[0])
+            assert not operation._target_parent_borrowers
+            assert bound._state == bound._NEW
+            assert bound._registered is False
+            assert bound._memory_fd is None
+            assert bound._memory_identity is None
+            operation._target_parent_borrowers = parents
+            with bound:
+                bound.require_current()
+
+
+def test_parent_current_preserves_snapshot_before_missing_descriptor_error_order(
+    tmp_path: Path,
+) -> None:
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        snapshot = authority.snapshot_target("MEMORY.md")
+        with authority.operation() as operation:
+            with operation.borrow_target_parent(snapshot) as bound:
+                name = snapshot.name
+                fd = bound._memory_fd
+                try:
+                    object.__setattr__(snapshot, "_name", "not-allowlisted")
+                    bound._memory_fd = None
+                    with pytest.raises(storage.MemoryStorageError) as rejected:
+                        bound.require_current()
+                    assert rejected.value.code == "invalid"
+                finally:
+                    object.__setattr__(snapshot, "_name", name)
+                    bound._memory_fd = fd
+                bound.require_current()
+
+
+def test_bound_constructor_cannot_select_another_operation_owner_or_actions(tmp_path: Path) -> None:
+    first_path = tmp_path / "first"
+    second_path = tmp_path / "second"
+    first_path.mkdir()
+    second_path.mkdir()
+    with storage.WorkspaceMemoryAuthority(first_path) as first:
+        with storage.WorkspaceMemoryAuthority(second_path) as second:
+            with first.operation() as first_operation, second.operation() as second_operation:
+                snapshot = first.snapshot_target("MEMORY.md")
+                other_snapshot = second.snapshot_target("MEMORY.md")
+                other = second_operation.borrow_target_parent(other_snapshot)
+                with pytest.raises(TypeError):
+                    storage.BoundMemoryTarget(
+                        first_operation, snapshot, _capability=storage._BOUND_TARGET_CAPABILITY,
+                        _authority_owner=second, _thread=threading.current_thread(),
+                        _epoch=second._activation_epoch,
+                        _validate_snapshot=second._validate_snapshot,
+                        _bind_actions=lambda hooks: other._actions,
+                    )
+                assert not first_operation._target_parent_borrowers
+                assert not second_operation._target_parent_borrowers
+                with first_operation.borrow_target_parent(snapshot) as bound:
+                    assert bound._authority is first
+                    assert bound._operation is first_operation
+                    assert bound in first_operation._target_parent_borrowers
+                    assert bound not in second_operation._target_parent_borrowers
+                    bound.require_current()

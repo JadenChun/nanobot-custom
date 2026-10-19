@@ -24,7 +24,7 @@ from nanobot.session.source_compaction import SourceCompactionCandidate
 from nanobot.session.source_projection import CheckpointNode, SourceNode, source_nodes
 from nanobot.session.source_request import SourceTranscript
 from nanobot.session.source_store import SourceSnapshot, SourceState
-from session.test_artifact_reader import setup_read
+from tests.session.test_artifact_reader import setup_read
 
 
 async def retrieval_candidate(tmp_path):
@@ -163,6 +163,45 @@ async def test_retrieval_payload_must_be_canonical_and_within_descriptor_bounds(
             derive_summary_references(proof, candidate.snapshot)
 
 
+@pytest.mark.parametrize('field,value', [
+    ('reference', None), ('reference', 7), ('text', None), ('text', []),
+    ('start_offset', True), ('start_offset', '0'), ('next_offset', False),
+    ('next_offset', None), ('eof', 1), ('eof', 'true'),
+])
+async def test_retrieval_proof_retains_canonical_field_refusals(tmp_path, field, value):
+    async for candidate, _ in retrieval_candidate(tmp_path):
+        event = next(row for row in candidate.snapshot.events if '_artifact_read' in row)
+        payload = json.loads(event['content'])
+        payload[field] = value
+        event['content'] = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+        event['_artifact_read']['sha256'] = hashlib.sha256(event['content'].encode()).hexdigest()
+        evidence = candidate.summary_evidence(candidate.boundaries[-1])
+        proof = SummaryDependencyProof(candidate, (
+            ConsumedSummaryChunk(evidence, None, 'Summary of a malformed canonical read.'),
+        ))
+
+        with pytest.raises(SourceValidationError, match='canonical JSON payload'):
+            derive_summary_references(proof, candidate.snapshot)
+
+
+@pytest.mark.parametrize('summary', [None, False, '', '   '])
+def test_summary_fold_retains_nonstring_and_empty_output_refusals(summary):
+    event = new_source_event({'role': 'user', 'content': 'visible'}, run_id='run')
+    event['_stream_id'] = 'root'
+    snapshot = SourceSnapshot(
+        SourceState('store', 'key', 'incarnation', 1, 0, None, 'fingerprint'), {}, [event], None,
+    )
+    transcript = SourceTranscript(source_nodes(snapshot.events))
+    candidate = SourceCompactionCandidate.capture(
+        snapshot, transcript, eligible_ids=frozenset(node.event_id for node in transcript.nodes),
+    )
+    evidence = candidate.summary_evidence(candidate.boundaries[-1])
+    proof = SummaryDependencyProof(candidate, (ConsumedSummaryChunk(evidence, None, summary),))
+
+    with pytest.raises(SourceValidationError, match='Invalid consumed summary output'):
+        derive_summary_references(proof, snapshot)
+
+
 async def test_prior_references_require_the_exact_accepted_summary_fold(tmp_path):
     async for original, descriptor in retrieval_candidate(tmp_path):
         prior = CheckpointNode('prior-checkpoint', 'Previously accepted summary.', (descriptor.reference,))
@@ -231,3 +270,116 @@ def test_untyped_projected_nodes_are_not_summary_evidence():
     )
     with pytest.raises(SourceValidationError, match='projection binding'):
         candidate.summary_evidence(candidate.boundaries[-1])
+
+
+def _stored_checkpoint_fields():
+    return {
+        'checkpoint_id': 'prior-checkpoint', 'summary': 'Previously accepted summary.',
+        'artifact_references': [], 'boundary': 2,
+    }
+
+
+def _checkpoint_comparison_proof(checkpoint):
+    prior = CheckpointNode('prior-checkpoint', 'Previously accepted summary.')
+    events = [new_source_event({'role': role, 'content': text}, run_id=run) for role, text, run in (
+        ('user', 'Previous input.', 'previous'), ('assistant', 'Previous answer.', 'previous'),
+        ('user', 'New input.', 'next'), ('assistant', 'New answer.', 'next'),
+    )]
+    for event in events:
+        event['_stream_id'] = 'root'
+    snapshot = SourceSnapshot(
+        SourceState('store', 'key', 'incarnation', 1, 1, prior.checkpoint_id, 'fingerprint'),
+        {}, events, checkpoint,
+    )
+    candidate = SourceCompactionCandidate.capture(
+        snapshot, SourceTranscript((prior, *source_nodes(events[2:]))),
+        eligible_ids=frozenset(event['_event_id'] for event in events[2:]),
+        accepted_boundary=2, accepted_checkpoint=prior,
+    )
+    evidence = candidate.summary_evidence(candidate.boundaries[-1])
+    return SummaryDependencyProof(candidate, (
+        ConsumedSummaryChunk(evidence, prior.summary, 'Folded follow-up summary.'),
+    ))
+
+
+@pytest.mark.parametrize('overrides', [
+    {}, {'artifact_references': ()}, {'artifact_references': ''}, {'boundary': 2.0},
+    {'extra': 'ignored stored metadata'},
+])
+def test_checkpoint_field_comparison_preserves_accepted_values(overrides):
+    proof = _checkpoint_comparison_proof({**_stored_checkpoint_fields(), **overrides})
+
+    assert derive_summary_references(proof, proof.candidate.snapshot) == ()
+
+
+def test_checkpoint_field_comparison_preserves_missing_reference_default():
+    checkpoint = _stored_checkpoint_fields()
+    del checkpoint['artifact_references']
+    proof = _checkpoint_comparison_proof(checkpoint)
+
+    assert derive_summary_references(proof, proof.candidate.snapshot) == ()
+
+
+@pytest.mark.parametrize('field,value', [
+    ('checkpoint_id', None), ('checkpoint_id', 7), ('checkpoint_id', 'different'),
+    ('summary', None), ('summary', []), ('summary', ''), ('summary', 'different'),
+    ('artifact_references', ['artifact:unaccepted']), ('artifact_references', 'unexpected'),
+    ('boundary', None), ('boundary', 0), ('boundary', '2'),
+])
+def test_checkpoint_field_comparison_preserves_changed_field_refusals(field, value):
+    proof = _checkpoint_comparison_proof({**_stored_checkpoint_fields(), field: value})
+
+    with pytest.raises(SourceValidationError, match='^Accepted summary checkpoint changed$'):
+        derive_summary_references(proof, proof.candidate.snapshot)
+
+
+@pytest.mark.parametrize('field', ['checkpoint_id', 'summary', 'boundary'])
+def test_checkpoint_field_comparison_preserves_missing_field_refusals(field):
+    checkpoint = _stored_checkpoint_fields()
+    del checkpoint[field]
+    proof = _checkpoint_comparison_proof(checkpoint)
+
+    with pytest.raises(SourceValidationError, match='^Accepted summary checkpoint changed$'):
+        derive_summary_references(proof, proof.candidate.snapshot)
+
+
+@pytest.mark.parametrize('checkpoint', [None, [], (), 'not a record'])
+def test_checkpoint_field_comparison_preserves_record_type_refusals(checkpoint):
+    proof = _checkpoint_comparison_proof(checkpoint)
+
+    with pytest.raises(SourceValidationError, match='^Accepted summary checkpoint is unavailable$'):
+        derive_summary_references(proof, proof.candidate.snapshot)
+
+
+@pytest.mark.parametrize('references', [None, 7, False])
+def test_checkpoint_field_comparison_preserves_noniterable_reference_faults(references):
+    proof = _checkpoint_comparison_proof({**_stored_checkpoint_fields(), 'artifact_references': references})
+
+    with pytest.raises(TypeError):
+        derive_summary_references(proof, proof.candidate.snapshot)
+
+
+@pytest.mark.parametrize('failing_field', [None, 'checkpoint_id', 'summary', 'artifact_references', 'boundary'])
+def test_checkpoint_field_comparison_preserves_lookup_order_and_fault_identity(failing_field):
+    lookups = []
+    failure = LookupError('stored checkpoint lookup failed')
+
+    class TracedCheckpoint(dict):
+        def get(self, key, default=None):
+            lookups.append(key)
+            if key == failing_field:
+                raise failure
+            return super().get(key, default)
+
+    proof = _checkpoint_comparison_proof(TracedCheckpoint(_stored_checkpoint_fields()))
+    lookups.clear()
+    expected = ['checkpoint_id', 'summary', 'artifact_references', 'boundary']
+
+    if failing_field is None:
+        assert derive_summary_references(proof, proof.candidate.snapshot) == ()
+        assert lookups == expected
+    else:
+        with pytest.raises(LookupError) as exc:
+            derive_summary_references(proof, proof.candidate.snapshot)
+        assert exc.value is failure
+        assert lookups == expected[:expected.index(failing_field) + 1]

@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent.runner_helpers import make_run_spec
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.policy import DelegatedReadOnlyPolicy
 from nanobot.agent.runner import AgentRunner
@@ -14,6 +13,7 @@ from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
 from nanobot.session.manager import JsonlSessionStore, Session
+from tests.agent.runner_helpers import make_run_spec
 
 
 def calls():

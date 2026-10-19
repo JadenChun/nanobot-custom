@@ -15,8 +15,34 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from nanobot.config.schema import Config, ModelPresetConfig
+from nanobot.providers.factory import make_provider
+from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
 from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+from nanobot.providers.pooled_provider import PooledProvider, _rotation_cooldown
 from nanobot.providers.registry import find_by_name
+
+
+def _gemini_provider(*, api_keys, api_base, default_model, spec, timeout=None):
+    """Exercise the production config/factory composition, not a mutable leaf."""
+    assert spec == find_by_name("gemini")
+    config = Config.model_validate({
+        "providers": {"gemini": {
+            "apiKey": "unused-single-key", "apiKeys": api_keys,
+            "apiBase": api_base,
+            **({"timeout": timeout} if timeout is not None else {}),
+        }},
+        "agents": {"defaults": {"provider": "gemini", "model": default_model}},
+    })
+    provider = make_provider(config)
+    if len(api_keys) > 1:
+        assert isinstance(provider, PooledProvider)
+        assert [leaf.api_key for leaf in provider._leaves] == api_keys
+        assert all(isinstance(leaf, OpenAICompatProvider) for leaf in provider._leaves)
+    else:
+        assert isinstance(provider, OpenAICompatProvider)
+        assert provider.api_key == api_keys[0]
+    return provider
 
 
 def _fake_chat_response(content: str = "ok") -> SimpleNamespace:
@@ -64,7 +90,7 @@ def test_openrouter_spec_is_gateway() -> None:
 
 def test_openrouter_sets_default_attribution_headers() -> None:
     spec = find_by_name("openrouter")
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         provider = OpenAICompatProvider(
             api_key="sk-or-test-key",
             api_base="https://openrouter.ai/api/v1",
@@ -73,7 +99,7 @@ def test_openrouter_sets_default_attribution_headers() -> None:
         )
         provider._build_client()
 
-    headers = MockClient.call_args.kwargs["default_headers"]
+    headers = mock_client.call_args.kwargs["default_headers"]
     assert headers["HTTP-Referer"] == "https://github.com/HKUDS/nanobot"
     assert headers["X-OpenRouter-Title"] == "nanobot"
     assert headers["X-OpenRouter-Categories"] == "cli-agent,personal-agent"
@@ -82,7 +108,7 @@ def test_openrouter_sets_default_attribution_headers() -> None:
 
 def test_openrouter_user_headers_override_default_attribution() -> None:
     spec = find_by_name("openrouter")
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
         provider = OpenAICompatProvider(
             api_key="sk-or-test-key",
             api_base="https://openrouter.ai/api/v1",
@@ -96,7 +122,7 @@ def test_openrouter_user_headers_override_default_attribution() -> None:
         )
         provider._build_client()
 
-    headers = MockClient.call_args.kwargs["default_headers"]
+    headers = mock_client.call_args.kwargs["default_headers"]
     assert headers["HTTP-Referer"] == "https://nanobot.ai"
     assert headers["X-OpenRouter-Title"] == "Nanobot Pro"
     assert headers["X-OpenRouter-Categories"] == "cli-agent,personal-agent"
@@ -109,8 +135,8 @@ async def test_openrouter_keeps_model_name_intact() -> None:
     mock_create = AsyncMock(return_value=_fake_chat_response())
     spec = find_by_name("openrouter")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        client_instance = MockClient.return_value
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+        client_instance = mock_client.return_value
         client_instance.chat.completions.create = mock_create
 
         provider = OpenAICompatProvider(
@@ -134,8 +160,8 @@ async def test_aihubmix_strips_model_prefix() -> None:
     mock_create = AsyncMock(return_value=_fake_chat_response())
     spec = find_by_name("aihubmix")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        client_instance = MockClient.return_value
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+        client_instance = mock_client.return_value
         client_instance.chat.completions.create = mock_create
 
         provider = OpenAICompatProvider(
@@ -159,8 +185,8 @@ async def test_opencode_go_strips_model_prefix() -> None:
     mock_create = AsyncMock(return_value=_fake_chat_response())
     spec = find_by_name("opencode-go")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        client_instance = MockClient.return_value
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+        client_instance = mock_client.return_value
         client_instance.chat.completions.create = mock_create
 
         provider = OpenAICompatProvider(
@@ -197,8 +223,8 @@ async def test_opencode_deepseek_fills_missing_tool_reasoning_history() -> None:
         {"role": "tool", "tool_call_id": "call_123", "content": "result"},
     ]
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        MockClient.return_value.chat.completions.create = mock_create
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+        mock_client.return_value.chat.completions.create = mock_create
         provider = OpenAICompatProvider(
             api_key="opencode-test-key",
             api_base="https://opencode.ai/zen/go/v1",
@@ -218,8 +244,8 @@ async def test_non_deepseek_does_not_invent_tool_reasoning_history() -> None:
     mock_create = AsyncMock(return_value=_fake_chat_response())
     spec = find_by_name("opencode-go")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        MockClient.return_value.chat.completions.create = mock_create
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+        mock_client.return_value.chat.completions.create = mock_create
         provider = OpenAICompatProvider(
             api_key="opencode-test-key",
             api_base="https://opencode.ai/zen/go/v1",
@@ -228,6 +254,8 @@ async def test_non_deepseek_does_not_invent_tool_reasoning_history() -> None:
         )
         await provider.chat(
             messages=[{
+                "role": "user", "content": "run the tool",
+            }, {
                 "role": "assistant",
                 "content": "calling",
                 "tool_calls": [{
@@ -235,11 +263,13 @@ async def test_non_deepseek_does_not_invent_tool_reasoning_history() -> None:
                     "type": "function",
                     "function": {"name": "read_file", "arguments": "{}"},
                 }],
+            }, {
+                "role": "tool", "tool_call_id": "call_123", "content": "result",
             }],
             model="kimi-k2.6",
         )
 
-    assistant = mock_create.call_args.kwargs["messages"][0]
+    assistant = mock_create.call_args.kwargs["messages"][1]
     assert "reasoning_content" not in assistant
 
 
@@ -269,8 +299,8 @@ async def test_standard_provider_passes_model_through() -> None:
     mock_create = AsyncMock(return_value=_fake_chat_response())
     spec = find_by_name("deepseek")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        client_instance = MockClient.return_value
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+        client_instance = mock_client.return_value
         client_instance.chat.completions.create = mock_create
 
         provider = OpenAICompatProvider(
@@ -293,8 +323,8 @@ async def test_openai_compat_preserves_extra_content_on_tool_calls() -> None:
     mock_create = AsyncMock(return_value=_fake_tool_call_response())
     spec = find_by_name("gemini")
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
-        client_instance = MockClient.return_value
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client:
+        client_instance = mock_client.return_value
         client_instance.chat.completions.create = mock_create
 
         provider = OpenAICompatProvider(
@@ -345,8 +375,8 @@ async def test_gemini_rotates_to_next_key_on_rate_limit() -> None:
         create=AsyncMock(return_value=_fake_chat_response("ok from backup key")),
     ))
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]) as MockClient:
-        provider = OpenAICompatProvider(
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]) as mock_client:
+        provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
             default_model="google/gemini-2.5-pro",
@@ -358,12 +388,12 @@ async def test_gemini_rotates_to_next_key_on_rate_limit() -> None:
         )
 
     assert result.content == "ok from backup key"
-    assert MockClient.call_args_list[0].kwargs["api_key"] == "gem-key-1"
-    assert MockClient.call_args_list[1].kwargs["api_key"] == "gem-key-2"
+    assert mock_client.call_args_list[0].kwargs["api_key"] == "gem-key-1"
+    assert mock_client.call_args_list[1].kwargs["api_key"] == "gem-key-2"
 
 
 @pytest.mark.asyncio
-async def test_gemini_rotation_updates_active_env_key(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_gemini_rotation_does_not_mutate_process_env_key(monkeypatch: pytest.MonkeyPatch) -> None:
     class _RateLimitError(Exception):
         status_code = 429
 
@@ -380,7 +410,7 @@ async def test_gemini_rotation_updates_active_env_key(monkeypatch: pytest.Monkey
     monkeypatch.setenv("GEMINI_API_KEY", "stale-key")
 
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
-        provider = OpenAICompatProvider(
+        provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
             default_model="google/gemini-2.5-pro",
@@ -392,7 +422,8 @@ async def test_gemini_rotation_updates_active_env_key(monkeypatch: pytest.Monkey
         )
 
     assert result.content == "ok from backup key"
-    assert os.environ["GEMINI_API_KEY"] == "gem-key-2"
+    assert os.environ["GEMINI_API_KEY"] == "stale-key"
+    assert [leaf.api_key for leaf in provider._leaves] == ["gem-key-1", "gem-key-2"]
 
 
 @pytest.mark.asyncio
@@ -406,8 +437,8 @@ async def test_gemini_does_not_rotate_on_non_rate_limit_error() -> None:
         create=AsyncMock(side_effect=_AuthError("unauthorized")),
     ))
 
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", return_value=client) as MockClient:
-        provider = OpenAICompatProvider(
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", return_value=client) as mock_client:
+        provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
             default_model="google/gemini-2.5-pro",
@@ -419,7 +450,7 @@ async def test_gemini_does_not_rotate_on_non_rate_limit_error() -> None:
         )
 
     assert result.finish_reason == "error"
-    assert MockClient.call_count == 1
+    assert mock_client.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -427,6 +458,7 @@ async def test_gemini_reports_when_all_keys_are_exhausted() -> None:
     class _RateLimitError(Exception):
         status_code = 429
 
+    exhausted, status = AsyncMock(), AsyncMock()
     spec = find_by_name("gemini")
     first = SimpleNamespace()
     first.chat = SimpleNamespace(completions=SimpleNamespace(
@@ -438,19 +470,27 @@ async def test_gemini_reports_when_all_keys_are_exhausted() -> None:
     ))
 
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
-        provider = OpenAICompatProvider(
+        provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
             default_model="google/gemini-2.5-pro",
             spec=spec,
         )
-        result = await provider.chat(
+        result = await provider.chat_with_retry(
             messages=[{"role": "user", "content": "hello"}],
             model="google/gemini-2.5-pro",
+            on_retry_exhausted=exhausted, on_retry_status=status,
         )
 
     assert result.finish_reason == "error"
-    assert "after trying 2 keys" in (result.content or "")
+    assert result.error_status_code == 429
+    assert "quota exceeded on key 2" in result.content
+    assert first.chat.completions.create.await_count == 1
+    assert second.chat.completions.create.await_count == 1
+    exhausted.assert_awaited_once()
+    status.assert_awaited_once()
+    assert status.call_args.args[0].state == "exhausted"
+    assert status.call_args.args[0].attempt == 2
 
 
 @pytest.mark.asyncio
@@ -459,6 +499,7 @@ async def test_gemini_concurrent_requests_keep_key_rotation_request_local() -> N
         status_code = 429
 
     spec = find_by_name("gemini")
+    call_keys = {}
     started_on_primary = 0
     started_on_backup = False
     release_primary = asyncio.Event()
@@ -466,6 +507,8 @@ async def test_gemini_concurrent_requests_keep_key_rotation_request_local() -> N
     def _client_factory(*, api_key, **kwargs):
         async def _create(**req_kwargs):
             nonlocal started_on_primary, started_on_backup
+            prompt = req_kwargs["messages"][0]["content"]
+            call_keys.setdefault(prompt, []).append(api_key)
             if api_key == "gem-key-1":
                 started_on_primary += 1
                 if started_on_primary >= 2 or started_on_backup:
@@ -481,13 +524,13 @@ async def test_gemini_concurrent_requests_keep_key_rotation_request_local() -> N
         return client
 
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=_client_factory):
-        provider = OpenAICompatProvider(
+        provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
             default_model="google/gemini-2.5-pro",
             spec=spec,
         )
-        first, second = await asyncio.gather(
+        first, second = await asyncio.wait_for(asyncio.gather(
             provider.chat(
                 messages=[{"role": "user", "content": "hello a"}],
                 model="google/gemini-2.5-pro",
@@ -496,12 +539,17 @@ async def test_gemini_concurrent_requests_keep_key_rotation_request_local() -> N
                 messages=[{"role": "user", "content": "hello b"}],
                 model="google/gemini-2.5-pro",
             ),
-        )
+        ), timeout=2.0)
 
     assert first.finish_reason == "stop"
     assert second.finish_reason == "stop"
     assert first.content == "ok from backup key"
     assert second.content == "ok from backup key"
+
+    assert call_keys == {
+        "hello a": ["gem-key-1", "gem-key-2"],
+        "hello b": ["gem-key-1", "gem-key-2"],
+    }
 
 
 @pytest.mark.asyncio
@@ -524,7 +572,7 @@ async def test_gemini_prefers_last_successful_key_on_follow_up_request() -> None
         return client
 
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=_client_factory):
-        provider = OpenAICompatProvider(
+        provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2", "gem-key-3"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
             default_model="google/gemini-2.5-pro",
@@ -545,7 +593,7 @@ async def test_gemini_prefers_last_successful_key_on_follow_up_request() -> None
 
 
 @pytest.mark.asyncio
-async def test_gemini_stream_timeout_rotates_to_next_key() -> None:
+async def test_gemini_stream_timeout_retries_same_credential(monkeypatch) -> None:
     class _TimedOutStream:
         def __aiter__(self):
             return self
@@ -553,45 +601,37 @@ async def test_gemini_stream_timeout_rotates_to_next_key() -> None:
         async def __anext__(self):
             await asyncio.Event().wait()
 
-    class _TextStream:
-        def __init__(self, parts: list[str]) -> None:
-            self._parts = iter(parts)
+    async def recovered_stream():
+        yield SimpleNamespace(choices=[SimpleNamespace(
+            delta=SimpleNamespace(content="ok after stream timeout"),
+            finish_reason="stop", index=0,
+        )], usage=None)
 
-        def __aiter__(self):
-            return self
+    create = AsyncMock(side_effect=[_TimedOutStream(), recovered_stream()])
+    first = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    delays = []
 
-        async def __anext__(self):
-            try:
-                return next(self._parts)
-            except StopIteration as exc:
-                raise StopAsyncIteration from exc
+    async def sleep(delay):
+        delays.append(delay)
 
-    spec = find_by_name("gemini")
-
-    first = SimpleNamespace()
-    first.chat = SimpleNamespace(completions=SimpleNamespace(
-        create=AsyncMock(return_value=_TimedOutStream()),
-    ))
-    second = SimpleNamespace()
-    second.chat = SimpleNamespace(completions=SimpleNamespace(
-        create=AsyncMock(return_value=_TextStream(["ok after stream timeout"])),
-    ))
-
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
-        provider = OpenAICompatProvider(
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", sleep)
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", return_value=first) as client:
+        provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
-            default_model="google/gemini-2.5-pro",
-            timeout=5.0,
-            spec=spec,
+            default_model="google/gemini-2.5-pro", timeout=0.01,
+            spec=find_by_name("gemini"),
         )
-        provider._request_timeout = 0.01
-        result = await provider.chat_stream(
+        assert all(leaf._configured_timeout == 5.0 for leaf in provider._leaves)
+        result = await provider.chat_stream_with_retry(
             messages=[{"role": "user", "content": "hello"}],
-            model="google/gemini-2.5-pro",
         )
-
     assert result.content == "ok after stream timeout"
+    assert create.await_count == 2
+    assert client.call_count == 1
+    assert client.call_args.kwargs["api_key"] == "gem-key-1"
+    assert provider._leaves[1]._client is None
+    assert delays == [1]
 
 
 @pytest.mark.asyncio
@@ -610,7 +650,7 @@ async def test_gemini_rotates_on_service_unavailable_503() -> None:
     ))
 
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
-        provider = OpenAICompatProvider(
+        provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
             default_model="google/gemini-2.5-pro",
@@ -625,59 +665,53 @@ async def test_gemini_rotates_on_service_unavailable_503() -> None:
 
 
 @pytest.mark.asyncio
-async def test_single_key_rate_limit_emits_canonical_exhaustion_message() -> None:
-    """A single-key pool hitting 429 must still emit the canonical exhaustion
-    message so FallbackProvider can detect quota exhaustion and fall back."""
-
+async def test_single_key_structured_rate_limit_reaches_legacy_fallback(monkeypatch) -> None:
+    """Fallback must work from the real leaf response, without pool-error prose."""
     class _RateLimitError(Exception):
         status_code = 429
 
-    spec = find_by_name("gemini")
-    client = SimpleNamespace()
-    client.chat = SimpleNamespace(completions=SimpleNamespace(
-        create=AsyncMock(side_effect=_RateLimitError("429 Too Many Requests")),
-    ))
-
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", return_value=client):
-        provider = OpenAICompatProvider(
+    sleep = AsyncMock()
+    monkeypatch.setattr("nanobot.providers.base.asyncio.sleep", sleep)
+    primary_create = AsyncMock(side_effect=_RateLimitError("429 Too Many Requests"))
+    backup_create = AsyncMock(return_value=_fake_chat_response("fallback succeeded"))
+    primary_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=primary_create)))
+    backup_client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=backup_create)))
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[primary_client, backup_client]):
+        provider = _gemini_provider(
             api_keys=["only-key"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
-            default_model="google/gemini-2.5-pro",
-            spec=spec,
+            default_model="google/gemini-2.5-pro", spec=find_by_name("gemini"),
         )
-        result = await provider.chat(
-            messages=[{"role": "user", "content": "hello"}],
-            model="google/gemini-2.5-pro",
+        result = await provider.chat(messages=[{"role": "user", "content": "hello"}])
+        assert result.finish_reason == "error"
+        assert result.error_status_code == 429
+        assert "429 Too Many Requests" in result.content
+        backup = OpenAICompatProvider(
+            api_key="backup", default_model="gemini-backup", spec=find_by_name("gemini"),
         )
-
-    assert result.finish_reason == "error"
-    assert "All configured API keys were rate-limited" in (result.content or "")
-    # The canonical message is what FallbackProvider._is_quota_exhaustion matches on.
-    from nanobot.providers.base import LLMProvider
-    assert LLMProvider._is_quota_exhaustion(result.content) is True
+        wrapper = LegacyFallbackProvider(
+            provider, [ModelPresetConfig(model="gemini-backup", provider="gemini")],
+            lambda preset: backup,
+        )
+        recovered = await wrapper.chat_with_retry(messages=[{"role": "user", "content": "hello"}])
+    assert recovered.content == "fallback succeeded"
+    # One inspected direct response, then four primary attempts before fallback.
+    assert primary_create.await_count == 5
+    assert backup_create.await_count == 1
+    assert [call.args[0] for call in sleep.await_args_list] == [1, 2, 4]
 
 
 def test_local_timeout_not_classified_as_rate_limit() -> None:
-    """A bare TimeoutError is no longer classified as a rate-limit error.
-    It is a transient network issue that chat_stream_with_retry handles
-    with its own retry logic. Key rotation cooldown still applies for
-    multi-key scenarios via the separate timeout path in chat_stream."""
-    spec = find_by_name("gemini")
-    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
-        provider = OpenAICompatProvider(
-            api_keys=["k1", "k2"],
-            api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
-            default_model="google/gemini-2.5-pro",
-            spec=spec,
-        )
-
-    err = TimeoutError("")
-    assert OpenAICompatProvider._is_rate_limit_error(err) is False
-    assert provider._cooldown_seconds_for_error(err) == OpenAICompatProvider._OVERLOAD_KEY_COOLDOWN_S
+    response = OpenAICompatProvider._handle_error(TimeoutError(""))
+    assert response.finish_reason == "error"
+    assert response.error_kind == "timeout"
+    assert response.error_status_code is None
+    assert _rotation_cooldown(response) is None
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_does_not_rotate_after_delivering_content() -> None:
+@pytest.mark.parametrize("retry", [False, True])
+async def test_chat_stream_does_not_rotate_after_delivering_content(retry) -> None:
     """Once content has been streamed to the user, a mid-stream failure must
     not rotate to another key and concatenate a second response."""
 
@@ -732,13 +766,14 @@ async def test_chat_stream_does_not_rotate_after_delivering_content() -> None:
         deltas.append(text)
 
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI", side_effect=[first, second]):
-        provider = OpenAICompatProvider(
+        provider = _gemini_provider(
             api_keys=["gem-key-1", "gem-key-2"],
             api_base="https://generativelanguage.googleapis.com/v1beta/openai/",
             default_model="google/gemini-2.5-pro",
             spec=spec,
         )
-        result = await provider.chat_stream(
+        call = provider.chat_stream_with_retry if retry else provider.chat_stream
+        result = await call(
             messages=[{"role": "user", "content": "hello"}],
             model="google/gemini-2.5-pro",
             on_content_delta=_on_delta,
@@ -746,6 +781,7 @@ async def test_chat_stream_does_not_rotate_after_delivering_content() -> None:
 
     # User received only the first key's partial content — no second key content.
     assert deltas == ["partial-hello"]
+    assert first.chat.completions.create.await_count == 1
     assert second_create.await_count == 0
     # The response should reflect the error; it must NOT contain the backup content.
     assert "should-not-see-this" not in (result.content or "")

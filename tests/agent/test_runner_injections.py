@@ -8,14 +8,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent.runner_helpers import make_run_spec
 from nanobot.agent.automation_turns import publish_next_deferred_turn
 from nanobot.agent.context import TranscriptInput
 from nanobot.agent.tools.context import RequestContext
 from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import LLMResponse, ToolCallRequest
+from tests.agent.runner_helpers import make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
+
+
+@pytest.fixture(autouse=True)
+def _admit_candidate_for_offline_injection_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise loop behavior without activating migration or external tool setup."""
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("nanobot.agent.tools.loader.ToolLoader.load", lambda *_args: [])
 
 
 def _make_injection_callback(queue: asyncio.Queue):
@@ -37,8 +44,9 @@ def _make_loop(tmp_path, *, recovery_admission=None):
     provider.get_default_model.return_value = "test-model"
 
     with patch("nanobot.agent.loop.ContextBuilder"), \
-         patch("nanobot.agent.loop.SessionManager"), \
+         patch("nanobot.agent.loop.SessionManager") as mock_sessions, \
          patch("nanobot.agent.loop.SubagentManager") as mock_sub_mgr:
+        mock_sessions.return_value.source_backend.return_value = None
         mock_sub_mgr.return_value.cancel_by_session = AsyncMock(return_value=0)
         mock_sub_mgr.return_value.close = AsyncMock()
         loop = AgentLoop(
@@ -48,6 +56,20 @@ def _make_loop(tmp_path, *, recovery_admission=None):
             recovery_admission=recovery_admission,
         )
     return loop
+
+
+def _offline_run_context(loop, session_key: str):
+    """Supply the canonical policy dependency required by direct runner tests."""
+    from nanobot.agent.turn import RunPolicyContext, TurnContext
+
+    return TurnContext(
+        run_id="offline-injection-test",
+        session_key=session_key,
+        policy=RunPolicyContext(
+            workspace=loop._fork_dependencies.resource_policy.workspace,
+            context_manager=loop._fork_dependencies.resource_policy.context_manager,
+        ),
+    )
 
 @pytest.mark.asyncio
 async def test_drain_injections_returns_empty_when_no_callback():
@@ -622,6 +644,7 @@ async def test_loop_injected_followup_preserves_image_media(tmp_path):
         runtime=runtime,
         request_context=RequestContext(channel="cli", chat_id="c", runtime=runtime),
         pending_queue=pending_queue,
+        run_context=_offline_run_context(loop, "cli:c"),
     )
 
     assert result.final_content == "second answer"
@@ -725,6 +748,7 @@ async def test_pending_injection_resolves_its_own_runtime_context(tmp_path):
             runtime=runtime,
         ),
         pending_queue=pending_queue,
+        run_context=_offline_run_context(loop, session.key),
     )
 
     assert seen_contexts == [
@@ -822,6 +846,7 @@ async def test_subagent_pending_injection_is_hidden_history_and_not_merged(tmp_p
         runtime=runtime,
         request_context=RequestContext(channel="cli", chat_id="c", runtime=runtime),
         pending_queue=pending_queue,
+        run_context=_offline_run_context(loop, "cli:c"),
     )
 
     assert result.final_content == "second answer"
@@ -1343,6 +1368,40 @@ async def test_local_trigger_turn_deferred_while_session_active(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [RuntimeError("bus unavailable"), asyncio.CancelledError()])
+async def test_deferred_automation_turn_survives_failed_publication(failure):
+    """A failed handoff must not drop the oldest automation turn or reorder the rest."""
+    from nanobot.bus.events import InboundMessage
+
+    key = "websocket:chat-1"
+    first = InboundMessage(channel="websocket", sender_id="cron", chat_id="chat-1", content="first")
+    second = InboundMessage(channel="websocket", sender_id="trigger", chat_id="chat-1", content="second")
+    deferred = {key: [first, second]}
+    published = []
+
+    async def fail(_msg):
+        raise failure
+
+    with pytest.raises(type(failure)):
+        await publish_next_deferred_turn(
+            deferred_queues=deferred, publish_inbound=fail, session_key=key,
+        )
+    assert deferred[key] == [first, second]
+
+    async def publish(msg):
+        published.append(msg)
+
+    assert await publish_next_deferred_turn(
+        deferred_queues=deferred, publish_inbound=publish, session_key=key,
+    ) is True
+    assert await publish_next_deferred_turn(
+        deferred_queues=deferred, publish_inbound=publish, session_key=key,
+    ) is True
+    assert published == [first, second]
+    assert key not in deferred
+
+
+@pytest.mark.asyncio
 async def test_submitted_cron_turn_reports_pending_until_completed(tmp_path):
     """Bound cron jobs remain marked pending while their session turn is in flight."""
     from nanobot.bus.events import InboundMessage, OutboundMessage
@@ -1496,6 +1555,7 @@ async def test_pending_queue_preserves_overflow_for_next_injection_cycle(tmp_pat
         runtime=runtime,
         request_context=RequestContext(channel="cli", chat_id="c", runtime=runtime),
         pending_queue=pending_queue,
+        run_context=_offline_run_context(loop, "cli:c"),
     )
 
     assert result.final_content == "answer-3"
@@ -1519,7 +1579,7 @@ async def test_pending_queue_full_falls_back_to_queued_task(tmp_path):
     loop = _make_loop(tmp_path)
     dispatched = asyncio.Event()
 
-    async def _dispatch(_msg):
+    async def _dispatch(_msg, *, _compact_settlement=None):
         dispatched.set()
 
     loop._dispatch = AsyncMock(side_effect=_dispatch)  # type: ignore[method-assign]
@@ -1541,6 +1601,11 @@ async def test_pending_queue_full_falls_back_to_queued_task(tmp_path):
     dispatched_msg = loop._dispatch.await_args.args[0]
     assert dispatched_msg.content == "follow-up"
     assert pending.qsize() == 1
+    assert loop._dispatch.await_args.kwargs == {"_compact_settlement": None}
+    assert run_task.done() and not run_task.cancelled()
+    assert loop._active_tasks == {}
+    assert loop._compact_dispatches == {}
+    assert loop._closed is True
 
 
 @pytest.mark.asyncio
@@ -1554,7 +1619,7 @@ async def test_pending_queue_overflow_keeps_websocket_followup_durable(tmp_path)
     dispatched = asyncio.Event()
     release_dispatch = asyncio.Event()
 
-    async def _dispatch(_msg):
+    async def _dispatch(_msg, *, _compact_settlement=None):
         dispatched.set()
         await release_dispatch.wait()
 
@@ -1586,6 +1651,52 @@ async def test_pending_queue_overflow_keeps_websocket_followup_durable(tmp_path)
     release_dispatch.set()
     loop.stop()
     await asyncio.wait_for(run_task, timeout=2)
+
+    assert loop._dispatch.await_count == 1
+    assert loop._dispatch.await_args.kwargs == {"_compact_settlement": None}
+    assert run_task.done() and not run_task.cancelled()
+    assert loop._active_tasks == {}
+    assert loop._compact_dispatches == {}
+    assert loop._closed is True
+    assert [message.content for message in pending_followups(session)] == ["durable follow-up"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", ["ordinary follow-up", "/compact"])
+async def test_bus_dispatch_forwards_named_compact_settlement_to_adapter(tmp_path, content):
+    from nanobot.bus.events import InboundMessage
+
+    loop = _make_loop(tmp_path)
+    loop._dispatch = AsyncMock()
+    msg = InboundMessage(
+        channel="cli", sender_id="u", chat_id="control", content=content,
+        metadata={"probe": "unchanged"},
+    )
+    task = loop._enqueue_bus_dispatch(msg, "cli:control")
+    try:
+        await asyncio.wait_for(task, timeout=1)
+        loop._dispatch.assert_awaited_once()
+        assert set(loop._dispatch.await_args.kwargs) == {"_compact_settlement"}
+        settlement = loop._dispatch.await_args.kwargs["_compact_settlement"]
+        if content == "/compact":
+            assert settlement is not None
+            assert settlement.key == "cli:control"
+            assert settlement.message is loop._dispatch.await_args.args[0]
+            assert settlement.message is not msg
+            assert settlement.message.content == content
+            assert settlement.message.metadata == msg.metadata
+            assert settlement.message.metadata is not msg.metadata
+        else:
+            assert settlement is None
+            assert loop._dispatch.await_args.args[0] is msg
+        assert msg.metadata == {"probe": "unchanged"}
+    finally:
+        await loop.aclose()
+
+    assert task.done() and not task.cancelled()
+    assert loop._active_tasks == {}
+    assert loop._compact_dispatches == {}
+    assert loop._closed is True
 
 
 @pytest.mark.asyncio

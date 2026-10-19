@@ -18,6 +18,9 @@ from oauth_cli_kit import login_oauth_interactive
 from oauth_cli_kit.models import OAuthToken
 from oauth_cli_kit.providers import OPENAI_CODEX_PROVIDER
 
+from nanobot.providers.codex_auth import get_codex_authority
+from nanobot.providers.oauth_credentials import OAuthToken as CanonicalToken
+
 _AUTHORIZATION_URL_TIMEOUT_S = 5.0
 _CALLBACK = urlsplit(OPENAI_CODEX_PROVIDER.redirect_uri)
 _CALLBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -52,6 +55,8 @@ class OpenAICodexOAuthLoginFlow:
         self._ready = threading.Event()
         self._submission_lock = threading.Lock()
         self._submitted = False
+        self._authority = get_codex_authority()
+        self._generation = self._authority.begin_login()
         self._thread = threading.Thread(
             target=self._run,
             name="nanobot-openai-codex-oauth",
@@ -137,12 +142,24 @@ class OpenAICodexOAuthLoginFlow:
                 provider=OPENAI_CODEX_PROVIDER,
                 proxy=self._proxy,
                 open_browser=self._open_browser,
+                storage=_AcquisitionOnlyStorage(),
             )
         except Exception as exc:
             with suppress(Exception):
                 self._result.set_exception(_safe_login_error(exc))
         else:
-            with suppress(Exception):
+            try:
+                self._authority.commit_login(
+                    CanonicalToken(token.access, token.refresh, token.expires, token.account_id),
+                    self._generation,
+                )
+                from nanobot.providers.oauth_model_catalog import invalidate_oauth_model_catalog
+
+                invalidate_oauth_model_catalog("openai_codex")
+            except Exception as exc:
+                with suppress(Exception):
+                    self._result.set_exception(_safe_login_error(exc))
+            else:
                 self._result.set_result(token)
         finally:
             self._ready.set()
@@ -270,3 +287,14 @@ def _safe_login_error(exc: Exception) -> OpenAICodexOAuthError:
 def _first(params: dict[str, list[str]], key: str) -> str | None:
     values = params.get(key)
     return values[0] if values else None
+
+
+class _AcquisitionOnlyStorage:
+    def save(self, token: object) -> None:
+        del token
+
+    def load(self) -> None:
+        return None
+
+    def get_token_path(self) -> None:
+        return None

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Callable as _Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, cast
 
@@ -78,6 +79,8 @@ def _reject_constant(_value: str) -> NoReturn:
 
 
 def _validate_tree(value: object, node_budget: int) -> int:
+    # The sole caller supplies JSON decoder output: object_pairs_hook receives
+    # string keys at every depth, including dictionaries nested in lists.
     pending: list[tuple[object, int]] = [(value, 1)]
     decoded_nodes = 0
     while pending:
@@ -86,17 +89,17 @@ def _validate_tree(value: object, node_budget: int) -> int:
         if depth > _MAX_DEPTH or decoded_nodes + len(pending) > node_budget:
             raise _InvalidJSONError
         if isinstance(current, dict):
-            child_count = 2 * len(current)
+            child_count = 2 * len(cast(dict[str, object], current))
             if decoded_nodes + len(pending) + child_count > node_budget:
                 raise _InvalidJSONError
-            for key, item in current.items():
+            for key, item in cast(dict[str, object], current).items():
                 key.encode("utf-8", "strict")
                 pending.append((key, depth + 1))
                 pending.append((item, depth + 1))
         elif isinstance(current, list):
-            if decoded_nodes + len(pending) + len(current) > node_budget:
+            if decoded_nodes + len(pending) + len(cast(list[object], current)) > node_budget:
                 raise _InvalidJSONError
-            pending.extend((item, depth + 1) for item in current)
+            pending.extend((item, depth + 1) for item in cast(list[object], current))
         elif isinstance(current, str):
             current.encode("utf-8", "strict")
         elif isinstance(current, float) and not math.isfinite(current):
@@ -113,7 +116,7 @@ def _parse_record(line: bytes, node_budget: int) -> tuple[dict[str, Any], int]:
     )
     if not isinstance(decoded, dict):
         raise _InvalidJSONError
-    decoded_nodes = _validate_tree(decoded, node_budget)
+    decoded_nodes = _validate_tree(cast(object, decoded), node_budget)
     return cast(dict[str, Any], decoded), decoded_nodes
 
 
@@ -246,6 +249,11 @@ def _chunk_digest(messages: list[dict[str, Any]]) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def capture_legacy_receipt_chunk_digest() -> _Callable[[list[dict[str, object]]], str]:
+    """Capture the current encoder callback without changing later import bindings."""
+    return _chunk_digest
+
+
 def patch_legacy_receipt_source(
     raw_bytes: bytes,
     trusted_session_key: str,
@@ -262,7 +270,7 @@ def patch_legacy_receipt_source(
     An already-advanced cursor returns no patch.
     """
     try:
-        if not isinstance(raw_bytes, bytes):
+        if not isinstance(cast(object, raw_bytes), bytes):
             raise _InvalidJSONError
         raw_bytes = bytes(raw_bytes)
         start, end, receipt_generation, chunk_digest = _receipt_evidence(

@@ -996,31 +996,31 @@ class GatewayHTTPHandler:
                         )
                     current_cron_jobs.append(current)
 
-            for job in current_cron_jobs:
-                try:
-                    result = self.cron_service.remove_job(
-                        job.id,
-                        job_instance_id=job.job_instance_id,
-                        definition_revision=job.definition_revision,
-                    )
-                except (
-                    CronDefinitionTokenRequiredError,
-                    DefinitionStoreConflictError,
-                    CronDefinitionConflictError,
-                ) as exc:
-                    return _http_error(
-                        409,
-                        f"automation deletion conflict for {job.id}: {exc}. "
-                        "Refresh the session and retry.",
-                    )
-                if result == "not_found":
-                    return _http_error(
-                        409,
-                        f"automation deletion conflict for {job.id}: it changed before deletion. "
-                        "Refresh the session and retry.",
-                    )
-                if result == "protected":
-                    return _http_error(409, f"automation {job.id} is protected")
+                for job in current_cron_jobs:
+                    try:
+                        result = self.cron_service.remove_job(
+                            job.id,
+                            job_instance_id=job.job_instance_id,
+                            definition_revision=job.definition_revision,
+                        )
+                    except (
+                        CronDefinitionTokenRequiredError,
+                        DefinitionStoreConflictError,
+                        CronDefinitionConflictError,
+                    ) as exc:
+                        return _http_error(
+                            409,
+                            f"automation deletion conflict for {job.id}: {exc}. "
+                            "Refresh the session and retry.",
+                        )
+                    if result == "not_found":
+                        return _http_error(
+                            409,
+                            f"automation deletion conflict for {job.id}: it changed before deletion. "
+                            "Refresh the session and retry.",
+                        )
+                    if result == "protected":
+                        return _http_error(409, f"automation {job.id} is protected")
 
             for job in automation_jobs:
                 if isinstance(job, LocalTrigger) and self.local_trigger_store is not None:

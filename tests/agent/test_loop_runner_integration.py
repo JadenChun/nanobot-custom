@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nanobot.agent.context import TranscriptInput
 from nanobot.agent.goal_permission import goal_mutation_allowed, goal_mutation_permission
+from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
 from nanobot.agent.tools.context import RequestContext
+from nanobot.agent.turn import (
+    DeliveryTarget,
+    RunPolicyContext,
+    TurnCallbacks,
+    TurnRequest,
+)
+from nanobot.agent.turn import TurnContext as RunContext
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import StreamedResponseEvent
-from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import AgentDefaults
 from nanobot.events import RetryStatusEvent
 from nanobot.providers.base import (
@@ -31,33 +38,61 @@ from nanobot.runtime_context import (
 from nanobot.session.goal_state import GOAL_STATE_KEY
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.progress_events import output_events
+from tests.agent.p6_admitted_fixtures import AgentInputs
+from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 _GOAL_RUNTIME_GUIDANCE_TAG = "[Goal Runtime Guidance — host instructions]"
 
 
-def _make_loop(tmp_path):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
+async def _make_loop(tmp_path, admitted_async, provider=None, *, keys=()):
+    if provider is None:
+        provider = MagicMock()
+        provider.get_default_model.return_value = "test-model"
+        provider.generation = GenerationSettings()
+    provider.supports_bound_conversation_state.return_value = False
+    provider.can_resume_conversation_state.return_value = False
 
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    provider.generation = GenerationSettings()
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="test-model", session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            session_ttl_minutes=0,
+        )
 
-    with patch("nanobot.agent.loop.ContextBuilder"), \
-         patch("nanobot.agent.loop.SessionManager"), \
-         patch("nanobot.agent.loop.SubagentManager") as mock_sub_mgr:
-        mock_sub_mgr.return_value.cancel_by_session = AsyncMock(return_value=0)
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path)
-    return loop
+    return await admitted_async(tmp_path, build, keys=keys)
+
+
+def _run_context(loop):
+    return RunContext(policy=RunPolicyContext(
+        workspace=loop.workspace,
+        context_manager=loop._fork_dependencies.resource_policy.context_manager,
+    ))
+
+
+async def _execute_inbound(
+    loop, msg, *, ephemeral=False, on_stream=None, on_stream_end=None,
+):
+    result = await loop.execute_turn(
+        TurnRequest(
+            content=msg.content, session_key=msg.session_key, sender_id=msg.sender_id,
+            source=loop._inbound_turn_source(msg), media=tuple(msg.media),
+            metadata=dict(msg.metadata),
+            route=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id),
+            callbacks=TurnCallbacks(on_stream=on_stream, on_stream_end=on_stream_end),
+        ),
+        _options=_TurnExecutionOptions(
+            inbound=msg, ephemeral=ephemeral, raise_errors=True,
+            trusted_foreground_activity=loop._trusted_foreground_inbound(msg),
+        ),
+    )
+    return result.outbound
 
 
 @pytest.mark.asyncio
-async def test_loop_uses_structured_retry_status_without_legacy_text(tmp_path):
-    from nanobot.agent.loop import AgentLoop
-
-    bus = MessageBus()
+async def test_loop_uses_structured_retry_status_without_legacy_text(tmp_path, admitted_async):
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     provider.generation = GenerationSettings()
@@ -77,10 +112,11 @@ async def test_loop_uses_structured_retry_status_without_legacy_text(tmp_path):
         return LLMResponse(content="done", tool_calls=[], usage=None)
 
     provider.chat_with_retry = chat_with_retry
-    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+    loop = await _make_loop(tmp_path, admitted_async, provider)
+    bus = loop.bus
     loop.tools.get_definitions = MagicMock(return_value=[])
 
-    result = await loop._process_message(
+    result = await _execute_inbound(loop,
         InboundMessage(
             channel="websocket",
             sender_id="user",
@@ -100,8 +136,8 @@ async def test_loop_uses_structured_retry_status_without_legacy_text(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_ephemeral_runner_enters_and_restores_turn_scopes(tmp_path):
-    loop = _make_loop(tmp_path)
+async def test_ephemeral_runner_enters_and_restores_turn_scopes(tmp_path, admitted_async):
+    loop = await _make_loop(tmp_path, admitted_async)
 
     async def chat_with_retry(**_kwargs):
         assert goal_mutation_allowed() is True
@@ -113,6 +149,7 @@ async def test_ephemeral_runner_enters_and_restores_turn_scopes(tmp_path):
     await loop._run_agent_loop(
         TranscriptInput(history=[], current_message=None),
         runtime=loop.llm_runtime(),
+        run_context=_run_context(loop),
         ephemeral=True,
         turn_scopes=[goal_mutation_permission(True)],
     )
@@ -121,13 +158,12 @@ async def test_ephemeral_runner_enters_and_restores_turn_scopes(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path):
-    from nanobot.agent.loop import AgentLoop
+async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path, admitted_async):
     from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
     provider.chat_with_retry = AsyncMock(side_effect=[
         LLMResponse(
             content="recording the agreed plan",
@@ -166,12 +202,19 @@ async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path):
         ),
         LLMResponse(content="done", tool_calls=[], usage=None),
     ])
-    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path, model="test-model")
+    loop = await _make_loop(tmp_path, admitted_async, provider, keys=("cli:direct",))
+    from nanobot.agent.tools.long_task import CreateGoalTool, UpdateGoalTool
+
+    assert not loop.tools.has("create_goal") and not loop.tools.has("update_goal")
+    # Optional legacy goal tools are explicitly installed, never enabled globally.
+    loop.tools.register(CreateGoalTool(loop.sessions, loop.bus))
+    loop.tools.register(UpdateGoalTool(loop.sessions, loop.bus))
     session = loop.sessions.get_or_create("cli:direct")
     session.add_message("user", "Let's agree on the migration implementation.")
     session.add_message("assistant", "Use the staged migration plan and run integration tests.")
+    loop.sessions.save(session)
 
-    result = await loop._process_message(
+    result = await _execute_inbound(loop,
         InboundMessage(
             channel="cli",
             sender_id="user",
@@ -181,15 +224,17 @@ async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path):
     )
 
     assert result is not None
-    assert result.content == "done"
+    # The accepted fail-fast tool policy stops at the unauthorized second goal;
+    # it must not spend another model call after the permission error.
+    assert "create_goal is unavailable for this turn" in result.content
+    assert provider.chat_with_retry.await_count == 3
     assert goal_mutation_allowed() is False
     assert session.metadata[GOAL_STATE_KEY]["status"] == "completed"
     first_request = provider.chat_with_retry.await_args_list[0].kwargs["messages"]
     assert "staged migration plan" in str(first_request)
     assert "/goal implement the plan above" in str(first_request)
     assert _GOAL_RUNTIME_GUIDANCE_TAG in str(first_request)
-    final_request = provider.chat_with_retry.await_args_list[-1].kwargs["messages"]
-    assert "create_goal is unavailable for this turn" in str(final_request)
+    assert "create_goal is unavailable for this turn" in str(session.messages[-1]["content"])
     assert _GOAL_RUNTIME_GUIDANCE_TAG in str(session.messages[2]["content"])
     assert _GOAL_RUNTIME_GUIDANCE_TAG not in str(
         public_history_message(session.messages[2])["content"]
@@ -197,12 +242,17 @@ async def test_goal_command_can_implement_plan_from_prior_discussion(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_runtime_context_is_persisted_as_next_turn_prompt_prefix(tmp_path):
-    from nanobot.agent.loop import AgentLoop
+async def test_runtime_context_is_persisted_as_next_turn_prompt_prefix(tmp_path, admitted_async):
     from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
-
-    skill_dir = tmp_path / "skills" / "review"
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(content="first answer", usage=None),
+        LLMResponse(content="second answer", usage=None),
+    ])
+    loop = await _make_loop(tmp_path, admitted_async, provider, keys=("cli:direct",))
+    skill_dir = loop.workspace / "skills" / "review"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
         "---\n"
@@ -212,14 +262,6 @@ async def test_runtime_context_is_persisted_as_next_turn_prompt_prefix(tmp_path)
         "Follow the unique review checklist.",
         encoding="utf-8",
     )
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    provider.generation = GenerationSettings()
-    provider.chat_with_retry = AsyncMock(side_effect=[
-        LLMResponse(content="first answer", usage=None),
-        LLMResponse(content="second answer", usage=None),
-    ])
-    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path, model="test-model")
     session = loop.sessions.get_or_create("cli:direct")
     provider_calls: list[str | None] = []
 
@@ -230,13 +272,13 @@ async def test_runtime_context_is_persisted_as_next_turn_prompt_prefix(tmp_path)
     loop.register_runtime_context_provider(provide_context)
     loop.register_runtime_context_provider(provide_context)
 
-    await loop._process_message(InboundMessage(
+    await _execute_inbound(loop, InboundMessage(
         channel="cli",
         sender_id="user",
         chat_id="direct",
         content="first turn $review",
     ))
-    await loop._process_message(InboundMessage(
+    await _execute_inbound(loop, InboundMessage(
         channel="cli",
         sender_id="user",
         chat_id="direct",
@@ -263,23 +305,21 @@ async def test_runtime_context_is_persisted_as_next_turn_prompt_prefix(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_webui_quote_reaches_model_without_leaking_into_public_history(tmp_path):
-    from nanobot.agent.loop import AgentLoop
+async def test_webui_quote_reaches_model_without_leaking_into_public_history(tmp_path, admitted_async):
     from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     provider.generation = GenerationSettings()
     provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="answer", usage=None))
-    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path, model="test-model")
+    loop = await _make_loop(tmp_path, admitted_async, provider, keys=("websocket:chat",))
     session = loop.sessions.get_or_create("websocket:chat")
     quote = webui_quote_runtime_context({
         WEBUI_QUOTE_METADATA: "the selected answer excerpt",
     })
     assert quote is not None
 
-    await loop._process_message(InboundMessage(
+    await _execute_inbound(loop, InboundMessage(
         channel="websocket",
         sender_id="user",
         chat_id="chat",
@@ -295,12 +335,8 @@ async def test_webui_quote_reaches_model_without_leaking_into_public_history(tmp
 
 
 @pytest.mark.asyncio
-async def test_runtime_context_provider_runs_once_across_tool_iterations(tmp_path):
-    from nanobot.agent.loop import AgentLoop
+async def test_runtime_context_provider_runs_once_across_tool_iterations(tmp_path, admitted_async):
     from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
-
-    (tmp_path / "note.txt").write_text("hello", encoding="utf-8")
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     provider.generation = GenerationSettings()
@@ -316,7 +352,8 @@ async def test_runtime_context_provider_runs_once_across_tool_iterations(tmp_pat
         ),
         LLMResponse(content="done", usage=None),
     ])
-    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path, model="test-model")
+    loop = await _make_loop(tmp_path, admitted_async, provider, keys=("cli:direct",))
+    (loop.workspace / "note.txt").write_text("hello", encoding="utf-8")
     provider_calls = 0
 
     async def provide_context(_request):
@@ -326,7 +363,7 @@ async def test_runtime_context_provider_runs_once_across_tool_iterations(tmp_pat
 
     loop.register_runtime_context_provider(provide_context)
 
-    await loop._process_message(InboundMessage(
+    await _execute_inbound(loop, InboundMessage(
         channel="cli",
         sender_id="user",
         chat_id="direct",
@@ -340,12 +377,11 @@ async def test_runtime_context_provider_runs_once_across_tool_iterations(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_non_goal_direct_turn_cannot_reuse_prior_goal_command(tmp_path):
-    from nanobot.agent.loop import AgentLoop
-    from nanobot.bus.queue import MessageBus
+async def test_non_goal_direct_turn_cannot_reuse_prior_goal_command(tmp_path, admitted_async):
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
     provider.chat_with_retry = AsyncMock(side_effect=[
         LLMResponse(
             content="trying to create a goal",
@@ -360,10 +396,17 @@ async def test_non_goal_direct_turn_cannot_reuse_prior_goal_command(tmp_path):
         ),
         LLMResponse(content="handled as a one-time task", tool_calls=[], usage=None),
     ])
-    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path, model="test-model")
+    loop = await _make_loop(tmp_path, admitted_async, provider, keys=("api:default",))
+    from nanobot.agent.tools.long_task import CreateGoalTool, UpdateGoalTool
+
+    assert not loop.tools.has("create_goal") and not loop.tools.has("update_goal")
+    # Optional legacy goal tools are explicitly installed, never enabled globally.
+    loop.tools.register(CreateGoalTool(loop.sessions, loop.bus))
+    loop.tools.register(UpdateGoalTool(loop.sessions, loop.bus))
     session = loop.sessions.get_or_create("api:default")
     session.add_message("user", "/goal old completed request")
     session.add_message("assistant", "The old request is complete.")
+    loop.sessions.save(session)
 
     result = await loop.process_direct(
         "Handle this as an ordinary one-time task.",
@@ -374,17 +417,17 @@ async def test_non_goal_direct_turn_cannot_reuse_prior_goal_command(tmp_path):
     )
 
     assert result is not None
-    assert result.content == "handled as a one-time task"
+    assert "create_goal is unavailable for this turn" in result.content
+    assert provider.chat_with_retry.await_count == 1
     assert GOAL_STATE_KEY not in session.metadata
-    second_request = provider.chat_with_retry.await_args_list[1].kwargs["messages"]
-    assert "create_goal is unavailable for this turn" in str(second_request)
+    assert "create_goal is unavailable for this turn" in str(session.messages[-1]["content"])
 
 @pytest.mark.asyncio
-async def test_loop_max_iterations_message_stays_stable(tmp_path):
-    loop = _make_loop(tmp_path)
+async def test_loop_max_iterations_message_stays_stable(tmp_path, admitted_async):
+    loop = await _make_loop(tmp_path, admitted_async)
     loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
         content="working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
+        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
     ))
     loop.tools.get_definitions = MagicMock(return_value=[])
     loop.tools.execute = AsyncMock(return_value="ok")
@@ -393,6 +436,7 @@ async def test_loop_max_iterations_message_stays_stable(tmp_path):
     result = await loop._run_agent_loop(
         TranscriptInput(history=[], current_message=None),
         runtime=loop.llm_runtime(),
+        run_context=_run_context(loop),
     )
 
     assert result.final_content == (
@@ -402,11 +446,11 @@ async def test_loop_max_iterations_message_stays_stable(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_loop_goal_turn_uses_standard_iteration_budget(tmp_path):
-    loop = _make_loop(tmp_path)
+async def test_loop_goal_turn_uses_standard_iteration_budget(tmp_path, admitted_async):
+    loop = await _make_loop(tmp_path, admitted_async)
     loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
         content="working",
-        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={})],
+        tool_calls=[ToolCallRequest(id="call_1", name="list_dir", arguments={"path": "."})],
     ))
     loop.tools.get_definitions = MagicMock(return_value=[])
     loop.tools.execute = AsyncMock(return_value="ok")
@@ -416,6 +460,7 @@ async def test_loop_goal_turn_uses_standard_iteration_budget(tmp_path):
     result = await loop._run_agent_loop(
         TranscriptInput(history=[], current_message=None),
         runtime=runtime,
+        run_context=_run_context(loop),
         request_context=RequestContext(
             channel="cli",
             chat_id="direct",
@@ -434,8 +479,8 @@ async def test_loop_goal_turn_uses_standard_iteration_budget(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_loop_stream_filter_handles_think_only_prefix_without_crashing(tmp_path):
-    loop = _make_loop(tmp_path)
+async def test_loop_stream_filter_handles_think_only_prefix_without_crashing(tmp_path, admitted_async):
+    loop = await _make_loop(tmp_path, admitted_async)
     deltas: list[str] = []
     endings: list[bool] = []
 
@@ -455,6 +500,7 @@ async def test_loop_stream_filter_handles_think_only_prefix_without_crashing(tmp
     result = await loop._run_agent_loop(
         TranscriptInput(history=[], current_message=None),
         runtime=loop.llm_runtime(),
+        run_context=_run_context(loop),
         events=output_events(on_stream=on_stream, on_stream_end=on_stream_end),
         streaming=True,
     )
@@ -465,8 +511,8 @@ async def test_loop_stream_filter_handles_think_only_prefix_without_crashing(tmp
 
 
 @pytest.mark.asyncio
-async def test_loop_stream_filter_hides_partial_trailing_think_prefix(tmp_path):
-    loop = _make_loop(tmp_path)
+async def test_loop_stream_filter_hides_partial_trailing_think_prefix(tmp_path, admitted_async):
+    loop = await _make_loop(tmp_path, admitted_async)
     deltas: list[str] = []
 
     async def chat_stream_with_retry(*, on_content_delta, **kwargs):
@@ -482,6 +528,7 @@ async def test_loop_stream_filter_hides_partial_trailing_think_prefix(tmp_path):
     result = await loop._run_agent_loop(
         TranscriptInput(history=[], current_message=None),
         runtime=loop.llm_runtime(),
+        run_context=_run_context(loop),
         events=output_events(on_stream=on_stream),
         streaming=True,
     )
@@ -491,8 +538,8 @@ async def test_loop_stream_filter_hides_partial_trailing_think_prefix(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_loop_stream_filter_hides_complete_trailing_think_tag(tmp_path):
-    loop = _make_loop(tmp_path)
+async def test_loop_stream_filter_hides_complete_trailing_think_tag(tmp_path, admitted_async):
+    loop = await _make_loop(tmp_path, admitted_async)
     deltas: list[str] = []
 
     async def chat_stream_with_retry(*, on_content_delta, **kwargs):
@@ -508,6 +555,7 @@ async def test_loop_stream_filter_hides_complete_trailing_think_tag(tmp_path):
     result = await loop._run_agent_loop(
         TranscriptInput(history=[], current_message=None),
         runtime=loop.llm_runtime(),
+        run_context=_run_context(loop),
         events=output_events(on_stream=on_stream),
         streaming=True,
     )
@@ -517,8 +565,8 @@ async def test_loop_stream_filter_hides_complete_trailing_think_tag(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_loop_retries_think_only_final_response(tmp_path):
-    loop = _make_loop(tmp_path)
+async def test_loop_retries_think_only_final_response(tmp_path, admitted_async):
+    loop = await _make_loop(tmp_path, admitted_async)
     call_count = {"n": 0}
 
     async def chat_with_retry(**kwargs):
@@ -532,6 +580,7 @@ async def test_loop_retries_think_only_final_response(tmp_path):
     result = await loop._run_agent_loop(
         TranscriptInput(history=[], current_message=None),
         runtime=loop.llm_runtime(),
+        run_context=_run_context(loop),
     )
 
     assert result.final_content == "Recovered answer"
@@ -539,17 +588,13 @@ async def test_loop_retries_think_only_final_response(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_streamed_flag_not_set_on_llm_error(tmp_path):
+async def test_streamed_flag_not_set_on_llm_error(tmp_path, admitted_async):
     """When LLM errors during a streaming-capable channel interaction,
     _streamed must NOT be set so ChannelManager delivers the error."""
-    from nanobot.agent.loop import AgentLoop
     from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
-
-    bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+    loop = await _make_loop(tmp_path, admitted_async, provider, keys=("feishu:c1",))
     error_resp = LLMResponse(
         content="503 service unavailable", finish_reason="error", tool_calls=[], usage=None,
     )
@@ -560,7 +605,7 @@ async def test_streamed_flag_not_set_on_llm_error(tmp_path):
     msg = InboundMessage(
         channel="feishu", sender_id="u1", chat_id="c1", content="hi",
     )
-    result = await loop._process_message(
+    result = await _execute_inbound(loop,
         msg,
         on_stream=AsyncMock(),
         on_stream_end=AsyncMock(),
@@ -574,14 +619,12 @@ async def test_streamed_flag_not_set_on_llm_error(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_ssrf_soft_block_can_finalize_after_streamed_tool_call(tmp_path):
-    from nanobot.agent.loop import AgentLoop
+async def test_ssrf_soft_block_can_finalize_after_streamed_tool_call(tmp_path, admitted_async):
     from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
 
-    bus = MessageBus()
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
     tool_call_resp = LLMResponse(
         content="checking metadata",
         tool_calls=[ToolCallRequest(
@@ -607,14 +650,14 @@ async def test_ssrf_soft_block_can_finalize_after_streamed_tool_call(tmp_path):
 
     provider.chat_stream_with_retry = AsyncMock(side_effect=chat_stream_with_retry)
 
-    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+    loop = await _make_loop(tmp_path, admitted_async, provider, keys=("telegram:c1",))
     loop.tools.get_definitions = MagicMock(return_value=[])
     loop.tools.prepare_call = MagicMock(return_value=(None, {}, None))
     loop.tools.execute = AsyncMock(return_value=(
         "Error: Command blocked by safety guard (internal/private URL detected)"
     ))
 
-    result = await loop._process_message(
+    result = await _execute_inbound(loop,
         InboundMessage(channel="telegram", sender_id="u1", chat_id="c1", content="hi"),
         on_stream=AsyncMock(),
         on_stream_end=AsyncMock(),
@@ -626,11 +669,9 @@ async def test_ssrf_soft_block_can_finalize_after_streamed_tool_call(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path):
-    from nanobot.agent.loop import AgentLoop
+async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path, admitted_async):
     from nanobot.agent.runner import _PERSISTED_MODEL_ERROR_PLACEHOLDER
     from nanobot.bus.events import InboundMessage
-    from nanobot.bus.queue import MessageBus
 
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
@@ -639,10 +680,10 @@ async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path):
         LLMResponse(content="Recovered answer", tool_calls=[], usage=None),
     ])
 
-    loop = AgentLoop(bus=MessageBus(), provider=provider, workspace=tmp_path, model="test-model")
+    loop = await _make_loop(tmp_path, admitted_async, provider, keys=("cli:test",))
     loop.tools.get_definitions = MagicMock(return_value=[])
 
-    first = await loop._process_message(
+    first = await _execute_inbound(loop,
         InboundMessage(channel="cli", sender_id="user", chat_id="test", content="first question")
     )
     assert first is not None
@@ -657,7 +698,7 @@ async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path):
         {"role": "assistant", "content": _PERSISTED_MODEL_ERROR_PLACEHOLDER},
     ]
 
-    second = await loop._process_message(
+    second = await _execute_inbound(loop,
         InboundMessage(channel="cli", sender_id="user", chat_id="test", content="second question")
     )
     assert second is not None
@@ -674,8 +715,82 @@ async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, monkeypatch):
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_admitted_runner_reads_owned_workspace_and_restores_context(
+    tmp_path, admitted_async, legacy,
+):
+    from nanobot.agent.tools.context import current_request_context
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="read-owned", name="read_file", arguments={"path": "note.txt"},
+        )]),
+        LLMResponse(content="read completed"),
+    ])
+    loop = await _make_loop(
+        tmp_path, admitted_async, provider, keys=("cli:probe",) if legacy else (),
+    )
+    assert loop.workspace != tmp_path
+    assert loop.sessions.has_managed_authority
+    assert loop.turn_delivery_factory.bus is loop.bus
+    assert loop.tools.get("create_goal") is None
+    assert loop.tools.get("update_goal") is None
+    outer = tmp_path / "note.txt"
+    target = loop.workspace / "note.txt"
+    outer.write_text("outer fixture must not be read", encoding="utf-8")
+    target.write_text("owned workspace contents", encoding="utf-8")
+    before_context = current_request_context()
+
+    result = await _execute_inbound(loop, InboundMessage(
+        channel="cli", sender_id="user", chat_id="probe", content="read the note",
+    ))
+
+    assert result is not None and result.content == "read completed"
+    assert provider.chat_with_retry.await_count == 2
+    tool_messages = [message for message in
+                     provider.chat_with_retry.await_args_list[1].kwargs["messages"]
+                     if message.get("role") == "tool"]
+    assert len(tool_messages) == 1
+    assert "owned workspace contents" in str(tool_messages[0]["content"])
+    assert "outer fixture must not be read" not in str(tool_messages[0]["content"])
+    assert target.read_text(encoding="utf-8") == "owned workspace contents"
+    assert outer.read_text(encoding="utf-8") == "outer fixture must not be read"
+    assert current_request_context() is before_context
+    assert loop.sessions.resolve_session_mode("cli:probe").mode == (
+        "legacy" if legacy else "canonical"
+    )
+
+
+@pytest.mark.asyncio
+async def test_admitted_runner_still_requires_policy_context(tmp_path, admitted_async):
+    loop = await _make_loop(tmp_path, admitted_async)
+    loop.provider.chat_with_retry = AsyncMock(side_effect=AssertionError("provider must not run"))
+
+    with pytest.raises(ValueError, match="canonical run context is required"):
+        await loop._run_agent_loop(
+            TranscriptInput(history=[], current_message=None), runtime=loop.llm_runtime(),
+        )
+
+    loop.provider.chat_with_retry.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admitted_legacy_subagent_scope_is_still_refused(tmp_path, admitted_async):
+    loop = await _make_loop(tmp_path, admitted_async)
+
+    with pytest.raises(ValueError, match="Unsupported runtime tool scope"):
+        loop.subagents._build_tools()
+
+
+@pytest.mark.asyncio
+async def test_legacy_subagent_adapter_announces_max_iteration_fallback(tmp_path, monkeypatch):
+    """Adapter-only compatibility; this does not activate the retired background runner."""
+    from nanobot.agent.runner import AgentRunResult
     from nanobot.agent.subagent import SubagentManager, SubagentStatus
+    from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.bus.queue import MessageBus
 
     bus = MessageBus()
@@ -693,10 +808,12 @@ async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, mon
     )
     mgr._announce_result = AsyncMock()
 
-    async def fake_execute(self, **kwargs):
-        return "tool result"
-
-    monkeypatch.setattr("nanobot.agent.tools.filesystem.ListDirTool.execute", fake_execute)
+    tools = ToolRegistry()
+    monkeypatch.setattr(mgr, "_build_tools", lambda **kwargs: tools)
+    monkeypatch.setattr(mgr, "_build_subagent_prompt", lambda **kwargs: "isolated adapter test")
+    mgr.runner.run = AsyncMock(return_value=AgentRunResult(
+        final_content="", messages=[], stop_reason="max_iterations",
+    ))
 
     status = SubagentStatus(task_id="sub-1", label="label", task_description="do task", started_at=time.monotonic())
     await mgr._run_subagent(
@@ -712,3 +829,10 @@ async def test_subagent_max_iterations_announces_existing_fallback(tmp_path, mon
     args = mgr._announce_result.await_args.args
     assert args[3] == "Task completed but no final response was generated."
     assert args[5] == "ok"
+    mgr.runner.run.assert_awaited_once()
+    spec = mgr.runner.run.await_args.args[0]
+    assert spec.tools is tools and spec.max_iterations == 2
+    assert spec.max_iterations_message == args[3]
+    assert not spec.finalize_on_max_iterations
+    provider.chat_with_retry.assert_not_awaited()
+    await mgr.close()

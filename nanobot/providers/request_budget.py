@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import cast
 
 DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER = 1024
 _BEDROCK_BINARY_MEDIA_KEYS = frozenset({"image", "document", "video"})
@@ -58,7 +58,7 @@ class ProviderRequestLimits:
         """Return an equivalent limit clamped to one selected concrete model."""
         if window is None:
             return self
-        if isinstance(window, bool) or not isinstance(window, int) or window <= 0:
+        if isinstance(window, bool) or not isinstance(cast(object, window), int) or window <= 0:
             raise ValueError("model context window must be a positive integer")
         current = self.model_context_window_tokens
         return replace(self, model_context_window_tokens=min(current, window) if current else window)
@@ -94,7 +94,7 @@ class TransportIdentity:
 
     def __post_init__(self) -> None:
         for name, value in (("provider", self.provider), ("transport", self.transport), ("model", self.model)):
-            if not isinstance(value, str) or not value.strip():
+            if not isinstance(cast(object, value), str) or not value.strip():
                 raise ValueError(f"{name} must be a non-empty string")
 
 
@@ -129,7 +129,7 @@ class FinalizedRequestBudgetExceeded(Exception):  # noqa: N818 - public contract
         super().__init__(self.DEFAULT_MESSAGE)
 
 
-def _completion_reserve(body: Mapping[str, Any]) -> int:
+def _completion_reserve(body: Mapping[str, object]) -> int:
     """Read one concrete generation cap from each supported request shape."""
     values: list[object] = [
         body.get("max_tokens"),
@@ -138,10 +138,10 @@ def _completion_reserve(body: Mapping[str, Any]) -> int:
     ]
     inference = body.get("inferenceConfig")
     if isinstance(inference, Mapping):
-        values.append(inference.get("maxTokens"))
+        values.append(cast(Mapping[object, object], inference).get("maxTokens"))
     output = body.get("output")
     if isinstance(output, Mapping):
-        values.append(output.get("max_tokens"))
+        values.append(cast(Mapping[object, object], output).get("max_tokens"))
     parsed: list[int] = []
     for value in values:
         if value is None:
@@ -200,7 +200,7 @@ def _canonicalize_finalized_value(
         canonical: dict[str, object] = {}
         binary_transport_bytes = 0
         binary_kinds: set[str] = set()
-        for key, item in value.items():
+        for key, item in cast(dict[object, object], value).items():
             if not isinstance(key, str):
                 raise ValueError("finalized provider request keys must be strings")
             converted, item_binary_bytes, item_binary_kinds = _canonicalize_finalized_value(
@@ -215,8 +215,8 @@ def _canonicalize_finalized_value(
     if isinstance(value, (list, tuple)):
         canonical_list: list[object] = []
         binary_transport_bytes = 0
-        binary_kinds: set[str] = set()
-        for index, item in enumerate(value):
+        binary_kinds = set()
+        for index, item in enumerate(cast(list[object] | tuple[object, ...], value)):
             converted, item_binary_bytes, item_binary_kinds = _canonicalize_finalized_value(
                 item,
                 identity,
@@ -233,7 +233,7 @@ def _canonicalize_finalized_value(
 
 def _serialized_input_measurement(
     identity: TransportIdentity,
-    body: Mapping[str, Any],
+    body: Mapping[str, object],
 ) -> tuple[int, str]:
     """Count a content-free canonical body with a conservative byte ceiling.
 
@@ -266,21 +266,21 @@ def _serialized_input_measurement(
 
 def measure_finalized_request(
     identity: TransportIdentity,
-    body: Mapping[str, Any],
+    body: Mapping[str, object],
     limits: ProviderRequestLimits,
     *,
     completion_reserve_tokens: int | None = None,
 ) -> TransportMeasurement:
     """Measure a detached finalized body against the selected transport limit."""
-    if not isinstance(identity, TransportIdentity):
+    if not isinstance(cast(object, identity), TransportIdentity):
         raise ValueError("transport identity is invalid")
-    if not isinstance(body, Mapping):
+    if not isinstance(cast(object, body), Mapping):
         raise ValueError("finalized provider request is invalid")
-    if not isinstance(limits, ProviderRequestLimits):
+    if not isinstance(cast(object, limits), ProviderRequestLimits):
         raise ValueError("provider request limits are invalid")
     if completion_reserve_tokens is not None and (
         isinstance(completion_reserve_tokens, bool)
-        or not isinstance(completion_reserve_tokens, int)
+        or not isinstance(cast(object, completion_reserve_tokens), int)
         or completion_reserve_tokens < 0
     ):
         raise ValueError("finalized completion reserve is invalid")
@@ -302,7 +302,7 @@ def measure_finalized_request(
 
 def validate_finalized_request(
     identity: TransportIdentity,
-    body: Mapping[str, Any],
+    body: Mapping[str, object],
     limits: ProviderRequestLimits,
     *,
     completion_reserve_tokens: int | None = None,

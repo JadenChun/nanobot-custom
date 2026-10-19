@@ -153,7 +153,7 @@ async def test_repeated_cancellation_does_not_abandon_fast_command_cleanup(monke
     monkeypatch.setattr('nanobot.channels.telegram.runtime.asyncio.create_subprocess_exec',
                         AsyncMock(return_value=process))
     clean = AsyncMock(side_effect=cleanup)
-    monkeypatch.setattr('nanobot.agent.tools.shell.ExecTool._kill_process_tree', clean)
+    monkeypatch.setattr('nanobot.agent.tools.shell.ExecTool.kill_process_tree', clean)
     task = asyncio.create_task(channel._try_fast_command(SimpleNamespace(text='/report')))
     await started.wait()
     task.cancel()

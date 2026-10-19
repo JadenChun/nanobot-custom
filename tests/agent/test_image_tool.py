@@ -167,3 +167,73 @@ async def test_codex_cli_backend_falls_back_to_generated_images_scan(tmp_path, m
 
     assert Path(result["source_path"]) == generated
     assert output.read_bytes() == b"png-bytes"
+
+
+def test_generated_image_scan_selects_newest_eligible_candidate(tmp_path) -> None:
+    import os
+
+    root = tmp_path / "generated_images"
+    root.mkdir()
+    paths = {}
+    for name, stamp in (("old.png", 900), ("earlier.jpg", 999), ("latest.PNG", 1001),
+                        ("known.webp", 2000), ("not-image.txt", 3000)):
+        path = root / name
+        path.write_bytes(b"synthetic-image")
+        os.utime(path, (stamp, stamp))
+        paths[name] = path.resolve()
+
+    selected = image_tool._find_generated_image(
+        "done", tmp_path, {paths["known.webp"]}, start_time=1000,
+    )
+
+    assert selected == paths["latest.PNG"]
+
+
+@pytest.mark.parametrize("case", ["missing-root", "empty", "known", "too-old"])
+def test_generated_image_scan_keeps_empty_and_exclusion_results(tmp_path, case) -> None:
+    import os
+
+    root = tmp_path / "generated_images"
+    known = set()
+    if case != "missing-root":
+        root.mkdir()
+    if case in {"known", "too-old"}:
+        path = root / "candidate.png"
+        path.write_bytes(b"synthetic-image")
+        stamp = 1000 if case == "known" else 997
+        os.utime(path, (stamp, stamp))
+        if case == "known":
+            known.add(path.resolve())
+
+    assert image_tool._find_generated_image("done", tmp_path, known, start_time=1000) is None
+
+
+def test_generated_image_scan_preserves_explicit_path_precedence(tmp_path) -> None:
+    import os
+
+    explicit = tmp_path / "explicit.png"
+    explicit.write_bytes(b"explicit-image")
+    os.utime(explicit, (1, 1))
+    root = tmp_path / "generated_images"
+    root.mkdir()
+    candidate = root / "newer.png"
+    candidate.write_bytes(b"newer-image")
+    os.utime(candidate, (2000, 2000))
+
+    assert image_tool._find_generated_image(
+        str(explicit), tmp_path, {explicit.resolve()}, start_time=1000,
+    ) == explicit.resolve()
+
+
+def test_generated_image_scan_preserves_stable_timestamp_ties(tmp_path, monkeypatch) -> None:
+    import os
+
+    root = tmp_path / "generated_images"
+    root.mkdir()
+    paths = [root / "z-first.png", root / "a-second.png"]
+    for path in paths:
+        path.write_bytes(b"synthetic-image")
+        os.utime(path, (1000, 1000))
+    monkeypatch.setattr(Path, "rglob", lambda _path, _pattern: iter(paths))
+
+    assert image_tool._find_generated_image("done", tmp_path, set(), start_time=1000) == paths[0]

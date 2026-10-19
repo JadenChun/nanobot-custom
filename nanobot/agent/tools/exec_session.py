@@ -244,7 +244,7 @@ class _ExecSession:
 
         try:
             if self._process_tree:
-                await ExecTool._kill_process_tree(self.process)  # pyright: ignore[reportPrivateUsage]
+                await ExecTool.kill_process_tree(self.process)
             else:
                 await ExecTool._kill_process(self.process)  # pyright: ignore[reportPrivateUsage]
         finally:

@@ -429,13 +429,21 @@ def test_test_mcp_preset_connects_and_reports_tools(
 ) -> None:
     _use_config(tmp_path, monkeypatch)
     mcp_presets_action("enable", {"name": ["playwright"]})
+    monkeypatch.setattr(
+        "nanobot.webui.mcp_presets_api.shutil.which",
+        lambda command: "fixture-npx" if command == "npx" else None,
+    )
+    connected: list[list[str]] = []
+    closed: list[str] = []
 
     class FakeStack:
         async def aclose(self) -> None:
+            closed.append("playwright")
             return None
 
     async def fake_connect(servers, registry):
         assert list(servers) == ["playwright"]
+        connected.append(list(servers))
 
         class FakeTool:
             name = "mcp_playwright_browser_navigate"
@@ -453,6 +461,8 @@ def test_test_mcp_preset_connects_and_reports_tools(
     assert payload["last_action"]["ok"] is True
     assert payload["last_action"]["tool_count"] == 1
     assert payload["last_action"]["tool_names"] == ["mcp_playwright_browser_navigate"]
+    assert connected == [["playwright"]]
+    assert closed == ["playwright"]
 
 
 def test_test_mcp_preset_inspects_tools_outside_the_enabled_allowlist(
@@ -466,13 +476,22 @@ def test_test_mcp_preset_inspects_tools_outside_the_enabled_allowlist(
         "mcp_playwright_browser_navigate",
     ]
     save_config(config)
+    before_inspection = (tmp_path / "config.json").read_bytes()
+    monkeypatch.setattr(
+        "nanobot.webui.mcp_presets_api.shutil.which",
+        lambda command: "fixture-npx" if command == "npx" else None,
+    )
+    connected: list[list[str]] = []
+    closed: list[str] = []
 
     class FakeStack:
         async def aclose(self) -> None:
+            closed.append("playwright")
             return None
 
     async def fake_connect(servers, registry):
         assert servers["playwright"].enabled_tools == ["*"]
+        connected.append(list(servers))
 
         class FakeTool:
             def __init__(self, name: str) -> None:
@@ -493,6 +512,49 @@ def test_test_mcp_preset_inspects_tools_outside_the_enabled_allowlist(
     assert len(payload["last_action"]["tool_names"]) == 20
     row = next(item for item in payload["presets"] if item["name"] == "playwright")
     assert row["enabled_tools"] == ["mcp_playwright_browser_navigate"]
+    assert connected == [["playwright"]]
+    assert closed == ["playwright"]
+    assert (tmp_path / "config.json").read_bytes() == before_inspection
+
+
+@pytest.mark.parametrize("dependency_available", [False, True])
+def test_mcp_inspection_dependency_gate_and_connection_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, dependency_available: bool,
+) -> None:
+    _use_config(tmp_path, monkeypatch)
+    mcp_presets_action("enable", {"name": ["playwright"]})
+    before = (tmp_path / "config.json").read_bytes()
+    monkeypatch.setattr(
+        "nanobot.webui.mcp_presets_api.shutil.which",
+        lambda command: "fixture-npx" if dependency_available and command == "npx" else None,
+    )
+    connected: list[list[str]] = []
+    closed: list[str] = []
+
+    class FakeStack:
+        async def aclose(self) -> None:
+            closed.append("playwright")
+
+    async def fake_connect(servers, registry):
+        assert list(servers) == ["playwright"]
+        assert servers["playwright"].enabled_tools == ["*"]
+        assert registry.tool_names == []
+        connected.append(list(servers))
+        return {"playwright": FakeStack()}
+
+    monkeypatch.setattr("nanobot.agent.tools.mcp.connect_mcp_servers", fake_connect)
+    payload = asyncio.run(mcp_presets_test_action({"name": ["playwright"]}))
+    assert payload["last_action"]["ok"] is dependency_available
+    assert payload["last_action"]["tool_count"] == 0
+    assert payload["last_action"]["tool_names"] == []
+    assert connected == ([["playwright"]] if dependency_available else [])
+    assert closed == (["playwright"] if dependency_available else [])
+    if dependency_available:
+        assert payload["last_action"]["message"] == "Playwright connected, but reported no tools."
+    else:
+        assert payload["last_action"]["error"] == "missing dependency"
+        assert "npx" in payload["last_action"]["message"]
+    assert (tmp_path / "config.json").read_bytes() == before
 
 
 def test_test_mcp_preset_scrubs_connection_errors(

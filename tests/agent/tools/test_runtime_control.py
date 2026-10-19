@@ -15,21 +15,33 @@ from nanobot.agent.tools.runtime_control import (
     RuntimeControl,
 )
 from nanobot.agent.tools.self import MyTool, MyToolConfig
-from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ToolsConfig
+from tests.agent import p6_admitted_fixtures
+
+admitted_async = p6_admitted_fixtures.admitted_async
 
 
-def _make_loop(tmp_path: Path, *, allow_set: bool = False) -> AgentLoop:
+async def _make_loop(
+    tmp_path: Path, admitted: p6_admitted_fixtures.AsyncAdmittedFactory,
+    *, allow_set: bool = False,
+) -> AgentLoop:
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     tools_config = ToolsConfig(my=MyToolConfig(allow_set=allow_set))
-    return AgentLoop(
-        bus=MessageBus(),
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-        tools_config=tools_config,
-    )
+    def build(inputs: p6_admitted_fixtures.AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="test-model", tools_config=tools_config,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            enable_legacy_auto_compact=False,
+        )
+
+    loop = await admitted(tmp_path, build)
+    # Runtime inspection is optional, not in the foreground default manifest.
+    assert loop.tools.get("my") is None
+    loop.tools.register(MyTool(AgentRuntimeControl(loop), modify_allowed=allow_set))
+    return loop
 
 
 def _my_tool(loop: AgentLoop) -> MyTool:
@@ -38,8 +50,9 @@ def _my_tool(loop: AgentLoop) -> MyTool:
     return tool
 
 
-def test_agent_loop_assembles_my_tool_with_runtime_control(tmp_path: Path) -> None:
-    loop = _make_loop(tmp_path)
+@pytest.mark.asyncio
+async def test_optional_my_tool_uses_managed_runtime_control(tmp_path: Path, admitted_async) -> None:
+    loop = await _make_loop(tmp_path, admitted_async)
     tool = _my_tool(loop)
 
     assert isinstance(tool._runtime_control, RuntimeControl)
@@ -47,8 +60,9 @@ def test_agent_loop_assembles_my_tool_with_runtime_control(tmp_path: Path) -> No
     assert tool._runtime_control is not loop
 
 
-def test_runtime_snapshot_has_exact_allowlist_and_redacts_secrets(tmp_path: Path) -> None:
-    loop = _make_loop(tmp_path)
+@pytest.mark.asyncio
+async def test_runtime_snapshot_has_exact_allowlist_and_redacts_secrets(tmp_path: Path, admitted_async) -> None:
+    loop = await _make_loop(tmp_path, admitted_async)
     loop.web_config.search.api_key = "search-secret"
     loop.web_config.proxy = "http://proxy-user:proxy-secret@proxy.example"
     loop.unlisted_secret = "loop-secret"
@@ -92,8 +106,9 @@ def test_runtime_snapshot_has_exact_allowlist_and_redacts_secrets(tmp_path: Path
     assert snapshot.web_config["proxy"] == "<configured>"
 
 
-def test_runtime_snapshot_is_detached_from_mutable_config(tmp_path: Path) -> None:
-    loop = _make_loop(tmp_path)
+@pytest.mark.asyncio
+async def test_runtime_snapshot_is_detached_from_mutable_config(tmp_path: Path, admitted_async) -> None:
+    loop = await _make_loop(tmp_path, admitted_async)
     control = _my_tool(loop)._runtime_control
     snapshot = control.snapshot()
     search = snapshot.web_config["search"]
@@ -112,8 +127,8 @@ def test_runtime_snapshot_is_detached_from_mutable_config(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_unlisted_loop_attributes_cannot_be_read_or_modified(tmp_path: Path) -> None:
-    loop = _make_loop(tmp_path, allow_set=True)
+async def test_unlisted_loop_attributes_cannot_be_read_or_modified(tmp_path: Path, admitted_async) -> None:
+    loop = await _make_loop(tmp_path, admitted_async, allow_set=True)
     loop.unlisted_control_plane = "internal-secret"
     original_workspace_root = loop.workspace_scopes.default_workspace
     tool = _my_tool(loop)
@@ -140,9 +155,9 @@ async def test_unlisted_loop_attributes_cannot_be_read_or_modified(tmp_path: Pat
 
 @pytest.mark.asyncio
 async def test_default_allow_set_and_public_parameter_schema_are_unchanged(
-    tmp_path: Path,
+    tmp_path: Path, admitted_async,
 ) -> None:
-    loop = _make_loop(tmp_path)
+    loop = await _make_loop(tmp_path, admitted_async)
     tool = _my_tool(loop)
 
     assert ToolsConfig().my.allow_set is False
@@ -180,8 +195,8 @@ async def test_default_allow_set_and_public_parameter_schema_are_unchanged(
 
 
 @pytest.mark.asyncio
-async def test_allowlisted_commands_preserve_runtime_side_effects(tmp_path: Path) -> None:
-    loop = _make_loop(tmp_path, allow_set=True)
+async def test_allowlisted_commands_preserve_runtime_side_effects(tmp_path: Path, admitted_async) -> None:
+    loop = await _make_loop(tmp_path, admitted_async, allow_set=True)
     tool = _my_tool(loop)
 
     max_iterations = await tool.execute(
@@ -212,8 +227,8 @@ async def test_allowlisted_commands_preserve_runtime_side_effects(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_registry_exposes_unchanged_my_tool_actions(tmp_path: Path) -> None:
-    loop = _make_loop(tmp_path, allow_set=True)
+async def test_registry_exposes_unchanged_my_tool_actions(tmp_path: Path, admitted_async) -> None:
+    loop = await _make_loop(tmp_path, admitted_async, allow_set=True)
 
     checked = await loop.tools.execute("my", {"action": "check", "key": "model"})
     changed = await loop.tools.execute(
@@ -227,13 +242,15 @@ async def test_registry_exposes_unchanged_my_tool_actions(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_workspace_display_command_cannot_change_path_enforcement(tmp_path: Path) -> None:
-    loop = _make_loop(tmp_path, allow_set=True)
+async def test_workspace_display_command_cannot_change_path_enforcement(tmp_path: Path, admitted_async) -> None:
+    loop = await _make_loop(tmp_path, admitted_async, allow_set=True)
     tool = _my_tool(loop)
 
+    original_workspace = loop.workspace
+    original_scope = loop.workspace_scopes.default_workspace
     result = await tool.execute(action="set", key="workspace", value="elsewhere")
 
     assert "Set workspace" in result
     assert tool._runtime_control.snapshot().workspace == "elsewhere"
-    assert loop.workspace == tmp_path
-    assert loop.workspace_scopes.default_workspace == tmp_path
+    assert loop.workspace == original_workspace
+    assert loop.workspace_scopes.default_workspace == original_scope

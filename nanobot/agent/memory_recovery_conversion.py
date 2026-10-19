@@ -10,10 +10,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import datetime
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping, NoReturn, cast, overload
 
 from nanobot.agent import memory_recovery as receipt_codec
 from nanobot.agent.legacy_history_codec import (
@@ -110,7 +111,7 @@ class ConversionError(ValueError):
         super().__init__("memory recovery conversion payload is invalid")
 
 
-def _fail() -> None:
+def _fail() -> NoReturn:
     raise ConversionError() from None
 
 
@@ -130,7 +131,7 @@ def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def _check_record_bounds(payload: dict[str, Any], phase: str, identity: str) -> None:
+def _check_record_bounds(payload: object, phase: str, identity: str) -> None:
     sequence = _CONVERSION_PHASE_SEQUENCE.get(phase)
     if sequence is None:
         _fail()
@@ -169,8 +170,9 @@ def _validate_built_payload(
 
 
 def _stat_from_payload(value: object) -> "MemoryFileStat":
-    if type(value) is not dict or set(value) != _STAT_FIELDS:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], _STAT_FIELDS):
         _fail()
+    value = cast(dict[str, object], value)
     counters = {key: _counter(value[key]) for key in _STAT_COUNTER_FIELDS}
     if counters["links"] == 0:
         _fail()
@@ -458,8 +460,9 @@ def capture_receipt_tail_conversion_payload(
 
 
 def _old_file(value: object) -> OldFileDescriptor:
-    if type(value) is not dict or set(value) != _FILE_FIELDS:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], _FILE_FIELDS):
         _fail()
+    value = cast(dict[str, object], value)
     exists = value["exists"]
     if type(exists) is not bool:
         _fail()
@@ -477,8 +480,9 @@ def _old_file(value: object) -> OldFileDescriptor:
 
 
 def _new_file(value: object) -> NewFileDescriptor:
-    if type(value) is not dict or set(value) != _NEW_FILE_FIELDS:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], _NEW_FILE_FIELDS):
         _fail()
+    value = cast(dict[str, object], value)
     exists = value["exists"]
     if type(exists) is not bool:
         _fail()
@@ -516,8 +520,9 @@ def _backup_index(basename: str) -> int:
 
 
 def _backup_plan(value: object) -> BackupPlan:
-    if type(value) is not dict or set(value) != _BACKUP_FIELDS:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], _BACKUP_FIELDS):
         _fail()
+    value = cast(dict[str, object], value)
     basename = value["basename"]
     if type(basename) is not str:
         _fail()
@@ -525,6 +530,7 @@ def _backup_plan(value: object) -> BackupPlan:
     candidates_value = value["candidates"]
     if type(candidates_value) is not list or not candidates_value:
         _fail()
+    candidates_value = cast(list[object], candidates_value)
     if len(candidates_value) > MAX_NODES:
         _fail()
     if len(candidates_value) != selected_index:
@@ -532,8 +538,9 @@ def _backup_plan(value: object) -> BackupPlan:
 
     candidates: list[BackupCandidate] = []
     for index, candidate_value in enumerate(candidates_value, start=1):
-        if type(candidate_value) is not dict or set(candidate_value) != _BACKUP_CANDIDATE_FIELDS:
+        if type(candidate_value) is not dict or set(cast(dict[object, object], candidate_value)) != cast(AbstractSet[object], _BACKUP_CANDIDATE_FIELDS):
             _fail()
+        candidate_value = cast(dict[str, object], candidate_value)
         candidate_basename = candidate_value["basename"]
         candidate_exists = candidate_value["exists"]
         if type(candidate_basename) is not str or type(candidate_exists) is not bool:
@@ -550,8 +557,9 @@ def _backup_plan(value: object) -> BackupPlan:
 
 
 def _target_map(value: object) -> Mapping[str, OldFileDescriptor]:
-    if type(value) is not dict or set(value) != set(_TARGET_NAMES):
+    if type(value) is not dict or set(cast(dict[object, object], value)) != set(_TARGET_NAMES):
         _fail()
+    value = cast(dict[str, object], value)
     return MappingProxyType({name: _old_file(value[name]) for name in _TARGET_NAMES})
 
 
@@ -559,8 +567,9 @@ def _verify_target_contents(
     targets: Mapping[str, OldFileDescriptor],
     contents_value: object,
 ) -> dict[str, bytes | None]:
-    if type(contents_value) is not dict or set(contents_value) != set(_TARGET_NAMES):
+    if type(contents_value) is not dict or set(cast(dict[object, object], contents_value)) != set(_TARGET_NAMES):
         _fail()
+    contents_value = cast(dict[str, object], contents_value)
     verified: dict[str, bytes | None] = {}
     for name in _TARGET_NAMES:
         descriptor = targets[name]
@@ -667,9 +676,7 @@ def _receipt_tail_evidence(
     if type(receipt) is not MemoryReceipt or type(receipt.raw_bytes) is not bytes:
         _fail()
     try:
-        parsed = receipt_codec._validate_payload(
-            receipt_codec._decode(receipt.raw_bytes), receipt.raw_bytes
-        )
+        parsed = receipt_codec.decode_memory_receipt_bytes(receipt.raw_bytes)
     except Exception:
         _fail()
     if parsed != receipt or type(transaction_captured) is not CapturedTransactionPayload:
@@ -678,6 +685,8 @@ def _receipt_tail_evidence(
         _fail()
     if (transaction_captured.receipt_digest != _sha256(parsed.raw_bytes)
             or transaction_captured.receipt_size != len(parsed.raw_bytes)):
+        _fail()
+    if parsed.session_key is None:
         _fail()
     try:
         marker = parsed.history_marker_id.encode("utf-8")
@@ -717,9 +726,9 @@ def _receipt_tail_evidence(
         loaded = decode_transaction_payload("CAPTURED", record.payload)
     except Exception:
         _fail()
-    if (type(raw_record) is not dict or raw_record.get("payload") != transaction_captured.to_payload()
+    if (type(raw_record) is not dict or cast(dict[object, object], raw_record).get("payload") != transaction_captured.to_payload()
             or loaded != transaction_captured
-            or raw_record.get("payload") != record.payload
+            or cast(dict[object, object], raw_record).get("payload") != record.payload
             or record.raw_bytes != json.dumps(raw_record, ensure_ascii=False, sort_keys=True,
                                               separators=(",", ":"), allow_nan=False).encode("utf-8")
             or raw_record != {"version": 1, "kind": "transactions", "identity": conversion_identity,
@@ -822,10 +831,11 @@ def _prepare(
             _fail()
         evidence = None
         if captured.schema_version == 2:
-            rows, *evidence = _receipt_tail_evidence(
+            rows, receipt_evidence, record_digest, tail_frame, canonical_row = _receipt_tail_evidence(
                 receipt, transaction_captured, transaction_captured_record,
                 captured.receipt_transaction_identity, raw_source, parsed_fallback,
             )
+            evidence = (receipt_evidence, record_digest, tail_frame, canonical_row)
         else:
             if any(value is not None for value in (receipt, transaction_captured, transaction_captured_record)):
                 _fail()
@@ -847,19 +857,18 @@ def _prepare(
             {".cursor": old_cursor, ".dream_cursor": old_dream_cursor}
         )
         outputs = _preview_outputs(rows, parsed_targets)
-        prepared = PreparedConversionPayload(
-            captured,
-            disposition,
-            parsed_source,
-            parsed_targets,
-            parsed_backup,
-            parsed_fallback,
-            len(rows),
-            final_cursor,
-            sidecar_counters,
-            outputs,
-            *(evidence or ()),
-        )
+        if evidence is None:
+            prepared = PreparedConversionPayload(
+                captured, disposition, parsed_source, parsed_targets, parsed_backup,
+                parsed_fallback, len(rows), final_cursor, sidecar_counters, outputs,
+            )
+        else:
+            receipt_evidence, record_digest, tail_frame, canonical_row = evidence
+            prepared = PreparedConversionPayload(
+                captured, disposition, parsed_source, parsed_targets, parsed_backup,
+                parsed_fallback, len(rows), final_cursor, sidecar_counters, outputs,
+                receipt_evidence, record_digest, tail_frame, canonical_row,
+            )
     payload = prepared.to_payload()
     try:
         derive_manifest_identity("conversions", payload)
@@ -926,8 +935,9 @@ def _validated_captured(value: object) -> CapturedConversionPayload:
 
 
 def _captured_from_payload(value: object) -> CapturedConversionPayload:
-    if type(value) is not dict or set(value) != _CAPTURED_FIELDS:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], _CAPTURED_FIELDS):
         _fail()
+    value = cast(dict[str, object], value)
     version = value["schema_version"]
     if type(version) is not int or version not in (1, 2):
         _fail()
@@ -940,9 +950,10 @@ def _prepared_from_payload(
     value: object,
     captured: CapturedConversionPayload,
 ) -> PreparedConversionPayload:
-    fields = _PREPARED_FIELDS | (_V2_EVIDENCE_FIELDS if captured.schema_version == 2 and type(value) is dict and value.get("disposition") == "convert" else frozenset())
-    if type(value) is not dict or set(value) != fields:
+    fields = _PREPARED_FIELDS | (_V2_EVIDENCE_FIELDS if captured.schema_version == 2 and type(value) is dict and cast(dict[object, object], value).get("disposition") == "convert" else cast(frozenset[str], frozenset()))
+    if type(cast(object, value)) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], fields):
         _fail()
+    value = cast(dict[str, object], value)
     if type(value["schema_version"]) is not int or value["schema_version"] != captured.schema_version:
         _fail()
     if value["conversion_policy"] != (_CONVERSION_POLICY if captured.schema_version == 1 else _RECEIPT_TAIL_POLICY):
@@ -950,6 +961,8 @@ def _prepared_from_payload(
     if _digest(value["conversion_identity"]) != captured.identity:
         _fail()
 
+    # Callers validate this payload through the exact-type manifest visitor first;
+    # the literal comparisons below select its validated string disposition.
     disposition = value["disposition"]
     source = _old_file(value["source"])
     targets = _target_map(value["targets"])
@@ -971,7 +984,7 @@ def _prepared_from_payload(
         ):
             _fail()
         return PreparedConversionPayload(
-            captured, disposition, source, targets, None, None, None, None, None, None
+            captured, cast(str, disposition), source, targets, None, None, None, None, None, None
         )
     if disposition != "convert":
         _fail()
@@ -984,12 +997,14 @@ def _prepared_from_payload(
     if final_cursor != row_count:
         _fail()
     outputs_value = value["outputs"]
-    if type(outputs_value) is not dict or set(outputs_value) != set(_TARGET_NAMES):
+    if type(outputs_value) is not dict or set(cast(dict[object, object], outputs_value)) != set(_TARGET_NAMES):
         _fail()
+    outputs_value = cast(dict[str, object], outputs_value)
     outputs = MappingProxyType({name: _new_file(outputs_value[name]) for name in _TARGET_NAMES})
     counters_value = value["sidecar_counters"]
-    if type(counters_value) is not dict or set(counters_value) != {".cursor", ".dream_cursor"}:
+    if type(counters_value) is not dict or set(cast(dict[object, object], counters_value)) != {".cursor", ".dream_cursor"}:
         _fail()
+    counters_value = cast(dict[str, object], counters_value)
     counters = {name: _counter(counters_value[name]) for name in (".cursor", ".dream_cursor")}
     if counters[".dream_cursor"] > counters[".cursor"]:
         _fail()
@@ -1023,10 +1038,13 @@ def _prepared_from_payload(
         receipt_value = value["receipt"]
         frame_value = value["tail_frame"]
         row_value = value["canonical_row"]
-        if (type(receipt_value) is not dict or set(receipt_value) != {"size", "blob_digest"}
-                or type(frame_value) is not dict or set(frame_value) != {"offset", "size", "digest"}
-                or type(row_value) is not dict or set(row_value) != {"cursor", "size", "blob_digest"}):
+        if (type(receipt_value) is not dict or set(cast(dict[object, object], receipt_value)) != {"size", "blob_digest"}
+                or type(frame_value) is not dict or set(cast(dict[object, object], frame_value)) != {"offset", "size", "digest"}
+                or type(row_value) is not dict or set(cast(dict[object, object], row_value)) != {"cursor", "size", "blob_digest"}):
             _fail()
+        frame_value = cast(dict[str, object], frame_value)
+        receipt_value = cast(dict[str, object], receipt_value)
+        row_value = cast(dict[str, object], row_value)
         receipt_size = _counter(receipt_value["size"], positive=True)
         receipt_digest = _digest(receipt_value["blob_digest"])
         offset = _counter(frame_value["offset"])
@@ -1044,9 +1062,15 @@ def _prepared_from_payload(
             MappingProxyType({"offset": offset, "size": frame_size, "digest": frame_digest}),
             MappingProxyType({"cursor": row_cursor, "size": row_size, "blob_digest": row_digest}),
         )
+    if len(evidence) == 0:
+        return PreparedConversionPayload(
+            captured, cast(str, disposition), source, targets, backup, fallback,
+            row_count, final_cursor, MappingProxyType(counters), outputs,
+        )
+    receipt_evidence, record_digest, tail_frame, canonical_row = evidence
     return PreparedConversionPayload(
         captured,
-        disposition,
+        cast(str, disposition),
         source,
         targets,
         backup,
@@ -1055,7 +1079,10 @@ def _prepared_from_payload(
         final_cursor,
         MappingProxyType(counters),
         outputs,
-        *evidence,
+        receipt_evidence,
+        record_digest,
+        tail_frame,
+        canonical_row,
     )
 
 
@@ -1147,8 +1174,9 @@ def _phase_payload(
     captured: CapturedConversionPayload,
     prepared: PreparedConversionPayload,
 ) -> dict[str, Any]:
-    if type(value) is not dict or set(value) != fields:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], fields):
         _fail()
+    value = cast(dict[str, object], value)
     if type(value["schema_version"]) is not int or value["schema_version"] != captured.schema_version:
         _fail()
     if _digest(value["conversion_identity"]) != captured.identity:
@@ -1159,8 +1187,9 @@ def _phase_payload(
 
 
 def _new_target_map(value: object) -> Mapping[str, NewFileDescriptor]:
-    if type(value) is not dict or set(value) != set(_TARGET_NAMES):
+    if type(value) is not dict or set(cast(dict[object, object], value)) != set(_TARGET_NAMES):
         _fail()
+    value = cast(dict[str, object], value)
     return MappingProxyType({name: _new_file(value[name]) for name in _TARGET_NAMES})
 
 
@@ -1383,32 +1412,6 @@ def _complete_from_payload(
     )
 
 
-def _validated_complete(
-    value: object,
-    captured: CapturedConversionPayload,
-    prepared: PreparedConversionPayload,
-    jsonl_applied: object,
-    cursors_applied: object,
-    legacy_finalized: object,
-    *,
-    finalized_record_digest: object,
-) -> CompleteConversionPayload:
-    if type(value) is not CompleteConversionPayload:
-        _fail()
-    decoded = _complete_from_payload(
-        value.to_payload(),
-        captured,
-        prepared,
-        jsonl_applied,
-        cursors_applied,
-        legacy_finalized,
-        finalized_record_digest=finalized_record_digest,
-    )
-    if decoded != value:
-        _fail()
-    return decoded
-
-
 def jsonl_applied_conversion_payload(
     captured: CapturedConversionPayload,
     prepared: PreparedConversionPayload,
@@ -1552,11 +1555,11 @@ def _pairs_without_duplicates(pairs: list[tuple[str, object]]) -> dict[str, obje
     return parsed
 
 
-def _reject_non_json_constant(value: str) -> None:
+def _reject_non_json_constant(value: str) -> NoReturn:
     raise ValueError(f"invalid JSON constant: {value}")
 
 
-def _parse_payload(value: object) -> dict[str, Any]:
+def _parse_payload(value: object) -> dict[object, object]:
     if type(value) is bytes:
         if len(value) > MAX_RECORD_BYTES:
             _fail()
@@ -1570,10 +1573,138 @@ def _parse_payload(value: object) -> dict[str, Any]:
             _fail()
         if type(parsed) is not dict:
             _fail()
+        parsed = cast(dict[object, object], parsed)
         return parsed
     if type(value) is not dict:
         _fail()
+    value = cast(dict[object, object], value)
     return value
+
+
+@overload
+def decode_conversion_payload(
+    payload: object,
+    phase: Literal["CAPTURED"],
+    *,
+    captured: CapturedConversionPayload | None = None,
+    prepared: PreparedConversionPayload | None = None,
+    jsonl_applied: JsonlAppliedConversionPayload | None = None,
+    cursors_applied: CursorsAppliedConversionPayload | None = None,
+    legacy_finalized: LegacyFinalizedConversionPayload | None = None,
+    prepared_record_digest: str | None = None,
+    jsonl_applied_record_digest: str | None = None,
+    cursors_applied_record_digest: str | None = None,
+    finalized_record_digest: str | None = None,
+) -> CapturedConversionPayload: ...
+
+
+@overload
+def decode_conversion_payload(
+    payload: object,
+    phase: Literal["CONVERSION_PREPARED"],
+    *,
+    captured: CapturedConversionPayload | None = None,
+    prepared: PreparedConversionPayload | None = None,
+    jsonl_applied: JsonlAppliedConversionPayload | None = None,
+    cursors_applied: CursorsAppliedConversionPayload | None = None,
+    legacy_finalized: LegacyFinalizedConversionPayload | None = None,
+    prepared_record_digest: str | None = None,
+    jsonl_applied_record_digest: str | None = None,
+    cursors_applied_record_digest: str | None = None,
+    finalized_record_digest: str | None = None,
+) -> PreparedConversionPayload: ...
+
+
+@overload
+def decode_conversion_payload(
+    payload: object,
+    phase: Literal["JSONL_APPLIED"],
+    *,
+    captured: CapturedConversionPayload | None = None,
+    prepared: PreparedConversionPayload | None = None,
+    jsonl_applied: JsonlAppliedConversionPayload | None = None,
+    cursors_applied: CursorsAppliedConversionPayload | None = None,
+    legacy_finalized: LegacyFinalizedConversionPayload | None = None,
+    prepared_record_digest: str | None = None,
+    jsonl_applied_record_digest: str | None = None,
+    cursors_applied_record_digest: str | None = None,
+    finalized_record_digest: str | None = None,
+) -> JsonlAppliedConversionPayload: ...
+
+
+@overload
+def decode_conversion_payload(
+    payload: object,
+    phase: Literal["CURSORS_APPLIED"],
+    *,
+    captured: CapturedConversionPayload | None = None,
+    prepared: PreparedConversionPayload | None = None,
+    jsonl_applied: JsonlAppliedConversionPayload | None = None,
+    cursors_applied: CursorsAppliedConversionPayload | None = None,
+    legacy_finalized: LegacyFinalizedConversionPayload | None = None,
+    prepared_record_digest: str | None = None,
+    jsonl_applied_record_digest: str | None = None,
+    cursors_applied_record_digest: str | None = None,
+    finalized_record_digest: str | None = None,
+) -> CursorsAppliedConversionPayload: ...
+
+
+@overload
+def decode_conversion_payload(
+    payload: object,
+    phase: Literal["LEGACY_FINALIZED"],
+    *,
+    captured: CapturedConversionPayload | None = None,
+    prepared: PreparedConversionPayload | None = None,
+    jsonl_applied: JsonlAppliedConversionPayload | None = None,
+    cursors_applied: CursorsAppliedConversionPayload | None = None,
+    legacy_finalized: LegacyFinalizedConversionPayload | None = None,
+    prepared_record_digest: str | None = None,
+    jsonl_applied_record_digest: str | None = None,
+    cursors_applied_record_digest: str | None = None,
+    finalized_record_digest: str | None = None,
+) -> LegacyFinalizedConversionPayload: ...
+
+
+@overload
+def decode_conversion_payload(
+    payload: object,
+    phase: Literal["COMPLETE"],
+    *,
+    captured: CapturedConversionPayload | None = None,
+    prepared: PreparedConversionPayload | None = None,
+    jsonl_applied: JsonlAppliedConversionPayload | None = None,
+    cursors_applied: CursorsAppliedConversionPayload | None = None,
+    legacy_finalized: LegacyFinalizedConversionPayload | None = None,
+    prepared_record_digest: str | None = None,
+    jsonl_applied_record_digest: str | None = None,
+    cursors_applied_record_digest: str | None = None,
+    finalized_record_digest: str | None = None,
+) -> CompleteConversionPayload: ...
+
+
+@overload
+def decode_conversion_payload(
+    payload: object,
+    phase: object,
+    *,
+    captured: CapturedConversionPayload | None = None,
+    prepared: PreparedConversionPayload | None = None,
+    jsonl_applied: JsonlAppliedConversionPayload | None = None,
+    cursors_applied: CursorsAppliedConversionPayload | None = None,
+    legacy_finalized: LegacyFinalizedConversionPayload | None = None,
+    prepared_record_digest: str | None = None,
+    jsonl_applied_record_digest: str | None = None,
+    cursors_applied_record_digest: str | None = None,
+    finalized_record_digest: str | None = None,
+) -> (
+    CapturedConversionPayload
+    | PreparedConversionPayload
+    | JsonlAppliedConversionPayload
+    | CursorsAppliedConversionPayload
+    | LegacyFinalizedConversionPayload
+    | CompleteConversionPayload
+): ...
 
 
 def decode_conversion_payload(

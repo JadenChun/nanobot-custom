@@ -1,12 +1,13 @@
 import asyncio
 import inspect
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from nanobot.agent.context import TranscriptInput
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.context import (
     RequestContext,
     bind_request_context,
@@ -14,15 +15,27 @@ from nanobot.agent.tools.context import (
     reset_request_context,
 )
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.turn import RunPolicyContext
+from nanobot.agent.turn import TurnContext as RunContext
 from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import Config
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.session.turn_continuation import INTERNAL_CONTINUATION_META
+from tests.agent.p6_admitted_fixtures import (
+    AgentInputs,
+    AsyncAdmittedFactory,
+    SyncAdmittedFactory,
+)
+from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
+from tests.agent.p6_admitted_fixtures import admitted_sync as admitted_sync
+from tests.agent.test_migration_engine import ScriptedProvider
 
 
-class _ContextRecordingTool:
+class _ContextRecordingTool(Tool):
     name = "cron"
+    description = "Record the scoped request context for this unit test."
+    parameters = {"type": "object", "properties": {"action": {"type": "string"}},
+                  "required": ["action"]}
     concurrency_safe = False
 
     def __init__(self) -> None:
@@ -42,35 +55,27 @@ class _ContextRecordingTool:
         return "created"
 
 
-class _Tools:
-    def __init__(self, tool: _ContextRecordingTool) -> None:
-        self.tool = tool
-
-    @property
-    def tool_names(self) -> list[str]:
-        return ["cron"]
-
-    def get(self, name: str):
-        return self.tool if name == "cron" else None
-
-    def get_definitions(self) -> list:
-        return []
-
-    def prepare_call(self, name: str, arguments: dict):
-        return (self.tool, arguments, None) if name == "cron" else (None, arguments, None)
+def _build_loop(provider: LLMProvider, registries: list[ToolRegistry] | None = None):
+    def build(inputs: AgentInputs) -> AgentLoop:
+        if registries is not None:
+            registries.append(inputs.tools)
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="test-model", session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            session_ttl_minutes=0,
+        )
+    return build
 
 
-def test_loop_registers_default_tools_in_injected_registry(tmp_path: Path) -> None:
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    registry = ToolRegistry()
-
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=provider,
-        workspace=tmp_path,
-        tool_registry=registry,
-    )
+def test_loop_registers_default_tools_in_injected_registry(
+    tmp_path: Path, admitted_sync: SyncAdmittedFactory,
+) -> None:
+    provider = ScriptedProvider([])
+    registries: list[ToolRegistry] = []
+    loop = admitted_sync(tmp_path, _build_loop(provider, registries))
+    registry = registries[0]
 
     assert loop.tools is registry
     assert registry.has("read_file")
@@ -80,10 +85,16 @@ def _config_for_loop(tmp_path: Path) -> Config:
     return Config.model_validate({"agents": {"defaults": {"workspace": str(tmp_path)}}})
 
 
-def _provider_for_loop() -> MagicMock:
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    return provider
+def _provider_for_loop() -> LLMProvider:
+    return ScriptedProvider([])
+
+
+def _run_context(loop: AgentLoop, *, approval_granted: bool = False) -> RunContext:
+    return RunContext(policy=RunPolicyContext(
+        workspace=loop.workspace,
+        context_manager=loop._fork_dependencies.resource_policy.context_manager,
+        approval_granted=approval_granted,
+    ))
 
 
 def test_loop_from_config_requires_caller_owned_registry(tmp_path: Path) -> None:
@@ -93,57 +104,61 @@ def test_loop_from_config_requires_caller_owned_registry(tmp_path: Path) -> None
         signature.bind(_config_for_loop(tmp_path))
 
 
-def test_loop_from_config_uses_caller_owned_registry(tmp_path: Path) -> None:
-    registry = ToolRegistry()
-    loop = AgentLoop.from_config(
-        _config_for_loop(tmp_path),
-        tool_registry=registry,
-        provider=_provider_for_loop(),
-    )
+def test_loop_from_config_uses_caller_owned_registry(
+    tmp_path: Path, admitted_sync: SyncAdmittedFactory,
+) -> None:
+    registries: list[ToolRegistry] = []
+
+    def build(inputs: AgentInputs) -> AgentLoop:
+        registry = inputs.tools
+        registries.append(registry)
+        return AgentLoop.from_config(
+            inputs.config, bus=inputs.bus, tool_registry=registry,
+            provider=_provider_for_loop(), session_manager=inputs.sessions,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+        )
+
+    loop = admitted_sync(tmp_path, build, config=_config_for_loop(tmp_path))
+    registry = registries[0]
 
     assert loop.tools is registry
     assert loop.tools.has("read_file")
 
 
 @pytest.mark.asyncio
-async def test_loop_binds_request_context_for_tool_execution(tmp_path: Path) -> None:
-    provider = MagicMock()
-    calls = {"n": 0}
-
-    async def chat_with_retry(**_kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return LLMResponse(
-                content=None,
-                tool_calls=[ToolCallRequest(id="call_1", name="cron", arguments={"action": "add"})],
-            )
-        return LLMResponse(content="done", tool_calls=[])
-
-    provider.chat_with_retry = chat_with_retry
-    provider.get_default_model.return_value = "test-model"
-
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-    )
+async def test_loop_binds_request_context_for_tool_execution(
+    tmp_path: Path, admitted_async: AsyncAdmittedFactory,
+) -> None:
+    provider = ScriptedProvider([
+        LLMResponse(
+            content=None,
+            tool_calls=[ToolCallRequest(id="call_1", name="cron", arguments={"action": "add"})],
+        ),
+        LLMResponse(content="done", tool_calls=[]),
+    ])
+    loop = await admitted_async(tmp_path, _build_loop(provider))
     cron = _ContextRecordingTool()
-    loop.tools = _Tools(cron)
+    original_cron = loop.tools.get("cron")
+    assert original_cron is not None
+    loop.tools.replace(cron)
 
     metadata = {"slack": {"thread_ts": "111.222", "channel_type": "channel"}}
     runtime = loop.llm_runtime()
-    await loop._run_agent_loop(
-        TranscriptInput(history=[], current_message=None),
-        runtime=runtime,
-        request_context=RequestContext(
-            channel="slack",
-            chat_id="C123",
-            session_key="slack:C123:111.222",
+    try:
+        await loop._run_agent_loop(
+            TranscriptInput(history=[], current_message=None),
             runtime=runtime,
-            metadata=metadata,
-        ),
-    )
+            run_context=_run_context(loop, approval_granted=True),
+            request_context=RequestContext(
+                channel="slack",
+                chat_id="C123",
+                session_key="slack:C123:111.222",
+                runtime=runtime,
+                metadata=metadata,
+            ),
+        )
+    finally:
+        loop.tools.replace(original_cron)
 
     assert cron.contexts[-1] == {
         "channel": "slack",
@@ -207,15 +222,10 @@ async def test_request_context_bindings_are_isolated_between_concurrent_tasks() 
 @pytest.mark.asyncio
 async def test_agent_loop_restores_outer_request_context_after_runner_exception(
     tmp_path: Path,
+    admitted_async: AsyncAdmittedFactory,
 ) -> None:
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-    )
+    provider = ScriptedProvider([])
+    loop = await admitted_async(tmp_path, _build_loop(provider))
     outer = RequestContext(channel="test", chat_id="outer", session_key="test:outer")
     runtime = loop.llm_runtime()
 
@@ -237,6 +247,7 @@ async def test_agent_loop_restores_outer_request_context_after_runner_exception(
             await loop._run_agent_loop(
                 TranscriptInput(history=[], current_message=None),
                 runtime=runtime,
+                run_context=_run_context(loop),
                 request_context=RequestContext(
                     channel="slack",
                     chat_id="C123",
@@ -264,15 +275,10 @@ async def test_process_message_captures_original_text_before_restore(
     tmp_path: Path,
     metadata: dict,
     expected: str | None,
+    admitted_async: AsyncAdmittedFactory,
 ) -> None:
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    loop = AgentLoop(
-        bus=MessageBus(),
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-    )
+    provider = ScriptedProvider([])
+    loop = await admitted_async(tmp_path, _build_loop(provider))
     runtime = loop.llm_runtime()
     seen: list[tuple[str | None, object]] = []
 
@@ -283,7 +289,7 @@ async def test_process_message_captures_original_text_before_restore(
     loop._restore_turn = stop_after_capture  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError, match="captured before restore"):
-        await loop._process_message(
+        await loop._process_turn(
             InboundMessage(
                 channel="slack",
                 sender_id="user",
@@ -295,3 +301,44 @@ async def test_process_message_captures_original_text_before_restore(
         )
 
     assert seen == [(expected, runtime)]
+
+
+def test_tool_context_construction_rejects_pending_startup_receipt(tmp_path: Path) -> None:
+    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+    from nanobot.bus.queue import MessageBus
+
+    workspace = tmp_path / "workspace"
+    pending = workspace / "memory" / ".consolidation.pending.json"
+    pending.parent.mkdir(parents=True)
+    pending.write_text("{broken", encoding="utf-8")
+    with pytest.raises(StartupReceiptAdmissionError):
+        AgentLoop(
+            bus=MessageBus(), provider=ScriptedProvider([]), workspace=workspace,
+            sessions_root=tmp_path / "sessions",
+        )
+
+
+async def test_unapproved_context_recording_call_is_not_dispatched(
+    tmp_path: Path, admitted_async: AsyncAdmittedFactory,
+) -> None:
+    provider = ScriptedProvider([LLMResponse(
+        content=None,
+        tool_calls=[ToolCallRequest(id="unapproved", name="cron", arguments={"action": "add"})],
+    )])
+    loop = await admitted_async(tmp_path, _build_loop(provider))
+    recording = _ContextRecordingTool()
+    original_cron = loop.tools.get("cron")
+    assert original_cron is not None
+    loop.tools.replace(recording)
+    runtime = loop.llm_runtime()
+    try:
+        result = await loop._run_agent_loop(
+            TranscriptInput(history=[], current_message=None), runtime=runtime,
+            run_context=_run_context(loop),
+            request_context=RequestContext(channel="slack", chat_id="C123", runtime=runtime),
+        )
+    finally:
+        loop.tools.replace(original_cron)
+    assert result.stop_reason == "approval_required"
+    assert recording.contexts == [] and len(provider.calls) == 1
+    assert current_request_context() is None

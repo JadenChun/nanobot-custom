@@ -125,7 +125,7 @@ async def test_execute_timeout_kills_and_reaps():
     with (
         patch.object(ExecTool, "_spawn", return_value=mock_proc) as spawn,
         patch.object(ExecTool, "_guard_command", return_value=None),
-        patch.object(ExecTool, "_kill_process_tree", new_callable=AsyncMock) as kill_tree,
+        patch.object(ExecTool, "kill_process_tree", new_callable=AsyncMock) as kill_tree,
     ):
         tool = ExecTool(timeout=1)
         result = await tool.execute(command="sleep 99", timeout=1)
@@ -145,7 +145,7 @@ async def test_execute_cancellation_kills_process_tree():
     with (
         patch.object(ExecTool, "_spawn", return_value=mock_proc) as spawn,
         patch.object(ExecTool, "_guard_command", return_value=None),
-        patch.object(ExecTool, "_kill_process_tree", new_callable=AsyncMock) as kill_tree,
+        patch.object(ExecTool, "kill_process_tree", new_callable=AsyncMock) as kill_tree,
     ):
         with pytest.raises(asyncio.CancelledError):
             await ExecTool().execute(command="sleep 99")
@@ -191,7 +191,7 @@ async def test_execute_exception_during_communicate_kills_live_process():
     with (
         patch.object(ExecTool, "_spawn", return_value=mock_proc),
         patch.object(ExecTool, "_guard_command", return_value=None),
-        patch.object(ExecTool, "_kill_process_tree", new_callable=AsyncMock) as kill_tree,
+        patch.object(ExecTool, "kill_process_tree", new_callable=AsyncMock) as kill_tree,
     ):
         tool = ExecTool()
         result = await tool.execute(command="broken")
@@ -213,7 +213,7 @@ async def test_kill_process_tree_targets_group_after_root_exits():
         patch("nanobot.agent.tools.shell.signal.SIGKILL", 9, create=True),
         patch("nanobot.agent.tools.shell._reap_pid") as reap,
     ):
-        await ExecTool._kill_process_tree(process)
+        await ExecTool.kill_process_tree(process)
 
     kill_group.assert_called_once_with(1006, 9)
     process.kill.assert_not_called()
@@ -276,13 +276,13 @@ async def test_kill_process_tree_kills_descendant_after_root_exits(tmp_path):
             while not started.exists():
                 await asyncio.sleep(0.01)
 
-        await ExecTool._kill_process_tree(process)
+        await ExecTool.kill_process_tree(process)
         await asyncio.wait_for(process.communicate(), timeout=5)
         release.write_text("go")
         await asyncio.sleep(1)
         assert not marker.exists()
     finally:
-        await ExecTool._kill_process_tree(process)
+        await ExecTool.kill_process_tree(process)
 
 
 def _mock_session_process(*, pid: int, returncode: int | None):

@@ -11,7 +11,6 @@ from nanobot.agent.tools.filesystem import (
 )
 from nanobot.agent.write_guard import FileLockRegistry, WriteScope
 
-
 # ---------------------------------------------------------------------------
 # ReadFileTool
 # ---------------------------------------------------------------------------
@@ -470,8 +469,9 @@ class TestWorkspaceAlias:
         assert resolved == tmp_path.resolve()
 
     def test_non_alias_absolute_path_unchanged(self, tmp_path):
-        from nanobot.agent.tools.filesystem import _resolve_path
         from pathlib import Path
+
+        from nanobot.agent.tools.filesystem import _resolve_path
 
         # A non-/workspace/ absolute path should NOT be rewritten.
         resolved = _resolve_path("/tmp/some_file.txt", workspace=tmp_path)

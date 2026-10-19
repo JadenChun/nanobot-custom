@@ -183,7 +183,7 @@ async def _artifact_source(tmp_path, text="evidence 中文 🌟"):
         )
         snapshot = owner.read_snapshot()
         event = snapshot.events[-1]
-        from session.test_artifact import fixture
+        from tests.session.test_artifact import fixture
 
         raw, _ = fixture()
         content = event["content"].encode()

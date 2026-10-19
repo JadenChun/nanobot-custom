@@ -33,6 +33,41 @@ def wrapper(*leaves):
     return LegacyFallbackProvider(leaves[0], presets, lambda p: leaves[presets.index(p)+1])
 
 
+def test_generation_constructor_and_assignment_preserve_exact_candidate_identity():
+    from nanobot.providers.base import GenerationSettings
+
+    leaves = [Leaf([]) for _ in range(3)]
+    original = GenerationSettings(max_tokens=71, temperature=0.25, reasoning_effort='high')
+    leaves[0].generation = original
+    provider = wrapper(*leaves)
+
+    assert 'generation' not in LLMProvider.__dict__
+    assert provider.generation is original
+    assert all(leaf.generation is original for leaf in leaves)
+    replacement = GenerationSettings(max_tokens=83, temperature=0.5)
+    provider.generation = replacement
+    assert provider.generation is replacement
+    assert all(leaf.generation is replacement for leaf in leaves)
+
+
+def test_generation_identity_propagates_through_nested_pool_legacy():
+    from nanobot.providers.base import GenerationSettings
+    from nanobot.providers.pooled_provider import PooledProvider
+
+    first, second, third = (Leaf([]) for _ in range(3))
+    original = GenerationSettings(max_tokens=71)
+    first.generation = original
+    pool = PooledProvider([first, second], ['a', 'b'])
+    provider = wrapper(pool, third)
+
+    assert provider.generation is pool.generation is original
+    assert all(leaf.generation is original for leaf in (first, second, third))
+    replacement = GenerationSettings(max_tokens=83)
+    provider.generation = replacement
+    assert provider.generation is pool.generation is replacement
+    assert all(leaf.generation is replacement for leaf in (first, second, third))
+
+
 async def test_cooling_primary_is_retried_after_ready_candidate_and_generation_override_is_preserved():
     primary = Leaf([quota(), LLMResponse(content='recovered')])
     second = Leaf([LLMResponse(content='ok'), quota()])
@@ -159,3 +194,69 @@ def test_staging_classifier_precedence(text, status, token, eligible):
 def test_empty_legacy_chain_is_rejected():
     with pytest.raises(ValueError, match='at least one'):
         LegacyFallbackProvider(Leaf([]), [], lambda _: None)
+
+
+@pytest.mark.parametrize('keyword_dependencies', [False, True])
+@pytest.mark.parametrize('requested_mode', [None, 'standard', 'persistent'])
+async def test_legacy_retry_forwarding_preserves_call_forms_and_forces_standard(
+    monkeypatch, keyword_dependencies, requested_mode,
+):
+    from nanobot.providers.fallback_provider import FallbackProvider
+
+    provider = wrapper(Leaf([]), Leaf([]))
+    response = LLMResponse(content='terminal')
+    observed = []
+
+    async def call(provider, kwargs):
+        return response
+
+    async def callback(*args):
+        return None
+
+    def guard():
+        return True
+
+    async def capture(self, *args, **kwargs):
+        observed.append((self, args, kwargs))
+        return response
+
+    monkeypatch.setattr(FallbackProvider, '_retry_with_fallback', capture)
+    kwargs = {'messages': []}
+    original_messages = []
+    streamed = [False]
+    options = {
+        'on_retry_wait': callback,
+        'on_retry_exhausted': callback,
+        'on_retry_status': callback,
+        'has_streamed': streamed,
+        'on_stream_recover': callback,
+        'persistent_retry_guard': guard,
+    }
+    if requested_mode is not None:
+        options['retry_mode'] = requested_mode
+    if keyword_dependencies:
+        result = await provider._retry_with_fallback(
+            call=call, kwargs=kwargs, original_messages=original_messages, **options,
+        )
+    else:
+        result = await provider._retry_with_fallback(call, kwargs, original_messages, **options)
+
+    assert result is response
+    [(owner, args, forwarded)] = observed
+    assert owner is provider
+    dependencies = dict(zip(('call', 'kwargs', 'original_messages'), args)) | forwarded
+    assert dependencies['call'] is call
+    assert dependencies['kwargs'] is kwargs
+    assert dependencies['original_messages'] is original_messages
+    assert dependencies['retry_mode'] == 'standard'
+    assert all(dependencies[key] is value for key, value in options.items() if key != 'retry_mode')
+
+
+async def test_legacy_exhausted_finite_traversal_returns_last_candidate_response():
+    terminal = quota()
+    first, second = Leaf([quota()]), Leaf([terminal])
+    provider = wrapper(first, second)
+
+    assert await provider.chat_with_retry(messages=[]) is terminal
+    assert [len(leaf.calls) for leaf in (first, second)] == [1, 1]
+    assert all(expiry > 0 for expiry in provider._cooldowns)

@@ -30,7 +30,7 @@ async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeyp
     loop.context = SimpleNamespace(build_transcript=lambda *args, **kwargs: None)
     loop.tools = ToolRegistry()
     from nanobot.agent.tools.message import MessageTool
-    loop.tools.register(MessageTool())
+    loop.tools.register(MessageTool(workspace=tmp_path))
     selected_tools = ToolRegistry()
     loop._file_state_store = FileStateStore()
     loop.tool_hint_max_length = 100

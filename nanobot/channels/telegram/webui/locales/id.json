@@ -24,7 +24,12 @@
       "allowFrom": {
         "label": "Pengguna yang diizinkan",
         "placeholder": "* atau ID pengguna Telegram",
-        "help": "Kosongkan untuk memakai kode pairing."
+        "help": "Required: add at least one Telegram sender ID/username or \"*\". Pairing is additional and does not replace sender authorization."
+      },
+      "allowChats": {
+        "label": "Obrolan yang diizinkan",
+        "placeholder": "ID obrolan grup Telegram",
+        "help": "Pembatasan grup opsional. Pengirim juga harus termasuk pengguna yang diizinkan."
       },
       "groupPolicy": {
         "label": "Perilaku grup",

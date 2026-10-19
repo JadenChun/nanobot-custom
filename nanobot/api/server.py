@@ -10,7 +10,7 @@ import asyncio
 import hmac
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Coroutine, Generator, TypeVar, cast
 
 from aiohttp import web
 from loguru import logger
@@ -32,6 +32,7 @@ from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 
 if TYPE_CHECKING:
     from nanobot.agent.loop import AgentLoop
+    from nanobot.runtime_composition import RuntimeComposition
 
 __all__ = (
     "MAX_FILE_SIZE",
@@ -49,6 +50,7 @@ _MODEL_NAME_KEY = web.AppKey[str]("model_name")
 _REQUEST_TIMEOUT_KEY = web.AppKey[float]("request_timeout")
 _PREPARE_AGENT_KEY = web.AppKey[Callable[[], Awaitable[None]] | None]("prepare_agent")
 _MISSING = object()
+_RequestResult = TypeVar("_RequestResult")
 
 
 def _app_value(
@@ -77,7 +79,7 @@ async def _prepare_agent(app: Any) -> None:
         await prepare()
 
 
-async def _cancel_and_join_owned(task: asyncio.Task[Any]) -> None:
+async def _cancel_and_join_owned(task: asyncio.Task[object]) -> None:
     """Cancel an owned request task and wait through cancellation-resistant cleanup.
 
     ``asyncio.wait_for`` cancels the awaitable it receives.  The HTTP adapter
@@ -124,7 +126,10 @@ async def _cancel_and_join_owned(task: asyncio.Task[Any]) -> None:
         raise asyncio.CancelledError()
 
 
-async def _run_owned_with_timeout(awaitable: Awaitable[Any], timeout_s: float) -> Any:
+async def _run_owned_with_timeout(
+    awaitable: Coroutine[object, object, _RequestResult] | Generator[object, None, _RequestResult],
+    timeout_s: float,
+) -> _RequestResult:
     """Run one preparation-plus-turn child and join it on timeout/cancellation."""
     task = asyncio.create_task(awaitable)
     try:
@@ -421,11 +426,13 @@ async def handle_health(request: web.Request) -> web.Response:
 
 
 def create_app(
-    agent_loop: "AgentLoop",
+    agent_loop: "AgentLoop | None" = None,
     model_name: str = "nanobot",
     request_timeout: float = 120.0,
     api_key: str = "",
     prepare_agent: Callable[[], Awaitable[None]] | None = None,
+    *,
+    composition: "RuntimeComposition | None" = None,
 ) -> web.Application:
     """Create the aiohttp application.
 
@@ -436,11 +443,26 @@ def create_app(
         api_key: Optional API key for Bearer-token authentication on API routes.
         prepare_agent: Optional application-owned readiness callback run before each turn.
     """
+    if (agent_loop is None) == (composition is None):
+        raise TypeError("provide exactly one of agent_loop or composition")
     app = web.Application(client_max_size=20 * 1024 * 1024)  # 20MB for base64 images
-    app[_AGENT_LOOP_KEY] = agent_loop
+    if agent_loop is not None:
+        app[_AGENT_LOOP_KEY] = agent_loop
     app[_MODEL_NAME_KEY] = model_name
     app[_REQUEST_TIMEOUT_KEY] = request_timeout
-    app[_PREPARE_AGENT_KEY] = prepare_agent
+    app[_PREPARE_AGENT_KEY] = prepare_agent if composition is None else None
+
+    if composition is not None:
+        async def runtime_context(_app: web.Application):
+            try:
+                handle = await composition.acquire()
+                _app[_AGENT_LOOP_KEY] = handle.agent
+                await handle.mcp.connect()
+                yield
+            finally:
+                await composition.aclose()
+
+        app.cleanup_ctx.append(runtime_context)
 
     @web.middleware
     async def auth_middleware(

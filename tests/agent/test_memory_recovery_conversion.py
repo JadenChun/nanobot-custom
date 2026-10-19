@@ -7,6 +7,7 @@ from datetime import datetime
 
 import pytest
 
+from nanobot.agent import memory_recovery_conversion as conversion
 from nanobot.agent import memory_recovery_storage as storage
 from nanobot.agent.memory_recovery_conversion import (
     CapturedConversionPayload,
@@ -97,6 +98,72 @@ def _prepare(**overrides: object):
     values = _prepared_inputs()
     values.update(overrides)
     return prepare_conversion_payload(_capture(), disposition="convert", **values)
+
+
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("preserve", [False, True])
+def test_prepared_constructor_positional_shape_and_evidence_identity(
+    monkeypatch: pytest.MonkeyPatch, version: int, preserve: bool,
+) -> None:
+    captured = (conversion.capture_receipt_tail_conversion_payload("a" * 64)
+                if version == 2 else _capture())
+    values = _prepared_inputs(history=b'{"cursor":1}\n' if preserve else b"")
+    extra = {}
+    if version == 2 and not preserve:
+        receipt, transaction, record = _v2_receipt("entry")
+        captured = conversion.capture_receipt_tail_conversion_payload(transaction.identity)
+        source = b"<!-- nanobot-consolidation:receipt-marker -->\nentry\n\n"
+        values = _prepared_inputs(source_bytes=source)
+        extra = dict(receipt=receipt, transaction_captured=transaction,
+                     transaction_captured_record=record)
+    if preserve:
+        values = dict(source=values["source"], targets=values["targets"], source_bytes=None)
+    calls = []
+    tails = []
+    original = conversion.PreparedConversionPayload.__init__
+    original_tail = conversion._receipt_tail_evidence
+
+    def constructor(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        original(self, *args, **kwargs)
+
+    def tail(*args):
+        result = original_tail(*args)
+        tails.append(result)
+        return result
+
+    monkeypatch.setattr(conversion.PreparedConversionPayload, "__init__", constructor)
+    monkeypatch.setattr(conversion, "_receipt_tail_evidence", tail)
+    prepared = prepare_conversion_payload(
+        captured, disposition="preserve_nonempty_jsonl" if preserve else "convert",
+        **values, **extra,
+    )
+    assert len(calls) == 1
+    args, kwargs = calls.pop()
+    assert len(args) == (14 if version == 2 and not preserve else 10)
+    assert kwargs == {}
+    assert args[0] is prepared.captured
+    assert args[0] == captured
+    assert args[2] is prepared.source
+    assert args[3] is prepared.targets
+    if tails:
+        assert all(arg is value for arg, value in zip(args[10:], tails[0][1:], strict=True))
+    decoded = decode_conversion_payload(prepared.to_payload(), "CONVERSION_PREPARED", captured=captured)
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert len(args) == (14 if version == 2 and not preserve else 10)
+    assert kwargs == {}
+    assert args[0] is decoded.captured
+    assert args[0] == captured
+    assert args[2] is decoded.source
+    assert args[3] is decoded.targets
+    if len(args) == 14:
+        assert args[10] is decoded.receipt
+        assert args[11] is decoded.transaction_captured_record_digest
+        assert args[12] is decoded.tail_frame
+        assert args[13] is decoded.canonical_row
+    assert decoded == prepared
+    assert ("receipt" in prepared.to_payload()) == (version == 2 and not preserve)
 
 
 def test_captured_payload_is_exact_deterministic_and_workspace_local() -> None:

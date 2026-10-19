@@ -1,5 +1,11 @@
 """Tests for the OpenCode Zen and OpenCode Go provider registrations."""
 
+from copy import deepcopy
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from nanobot.config.schema import Config, ProvidersConfig
 from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.registry import PROVIDERS, find_by_name
@@ -120,3 +126,120 @@ def test_opencode_prefixes_are_stripped_before_request() -> None:
         tool_choice=None,
     )
     assert go_kwargs["model"] == "o3"
+
+
+def _completion():
+    return SimpleNamespace(
+        choices=[SimpleNamespace(
+            message=SimpleNamespace(content="ok", tool_calls=None, reasoning_content=None),
+            finish_reason="stop",
+        )],
+        usage=None,
+    )
+
+
+async def _chunks():
+    yield SimpleNamespace(
+        choices=[SimpleNamespace(
+            delta=SimpleNamespace(content="ok"), finish_reason="stop", index=0,
+        )],
+        usage=None,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("provider_name,model", [
+    ("opencode", "opencode/deepseek-v4-flash"),
+    ("opencode_zen", "opencode-zen/deepseek-reasoner"),
+    ("opencode_go", "opencode-go/deepseek-v4-pro"),
+    ("opencode_go", "deepseek-v4-flash"),
+    ("deepseek", "deepseek-reasoner"),
+])
+@pytest.mark.parametrize("effort", [None, "high", "none", "minimal"])
+async def test_deepseek_history_reaches_transport_without_mutating_source(
+    stream, provider_name, model, effort,
+) -> None:
+    messages = [
+        {"role": "user", "content": "research"},
+        {"role": "assistant", "content": None, "tool_calls": [{
+            "id": "call_1", "type": "function",
+            "function": {"name": "read_file", "arguments": "{}"},
+        }]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "result"},
+        {"role": "assistant", "content": "prior", "reasoning_content": "kept"},
+        {"role": "user", "content": "continue"},
+    ]
+    original = deepcopy(messages)
+    create = AsyncMock(return_value=_chunks() if stream else _completion())
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client:
+        client.return_value.chat.completions.create = create
+        provider = OpenAICompatProvider(
+            api_key="fixture", spec=find_by_name(provider_name), default_model=model,
+        )
+        call = provider.chat_stream if stream else provider.chat
+        response = await call(messages=messages, reasoning_effort=effort)
+    assert response.content == "ok"
+    assert create.await_count == 1
+    sent = create.call_args.kwargs["messages"]
+    if effort in (None, "high"):
+        assert sent[1]["reasoning_content"] == ""
+    else:
+        assert "reasoning_content" not in sent[1]
+    assert sent[3]["reasoning_content"] == "kept"
+    assert sent[1]["content"] == (None if provider_name == "deepseek" else "")
+    assert sent[1]["tool_calls"][0]["function"]["name"] == "read_file"
+    assert messages == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("provider_name,prefix", [
+    ("opencode", "opencode/"),
+    ("opencode_zen", "opencode-zen/"),
+    ("opencode_go", "opencode-go/"),
+    ("opencode_go", ""),
+])
+@pytest.mark.parametrize("api_type", ["auto", "chat_completions", "responses"])
+async def test_opencode_minimax_rejected_before_transport(
+    stream, provider_name, prefix, api_type,
+) -> None:
+    create = AsyncMock(return_value=_completion())
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client:
+        client.return_value.chat.completions.create = create
+        provider = OpenAICompatProvider(
+            api_key="fixture", spec=find_by_name(provider_name),
+            default_model="kimi-k2.6", api_type=api_type,
+        )
+        call = provider.chat_stream_with_retry if stream else provider.chat_with_retry
+        response = await call(
+            messages=[{"role": "user", "content": "hello"}],
+            model=prefix + "minimax-m2.7",
+        )
+        assert response.finish_reason == "error"
+        assert "MiniMax models use the Anthropic-style /messages endpoint" in response.content
+        create.assert_not_awaited()
+        client.return_value.responses.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_name,model", [
+    ("openrouter", "minimax/minimax-m2.7"),
+    ("opencode_go", "opencode-go/kimi-k2.6"),
+    ("opencode", "opencode/deepseek-chat"),
+])
+async def test_other_gateway_models_keep_existing_transport_contract(provider_name, model) -> None:
+    create = AsyncMock(return_value=_completion())
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as client:
+        client.return_value.chat.completions.create = create
+        provider = OpenAICompatProvider(
+            api_key="fixture", spec=find_by_name(provider_name), default_model=model,
+        )
+        response = await provider.chat(messages=[
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "prior"},
+            {"role": "user", "content": "continue"},
+        ])
+    assert response.content == "ok"
+    assert create.await_count == 1
+    assert "reasoning_content" not in create.call_args.kwargs["messages"][1]

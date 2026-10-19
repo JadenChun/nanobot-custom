@@ -11,9 +11,10 @@ import hashlib
 import json
 import re
 import stat
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Mapping, NoReturn, TypeAlias
+from typing import Any, Literal, Mapping, NoReturn, TypeAlias, cast, overload
 
 from nanobot.agent import memory_recovery as receipt_codec
 from nanobot.agent.memory_recovery import MemoryReceipt
@@ -178,8 +179,7 @@ def _receipt_from_exact_bytes(receipt: MemoryReceipt) -> MemoryReceipt:
     if type(receipt) is not MemoryReceipt or type(receipt.raw_bytes) is not bytes or not receipt.raw_bytes:
         _fail()
     try:
-        payload = receipt_codec._decode(receipt.raw_bytes)
-        parsed = receipt_codec._validate_payload(payload, receipt.raw_bytes)
+        parsed = receipt_codec.decode_memory_receipt_bytes(receipt.raw_bytes)
     except Exception:
         _fail()
     if parsed != receipt:
@@ -188,8 +188,9 @@ def _receipt_from_exact_bytes(receipt: MemoryReceipt) -> MemoryReceipt:
 
 
 def _stat_payload(value: object, *, receipt: bool) -> "MemoryFileStat":
-    if type(value) is not dict or set(value) != _STAT_FIELDS:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], _STAT_FIELDS):
         _fail()
+    value = cast(dict[str, object], value)
     device = _counter(value["device"])
     inode = _counter(value["inode"])
     mode = _counter(value["mode"])
@@ -204,7 +205,7 @@ def _stat_payload(value: object, *, receipt: bool) -> "MemoryFileStat":
             _fail()
     if receipt and (not stat.S_ISREG(mode) or links != 1):
         _fail()
-    return MemoryFileStat(device, inode, mode, uid, gid, links, size, mtime_ns, ctime_ns)
+    return MemoryFileStat(device, inode, mode, uid, gid, links, size, cast(int | None, mtime_ns), cast(int | None, ctime_ns))
 
 
 def _stat_to_payload(value: "MemoryFileStat") -> dict[str, int | None]:
@@ -296,7 +297,9 @@ def capture_transaction_payload(
     _counter(workspace_identity[1])
     for value in (parsed.start_offset, parsed.end_offset, parsed.session_generation):
         _counter(value)
-    if parsed.start_offset >= parsed.end_offset:
+    # The reparsed receipt is frozen; the counter checks above establish ints
+    # for these existing later reads without changing their validation phases.
+    if cast(int, parsed.start_offset) >= cast(int, parsed.end_offset):
         _fail()
     _text(parsed.session_key)
     for value in (parsed.chunk_digest, parsed.base_memory_digest):
@@ -315,13 +318,15 @@ def capture_transaction_payload(
             output_memory_size = len(parsed.memory_output.encode("utf-8"))
         except UnicodeEncodeError:
             _fail()
+    # _text above validates the frozen session key; _counter validates the
+    # three offsets/generation. Keep the original reads at construction time.
     captured = CapturedTransactionPayload(
         receipt_digest=hashlib.sha256(parsed.raw_bytes).hexdigest(),
         receipt_size=len(parsed.raw_bytes),
-        session_key_digest=_hash_text(parsed.session_key),
-        start_offset=parsed.start_offset,
-        end_offset=parsed.end_offset,
-        session_generation=parsed.session_generation,
+        session_key_digest=_hash_text(cast(str, parsed.session_key)),
+        start_offset=cast(int, parsed.start_offset),
+        end_offset=cast(int, parsed.end_offset),
+        session_generation=cast(int, parsed.session_generation),
         chunk_digest=parsed.chunk_digest,
         base_memory_digest=parsed.base_memory_digest,
         output_memory_digest=parsed.output_memory_digest,
@@ -547,8 +552,9 @@ class CompleteTransactionPayload:
 
 
 def _old_target(value: object) -> OldTargetDescriptor:
-    if type(value) is not dict or set(value) != _OLD_TARGET_FIELDS:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], _OLD_TARGET_FIELDS):
         _fail()
+    value = cast(dict[str, object], value)
     exists = value["exists"]
     if type(exists) is not bool:
         _fail()
@@ -567,8 +573,9 @@ def _old_target(value: object) -> OldTargetDescriptor:
 
 
 def _new_target(value: object) -> NewTargetDescriptor:
-    if type(value) is not dict or set(value) != _NEW_TARGET_FIELDS:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], _NEW_TARGET_FIELDS):
         _fail()
+    value = cast(dict[str, object], value)
     exists = value["exists"]
     if type(exists) is not bool:
         _fail()
@@ -583,8 +590,9 @@ def _new_target(value: object) -> NewTargetDescriptor:
 
 
 def _source_transition(value: object, captured: CapturedTransactionPayload) -> SourceTransition:
-    if type(value) is not dict or set(value) != _SOURCE_FIELDS:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], _SOURCE_FIELDS):
         _fail()
+    value = cast(dict[str, object], value)
     old_digest = _digest(value["old_digest"])
     new_digest = _digest(value["new_digest"])
     old_size = _counter(value["old_size"])
@@ -643,13 +651,15 @@ def _prepare(
     parsed_stat = _stat_payload(receipt_stat, receipt=True)
     if parsed_stat.size != captured.receipt_size:
         _fail()
-    if type(targets) is not dict or set(targets) != set(_TARGET_NAMES):
+    if type(targets) is not dict or set(cast(dict[object, object], targets)) != set(_TARGET_NAMES):
         _fail()
+    targets = cast(dict[str, object], targets)
     parsed_targets: dict[str, TargetTransition] = {}
     for name in _TARGET_NAMES:
         raw = targets[name]
-        if type(raw) is not dict or set(raw) != {"old", "new"}:
+        if type(raw) is not dict or set(cast(dict[object, object], raw)) != {"old", "new"}:
             _fail()
+        raw = cast(dict[str, object], raw)
         parsed_targets[name] = TargetTransition(_old_target(raw["old"]), _new_target(raw["new"]))
     parsed_source = _source_transition(source, captured)
     marker_digest = _digest(history_marker_digest)
@@ -749,8 +759,9 @@ def _validated_captured(value: CapturedTransactionPayload) -> CapturedTransactio
 
 
 def _captured_from_payload(payload: object) -> CapturedTransactionPayload:
-    if type(payload) is not dict or set(payload) != _CAPTURED_FIELDS:
+    if type(payload) is not dict or set(cast(dict[object, object], payload)) != cast(AbstractSet[object], _CAPTURED_FIELDS):
         _fail()
+    payload = cast(dict[str, object], payload)
     if type(payload["schema_version"]) is not int or payload["schema_version"] != _SCHEMA_VERSION:
         _fail()
     if payload["source_format"] != _SOURCE_FORMAT or payload["conversion_identity"] is not None:
@@ -799,8 +810,9 @@ def _captured_from_payload(payload: object) -> CapturedTransactionPayload:
 def _prepared_from_payload(
     payload: object, captured: CapturedTransactionPayload
 ) -> PreparedTransactionPayload:
-    if type(payload) is not dict or set(payload) != _PREPARED_FIELDS:
+    if type(payload) is not dict or set(cast(dict[object, object], payload)) != cast(AbstractSet[object], _PREPARED_FIELDS):
         _fail()
+    payload = cast(dict[str, object], payload)
     if type(payload["schema_version"]) is not int or payload["schema_version"] != _SCHEMA_VERSION:
         _fail()
     return _prepare(
@@ -816,7 +828,7 @@ def _prepared_from_payload(
     )
 
 
-def _validate_record_bounds(payload: dict[str, Any], phase: str, identity: str) -> None:
+def _validate_record_bounds(payload: object, phase: str, identity: str) -> None:
     sequence = _TRANSACTION_PHASE_SEQUENCE.get(phase)
     if sequence is None:
         _fail()
@@ -842,29 +854,32 @@ def _validate_record_bounds(payload: dict[str, Any], phase: str, identity: str) 
         _fail()
 
 
-def _parse_payload(value: object) -> dict[str, Any]:
+def _parse_payload(value: object) -> dict[object, object]:
     if type(value) is bytes:
         if len(value) > MAX_RECORD_BYTES:
             _fail()
         try:
             parsed = json.loads(
                 value.decode("utf-8"),
-                object_pairs_hook=receipt_codec._reject_duplicate_keys,
-                parse_constant=receipt_codec._reject_non_json_number,
+                object_pairs_hook=receipt_codec.reject_duplicate_receipt_keys,
+                parse_constant=receipt_codec.reject_non_json_receipt_number,
             )
         except Exception:
             _fail()
         if type(parsed) is not dict:
             _fail()
+        parsed = cast(dict[object, object], parsed)
         return parsed
     if type(value) is not dict:
         _fail()
+    value = cast(dict[object, object], value)
     return value
 
 
 def _phase_fields(payload: object, fields: frozenset[str]) -> dict[str, Any]:
-    if type(payload) is not dict or set(payload) != fields:
+    if type(payload) is not dict or set(cast(dict[object, object], payload)) != cast(AbstractSet[object], fields):
         _fail()
+    payload = cast(dict[str, object], payload)
     if type(payload["schema_version"]) is not int or payload["schema_version"] != _SCHEMA_VERSION:
         _fail()
     return payload
@@ -885,8 +900,9 @@ def _transaction_context(
 
 
 def _source_applied(value: object) -> SourceAppliedState:
-    if type(value) is not dict or set(value) != _SOURCE_APPLIED_FIELDS:
+    if type(value) is not dict or set(cast(dict[object, object], value)) != cast(AbstractSet[object], _SOURCE_APPLIED_FIELDS):
         _fail()
+    value = cast(dict[str, object], value)
     return SourceAppliedState(
         _digest(value["digest"]),
         _counter(value["size"]),
@@ -1352,6 +1368,158 @@ def complete_transaction_payload(
         memory_applied_record_digest=memory_applied_record_digest,
         offset_applied_record_digest=offset_applied_record_digest,
     )
+
+
+@overload
+def decode_transaction_payload(
+    phase: Literal["CAPTURED"],
+    payload: object,
+    *,
+    captured: CapturedTransactionPayload | None = None,
+    prepared: PreparedTransactionPayload | None = None,
+    history_applied: HistoryAppliedTransactionPayload | None = None,
+    memory_applied: MemoryAppliedTransactionPayload | None = None,
+    offset_applied: OffsetAppliedTransactionPayload | None = None,
+    receipt_committed: ReceiptCommittedTransactionPayload | None = None,
+    commit_record_digest: str | None = None,
+    prepared_record_digest: str | None = None,
+    history_applied_record_digest: str | None = None,
+    memory_applied_record_digest: str | None = None,
+    offset_applied_record_digest: str | None = None,
+) -> CapturedTransactionPayload: ...
+
+
+@overload
+def decode_transaction_payload(
+    phase: Literal["PREPARED"],
+    payload: object,
+    *,
+    captured: CapturedTransactionPayload | None = None,
+    prepared: PreparedTransactionPayload | None = None,
+    history_applied: HistoryAppliedTransactionPayload | None = None,
+    memory_applied: MemoryAppliedTransactionPayload | None = None,
+    offset_applied: OffsetAppliedTransactionPayload | None = None,
+    receipt_committed: ReceiptCommittedTransactionPayload | None = None,
+    commit_record_digest: str | None = None,
+    prepared_record_digest: str | None = None,
+    history_applied_record_digest: str | None = None,
+    memory_applied_record_digest: str | None = None,
+    offset_applied_record_digest: str | None = None,
+) -> PreparedTransactionPayload: ...
+
+
+@overload
+def decode_transaction_payload(
+    phase: Literal["HISTORY_APPLIED"],
+    payload: object,
+    *,
+    captured: CapturedTransactionPayload | None = None,
+    prepared: PreparedTransactionPayload | None = None,
+    history_applied: HistoryAppliedTransactionPayload | None = None,
+    memory_applied: MemoryAppliedTransactionPayload | None = None,
+    offset_applied: OffsetAppliedTransactionPayload | None = None,
+    receipt_committed: ReceiptCommittedTransactionPayload | None = None,
+    commit_record_digest: str | None = None,
+    prepared_record_digest: str | None = None,
+    history_applied_record_digest: str | None = None,
+    memory_applied_record_digest: str | None = None,
+    offset_applied_record_digest: str | None = None,
+) -> HistoryAppliedTransactionPayload: ...
+
+
+@overload
+def decode_transaction_payload(
+    phase: Literal["MEMORY_APPLIED"],
+    payload: object,
+    *,
+    captured: CapturedTransactionPayload | None = None,
+    prepared: PreparedTransactionPayload | None = None,
+    history_applied: HistoryAppliedTransactionPayload | None = None,
+    memory_applied: MemoryAppliedTransactionPayload | None = None,
+    offset_applied: OffsetAppliedTransactionPayload | None = None,
+    receipt_committed: ReceiptCommittedTransactionPayload | None = None,
+    commit_record_digest: str | None = None,
+    prepared_record_digest: str | None = None,
+    history_applied_record_digest: str | None = None,
+    memory_applied_record_digest: str | None = None,
+    offset_applied_record_digest: str | None = None,
+) -> MemoryAppliedTransactionPayload: ...
+
+
+@overload
+def decode_transaction_payload(
+    phase: Literal["OFFSET_APPLIED"],
+    payload: object,
+    *,
+    captured: CapturedTransactionPayload | None = None,
+    prepared: PreparedTransactionPayload | None = None,
+    history_applied: HistoryAppliedTransactionPayload | None = None,
+    memory_applied: MemoryAppliedTransactionPayload | None = None,
+    offset_applied: OffsetAppliedTransactionPayload | None = None,
+    receipt_committed: ReceiptCommittedTransactionPayload | None = None,
+    commit_record_digest: str | None = None,
+    prepared_record_digest: str | None = None,
+    history_applied_record_digest: str | None = None,
+    memory_applied_record_digest: str | None = None,
+    offset_applied_record_digest: str | None = None,
+) -> OffsetAppliedTransactionPayload: ...
+
+
+@overload
+def decode_transaction_payload(
+    phase: Literal["RECEIPT_COMMITTED"],
+    payload: object,
+    *,
+    captured: CapturedTransactionPayload | None = None,
+    prepared: PreparedTransactionPayload | None = None,
+    history_applied: HistoryAppliedTransactionPayload | None = None,
+    memory_applied: MemoryAppliedTransactionPayload | None = None,
+    offset_applied: OffsetAppliedTransactionPayload | None = None,
+    receipt_committed: ReceiptCommittedTransactionPayload | None = None,
+    commit_record_digest: str | None = None,
+    prepared_record_digest: str | None = None,
+    history_applied_record_digest: str | None = None,
+    memory_applied_record_digest: str | None = None,
+    offset_applied_record_digest: str | None = None,
+) -> ReceiptCommittedTransactionPayload: ...
+
+
+@overload
+def decode_transaction_payload(
+    phase: Literal["COMPLETE"],
+    payload: object,
+    *,
+    captured: CapturedTransactionPayload | None = None,
+    prepared: PreparedTransactionPayload | None = None,
+    history_applied: HistoryAppliedTransactionPayload | None = None,
+    memory_applied: MemoryAppliedTransactionPayload | None = None,
+    offset_applied: OffsetAppliedTransactionPayload | None = None,
+    receipt_committed: ReceiptCommittedTransactionPayload | None = None,
+    commit_record_digest: str | None = None,
+    prepared_record_digest: str | None = None,
+    history_applied_record_digest: str | None = None,
+    memory_applied_record_digest: str | None = None,
+    offset_applied_record_digest: str | None = None,
+) -> CompleteTransactionPayload: ...
+
+
+@overload
+def decode_transaction_payload(
+    phase: str,
+    payload: object,
+    *,
+    captured: CapturedTransactionPayload | None = None,
+    prepared: PreparedTransactionPayload | None = None,
+    history_applied: HistoryAppliedTransactionPayload | None = None,
+    memory_applied: MemoryAppliedTransactionPayload | None = None,
+    offset_applied: OffsetAppliedTransactionPayload | None = None,
+    receipt_committed: ReceiptCommittedTransactionPayload | None = None,
+    commit_record_digest: str | None = None,
+    prepared_record_digest: str | None = None,
+    history_applied_record_digest: str | None = None,
+    memory_applied_record_digest: str | None = None,
+    offset_applied_record_digest: str | None = None,
+) -> CapturedTransactionPayload | PreparedTransactionPayload | HistoryAppliedTransactionPayload | MemoryAppliedTransactionPayload | OffsetAppliedTransactionPayload | ReceiptCommittedTransactionPayload | CompleteTransactionPayload: ...
 
 
 def decode_transaction_payload(

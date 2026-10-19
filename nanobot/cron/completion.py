@@ -19,7 +19,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generator, Mapping
+from typing import Any, Generator, Mapping, cast
 
 try:
     import fcntl as _fcntl
@@ -29,6 +29,7 @@ except ImportError:  # pragma: no cover - construction fails closed on Windows
 from nanobot.cron.occurrence_store import (
     CronOccurrenceStore,
     OccurrenceClaim,
+    OccurrenceExecutionFence,
     OccurrenceNotFoundError,
     OccurrenceReconciliationRequiredError,
     OccurrenceRecord,
@@ -90,7 +91,7 @@ class _RootBinding:
         return self.fds[-1]
 
     def assert_bound(self) -> None:
-        self.store._assert_path_binding(self)
+        self.store.require_projection_root_binding(self)
 
     def close(self) -> None:
         for fd in reversed(self.fds):
@@ -115,7 +116,7 @@ class _HeldProjection:
         return self.root_binding.root_fd
 
     def assert_bound(self) -> None:
-        self.store._assert_binding(self)
+        self.store.require_held_projection_binding(self)
 
 
 def _canonical_json(value: object, *, label: str) -> str:
@@ -131,16 +132,16 @@ def _canonical_json(value: object, *, label: str) -> str:
         raise CronCompletionConflictError(f"{label} must contain finite JSON data") from exc
 
 
-def _copy_mapping(value: Mapping[str, Any], *, label: str) -> dict[str, Any]:
+def _copy_mapping(value: object, *, label: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise CronCompletionConflictError(f"{label} must be a JSON object")
     try:
-        copied = json.loads(_canonical_json(dict(value), label=label))
+        copied = json.loads(_canonical_json(dict(cast(Mapping[object, object], value)), label=label))
     except (TypeError, ValueError, RecursionError, json.JSONDecodeError) as exc:
         raise CronCompletionConflictError(f"{label} must be a JSON object") from exc
     if not isinstance(copied, dict):  # pragma: no cover - mapping encodes as object
         raise CronCompletionConflictError(f"{label} must be a JSON object")
-    return copied
+    return cast(dict[str, Any], copied)  # JSON decoding constructs string-key objects.
 
 
 def _strict_json_object(value: object, *, label: str) -> dict[str, Any]:
@@ -148,13 +149,17 @@ def _strict_json_object(value: object, *, label: str) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise CronCompletionConflictError(f"{label} must be a JSON object")
 
+    value = cast(Mapping[object, object], value)
+
     def check_keys(item: object) -> None:
         if isinstance(item, Mapping):
+            item = cast(Mapping[object, object], item)
             if any(not isinstance(key, str) for key in item):
                 raise CronCompletionConflictError(f"{label} must be a JSON object")
             for child in item.values():
                 check_keys(child)
         elif isinstance(item, (list, tuple)):
+            item = cast(list[object] | tuple[object, ...], item)
             for child in item:
                 check_keys(child)
 
@@ -171,7 +176,7 @@ def _exact_equal(actual: object, expected: object) -> bool:
     return type(actual) is type(expected) and actual == expected
 
 
-def run_id_for_claim(claim: OccurrenceClaim) -> str:
+def run_id_for_claim(claim: object) -> str:
     """Derive one stable run identity for one occurrence generation."""
     if not isinstance(claim, OccurrenceClaim):
         raise CronCompletionConflictError("completion requires an occurrence claim")
@@ -182,7 +187,7 @@ class CronCompletionProjector:
     """Persist canonical occurrence completion and a detached run projection."""
 
     def __init__(self, occurrence_store: CronOccurrenceStore, root: Path):
-        if not isinstance(occurrence_store, CronOccurrenceStore):
+        if not isinstance(cast(object, occurrence_store), CronOccurrenceStore):
             raise TypeError("occurrence_store must be a CronOccurrenceStore")
         root = Path(root)
         if not root.is_absolute() or root == Path(root.anchor) or ".." in root.parts:
@@ -194,6 +199,7 @@ class CronCompletionProjector:
             or not {os.open, os.mkdir, os.stat, os.rename, os.unlink} <= os.supports_dir_fd
         ):
             raise CronCompletionPersistenceError("completion projection requires qualified POSIX flock support")
+        self._flock_module = _fcntl
         self.occurrence_store = occurrence_store
         self.root = root
         self._root_identity: tuple[int, int] | None = None
@@ -328,7 +334,7 @@ class CronCompletionProjector:
             self._private(info, directory=False)
             if self._lock_identity is not None and self._inode(info) != self._lock_identity:
                 raise CronCompletionConflictError("completion projection lock binding changed")
-            _fcntl.flock(lock_fd, _fcntl.LOCK_EX)
+            self._flock_module.flock(lock_fd, self._flock_module.LOCK_EX)
             return lock_fd
         except CronCompletionError:
             if lock_fd is not None:
@@ -340,6 +346,10 @@ class CronCompletionProjector:
             if exc.errno == errno.ELOOP:
                 raise CronCompletionConflictError("completion projection lock must not be a symlink") from exc
             raise CronCompletionPersistenceError("could not acquire completion projection lock") from exc
+
+    def require_projection_root_binding(self, binding: _RootBinding) -> None:
+        """Reprove the existing no-follow pathname checks for a projection root."""
+        return self._assert_path_binding(binding)
 
     def _assert_path_binding(self, binding: _RootBinding) -> None:
         try:
@@ -370,6 +380,10 @@ class CronCompletionProjector:
             if exc.errno in {errno.ELOOP, errno.ENOTDIR, errno.ENOENT}:
                 raise CronCompletionConflictError("completion root path binding changed")
             raise CronCompletionConflictError("completion root path binding could not be verified") from exc
+
+    def require_held_projection_binding(self, held: _HeldProjection) -> None:
+        """Reprove the existing projection root and lock checks for a held operation."""
+        return self._assert_binding(held)
 
     def _assert_binding(self, held: _HeldProjection) -> None:
         held.root_binding.assert_bound()
@@ -404,12 +418,12 @@ class CronCompletionProjector:
                 held.assert_bound()
             finally:
                 try:
-                    _fcntl.flock(lock_fd, _fcntl.LOCK_UN)
+                    self._flock_module.flock(lock_fd, self._flock_module.LOCK_UN)
                 finally:
                     os.close(lock_fd)
 
     @staticmethod
-    def _validate_run_id(run_id: str) -> str:
+    def _validate_run_id(run_id: object) -> str:
         if not isinstance(run_id, str) or _RUN_ID_RE.fullmatch(run_id) is None:
             raise CronCompletionConflictError("run_id is invalid")
         return run_id
@@ -506,6 +520,7 @@ class CronCompletionProjector:
     def _projection_from_wire(value: object, *, run_id: str) -> CronCompletionProjection:
         if not isinstance(value, dict):
             raise CronCompletionConflictError("cron completion projection is not an object")
+        value = cast(dict[object, object], value)
         fields = {
             "schema_version",
             "kind",
@@ -522,6 +537,7 @@ class CronCompletionProjector:
         }
         if set(value) != fields:
             raise CronCompletionConflictError("cron completion projection has an invalid schema")
+        value = cast(dict[str, Any], value)  # Exact wire field set checked above.
         body = {key: item for key, item in value.items() if key != "integrity"}
         if value["schema_version"] != _SCHEMA_VERSION or value["kind"] != _PROJECTION_KIND:
             raise CronCompletionConflictError("cron completion projection has an invalid version or kind")
@@ -890,9 +906,10 @@ class CronCompletionProjector:
         error: str | None | object = _MISSING,
         run_id: str | None = None,
         provenance: Mapping[str, Any] | None = None,
+        fence: OccurrenceExecutionFence,
     ) -> CronCompletionProjection:
         """Persist canonical completion, then project it into run history."""
-        if not isinstance(claim, OccurrenceClaim):
+        if not isinstance(cast(object, claim), OccurrenceClaim):
             raise CronCompletionConflictError("completion requires an occurrence claim")
         expected_run_id = run_id_for_claim(claim)
         if run_id is not None and self._validate_run_id(run_id) != expected_run_id:
@@ -930,7 +947,7 @@ class CronCompletionProjector:
         # The ledger is the source of computation truth.  If this write is
         # durable but projection fails, project_completed can safely resume;
         # a claimed record can never be projected as success.
-        self.occurrence_store.complete(claim, canonical)
+        self.occurrence_store.complete(claim, canonical, fence)
         return self.project_completed(claim, run_id=expected_run_id, provenance=provenance)
 
     complete_occurrence = complete

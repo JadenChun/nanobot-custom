@@ -33,6 +33,7 @@ from nanobot.providers.conversation_state import (
     ProviderConversationStateController,
     allows_conversation_message_merge,
 )
+from nanobot.providers.image_history import recent_image_messages
 from nanobot.providers.request_budget import DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
@@ -45,7 +46,7 @@ from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.source import SourceValidationError, prefix_digest
 from nanobot.session.source_compaction import SourceCompactionCandidate
 from nanobot.session.source_projection import CheckpointNode, RuntimeNode, SourceNode
-from nanobot.session.source_request import SourceTranscript
+from nanobot.session.source_request import RequestNode, SourceTranscript
 from nanobot.session.summary import (
     SUMMARY_CONTINUATION_TEXT,
     SessionSummaryCheckpoint,
@@ -434,10 +435,9 @@ class ContextGovernor:
         if not references:
             return
         reader = ContextGovernor._dependency_reader(state, attempt)
-        from nanobot.session.execution_owner import execution_transaction
 
         with reader.store.transaction() as blobs:
-            with execution_transaction(reader.writer.store._backend, reader.writer.owner.key,
+            with reader.writer.store.execution_transaction(reader.writer.owner.key,
                                        reader.writer.owner):
                 current = reader.writer.owner.read_snapshot()
                 validate_summary_dependencies(proof, current, reader, blobs)
@@ -460,12 +460,14 @@ class ContextGovernor:
                 or compaction.raw_messages != candidate.transcript.messages()
                 or compaction.stream_id != candidate.stream_id):
             raise SourceValidationError('Source projection changed during compaction')
-        if (not isinstance(summary, str) or not summary.strip() or len(summary) > 64_000
+        if (not isinstance(cast(object, summary), str) or not summary.strip() or len(summary) > 64_000
                 or truncate_text_to_tokens(summary, 2048) != summary):
             raise SourceValidationError('Invalid bounded source summary')
         if auxiliary_usage is not None and (not auxiliary_usage or any(
                 type(value) is not int or value < 0 for value in auxiliary_usage.values())):
             raise SourceValidationError('Invalid source auxiliary usage')
+        # Only the validated non-None proof branch can produce references, so
+        # both later reference-bearing paths retain that same concrete proof.
         references: tuple[str, ...] = ()
         if proof is not None:
             from nanobot.session.checkpoint_dependencies import (
@@ -512,13 +514,11 @@ class ContextGovernor:
                 'projection_scope': 'root', 'projection_version': 1,
             }
             if references:
-                from nanobot.session.source_store import SourceSessionStore
-
                 reader = self._dependency_reader(state, attempt)
-                configured = SourceSessionStore(writer.store._backend, artifact_store=reader.store)
+                configured = writer.store.with_artifact_store(reader.store)
                 with reader.store.transaction() as blobs:
                     committed = configured.commit_dependent_context_checkpoint(
-                        writer.owner.key, captured.state, proposal, proof,
+                        writer.owner.key, captured.state, proposal, cast(SummaryDependencyProof, proof),
                         owner=writer.owner, reader=reader, blobs=blobs,
                     )
             else:
@@ -527,11 +527,10 @@ class ContextGovernor:
                 )
         elif references:
             from nanobot.session.checkpoint_dependencies import validate_summary_dependencies
-            from nanobot.session.execution_owner import execution_transaction
 
             reader = self._dependency_reader(state, attempt)
             with reader.store.transaction() as blobs:
-                with execution_transaction(reader.writer.store._backend, reader.writer.owner.key,
+                with reader.writer.store.execution_transaction(reader.writer.owner.key,
                                            reader.writer.owner):
                     current = writer.owner.read_snapshot()
                     before, after = captured.state, current.state
@@ -542,7 +541,7 @@ class ContextGovernor:
                             != [event for event in current.events
                                 if event.get('_stream_id') == candidate.stream_id]):
                         raise SourceValidationError('Local source changed during compaction')
-                    validate_summary_dependencies(proof, current, reader, blobs)
+                    validate_summary_dependencies(cast(SummaryDependencyProof, proof), current, reader, blobs)
         else:
             current = writer.owner.read_snapshot()
             before, after = captured.state, current.state
@@ -834,7 +833,8 @@ class ContextGovernor:
         """Build the normalized model-facing copy of a raw transcript."""
         if config.preserve_source:
             return deepcopy(messages)
-        governed = self.prepare_for_model(config, messages)
+        # Select the image-bearing message before adjacent users are merged.
+        governed = self.prepare_for_model(config, recent_image_messages(messages))
         return self._merge_adjacent_user_messages_for_model(governed)
 
     def prepare_for_model(
@@ -1092,6 +1092,40 @@ class ContextGovernor:
         )
         return prepared
 
+    @staticmethod
+    def project_source_images(
+        state: ModelRequestState, view: SourceTranscript,
+        transcript: list[dict[str, object]] | None,
+    ) -> SourceTranscript:
+        """Publish only the deterministic image projection, never request-only notes."""
+        source = state.source
+        if source is None:
+            raise SourceValidationError('Image projection requires an active source ledger')
+        notes = source.validate_view(view)
+        if source.has_pending_requests:
+            raise SourceValidationError('Cannot project images with an outstanding request ticket')
+        active = source.transcript
+        raw = state.source_compaction.raw_messages if state.source_compaction else transcript
+        if raw is not None and raw != active.messages():
+            raise SourceValidationError('Image projection differs from runner transcript')
+        prepared = recent_image_messages(view.messages())
+        nodes: list[RequestNode] = [
+            node if isinstance(node, CheckpointNode) else replace(node, message=message)
+            for node, message in zip(view.nodes, prepared, strict=True)
+        ]
+        updated = SourceTranscript(tuple(nodes[:len(active.nodes)]))
+        extensions = tuple(
+            replace(node, message=message)
+            for node, message in zip(notes, prepared[len(active.nodes):], strict=True)
+        )
+        if updated != active:
+            source.replace_projection(updated)
+            if raw is not None:
+                raw[:] = updated.messages()
+            state.usage = None
+            state.conversation.replace_transcript(updated.messages())
+        return updated.with_runtime(*extensions)
+
     async def prepare_request(
         self,
         state: ModelRequestState,
@@ -1114,8 +1148,11 @@ class ContextGovernor:
             if source_view is not None:
                 source_view = self.admit_source_checkpoint(state, source_view, tool_definitions=tool_definitions)
                 source_view = self.project_source_artifacts(state, source_view, tool_definitions=tool_definitions)
+                source_view = self.project_source_images(state, source_view, transcript)
                 source_view = await self.compact_source_request(state, source_view, tool_definitions=tool_definitions)
                 messages = source_view.messages()
+            else:
+                messages = recent_image_messages(messages)
             prepared = self.ensure_request_fits(state.config, deepcopy(messages), tool_definitions=tool_definitions)
             if state.source_compaction is not None:
                 state.source_compaction.writer.owner.validate_dispatch()
@@ -1137,11 +1174,14 @@ class ContextGovernor:
                 events=state.events,
             )
         prepared = self.prepare_messages_for_model(state.config, messages)
+        image_view_changed = recent_image_messages(messages) != messages
+        if image_view_changed:
+            state.conversation.invalidate()
         model_messages: list[dict[str, Any]] | None = prepared
         supplemental_messages: list[dict[str, Any]] | None = None
         request_context_tokens = None
         if transcript is not None:
-            if tool_definitions is None:
+            if tool_definitions is None and not image_view_changed:
                 model_messages = None
                 supplemental_messages = [prepared[-1]]
             request_context_tokens = state.conversation.estimate_request_context_tokens(
@@ -1213,7 +1253,7 @@ class ContextGovernor:
                 completion_reserve_tokens=state.config.max_tokens,
                 model_messages=model_messages,
                 supplemental_messages=supplemental_messages,
-                resume_state=not request_was_fitted,
+                resume_state=not request_was_fitted and not image_view_changed,
                 binding=binding,
             )
             if transcript is not None

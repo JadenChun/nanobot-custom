@@ -52,7 +52,7 @@ def _memory_store_worker(
     continue_gate: Any,
     result: Any,
 ) -> None:
-    from nanobot.agent import memory
+    from nanobot.agent import memory_recovery_startup_admission as admission
     from nanobot.agent.memory_recovery_storage import open_workspace_memory_lock
 
     def observed_gate(path: Path | str) -> object:
@@ -61,7 +61,7 @@ def _memory_store_worker(
             raise TimeoutError("test did not release memory gate handshake")
         return open_workspace_memory_lock(path)
 
-    memory.open_workspace_memory_lock = observed_gate
+    admission.storage.open_workspace_memory_lock = observed_gate
     try:
         MemoryStore(Path(workspace))
     except Exception as exc:
@@ -169,10 +169,9 @@ def test_memory_store_rechecks_receipt_after_waiting_for_authority_lock(
             # gate entry until after the receipt is durably published.
             continue_gate.set()
 
-        assert _receive(result) == (
-            "error",
-            "MemoryReceiptRecoveryRequiredError: memory recovery required",
-        )
+        error, detail = _receive(result)
+        assert error == "error"
+        assert detail == "StartupReceiptAdmissionError: memory recovery required"
         _finish_process(process)
         assert legacy.read_text(encoding="utf-8") == "[2026-01-01 00:00] legacy history\n"
         assert not (memory_dir / "history.jsonl").exists()
@@ -280,14 +279,16 @@ def test_windows_noop_gate_preserves_both_receipt_checks(
     monkeypatch: pytest.MonkeyPatch,
     receipt_arrives: bool,
 ) -> None:
-    from nanobot.agent import memory
+    from types import SimpleNamespace
 
-    monkeypatch.setattr(memory, "_is_windows", lambda: True)
+    from nanobot.agent import memory_recovery_startup_admission as admission
+
+    monkeypatch.setattr(admission, "os", SimpleNamespace(name="nt"))
     memory_dir = tmp_path / "memory"
     memory_dir.mkdir()
     legacy = memory_dir / "HISTORY.md"
     legacy.write_text("[2026-01-01 00:00] legacy history\n", encoding="utf-8")
-    real_preflight = memory.require_memory_receipt_recovery
+    real_preflight = admission.require_memory_receipt_recovery
     preflight_calls = 0
 
     def record_preflight(path: Path) -> None:
@@ -300,8 +301,8 @@ def test_windows_noop_gate_preserves_both_receipt_checks(
     def unexpected_posix_gate(path: Path | str) -> object:
         pytest.fail("Windows constructor attempted to acquire the POSIX memory gate")
 
-    monkeypatch.setattr(memory, "require_memory_receipt_recovery", record_preflight)
-    monkeypatch.setattr(memory, "open_workspace_memory_lock", unexpected_posix_gate)
+    monkeypatch.setattr(admission, "require_memory_receipt_recovery", record_preflight)
+    monkeypatch.setattr(admission.storage, "open_workspace_memory_lock", unexpected_posix_gate)
 
     if receipt_arrives:
         with pytest.raises(MemoryReceiptRecoveryRequiredError) as failure:
@@ -315,23 +316,21 @@ def test_windows_noop_gate_preserves_both_receipt_checks(
         assert not legacy.exists()
         assert (memory_dir / "history.jsonl").is_file()
 
-    assert preflight_calls == 2
+    assert preflight_calls == (2 if receipt_arrives else 6)
 
 
 def test_unavailable_posix_gate_is_not_silently_ignored(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.agent import memory
-
-    monkeypatch.setattr(memory, "_is_windows", lambda: False)
+    from nanobot.agent import memory_recovery_startup_admission as admission
 
     def unavailable_gate(path: Path | str) -> object:
         raise storage.MemoryStorageUnavailableError()
 
-    monkeypatch.setattr(memory, "open_workspace_memory_lock", unavailable_gate)
+    monkeypatch.setattr(admission.storage, "open_workspace_memory_lock", unavailable_gate)
 
-    with pytest.raises(storage.MemoryStorageUnavailableError):
+    with pytest.raises(MemoryReceiptRecoveryRequiredError, match="memory recovery required"):
         MemoryStore(tmp_path)
 
     assert tmp_path.is_dir()

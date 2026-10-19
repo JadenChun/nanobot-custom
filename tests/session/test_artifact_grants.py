@@ -33,7 +33,7 @@ from nanobot.session.manager import JsonlSessionStore, Session
 from nanobot.session.source_store import SourceSessionStore
 from nanobot.session.turn_writer import SourceTurnWriter
 from nanobot.utils.llm_runtime import LLMRuntime
-from session.test_artifact import fixture
+from tests.session.test_artifact import fixture
 
 
 @asynccontextmanager
@@ -803,3 +803,294 @@ async def test_policy_terminal_cannot_seal_child_handoff(tmp_path, finish_reason
 
         assert result.stop_reason == finish_reason
         assert result.artifact_handoff_receipt is None
+
+
+@asynccontextmanager
+async def _durable_child_evidence(tmp_path):
+    async with published_artifact(tmp_path, child=True) as (_, child, tool, store, descriptor, _):
+        collector = ArtifactHandoffCollector(ArtifactReader(child, "isolated_stream", store, tool))
+        receipt = collector.select([descriptor.reference])
+        child.begin_tool_batch({
+            "role": "assistant", "content": "", "tool_calls": [{
+                "id": "handoff", "type": "function",
+                "function": {"name": "handoff_artifact", "arguments": "{}"},
+            }],
+        })
+        event_id = await child.record_tool_result_event(KnownToolResult(
+            0, "handoff", "handoff_artifact", "accepted", "accepted", {"status": "ok"}, True,
+            handoff_receipt=receipt,
+        ))
+        collector.record(receipt, event_id)
+        child.append_message({"role": "assistant", "content": "complete"})
+        yield child, collector, receipt, store, descriptor, event_id
+
+
+@pytest.mark.parametrize("fault", [
+    "none", "dispatch_first", "snapshot_first", "verify", "dispatch_final",
+    "source_exit", "blobs_exit", "construct", "seal_before", "seal_after",
+    "invalidate_before", "invalidate_after", "missing_tool", "unretained_tool",
+    "missing_terminal", "selection_changed", "events_changed",
+])
+async def test_child_evidence_preserves_finalization_order_and_partial_failures(tmp_path, monkeypatch, fault):
+    from contextlib import contextmanager
+
+    import nanobot.session.artifact_grants as grants_module
+    import nanobot.session.execution_owner as execution_module
+
+    async with _durable_child_evidence(tmp_path) as (child, collector, receipt, store, descriptor, event_id):
+        if fault == "missing_tool":
+            receipt._tool_events = []
+        elif fault == "unretained_tool":
+            receipt._tool_events = ["not-a-durable-child-event"]
+        elif fault == "missing_terminal":
+            child.append_message({"role": "user", "content": "still working"})
+        before = child.owner.read_snapshot()
+        failure = RuntimeError("controlled finalization fault")
+        trace = []
+        constructed = []
+        dispatch_count = 0
+        snapshot_count = 0
+        original_dispatch = child.owner.validate_dispatch
+        original_snapshot = child.owner.read_snapshot
+        original_verify = ArtifactReader._verify_descriptor
+        original_source = execution_module.execution_transaction
+        original_blobs = store.transaction
+        original_construct = ArtifactHandoffReceipt.__init__
+        original_seal = ArtifactHandoffReceipt._seal
+        original_invalidate = ArtifactHandoffReceipt._invalidate
+
+        def dispatch():
+            nonlocal dispatch_count
+            dispatch_count += 1
+            trace.append("dispatch")
+            if (fault == "dispatch_first" and dispatch_count == 1
+                    or fault == "dispatch_final" and dispatch_count == 3):
+                raise failure
+            return original_dispatch()
+
+        def snapshot():
+            nonlocal snapshot_count
+            snapshot_count += 1
+            trace.append("snapshot")
+            if fault == "snapshot_first" and snapshot_count == 1:
+                raise failure
+            return original_snapshot()
+
+        def verify(reader, selected, captured, blobs, *, require_native):
+            trace.append("verify")
+            assert require_native is True
+            assert selected == descriptor
+            if fault == "verify":
+                raise failure
+            result = original_verify(reader, selected, captured, blobs, require_native=require_native)
+            if fault == "selection_changed":
+                receipt._descriptors = (replace(descriptor, artifact_id="changed-selection"),)
+            elif fault == "events_changed":
+                receipt._tool_events.append(event_id)
+            return result
+
+        @contextmanager
+        def source(*args, **kwargs):
+            trace.append("source_enter")
+            try:
+                with original_source(*args, **kwargs):
+                    yield
+            finally:
+                trace.append("source_exit")
+            if fault == "source_exit":
+                raise failure
+
+        @contextmanager
+        def blobs():
+            trace.append("blobs_enter")
+            try:
+                with original_blobs() as transaction:
+                    yield transaction
+            finally:
+                trace.append("blobs_exit")
+            if fault == "blobs_exit":
+                raise failure
+
+        def construct(merged, capability, bound_collector, descriptors):
+            trace.append("construct")
+            if fault == "construct":
+                raise failure
+            original_construct(merged, capability, bound_collector, descriptors)
+            constructed.append(merged)
+
+        def seal(merged, capability):
+            trace.append("seal")
+            if fault == "seal_before":
+                raise failure
+            original_seal(merged, capability)
+            if fault == "seal_after":
+                raise failure
+
+        def invalidate(selected, capability):
+            trace.append("invalidate")
+            if fault == "invalidate_before":
+                raise failure
+            original_invalidate(selected, capability)
+            if fault == "invalidate_after":
+                raise failure
+
+        expected = ["blobs_enter", "source_enter", "dispatch", "snapshot", "verify",
+                    "dispatch", "snapshot", "dispatch", "source_exit", "blobs_exit",
+                    "construct", "seal", "invalidate"]
+        terminal = {
+            "dispatch_first": 3, "snapshot_first": 4, "verify": 5, "dispatch_final": 8,
+            "source_exit": 9, "blobs_exit": 10, "construct": 11,
+            "seal_before": 12, "seal_after": 12, "invalidate_before": 13, "invalidate_after": 13,
+        }
+        refusal = fault in {"missing_tool", "unretained_tool", "missing_terminal"}
+        successful = fault in {"none", "selection_changed", "events_changed"}
+        with monkeypatch.context() as patch:
+            patch.setattr(child.owner, "validate_dispatch", dispatch)
+            patch.setattr(child.owner, "read_snapshot", snapshot)
+            patch.setattr(ArtifactReader, "_verify_descriptor", verify)
+            patch.setattr(execution_module, "execution_transaction", source)
+            if hasattr(grants_module, "execution_transaction"):
+                patch.setattr(grants_module, "execution_transaction", source)
+            patch.setattr(store, "transaction", blobs)
+            patch.setattr(ArtifactHandoffReceipt, "__init__", construct)
+            patch.setattr(ArtifactHandoffReceipt, "_seal", seal)
+            patch.setattr(ArtifactHandoffReceipt, "_invalidate", invalidate)
+            if successful:
+                merged = collector.finalize(stop_reason="completed")
+                assert merged is not None
+                assert merged._descriptors == (descriptor,)
+                assert merged._tool_events == ([event_id, event_id] if fault == "events_changed" else [event_id])
+                assert merged._sealed and not merged._consumed
+            elif refusal:
+                message = ("Artifact handoff has no successful child terminal event"
+                           if fault == "missing_terminal" else "Artifact handoff result was not retained")
+                with pytest.raises(ArtifactValidationError, match="^" + message + "$"):
+                    collector.finalize(stop_reason="completed")
+            else:
+                with pytest.raises(RuntimeError) as exc:
+                    collector.finalize(stop_reason="completed")
+                assert exc.value is failure
+
+        if successful:
+            assert trace == expected
+        elif refusal:
+            assert trace == expected[:4] + ["source_exit", "blobs_exit"]
+        else:
+            end = terminal[fault]
+            assert trace == expected[:end] + (["source_exit", "blobs_exit"] if end <= 8
+                                            else ["blobs_exit"] if end == 9 else [])
+        assert collector._closed
+        assert receipt._consumed is (successful or fault == "invalidate_after")
+        if constructed:
+            assert constructed[0]._sealed is (successful or fault in {
+                "seal_after", "invalidate_before", "invalidate_after",
+            })
+        trace_before_repeat = list(trace)
+        assert collector.finalize(stop_reason="completed") is None
+        assert trace == trace_before_repeat
+        assert child.owner.read_snapshot() == before
+
+
+@pytest.mark.parametrize("case", ["native", "unknown", "borrowed", "source_changed", "corrupt_blob"])
+async def test_native_selection_operation_verifies_before_returning_without_granting(tmp_path, monkeypatch, case):
+    from nanobot.session.execution_owner import execution_transaction
+
+    async with published_artifact(tmp_path) as (_, writer, tool, store, descriptor, _):
+        reader = ArtifactReader(writer, "root_history", store, tool)
+        if case == "borrowed":
+            child = writer.child_stream()
+            grants = ArtifactGrantSet.issue_downward(reader, child, [descriptor.reference])
+            reader = ArtifactReader(child, "isolated_stream", store, tool, grants=grants)
+        snapshot = writer.owner.read_snapshot()
+        captured = (replace(snapshot, state=replace(snapshot.state, generation=snapshot.state.generation + 1))
+                    if case == "source_changed" else snapshot)
+        if case == "corrupt_blob":
+            store.root.joinpath(*store._parts, descriptor.artifact_id + ".blob").write_bytes(b"corrupt")
+        verified = []
+        original_verify = ArtifactReader._verify_descriptor
+
+        def verify(bound_reader, selected, source, blobs, *, require_native):
+            assert require_native is True
+            result = original_verify(bound_reader, selected, source, blobs, require_native=require_native)
+            verified.append(selected)
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ArtifactReader, "_verify_descriptor", verify)
+            with store.transaction() as blobs:
+                with execution_transaction(writer.store._backend, writer.owner.key, writer.owner):
+                    if case == "native":
+                        selected = reader.verify_native_artifact(descriptor.artifact_id, captured, blobs)
+                        assert selected == descriptor
+                        assert len(verified) == 1 and selected is verified[0]
+                    else:
+                        expected = OSError if case == "corrupt_blob" else ArtifactValidationError
+                        with pytest.raises(expected):
+                            reader.verify_native_artifact(
+                                "unknown-artifact" if case == "unknown" else descriptor.artifact_id,
+                                captured, blobs,
+                            )
+                        assert verified == []
+        assert writer.owner.read_snapshot() == snapshot
+        if case == "borrowed":
+            # A native-evidence refusal does not revoke or widen the separately
+            # admitted received grant; normal read still uses that exact grant.
+            assert reader.read(descriptor.reference).reference == descriptor.reference
+
+
+async def test_child_evidence_operation_returns_only_verified_descriptor_identities(tmp_path, monkeypatch):
+    from nanobot.session.execution_owner import execution_transaction
+
+    async with _durable_child_evidence(tmp_path) as (child, collector, receipt, store, _, _):
+        selected = receipt._descriptors[0]
+        snapshot = child.owner.read_snapshot()
+        event_ids = {row.get("_event_id") for row in snapshot.events
+                     if row.get("_stream_id") == child.stream_id}
+        original_verify = ArtifactReader._verify_descriptor
+        verified = []
+
+        def verify(reader, descriptor, captured, blobs, *, require_native):
+            result = original_verify(reader, descriptor, captured, blobs, require_native=require_native)
+            verified.append(descriptor)
+            # The owning operation must return what it actually verified, not
+            # reread a replaced private tuple after the validation callback.
+            receipt._descriptors = (replace(selected, artifact_id="unverified-replacement"),)
+            return result
+
+        with monkeypatch.context() as patch:
+            patch.setattr(ArtifactReader, "_verify_descriptor", verify)
+            with store.transaction() as blobs:
+                with execution_transaction(child.store._backend, child.owner.key, child.owner):
+                    evidence = receipt.verify_child_evidence(
+                        collector.reader, snapshot, blobs, event_ids=event_ids,
+                    )
+        assert verified == [selected]
+        assert evidence == (selected,) and evidence[0] is selected
+        assert not receipt._sealed and not receipt._consumed and not collector._closed
+        assert child.owner.read_snapshot() == snapshot
+
+
+@pytest.mark.parametrize("native", [False, True])
+async def test_shared_reference_parser_retains_late_bound_grant_subclass_hook(tmp_path, native):
+    async with published_artifact(tmp_path) as (_, writer, tool, store, descriptor, _):
+        observed = []
+
+        class SpecializedGrants(ArtifactGrantSet):
+            @staticmethod
+            def _references(value):
+                observed.append(value)
+                return (descriptor.artifact_id,) if native else ()
+
+        reader = ArtifactReader(writer, "root_history", store, tool)
+        child = writer.child_stream()
+        input_marker = object()
+        before = writer.owner.read_snapshot()
+        grants = SpecializedGrants.issue_downward(reader, child, input_marker)
+
+        assert type(grants) is SpecializedGrants
+        assert len(observed) == 1 and observed[0] is input_marker
+        assert grants.references == ((descriptor.reference,) if native else ())
+        if native:
+            admitted = ArtifactReader(child, "isolated_stream", store, tool, grants=grants)
+            assert admitted.read(descriptor.reference).reference == descriptor.reference
+        assert writer.owner.read_snapshot() == before

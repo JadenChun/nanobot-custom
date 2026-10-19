@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from nanobot.session.source import SourceValidationError, canonical_events, validate_execution_links
 
@@ -104,6 +105,7 @@ def read_user_activity(metadata: object) -> UserActivity | None:
 
     if not isinstance(metadata, dict):
         raise SourceValidationError("Invalid idle activity metadata")
+    metadata = cast(Mapping[object, object], metadata)
     revision_present = USER_ACTIVITY_REVISION_KEY in metadata
     timestamp_present = LAST_USER_ACTIVITY_AT_KEY in metadata
     if not revision_present and not timestamp_present:
@@ -135,7 +137,7 @@ def _canonical_fingerprint(value: object) -> str:
 
 def _checkpoint_binding(snapshot: SourceSnapshot) -> tuple[str | None, int | None, bool]:
     metadata = snapshot.header.get("metadata")
-    raw = metadata.get("context_checkpoint") if isinstance(metadata, dict) else None
+    raw = cast(Mapping[object, object], metadata).get("context_checkpoint") if isinstance(metadata, dict) else None
     if raw is None:
         return None, None, True
     if snapshot.checkpoint is None:
@@ -154,8 +156,9 @@ def durable_idle_state(snapshot: SourceSnapshot, *, runtime_checkpoint_present: 
     metadata = snapshot.header.get("metadata")
     if not isinstance(metadata, dict):
         raise SourceValidationError("Invalid idle durable state")
+    metadata = cast(Mapping[object, object], metadata)
     unresolved = tuple(sorted(validate_execution_links(snapshot.events)))
-    values = {
+    values: dict[str, object] = {
         "execution_lease": metadata.get("execution_lease") if "execution_lease" in metadata else None,
         "execution_recovery_required": (
             metadata.get("execution_recovery_required")
@@ -187,9 +190,9 @@ def capture_idle_token(
 ) -> IdleCaptureToken | None:
     """Create a detached token; legacy sessions with no activity stay ineligible."""
 
-    if not isinstance(runtime_checkpoint_present, bool):
+    if not isinstance(cast(object, runtime_checkpoint_present), bool):
         raise SourceValidationError("Invalid idle durable state")
-    activity = read_user_activity(snapshot.header.get("metadata"))
+    activity: UserActivity | None = read_user_activity(snapshot.header.get("metadata"))
     if activity is None:
         return None
     checkpoint_id, checkpoint_revision, checkpoint_valid = _checkpoint_binding(snapshot)
@@ -233,4 +236,4 @@ def checkpoint_candidate_fingerprint(candidate: object) -> str:
 
     if not isinstance(candidate, dict):
         raise SourceValidationError("Invalid idle checkpoint candidate")
-    return hashlib.sha256(canonical_events([candidate])).hexdigest()
+    return hashlib.sha256(canonical_events([cast(dict[object, object], candidate)])).hexdigest()

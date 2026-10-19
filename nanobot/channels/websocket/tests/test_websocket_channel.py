@@ -15,6 +15,8 @@ import websockets
 from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed
 from websockets.frames import Close
+from websockets.http11 import Request as WsRequest
+from websockets.http11 import Response as WsResponse
 
 from nanobot.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
@@ -3959,6 +3961,92 @@ async def test_http_route_issues_token_then_websocket_requires_it(bus: MagicMock
         await server_task
 
 
+class _OfflineSettingsConnection:
+    """Frame-only transport; gateway auth and application responses remain real."""
+
+    def __init__(self, request: WsRequest) -> None:
+        self.request = request
+        self.remote_address = ("127.0.0.1", 12345)
+        self.incoming: asyncio.Queue[str | None] = asyncio.Queue()
+        self.outgoing: asyncio.Queue[str] = asyncio.Queue()
+        self.closed = False
+
+    def __aiter__(self) -> "_OfflineSettingsConnection":
+        return self
+
+    async def __anext__(self) -> str:
+        raw = await self.incoming.get()
+        if raw is None:
+            raise StopAsyncIteration
+        return raw
+
+    async def send(self, raw: str) -> None:
+        await self.outgoing.put(raw)
+
+    def respond(self, status: int, text: str) -> WsResponse:
+        return WsResponse(status, "", Headers(), text.encode())
+
+    async def close(self, code: int = 1000, reason: str = "") -> None:
+        if not self.closed:
+            self.closed = True
+            await self.incoming.put(None)
+
+
+class _OfflineSettingsClient:
+    def __init__(self, connection: _OfflineSettingsConnection) -> None:
+        self.connection = connection
+
+    async def send(self, raw: str) -> None:
+        await self.connection.incoming.put(raw)
+
+    async def recv(self) -> str:
+        return await self.connection.outgoing.get()
+
+    async def close(self) -> None:
+        await self.connection.close()
+
+
+def _offline_settings_channel(config_path: Path, *, port: int) -> WebSocketChannel:
+    bus = MessageBus()
+    config = WebSocketConfig.model_validate({
+        "enabled": True, "allowFrom": ["*"], "host": "127.0.0.1",
+        "port": port, "path": "/ws", "websocketRequiresToken": True,
+    })
+    gateway = build_gateway_services(
+        config=config,
+        bus=bus,
+        session_manager=None,
+        static_dist_path=None,
+        workspace_path=load_config(config_path).workspace_path,
+        default_restrict_to_workspace=False,
+        config_path=config_path,
+        runtime_model_name=None,
+        runtime_surface="browser",
+        runtime_capabilities_overrides=None,
+    )
+    return WebSocketChannel(config, bus, gateway=gateway)
+
+
+async def _offline_settings_get(
+    channel: WebSocketChannel,
+    path: str,
+    *,
+    headers: dict[str, str],
+) -> httpx.Response:
+    request = WsRequest(path, Headers(headers))
+    connection = _OfflineSettingsConnection(request)
+    response = await channel.gateway.endpoint.process_request(
+        connection, request, is_allowed=channel.is_allowed,
+    )
+    assert isinstance(response, WsResponse)
+    return httpx.Response(
+        response.status_code,
+        headers=list(response.headers.raw_items()),
+        content=response.body,
+        request=httpx.Request("GET", f"http://nanobot.local{path}"),
+    )
+
+
 @pytest.mark.asyncio
 async def test_settings_api_returns_safe_subset_and_updates_whitelist(
     bus: MagicMock,
@@ -3968,6 +4056,8 @@ async def test_settings_api_returns_safe_subset_and_updates_whitelist(
     port = 29891
     config_path = tmp_path / "config.json"
     config = Config()
+    # Own every path in copied state without changing default-path presentation assertions.
+    config.agents.defaults.workspace = str(tmp_path / ".nanobot" / "workspace")
     config.agents.defaults.model = "openai/gpt-4o"
     config.providers.openai.api_key = "secret-key"
     config.model_presets["deep"] = ModelPresetConfig(
@@ -3980,6 +4070,8 @@ async def test_settings_api_returns_safe_subset_and_updates_whitelist(
     expected_timezone = config.agents.defaults.timezone
     save_config(config, config_path)
     monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.setattr("nanobot.webui.workspaces.get_webui_dir", lambda: tmp_path / "webui")
+    assert load_config(config_path).agents.defaults.max_tokens == 4096
     monkeypatch.setattr(
         "nanobot.webui.settings_api._oauth_provider_status",
         lambda _spec: {
@@ -4001,23 +4093,31 @@ async def test_settings_api_returns_safe_subset_and_updates_whitelist(
         image_reload,
     )
 
-    channel = _ch(bus, port=port)
+    channel = _offline_settings_channel(config_path, port=port)
     channel.gateway.tokens.api_tokens["tok"] = time.monotonic() + 300
 
-    server_task = asyncio.create_task(channel.start())
-    await asyncio.sleep(0.3)
-
     webui_client = None
+    connection_task = None
     try:
         webui_token = channel.gateway.tokens.issue_token(300, audience="webui")
-        webui_client = await websockets.connect(
-            f"ws://127.0.0.1:{port}/ws?token={webui_token}&client_id=settings-test"
+        connection = _OfflineSettingsConnection(
+            WsRequest(
+                f"/ws?token={webui_token}&client_id=settings-test",
+                Headers({"Upgrade": "websocket", "Connection": "Upgrade"}),
+            )
         )
+        handshake = await channel.gateway.endpoint.process_request(
+            connection, connection.request, is_allowed=channel.is_allowed,
+        )
+        assert handshake is None
+        assert channel.gateway.endpoint.is_webui_connection(connection)
+        webui_client = _OfflineSettingsClient(connection)
+        connection_task = asyncio.create_task(channel._connection_loop(connection))
         ready = json.loads(await asyncio.wait_for(webui_client.recv(), timeout=5))
         assert ready["event"] == "ready"
 
-        settings = await _http_get(
-            f"http://127.0.0.1:{port}/api/settings",
+        settings = await _offline_settings_get(
+            channel, "/api/settings",
             headers={"Authorization": "Bearer tok"},
         )
         assert settings.status_code == 200
@@ -4025,7 +4125,7 @@ async def test_settings_api_returns_safe_subset_and_updates_whitelist(
         assert body["agent"]["model"] == "openai/gpt-4o"
         assert body["agent"]["provider"] == "openai"
         assert body["agent"]["model_preset"] == "default"
-        assert body["agent"]["max_tokens"] == 8192
+        assert body["agent"]["max_tokens"] == 4096
         assert body["agent"]["timezone"] == expected_timezone
         assert "bot_name" not in body["agent"]
         assert "bot_icon" not in body["agent"]
@@ -4096,8 +4196,8 @@ async def test_settings_api_returns_safe_subset_and_updates_whitelist(
         assert "secret-key" not in settings.text
         assert "brave-secret" not in settings.text
 
-        unknown_api = await _http_get(
-            f"http://127.0.0.1:{port}/api/settings/model-configurations/missing",
+        unknown_api = await _offline_settings_get(
+            channel, "/api/settings/model-configurations/missing",
             headers={"Authorization": "Bearer tok"},
         )
         assert unknown_api.status_code == 404
@@ -4373,8 +4473,9 @@ async def test_settings_api_returns_safe_subset_and_updates_whitelist(
     finally:
         if webui_client is not None:
             await webui_client.close()
+        if connection_task is not None:
+            await asyncio.wait_for(connection_task, timeout=5)
         await channel.stop()
-        await server_task
 
 
 @pytest.mark.asyncio

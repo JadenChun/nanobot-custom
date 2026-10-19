@@ -2,7 +2,7 @@ import asyncio
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -1505,6 +1505,8 @@ async def test_send_remote_media_url_after_security_validation(monkeypatch) -> N
             "chat_id": 123,
             "photo": "https://example.com/cat.jpg",
             "reply_parameters": None,
+            "caption": "Attached file.",
+            "parse_mode": "HTML",
         }
     ]
 
@@ -1535,6 +1537,8 @@ async def test_send_local_media_preserves_filename(tmp_path: Path) -> None:
             "document": b"# Report\n",
             "reply_parameters": None,
             "filename": "report.final.md",
+            "caption": "Attached file.",
+            "parse_mode": "HTML",
         }
     ]
 
@@ -2002,20 +2006,21 @@ async def test_forward_command_does_not_inject_reply_context() -> None:
 
 
 @pytest.mark.asyncio
-async def test_forward_command_pairs_unauthorized_private_user(monkeypatch) -> None:
+async def test_forward_command_rejects_unauthorized_private_user(monkeypatch) -> None:
     channel = TelegramChannel(
         TelegramConfig(enabled=True, token="123:abc", allow_from=["999"], group_policy="open"),
         MessageBus(),
     )
     _install_ready_app(channel)
     monkeypatch.setattr(
-        "nanobot.channels.base.generate_code", lambda _ch, _sid: "ABCD-EFGH"
+        "nanobot.channels.base.generate_code",
+        Mock(side_effect=AssertionError("unexpected pairing")),
     )
 
     await channel._forward_command(_make_telegram_update(text="/new", chat_type="private"), None)
 
-    assert len(channel._app.bot.sent_messages) == 1
-    assert "ABCD-EFGH" in channel._app.bot.sent_messages[0]["text"]
+    assert channel._app.bot.sent_messages == []
+    assert channel.bus.inbound_size == 0
 
 
 @pytest.mark.asyncio
@@ -2115,7 +2120,7 @@ async def test_on_help_includes_restart_command() -> None:
 
 
 @pytest.mark.asyncio
-async def test_on_start_sends_pairing_code_to_unauthorized_private_user(monkeypatch) -> None:
+async def test_on_start_rejects_unauthorized_private_user(monkeypatch) -> None:
     channel = TelegramChannel(
         TelegramConfig(enabled=True, token="123:abc", allow_from=["999"], group_policy="open"),
         MessageBus(),
@@ -2124,18 +2129,19 @@ async def test_on_start_sends_pairing_code_to_unauthorized_private_user(monkeypa
     update = _make_telegram_update(text="/start", chat_type="private")
     update.message.reply_text = AsyncMock()
     monkeypatch.setattr(
-        "nanobot.channels.base.generate_code", lambda _ch, _sid: "ABCD-EFGH"
+        "nanobot.channels.base.generate_code",
+        Mock(side_effect=AssertionError("unexpected pairing")),
     )
 
     await channel._on_start(update, None)
 
     update.message.reply_text.assert_not_awaited()
-    assert len(channel._app.bot.sent_messages) == 1
-    assert "ABCD-EFGH" in channel._app.bot.sent_messages[0]["text"]
+    assert channel._app.bot.sent_messages == []
+    assert channel.bus.inbound_size == 0
 
 
 @pytest.mark.asyncio
-async def test_on_help_sends_pairing_code_to_unauthorized_private_user(monkeypatch) -> None:
+async def test_on_help_rejects_unauthorized_private_user(monkeypatch) -> None:
     channel = TelegramChannel(
         TelegramConfig(enabled=True, token="123:abc", allow_from=["999"], group_policy="open"),
         MessageBus(),
@@ -2144,18 +2150,19 @@ async def test_on_help_sends_pairing_code_to_unauthorized_private_user(monkeypat
     update = _make_telegram_update(text="/help", chat_type="private")
     update.message.reply_text = AsyncMock()
     monkeypatch.setattr(
-        "nanobot.channels.base.generate_code", lambda _ch, _sid: "ABCD-EFGH"
+        "nanobot.channels.base.generate_code",
+        Mock(side_effect=AssertionError("unexpected pairing")),
     )
 
     await channel._on_help(update, None)
 
     update.message.reply_text.assert_not_awaited()
-    assert len(channel._app.bot.sent_messages) == 1
-    assert "ABCD-EFGH" in channel._app.bot.sent_messages[0]["text"]
+    assert channel._app.bot.sent_messages == []
+    assert channel.bus.inbound_size == 0
 
 
 @pytest.mark.asyncio
-async def test_on_message_pairs_unauthorized_private_user_before_side_effects(
+async def test_on_message_rejects_unauthorized_private_user_before_side_effects(
     monkeypatch,
 ) -> None:
     channel = TelegramChannel(
@@ -2168,7 +2175,8 @@ async def test_on_message_pairs_unauthorized_private_user_before_side_effects(
     channel._add_reaction = AsyncMock(return_value=None)
     channel._download_message_media = AsyncMock(return_value=([], []))
     monkeypatch.setattr(
-        "nanobot.channels.base.generate_code", lambda _ch, _sid: "ABCD-EFGH"
+        "nanobot.channels.base.generate_code",
+        Mock(side_effect=AssertionError("unexpected pairing")),
     )
 
     await channel._on_message(_make_telegram_update(text="hello", chat_type="private"), None)
@@ -2176,8 +2184,8 @@ async def test_on_message_pairs_unauthorized_private_user_before_side_effects(
     assert started_typing == []
     channel._add_reaction.assert_not_awaited()
     channel._download_message_media.assert_not_awaited()
-    assert len(channel._app.bot.sent_messages) == 1
-    assert "ABCD-EFGH" in channel._app.bot.sent_messages[0]["text"]
+    assert channel._app.bot.sent_messages == []
+    assert channel.bus.inbound_size == 0
 
 
 @pytest.mark.asyncio

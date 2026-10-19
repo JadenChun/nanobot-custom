@@ -17,6 +17,8 @@ from nanobot import __version__
 from nanobot.bus.events import INBOUND_META_USER_SHELL, OutboundMessage
 from nanobot.command.router import CommandContext, CommandRouter, normalize_command_text
 from nanobot.providers.base import LLMUsage
+from nanobot.session.manager import SESSION_MODEL_PRESET_METADATA_KEY
+from nanobot.session.pending_followups import PendingFollowupStopError
 from nanobot.utils.helpers import build_status_content
 from nanobot.utils.restart import set_restart_notice_to_env
 from nanobot.utils.workspace_prompts import initialize_workspace_prompt
@@ -215,7 +217,15 @@ async def cmd_stop(ctx: CommandContext) -> OutboundMessage:
     """Cancel all active tasks and subagents for the session."""
     loop = ctx.loop
     msg = ctx.msg
-    total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+    try:
+        total = await loop._cancel_active_tasks(ctx.key)  # pyright: ignore[reportPrivateUsage]
+    except PendingFollowupStopError:
+        logger.exception("Stop request failed for session {}", ctx.key)
+        return OutboundMessage(
+            channel=msg.channel, chat_id=msg.chat_id,
+            content="Could not complete the stop request. Please retry.",
+            metadata=dict(msg.metadata or {}),
+        )
     # Also drain pending queue to prevent mid-turn injection deadlock
     pending = loop._pending_queues.pop(ctx.key, None)  # pyright: ignore[reportPrivateUsage]
     if pending is not None:
@@ -340,9 +350,16 @@ async def cmd_new(ctx: CommandContext) -> OutboundMessage:
             metadata=dict(session.metadata),
             provider_state=None,
         )
-    session.clear()
-    loop.sessions.save(session)
-    loop.sessions.invalidate(session.key)
+    if not session.policy.persist:
+        session.clear()
+        archive_snapshot = None
+    elif loop.sessions.has_managed_authority:
+        loop.sessions.reset_session(session.key)
+    else:
+        session.clear()
+        loop.sessions.save(session)
+    if session.policy.persist:
+        loop.sessions.invalidate(session.key)
     if archive_snapshot is not None and runtime is not None:
         loop.schedule_background(
             loop.consolidator.archive_session(  # pyright: ignore[reportUnknownMemberType]
@@ -432,7 +449,11 @@ async def cmd_model(ctx: CommandContext) -> OutboundMessage:
 
     name = args
     try:
-        runtime = loop.set_session_model_preset(ctx.key, name)
+        if ctx.session is not None and not ctx.session.policy.persist:
+            runtime = loop.runtime_resolver.resolve_preset(name)
+            ctx.session.metadata[SESSION_MODEL_PRESET_METADATA_KEY] = runtime.model_preset
+        else:
+            runtime = loop.set_session_model_preset(ctx.key, name)
     except (KeyError, ValueError) as exc:
         names = _model_preset_names(loop)
         return OutboundMessage(

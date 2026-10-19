@@ -12,7 +12,7 @@ import os
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from nanobot.agent import memory_recovery as receipt_codec
 from nanobot.agent import memory_recovery_storage as storage
@@ -128,11 +128,11 @@ def _fsync(fd: int) -> None:
 
 
 def _stat_at(parent_fd: int, name: str) -> storage.MemoryTargetStatIdentity | None:
-    info = storage._stat_entry(parent_fd, name)
+    info = storage.stat_recovery_entry(parent_fd, name)
     if info is None:
         return None
-    storage._valid_memory_target(name, info)
-    return storage._target_stat_identity(info)
+    storage.require_safe_memory_target(name, info)
+    return storage.memory_target_stat_identity(info)
 
 
 def _durably_verify_memory(
@@ -181,15 +181,15 @@ def _durably_verify_memory(
             if identity is None:
                 _fail()
             try:
-                target_fd = os.open(
-                    "MEMORY.md", storage._leaf_flags(), dir_fd=parent_fd,
+                target_fd = storage.open_recovery_read_leaf(
+                    os.open, "MEMORY.md", parent_fd,
                 )
                 opened = os.fstat(target_fd)
             except (OSError, TypeError, ValueError):
                 _fail()
-            storage._valid_memory_target("MEMORY.md", opened)
+            storage.require_safe_memory_target("MEMORY.md", opened)
             if (
-                storage._target_stat_identity(opened) != identity
+                storage.memory_target_stat_identity(opened) != identity
                 or _stat_at(parent_fd, "MEMORY.md") != identity
             ):
                 _fail()
@@ -201,10 +201,10 @@ def _durably_verify_memory(
                 opened_after = os.fstat(target_fd)
             except (OSError, TypeError, ValueError):
                 _fail()
-            storage._valid_memory_target("MEMORY.md", opened_after)
+            storage.require_safe_memory_target("MEMORY.md", opened_after)
             if (
                 not _same_snapshot(snapshot, current)
-                or storage._target_stat_identity(opened_after) != identity
+                or storage.memory_target_stat_identity(opened_after) != identity
                 or _stat_at(parent_fd, "MEMORY.md") != identity
             ):
                 _fail()
@@ -214,8 +214,8 @@ def _durably_verify_memory(
     except Exception:
         _fail()
     finally:
-        storage._close(target_fd)
-        storage._close(parent_fd)
+        storage.close_recovery_descriptor(target_fd)
+        storage.close_recovery_descriptor(parent_fd)
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,11 +243,13 @@ def _check_memory_blob(
         if descriptor.exists or descriptor.blob_digest is not None or descriptor.size != 0:
             _fail()
         return
+    # The decoded descriptor is frozen. The preceding digest equality proves
+    # a string before read_blob is reached; preserve the second digest read.
     if (
         not descriptor.exists
         or descriptor.blob_digest != _hash(expected)
         or descriptor.size != len(expected)
-        or authority.read_blob(descriptor.blob_digest) != expected
+        or authority.read_blob(cast(str, descriptor.blob_digest)) != expected
     ):
         _fail()
 
@@ -267,7 +269,7 @@ def _proof_locked(
     raw_receipt = receipt_snapshot.content
     if raw_receipt is None:
         _fail()
-    receipt = receipt_codec._validate_payload(receipt_codec._decode(raw_receipt), raw_receipt)
+    receipt = receipt_codec.decode_memory_receipt_bytes(raw_receipt)
     if transaction.capture_transaction_payload(
         receipt,
         workspace_id=workspace_id,
@@ -282,7 +284,7 @@ def _proof_locked(
     prepared = transaction.decode_transaction_payload(
         "PREPARED", records[1].payload, captured=captured,
     )
-    if preparation._receipt_stat(receipt_snapshot) != prepared.receipt_stat.to_payload():
+    if preparation.receipt_snapshot_stat(receipt_snapshot) != prepared.receipt_stat.to_payload():
         _fail()
 
     history_applied = transaction.decode_transaction_payload(
@@ -297,7 +299,7 @@ def _proof_locked(
     if history_applied != expected_history_applied:
         _fail()
 
-    conversion_prepared = preparation._conversion_evidence(
+    conversion_prepared = preparation.require_transaction_conversion_evidence(
         authority,
         captured,
         records[0],
@@ -313,7 +315,7 @@ def _proof_locked(
         _fail()
 
     source_bytes = checked_session.read_source_bytes()
-    source_payload, proposed_source_bytes = preparation._source_proposal(
+    source_payload, proposed_source_bytes = preparation.derive_recovery_source_proposal(
         source_bytes, receipt,
     )
     if (
@@ -327,7 +329,7 @@ def _proof_locked(
     cursor_bytes = snapshots[".cursor"].content
     if history_bytes is None or cursor_bytes is None:
         _fail()
-    marker_row = preparation._verified_marker_row(
+    marker_row = preparation.read_verified_transaction_marker_row(
         authority,
         conversion_prepared,
         receipt,
@@ -339,7 +341,7 @@ def _proof_locked(
 
     for name, content in (("history.jsonl", history_bytes), (".cursor", cursor_bytes)):
         descriptor = prepared.targets[name].new
-        history._check_new_target_blob(authority, descriptor, content)
+        history.require_transaction_target_blob(authority, descriptor, content)
         verified = target_verify.durably_verify_target(operation, snapshots[name], content)
         if not _same_snapshot(snapshots[name], verified):
             _fail()
@@ -440,7 +442,7 @@ def _verify_still_current(
     expected_memory_snapshot: storage.MemoryTargetSnapshot,
     expected_memory_bytes: bytes | None,
 ) -> None:
-    preparation._receipt_bound(authority, receipt_snapshot)
+    preparation.require_transaction_receipt_binding(authority, receipt_snapshot)
     if checked_session.read_source_bytes() != proof.source_bytes:
         _fail()
     for name in ("history.jsonl", ".cursor"):
@@ -452,7 +454,7 @@ def _verify_still_current(
         verified = target_verify.durably_verify_target(operation, current, content)
         if not _same_snapshot(current, verified):
             _fail()
-        history._check_new_target_blob(
+        history.require_transaction_target_blob(
             authority, proof.prepared.targets[name].new, content,
         )
     current_memory = authority.snapshot_target("MEMORY.md")
@@ -497,9 +499,7 @@ def reconcile_memory_recovery_transaction_memory(
                 current = scope.snapshot_target()
                 if not _same_snapshot(receipt_snapshot, current):
                     _fail()
-            receipt = receipt_codec._validate_payload(
-                receipt_codec._decode(raw_receipt), raw_receipt,
-            )
+            receipt = receipt_codec.decode_memory_receipt_bytes(raw_receipt)
             captured = transaction.capture_transaction_payload(
                 receipt,
                 workspace_id=workspace_id,
@@ -635,7 +635,56 @@ def reconcile_memory_recovery_transaction_memory(
         _fail()
 
 
+def transaction_snapshots_match(
+    expected: storage.MemoryTargetSnapshot,
+    current: storage.MemoryTargetSnapshot,
+) -> bool:
+    """Compare transaction target names, bytes and complete stat identities."""
+    return _same_snapshot(expected, current)
+
+
+def transaction_snapshot_matches_old(
+    snapshot: storage.MemoryTargetSnapshot,
+    old: transaction.OldTargetDescriptor,
+) -> bool:
+    """Compare a target with the existing original transaction descriptor."""
+    return _snapshot_matches_old(snapshot, old)
+
+
+def transaction_snapshot_is_authorized_new(
+    snapshot: storage.MemoryTargetSnapshot,
+    descriptor: transaction.NewTargetDescriptor,
+    expected: bytes,
+    old: transaction.OldTargetDescriptor,
+) -> bool:
+    """Check the existing output policy including distinct inode binding."""
+    return _authorized_new_snapshot(snapshot, descriptor, expected, old)
+
+
+def durably_verify_transaction_memory(
+    operation: storage.WorkspaceMemoryOperation,
+    snapshot: storage.MemoryTargetSnapshot,
+    expected: bytes | None,
+) -> storage.MemoryTargetSnapshot:
+    """Fsync and recheck MEMORY.md through its bound parent."""
+    return _durably_verify_memory(operation, snapshot, expected)
+
+
+def require_transaction_memory_blob(
+    authority: storage.WorkspaceMemoryAuthority,
+    descriptor: transaction.NewTargetDescriptor,
+    expected: bytes | None,
+) -> None:
+    """Require the memory-specific proposed blob and digest checks."""
+    return _check_memory_blob(authority, descriptor, expected)
+
+
 __all__ = [
     "MemoryRecoveryTransactionMemoryError",
     "reconcile_memory_recovery_transaction_memory",
+    "transaction_snapshots_match",
+    "transaction_snapshot_matches_old",
+    "transaction_snapshot_is_authorized_new",
+    "durably_verify_transaction_memory",
+    "require_transaction_memory_blob",
 ]

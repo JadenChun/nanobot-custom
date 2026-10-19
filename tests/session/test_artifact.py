@@ -90,6 +90,9 @@ def test_mixed_blocks_select_exact_text_and_never_inline_images_or_reasoning():
     ('workspace_id', 'a' * 31), ('sha256', 'not a digest'), ('mime_type', 'image/png'),
     ('created_at', '2026-09-10T00:00:00'), ('created_at', 'invalid'), ('event_id', ''),
     ('stream_id', None), ('execution_id', '\x00'), ('run_id', '  '),
+    ('generation', '1'), ('generation', None), ('byte_length', 1.0),
+    ('byte_length', {}), ('block_index', []), ('source_access', []),
+    ('source_access', {'kind': 'filesystem'}), ('created_at', {}),
 ])
 def test_invalid_fields_fail_with_content_free_errors(field, value):
     raw, _ = fixture()
@@ -119,7 +122,8 @@ def test_source_locator_rejects_noncanonical_paths(path):
 
 
 @pytest.mark.parametrize('access,repository', [('workspace', 'repo'), ('context_repository', None),
-    ('target_repository', ''), ('unknown', None)])
+    ('target_repository', ''), ('unknown', None), ([], None), (None, None),
+    ('context_repository', {}), ('target_repository', 1)])
 def test_access_class_cannot_silently_fall_back_to_workspace(access, repository):
     raw, _ = fixture()
     raw['source_access'].update(access_class=access, repository=repository)

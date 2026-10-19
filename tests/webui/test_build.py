@@ -164,3 +164,12 @@ def test_ensure_webui_bundle_warns_without_building(tmp_path: Path) -> None:
     assert status.stale is True
     assert messages
     assert "Run `cd" in messages[0]
+
+
+def test_docker_webui_builder_includes_channel_owned_sources() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    dockerfile = (project_root / "Dockerfile").read_text(encoding="utf-8")
+    builder = dockerfile.split("\nFROM ", 1)[0]
+    channel_copy = "COPY nanobot/channels/ /app/nanobot/channels/"
+    assert channel_copy in builder
+    assert builder.index(channel_copy) < builder.index("npm run build")

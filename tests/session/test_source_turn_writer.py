@@ -91,13 +91,12 @@ async def test_child_serialization_failure_poisoning_stops_parent(store):
 async def test_known_assistant_is_durable_before_observer_failure(store, observer):
     from unittest.mock import AsyncMock, MagicMock
 
-    from agent.runner_helpers import make_run_spec
-
     from nanobot.agent.hook import AgentHook
     from nanobot.agent.runner import AgentRunner
     from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.agent.turn import TurnContext
     from nanobot.providers.base import LLMResponse
+    from tests.agent.runner_helpers import make_run_spec
 
     class Broken(AgentHook):
         def finalize_content(self, context, content):
@@ -159,10 +158,9 @@ async def test_multimodal_source_retains_text_without_inline_image_or_reasoning(
 async def test_source_runner_requires_writer_dispatch_owner_match(store):
     from unittest.mock import AsyncMock, MagicMock
 
-    from agent.runner_helpers import make_run_spec
-
     from nanobot.agent.runner import AgentRunner
     from nanobot.agent.tools.registry import ToolRegistry
+    from tests.agent.runner_helpers import make_run_spec
 
     provider = MagicMock()
     provider.chat_with_retry = AsyncMock()
@@ -179,7 +177,7 @@ async def test_writer_strips_forged_origin_and_preserves_changed_inline_result(s
 
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.session.artifact import parse_artifact_descriptor
-    from session.test_artifact import fixture
+    from tests.session.test_artifact import fixture
 
     raw, _ = fixture()
     descriptor = parse_artifact_descriptor(raw)
@@ -214,7 +212,7 @@ async def test_writer_rejects_receipts_copied_between_canonical_producers(
 
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.session.artifact import parse_artifact_descriptor
-    from session.test_artifact import fixture
+    from tests.session.test_artifact import fixture
 
     raw, _ = fixture()
     descriptor = parse_artifact_descriptor(raw)

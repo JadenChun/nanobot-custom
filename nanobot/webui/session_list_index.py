@@ -7,6 +7,7 @@ store from the other, so core session writes stay independent from UI state.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -40,7 +41,6 @@ from nanobot.webui.session_identity import (
 )
 
 _INDEX_VERSION = 8
-_INDEX_FILENAME = ".webui_session_index.json"
 _MODEL_PRESET_FIELD = "model_preset"
 _ROW_SOURCE_FIELD = "_source"
 _SESSION_SOURCE = "session"
@@ -151,7 +151,12 @@ def _reconcile_index(session_manager: SessionManager) -> tuple[list[dict[str, An
 
 
 def _index_path(sessions_dir: Path) -> Path:
-    return sessions_dir / _INDEX_FILENAME
+    # The authoritative namespace accepts only session data and mode evidence.
+    # Keep rebuildable UI state (including interrupted atomic-write temp files)
+    # outside it. Include the full root to distinguish identical workspace IDs
+    # stored by separate instances.
+    namespace = hashlib.sha256(os.fsencode(sessions_dir)).hexdigest()
+    return get_webui_dir() / "session-index" / f"{namespace}.json"
 
 
 def _read_index_rows(sessions_dir: Path) -> list[dict[str, Any]] | None:
@@ -178,6 +183,7 @@ def _read_index_rows(sessions_dir: Path) -> list[dict[str, Any]] | None:
 
 def _write_index_rows(sessions_dir: Path, rows: list[dict[str, Any]]) -> None:
     path = _index_path(sessions_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f"{path.name}.{secrets.token_hex(8)}.tmp")
     data = {"version": _INDEX_VERSION, "sessions": rows}
     try:

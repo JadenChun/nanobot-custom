@@ -1,19 +1,29 @@
+import pytest
+
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.loader import ToolLoader
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.schema import Config
 
 
-def test_tool_loader_scope_memory_only_returns_memory_tools():
+@pytest.mark.parametrize("admitted", [False, True])
+def test_retired_memory_scope_never_constructs_runtime_tools(tmp_path, monkeypatch, admitted):
     loader = ToolLoader()
     registry = ToolRegistry()
-    ctx = ToolContext(config=Config().tools, workspace="/tmp")
-    loader.load(ctx, registry, scope="memory")
+    ctx = ToolContext(config=Config().tools, workspace=str(tmp_path))
+    attempts = []
 
-    names = set(registry.tool_names)
-    assert "read_file" in names
-    assert "edit_file" in names
-    assert "write_file" in names
-    assert "list_dir" not in names
-    assert "exec" not in names
-    assert "message" not in names
+    def forbidden(*_args, **_kwargs):
+        attempts.append("construction")
+        raise AssertionError("retired memory scope must not construct tools or plugins")
+
+    monkeypatch.setattr("nanobot.agent.tools.fork_factories.construct_core_tools", forbidden)
+    monkeypatch.setattr(ToolLoader, "_construct_plugins", forbidden)
+    if admitted:
+        # The foreground-only contract still refuses non-core scopes.
+        monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    with pytest.raises(ValueError, match="Unsupported runtime tool scope"):
+        loader.load(ctx, registry, scope="memory")
+
+    assert attempts == []
+    assert registry.tool_names == []

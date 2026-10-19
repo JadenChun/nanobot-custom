@@ -20,7 +20,7 @@ from nanobot.session.source_compaction import SourceCompactionCandidate
 from nanobot.session.source_projection import source_nodes
 from nanobot.session.source_request import SourceTranscript
 from nanobot.session.source_store import SourceSessionStore
-from session.test_artifact_reader import setup_read
+from tests.session.test_artifact_reader import setup_read
 
 
 async def publication_inputs(tmp_path):

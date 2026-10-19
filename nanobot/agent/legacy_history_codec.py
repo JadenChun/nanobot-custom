@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import cast
 
 MAX_LEGACY_HISTORY_BYTES = 64 * 1024 * 1024
 _MAX_CURSOR = (1 << 63) - 1
@@ -35,13 +36,13 @@ def parse_legacy_history(
     Rows begin at ``base_cursor + 1``. The fallback timestamp is supplied by
     the caller so parsing remains deterministic.
     """
-    if not isinstance(captured_bytes, bytes):
+    if not isinstance(cast(object, captured_bytes), bytes):
         raise TypeError("captured_bytes must be bytes")
     if len(captured_bytes) > MAX_LEGACY_HISTORY_BYTES:
         raise ValueError("captured HISTORY.md exceeds 64 MiB")
-    if not isinstance(fallback_timestamp, str):
+    if not isinstance(cast(object, fallback_timestamp), str):
         raise TypeError("fallback_timestamp must be a string")
-    if isinstance(base_cursor, bool) or not isinstance(base_cursor, int):
+    if isinstance(base_cursor, bool) or not isinstance(cast(object, base_cursor), int):
         raise TypeError("base_cursor must be an integer")
     if not 0 <= base_cursor <= _MAX_CURSOR:
         raise ValueError("base_cursor must be between 0 and the signed 63-bit maximum")

@@ -13,12 +13,13 @@ import uuid
 from contextlib import asynccontextmanager, contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, AsyncIterator, Iterator
+from typing import TYPE_CHECKING, AsyncGenerator, Generator, NoReturn, cast
 
 from filelock import FileLock, Timeout
 
 from nanobot.session.manager import SessionWriteConflict
 from nanobot.session.source import validate_execution_links
+from nanobot.session.source_store import SourceSessionStore
 
 if TYPE_CHECKING:
     from nanobot.session.manager import JsonlSessionStore
@@ -37,6 +38,9 @@ class ExecutionOwnershipError(SessionWriteConflict):
 
 
 def _execution_lock(backend: JsonlSessionStore, key: str) -> FileLock:
+    from nanobot.session.mode_storage import require_namespace_write_access
+
+    require_namespace_write_access(backend)
     directory = backend.sessions_dir / ".execution-locks"
     directory.mkdir(mode=0o700, exist_ok=True)
     directory.chmod(0o700)
@@ -67,7 +71,7 @@ class ExecutionOwner:
         self.recovery_required = recovery_required
         self.unresolved_executions = validate_execution_links(snapshot.events)
 
-    def __reduce__(self):
+    def __reduce__(self) -> NoReturn:
         raise TypeError("Execution ownership cannot be serialized")
 
     def _require_registered_task(self) -> None:
@@ -89,16 +93,33 @@ class ExecutionOwner:
             or snapshot.state.session_key != self.key
             or snapshot.state.incarnation != self._incarnation
             or snapshot.state.generation != self._generation
-            or not isinstance(lease, dict) or lease.get("token") != self._token
-            or lease.get("incarnation") != self._incarnation
-            or type(lease.get("generation")) is not int
-            or lease.get("generation") != self._generation
-            or type(lease.get("schema_version")) is not int
-            or lease.get("schema_version") != 1
+            or not isinstance(lease, dict) or cast(dict[object, object], lease).get("token") != self._token
+            or cast(dict[object, object], lease).get("incarnation") != self._incarnation
+            or type(cast(dict[object, object], lease).get("generation")) is not int
+            or cast(dict[object, object], lease).get("generation") != self._generation
+            or type(cast(dict[object, object], lease).get("schema_version")) is not int
+            or cast(dict[object, object], lease).get("schema_version") != 1
         ):
             raise ExecutionOwnershipError()
-        if dispatch and (self._closing or self.recovery_required or lease.get("recovery_required") is not False):
+        if dispatch and (self._closing or self.recovery_required or cast(dict[object, object], lease).get("recovery_required") is not False):
             raise ExecutionOwnershipError()
+
+    @contextmanager
+    def transaction(
+        self, backend: JsonlSessionStore, key: str, *, destructive: bool = False,
+    ) -> Generator[None, None, None]:
+        """Validate this owner under its mutex before entering the storage lock."""
+        if type(self) is not ExecutionOwner:
+            raise ExecutionOwnershipError()
+        with self._mutex:
+            if not self._active or not self._lock.is_locked or self.key != key:
+                raise ExecutionOwnershipError()
+            if destructive:
+                self._require_drained()
+            with backend.locked_session_files():
+                snapshot = backend.source.load_source_snapshot(key)
+                self._validate_unlocked(backend, snapshot)
+                yield
 
     def read_snapshot(self) -> SourceSnapshot:
         with self._mutex, self._backend.locked_session_files():
@@ -142,6 +163,29 @@ class ExecutionOwner:
         if os.getpid() != self._pid or asyncio.current_task() is not self._root_task:
             raise ExecutionOwnershipError()
 
+    @contextmanager
+    def closing_transaction(self, backend: JsonlSessionStore) -> Generator[SourceSnapshot, None, None]:
+        """Derive close data under the real owner locks after root quiescence."""
+        if type(self) is not ExecutionOwner:
+            raise ExecutionOwnershipError()
+        with self._mutex, backend.locked_session_files():
+            snapshot = backend.source.load_source_snapshot(self.key)
+            self._validate_unlocked(backend, snapshot)
+            self._require_drained()
+            yield snapshot
+
+    @staticmethod
+    def copy_execution_lease(lease: dict[str, object]) -> dict[str, object]:
+        """Detach validated lease data for close-time recovery, not authority."""
+        return deepcopy(lease)
+
+    def matches_current_execution_lifetime(self, snapshot: SourceSnapshot) -> bool:
+        """Compare only close-recovery identity data with the original short circuit."""
+        return (
+            snapshot.state.incarnation == self._incarnation
+            and snapshot.state.generation == self._generation
+        )
+
     async def aclose(self) -> None:
         if os.getpid() != self._pid or asyncio.current_task() is not self._root_task:
             raise ExecutionOwnershipError()
@@ -153,36 +197,24 @@ class ExecutionOwner:
                 await self.quiesce()
             except asyncio.CancelledError:
                 interrupted = True
-            with self._mutex, self._backend.locked_session_files():
-                snapshot = self._backend.source.load_source_snapshot(self.key)
-                self._validate_unlocked(self._backend, snapshot)
-                header = snapshot.header
-                retained_lease = deepcopy(header["metadata"]["execution_lease"])
-                if self.recovery_required or validate_execution_links(snapshot.events):
-                    header["metadata"]["execution_recovery_required"] = True
-                header["metadata"].pop("execution_lease", None)
-                header["revision"] += 1
-                try:
-                    self._backend.source._write(header, snapshot.events)
-                except BaseException as failure:
-                    # A replacement may have happened before fsync failed. Keep
-                    # abandoned-owner evidence even in that complete-new-file case.
-                    try:
-                        current = self._backend.source.load_source_snapshot(self.key)
-                        if current.state.incarnation == self._incarnation and current.state.generation == self._generation:
-                            retained_lease["recovery_required"] = True
-                            current.header["metadata"]["execution_lease"] = retained_lease
-                            current.header["metadata"]["execution_recovery_required"] = True
-                            current.header["revision"] += 1
-                            self._backend.source._write(current.header, current.events)
-                    except BaseException:
-                        failure.add_note("Persisting execution recovery metadata also failed.")
-                    raise
+            from nanobot.session.source_store import SourceSessionStore
+
+            SourceSessionStore.settle_execution_close(self._backend, self)
         finally:
             self._active = False
             self._lock.release()
         if interrupted:
             raise asyncio.CancelledError
+
+    def revoke_acquisition(self, capability: object) -> None:
+        """Acquisition-finally fence; it does not release the retained OS lock."""
+        if capability is not _CAPABILITY:
+            raise ExecutionOwnershipError()
+        self._active = False
+
+    def retire_after_destructive_write(self) -> None:
+        """Revoke dispatch after reset/delete without releasing the retained OS lock."""
+        self._invalidate_after_destructive_write()
 
     def _invalidate_after_destructive_write(self) -> None:
         self._active = False
@@ -190,8 +222,8 @@ class ExecutionOwner:
 
 
 @asynccontextmanager
-async def acquire_execution(backend: JsonlSessionStore, key: str, *, run_id: str) -> AsyncIterator[ExecutionOwner]:
-    if not isinstance(run_id, str) or not run_id.strip():
+async def acquire_execution(backend: JsonlSessionStore, key: str, *, run_id: str) -> AsyncGenerator[ExecutionOwner, None]:
+    if not isinstance(cast(object, run_id), str) or not run_id.strip():
         raise ExecutionOwnershipError()
     lock = _execution_lock(backend, key)
     owner = None
@@ -213,14 +245,11 @@ async def acquire_execution(backend: JsonlSessionStore, key: str, *, run_id: str
                 or backend.get_runtime_checkpoint_path(key).is_symlink()
             )
             token = uuid.uuid4().hex
-            metadata["execution_lease"] = {
-                "schema_version": 1, "token": token, "run_id": run_id,
-                "incarnation": snapshot.state.incarnation, "generation": snapshot.state.generation,
-                "acquired_at": datetime.now(timezone.utc).isoformat(),
-                "recovery_required": recovery_required,
-            }
-            snapshot.header["revision"] += 1
-            committed = backend.source._write(snapshot.header, snapshot.events)
+            committed = SourceSessionStore.publish_execution_lease(
+                backend, snapshot, metadata, token=token, run_id=run_id,
+                recovery_required=recovery_required,
+                select_acquired_at=lambda: datetime.now(timezone.utc).isoformat(),
+            )
             owner = ExecutionOwner(_CAPABILITY, backend, key, lock, committed, token, recovery_required)
         try:
             yield owner
@@ -234,7 +263,7 @@ async def acquire_execution(backend: JsonlSessionStore, key: str, *, run_id: str
             await owner.aclose()
     finally:
         if owner is not None:
-            owner._active = False
+            owner.revoke_acquisition(_CAPABILITY)
         lock.release()
 
 
@@ -242,7 +271,7 @@ async def acquire_execution(backend: JsonlSessionStore, key: str, *, run_id: str
 def execution_transaction(backend: JsonlSessionStore, key: str,
                           owner: ExecutionOwner | None = None, *, destructive: bool = False,
                           allow_legacy: bool = False,
-                          root_authority: SourceRootAuthority | None = None) -> Iterator[None]:
+                          root_authority: SourceRootAuthority | None = None) -> Generator[None, None, None]:
     """Always acquire execution authority before entering the directory lock."""
     if root_authority is not None:
         if owner is not None or destructive or allow_legacy:
@@ -251,42 +280,22 @@ def execution_transaction(backend: JsonlSessionStore, key: str,
             with _descriptor_execution_lock_guard(backend, key, root_authority), root_authority.lock_file(
                 ".session-files.lock", blocking=True
             ):
-                try:
-                    header, _ = backend.source._read_unlocked(
-                        key, root_authority=root_authority
-                    )
-                except FileNotFoundError:
-                    raise SessionWriteConflict() from None
-                metadata = header["metadata"]
-                if "execution_lease" in metadata or "execution_recovery_required" in metadata:
-                    raise ExecutionOwnershipError()
+                backend.source.assert_no_execution_metadata(key, root_authority=root_authority)
                 yield
         return
     if owner is not None:
         if type(owner) is not ExecutionOwner:
             raise ExecutionOwnershipError()
-        with owner._mutex:
-            if not owner._active or not owner._lock.is_locked or owner.key != key:
-                raise ExecutionOwnershipError()
-            if destructive:
-                owner._require_drained()
-            with backend.locked_session_files():
-                snapshot = backend.source.load_source_snapshot(key)
-                owner._validate_unlocked(backend, snapshot)
-                yield
+        with owner.transaction(backend, key, destructive=destructive):
+            yield
         return
     with execution_lock_guard(backend, key), backend.locked_session_files():
-        try:
-            header, _ = backend.source._read_unlocked(key, require_source=not allow_legacy)
-        except FileNotFoundError:
-            raise SessionWriteConflict() from None
-        if "execution_lease" in header["metadata"] or "execution_recovery_required" in header["metadata"]:
-            raise ExecutionOwnershipError()
+        backend.source.assert_no_execution_metadata(key, allow_legacy=allow_legacy)
         yield
 
 
 @contextmanager
-def execution_lock_guard(backend: JsonlSessionStore, key: str) -> Iterator[None]:
+def execution_lock_guard(backend: JsonlSessionStore, key: str) -> Generator[None, None, None]:
     """Acquire only the OS lock; callers must recheck format under storage lock."""
     lock = _execution_lock(backend, key)
     try:
@@ -304,7 +313,7 @@ def _descriptor_execution_lock_guard(
     backend: JsonlSessionStore,
     key: str,
     root_authority: SourceRootAuthority,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Acquire the same flock-compatible execution lock relative to the root."""
 
     try:

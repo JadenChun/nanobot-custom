@@ -455,7 +455,9 @@ def test_missing_receipt_under_workspace_symlink_preserves_migration_behavior(
 
     store = MemoryStore(workspace_alias)
 
-    assert store.memory_dir == workspace_alias / "memory"
+    assert store.memory_dir == target.resolve() / "memory"
+    assert (workspace_alias / "memory").samefile(store.memory_dir)
+    assert workspace_alias.is_symlink()
     assert (memory_dir / "history.jsonl").exists()
     assert (memory_dir / "HISTORY.md.bak").read_text(encoding="utf-8") == legacy
 
@@ -535,3 +537,210 @@ def test_constructor_rejection_has_no_forbidden_mutations(
     assert not (memory_dir / ".cursor").exists()
     assert not (memory_dir / ".dream_cursor").exists()
     assert not list(memory_dir.glob("HISTORY.md.bak*"))
+
+
+@pytest.mark.parametrize("variant", ["literal", "aliases", "reference", "no-session"])
+def test_bytes_decoder_matches_existing_composition_and_path_parser(
+    tmp_path: Path, variant: str,
+) -> None:
+    payload = _payload(metadata={"nested": [{"future": [1, None, True]}]})
+    if variant == "aliases":
+        payload.update(
+            memory_update=payload["memory_output"],
+            memory_base_digest=payload["base_memory_digest"],
+            memory_output_digest=payload["output_memory_digest"],
+            generation=payload.pop("session_generation"),
+        )
+    elif variant == "reference":
+        payload.update(memory_output=None, output_memory_digest=None, reference_only=True)
+    elif variant == "no-session":
+        for name in ("session_key", "start_offset", "end_offset", "session_generation"):
+            payload.pop(name)
+    # Whitespace and insertion order deliberately differ from canonical serialization.
+    raw = (" \n" + json.dumps(payload, indent=2) + "\n ").encode("utf-8")
+    expected = memory_recovery._validate_payload(memory_recovery._decode(raw), raw)
+    parsed = memory_recovery.decode_memory_receipt_bytes(raw)
+    path = _write_receipt(tmp_path, {}, raw=raw)
+
+    assert parsed == expected == parse_memory_receipt(path)
+    assert parsed.raw_bytes == raw
+    assert parsed.raw == payload
+    assert parsed.unknown_fields == {"metadata": payload["metadata"]}
+    assert "decode_memory_receipt_bytes" in memory_recovery.__all__
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"\xff", b"{", b"null", b"[]", b"1", b"true", b'"text"',
+        b'{"version":1,"version":1}',
+        b'{"unknown":{"duplicate":1,"duplicate":2}}',
+        b'{"unknown":NaN}', b'{"unknown":Infinity}', b'{"unknown":-Infinity}',
+        b"{}",
+    ] + [
+        json.dumps(_payload(**override)).encode("utf-8")
+        for override in (
+            {"version": True}, {"version": 2},
+            {"chunk_digest": "A" * 64}, {"base_memory_digest": "b" * 63},
+            {"output_memory_digest": "c" * 64},
+            {"start_offset": True}, {"start_offset": -1},
+            {"end_offset": 1 << 63}, {"session_generation": 1.5},
+            {"generation": True}, {"start_offset": 3, "end_offset": 2},
+            {"reference_only": 1}, {"history_entry": ""},
+            {"session_key": None}, {"memory_update": "conflicting alias"},
+        )
+    ],
+)
+def test_bytes_decoder_preserves_malformed_input_errors(raw: bytes) -> None:
+    with pytest.raises(MemoryReceiptValidationError) as expected:
+        memory_recovery._validate_payload(memory_recovery._decode(raw), raw)
+    with pytest.raises(MemoryReceiptValidationError) as actual:
+        memory_recovery.decode_memory_receipt_bytes(raw)
+
+    assert type(actual.value) is type(expected.value)
+    assert actual.value.args == expected.value.args == ("memory recovery required",)
+    assert actual.value.__cause__ is expected.value.__cause__ is None
+
+
+def test_bytes_decoder_detaches_nested_metadata_and_each_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decode = memory_recovery.decode_memory_receipt_bytes
+    payload = _payload(metadata={"nested": ["original"]})
+    raw = json.dumps(payload).encode("utf-8")
+    monkeypatch.setattr(memory_recovery, "_decode", lambda _raw: payload)
+    first, second = decode(raw), decode(raw)
+
+    payload["metadata"]["nested"].append("decoder mutation")
+    assert first.unknown_fields["metadata"] == {"nested": ["original"]}
+    assert first.raw_fields["metadata"] == {"nested": ["original"]}
+    # Detached, not deeply immutable: each nested copy can be mutated independently.
+    first.unknown_fields["metadata"]["nested"].append("unknown mutation")
+    assert first.raw_fields["metadata"] == {"nested": ["original"]}
+    first.raw_fields["metadata"]["nested"].append("raw-field mutation")
+    assert first.unknown_fields["metadata"] == {"nested": ["original", "unknown mutation"]}
+    assert second.unknown_fields["metadata"] == {"nested": ["original"]}
+    assert second.raw_fields["metadata"] == {"nested": ["original"]}
+    view = first.raw
+    view["metadata"]["nested"].append("raw-property mutation")
+    assert first.raw["metadata"] == {"nested": ["original", "raw-field mutation"]}
+    assert first.raw_bytes == second.raw_bytes == raw
+
+
+def test_bytes_decoder_performs_no_filesystem_or_owner_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decode = memory_recovery.decode_memory_receipt_bytes
+    raw = json.dumps(_payload()).encode("utf-8")
+    attempts: list[str] = []
+
+    def forbidden(*_args, **_kwargs):
+        attempts.append("filesystem or owner read")
+        raise AssertionError("bytes decoding must not establish provenance")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(memory_recovery, "_read_owned_receipt", forbidden)
+        patch.setattr(memory_recovery, "_canonical_receipt_path", forbidden)
+        for owner, name in ((os, "open"), (os, "read"), (os, "stat"),
+                            (Path, "open"), (Path, "read_bytes")):
+            patch.setattr(owner, name, forbidden)
+        parsed = decode(raw)
+    assert attempts == []
+    assert parsed.raw_bytes == raw
+
+
+def test_bytes_decoder_calls_dynamic_helpers_in_order_with_exact_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decode = memory_recovery.decode_memory_receipt_bytes
+    raw = b"sentinel unparsed bytes"
+    payload = _payload()
+    sentinel = object()
+    calls: list[str] = []
+
+    def decode_helper(value):
+        assert value is raw
+        calls.append("decode")
+        return payload
+
+    def validate_helper(value, raw_value):
+        assert value is payload
+        assert raw_value is raw
+        calls.append("validate")
+        return sentinel
+
+    monkeypatch.setattr(memory_recovery, "_decode", decode_helper)
+    monkeypatch.setattr(memory_recovery, "_validate_payload", validate_helper)
+    assert decode(raw) is sentinel
+    assert calls == ["decode", "validate"]
+
+
+@pytest.mark.parametrize("stage", ["decode", "validate"])
+def test_bytes_decoder_preserves_dynamic_helper_exception_identity_and_cause(
+    monkeypatch: pytest.MonkeyPatch, stage: str,
+) -> None:
+    decode = memory_recovery.decode_memory_receipt_bytes
+    raw = b"sentinel unparsed bytes"
+    payload = _payload()
+    cause = ValueError("sentinel cause")
+    failure = RuntimeError("sentinel failure")
+    calls: list[str] = []
+
+    def decode_helper(value):
+        assert value is raw
+        calls.append("decode")
+        if stage == "decode":
+            raise failure from cause
+        return payload
+
+    def validate_helper(value, raw_value):
+        assert value is payload and raw_value is raw
+        calls.append("validate")
+        raise failure from cause
+
+    monkeypatch.setattr(memory_recovery, "_decode", decode_helper)
+    monkeypatch.setattr(memory_recovery, "_validate_payload", validate_helper)
+    with pytest.raises(RuntimeError) as raised:
+        decode(raw)
+    assert raised.value is failure
+    assert raised.value.__cause__ is cause
+    assert calls == (["decode"] if stage == "decode" else ["decode", "validate"])
+
+
+def test_bytes_decoder_recursion_escapes_but_path_parser_sanitizes(tmp_path: Path) -> None:
+    decode = memory_recovery.decode_memory_receipt_bytes
+    prefix = json.dumps(_payload(), separators=(",", ":"))[:-1] + ","
+    raw = prefix.encode("utf-8") + b'"extra":' + b"[" * 2_000 + b"0" + b"]" * 2_000 + b"}"
+    path = _write_receipt(tmp_path, {}, raw=raw)
+    with pytest.raises(RecursionError):
+        decode(raw)
+    with pytest.raises(MemoryReceiptValidationError) as raised:
+        parse_memory_receipt(path)
+    assert raised.value.args == ("memory recovery required",)
+    assert raised.value.__cause__ is None
+    assert raised.value.__suppress_context__
+
+
+@pytest.mark.parametrize("error_type", [RecursionError, RuntimeError])
+def test_bytes_decoder_detachment_failure_escapes_but_path_parser_sanitizes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[Exception],
+) -> None:
+    decode = memory_recovery.decode_memory_receipt_bytes
+    raw = json.dumps(_payload(metadata={"nested": []})).encode("utf-8")
+    path = _write_receipt(tmp_path, {}, raw=raw)
+    failure = error_type("sentinel detachment failure")
+    cause = ValueError("sentinel detachment cause")
+
+    def fail_detachment(_value):
+        raise failure from cause
+
+    monkeypatch.setattr(memory_recovery.copy, "deepcopy", fail_detachment)
+    with pytest.raises(error_type) as bare:
+        decode(raw)
+    assert bare.value is failure
+    assert bare.value.__cause__ is cause
+    with pytest.raises(MemoryReceiptValidationError) as sanitized:
+        parse_memory_receipt(path)
+    assert sanitized.value.args == ("memory recovery required",)
+    assert sanitized.value.__cause__ is None
+    assert sanitized.value.__suppress_context__

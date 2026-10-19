@@ -9,8 +9,9 @@ durability while holding its normal transactions.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
 from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt, parse_retrieval_receipt
 from nanobot.session.artifact import (
@@ -84,6 +85,19 @@ class SummaryDependencyProof:
     chunks: tuple[ConsumedSummaryChunk, ...]
 
 
+class SummaryDependencyMetadata(Protocol):
+    """Read-only reconstructed values, not current artifact or write admission."""
+
+    @property
+    def references(self) -> tuple[str, ...]: ...
+
+    @property
+    def boundary(self) -> int: ...
+
+    @property
+    def summary(self) -> str: ...
+
+
 @dataclass(frozen=True)
 class _ValidatedProof:
     references: tuple[str, ...]
@@ -118,11 +132,12 @@ def _require_candidate(proof: SummaryDependencyProof, snapshot: SourceSnapshot) 
         if type(previous) is not CheckpointNode or not isinstance(snapshot.checkpoint, dict):
             raise SourceValidationError('Accepted summary checkpoint is unavailable')
         stored = snapshot.checkpoint
-        expected = CheckpointNode(
+        expected = (
             stored.get('checkpoint_id'), stored.get('summary'),
             tuple(stored.get('artifact_references', ())),
         )
-        if stored.get('boundary') != candidate.previous_boundary or previous != expected:
+        if (stored.get('boundary') != candidate.previous_boundary
+                or (previous.checkpoint_id, previous.summary, previous.artifact_references) != expected):
             raise SourceValidationError('Accepted summary checkpoint changed')
     validate_event_ids(snapshot.events)
     validate_execution_links(snapshot.events)
@@ -143,26 +158,28 @@ def _canonical_retrieval_payload(content: object,
 
     try:
         payload = json.loads(content, object_pairs_hook=object_pairs)
-        if (not isinstance(payload, dict) or payload.get('reference') != receipt.reference
-                or not isinstance(payload.get('text'), str)
-                or type(payload.get('start_offset')) is not int
-                or type(payload.get('next_offset')) is not int
-                or type(payload.get('eof')) is not bool
+        if (not isinstance(payload, dict) or cast(dict[object, object], payload).get('reference') != receipt.reference
+                or not isinstance(cast(dict[object, object], payload).get('text'), str)
+                or type(cast(dict[object, object], payload).get('start_offset')) is not int
+                or type(cast(dict[object, object], payload).get('next_offset')) is not int
+                or type(cast(dict[object, object], payload).get('eof')) is not bool
                 or payload['start_offset'] != receipt.start_offset
                 or payload['next_offset'] != receipt.next_offset
                 or json.dumps(payload, ensure_ascii=False, separators=(',', ':')) != content):
             raise ValueError
-        text_bytes = len(payload['text'].encode('utf-8'))
+        # The decoder/hook produces ordinary dictionaries; the guards establish
+        # these fields without changing the canonical payload or its exact bytes.
+        text_bytes = len(cast(str, payload['text']).encode('utf-8'))
     except (TypeError, ValueError, UnicodeError):
         raise SourceValidationError('Artifact retrieval result is not a canonical JSON payload') from None
     return _CanonicalRetrievalPayload(receipt.reference, receipt.start_offset,
-                                      receipt.next_offset, payload['eof'], text_bytes)
+                                      receipt.next_offset, cast(bool, payload['eof']), text_bytes)
 
 
 def _validate_retrieval(snapshot: SourceSnapshot,
                         dependency: RetrievalDependency) -> _CanonicalRetrievalPayload:
-    if (type(dependency) is not RetrievalDependency or not isinstance(dependency.event_id, str)
-            or not dependency.event_id or not isinstance(dependency.execution_id, str)
+    if (type(dependency) is not RetrievalDependency or not isinstance(cast(object, dependency.event_id), str)
+            or not dependency.event_id or not isinstance(cast(object, dependency.execution_id), str)
             or not dependency.execution_id or type(dependency.receipt) is not ArtifactRetrievalReceipt):
         raise SourceValidationError('Invalid consumed artifact retrieval proof')
     event = next((row for row in snapshot.events if row['_event_id'] == dependency.event_id), None)
@@ -179,18 +196,19 @@ def _validate_retrieval(snapshot: SourceSnapshot,
         raise SourceValidationError('Artifact retrieval payload receipt does not match canonical result')
     payload = _canonical_retrieval_payload(event.get('content'), receipt)
     intent = None
+    index: int | None = None
     for row in snapshot.events:
         identities = row.get('_execution_ids')
         if isinstance(identities, list) and dependency.execution_id in identities:
             intent = row
-            index = identities.index(dependency.execution_id)
+            index = cast(list[object], identities).index(dependency.execution_id)
             break
-    if intent is None or intent.get('role') != 'assistant' or not isinstance(intent.get('tool_calls'), list):
+    if intent is None or index is None or intent.get('role') != 'assistant' or not isinstance(intent.get('tool_calls'), list):
         raise SourceValidationError('Artifact retrieval intent is absent')
     call = intent['tool_calls'][index]
-    function = call.get('function') if isinstance(call, dict) else None
-    if (not isinstance(function, dict) or function.get('name') != 'read_artifact'
-            or event.get('tool_call_id') != call.get('id')
+    function = cast(dict[object, object], call).get('function') if isinstance(call, dict) else None
+    if (not isinstance(function, dict) or cast(dict[object, object], function).get('name') != 'read_artifact'
+            or event.get('tool_call_id') != cast(dict[object, object], call).get('id')
             or intent.get('_stream_id') != event.get('_stream_id')
             or intent.get('_parent_stream_id') != event.get('_parent_stream_id')):
         raise SourceValidationError('Artifact retrieval intent does not match canonical result')
@@ -199,11 +217,11 @@ def _validate_retrieval(snapshot: SourceSnapshot,
 
 def _manifest_descriptors(snapshot: SourceSnapshot) -> dict[str, ArtifactDescriptor]:
     metadata = snapshot.header.get('metadata')
-    manifest = metadata.get('artifact_manifest') if isinstance(metadata, dict) else None
-    if (not isinstance(manifest, dict) or set(manifest) != {'schema_version', 'descriptors'}
-            or not isinstance(manifest.get('descriptors'), dict) or not manifest['descriptors']):
+    manifest = cast(dict[object, object], metadata).get('artifact_manifest') if isinstance(metadata, dict) else None
+    if (not isinstance(manifest, dict) or set(cast(dict[object, object], manifest)) != {'schema_version', 'descriptors'}
+            or not isinstance(cast(dict[object, object], manifest).get('descriptors'), dict) or not manifest['descriptors']):
         raise ArtifactValidationError('Summary dependency manifest is unavailable')
-    first = next(iter(manifest['descriptors'].values()))
+    first = next(iter(cast(dict[object, object], manifest['descriptors']).values()))
     workspace_id = parse_artifact_descriptor(first).workspace_id
     return {item.reference: item for item in published_artifacts(snapshot, workspace_id=workspace_id)}
 
@@ -227,7 +245,7 @@ def _validate_projection(snapshot: SourceSnapshot, candidate: SourceCompactionCa
 
 def _validated_proof(proof: SummaryDependencyProof, snapshot: SourceSnapshot) -> _ValidatedProof:
     candidate = _require_candidate(proof, snapshot)
-    if not isinstance(proof.chunks, tuple) or not proof.chunks:
+    if not isinstance(cast(object, proof.chunks), tuple) or not proof.chunks:
         raise SourceValidationError('Summary dependency proof has no consumed chunks')
     cursor = candidate.previous_boundary
     previous_summary = candidate.previous_checkpoint.summary if candidate.previous_checkpoint else None
@@ -238,12 +256,12 @@ def _validated_proof(proof: SummaryDependencyProof, snapshot: SourceSnapshot) ->
             raise SourceValidationError('Invalid consumed summary proof record')
         evidence = chunk.evidence
         if (type(evidence.after) is not int or type(evidence.boundary) is not int
-                or not isinstance(evidence.projections, tuple)
+                or not isinstance(cast(object, evidence.projections), tuple)
                 or evidence.after != cursor or evidence.boundary <= cursor):
             raise SourceValidationError('Summary dependency evidence is not contiguous')
         if chunk.previous_summary != previous_summary:
             raise SourceValidationError('Summary dependency fold chain changed')
-        if not isinstance(chunk.summary, str) or not chunk.summary.strip():
+        if not isinstance(cast(object, chunk.summary), str) or not chunk.summary.strip():
             raise SourceValidationError('Invalid consumed summary output')
         expected = candidate.summary_evidence(evidence.boundary, after=cursor)
         if evidence != expected:
@@ -267,7 +285,15 @@ def _validated_proof(proof: SummaryDependencyProof, snapshot: SourceSnapshot) ->
                     or payload.next_offset - payload.start_offset != payload.text_bytes
                     or payload.eof != (payload.next_offset == descriptor.byte_length)):
                 raise SourceValidationError('Artifact retrieval payload is outside descriptor bounds')
-    return _ValidatedProof(tuple(sorted(references)), cursor, previous_summary)
+    # A successful nonempty chunk fold has assigned a checked, nonempty string
+    # to previous_summary at least once; no initial optional value can survive.
+    return _ValidatedProof(tuple(sorted(references)), cursor, cast(str, previous_summary))
+
+
+def select_summary_dependency_metadata_validator(
+) -> Callable[[SummaryDependencyProof, SourceSnapshot], SummaryDependencyMetadata]:
+    """Select the current stateless validator before caller-controlled observations."""
+    return _validated_proof
 
 
 def derive_summary_references(proof: SummaryDependencyProof, snapshot: SourceSnapshot) -> tuple[str, ...]:
@@ -302,13 +328,13 @@ def _validate_reader_binding(reader: ArtifactReader, snapshot: SourceSnapshot,
         raise ArtifactValidationError('Dependent checkpoint requires trusted artifact access')
     writer = reader.writer
     store = reader.store
-    if (blobs._store is not store
-            or store.workspace_id != writer.store._backend.sessions_dir.name
+    if (not blobs.matches_store(store)
+            or store.workspace_id != writer.store.artifact_workspace_id
             or store.session_key != snapshot.state.session_key
             or store.incarnation != snapshot.state.incarnation
             or store.generation != snapshot.state.generation
             or writer.owner.key != snapshot.state.session_key
-            or writer.store._store_identity != snapshot.state.store_identity):
+            or writer.store.source_snapshot_identity_differs(snapshot)):
         raise ArtifactValidationError('Dependent checkpoint artifact access binding changed')
     if candidate.stream_id is None:
         if reader.mode != 'root_history' or writer.parent_stream_id is not None:

@@ -335,13 +335,17 @@ class WebUIWorkspaceController:
             raise WorkspaceScopeError("chat_running", status=409)
         return scope
 
-    def persist_scope(self, chat_id: str, scope: WorkspaceScope) -> None:
+    def persist_scope(
+        self, chat_id: str, scope: WorkspaceScope, *, create_if_absent: bool = True
+    ) -> None:
+        """Persist after accepted message dispatch; staging may update existing state only."""
         session_key = webui_session_key(chat_id)
         if self._sessions is not None:
-            session = self._sessions.get_or_create(session_key)
-            session.metadata["webui"] = True
-            session.metadata[WORKSPACE_SCOPE_METADATA_KEY] = scope.metadata()
-            self._sessions.save(session)
+            self._sessions.upsert_session_metadata(
+                session_key,
+                {"webui": True, WORKSPACE_SCOPE_METADATA_KEY: scope.metadata()},
+                create_if_absent=create_if_absent,
+            )
         self._draft_scopes.pop(session_key, None)
 
     def stage_scope(self, chat_id: str, scope: WorkspaceScope) -> None:
@@ -351,7 +355,7 @@ class WebUIWorkspaceController:
             self._sessions is not None
             and self._sessions.read_session_metadata(session_key) is not None
         ):
-            self.persist_scope(chat_id, scope)
+            self.persist_scope(chat_id, scope, create_if_absent=False)
             return
         self._draft_scopes[session_key] = scope
         self._draft_scopes.move_to_end(session_key)

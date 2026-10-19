@@ -3,19 +3,55 @@ from __future__ import annotations
 
 import secrets
 import time
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import replace
+from typing import Any, Generic, Protocol, TypedDict, TypeVar, Unpack
 
-from nanobot.providers.base import LLMResponse, ProviderCallContext
-from nanobot.providers.fallback_provider import FallbackProvider
+from nanobot.providers.base import (
+    GenerationSettings,
+    LLMCallObserver,
+    LLMProvider,
+    LLMResponse,
+    ProviderCallContext,
+    ProviderConversationState,
+    RetryEventCallback,
+    RetryStatusCallback,
+)
+from nanobot.providers.fallback_provider import FallbackModelObserver, FallbackProvider
 
 _OWNER = '_nanobot_legacy_candidate'
 
 
-class LegacyFallbackProvider(FallbackProvider):
+class _FallbackPreset(Protocol):
+    @property
+    def model(self) -> str: ...
+
+    @property
+    def context_window_tokens(self) -> int | None: ...
+
+
+_Preset = TypeVar('_Preset', bound=_FallbackPreset)
+
+
+class _FallbackOptions(TypedDict, total=False):
+    fallback_model_observer: FallbackModelObserver | None
+    primary_context_window_tokens: int | None
+
+
+class LegacyFallbackProvider(FallbackProvider, Generic[_Preset]):
     """One ordered traversal per request; only quota/rate failures advance."""
 
-    def __init__(self, primary, fallback_presets, provider_factory, **kwargs):
+    _fallback_presets: list[_Preset]
+    _provider_factory: Callable[[_Preset], LLMProvider]
+
+    def __init__(
+        self,
+        primary: LLMProvider,
+        fallback_presets: list[_Preset],
+        provider_factory: Callable[[_Preset], LLMProvider],
+        **kwargs: Unpack[_FallbackOptions],
+    ) -> None:
         if not fallback_presets:
             raise ValueError("Legacy fallback requires at least one fallback candidate")
         generation = primary.generation
@@ -26,42 +62,48 @@ class LegacyFallbackProvider(FallbackProvider):
         self.generation = generation
 
     @property
-    def generation(self):
+    def generation(self) -> GenerationSettings:
         return self._candidates[0].generation
 
     @generation.setter
-    def generation(self, value):
+    def generation(self, value: GenerationSettings) -> None:
         for candidate in self._candidates:
             candidate.generation = value
 
-    def set_llm_call_observer(self, observer):
+    def set_llm_call_observer(self, observer: LLMCallObserver | None) -> None:
         super().set_llm_call_observer(observer)
         for candidate in self._candidates:
             candidate.set_llm_call_observer(observer)
 
-    def _model(self, slot, override=None):
+    def _model(self, slot: int, override: str | None = None) -> str:
         return (override or self._primary.get_default_model()) if slot == 0 else self._fallback_presets[slot - 1].model
 
-    def _state(self, slot, state, model):
+    def _state(
+        self, slot: int, state: ProviderConversationState | None, model: str,
+    ) -> ProviderConversationState | None:
         if state is None or state.payload.get(_OWNER) != self._owners[slot]:
             return None
         clean = replace(state, payload=deepcopy({k: v for k, v in state.payload.items() if k != _OWNER}),
                         pending_messages=deepcopy(state.pending_messages))
         return clean if self._candidates[slot].can_resume_conversation_state(clean, model) else None
 
-    def can_resume_conversation_state(self, state, model=None):
+    def can_resume_conversation_state(
+        self, state: ProviderConversationState, model: str | None = None,
+    ) -> bool:
         return any(self._state(slot, state, self._model(slot, model)) is not None
                    for slot in range(len(self._candidates)))
 
-    def supports_native_compaction(self, model=None):
+    def supports_native_compaction(self, model: str | None = None) -> bool:
         return any(candidate.supports_native_compaction(self._model(slot, model))
                    for slot, candidate in enumerate(self._candidates))
 
-    def _primary_call_context(self, provider_context, model):
+    def _primary_call_context(
+        self, provider_context: ProviderCallContext, model: str | None,
+    ) -> ProviderCallContext:
         # Capacity and state are resolved only after the destination is selected.
         return provider_context
 
-    def _kwargs(self, slot, kwargs):
+    def _kwargs(self, slot: int, kwargs: dict[str, Any]) -> dict[str, Any]:
         local = dict(kwargs)
         local['model'] = self._model(slot, kwargs.get('model'))
         context = local.get('provider_context')
@@ -76,10 +118,10 @@ class LegacyFallbackProvider(FallbackProvider):
                 context_window_tokens=capacity if self._candidates[slot].supports_native_compaction(local['model']) else None)
         return local
 
-    def _tag(self, slot, response):
-        states = {}
+    def _tag(self, slot: int, response: LLMResponse) -> LLMResponse:
+        states: dict[str, ProviderConversationState] = {}
         for field in ('provider_state', 'provider_compaction_state'):
-            state = getattr(response, field)
+            state: ProviderConversationState | None = getattr(response, field)
             if state is not None:
                 states[field] = replace(
                     state,
@@ -91,26 +133,53 @@ class LegacyFallbackProvider(FallbackProvider):
                 )
         return replace(response, **states) if states else response
 
-    async def chat(self, **kwargs):
+    async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
+        kwargs['messages'] = messages
         return self._tag(0, await self._primary.chat(**self._kwargs(0, kwargs)))
 
-    async def chat_with_context(self, *, provider_context, **kwargs):
+    async def chat_with_context(
+        self, *, provider_context: ProviderCallContext, **kwargs: Any,
+    ) -> LLMResponse:
         return self._tag(0, await self._primary.chat_with_context(
             **self._kwargs(0, dict(kwargs, provider_context=provider_context))))
 
-    async def chat_stream(self, **kwargs):
+    async def chat_stream(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
+        kwargs['messages'] = messages
         kwargs.pop('on_stream_recover', None)
         return self._tag(0, await self._primary.chat_stream(**self._kwargs(0, kwargs)))
 
-    async def chat_stream_with_context(self, *, provider_context, **kwargs):
+    async def chat_stream_with_context(
+        self, *, provider_context: ProviderCallContext, **kwargs: Any,
+    ) -> LLMResponse:
         kwargs.pop('on_stream_recover', None)
         return self._tag(0, await self._primary.chat_stream_with_context(
             **self._kwargs(0, dict(kwargs, provider_context=provider_context))))
 
-    async def _retry_with_fallback(self, *args, **kwargs):
+    async def _retry_with_fallback(
+        self,
+        call: Callable[[LLMProvider, dict[str, Any]], Awaitable[LLMResponse]],
+        kwargs: dict[str, Any],
+        original_messages: list[dict[str, Any]],
+        *,
+        retry_mode: str = 'standard',
+        on_retry_wait: RetryEventCallback | None,
+        on_retry_exhausted: RetryEventCallback | None,
+        on_retry_status: RetryStatusCallback | None,
+        has_streamed: list[bool] | None,
+        on_stream_recover: Callable[[], Awaitable[None]] | None,
+        persistent_retry_guard: Callable[[], bool] | None,
+    ) -> LLMResponse:
         # Staging retries individual candidates, never the whole chain.
-        kwargs['retry_mode'] = 'standard'
-        return await super()._retry_with_fallback(*args, **kwargs)
+        return await super()._retry_with_fallback(
+            call, kwargs, original_messages,
+            retry_mode='standard',
+            on_retry_wait=on_retry_wait,
+            on_retry_exhausted=on_retry_exhausted,
+            on_retry_status=on_retry_status,
+            has_streamed=has_streamed,
+            on_stream_recover=on_stream_recover,
+            persistent_retry_guard=persistent_retry_guard,
+        )
 
     _NON_RETRYABLE_429_TOKENS = frozenset({
         "insufficient_quota",
@@ -196,15 +265,22 @@ class LegacyFallbackProvider(FallbackProvider):
         return has_rate_limit and not has_quota
 
     @classmethod
-    def _eligible(cls, response):
+    def _eligible(cls, response: LLMResponse) -> bool:
         return cls._is_quota_exhaustion_response(response) or cls._is_rate_limit_response(response)
 
-    async def _try_with_fallback(self, call, kwargs, has_streamed,
-                                 on_stream_recover=None, on_fallback_attempt=None):
+    async def _try_with_fallback(
+        self,
+        call: Callable[[LLMProvider, dict[str, Any]], Awaitable[LLMResponse]],
+        kwargs: dict[str, Any],
+        has_streamed: list[bool] | None,
+        on_stream_recover: Callable[[], Awaitable[None]] | None = None,
+        on_fallback_attempt: Callable[[], Awaitable[None]] | None = None,
+    ) -> LLMResponse:
         now = time.monotonic()
         ready = [slot for slot, expiry in enumerate(self._cooldowns) if expiry <= now]
         cooling = sorted((slot for slot, expiry in enumerate(self._cooldowns) if expiry > now),
                          key=lambda slot: (self._cooldowns[slot], slot))
+        response: LLMResponse | None = None
         for position, slot in enumerate((*ready, *cooling)):
             if position and on_fallback_attempt:
                 await on_fallback_attempt()
@@ -218,4 +294,7 @@ class LegacyFallbackProvider(FallbackProvider):
             if (has_streamed is not None and has_streamed[0]) or not self._eligible(response):
                 return response
             self._cooldowns[slot] = max(self._cooldowns[slot], time.monotonic() + 300.0)
+        # Construction supplies a primary plus fallbacks and equal-length finite
+        # cooldowns, so the ready/cooling partition always traverses a candidate.
+        assert response is not None
         return response

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 _DATA_URI_RE = re.compile(
     r"data:[^\s;,]+(?:;[^\s;,]+)*;base64,[A-Za-z0-9+/=_-]+",
@@ -42,7 +42,7 @@ def _bounded_text(value: Any, *, max_chars: int = 4000) -> str:
     return text
 
 
-def _media_placeholder(kind: str, block: Mapping[str, Any]) -> str:
+def _media_placeholder(kind: str, block: Mapping[object, object]) -> str:
     """Describe media without exposing its URL or encoded payload."""
 
     label = ""
@@ -54,7 +54,7 @@ def _media_placeholder(kind: str, block: Mapping[str, Any]) -> str:
     return f"[{kind} content omitted]" + (f" {label}" if label else "")
 
 
-def _block_text(block: Mapping[str, Any]) -> str:
+def _block_text(block: Mapping[object, object]) -> str:
     raw_type = block.get("type")
     block_type = raw_type.strip().lower() if isinstance(raw_type, str) else ""
 
@@ -111,12 +111,12 @@ def content_to_text(content: Any, *, max_chars: int = 12000) -> str:
     if isinstance(content, (bytes, bytearray, memoryview)):
         return "[binary content omitted]"
     if isinstance(content, Mapping):
-        text = _block_text(content)
+        text = _block_text(cast(Mapping[object, object], content))
     elif isinstance(content, Sequence) and not isinstance(content, (str, bytes, bytearray)):
         parts: list[str] = []
-        for item in content:
+        for item in cast(Sequence[object], content):
             if isinstance(item, Mapping):
-                text = _block_text(item)
+                text = _block_text(cast(Mapping[object, object], item))
             elif isinstance(item, str):
                 text = _bounded_text(item)
             elif isinstance(item, (bytes, bytearray, memoryview)):

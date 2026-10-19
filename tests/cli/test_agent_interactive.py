@@ -27,6 +27,10 @@ def test_interactive_agent_routes_a_complete_user_turn(
 ) -> None:
     config = Config()
     config.agents.defaults.workspace = str(tmp_path / "workspace")
+    # Exercise real setup validation; client construction remains scripted below.
+    config.agents.defaults.provider = "custom"
+    config.providers.custom.api_base = "https://provider.invalid/v1"
+    config.providers.custom.api_key = "synthetic-test-key"
     seen: dict[str, object] = {}
     renderers: list[object] = []
 
@@ -58,6 +62,8 @@ def test_interactive_agent_routes_a_complete_user_turn(
         @classmethod
         def from_config(cls, _config, bus, **_kwargs):
             instance = cls(bus)
+            instance.sessions = _kwargs["session_manager"]
+            instance.turn_delivery_factory = _kwargs["turn_delivery_factory"]
             seen["loop"] = instance
             return instance
 
@@ -112,11 +118,30 @@ def test_interactive_agent_routes_a_complete_user_turn(
     # This is an isolated classic-agent interaction test; production entry
     # points remain closed by the migration guard.
     monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr("nanobot.cli.commands.set_cli_process_identity", lambda _args: None)
     monkeypatch.setattr("nanobot.cli.agent._model_display", lambda *_args: ("test-model", ""))
     monkeypatch.setattr("nanobot.cli.agent.consume_restart_notice_from_env", lambda: None)
     monkeypatch.setattr("nanobot.cli.agent.AgentLoop", _AgentLoop)
     monkeypatch.setattr("nanobot.cli.agent.StreamRenderer", _Renderer)
     monkeypatch.setattr("nanobot.providers.factory.make_provider", lambda *_args: object())
+    from nanobot.runtime_composition import RuntimeComposition
+    from nanobot.session.runtime_authority import SessionAuthorityLease
+
+    original_define = RuntimeComposition.define
+
+    class Authority:
+        async def acquire(self):
+            return SessionAuthorityLease(object())  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        RuntimeComposition,
+        "define",
+        lambda config, **kwargs: original_define(
+            config,
+            session_authority=Authority(),
+            **kwargs,
+        ),
+    )
     monkeypatch.setattr(
         "nanobot.providers.image_generation.image_gen_provider_configs",
         lambda *_args: [],

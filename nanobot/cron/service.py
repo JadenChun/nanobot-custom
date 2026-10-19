@@ -19,7 +19,7 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from types import EllipsisType
-from typing import Any, Callable, Coroutine, Literal, Mapping
+from typing import Any, Callable, Coroutine, Literal, Mapping, cast
 
 from loguru import logger
 
@@ -57,6 +57,7 @@ from nanobot.cron.occurrence import (
 from nanobot.cron.occurrence_store import (
     CronOccurrenceStore,
     OccurrenceClaim,
+    OccurrenceExecutionFence,
     OccurrenceRecord,
 )
 from nanobot.cron.types import (
@@ -169,7 +170,7 @@ def _validate_delivery_destinations_for_add(
     if to:
         candidates.append((channel or "cli", to))
     for index, destination in enumerate(additional):
-        if not isinstance(destination, CronDestination):
+        if not isinstance(cast(object, destination), CronDestination):
             raise TypeError(f"additional_destinations[{index}] must be a CronDestination")
         if type(destination.channel) is not str or type(destination.to) is not str:
             raise ValueError(f"additional_destinations[{index}] channel and to must be strings")
@@ -196,6 +197,11 @@ def _validate_delivery_destinations_for_add(
 def _normalize_agent_turn_job(_job: CronJob) -> bool:
     """Compatibility shim; definition reads must not mutate execution fields."""
     return False
+
+
+legacy_now_ms = _now_ms
+legacy_compute_next_run = _compute_next_run
+legacy_normalize_agent_turn_job = _normalize_agent_turn_job
 
 
 def _definition_revision_action_id(action: CronDefinitionAction) -> str:
@@ -313,12 +319,12 @@ class CronService:
                 store_namespace = namespace or f"cron:{action_root}"
                 action_store = CronActionStore(action_root, namespace=store_namespace)
             definition_store = CronDefinitionStore(action_store)
-        elif not isinstance(definition_store, CronDefinitionStore):
+        elif not isinstance(cast(object, definition_store), CronDefinitionStore):
             raise TypeError("definition_store must be a CronDefinitionStore")
 
-        if occurrence_store is not None and not isinstance(occurrence_store, CronOccurrenceStore):
+        if occurrence_store is not None and not isinstance(cast(object, occurrence_store), CronOccurrenceStore):
             raise TypeError("occurrence_store must be a CronOccurrenceStore")
-        if completion_projector is not None and not isinstance(completion_projector, CronCompletionProjector):
+        if completion_projector is not None and not isinstance(cast(object, completion_projector), CronCompletionProjector):
             raise TypeError("completion_projector must be a CronCompletionProjector")
         if occurrence_store is None and completion_projector is not None:
             raise ValueError("completion_projector requires an explicitly configured occurrence_store")
@@ -332,9 +338,9 @@ class CronService:
             and occurrence_store.namespace != definition_store.action_store.namespace
         ):
             raise ValueError("definition and occurrence stores must share one namespace")
-        if delivery_store is not None and not isinstance(delivery_store, CronDeliveryOutboxStore):
+        if delivery_store is not None and not isinstance(cast(object, delivery_store), CronDeliveryOutboxStore):
             raise TypeError("delivery_store must be a CronDeliveryOutboxStore")
-        if delivery_runtime is not None and not isinstance(delivery_runtime, CronDeliveryRuntime):
+        if delivery_runtime is not None and not isinstance(cast(object, delivery_runtime), CronDeliveryRuntime):
             raise TypeError("delivery_runtime must be a CronDeliveryRuntime")
         if delivery_runtime is not None and delivery_store is not None:
             if delivery_runtime.outbox_store is not delivery_store:
@@ -350,7 +356,7 @@ class CronService:
                 raise ValueError("delivery runtime injection requires an explicit occurrence_store")
             if delivery_runtime.occurrence_store is not occurrence_store:
                 raise ValueError("delivery runtime must use the service occurrence authority")
-            if delivery_runtime.occurrence_store.namespace != delivery_runtime.outbox_store.namespace:
+            if occurrence_store.namespace != delivery_runtime.outbox_store.namespace:
                 raise ValueError("delivery and occurrence stores must share one namespace")
 
         self.store_path = path
@@ -473,6 +479,7 @@ class CronService:
         error: str | None | object = None,
         run_id: str | None = None,
         provenance: Mapping[str, Any] | None = None,
+        fence: OccurrenceExecutionFence,
     ) -> CronCompletionProjection:
         """Persist a canonical completion and fenced history projection."""
         # The projector distinguishes omitted values with a private sentinel;
@@ -489,7 +496,7 @@ class CronService:
             kwargs["error"] = error
         if self.completion_projector is None:
             raise CronOccurrenceRuntimeUnavailableError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
-        return self.completion_projector.complete(claim, completion, **kwargs)
+        return self.completion_projector.complete(claim, completion, fence=fence, **kwargs)
 
     def project_occurrence_completion(
         self,
@@ -570,6 +577,40 @@ class CronService:
         """Expose E2 in-flight/uncertain records without auto-retry."""
         return self._require_delivery_runtime().reconciliation_required()
 
+    def resolve_delivery_after_reconciliation(
+        self,
+        outbox_id: str | DeliveryClaim,
+        destination_id: str | None = None,
+        *,
+        expected_revision: int,
+        action_id: str,
+        request_digest: str,
+        evidence_ref: str,
+        predecessor_fenced_ref: str,
+        resolution: str | Mapping[str, Any],
+        receipt: Mapping[str, Any] | None = None,
+        predecessor_attempt: int | None = None,
+        predecessor_owner: str | None = None,
+        attempt: int | None = None,
+        owner: str | None = None,
+    ) -> DeliveryOutboxRecord:
+        """Forward exact operator evidence; E2 acquires the send fence internally."""
+        return self._require_delivery_runtime().resolve_after_reconciliation(
+            outbox_id,
+            destination_id,
+            expected_revision=expected_revision,
+            action_id=action_id,
+            request_digest=request_digest,
+            evidence_ref=evidence_ref,
+            predecessor_fenced_ref=predecessor_fenced_ref,
+            resolution=resolution,
+            receipt=receipt,
+            predecessor_attempt=predecessor_attempt,
+            predecessor_owner=predecessor_owner,
+            attempt=attempt,
+            owner=owner,
+        )
+
     # Explicit aliases keep service call sites descriptive without creating a
     # second delivery authority or any ordinary-construction side effect.
     prepare_delivery = prepare_completed_delivery
@@ -619,7 +660,7 @@ class CronService:
             )
             carried_evidence = (
                 candidate is not None
-                and candidate.get("kind") == "cron_definition_candidate_v1"
+                and candidate.get("kind") in {"cron_definition_candidate_v1", "cron_definition_candidate_v2"}
                 and "legacy_conversion_evidence" in candidate
             )
             if not converted_candidate and not carried_evidence:
@@ -662,12 +703,12 @@ class CronService:
         """Start management availability without arming a timer or running jobs."""
         self._running = False
         self._arm_timer()
-        self._load_store()
+        store = self._load_store()
         self._running = True
         self._timer_task = None
         logger.info(
             "Cron definition service started with {} definitions; execution fenced",
-            len(self._store.jobs),
+            len(store.jobs),
         )
 
     def stop(self) -> None:

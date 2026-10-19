@@ -154,13 +154,13 @@ exclude = ["nanobot/channels/*/tests/**"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "nanobot/",
-    "nanobot/web/dist/",
-    "hatch_build.py",
-    "README.md",
-    "LICENSE",
-    "THIRD_PARTY_NOTICES.md",
-    "pyproject.toml",
+    "/nanobot/",
+    "/nanobot/web/dist/",
+    "/hatch_build.py",
+    "/README.md",
+    "/LICENSE",
+    "/THIRD_PARTY_NOTICES.md",
+    "/pyproject.toml",
 ]
 exclude = ["nanobot/channels/*/tests/**"]
 

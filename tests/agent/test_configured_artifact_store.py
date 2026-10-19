@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
-from agent.test_migration_engine import ScriptedProvider
-from agent.test_migration_engine import engine_config as engine_config
-from agent.test_migration_source_engine import upgrade
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import TurnRequest
+from nanobot.context_repo import ContextRepoManager
 from nanobot.providers.base import LLMResponse
 from nanobot.session.artifact import ArtifactValidationError
 from nanobot.session.manager import SessionPolicy
+from tests.agent.test_migration_engine import ScriptedProvider
+from tests.agent.test_migration_engine import engine_config as engine_config
+from tests.agent.test_migration_source_engine import upgrade
 
 
 async def test_enabled_config_captures_default_root_and_registers_only_per_invocation(engine_config) -> None:
@@ -142,3 +146,51 @@ async def test_unsafe_enabled_artifact_root_rejects_loop_startup(engine_config) 
             tool_registry=ToolRegistry(),
             provider=ScriptedProvider([]),
         )
+
+
+@pytest.mark.parametrize("root_relation", ["disjoint", "within", "ancestor"])
+async def test_loop_artifact_roots_omit_absent_targets_and_retain_restricted_targets(
+    engine_config, tmp_path: Path, root_relation: str,
+) -> None:
+    context_root = tmp_path / "context"
+    context_root.mkdir()
+    configured_root = tmp_path / "target" / "restricted"
+    (context_root / "nanobot.context.json").write_text(json.dumps({
+        "targetRepos": {
+            "unconfigured": {},
+            "restricted": {"path": str(configured_root), "read": [], "write": []},
+        },
+    }), encoding="utf-8")
+    engine_config.agents.defaults.context_repos = [str(context_root)]
+    manager = ContextRepoManager.from_config(
+        context_repos=engine_config.agents.defaults.context_repos,
+    )
+    assert any(target.path is None for target in manager.target_repos())
+    assert configured_root not in manager.read_roots()
+    assert configured_root not in manager.write_roots()
+    root = {
+        "disjoint": tmp_path / "private-artifacts",
+        "within": configured_root / "private-artifacts",
+        "ancestor": configured_root.parent,
+    }[root_relation]
+    engine_config.artifacts.enabled = True
+    engine_config.artifacts.root = str(root)
+
+    if root_relation != "disjoint":
+        with pytest.raises(ArtifactValidationError, match="overlaps"):
+            AgentLoop.from_config(
+                engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([]),
+            )
+    else:
+        loop = AgentLoop.from_config(
+            engine_config, tool_registry=ToolRegistry(), provider=ScriptedProvider([]),
+        )
+        try:
+            factory = loop._artifact_reader_factory
+            assert factory is not None
+            assert factory.settings.root == root
+            assert not loop.tools.has("read_artifact")
+        finally:
+            await loop.aclose()
+    assert not root.exists()
+    assert not configured_root.exists()

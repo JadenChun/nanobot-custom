@@ -13,22 +13,25 @@ import json
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn, cast
 
 from nanobot.agent import memory_recovery as receipt_codec
 from nanobot.agent import memory_recovery_conversion as conversion
 from nanobot.agent import memory_recovery_conversion_finalize as conversion_finalize
+from nanobot.agent import memory_recovery_quarantine_storage as quarantine
 from nanobot.agent import memory_recovery_storage as storage
 from nanobot.agent import memory_recovery_transaction as transaction
 from nanobot.agent.memory_recovery_manifest import MAX_INT, ManifestRecord, MemoryRecoveryManifest
 from nanobot.session.checked_source import open_checked_recovery_session
-from nanobot.session.legacy_receipt_source import _chunk_digest as _legacy_chunk_digest
+from nanobot.session.legacy_receipt_source import capture_legacy_receipt_chunk_digest
 from nanobot.session.recovery_locator import locate_recovery_candidate
 from nanobot.session.source import (
     canonical_events,
     validate_event_ids,
     validate_execution_links,
 )
+
+_legacy_chunk_digest = capture_legacy_receipt_chunk_digest()
 
 _RECEIPT = ".consolidation.pending.json"
 _TARGETS = ("history.jsonl", ".cursor", "MEMORY.md")
@@ -49,7 +52,7 @@ class MemoryRecoveryTransactionPreparationError(RuntimeError):
         super().__init__("memory recovery transaction preparation is unavailable")
 
 
-def _fail() -> None:
+def _fail() -> NoReturn:
     raise MemoryRecoveryTransactionPreparationError() from None
 
 
@@ -72,7 +75,7 @@ def _strict_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _reject_constant(value: str) -> None:
+def _reject_constant(value: str) -> NoReturn:
     raise ValueError(value)
 
 
@@ -101,6 +104,20 @@ def _receipt_stat(snapshot: storage.MemoryTargetSnapshot) -> dict[str, int | Non
     }
 
 
+def receipt_snapshot_stat(snapshot: storage.MemoryTargetSnapshot) -> dict[str, int | None]:
+    """Project an existing receipt snapshot's stat; acquire no new authority."""
+    return _receipt_stat(snapshot)
+
+
+def require_transaction_receipt_binding(
+    authority: storage.WorkspaceMemoryAuthority,
+    issued: storage.MemoryTargetSnapshot,
+) -> None:
+    """Check the direct transaction receipt's bytes and complete stat binding."""
+
+    _receipt_bound(authority, issued)
+
+
 def _receipt_bound(
     authority: storage.WorkspaceMemoryAuthority,
     issued: storage.MemoryTargetSnapshot,
@@ -126,22 +143,31 @@ def _conversion_evidence(
     authority: storage.WorkspaceMemoryAuthority,
     captured: transaction.CapturedTransactionPayload,
     tx_record: ManifestRecord,
-    receipt_snapshot: storage.MemoryTargetSnapshot,
+    receipt_snapshot: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
     receipt: receipt_codec.MemoryReceipt,
     operation: storage.WorkspaceMemoryOperation,
+    *, read_only: bool = False,
 ) -> conversion.PreparedConversionPayload:
     v1 = conversion.capture_conversion_payload(captured.identity)
+    if read_only and not (
+        authority.workspace / "memory" / ".recovery" / "conversions" / v1.identity
+    ).is_dir():
+        _fail()
     if _manifest(authority, "conversions", v1.identity).load():
         _fail()
 
     v2 = conversion.capture_receipt_tail_conversion_payload(captured.identity)
+    if read_only and not (
+        authority.workspace / "memory" / ".recovery" / "conversions" / v2.identity
+    ).is_dir():
+        _fail()
     records = _manifest(authority, "conversions", v2.identity).load()
     if len(records) != len(_CONVERSION_PHASES) or tuple(
         item.phase for item in records
     ) != _CONVERSION_PHASES:
         _fail()
 
-    decoded = conversion_finalize._decode(records, v2)
+    decoded = conversion_finalize.decode_conversion_finalization_evidence(records, v2)
     prepared = decoded[0]
     if (
         prepared.disposition != "convert"
@@ -152,7 +178,7 @@ def _conversion_evidence(
         or prepared.receipt.get("blob_digest") != captured.receipt_digest
     ):
         _fail()
-    conversion_finalize._verify(
+    conversion_finalize.require_conversion_finalization_binding(
         authority,
         operation,
         receipt_snapshot,
@@ -162,6 +188,7 @@ def _conversion_evidence(
         v2,
         prepared,
         finalized=True,
+        read_only=read_only,
     )
     return prepared
 
@@ -176,12 +203,13 @@ def _parse_history_rows(raw: bytes) -> list[dict[str, Any]]:
         record = _decode_json(line)
         if type(record) is not dict:
             _fail()
-        cursor = record.get("cursor")
-        timestamp = record.get("timestamp")
-        content = record.get("content")
+        cursor = cast(dict[object, object], record).get("cursor")
+        timestamp = cast(dict[object, object], record).get("timestamp")
+        content = cast(dict[object, object], record).get("content")
         if type(cursor) is not int or cursor < 0 or type(timestamp) is not str or type(content) is not str:
             _fail()
-        rows.append(record)
+        # _decode_json/_strict_pairs constructs only ordinary JSON string keys.
+        rows.append(cast(dict[str, object], record))
     if not rows:
         _fail()
     return rows
@@ -243,14 +271,16 @@ def _session_records(raw: bytes, session_key: str) -> tuple[dict[str, Any], list
     ]
     if not records or type(records[0]) is not dict:
         _fail()
-    header = records[0]
+    # Exact-dict checks plus _strict_pairs establish JSON string keys, not a
+    # primitive field schema; those fields retain their ordered checks below.
+    header = cast(dict[str, object], records[0])
     if (
         header.get("_type") != "metadata"
         or header.get("key") != session_key
         or type(header.get("metadata")) is not dict
     ):
         _fail()
-    metadata = header["metadata"]
+    metadata = cast(dict[str, object], header["metadata"])
     if (
         type(metadata.get("source_schema_version")) is not int
         or metadata["source_schema_version"] != 1
@@ -266,17 +296,17 @@ def _session_records(raw: bytes, session_key: str) -> tuple[dict[str, Any], list
     for field in ("created_at", "updated_at"):
         if type(header.get(field)) is not str:
             _fail()
-        datetime.fromisoformat(header[field])
+        datetime.fromisoformat(cast(str, header[field]))
     events: list[dict[str, Any]] = []
     for event in records[1:]:
         if (
             type(event) is not dict
             or "_type" in event
-            or type(event.get("role")) is not str
+            or type(cast(dict[object, object], event).get("role")) is not str
             or event["role"] not in {"user", "assistant", "tool", "system", "developer"}
         ):
             _fail()
-        events.append(event)
+        events.append(cast(dict[str, object], event))
     canonical_events(records)
     validate_event_ids(events)
     validate_execution_links(events)
@@ -399,7 +429,7 @@ def _record_proposal_blobs(
         new = targets[name]["new"]
         if type(new) is not dict:
             _fail()
-        digest = new["blob_digest"]
+        digest = cast(dict[object, object], new)["blob_digest"]
         content = target_bytes[name]
         if (content is None) != (digest is None):
             _fail()
@@ -419,7 +449,7 @@ def _prepare_locked(
     raw = receipt_snapshot.content
     if raw is None:
         _fail()
-    receipt = receipt_codec._validate_payload(receipt_codec._decode(raw), raw)
+    receipt = receipt_codec.decode_memory_receipt_bytes(raw)
     captured = transaction.capture_transaction_payload(
         receipt,
         workspace_id=workspace_id,
@@ -588,7 +618,73 @@ def prepare_memory_recovery_transaction(
         _fail()
 
 
+def require_transaction_conversion_evidence(
+    authority: storage.WorkspaceMemoryAuthority,
+    captured: transaction.CapturedTransactionPayload,
+    tx_record: ManifestRecord,
+    receipt_snapshot: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
+    receipt: receipt_codec.MemoryReceipt,
+    operation: storage.WorkspaceMemoryOperation,
+    *, read_only: bool = False,
+) -> conversion.PreparedConversionPayload:
+    """Require and return the transaction completed-conversion evidence."""
+    return _conversion_evidence(authority, captured, tx_record, receipt_snapshot, receipt, operation, read_only=read_only)
+
+
+def read_verified_transaction_marker_row(
+    authority: storage.WorkspaceMemoryAuthority,
+    prepared: conversion.PreparedConversionPayload,
+    receipt: receipt_codec.MemoryReceipt,
+    history_bytes: bytes,
+    cursor_bytes: bytes,
+) -> bytes:
+    """Read the marker row after existing history, cursor and blob checks."""
+    return _verified_marker_row(authority, prepared, receipt, history_bytes, cursor_bytes)
+
+
+def parse_recovery_session_records(raw: bytes, session_key: str) -> tuple[dict[str, object], list[dict[str, object]]]:
+    """Parse session records through the ordered recovery-source checks."""
+    return _session_records(raw, session_key)
+
+
+def derive_recovery_source_proposal(
+    raw: bytes,
+    receipt: receipt_codec.MemoryReceipt,
+) -> tuple[dict[str, int | str], bytes]:
+    """Derive the checked source transition without applying it."""
+    return _source_proposal(raw, receipt)
+
+
+def transaction_target_descriptor(
+    snapshot: storage.MemoryTargetSnapshot,
+    new_content: bytes | None,
+) -> dict[str, object]:
+    """Project the original snapshot and proposed bytes to a target transition."""
+    return _target_descriptor(snapshot, new_content)
+
+
+def require_current_transaction_snapshot(
+    authority: storage.WorkspaceMemoryAuthority,
+    snapshot: storage.MemoryTargetSnapshot,
+) -> None:
+    """Require current bytes and stat identity for the issued snapshot."""
+    return _same_snapshot(authority, snapshot)
+
+
+def legacy_transaction_chunk_digest(messages: list[dict[str, object]]) -> str:
+    """Digest source events with the existing import-bound legacy encoder callback."""
+    return _legacy_chunk_digest(messages)
+
+
 __all__ = [
     "MemoryRecoveryTransactionPreparationError",
     "prepare_memory_recovery_transaction",
+    "require_transaction_receipt_binding",
+    "require_transaction_conversion_evidence",
+    "read_verified_transaction_marker_row",
+    "parse_recovery_session_records",
+    "derive_recovery_source_proposal",
+    "transaction_target_descriptor",
+    "require_current_transaction_snapshot",
+    "legacy_transaction_chunk_digest",
 ]

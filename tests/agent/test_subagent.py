@@ -1,14 +1,16 @@
-"""Tests for SubagentManager."""
+"""Foreground delegation invariants and dormant SubagentManager adapters."""
 
 import asyncio
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.subagent import SubagentManager, SubagentStatus
-from nanobot.agent.tools.filesystem import FileToolsConfig
+from nanobot.agent.tools.file_state import FileStates, bind_file_states, reset_file_states
+from nanobot.agent.tools.filesystem import FileToolsConfig, ReadFileTool
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.bus.queue import MessageBus
 from nanobot.config.schema import ToolsConfig
 from nanobot.llm_usage.context import llm_usage_source
@@ -23,45 +25,102 @@ def _runtime(provider: LLMProvider) -> LLMRuntime:
 
 
 @pytest.mark.asyncio
-async def test_subagent_uses_tool_loader():
-    """Verify subagent registers tools via ToolLoader, not hard-coded imports."""
-    provider = MagicMock(spec=LLMProvider)
-    provider.get_default_model.return_value = "test"
-    sm = SubagentManager(
-        workspace=Path("/tmp"),
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
-    tools = sm._build_tools()
-    assert tools.has("read_file")
-    assert tools.has("write_file")
-    assert not tools.has("message")
-    assert not tools.has("spawn")
-
-
-@pytest.mark.asyncio
-async def test_subagent_build_tools_isolates_file_read_state(tmp_path):
-    """Each spawned subagent needs a fresh file-state cache."""
-    (tmp_path / "note.txt").write_text("hello\n", encoding="utf-8")
-    provider = MagicMock(spec=LLMProvider)
-    provider.get_default_model.return_value = "test"
+async def test_retired_subagent_tool_loader_rejects_unsupported_scope(tmp_path):
+    """The upstream background factory must not restore retired tools."""
     sm = SubagentManager(
         workspace=tmp_path,
         bus=MessageBus(),
         max_tool_result_chars=16_000,
     )
-
-    first_read = sm._build_tools().get("read_file")
-    second_read = sm._build_tools().get("read_file")
-
-    assert first_read is not second_read
-    assert (await first_read.execute(path="note.txt")).startswith("1| hello")
-    second_result = await second_read.execute(path="note.txt")
-    assert second_result.startswith("1| hello")
-    assert "File unchanged" not in second_result
+    try:
+        with pytest.raises(ValueError, match="Unsupported runtime tool scope"):
+            sm._build_tools()
+    finally:
+        await sm.close()
 
 
-def test_subagent_respects_file_tool_toggle(tmp_path):
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["planner", "reviewer", "explorer", "worker"])
+async def test_foreground_tools_isolate_file_read_state(tmp_path, role):
+    """An independent delegated context must see contents, not a parent's read stub."""
+    (tmp_path / "note.txt").write_text("hello\n", encoding="utf-8")
+    provider = MagicMock(spec=LLMProvider)
+    provider.get_default_model.return_value = "test"
+    manager = ForegroundAgentManager(provider=provider, workspace=tmp_path, runtime=_runtime(provider))
+    def registry(call_id):
+        if role == "worker":
+            return manager._worker_tools(call_id, manager._normalize_scopes(tmp_path, ["note.txt"]))
+        return manager._tools_for_role(role)
+
+    parent_state = FileStates()
+    parent_read = ReadFileTool(workspace=tmp_path, file_states=parent_state)
+    token = bind_file_states(parent_state)
+    try:
+        assert (await parent_read.execute(path="note.txt")).startswith("1| hello")
+        first = registry("first")
+        second = registry("second")
+        first_read = first.get("read_file")
+        second_read = second.get("read_file")
+        assert first_read is not second_read
+        first_result, second_result = await asyncio.gather(
+            first_read.execute(path="note.txt"), second_read.execute(path="note.txt"),
+        )
+        assert first_result.startswith("1| hello")
+        assert second_result.startswith("1| hello")
+        assert "File unchanged" not in second_result
+        assert first_read._file_states is not parent_state
+        assert first_read._file_states is not second_read._file_states
+        assert "File unchanged" in await first_read.execute(path="note.txt")
+        assert "File unchanged" in await parent_read.execute(path="note.txt")
+        if role == "worker":
+            assert first.get("write_file")._file_states is first_read._file_states
+            assert first.get("edit_file")._file_states is first_read._file_states
+    finally:
+        reset_file_states(token)
+        await manager.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["planner", "reviewer", "explorer", "worker"])
+async def test_foreground_runner_receives_contents_already_read_by_parent(tmp_path, role):
+    (tmp_path / "note.txt").write_text("delegated evidence\n", encoding="utf-8")
+    provider = MagicMock(spec=LLMProvider)
+    provider.get_default_model.return_value = "test"
+    provider.supports_bound_conversation_state.return_value = False
+    provider.can_resume_conversation_state.return_value = False
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(content="reading", tool_calls=[ToolCallRequest(
+            id="read", name="read_file", arguments={"path": "note.txt"},
+        )]),
+        LLMResponse(content="inspection finished"),
+    ])
+    manager = ForegroundAgentManager(provider=provider, workspace=tmp_path, runtime=_runtime(provider))
+    parent_state = FileStates()
+    parent_read = ReadFileTool(workspace=tmp_path, file_states=parent_state)
+    token = bind_file_states(parent_state)
+    try:
+        assert "delegated evidence" in await parent_read.execute(path="note.txt")
+        tools = (manager._worker_tools("worker", manager._normalize_scopes(tmp_path, ["note.txt"]))
+                 if role == "worker" else manager._tools_for_role(role))
+        result = await manager._run_role(
+            role=role, prompt="Inspect files", assignment="Read note.txt",
+            tools=tools, max_iterations=3,
+        )
+        assert result.stop_reason == "completed"
+        assert provider.chat_with_retry.await_count == 2
+        messages = provider.chat_with_retry.await_args_list[1].kwargs["messages"]
+        tool_rows = [row for row in messages if row["role"] == "tool"]
+        assert len(tool_rows) == 1
+        assert "delegated evidence" in str(tool_rows[0]["content"])
+        assert "File unchanged" not in str(tool_rows[0]["content"])
+        assert parent_read._file_states is parent_state
+        assert "File unchanged" in await parent_read.execute(path="note.txt")
+    finally:
+        reset_file_states(token)
+        await manager.close()
+
+
+def test_retired_subagent_preserves_file_toggle_without_loading_tools(tmp_path):
     provider = MagicMock(spec=LLMProvider)
     provider.get_default_model.return_value = "test"
     sm = SubagentManager(
@@ -71,18 +130,9 @@ def test_subagent_respects_file_tool_toggle(tmp_path):
         tools_config=ToolsConfig(file=FileToolsConfig(enable=False)),
     )
 
-    tools = sm._build_tools()
-
-    file_tools = {
-        "apply_patch",
-        "edit_file",
-        "find_files",
-        "grep",
-        "list_dir",
-        "read_file",
-        "write_file",
-    }
-    assert file_tools.isdisjoint(tools.tool_names)
+    assert sm._subagent_tools_config().file.enable is False
+    with pytest.raises(ValueError, match="Unsupported runtime tool scope"):
+        sm._build_tools()
 
 
 def test_subagent_prompt_keeps_agent_paths_for_selected_project(tmp_path):
@@ -145,6 +195,10 @@ async def test_subagent_keeps_project_runtime_scope_with_agent_owned_tools(tmp_p
         return_value=AgentRunResult(final_content="ok", messages=[], stop_reason="completed")
     )
     manager._announce_result = AsyncMock()
+    # Adapter forwarding only: production background tool loading stays retired.
+    tools = ToolRegistry()
+    tools.register(ReadFileTool(workspace=agent_workspace.resolve()))
+    manager._build_tools = MagicMock(return_value=tools)
     status = SubagentStatus(
         task_id="t1",
         label="label",
@@ -165,12 +219,16 @@ async def test_subagent_keeps_project_runtime_scope_with_agent_owned_tools(tmp_p
     spec = manager.runner.run.call_args.args[0]
     assert spec.workspace == project
     assert spec.tools.get("read_file")._workspace == agent_workspace.resolve()
+    assert spec.tools is tools
+    await manager.close()
 
 
 @pytest.mark.asyncio
-async def test_subagent_recovers_from_tool_error_in_same_run(tmp_path):
+async def test_foreground_tool_error_stops_without_extra_model_call(tmp_path):
     provider = MagicMock(spec=LLMProvider)
     provider.get_default_model.return_value = "test"
+    provider.supports_bound_conversation_state.return_value = False
+    provider.can_resume_conversation_state.return_value = False
     provider.chat_with_retry = AsyncMock(side_effect=[
         LLMResponse(
             content="reading",
@@ -184,20 +242,18 @@ async def test_subagent_recovers_from_tool_error_in_same_run(tmp_path):
         ),
         LLMResponse(content="recovered without restarting", tool_calls=[]),
     ])
-    sm = SubagentManager(
-        workspace=tmp_path,
-        bus=MessageBus(),
-        max_tool_result_chars=16_000,
-    )
-
-    result = await sm.run_inline(
-        task="recover after a missing file",
-        session_key="test:direct",
-        runtime=_runtime(provider),
-    )
-
-    assert result == "recovered without restarting"
-    assert provider.chat_with_retry.await_count == 2
+    manager = ForegroundAgentManager(provider=provider, workspace=tmp_path, runtime=_runtime(provider))
+    try:
+        result = await manager._run_role(
+            role="planner", prompt="Inspect files", assignment="read a missing file",
+            tools=manager._tools_for_role("planner"), max_iterations=3,
+        )
+        assert result.stop_reason == "tool_error"
+        assert provider.chat_with_retry.await_count == 1
+        assert any(event["status"] == "error" for event in result.tool_events)
+        assert not (tmp_path / "missing.txt").exists()
+    finally:
+        await manager.close()
 
 
 @pytest.mark.asyncio
@@ -213,6 +269,9 @@ async def test_spawned_subagent_inherits_llm_usage_source(tmp_path):
         return_value=AgentRunResult(final_content="ok", messages=[], stop_reason="completed")
     )
     sm._announce_result = AsyncMock()
+    # Preserve legacy usage-source forwarding without admitting background tools.
+    sm._build_tools = MagicMock(side_effect=lambda **_kwargs: ToolRegistry())
+    sm._build_subagent_prompt = MagicMock(return_value="isolated usage adapter test")
 
     with llm_usage_source("cron"):
         await sm.spawn(
@@ -225,3 +284,4 @@ async def test_spawned_subagent_inherits_llm_usage_source(tmp_path):
 
     spec = sm.runner.run.call_args.args[0]
     assert spec.llm_usage_source == "cron"
+    await sm.close()

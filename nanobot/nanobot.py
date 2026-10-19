@@ -5,17 +5,14 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nanobot.agent.hook import AgentHook
-from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.mcp import MCPProvider
-from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import RunStatus, TraceMode, TurnSource
 from nanobot.config.schema import Config
 from nanobot.providers.base import LLMUsage
-from nanobot.providers.image_generation import image_gen_provider_configs
 from nanobot.sdk.clients import MemoryClient, RuntimeClient, SessionClient
 from nanobot.sdk.runtime import (
     build_process_direct_kwargs,
@@ -42,6 +39,10 @@ from nanobot.sdk.types import (
     result_from_turn,
 )
 from nanobot.utils.llm_runtime import LLMRuntime
+
+if TYPE_CHECKING:
+    from nanobot.runtime_composition import RuntimeComposition
+    from nanobot.session.runtime_authority import SessionAuthority
 
 __all__ = [
     "Nanobot",
@@ -78,19 +79,41 @@ class Nanobot:
 
     def __init__(
         self,
-        loop: AgentLoop,
+        loop: AgentLoop | None,
         *,
         config: Config | None = None,
         mcp_provider: MCPProvider | None = None,
+        composition: RuntimeComposition | None = None,
     ) -> None:
-        from nanobot.migration_guard import require_runtime_ready
-        require_runtime_ready()
         self._loop = loop
         self._config = config
         self._mcp_provider = mcp_provider
-        self.sessions = SessionClient(loop)
-        self.memory = MemoryClient(loop)
-        self.runtime = RuntimeClient(loop)
+        self._composition = composition
+        self._closed = False
+        resolver = self._require_loop
+        self.sessions = SessionClient(resolver)
+        self.memory = MemoryClient(resolver)
+        self.runtime = RuntimeClient(resolver)
+
+    def _require_loop(self) -> AgentLoop:
+        if getattr(self, "_closed", False):
+            raise RuntimeError("Nanobot is closed")
+        if self._loop is not None:
+            return self._loop
+        if self._composition is None:
+            raise RuntimeError("Nanobot runtime is unavailable")
+        return self._composition.require_ready().agent
+
+    async def _ensure_runtime(self) -> AgentLoop:
+        if getattr(self, "_closed", False):
+            raise RuntimeError("Nanobot is closed")
+        if self._loop is None:
+            if self._composition is None:
+                raise RuntimeError("Nanobot runtime is unavailable")
+            handle = await self._composition.acquire()
+            self._loop = handle.agent
+            self._mcp_provider = handle.mcp
+        return self._loop
 
     @classmethod
     def from_config(
@@ -100,6 +123,7 @@ class Nanobot:
         workspace: str | Path | None = None,
         model: str | None = None,
         model_preset: str | None = None,
+        session_authority: SessionAuthority | None = None,
     ) -> Nanobot:
         """Create a Nanobot instance from a config file.
 
@@ -110,8 +134,6 @@ class Nanobot:
             model: Override the instance default model.
             model_preset: Override the instance default model preset.
         """
-        from nanobot.migration_guard import require_runtime_ready
-        require_runtime_ready()
         from nanobot.config.loader import load_config, resolve_config_env_vars
 
         ensure_single_model_selector(model=model, model_preset=model_preset)
@@ -136,15 +158,17 @@ class Nanobot:
         elif model_preset is not None:
             config.agents.defaults.model_preset = model_preset
 
-        tools = ToolRegistry()
-        mcp_provider = MCPProvider.from_config(config, tools)
-        loop = AgentLoop.from_config(
+        from nanobot.runtime_composition import RuntimeComposition
+
+        composition = RuntimeComposition.define(
             config,
-            image_generation_provider_configs=image_gen_provider_configs(config),
-            hook_factories=[create_file_edit_activity_hook],
-            tool_registry=tools,
+            session_authority=session_authority,
         )
-        return cls(loop, config=config, mcp_provider=mcp_provider)
+        return cls(
+            None,
+            config=config,
+            composition=composition,
+        )
 
     async def run(
         self,
@@ -181,10 +205,11 @@ class Nanobot:
             model: Override the model for this run only.
             model_preset: Override the model preset for this run only.
         """
+        loop = await self._ensure_runtime()
         channel = "sdk" if channel is None else channel
         chat_id = (session_key if channel == "sdk" else "direct") if chat_id is None else chat_id
         per_run_hooks = list(hooks or [])
-        runtime = self._loop.runtime_resolver.resolve_override(
+        runtime = loop.runtime_resolver.resolve_override(
             model=model,
             model_preset=model_preset,
             config=self._config,
@@ -202,7 +227,7 @@ class Nanobot:
             kwargs["runtime"] = runtime
         if self._mcp_provider is not None:
             await self._mcp_provider.connect()
-        response = await self._loop._execute_direct(
+        response = await loop.process_direct_result(
             message, **kwargs, hooks=per_run_hooks, source=TurnSource.SDK,
             trace_mode=TraceMode.SANITIZED if include_messages else TraceMode.NONE,
         )
@@ -230,9 +255,10 @@ class Nanobot:
         include_messages controls the final sanitized trace. Explicit stream
         events retain their tool and reasoning fields.
         """
+        loop = await self._ensure_runtime()
         channel = "sdk" if channel is None else channel
         chat_id = (session_key if channel == "sdk" else "direct") if chat_id is None else chat_id
-        override_runtime = self._loop.runtime_resolver.resolve_override(
+        override_runtime = loop.runtime_resolver.resolve_override(
             model=model,
             model_preset=model_preset,
             config=self._config,
@@ -290,7 +316,7 @@ class Nanobot:
             try:
                 if self._mcp_provider is not None:
                     await self._mcp_provider.connect()
-                response = await self._loop._execute_direct(
+                response = await loop.process_direct_result(
                     message, **kwargs, hooks=per_run_hooks, source=TurnSource.SDK,
                     trace_mode=TraceMode.SANITIZED if include_messages else TraceMode.NONE,
                 )
@@ -363,13 +389,21 @@ class Nanobot:
 
     async def aclose(self) -> None:
         """Release resources held by this instance."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
+        if self._composition is not None:
+            await self._composition.aclose()
+            return
         try:
-            await self._loop.aclose()
+            if self._loop is not None:
+                await self._loop.aclose()
         finally:
             if self._mcp_provider is not None:
                 await self._mcp_provider.aclose()
 
     async def __aenter__(self) -> Nanobot:
+        await self._ensure_runtime()
         return self
 
     async def __aexit__(self, *exc: object) -> None:

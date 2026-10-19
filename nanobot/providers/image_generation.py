@@ -9,7 +9,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from urllib.parse import urljoin
 
 import httpx
@@ -1380,6 +1380,10 @@ class CustomImageGenerationClient(ImageGenerationProvider):
 # ---------------------------------------------------------------------------
 
 
+class _CodexImageTokenKwargs(TypedDict, total=False):
+    proxy: str
+
+
 class CodexImageGenerationClient(ImageGenerationProvider):
     """OpenAI image generation via Codex subscription OAuth.
 
@@ -1414,25 +1418,16 @@ class CodexImageGenerationClient(ImageGenerationProvider):
         image_size: str | None = None,
     ) -> GeneratedImageResponse:
         try:
-            from oauth_cli_kit import (  # pyright: ignore[reportMissingTypeStubs]
-                get_token as _get_codex_token,
-            )
-        except ImportError:
-            raise ImageGenerationError(self.missing_key_message)
+            from nanobot.providers.codex_auth import get_token as get_codex_token
 
-        try:
-            get_codex_token = cast(Any, _get_codex_token)
-            token_kwargs = {"proxy": self.proxy} if self.proxy else {}
+            token_kwargs: _CodexImageTokenKwargs = {"proxy": self.proxy} if self.proxy else {}
             token = await asyncio.to_thread(get_codex_token, **token_kwargs)
         except Exception as exc:
             raise ImageGenerationError(self.missing_key_message) from exc
         if not token or not token.access:
             raise ImageGenerationError(self.missing_key_message)
 
-        logger.info(
-            "Using Codex OAuth token for image generation (account: {})",
-            token.account_id,
-        )
+        logger.info("Using canonical Codex OAuth credential for image generation")
 
         if reference_images:
             logger.warning(

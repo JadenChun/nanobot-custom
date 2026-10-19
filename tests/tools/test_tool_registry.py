@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from typing import Any
 from unittest.mock import AsyncMock
 
-from nanobot.agent.tools.base import Tool, ToolResult
-from nanobot.agent.tools.filesystem import ReadFileTool
+import pytest
+
+from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
+from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.image_generation import ImageGenerationTool
 from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.session.artifact import FilesystemArtifactOrigin
 
@@ -31,6 +36,69 @@ class _FakeTool(Tool):
 
     async def execute(self, **kwargs: Any) -> Any:
         return kwargs
+
+
+async def test_contextual_call_preserves_schema_context_argument() -> None:
+    class ContextTool(_FakeTool):
+        async def execute(self, context: str, execution_context: Any = None) -> Any:
+            return (context, execution_context)
+
+    tool = ContextTool("context_tool", {
+        "type": "object", "properties": {"context": {"type": "string"}},
+    })
+    turn = TurnContext(run_id="context-boundary")
+    assert await tool.execute_with_context(turn, context="user evidence") == (
+        "user evidence", turn,
+    )
+
+
+async def test_contextual_call_preserves_remote_kwargs() -> None:
+    tool = _FakeTool("remote", {
+        "type": "object", "properties": {"context": {"type": "string"}},
+    })
+    assert await tool.execute_with_context(
+        TurnContext(run_id="remote"), context="remote value",
+    ) == {"context": "remote value"}
+
+
+async def test_contextual_call_still_injects_internal_context() -> None:
+    class InternalContextTool(_FakeTool):
+        async def execute(self, context: Any = None, **kwargs: Any) -> Any:
+            return context
+
+    turn = TurnContext(run_id="internal")
+    assert await InternalContextTool("internal").execute_with_context(turn) is turn
+
+
+async def test_contextual_registry_preserves_context_input() -> None:
+    class ContextTool(_FakeTool):
+        async def execute(self, context: str = "default", **kwargs: Any) -> str:
+            return context
+
+    registry = ToolRegistry()
+    registry.register(ContextTool("context_tool", {
+        "type": "object", "properties": {"context": {"type": "string"}},
+    }))
+    turn = TurnContext(run_id="registry-context")
+    supplied = await registry.execute("context_tool", {"context": "evidence"}, context=turn)
+    omitted = await registry.execute("context_tool", {}, context=turn)
+    assert isinstance(supplied, ToolOutcome)
+    assert isinstance(omitted, ToolOutcome)
+    assert supplied.content == "evidence"
+    assert omitted.content == "default"
+
+
+async def test_contextual_call_preserves_schema_execution_context() -> None:
+    class ContextTool(_FakeTool):
+        async def execute(self, execution_context: str = "default", **kwargs: Any) -> str:
+            return execution_context
+
+    tool = ContextTool("context_tool", {
+        "type": "object", "properties": {"execution_context": {"type": "string"}},
+    })
+    turn = TurnContext(run_id="execution-context")
+    assert await tool.execute_with_context(turn, execution_context="evidence") == "evidence"
+    assert await tool.execute_with_context(turn) == "default"
 
 def _tool_names(definitions: list[dict[str, Any]]) -> list[str]:
     names: list[str] = []
@@ -367,3 +435,105 @@ def test_unregister_invalidates_cache() -> None:
     second = registry.get_definitions()
     assert first is not second
     assert len(second) == 1
+
+
+def test_tool_interface_runtime_abstractness_and_signatures() -> None:
+    assert Tool.__abstractmethods__ == {"name", "description", "parameters", "execute"}
+    assert str(inspect.signature(Tool.execute)) == "(self, **kwargs: 'Any') -> 'Any'"
+    assert str(inspect.signature(Tool.execute_with_context)) == (
+        "(self, context: 'Any', /, **kwargs: 'Any') -> 'Any'"
+    )
+    for missing in ("name", "description", "parameters", "execute"):
+        members = {
+            "name": _FakeTool.name,
+            "description": _FakeTool.description,
+            "parameters": _FakeTool.parameters,
+            "execute": _FakeTool.execute,
+        }
+        del members[missing]
+        incomplete = type("IncompleteTool", (Tool,), members)
+        with pytest.raises(TypeError, match=missing):
+            incomplete()
+        decorated = tool_parameters({"type": "object"})(incomplete)
+        assert decorated is incomplete
+        if missing != "parameters":
+            with pytest.raises(TypeError, match=missing):
+                decorated()
+        else:
+            assert decorated.__abstractmethods__ == frozenset()
+
+
+def test_tool_interface_class_values_and_property_metadata() -> None:
+    schema: dict[str, Any] = {"type": "object", "properties": {}}
+    value_tool = type("ValueTool", (Tool,), {
+        "name": "value", "description": "value metadata", "parameters": schema,
+        "execute": _FakeTool.execute,
+    })
+    first = value_tool()
+    second = value_tool()
+    assert first.name == "value"
+    assert first.description == "value metadata"
+    assert first.parameters is schema
+    schema["title"] = "class mutation"
+    assert second.parameters["title"] == "class mutation"
+    shadow: dict[str, Any] = {"type": "object", "title": "instance shadow"}
+    setattr(first, "parameters", shadow)
+    assert first.parameters is shadow
+    assert second.parameters is schema
+    property_tool = _FakeTool("property", schema)
+    assert property_tool.name == "property"
+    assert property_tool.description == "property tool"
+    assert property_tool.parameters is schema
+
+
+async def test_tool_interface_decorator_identity_binding_and_copies() -> None:
+    schema: dict[str, Any] = {
+        "type": "object", "properties": {"value": {"type": "string", "enum": ["seed"]}},
+    }
+    original = _FakeTool
+    # A fresh subclass keeps the shared test helper's metadata untouched.
+    owner = type("DecoratedTool", (original,), {})
+    constructor = owner.__init__
+    execute = owner.execute
+    constructor_signature = inspect.signature(owner)
+    execute_signature = inspect.signature(owner.execute)
+    decorated = tool_parameters(schema)(owner)
+    assert decorated is owner
+    assert decorated.__init__ is constructor
+    assert decorated.execute is execute
+    assert inspect.signature(decorated) == constructor_signature
+    assert inspect.signature(decorated.execute) == execute_signature
+    instance = decorated("bound")
+    assert instance.execute.__self__ is instance
+    assert instance.execute.__func__ is execute
+    assert await instance.execute(value="seed") == {"value": "seed"}
+    schema["properties"]["value"]["enum"].append("input mutation")
+    first = instance.parameters
+    assert first["properties"]["value"]["enum"] == ["seed"]
+    first["properties"]["value"]["enum"].append("access mutation")
+    second = instance.parameters
+    assert second is not first
+    assert second["properties"]["value"]["enum"] == ["seed"]
+
+
+@pytest.mark.parametrize("owner", [
+    ReadFileTool, WriteFileTool, EditFileTool, ListDirTool,
+    WebSearchTool, WebFetchTool, ImageGenerationTool,
+])
+def test_tool_interface_real_decorated_owner_schema_copies(owner: type[Tool]) -> None:
+    descriptor = vars(owner)["parameters"]
+    assert isinstance(descriptor, property)
+    assert not getattr(descriptor, "__isabstractmethod__", False)
+    assert "parameters" not in owner.__abstractmethods__
+    # Access the installed property without activating constructors/providers.
+    instance = object.__new__(owner)
+    first = instance.parameters
+    second = instance.parameters
+    assert isinstance(first, dict)
+    assert first == second
+    assert first is not second
+    assert first["type"] == "object"
+    assert first["properties"] is not second["properties"]
+    key = next(iter(first["properties"]))
+    first["properties"][key]["title"] = "access mutation"
+    assert "title" not in instance.parameters["properties"][key]

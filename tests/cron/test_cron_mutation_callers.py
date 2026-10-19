@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -10,13 +12,14 @@ from websockets.http11 import Request
 
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.cron import CronTool
-from nanobot.cli.gateway_runtime import (
-    _register_system_job_with_current_tokens,
-    _remove_system_job_with_current_tokens,
-)
 from nanobot.cron.definition_store import DefinitionStoreConflictError
-from nanobot.cron.service import CronDefinitionTokenRequiredError, CronService
+from nanobot.cron.service import (
+    CronDefinitionConflictError,
+    CronDefinitionTokenRequiredError,
+    CronService,
+)
 from nanobot.cron.types import CronJob, CronPayload, CronSchedule
+from nanobot.triggers.local_types import LocalTrigger
 from nanobot.webui.http_utils import http_json_response
 from nanobot.webui.ws_http import GatewayHTTPHandler
 
@@ -256,7 +259,7 @@ async def test_session_delete_preflights_all_jobs_before_any_delete() -> None:
 
 
 @pytest.mark.parametrize("job_id", ["dream", "heartbeat"])
-def test_gateway_system_reconciliation_updates_and_removes_with_tokens(
+def test_explicit_system_definition_mutation_updates_and_removes_with_tokens(
     tmp_path, job_id: str
 ) -> None:
     service = CronService(tmp_path / f"{job_id}.json")
@@ -272,12 +275,180 @@ def test_gateway_system_reconciliation_updates_and_removes_with_tokens(
         name=job_id,
         schedule=CronSchedule(kind="every", every_ms=120_000),
         payload=CronPayload(kind="system_event"),
+        job_instance_id=created.job_instance_id,
+        definition_revision=created.definition_revision,
     )
 
-    reconciled = _register_system_job_with_current_tokens(service, updated)
+    reconciled = service.register_system_job(updated)
 
     assert reconciled.schedule.every_ms == 120_000
     assert reconciled.job_instance_id == created.job_instance_id
     assert reconciled.definition_revision != created.definition_revision
-    assert _remove_system_job_with_current_tokens(service, job_id)
+    assert service.remove_system_job(
+        job_id,
+        job_instance_id=reconciled.job_instance_id,
+        definition_revision=reconciled.definition_revision,
+    )
     assert service.get_job(job_id) is None
+
+
+def _cascade_handler(monkeypatch, service, triggers, calls, cleanup_mask: int = 0):
+    def cleanup(kind: str, key: str) -> bool:
+        calls.append((kind, key))
+        return bool(cleanup_mask & {"draft": 1, "session": 2, "transcript": 4}[kind])
+
+    monkeypatch.setattr(
+        "nanobot.webui.ws_http.delete_webui_thread", lambda key: cleanup("transcript", key)
+    )
+    return SimpleNamespace(
+        check_api_token=lambda _request: True,
+        session_manager=SimpleNamespace(delete_session=lambda key: cleanup("session", key)),
+        cron_service=service,
+        local_trigger_store=triggers,
+        workspaces=SimpleNamespace(discard_draft_scope=lambda key: cleanup("draft", key)),
+    )
+
+
+@pytest.mark.parametrize("cron_count", [None, 0, 2])
+@pytest.mark.parametrize("has_local", [False, True])
+@pytest.mark.parametrize("cleanup_mask", range(8))
+def test_session_delete_preserves_optional_service_and_cleanup_order(
+    monkeypatch, cron_count: int | None, has_local: bool, cleanup_mask: int
+) -> None:
+    calls: list[tuple[object, ...]] = []
+    jobs = [
+        _bound_job(),
+        replace(_bound_job(), id="job-2", job_instance_id="instance-2",
+                definition_revision="revision-2"),
+    ][:cron_count or 0]
+
+    class Service:
+        def list_bound_cron_jobs_for_session(self, key: str, *, include_disabled: bool):
+            calls.append(("list_cron", key, include_disabled))
+            return jobs
+
+        def get_job(self, job_id: str) -> CronJob | None:
+            calls.append(("get", job_id))
+            return next((job for job in jobs if job.id == job_id), None)
+
+        def remove_job(self, job_id: str, *, job_instance_id: str, definition_revision: str):
+            calls.append(("remove", job_id, job_instance_id, definition_revision))
+            return "removed"
+
+    local = LocalTrigger("local-1", "local", True, "websocket", "chat", "websocket:chat")
+
+    def list_local(key: str, *, include_disabled: bool):
+        calls.append(("list_local", key, include_disabled))
+        return [local]
+
+    service = Service() if cron_count is not None else None
+    triggers = SimpleNamespace(
+        list_for_session=list_local,
+        delete=lambda trigger_id: calls.append(("trigger", trigger_id)),
+    ) if has_local else None
+    handler = _cascade_handler(monkeypatch, service, triggers, calls, cleanup_mask)
+
+    response = GatewayHTTPHandler._handle_session_delete(
+        handler,
+        Request("/api/sessions/websocket:chat/delete?delete_automations=true", Headers()),
+        "websocket:chat",
+    )
+
+    expected: list[tuple[object, ...]] = []
+    if service is not None:
+        expected.append(("list_cron", "websocket:chat", True))
+    if has_local:
+        expected.append(("list_local", "websocket:chat", True))
+    expected.extend(("get", job.id) for job in jobs)
+    expected.extend(("remove", job.id, job.job_instance_id, job.definition_revision) for job in jobs)
+    if has_local:
+        expected.append(("trigger", "local-1"))
+    expected.extend((kind, "websocket:chat") for kind in ("draft", "session", "transcript"))
+    assert response.status_code == 200
+    assert json.loads(response.body) == {"deleted": bool(cleanup_mask)}
+    assert calls == expected
+
+
+@pytest.mark.parametrize("scenario", [
+    "preflight_missing", "preflight_stale_instance", "preflight_stale_revision",
+    "preflight_missing_instance_token", "preflight_missing_revision_token",
+    "preflight_token_error", "preflight_store_error", "preflight_service_error",
+    "preflight_unexpected", "remove_missing", "remove_protected", "remove_token_error",
+    "remove_store_error", "remove_service_error", "remove_unexpected",
+])
+def test_session_delete_preserves_preflight_and_cas_failure_effects(monkeypatch, scenario: str):
+    calls: list[tuple[object, ...]] = []
+    first = _bound_job()
+    second = replace(first, id="job-2", job_instance_id="instance-2", definition_revision="revision-2")
+    if scenario == "preflight_missing_instance_token":
+        second.job_instance_id = ""
+    if scenario == "preflight_missing_revision_token":
+        second.definition_revision = ""
+    current = second
+    if scenario == "preflight_stale_instance":
+        current = replace(second, job_instance_id="changed-instance")
+    if scenario == "preflight_stale_revision":
+        current = replace(second, definition_revision="changed-revision")
+    failure_types = {
+        "token_error": CronDefinitionTokenRequiredError,
+        "store_error": DefinitionStoreConflictError,
+        "service_error": CronDefinitionConflictError,
+        "unexpected": RuntimeError,
+    }
+    failure = next((kind("controlled failure") for suffix, kind in failure_types.items()
+                    if scenario.endswith(suffix)), None)
+
+    class Service:
+        def list_bound_cron_jobs_for_session(self, key: str, *, include_disabled: bool):
+            calls.append(("list_cron", key, include_disabled))
+            return [first, second]
+
+        def get_job(self, job_id: str) -> CronJob | None:
+            calls.append(("get", job_id))
+            if job_id == first.id:
+                return first
+            if scenario.startswith("preflight_") and failure is not None:
+                raise failure
+            return None if scenario == "preflight_missing" else current
+
+        def remove_job(self, job_id: str, *, job_instance_id: str, definition_revision: str):
+            calls.append(("remove", job_id, job_instance_id, definition_revision))
+            if job_id == first.id:
+                return "removed"
+            if failure is not None:
+                raise failure
+            return "protected" if scenario == "remove_protected" else "not_found"
+
+    local = LocalTrigger("local-1", "local", True, "websocket", "chat", "websocket:chat")
+
+    def list_local(key: str, *, include_disabled: bool):
+        calls.append(("list_local", key, include_disabled))
+        return [local]
+
+    triggers = SimpleNamespace(
+        list_for_session=list_local,
+        delete=lambda trigger_id: calls.append(("trigger", trigger_id)),
+    )
+    handler = _cascade_handler(monkeypatch, Service(), triggers, calls)
+    request = Request("/api/sessions/websocket:chat/delete?delete_automations=true", Headers())
+    if scenario.endswith("unexpected"):
+        with pytest.raises(RuntimeError) as caught:
+            GatewayHTTPHandler._handle_session_delete(handler, request, "websocket:chat")
+        assert caught.value is failure
+    else:
+        response = GatewayHTTPHandler._handle_session_delete(handler, request, "websocket:chat")
+        if scenario == "remove_protected":
+            message = "automation job-2 is protected"
+        else:
+            reason = "controlled failure" if failure is not None else "it changed before deletion"
+            message = f"automation deletion conflict for job-2: {reason}. Refresh the session and retry."
+        assert response.status_code == 409
+        assert response.body == message.encode("utf-8")
+    expected = [
+        ("list_cron", "websocket:chat", True), ("list_local", "websocket:chat", True),
+        ("get", "job"), ("get", "job-2"),
+    ]
+    if scenario.startswith("remove_"):
+        expected.extend(("remove", job.id, job.job_instance_id, job.definition_revision)
+                        for job in (first, second))
+    assert calls == expected

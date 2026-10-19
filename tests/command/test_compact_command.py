@@ -6,21 +6,38 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.bus.events import InboundMessage
+from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
+from nanobot.agent.turn import DeliveryTarget, TurnRequest, TurnSource
+from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.outbound_events import ContextCompactionEvent
-from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import TurnCompleted
 from nanobot.command.builtin import cmd_stop
 from nanobot.command.router import CommandContext
 from nanobot.providers.base import GenerationSettings, LLMResponse, ProviderConversationState
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.summary import SUMMARY_CONTINUATION_TEXT
+from nanobot.utils.llm_runtime import LLMRuntime
+from tests.agent.p6_admitted_fixtures import AgentInputs
+from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
+
+
+async def _process_message(
+    loop: AgentLoop, msg: InboundMessage, *, runtime: LLMRuntime,
+) -> OutboundMessage | None:
+    result = await loop.execute_turn(
+        TurnRequest(
+            content=msg.content, session_key=msg.session_key, source=TurnSource.DIRECT,
+            route=DeliveryTarget(channel=msg.channel, chat_id=msg.chat_id,
+                                 message_id=msg.metadata.get("message_id")),
+            sender_id=msg.sender_id, media=tuple(msg.media), metadata=dict(msg.metadata),
+        ),
+        _options=_TurnExecutionOptions(runtime=runtime, raise_errors=True),
+    )
+    return result.outbound
 
 
 @pytest.fixture
-async def loop(tmp_path):
-    bus = MessageBus()
+async def loop(tmp_path, admitted_async):
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     provider.generation = GenerationSettings(max_tokens=100)
@@ -29,18 +46,21 @@ async def loop(tmp_path):
         content="Portable checkpoint.",
         finish_reason="stop",
     ))
-    loop = AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-        context_window_tokens=128_000,
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="test-model", context_window_tokens=128_000,
+            session_manager=inputs.sessions, tool_registry=inputs.tools,
+            cron_service=inputs.cron, turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools, restrict_to_workspace=True,
+            enable_legacy_auto_compact=True, session_ttl_minutes=0,
+        )
+
+    loop = await admitted_async(
+        tmp_path, build, keys=("cli:test", "cli:checkpoint-resume", "websocket:test"),
     )
     loop.tools.get_definitions = MagicMock(return_value=[])
-    try:
-        yield loop
-    finally:
-        await loop.aclose()
+    yield loop
 
 
 @pytest.mark.asyncio
@@ -60,7 +80,7 @@ async def test_compact_emits_one_lifecycle_and_keeps_the_session(loop, command) 
     loop.sessions.save(session)
 
     msg = InboundMessage(channel="cli", sender_id="user", chat_id="test", content=command)
-    response = await loop._process_message(msg, runtime=loop.llm_runtime())
+    response = await _process_message(loop, msg, runtime=loop.llm_runtime())
 
     assert response is None
     assert bus.outbound_size == 2
@@ -82,7 +102,7 @@ async def test_compact_emits_one_lifecycle_and_keeps_the_session(loop, command) 
     assert reloaded.metadata["_last_summary"]["text"] == "Portable checkpoint."
     assert len(loop.consolidator.store.read_unprocessed_history(0)) == 1
 
-    response = await loop._process_message(msg, runtime=loop.llm_runtime())
+    response = await _process_message(loop, msg, runtime=loop.llm_runtime())
     assert response is None
     assert bus.outbound_size == 0
     loop.provider.chat_with_retry.assert_awaited_once()
@@ -101,7 +121,8 @@ async def test_checkpoint_continues_through_reloaded_session(loop, trigger, summ
     loop.provider.chat_with_retry.return_value = LLMResponse(content=summary)
 
     if trigger == "manual":
-        await loop._process_message(
+        await _process_message(
+            loop,
             InboundMessage(channel="cli", sender_id="user", chat_id="checkpoint-resume",
                            content="/compact"),
             runtime=loop.llm_runtime(),
@@ -283,7 +304,8 @@ async def test_idle_and_manual_compact_share_persisted_checkpoint(loop) -> None:
         SUMMARY_CONTINUATION_TEXT,
     ]
 
-    await loop._process_message(
+    await _process_message(
+        loop,
         InboundMessage(channel="cli", sender_id="user", chat_id="test", content="/compact"),
         runtime=runtime,
     )

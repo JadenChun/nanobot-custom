@@ -9,7 +9,6 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.write_guard import FileLockRegistry
 from nanobot.config.schema import ToolsConfig
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
-from nanobot.migration_guard import MigrationIncompleteError
 
 
 @pytest.fixture
@@ -29,21 +28,21 @@ def load(context, monkeypatch):
     return names, registry
 
 
-def test_unpatched_loader_remains_guarded(context):
-    with pytest.raises(MigrationIncompleteError):
-        ToolLoader().load(context, ToolRegistry())
+def test_tool_loader_rejects_non_core_scope(context):
+    with pytest.raises(ValueError, match='scope'):
+        ToolLoader().load(context, ToolRegistry(), scope='subagent')
 
 
-def test_unpatched_guard_stops_snapshot_discovery_factory_and_registry(context):
+def test_non_core_scope_stops_snapshot_discovery_factory_and_registry(context):
     registry = ToolRegistry()
     with (
         patch("nanobot.agent.tools.loader.snapshot_external_context") as snapshot,
         patch("nanobot.agent.tools.loader.entry_points") as discovery,
         patch("nanobot.agent.tools.fork_factories.construct_core_tools") as factory,
         patch.object(registry, "register") as register,
-        pytest.raises(MigrationIncompleteError),
+        pytest.raises(ValueError, match="scope"),
     ):
-        ToolLoader().load(context, registry)
+        ToolLoader().load(context, registry, scope="subagent")
     snapshot.assert_not_called()
     discovery.assert_not_called()
     factory.assert_not_called()
@@ -54,7 +53,8 @@ def test_exact_default_main_tools_and_dependency_handoff(context, monkeypatch):
     monkeypatch.delenv('NANOBOT_TREND_VPN_TOOLS_ENABLED', raising=False)
     monkeypatch.setattr('nanobot.agent.tools.fork_factories.vpn_tools_enabled', lambda: False)
     names, registry = load(context, monkeypatch)
-    assert set(names) == {'read_file', 'write_file', 'edit_file', 'list_dir', 'exec', 'web_search',
+    assert set(names) == {'read_file', 'write_file', 'edit_file', 'list_dir', 'exec',
+                          'exec_session', 'list_exec_sessions', 'web_search',
                           'web_fetch', 'message', 'plan_task', 'delegate_task', 'review_work',
                           'explore', 'agent_browser', 'agent_device', 'generate_image'}
     assert registry.get('write_file')._resource_policy is context.fork_dependencies.resource_policy
@@ -125,3 +125,26 @@ def test_vpn_preserves_exact_existing_flag(context, monkeypatch, flag, enabled):
     vpn = {name for name in names if name.startswith('trend_vpn_')}
     assert vpn == ({'trend_vpn_session_start', 'trend_vpn_fetch', 'trend_vpn_browser_fetch',
                     'trend_vpn_session_close'} if enabled else set())
+
+
+@pytest.mark.parametrize('missing_fields,message', [
+    (('foreground_manager',), 'foreground_manager dependencies'),
+    (('resource_policy',), 'resource policy and file locks'),
+    (('file_locks',), 'resource policy and file locks'),
+    (('foreground_manager', 'resource_policy', 'file_locks'), 'foreground_manager dependencies'),
+])
+def test_construction_retains_required_dependency_guards(context, missing_fields, message):
+    from dataclasses import replace
+
+    from nanobot.agent.tools.fork_factories import construct_core_tools
+
+    context.fork_dependencies = replace(
+        context.fork_dependencies, **dict.fromkeys(missing_fields),
+    )
+    with (
+        patch('nanobot.agent.tools.fork_factories.ToolFactory') as factory,
+        pytest.raises(ValueError) as error,
+    ):
+        construct_core_tools(context)
+    assert str(error.value) == f'Foreground tool construction requires {message}'
+    factory.assert_not_called()

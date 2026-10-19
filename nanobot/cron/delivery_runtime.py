@@ -20,12 +20,13 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, cast, runtime_checkable
 
 from nanobot.cron.delivery_store import (
     CronDeliveryOutboxStore,
     DeliveryClaim,
     DeliveryOutboxRecord,
+    DeliverySendFence,
 )
 from nanobot.cron.occurrence_store import CronOccurrenceStore
 
@@ -118,12 +119,14 @@ def _assert_json_value(value: object, *, label: str) -> None:
             raise DispatchRequestError(f"{label} contains a non-finite JSON number")
         return
     if isinstance(value, Mapping):
+        value = cast(Mapping[object, object], value)
         for key, item in value.items():
             if not isinstance(key, str):
                 raise DispatchRequestError(f"{label} contains a non-string JSON key")
             _assert_json_value(item, label=label)
         return
     if isinstance(value, (list, tuple)):
+        value = cast(list[object] | tuple[object, ...], value)
         for item in value:
             _assert_json_value(item, label=label)
         return
@@ -133,10 +136,13 @@ def _assert_json_value(value: object, *, label: str) -> None:
 def _detach_json(value: object, *, label: str) -> object:
     _assert_json_value(value, label=label)
     if isinstance(value, Mapping):
+        # _assert_json_value recursively checked string keys on this path.
+        value = cast(Mapping[str, object], value)
         return MappingProxyType(
             {key: _detach_json(item, label=label) for key, item in value.items()}
         )
     if isinstance(value, (list, tuple)):
+        value = cast(list[object] | tuple[object, ...], value)
         return _FrozenSequence(_detach_json(item, label=label) for item in value)
     return value
 
@@ -146,16 +152,19 @@ class _FrozenSequence(tuple[object, ...]):
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, (list, tuple)):
-            return tuple(self) == tuple(other)
+            return tuple(self) == tuple(cast(list[object] | tuple[object, ...], other))
         return NotImplemented
 
 
 def _plain_json(value: object) -> object:
     if isinstance(value, Mapping):
+        value = cast(Mapping[object, object], value)
         return {key: _plain_json(item) for key, item in value.items()}
     if isinstance(value, tuple):
+        value = cast(tuple[object, ...], value)
         return [_plain_json(item) for item in value]
     if isinstance(value, list):
+        value = cast(list[object], value)
         return [_plain_json(item) for item in value]
     return value
 
@@ -174,15 +183,17 @@ def _encoded_size(value: object, *, label: str) -> int:
     return len(encoded)
 
 
-def _freeze_receipt(value: Mapping[str, Any]) -> Mapping[str, Any]:
+def _freeze_receipt(value: object) -> Mapping[str, Any]:
     if not isinstance(value, Mapping) or not value:
         raise InvalidSenderResultError("confirmed delivery requires a non-empty receipt object")
+    value = cast(Mapping[object, object], value)
     try:
         detached = _detach_json(value, label="receipt")
     except DispatchRequestError as exc:
         raise InvalidSenderResultError(str(exc)) from exc
     if not isinstance(detached, Mapping):  # pragma: no cover - guarded above
         raise InvalidSenderResultError("confirmed delivery requires a receipt object")
+    detached = cast(Mapping[str, object], detached)  # _detach_json checked all string keys.
     try:
         receipt_size = _encoded_size(detached, label="receipt")
     except DispatchRequestError as exc:
@@ -202,7 +213,7 @@ class DispatchMessage(Mapping[str, object]):
     media: tuple[object, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.content, str):
+        if not isinstance(cast(object, self.content), str):
             raise DispatchRequestError("message content must be text")
         if len(self.content.encode("utf-8")) > _MAX_MESSAGE_BYTES:
             raise DispatchRequestError(
@@ -230,17 +241,18 @@ class DispatchMessage(Mapping[str, object]):
         if isinstance(other, DispatchMessage):
             return self.content == other.content
         if isinstance(other, Mapping):
-            return dict(self) == dict(other)
+            return dict(self) == dict(cast(Mapping[object, object], other))
         return NotImplemented
 
     @classmethod
     def from_value(cls, value: object) -> DispatchMessage:
         if isinstance(value, cls):
             return cls(value.content, ())
-        if not isinstance(value, Mapping) or set(value) != {"content", "media"}:
+        if not isinstance(value, Mapping) or set(cast(Mapping[object, object], value)) != {"content", "media"}:
             raise DispatchRequestError(
                 "dispatch messages must have exactly content and media fields"
             )
+        value = cast(Mapping[str, Any], value)  # Exact raw message wire fields checked above.
         if not isinstance(value["media"], (list, tuple)) or value["media"] != []:
             raise DispatchRequestError("delivery messages must not carry media")
         return cls(value["content"], ())
@@ -259,6 +271,22 @@ class DispatchRequest:
     to: str
     messages: tuple[DispatchMessage, ...]
 
+    if TYPE_CHECKING:
+        # Construction accepts raw bundles; __post_init__ validates and narrows
+        # them to the immutable concrete messages stored by this dataclass.
+        def __init__(
+            self,
+            outbox_id: str,
+            destination_id: str,
+            attempt: int,
+            action_id: str,
+            request_digest: str,
+            channel: str,
+            to: str,
+            messages: Sequence[object],
+        ) -> None:
+            ...
+
     def __post_init__(self) -> None:
         for name in ("outbox_id", "destination_id", "action_id", "request_digest"):
             value = getattr(self, name)
@@ -272,13 +300,13 @@ class DispatchRequest:
             raise DispatchRequestError("attempt must be a positive integer")
         _bounded_text(self.channel, label="channel")
         _bounded_text(self.to, label="to")
-        if isinstance(self.messages, (str, bytes)) or not isinstance(self.messages, Sequence):
+        if isinstance(self.messages, (str, bytes)) or not isinstance(cast(object, self.messages), Sequence):
             raise DispatchRequestError("messages must be an ordered sequence")
         detached = tuple(DispatchMessage.from_value(message) for message in self.messages)
         if not detached:
             raise DispatchRequestError("messages must contain at least one text message")
         if _encoded_size(
-            [{"content": item.content, "media": []} for item in detached], label="messages"
+            [{"content": item.content, "media": cast(list[object], [])} for item in detached], label="messages"
         ) > _MAX_BUNDLE_BYTES:
             raise DispatchRequestError(f"messages exceed the {_MAX_BUNDLE_BYTES}-byte limit")
         object.__setattr__(self, "messages", detached)
@@ -365,8 +393,9 @@ SenderResult: TypeAlias = (
 class Sender(Protocol):
     """The only external delivery capability accepted by E3."""
 
-    async def send(self, request: DispatchRequest) -> SenderResult:
+    async def send(self, request: DispatchRequest) -> SenderResult | PartialBundleOutcome:
         """Send one complete immutable request exactly once."""
+        ...
 
 
 DeliverySender = Sender
@@ -534,9 +563,9 @@ class CronDeliveryRuntime:
         *,
         sender: Sender | None = None,
     ) -> None:
-        if not isinstance(outbox_store, CronDeliveryOutboxStore):
+        if not isinstance(cast(object, outbox_store), CronDeliveryOutboxStore):
             raise TypeError("CronDeliveryRuntime requires a CronDeliveryOutboxStore")
-        if occurrence_store is not None and not isinstance(occurrence_store, CronOccurrenceStore):
+        if occurrence_store is not None and not isinstance(cast(object, occurrence_store), CronOccurrenceStore):
             raise TypeError("occurrence_store must be a CronOccurrenceStore")
         if (
             occurrence_store is not None
@@ -597,6 +626,42 @@ class CronDeliveryRuntime:
 
     get_reconciliation_required = reconciliation_required
 
+    def resolve_after_reconciliation(
+        self,
+        outbox_id: str | DeliveryClaim,
+        destination_id: str | None = None,
+        *,
+        expected_revision: int,
+        action_id: str,
+        request_digest: str,
+        evidence_ref: str,
+        predecessor_fenced_ref: str,
+        resolution: str | Mapping[str, Any],
+        receipt: Mapping[str, Any] | None = None,
+        predecessor_attempt: int | None = None,
+        predecessor_owner: str | None = None,
+        attempt: int | None = None,
+        owner: str | None = None,
+    ) -> DeliveryOutboxRecord:
+        """Forward explicit evidence to E2, which acquires the destination fence."""
+        return self.outbox_store.resolve_after_reconciliation(
+            outbox_id,
+            destination_id,
+            expected_revision=expected_revision,
+            action_id=action_id,
+            request_digest=request_digest,
+            evidence_ref=evidence_ref,
+            predecessor_fenced_ref=predecessor_fenced_ref,
+            resolution=resolution,
+            receipt=receipt,
+            predecessor_attempt=predecessor_attempt,
+            predecessor_owner=predecessor_owner,
+            attempt=attempt,
+            owner=owner,
+        )
+
+    resolve = resolve_after_reconciliation
+
     def claim(
         self,
         outbox_id: str,
@@ -654,12 +719,15 @@ class CronDeliveryRuntime:
     def _settle(
         self,
         claim: DeliveryClaim,
+        fence: DeliverySendFence,
         result: SenderResult,
         *,
         original_error: BaseException | None = None,
     ) -> SenderResult:
         try:
-            self.outbox_store.settle(claim, _result_for_settlement(result))
+            self.outbox_store.settle(
+                claim, _result_for_settlement(result), fence=fence
+            )
         except BaseException as exc:
             settlement_error = CronDeliverySettlementError(
                 "sender outcome could not be durably settled; reconciliation is required",
@@ -757,6 +825,7 @@ class CronDeliveryRuntime:
     async def _dispatch_sender(
         self,
         claim: DeliveryClaim,
+        fence: DeliverySendFence,
         request: DispatchRequest,
         selected_sender: Sender,
         timeout: float | None,
@@ -791,12 +860,12 @@ class CronDeliveryRuntime:
             _ACTIVE_INVOCATIONS.reset(marker_token)
         if setup_error is not None:
             unknown = UnknownOutcome(self._exception_reason(setup_error))
-            self._settle(claim, unknown, original_error=setup_error)
+            self._settle(claim, fence, unknown, original_error=setup_error)
             raise setup_error
         if sender_task is None:  # pragma: no cover - setup either creates a future or fails
             setup_error = InvalidSenderResultError("sender task could not be created")
             unknown = UnknownOutcome(self._exception_reason(setup_error))
-            self._settle(claim, unknown, original_error=setup_error)
+            self._settle(claim, fence, unknown, original_error=setup_error)
             raise setup_error
         entry.sender_task = sender_task
 
@@ -809,10 +878,10 @@ class CronDeliveryRuntime:
             if state.caller_cancelled:
                 cancellation = state.caller_error or asyncio.CancelledError()
                 unknown = UnknownOutcome("cancelled")
-                self._settle(claim, unknown, original_error=cancellation)
+                self._settle(claim, fence, unknown, original_error=cancellation)
                 raise cancellation
             unknown = UnknownOutcome("timeout")
-            self._settle(claim, unknown, original_error=exc)
+            self._settle(claim, fence, unknown, original_error=exc)
             raise
         except asyncio.CancelledError as exc:
             # A cancellation from a sender task that is already done is a
@@ -825,8 +894,9 @@ class CronDeliveryRuntime:
             await self._cancel_and_join_sender(sender_task, state)
             reason = "cancelled"
             unknown = UnknownOutcome(reason)
-            original = state.caller_error if state.caller_cancelled else exc
-            self._settle(claim, unknown, original_error=original)
+            # Every caller_cancelled assignment also records caller_error before an await.
+            original = cast(asyncio.CancelledError, state.caller_error) if state.caller_cancelled else exc
+            self._settle(claim, fence, unknown, original_error=original)
             raise original
         except BaseException as exc:
             # If cancellation arrived while the sender was cleaning up, the
@@ -835,34 +905,34 @@ class CronDeliveryRuntime:
             if state.caller_cancelled:
                 cancellation = state.caller_error or asyncio.CancelledError()
                 unknown = UnknownOutcome("cancelled")
-                self._settle(claim, unknown, original_error=cancellation)
+                self._settle(claim, fence, unknown, original_error=cancellation)
                 raise cancellation
             unknown = UnknownOutcome(self._exception_reason(exc))
-            self._settle(claim, unknown, original_error=exc)
+            self._settle(claim, fence, unknown, original_error=exc)
             raise
 
         if state.caller_cancelled:
             cancellation = state.caller_error or asyncio.CancelledError()
             unknown = UnknownOutcome("cancelled")
-            self._settle(claim, unknown, original_error=cancellation)
+            self._settle(claim, fence, unknown, original_error=cancellation)
             raise cancellation
         if state.deadline_expired:
             timeout_error = state.timeout_error or asyncio.TimeoutError()
             unknown = UnknownOutcome("timeout")
-            self._settle(claim, unknown, original_error=timeout_error)
+            self._settle(claim, fence, unknown, original_error=timeout_error)
             raise timeout_error
         if entry.reentrant_error is not None:
             error = entry.reentrant_error
             unknown = UnknownOutcome("reentrant_dispatch")
-            self._settle(claim, unknown, original_error=error)
+            self._settle(claim, fence, unknown, original_error=error)
             raise error
         try:
             result = self._normalize_result(value)
         except BaseException as exc:
             unknown = UnknownOutcome(self._exception_reason(exc))
-            self._settle(claim, unknown, original_error=exc)
+            self._settle(claim, fence, unknown, original_error=exc)
             raise
-        return self._settle(claim, result)
+        return self._settle(claim, fence, result)
 
     async def _dispatch_once(
         self,
@@ -874,13 +944,16 @@ class CronDeliveryRuntime:
         # This synchronous store call is the only path that establishes sender
         # authority.  It completes before request construction and before any
         # await that can enter sender/channel code.
-        sending_record = self.outbox_store.mark_sending(claim)
-        try:
-            request = _request_from_record(sending_record, claim)
-        except BaseException as exc:
-            unknown = UnknownOutcome("invalid_request")
-            return self._settle(claim, unknown, original_error=exc)
-        return await self._dispatch_sender(claim, request, selected_sender, timeout, entry)
+        with self.outbox_store.acquire_send_fence(claim) as fence:
+            sending_record = self.outbox_store.mark_sending(claim, fence)
+            try:
+                request = _request_from_record(sending_record, claim)
+            except BaseException as exc:
+                unknown = UnknownOutcome("invalid_request")
+                return self._settle(claim, fence, unknown, original_error=exc)
+            return await self._dispatch_sender(
+                claim, fence, request, selected_sender, timeout, entry
+            )
 
     async def dispatch(
         self,
@@ -919,8 +992,10 @@ class CronDeliveryRuntime:
             reentrant_error = self._reentrancy_error_for_claim(delivery_claim)
             if reentrant_error is not None:
                 raise reentrant_error
+            selected = self._sender_for(selected_sender)
+            bounded_timeout = _validate_timeout(timeout)
         else:
-            if not isinstance(claim, str) or not isinstance(destination_id, str):
+            if not isinstance(cast(object, claim), str) or not isinstance(destination_id, str):
                 raise TypeError("dispatch requires a DeliveryClaim or outbox/destination IDs")
             if expected_revision is None:
                 raise TypeError("dispatch requires expected_revision for an outbox ID")
@@ -937,10 +1012,6 @@ class CronDeliveryRuntime:
                 expected_revision,
                 owner=owner,
             )
-        if isinstance(claim, DeliveryClaim):
-            selected = self._sender_for(selected_sender)
-            bounded_timeout = _validate_timeout(timeout)
-
         key = id(delivery_claim)
         current = asyncio.current_task()
         with self._dispatch_registry.lock:

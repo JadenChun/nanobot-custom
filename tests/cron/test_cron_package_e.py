@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -12,6 +13,7 @@ import nanobot.cron.occurrence_store as occurrence_store_module
 from nanobot.cron.action_store import CronActionStore
 from nanobot.cron.completion import (
     CronCompletionConflictError,
+    CronCompletionPersistenceError,
     CronCompletionProjector,
 )
 from nanobot.cron.definition_store import CronDefinitionStore
@@ -24,6 +26,38 @@ from nanobot.cron.service import CronService
 from nanobot.cron.types import CronSchedule
 
 NAMESPACE = "cron:package-e1-tests"
+
+
+def test_projector_captures_admitted_flock_module(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _service(tmp_path)
+    module = completion_module._fcntl
+    assert module is not None
+    calls: list[int] = []
+    original = module.flock
+
+    def flock(fd: int, operation: int) -> None:
+        calls.append(operation)
+        original(fd, operation)
+
+    monkeypatch.setattr(module, "flock", flock)
+    # Probe the captured collaborator, not a supported global-rebinding API.
+    monkeypatch.setattr(completion_module, "_fcntl", None)
+    with service.completion_projector._held_lock() as held:
+        assert held.lock_fd >= 0
+    assert calls == [module.LOCK_EX, module.LOCK_UN]
+
+
+def test_projector_missing_flock_refuses_before_root_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = CronOccurrenceStore(tmp_path / "occurrences", namespace=NAMESPACE)
+    root = tmp_path / "runs"
+    monkeypatch.setattr(completion_module, "_fcntl", None)
+    with pytest.raises(CronCompletionPersistenceError, match="POSIX flock"):
+        CronCompletionProjector(store, root)
+    assert not root.exists()
 
 
 def _service(tmp_path: Path) -> CronService:
@@ -54,6 +88,26 @@ def _claim(service: CronService):
     )
 
 
+def _complete(service: CronService, claim, completion, **kwargs):
+    async def execute():
+        with service.occurrence_store.acquire_execution_fence(claim) as fence:
+            service.occurrence_store.begin_execution(claim, fence)
+            return service.completion_projector.complete(
+                claim, completion, fence=fence, **kwargs
+            )
+
+    return asyncio.run(execute())
+
+
+def _complete_raw(service: CronService, claim, completion):
+    async def execute():
+        with service.occurrence_store.acquire_execution_fence(claim) as fence:
+            service.occurrence_store.begin_execution(claim, fence)
+            return service.occurrence_store.complete(claim, completion, fence)
+
+    return asyncio.run(execute())
+
+
 def test_provenance_is_canonical_before_projection_and_survives_restart(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -69,7 +123,7 @@ def test_provenance_is_canonical_before_projection_and_survives_restart(
     )
 
     with pytest.raises(OSError, match="projection disk"):
-        projector.complete(claim, {"status": "ok", "result": "computed"}, provenance=provenance)
+        _complete(service, claim, {"status": "ok", "result": "computed"}, provenance=provenance)
 
     durable = service.occurrence_store.get_completed_durable(claim.occurrence_id)
     assert durable.completion is not None
@@ -91,22 +145,27 @@ def test_provenance_is_strict_and_reserved_conflicts_fail_before_completion(tmp_
             claim,
             {"status": "ok", "provenance": {"source": "completion"}},
             provenance={"source": "argument"},
+            fence=None,  # type: ignore[arg-type]
         )
     assert service.occurrence_store.get(claim.occurrence_id).state == "claimed"
 
     with pytest.raises(CronCompletionConflictError, match="provenance"):
-        service.completion_projector.complete(claim, {"status": "ok"}, provenance=["invalid"])
+        service.completion_projector.complete(
+            claim, {"status": "ok"}, provenance=["invalid"], fence=None  # type: ignore[arg-type]
+        )
     with pytest.raises(CronCompletionConflictError, match="finite"):
         service.completion_projector.complete(
             claim,
             {"status": "ok"},
             provenance={"invalid": float("nan")},
+            fence=None,  # type: ignore[arg-type]
         )
     with pytest.raises(CronCompletionConflictError, match="provenance"):
         service.completion_projector.complete(
             claim,
             {"status": "ok"},
             provenance={"generation": 1.0},
+            fence=None,  # type: ignore[arg-type]
         )
 
 
@@ -115,7 +174,7 @@ def test_historical_completion_without_provenance_remains_empty_and_unfabricated
 ) -> None:
     service = _service(tmp_path)
     claim = _claim(service)
-    service.occurrence_store.complete(claim, {"status": "ok", "result": "legacy"})
+    _complete_raw(service, claim, {"status": "ok", "result": "legacy"})
 
     record = service.occurrence_store.get_completed_durable(claim.occurrence_id)
     assert record.completion is not None
@@ -141,7 +200,7 @@ def test_completed_durable_read_reproves_record_and_directory_and_rejects_claime
     with pytest.raises(OccurrenceReconciliationRequiredError, match="claimed"):
         service.occurrence_store.get_completed_durable(claim.occurrence_id)
 
-    service.occurrence_store.complete(claim, {"status": "ok", "result": "computed"})
+    _complete_raw(service, claim, {"status": "ok", "result": "computed"})
     fsynced: list[int] = []
     original_fsync = occurrence_store_module.os.fsync
 
@@ -163,7 +222,7 @@ def test_completed_durable_read_reproves_record_and_directory_and_rejects_claime
 def test_completed_durable_read_rejects_live_root_swap(tmp_path: Path) -> None:
     service = _service(tmp_path)
     claim = _claim(service)
-    service.occurrence_store.complete(claim, {"status": "ok", "result": "computed"})
+    _complete_raw(service, claim, {"status": "ok", "result": "computed"})
     root = service.occurrence_store.root
     root.rename(tmp_path / "moved-occurrences")
     root.mkdir(mode=0o700)
@@ -178,7 +237,7 @@ def test_completed_durable_read_rejects_record_replacement_after_file_fsync(
 ) -> None:
     service = _service(tmp_path)
     claim = _claim(service)
-    service.occurrence_store.complete(claim, {"status": "ok", "result": "computed"})
+    _complete_raw(service, claim, {"status": "ok", "result": "computed"})
     record_path = service.occurrence_store.root / f"{claim.occurrence_id}.json"
     record_identity = (record_path.stat().st_dev, record_path.stat().st_ino)
     moved_path = tmp_path / "moved-record.json"
@@ -206,7 +265,7 @@ def test_completed_durable_read_rejects_in_place_mutation_after_file_fsync(
 ) -> None:
     service = _service(tmp_path)
     claim = _claim(service)
-    service.occurrence_store.complete(claim, {"status": "ok", "result": "computed"})
+    _complete_raw(service, claim, {"status": "ok", "result": "computed"})
     record_path = service.occurrence_store.root / f"{claim.occurrence_id}.json"
     record_identity = (record_path.stat().st_dev, record_path.stat().st_ino)
     original_fsync = occurrence_store_module.os.fsync
@@ -232,7 +291,7 @@ def test_completed_durable_read_rejects_root_swap_after_file_fsync(
 ) -> None:
     service = _service(tmp_path)
     claim = _claim(service)
-    service.occurrence_store.complete(claim, {"status": "ok", "result": "computed"})
+    _complete_raw(service, claim, {"status": "ok", "result": "computed"})
     root = service.occurrence_store.root
     original_fsync = occurrence_store_module.os.fsync
     swapped = False
@@ -274,7 +333,7 @@ def test_legacy_projection_provenance_is_preserved_only_without_explicit_retry(
 ) -> None:
     service = _service(tmp_path)
     claim = _claim(service)
-    service.occurrence_store.complete(claim, {"status": "ok", "result": "legacy"})
+    _complete_raw(service, claim, {"status": "ok", "result": "legacy"})
     historical = {"source": "historical-d"}
     path = _write_legacy_projection(service, claim, historical)
     before = path.read_bytes()
@@ -299,7 +358,8 @@ def test_legacy_projection_provenance_is_preserved_only_without_explicit_retry(
 def test_projection_rejects_canonical_provenance_bool_integer_mismatch(tmp_path: Path) -> None:
     service = _service(tmp_path)
     claim = _claim(service)
-    projection = service.completion_projector.complete(
+    projection = _complete(
+        service,
         claim,
         {"status": "ok", "result": "computed"},
         provenance={"flag": True},
@@ -325,7 +385,7 @@ def test_projection_read_rejects_record_replacement_after_file_fsync(
 ) -> None:
     service = _service(tmp_path)
     claim = _claim(service)
-    projection = service.completion_projector.complete(claim, {"status": "ok", "result": "computed"})
+    projection = _complete(service, claim, {"status": "ok", "result": "computed"})
     path = service.completion_projector.projection_path(projection.run_id)
     projection_identity = (path.stat().st_dev, path.stat().st_ino)
     moved_path = tmp_path / "moved-projection.json"
@@ -353,7 +413,7 @@ def test_projection_read_rejects_in_place_mutation_after_file_fsync(
 ) -> None:
     service = _service(tmp_path)
     claim = _claim(service)
-    projection = service.completion_projector.complete(claim, {"status": "ok", "result": "computed"})
+    projection = _complete(service, claim, {"status": "ok", "result": "computed"})
     path = service.completion_projector.projection_path(projection.run_id)
     projection_identity = (path.stat().st_dev, path.stat().st_ino)
     original_fsync = completion_module.os.fsync
@@ -379,7 +439,7 @@ def test_projection_read_rejects_root_swap_after_file_fsync(
 ) -> None:
     service = _service(tmp_path)
     claim = _claim(service)
-    projection = service.completion_projector.complete(claim, {"status": "ok", "result": "computed"})
+    projection = _complete(service, claim, {"status": "ok", "result": "computed"})
     path = service.completion_projector.projection_path(projection.run_id)
     projection_identity = (path.stat().st_dev, path.stat().st_ino)
     root = service.completion_projector.root

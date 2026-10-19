@@ -5,15 +5,31 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from nanobot.agent.tools.base import Tool
-from nanobot.agent.turn import TurnContext
+from nanobot.agent.turn import ToolOutcome, TurnContext
 
 if TYPE_CHECKING:
     from nanobot.agent.delegation import ForegroundAgentManager
 
 
 class _ForegroundTool(Tool):
+    _tool_name: str
+    _tool_description: str
+    _tool_parameters: dict[str, Any]
+
     def __init__(self, manager: "ForegroundAgentManager") -> None:
         self._manager = manager
+
+    @property
+    def name(self) -> str:
+        return self._tool_name
+
+    @property
+    def description(self) -> str:
+        return self._tool_description
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self._tool_parameters
 
     @property
     def supports_parallel_calls(self) -> bool:
@@ -29,13 +45,13 @@ _ARTIFACT_REFERENCES = {
 
 
 class PlanTaskTool(_ForegroundTool):
-    name = "plan_task"
-    description = (
+    _tool_name = "plan_task"
+    _tool_description = (
         "Ask a foreground read-only planner for an implementation-ready plan when sequencing, "
         "dependencies, or ambiguity make direct work unreliable. Waits for the plan. Do not use "
         "for simple or already-clear tasks."
     )
-    parameters = {
+    _tool_parameters = {
         "type": "object",
         "properties": {
             "objective": {"type": "string", "minLength": 3},
@@ -56,7 +72,7 @@ class PlanTaskTool(_ForegroundTool):
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
         **_: Any,
-    ) -> str:
+    ) -> str | ToolOutcome:
         return await self._manager.run_plan(
             objective=objective,
             context=context,
@@ -64,18 +80,18 @@ class PlanTaskTool(_ForegroundTool):
             artifact_references=artifact_references,
         )
 
-    async def execute_with_context(self, turn_context: TurnContext, **kwargs: Any) -> Any:
+    async def execute_with_context(self, turn_context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:
         return await self.execute(turn_context=turn_context, **kwargs)
 
 
 class DelegateTaskTool(_ForegroundTool):
-    name = "delegate_task"
-    description = (
+    _tool_name = "delegate_task"
+    _tool_description = (
         "Run one bounded implementation or artifact task in a foreground worker and wait for its "
         "completion report. Provide a self-contained Markdown contract and explicit writable "
         "workspace paths. Use direct tools when isolated worker context adds no value."
     )
-    parameters = {
+    _tool_parameters = {
         "type": "object",
         "properties": {
             "contract": {
@@ -102,7 +118,7 @@ class DelegateTaskTool(_ForegroundTool):
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
         **_: Any,
-    ) -> str:
+    ) -> str | ToolOutcome:
         return await self._manager.run_worker(
             contract=contract,
             write_scope=write_scope,
@@ -110,18 +126,18 @@ class DelegateTaskTool(_ForegroundTool):
             artifact_references=artifact_references,
         )
 
-    async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> Any:
+    async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:
         return await self.execute(turn_context=context, **kwargs)
 
 
 class ReviewWorkTool(_ForegroundTool):
-    name = "review_work"
-    description = (
+    _tool_name = "review_work"
+    _tool_description = (
         "Run a foreground independent read-only review and wait for PASS, CORRECT, or REJECT "
         "evidence. Use for important deliverables, risky changes, uncertain results, or explicit "
         "quality requests; do not review every routine task."
     )
-    parameters = {
+    _tool_parameters = {
         "type": "object",
         "properties": {
             "goal": {"type": "string", "minLength": 3},
@@ -146,7 +162,7 @@ class ReviewWorkTool(_ForegroundTool):
         turn_context: TurnContext | None = None,
         artifact_references: list[str] | None = None,
         **_: Any,
-    ) -> str:
+    ) -> str | ToolOutcome:
         return await self._manager.run_review(
             goal=goal,
             acceptance_criteria=acceptance_criteria,
@@ -156,7 +172,7 @@ class ReviewWorkTool(_ForegroundTool):
             artifact_references=artifact_references,
         )
 
-    async def execute_with_context(self, context: TurnContext, **kwargs: Any) -> Any:
+    async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:
         return await self.execute(turn_context=context, **kwargs)
 
 

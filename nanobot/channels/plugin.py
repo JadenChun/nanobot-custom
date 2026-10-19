@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import importlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib.resources import files
 from typing import TYPE_CHECKING, Any, cast
@@ -113,6 +113,36 @@ class ChannelPlugin:
         return connector
 
 
+@dataclass(frozen=True)
+class LegacyEntryPointChannelPlugin(ChannelPlugin):
+    """Descriptor facade for one explicitly enabled legacy entry point.
+
+    Discovery retains only entry-point metadata.  The target is imported by
+    ``load_channel_class`` after configuration and dependency preflight.
+    """
+
+    entry_point: Any = field(default=None, repr=False, compare=False)
+
+    def load_channel_class(self) -> type[BaseChannel]:
+        from nanobot.channels.base import BaseChannel
+
+        channel_cls = self.entry_point.load()
+        if (
+            not isinstance(channel_cls, type)
+            or not issubclass(channel_cls, BaseChannel)
+            or channel_cls is BaseChannel
+        ):
+            raise ImportError(
+                f"Legacy channel entry point '{self.name}' must load a BaseChannel subclass"
+            )
+        if channel_cls.name != self.name:
+            raise ImportError(
+                f"Legacy channel entry point '{self.name}' declares name "
+                f"'{channel_cls.name}'"
+            )
+        return channel_cls
+
+
 def _target_parts(target: str, *, label: str) -> tuple[str, str]:
     module_name, separator, attr_name = target.partition(":")
     if not separator or not module_name or not attr_name:
@@ -122,6 +152,11 @@ def _target_parts(target: str, *, label: str) -> tuple[str, str]:
     if not attr_name.isidentifier():
         raise ValueError(f"channel plugin {label} attribute must be a Python identifier")
     return module_name, attr_name
+
+
+def parse_channel_target(target: str, *, label: str) -> tuple[str, str]:
+    """Validate metadata without loading its target, using the live owner parser."""
+    return _target_parts(target, label=label)
 
 
 def has_channel_package(name: str) -> bool:
@@ -181,6 +216,8 @@ def load_channel_package(name: str) -> ChannelPlugin | None:
 
 __all__ = [
     "ChannelPlugin",
+    "LegacyEntryPointChannelPlugin",
     "has_channel_package",
     "load_channel_package",
+    "parse_channel_target",
 ]

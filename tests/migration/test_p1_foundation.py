@@ -75,10 +75,20 @@ def test_legacy_capacity_precedence_is_preserved():
 
 def test_runtime_blocked_before_workspace_creation(tmp_path):
     from nanobot.agent.loop import AgentLoop
-    workspace = tmp_path / 'must-not-exist'
-    with pytest.raises(MigrationIncompleteError):
-        AgentLoop(bus=object(), provider=object(), workspace=workspace)
-    assert not workspace.exists()
+    from nanobot.agent.memory_recovery_startup_admission import StartupReceiptAdmissionError
+
+    workspace = tmp_path / 'workspace'
+    pending = workspace / 'memory' / '.consolidation.pending.json'
+    pending.parent.mkdir(parents=True)
+    pending.write_text('{broken', encoding='utf-8')
+    before = {path.relative_to(tmp_path): path.read_bytes()
+              for path in tmp_path.rglob('*') if path.is_file()}
+    with pytest.raises(StartupReceiptAdmissionError):
+        AgentLoop(bus=object(), provider=object(), workspace=workspace,
+                  sessions_root=tmp_path / 'sessions')
+    after = {path.relative_to(tmp_path): path.read_bytes()
+             for path in tmp_path.rglob('*') if path.is_file()}
+    assert after == before
 
 
 def test_loader_blocks_before_discovery(monkeypatch):
@@ -89,8 +99,8 @@ def test_loader_blocks_before_discovery(monkeypatch):
         pytest.fail('unadapted tool/plugin discovery executed')
     monkeypatch.setattr(loader, 'discover', forbidden)
     monkeypatch.setattr(loader, '_discover_plugins', forbidden)
-    with pytest.raises(MigrationIncompleteError):
-        loader.load(object(), ToolRegistry())
+    with pytest.raises(ValueError, match='scope'):
+        loader.load(object(), ToolRegistry(), scope='subagent')
 
 
 def test_registry_rejects_duplicate_names():
@@ -122,13 +132,25 @@ def test_bare_cli_displays_help_without_state(tmp_path):
     assert list((tmp_path / 'home').iterdir()) == []
 
 
-def test_gateway_service_arguments_parse_before_block(tmp_path):
-    result = _cli(tmp_path, 'gateway', '--config', str(tmp_path / 'absent.json'),
-                  '--log-file', str(tmp_path / 'gateway.log'))
+def test_gateway_service_arguments_parse_before_configuration_rejection(tmp_path):
+    workspace = tmp_path / 'workspace'
+    config_path = tmp_path / 'invalid-webui-config.json'
+    config_path.write_text(json.dumps({
+        'agents': {'defaults': {'workspace': str(workspace)}},
+        'channels': {'websocket': {'enabled': True, 'port': 'not-a-port'}},
+    }), encoding='utf-8')
+    config_bytes = config_path.read_bytes()
+    log_file = tmp_path / 'gateway.log'
+    result = _cli(tmp_path, 'gateway', '--config', str(config_path),
+                  '--log-file', str(log_file))
+    output = result.stdout + result.stderr
     assert result.returncode != 0
-    assert 'Migration candidate is not runnable' in result.stderr
-    assert 'No such option' not in result.stderr
-    assert not (tmp_path / 'gateway.log').exists()
+    assert 'Gateway configuration is invalid.' in output
+    assert 'channels.websocket.port' in output
+    assert 'No such option' not in output
+    assert not log_file.exists()
+    assert not workspace.exists()
+    assert config_path.read_bytes() == config_bytes
     assert list((tmp_path / 'home').iterdir()) == []
 
 
@@ -200,8 +222,14 @@ def test_mcp_missing_only_timeout_and_environment(tmp_path, monkeypatch):
 ])
 def test_mutating_entrypoints_block_before_effects(tmp_path, args):
     result = _cli(tmp_path, *args)
+    output = result.stdout + result.stderr
     assert result.returncode != 0
-    assert "Migration candidate is not runnable" in result.stderr
+    if args == ("webui",):
+        assert "WebUI setup needs confirmation" in output
+    elif args == ("serve",):
+        assert "SessionModeError: session authority lease is unavailable" in output
+    else:
+        assert "Migration candidate is not runnable" in output
     assert list((tmp_path / "home").iterdir()) == []
 
 
@@ -223,14 +251,26 @@ def test_legacy_context_path_appends():
     assert cfg.agents.defaults.context_paths == ["/one", "/two"]
 
 
-def test_sdk_factory_blocks_before_config_loading(monkeypatch):
+def test_sdk_config_preflight_rejects_unsupported_idle_after_loading(monkeypatch, tmp_path):
     import nanobot.config.loader as loader
+    from nanobot.config.schema import Config
     from nanobot.nanobot import Nanobot
-    def forbidden(*args, **kwargs):
-        pytest.fail("config loading happened before admission")
-    monkeypatch.setattr(loader, "load_config", forbidden)
-    with pytest.raises(MigrationIncompleteError):
+    from nanobot.runtime_composition import RuntimePreflightError
+
+    config = Config()
+    config.bind_source_path(tmp_path / "config.json")
+    config.agents.defaults.session_ttl_minutes = 15
+    loaded = []
+
+    def load(*_args, **_kwargs):
+        loaded.append(True)
+        return config
+
+    monkeypatch.setattr(loader, "load_config", load)
+    with pytest.raises(RuntimePreflightError, match="idle"):
         Nanobot.from_config()
+    assert loaded == [True]
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_desktop_entry_blocks_before_discovery(monkeypatch):

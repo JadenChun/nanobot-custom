@@ -364,7 +364,7 @@ def _migrate_config(data: dict[str, Any]) -> dict[str, Any]:
 
     servers = tools.get("mcpServers", tools.get("mcp_servers", {}))
     if isinstance(servers, dict):
-        desktop = servers.get("ltx-desktop")
+        desktop = cast(dict[object, object], servers).get("ltx-desktop")
         if isinstance(desktop, dict) and "toolTimeout" not in desktop and "tool_timeout" not in desktop:
             desktop["toolTimeout"] = 120
 

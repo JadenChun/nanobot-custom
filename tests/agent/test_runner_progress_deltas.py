@@ -5,14 +5,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent.runner_helpers import make_run_spec
 from nanobot.agent.hooks import FileEditActivityHook
 from nanobot.agent.progress_hook import AgentProgressHook
 from nanobot.agent.runner import AgentRunner
 from nanobot.agent.tools.filesystem import EditFileTool, WriteFileTool
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.utils.progress_events import output_events
+from tests.agent.runner_helpers import make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 
@@ -179,13 +180,6 @@ async def test_runner_emits_write_file_diff_from_tool_execution_snapshots(tmp_pa
 
     tool = WriteFileTool(workspace=tmp_path)
 
-    class Tools:
-        def get_definitions(self):
-            return [{"type": "function", "function": {"name": "write_file"}}]
-
-        def prepare_call(self, name, params):
-            return tool, params, None
-
     async def chat_with_retry(**kwargs):
         nonlocal call_count
         call_count += 1
@@ -204,7 +198,8 @@ async def test_runner_emits_write_file_diff_from_tool_execution_snapshots(tmp_pa
         return LLMResponse(content="done", tool_calls=[], usage=None)
 
     provider.chat_with_retry = chat_with_retry
-    tools = Tools()
+    tools = ToolRegistry()
+    tools.register(tool)
 
     runner = AgentRunner()
     result = await runner.run(make_run_spec(provider,
@@ -245,13 +240,6 @@ async def test_runner_emits_edit_file_diff_from_tool_execution_snapshots(tmp_pat
 
     tool = EditFileTool(workspace=tmp_path)
 
-    class Tools:
-        def get_definitions(self):
-            return [{"type": "function", "function": {"name": "edit_file"}}]
-
-        def prepare_call(self, name, params):
-            return tool, params, None
-
     async def chat_with_retry(**kwargs):
         nonlocal call_count
         call_count += 1
@@ -274,7 +262,8 @@ async def test_runner_emits_edit_file_diff_from_tool_execution_snapshots(tmp_pat
         return LLMResponse(content="done", tool_calls=[], usage=None)
 
     provider.chat_with_retry = chat_with_retry
-    tools = Tools()
+    tools = ToolRegistry()
+    tools.register(tool)
 
     runner = AgentRunner()
     result = await runner.run(make_run_spec(provider,
@@ -309,14 +298,14 @@ async def test_runner_marks_file_edit_activity_failed_when_tool_errors(tmp_path)
         if file_edit_events:
             progress_events.extend(file_edit_events)
 
-    tool = WriteFileTool(workspace=tmp_path)
+    executed: list[tuple[str, str]] = []
 
-    class Tools:
-        def get_definitions(self):
-            return [{"type": "function", "function": {"name": "write_file"}}]
+    class FailingWriteTool(WriteFileTool):
+        async def execute(self, path, content, **kwargs):
+            executed.append((path, content))
+            raise RuntimeError("synthetic write failure")
 
-        def prepare_call(self, name, params):
-            return tool, params, None
+    tool = FailingWriteTool(workspace=tmp_path)
 
     async def chat_with_retry(**kwargs):
         nonlocal call_count
@@ -328,7 +317,7 @@ async def test_runner_marks_file_edit_activity_failed_when_tool_errors(tmp_path)
                     ToolCallRequest(
                         id="call-write",
                         name="write_file",
-                        arguments={"path": "aborted.txt"},
+                        arguments={"path": "aborted.txt", "content": "must not be written"},
                     )
                 ],
                 usage=None,
@@ -336,7 +325,8 @@ async def test_runner_marks_file_edit_activity_failed_when_tool_errors(tmp_path)
         return LLMResponse(content="done", tool_calls=[], usage=None)
 
     provider.chat_with_retry = chat_with_retry
-    tools = Tools()
+    tools = ToolRegistry()
+    tools.register(tool)
 
     runner = AgentRunner()
     result = await runner.run(make_run_spec(provider,
@@ -353,6 +343,11 @@ async def test_runner_marks_file_edit_activity_failed_when_tool_errors(tmp_path)
     assert progress_events[-1]["path"] == "aborted.txt"
     assert progress_events[-1]["phase"] == "error"
     assert progress_events[-1]["status"] == "error"
+    assert executed == [("aborted.txt", "must not be written")]
+    assert not (tmp_path / "aborted.txt").exists()
+    assert call_count == 2
+    assert [event["phase"] for event in progress_events] == ["start", "error"]
+    assert progress_events[-1]["error"] == "synthetic write failure"
 
 
 @pytest.mark.asyncio
@@ -375,13 +370,6 @@ async def test_runner_marks_file_edit_activity_failed_when_cancelled(tmp_path):
 
     tool = SlowWriteTool(workspace=tmp_path)
 
-    class Tools:
-        def get_definitions(self):
-            return [{"type": "function", "function": {"name": "write_file"}}]
-
-        def prepare_call(self, name, params):
-            return tool, params, None
-
     async def chat_with_retry(**kwargs):
         return LLMResponse(
             content=None,
@@ -396,7 +384,8 @@ async def test_runner_marks_file_edit_activity_failed_when_cancelled(tmp_path):
         )
 
     provider.chat_with_retry = chat_with_retry
-    tools = Tools()
+    tools = ToolRegistry()
+    tools.register(tool)
 
     runner = AgentRunner()
     task = asyncio.create_task(runner.run(make_run_spec(provider,
@@ -418,3 +407,114 @@ async def test_runner_marks_file_edit_activity_failed_when_cancelled(tmp_path):
     assert progress_events[-1]["path"] == "cancelled.txt"
     assert progress_events[-1]["status"] == "error"
     assert progress_events[-1]["error"] == "Task interrupted before this tool finished."
+    assert task.done() and task.cancelled()
+    assert target.read_text(encoding="utf-8") == "old\n"
+
+
+@pytest.mark.asyncio
+async def test_runner_refuses_invalid_write_before_file_edit_activity(tmp_path):
+    progress_events: list[dict] = []
+    executed: list[tuple[str, str]] = []
+
+    async def progress_cb(content, *, file_edit_events=None, **kwargs):
+        if file_edit_events:
+            progress_events.extend(file_edit_events)
+
+    class RecordingWriteTool(WriteFileTool):
+        async def execute(self, path, content, **kwargs):
+            executed.append((path, content))
+            return await super().execute(path, content, **kwargs)
+
+    tools = ToolRegistry()
+    tools.register(RecordingWriteTool(workspace=tmp_path))
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="invalid-write", name="write_file", arguments={"path": "invalid.txt"},
+        )]),
+        LLMResponse(content="done"),
+    ])
+    hook = FileEditActivityHook(events=output_events(on_progress=progress_cb), workspace=tmp_path)
+
+    result = await AgentRunner().run(make_run_spec(provider,
+        initial_messages=[{"role": "user", "content": "write a file"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=2,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        workspace=tmp_path,
+        hook=hook,
+    ))
+
+    assert result.final_content == "done"
+    assert result.stop_reason == "completed"
+    assert executed == []
+    assert not (tmp_path / "invalid.txt").exists()
+    assert progress_events == []
+    assert hook._trackers_by_call == {}
+    assert provider.chat_with_retry.await_count == 2
+    assert len(result.tool_events) == 1
+    assert result.tool_events[0]["status"] == "error"
+    assert "missing required content" in result.tool_events[0]["detail"]
+
+
+@pytest.mark.asyncio
+async def test_runner_cancellation_cleans_tool_task_and_file_edit_tracker(tmp_path):
+    executing = asyncio.Event()
+    cleaned = asyncio.Event()
+    pending = asyncio.Event()
+    progress_events: list[dict] = []
+    target = tmp_path / "cleanup.txt"
+    original = b"original\n"
+    target.write_bytes(original)
+
+    async def progress_cb(content, *, file_edit_events=None, **kwargs):
+        if file_edit_events:
+            progress_events.extend(file_edit_events)
+
+    class PendingWriteTool(WriteFileTool):
+        async def execute(self, path, content, **kwargs):
+            executing.set()
+            try:
+                await pending.wait()
+                return await super().execute(path, content, **kwargs)
+            finally:
+                cleaned.set()
+
+    tools = ToolRegistry()
+    tools.register(PendingWriteTool(workspace=tmp_path))
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
+        content=None, tool_calls=[ToolCallRequest(
+            id="cleanup-write", name="write_file",
+            arguments={"path": "cleanup.txt", "content": "replacement\n"},
+        )],
+    ))
+    hook = FileEditActivityHook(events=output_events(on_progress=progress_cb), workspace=tmp_path)
+    tasks_before = asyncio.all_tasks()
+    task = asyncio.create_task(AgentRunner().run(make_run_spec(provider,
+        initial_messages=[{"role": "user", "content": "write a file"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=2,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        workspace=tmp_path,
+        hook=hook,
+    )))
+    try:
+        await asyncio.wait_for(executing.wait(), timeout=1)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert executing.is_set()
+    assert cleaned.is_set()
+    assert task.done() and task.cancelled()
+    assert not (asyncio.all_tasks() - tasks_before)
+    assert hook._trackers_by_call == {}
+    assert target.read_bytes() == original
+    assert [event["phase"] for event in progress_events] == ["start", "error"]
+    assert {event["call_id"] for event in progress_events} == {"cleanup-write"}
+    assert progress_events[-1]["error"] == "Task interrupted before this tool finished."
+    provider.chat_with_retry.assert_awaited_once()

@@ -23,7 +23,16 @@ from nanobot.utils.workspace_prompts import (
 )
 
 if TYPE_CHECKING:
+    from typing import NotRequired, TypedDict
+
     from nanobot.providers.base import LLMProvider
+
+    class _EvaluatorRequest(TypedDict):
+        tools: list[dict[str, object]]
+        model: str
+        max_tokens: int
+        temperature: float
+        provider_context: NotRequired[ProviderCallContext]
 
 # Cap for a workspace-local heartbeat evaluator prompt override.
 EVALUATOR_PROMPT_MAX_CHARS = WORKSPACE_PROMPT_MAX_CHARS
@@ -61,7 +70,7 @@ def resolve_evaluator_prompt(workspace: Path) -> str:
         return text
     return default_evaluator_prompt()
 
-_EVALUATE_TOOL = [
+_EVALUATE_TOOL: list[dict[str, object]] = [
     {
         "type": "function",
         "function": {
@@ -113,7 +122,7 @@ async def evaluate_response(
         )
 
     try:
-        request_kwargs: dict[str, object] = {
+        request_kwargs: _EvaluatorRequest = {
             "tools": _EVALUATE_TOOL,
             "model": call_model,
             "max_tokens": EVALUATOR_MAX_TOKENS,

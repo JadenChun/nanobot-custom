@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.bus.runtime_events import SessionTurnPersisted
 from nanobot.runtime_context import RUNTIME_CONTEXT_HISTORY_META, RuntimeContextProvider
@@ -15,9 +15,17 @@ from nanobot.sdk.types import (
     snapshot_from_payload,
     snapshot_from_session,
 )
+from nanobot.session.manager import Session
 
 if TYPE_CHECKING:
     from nanobot.agent.loop import AgentLoop
+
+
+AgentResolver = Callable[[], "AgentLoop"]
+
+
+def _resolver(loop: "AgentLoop | AgentResolver") -> AgentResolver:
+    return loop if callable(loop) else lambda: loop
 
 
 class SessionClient:
@@ -26,8 +34,12 @@ class SessionClient:
     _RESERVED_MESSAGE_KEYS = {"role", "content", RUNTIME_CONTEXT_HISTORY_META}
     _VALID_ROLES = {"user", "assistant", "tool", "system"}
 
-    def __init__(self, loop: AgentLoop) -> None:
-        self._loop = loop
+    def __init__(self, loop: AgentLoop | AgentResolver) -> None:
+        self._resolve_loop = _resolver(loop)
+
+    @property
+    def _loop(self) -> AgentLoop:
+        return self._resolve_loop()
 
     async def ingest(
         self,
@@ -39,7 +51,11 @@ class SessionClient:
         save: bool = True,
     ) -> SessionSnapshot:
         """Import an existing transcript without running the model."""
-        session = self._loop.sessions.get_or_create(session_key)
+        if not isinstance(cast(object, session_key), str) or not session_key:
+            raise ValueError("ingested messages must include a session key")
+        if save and self._loop.sessions.has_managed_authority:
+            raise RuntimeError("managed session import is unsupported")
+        session = self._loop.sessions.get_or_create(session_key) if save else Session(session_key)
         if metadata:
             session.metadata.update(deepcopy(dict(metadata)))
 
@@ -106,10 +122,12 @@ class SessionClient:
         save: bool = True,
     ) -> SessionSnapshot:
         """Restore a trusted snapshot into an empty session."""
-        key = session_key or snapshot.key
-        if not key:
+        key = snapshot.key if session_key is None else session_key
+        if not isinstance(cast(object, key), str) or not key:
             raise ValueError("restored snapshots must include a session key")
-        session = self._loop.sessions.get_or_create(key)
+        if save and self._loop.sessions.has_managed_authority:
+            raise RuntimeError("managed session import is unsupported")
+        session = self._loop.sessions.get_or_create(key) if save else Session(key)
         if session.messages:
             raise ValueError(f"restore target session is not empty: {key}")
 
@@ -137,10 +155,10 @@ class SessionClient:
 
     def clear(self, session_key: str) -> SessionSnapshot:
         """Clear one session and persist the empty session."""
+        session = self._loop.sessions.reset_session(session_key)
+        if session is None:
+            raise RuntimeError("session reset did not commit")
         self._loop.discard_session_file_state(session_key)
-        session = self._loop.sessions.get_or_create(session_key)
-        session.clear()
-        self._loop.sessions.save(session)
         return snapshot_from_session(session)
 
     def delete(self, session_key: str) -> bool:
@@ -155,8 +173,12 @@ class SessionClient:
 class MemoryClient:
     """Long-term memory helpers exposed through ``bot.memory``."""
 
-    def __init__(self, loop: AgentLoop) -> None:
-        self._loop = loop
+    def __init__(self, loop: AgentLoop | AgentResolver) -> None:
+        self._resolve_loop = _resolver(loop)
+
+    @property
+    def _loop(self) -> AgentLoop:
+        return self._resolve_loop()
 
     def read(self) -> str:
         """Read ``memory/MEMORY.md``."""
@@ -181,8 +203,12 @@ class MemoryClient:
 class RuntimeClient:
     """Runtime control helpers exposed through ``bot.runtime``."""
 
-    def __init__(self, loop: AgentLoop) -> None:
-        self._loop = loop
+    def __init__(self, loop: AgentLoop | AgentResolver) -> None:
+        self._resolve_loop = _resolver(loop)
+
+    @property
+    def _loop(self) -> AgentLoop:
+        return self._resolve_loop()
 
     @property
     def model(self) -> str:

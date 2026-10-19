@@ -849,11 +849,17 @@ def test_agent_loop_shutdown_closes_exec_sessions(tmp_path):
         loop.subagents = SimpleNamespace(close=AsyncMock())
 
         await loop.aclose()
+        close_task = loop._close_task
+        assert close_task is not None and close_task.done()
+        loop.subagents.close.assert_awaited_once()
         await loop.aclose()
 
         assert process.returncode is not None
         assert manager._sessions == {}
-        assert loop.subagents.close.await_count == 2
+        # Repeated close joins the completed shared teardown; it must not
+        # invoke owned cleanup again (the accepted Stage 1 lifecycle contract).
+        assert loop._close_task is close_task
+        loop.subagents.close.assert_awaited_once()
 
     asyncio.run(run())
 

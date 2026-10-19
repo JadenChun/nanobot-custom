@@ -753,7 +753,7 @@ def test_normal_0755_namespace_and_0700_migration_parent_are_accepted(
         authority.require_current()
 
 
-def test_root_owned_sticky_temp_ancestor_is_accepted_when_available() -> None:
+def test_root_owned_sticky_temp_ancestor_is_accepted_when_available(tmp_path: Path) -> None:
     temp_root = Path("/tmp").resolve()
     try:
         value = temp_root.stat()
@@ -761,8 +761,10 @@ def test_root_owned_sticky_temp_ancestor_is_accepted_when_available() -> None:
         pytest.skip(f"temporary root is unavailable: {type(exc).__name__}")
     if value.st_uid != 0 or not (stat.S_IMODE(value.st_mode) & stat.S_ISVTX):
         pytest.skip("no root-owned sticky temporary ancestor is available")
-    with tempfile.TemporaryDirectory(prefix="checked-source-", dir=temp_root) as temporary:
+    allocation_root = tmp_path if temp_root in tmp_path.resolve().parents else temp_root
+    with tempfile.TemporaryDirectory(prefix="checked-source-", dir=allocation_root) as temporary:
         base = Path(temporary)
+        assert temp_root in base.resolve().parents
         backend = JsonlSessionStore(base / "workspace", sessions_root=base / "sessions")
         with open_checked_session(backend, "policy:sticky-temp") as authority:
             authority.require_current()

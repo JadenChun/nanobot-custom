@@ -19,7 +19,7 @@ from nanobot.session.manager import JsonlSessionStore, Session
 from nanobot.session.source import SourceValidationError
 from nanobot.session.source_store import SourceSessionStore
 from nanobot.session.turn_writer import SourceTurnWriter
-from session.test_artifact import fixture
+from tests.session.test_artifact import fixture
 
 
 @asynccontextmanager
@@ -38,6 +38,7 @@ async def setup_read(tmp_path, text='evidence 中文 🌟', *, child=False):
             writer = writer.child_stream()
         tool = ReadFileTool(workspace=workspace, allowed_dir=workspace)
         outcome = await ToolRegistry.execute_prepared(tool, {'path': 'file'}, SimpleNamespace(lock_owner=None))
+        assert outcome.producer_receipt is not None, outcome.content
         writer.begin_tool_batch({'role': 'assistant', 'content': '', 'tool_calls': [
             {'id': 'read', 'type': 'function', 'function': {'name': 'read_file', 'arguments': '{}'}}]})
         await writer.record_tool_result(KnownToolResult(0, 'read', 'read_file', outcome, outcome.content,
@@ -276,3 +277,91 @@ async def test_invalid_retrieval_receipt_does_not_mark_or_discard_inline_evidenc
             'inline', {'status': 'ok'}, True, retrieval_receipt=receipt))
         event = writer.owner.read_snapshot().events[-1]
         assert event['content'] == 'inline' and '_artifact_read' not in event
+
+
+@pytest.mark.parametrize('operation', ['source', 'published'])
+@pytest.mark.parametrize('fault', ['none', 'resolver_refusal', 'private_root'])
+async def test_artifact_file_policy_preserves_existing_guard_and_resolver_order(
+    tmp_path, monkeypatch, operation, fault,
+):
+    async with setup_read(tmp_path) as (writer, tool, store, descriptor, _):
+        trace = []
+        reader = ArtifactReader(writer, 'root_history', store, tool,
+                                location_validator=lambda: trace.append('root'))
+        snapshot = writer.owner.read_snapshot()
+        dispatch = writer.owner.validate_dispatch
+        read_snapshot = writer.owner.read_snapshot
+        resolve_read = tool._resolve_read
+
+        def traced_dispatch():
+            trace.append('dispatch')
+            return dispatch()
+
+        def traced_snapshot():
+            trace.append('snapshot')
+            return read_snapshot()
+
+        def traced_resolve(path):
+            trace.append('resolve')
+            assert path == str(tool._workspace / 'file')
+            if fault == 'resolver_refusal':
+                raise OSError('denied by current resolver')
+            return resolve_read(path)
+
+        if fault == 'private_root':
+            tool._extra_read_allowed_dirs.append(store.root)
+        trace.clear()
+
+        def validate():
+            if operation == 'source':
+                receipt = reader.authorize_source(descriptor, snapshot)
+                assert receipt.source_access == descriptor.source_access
+                assert receipt.sha256 == descriptor.sha256
+            else:
+                with store.transaction() as blobs:
+                    assert reader.verify_published(descriptor, snapshot, blobs) is None
+
+        with monkeypatch.context() as patch:
+            patch.setattr(writer.owner, 'validate_dispatch', traced_dispatch)
+            patch.setattr(writer.owner, 'read_snapshot', traced_snapshot)
+            patch.setattr(tool, '_resolve_read', traced_resolve)
+            if fault == 'none':
+                validate()
+            else:
+                with pytest.raises(ArtifactValidationError):
+                    validate()
+
+        assert trace == (['root'] if fault == 'private_root' else
+                         ['root', 'dispatch', 'resolve'] if operation == 'source' else
+                         ['root', 'dispatch', 'snapshot', 'resolve'])
+        assert writer.owner.read_snapshot() == snapshot
+
+
+@pytest.mark.parametrize('operation', ['source', 'published'])
+@pytest.mark.parametrize('policy_changed', [False, True])
+async def test_file_tool_artifact_validation_uses_current_policy_without_returning_text(
+    tmp_path, operation, policy_changed,
+):
+    from nanobot.session.artifact import attested_artifact_origin
+
+    async with setup_read(tmp_path) as (writer, tool, store, descriptor, _):
+        snapshot = writer.owner.read_snapshot()
+        expected = attested_artifact_origin(descriptor, snapshot, workspace_id=store.workspace_id)
+        if policy_changed:
+            tool._workspace = tmp_path / 'other-workspace'
+
+        def validate():
+            if operation == 'source':
+                assert tool.revalidate_artifact_source(expected) is None
+            else:
+                with store.transaction() as blobs:
+                    receipt = tool.verify_artifact_evidence(descriptor, snapshot, blobs, store=store)
+                    assert receipt == expected
+                    assert receipt.sha256 == descriptor.sha256
+
+        if policy_changed:
+            with pytest.raises(ArtifactValidationError):
+                validate()
+        else:
+            validate()
+        assert writer.owner.read_snapshot() == snapshot

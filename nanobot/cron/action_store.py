@@ -18,7 +18,7 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generator, Mapping
+from typing import Any, Generator, Mapping, Never, TypedDict, cast
 
 from nanobot.cron.types import CronJob, CronStore
 
@@ -47,6 +47,30 @@ _LEGACY_COMPLETION = "conversion-complete.json"
 _LEGACY_CANDIDATE_EVIDENCE_KEY = "legacy_conversion_evidence"
 _LEGACY_CANDIDATE_EVIDENCE_VERSION = 1
 _MISSING = object()
+
+
+class _ConversionAction(TypedDict):
+    status: str
+    source_digest: str | None
+    backup_digest: str | None
+    operations: list[Any]
+
+
+class _ConversionJobs(TypedDict):
+    status: str
+    source_digest: str | None
+    backup_digest: str | None
+
+
+class _ConversionManifest(TypedDict):
+    schema_version: int
+    kind: str
+    store_namespace: str
+    conversion_identity: str
+    identity_action_digest: str | None
+    identity_jobs_digest: str | None
+    action: _ConversionAction
+    jobs: _ConversionJobs
 
 
 class CronActionStoreError(RuntimeError):
@@ -170,7 +194,7 @@ class _HeldStore:
     lock_identity: tuple[int, int]
 
     def assert_bound(self) -> None:
-        self.store._assert_binding(self)
+        self.store.require_held_store_binding(self)
 
 
 def _inode(info: os.stat_result) -> tuple[int, int]:
@@ -188,7 +212,7 @@ def _private(info: os.stat_result, *, directory: bool, links: int = 1) -> None:
         raise ActionStoreCorruptError("action store object is not private or has an unexpected type")
 
 
-def _reject_constant(value: str) -> None:
+def _reject_constant(value: str) -> Never:
     raise ValueError(f"non-finite JSON constant {value!r} is not allowed")
 
 
@@ -210,6 +234,14 @@ def _strict_json_loads(data: bytes, *, label: str) -> object:
         raise ActionStoreCorruptError(f"{label} is not strict JSON") from exc
 
 
+def decode_scheduler_state_json(data: bytes) -> object:
+    return _strict_json_loads(data, label="scheduler state")
+
+
+def decode_pinned_scheduler_state_json(data: bytes) -> object:
+    return _strict_json_loads(data, label="pinned scheduler state")
+
+
 def _canonical_json(value: object, *, error: type[CronActionStoreError] = ActionStoreConflictError) -> str:
     try:
         return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"), sort_keys=True)
@@ -218,17 +250,19 @@ def _canonical_json(value: object, *, error: type[CronActionStoreError] = Action
 
 
 def _copy_json_mapping(
-    value: Mapping[str, Any], *, label: str, error: type[CronActionStoreError] = ActionStoreConflictError
+    value: object, *, label: str, error: type[CronActionStoreError] = ActionStoreConflictError
 ) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise error(f"{label} must be a JSON object")
-    encoded = _canonical_json(dict(value), error=error).encode("utf-8")
+    # Mapping keys remain untrusted until JSON encoding has accepted them.
+    encoded = _canonical_json(dict(cast(Mapping[object, object], value)), error=error).encode("utf-8")
     if len(encoded) > _MAX_REQUEST_BYTES:
         raise error(f"{label} exceeds the { _MAX_REQUEST_BYTES } byte limit")
     parsed = _strict_json_loads(encoded, label=label)
     if not isinstance(parsed, dict):  # defensive; mappings encode to objects
         raise error(f"{label} must be a JSON object")
-    return parsed
+    # The JSON decoder constructs string-keyed objects; values are opaque JSON.
+    return cast(dict[str, Any], parsed)
 
 
 def _digest_request(request: Mapping[str, Any]) -> str:
@@ -247,7 +281,7 @@ class CronActionStore:
     """
 
     def __init__(self, root: Path, *, namespace: str, _allow_legacy_source: bool = False):
-        self._require_qualified_platform()
+        self._flock = self._require_qualified_platform()
         root = Path(root)
         if not root.is_absolute() or root == Path(root.anchor) or ".." in root.parts:
             raise ValueError("action store root must be an absolute non-root path without '..'")
@@ -270,7 +304,7 @@ class CronActionStore:
             self._read_state(held)
 
     @staticmethod
-    def _require_qualified_platform() -> None:
+    def _require_qualified_platform():
         required_calls = {os.open, os.mkdir, os.stat, os.unlink, os.rename}
         if (
             os.name != "posix"
@@ -281,15 +315,17 @@ class CronActionStore:
             raise ActionStorePersistenceError(
                 "private cron action store requires qualified POSIX descriptor and flock support"
             )
+        # Infer the concrete stdlib module type, which has no annotation spelling.
+        return _fcntl
 
     @staticmethod
-    def _validate_namespace(namespace: str) -> str:
+    def _validate_namespace(namespace: object) -> str:
         if not isinstance(namespace, str) or not namespace or len(namespace.encode("utf-8")) > _MAX_NAMESPACE_BYTES:
             raise ValueError(f"namespace must be a non-empty UTF-8 string no longer than {_MAX_NAMESPACE_BYTES} bytes")
         return namespace
 
     @staticmethod
-    def _validate_action_id(action_id: str) -> str:
+    def _validate_action_id(action_id: object) -> str:
         if not isinstance(action_id, str) or not _ACTION_ID_RE.fullmatch(action_id):
             raise ValueError("action_id must match [A-Za-z0-9][A-Za-z0-9._:-]{0,511}")
         return action_id
@@ -391,7 +427,7 @@ class CronActionStore:
             current = _inode(os.fstat(lock_fd))
             if self._lock_identity is not None and current != self._lock_identity:
                 raise ActionStoreCorruptError("action store lock binding changed")
-            _fcntl.flock(lock_fd, _fcntl.LOCK_EX)
+            self._flock.flock(lock_fd, self._flock.LOCK_EX)
             return lock_fd
         except CronActionStoreError:
             if lock_fd is not None:
@@ -403,6 +439,10 @@ class CronActionStore:
             if exc.errno == errno.ELOOP:
                 raise ActionStoreCorruptError("action store lock must not be a symlink") from exc
             raise ActionStorePersistenceError("could not acquire action store lock") from exc
+
+    def require_held_store_binding(self, held: _HeldStore) -> None:
+        """Reprove the existing root and lock checks for an already held operation."""
+        return self._assert_binding(held)
 
     def _assert_binding(self, held: _HeldStore) -> None:
         root_info = os.fstat(held.root_fd)
@@ -453,7 +493,7 @@ class CronActionStore:
                 held.assert_bound()
             finally:
                 try:
-                    _fcntl.flock(lock_fd, _fcntl.LOCK_UN)
+                    self._flock.flock(lock_fd, self._flock.LOCK_UN)
                 finally:
                     os.close(lock_fd)
 
@@ -554,6 +594,8 @@ class CronActionStore:
         fields = {"schema_version", "kind", "store_namespace", "journal_generation", "base_sequence"}
         if not isinstance(value, dict):
             raise ActionStoreConversionRequiredError("journal is not a version-2 action-store journal")
+        # This private parser receives decoded JSON; field values are checked below.
+        value = cast(dict[str, Any], value)
         version = value.get("schema_version")
         if type(version) is not int:
             raise ActionStoreCorruptError("journal schema version must be an exact integer")
@@ -573,8 +615,10 @@ class CronActionStore:
             "schema_version", "kind", "store_namespace", "journal_generation", "sequence", "action_id",
             "request_digest", "request",
         }
-        if not isinstance(value, dict) or set(value) != fields:
+        if not isinstance(value, dict) or set(cast(dict[object, object], value)) != fields:
             raise ActionStoreCorruptError("journal action has an invalid schema")
+        # Exact field-set validation proves string keys, not the opaque values.
+        value = cast(dict[str, Any], value)
         version = self._as_int(value["schema_version"], label="journal action schema version", minimum=1)
         if version != _SCHEMA_VERSION or value["kind"] != "action":
             raise ActionStoreCorruptError("journal action has an invalid version or kind")
@@ -708,8 +752,10 @@ class CronActionStore:
             "schema_version", "kind", "store_namespace", "journal_generation", "snapshot_generation",
             "base_sequence", "watermark", "prior_generation", "candidate", "receipts",
         }
-        if not isinstance(value, dict) or set(value) != fields:
+        if not isinstance(value, dict) or set(cast(dict[object, object], value)) != fields:
             raise ActionStoreCorruptError("action snapshot has an invalid schema")
+        # Exact field-set validation proves string keys; nested values are checked below.
+        value = cast(dict[str, Any], value)
         version = self._as_int(value["schema_version"], label="snapshot schema version", minimum=1)
         if version != _SCHEMA_VERSION or value["kind"] != "snapshot":
             raise ActionStoreConversionRequiredError("snapshot conversion to version 2 is required")
@@ -723,8 +769,9 @@ class CronActionStore:
             raise ActionStoreCorruptError("snapshot base sequence must equal its watermark")
         prior = value["prior_generation"]
         prior_fields = {"journal_generation", "snapshot_generation", "watermark", "sequence"}
-        if not isinstance(prior, dict) or set(prior) != prior_fields:
+        if not isinstance(prior, dict) or set(cast(dict[object, object], prior)) != prior_fields:
             raise ActionStoreCorruptError("snapshot prior generation has an invalid schema")
+        prior = cast(dict[str, Any], prior)  # Exact string-key field set checked above.
         prior_generation = ActionStoreGeneration(
             self._as_int(prior["journal_generation"], label="prior journal generation", minimum=1),
             self._as_int(prior["snapshot_generation"], label="prior snapshot generation"),
@@ -743,15 +790,19 @@ class CronActionStore:
         except TypeError as exc:
             raise ActionStoreCorruptError("snapshot candidate is invalid") from exc
         raw_receipts = value["receipts"]
-        if not isinstance(raw_receipts, list) or len(raw_receipts) > _MAX_RECEIPTS or len(raw_receipts) != watermark:
+        if not isinstance(raw_receipts, list):
+            raise ActionStoreCorruptError("snapshot has an invalid receipt count")
+        raw_receipts = cast(list[object], raw_receipts)  # Elements are validated individually.
+        if len(raw_receipts) > _MAX_RECEIPTS or len(raw_receipts) != watermark:
             raise ActionStoreCorruptError("snapshot has an invalid receipt count")
         receipts: list[ActionReceipt] = []
         seen: set[str] = set()
         previous_receipt_generation = 1
         for sequence, raw in enumerate(raw_receipts, start=1):
             receipt_fields = {"action_id", "request_digest", "sequence", "journal_generation"}
-            if not isinstance(raw, dict) or set(raw) != receipt_fields:
+            if not isinstance(raw, dict) or set(cast(dict[object, object], raw)) != receipt_fields:
                 raise ActionStoreCorruptError("snapshot receipt has an invalid schema")
+            raw = cast(dict[str, Any], raw)  # Exact string-key field set checked above.
             if self._as_int(raw["sequence"], label="snapshot receipt sequence", minimum=1) != sequence:
                 raise ActionStoreCorruptError("snapshot receipts are not contiguous")
             action_id = raw["action_id"]
@@ -1163,15 +1214,17 @@ class CronActionStore:
                 if fd is not None:
                     os.close(fd)
 
-    def _read_conversion_manifest(self, held: _HeldStore) -> dict[str, Any]:
+    def _read_conversion_manifest(self, held: _HeldStore) -> _ConversionManifest:
         data = self._read_private_bytes(held, _LEGACY_MANIFEST, maximum=_MAX_RECORD_BYTES)
         value = _strict_json_loads(data, label="legacy conversion manifest")
         fields = {
             "schema_version", "kind", "store_namespace", "conversion_identity", "identity_action_digest",
             "identity_jobs_digest", "action", "jobs",
         }
-        if not isinstance(value, dict) or set(value) != fields:
+        if not isinstance(value, dict) or set(cast(dict[object, object], value)) != fields:
             raise ActionStoreCorruptError("legacy conversion manifest has an invalid schema")
+        # Exact field-set validation proves string keys; the schema follows below.
+        value = cast(dict[str, Any], value)
         if type(value["schema_version"]) is not int or value["schema_version"] != _LEGACY_CONVERSION_VERSION:
             raise ActionStoreCorruptError("legacy conversion manifest has an invalid version")
         if value["kind"] != "legacy_cron_conversion" or value["store_namespace"] != self.namespace:
@@ -1183,8 +1236,10 @@ class CronActionStore:
         jobs = value["jobs"]
         action_fields = {"status", "source_digest", "backup_digest", "operations"}
         jobs_fields = {"status", "source_digest", "backup_digest"}
-        if not isinstance(action, dict) or set(action) != action_fields or not isinstance(jobs, dict) or set(jobs) != jobs_fields:
+        if not isinstance(action, dict) or set(cast(dict[object, object], action)) != action_fields or not isinstance(jobs, dict) or set(cast(dict[object, object], jobs)) != jobs_fields:
             raise ActionStoreCorruptError("legacy conversion manifest has invalid source state")
+        action = cast(dict[str, Any], action)  # Exact source field sets checked above.
+        jobs = cast(dict[str, Any], jobs)
         if action["status"] not in {"absent", "pending", "removing", "converted"}:
             raise ActionStoreCorruptError("legacy action conversion status is invalid")
         if jobs["status"] not in {"absent", "unavailable", "pending", "converted"}:
@@ -1221,7 +1276,8 @@ class CronActionStore:
             self._verify_legacy_backup(held, action_backup)
         if jobs_backup is not None:
             self._verify_legacy_backup(held, jobs_backup)
-        return _copy_json_mapping(value, label="legacy conversion manifest", error=ActionStoreCorruptError)
+        # All manifest fields and nested source shapes were validated on this path.
+        return cast(_ConversionManifest, _copy_json_mapping(value, label="legacy conversion manifest", error=ActionStoreCorruptError))
 
     def _copy_legacy_conversion_evidence(self, value: object, *, label: str) -> dict[str, Any]:
         evidence = _copy_json_mapping(value, label=label, error=ActionStoreCorruptError)
@@ -1253,8 +1309,10 @@ class CronActionStore:
             "jobs_status",
             "conversion_evidence",
         }
-        if not isinstance(value, dict) or set(value) != fields:
+        if not isinstance(value, dict) or set(cast(dict[object, object], value)) != fields:
             raise ActionStoreCorruptError("legacy conversion completion provenance has an invalid schema")
+        # Exact field-set validation proves string keys; field values follow below.
+        value = cast(dict[str, Any], value)
         if type(value["schema_version"]) is not int or value["schema_version"] != _LEGACY_CONVERSION_VERSION:
             raise ActionStoreCorruptError("legacy conversion completion provenance has an invalid version")
         if value["kind"] != "legacy_cron_conversion_completion" or value["store_namespace"] != self.namespace:
@@ -1372,16 +1430,17 @@ class CronActionStore:
                 value = _strict_json_loads(line, label="legacy action")
             except ActionStoreCorruptError as exc:
                 raise ActionStoreLegacyConversionError("legacy action journal is malformed") from exc
-            if not isinstance(value, dict) or set(value) != {"action", "params"}:
+            if not isinstance(value, dict) or set(cast(dict[object, object], value)) != {"action", "params"}:
                 raise ActionStoreLegacyConversionError("legacy action has an invalid schema")
+            value = cast(dict[str, Any], value)  # Exact string-key field set checked above.
             operation = value["action"]
             if operation not in {"add", "update", "del"} or not isinstance(value["params"], dict):
                 raise ActionStoreLegacyConversionError("legacy action is not an accepted add/update/del operation")
-            parsed.append((operation, _copy_json_mapping(value["params"], label="legacy action params"), ordinal))
+            parsed.append((operation, _copy_json_mapping(cast(dict[object, object], value["params"]), label="legacy action params"), ordinal))
         return parsed
 
     @staticmethod
-    def _legacy_field(data: Mapping[str, Any], camel: str, snake: str, *, default: object = _MISSING) -> object:
+    def _legacy_field(data: Mapping[object, object], camel: str, snake: str, *, default: object = _MISSING) -> object:
         has_camel = camel in data
         has_snake = snake in data
         if has_camel and has_snake:
@@ -1395,7 +1454,7 @@ class CronActionStore:
         return default
 
     @staticmethod
-    def _legacy_known_fields(data: Mapping[str, Any], fields: set[str], *, label: str) -> None:
+    def _legacy_known_fields(data: Mapping[object, object], fields: set[str], *, label: str) -> None:
         unknown = set(data) - fields
         if unknown:
             raise ActionStoreLegacyConversionError(f"{label} has unknown fields")
@@ -1423,10 +1482,10 @@ class CronActionStore:
         return value
 
     @staticmethod
-    def _legacy_mapping(value: object, *, label: str) -> dict[str, Any]:
+    def _legacy_mapping(value: object, *, label: str) -> dict[object, object]:
         if not isinstance(value, dict):
             raise ActionStoreLegacyConversionError(f"{label} must be an object")
-        return value
+        return cast(dict[object, object], value)
 
     def _validate_legacy_schedule(self, value: object) -> None:
         data = self._legacy_mapping(value, label="legacy cron schedule")
@@ -1470,7 +1529,7 @@ class CronActionStore:
         destinations = self._legacy_field(data, "additionalDestinations", "additional_destinations", default=[])
         if not isinstance(destinations, list):
             raise ActionStoreLegacyConversionError("legacy cron destinations must be a list")
-        for destination in destinations:
+        for destination in cast(list[object], destinations):
             item = self._legacy_mapping(destination, label="legacy cron destination")
             self._legacy_known_fields(item, {"channel", "to"}, label="legacy cron destination")
             self._legacy_string(item.get("channel"), label="legacy cron destination channel")
@@ -1515,7 +1574,7 @@ class CronActionStore:
         history = self._legacy_field(data, "runHistory", "run_history", default=[])
         if not isinstance(history, list):
             raise ActionStoreLegacyConversionError("legacy cron run history must be a list")
-        for record in history:
+        for record in cast(list[object], history):
             item = self._legacy_mapping(record, label="legacy cron run history record")
             self._legacy_known_fields(
                 item,
@@ -1568,7 +1627,8 @@ class CronActionStore:
         jobs = data.get("jobs")
         if not isinstance(jobs, list):
             raise ActionStoreLegacyConversionError("legacy jobs snapshot must contain a jobs list")
-        return CronStore(version=data.get("version", 1), jobs=[self._strict_legacy_job(job) for job in jobs])
+        # _legacy_int above proved the version before constructing the legacy record.
+        return CronStore(version=cast(int, data.get("version", 1)), jobs=[self._strict_legacy_job(job) for job in cast(list[object], jobs)])
 
     def _canonical_legacy_job(self, params: Mapping[str, Any], conversion_identity: str) -> dict[str, Any]:
         try:
@@ -1577,7 +1637,7 @@ class CronActionStore:
             raise
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
             raise ActionStoreLegacyConversionError("legacy add/update does not contain a valid cron job") from exc
-        if not isinstance(job.id, str) or not job.id:
+        if not isinstance(cast(object, job.id), str) or not job.id:
             raise ActionStoreLegacyConversionError("legacy cron job has an invalid id")
         canonical = job.to_store_dict()
         instance = hashlib.sha256(
@@ -1931,6 +1991,7 @@ class CronActionStore:
         """Run the one-way stopped-writer conversion without service wiring."""
         jobs_for_snapshot: CronStore | None = None
         snapshot_candidate: dict[str, Any] | None = None
+        manifest: _ConversionManifest | None
         with self._held_lock() as held:
             try:
                 manifest = self._read_conversion_manifest(held)
@@ -2056,7 +2117,7 @@ class CronActionStore:
                     raw_jobs = _strict_json_loads(jobs_bytes, label="legacy jobs snapshot")
                     if not isinstance(raw_jobs, dict):
                         raise ValueError("jobs snapshot must be an object")
-                    jobs_for_snapshot = self._strict_legacy_store(raw_jobs)
+                    jobs_for_snapshot = self._strict_legacy_store(cast(dict[object, object], raw_jobs))
                 except (ActionStoreCorruptError, ActionStoreLegacyConversionError, AttributeError, KeyError, TypeError, ValueError):
                     jobs_state["status"] = "unavailable"
                     self._write_conversion_manifest(held, manifest)
@@ -2075,7 +2136,8 @@ class CronActionStore:
                 jobs_state["status"] = "pending"
                 snapshot_candidate = self._legacy_jobs_candidate(
                     conversion_identity=identity,
-                    jobs_digest=jobs_digest,
+                    # This branch has jobs_bytes; its digest was computed above.
+                    jobs_digest=cast(str, jobs_digest),
                     jobs=jobs_for_snapshot,
                     operations=operations,
                     evidence=self._legacy_conversion_evidence(manifest),
@@ -2194,7 +2256,7 @@ class CronActionStore:
                     self._verify_journal_durable(held)
                 return self._copy_receipt(receipt)
             if expected_generation is not None:
-                if not isinstance(expected_generation, ActionStoreGeneration):
+                if not isinstance(cast(object, expected_generation), ActionStoreGeneration):
                     raise ValueError("expected_generation must be an ActionStoreGeneration returned by replay()")
                 expected_generation = self._validate_generation(expected_generation)
                 if state.replay.generation != expected_generation:
@@ -2214,7 +2276,7 @@ class CronActionStore:
         success is returned.  A different candidate for that prior generation
         is a conflict rather than an accidental overwrite.
         """
-        if not isinstance(expected_generation, ActionStoreGeneration):
+        if not isinstance(cast(object, expected_generation), ActionStoreGeneration):
             raise ValueError("expected_generation must be an ActionStoreGeneration returned by replay()")
         expected_generation = self._validate_generation(expected_generation)
         canonical_candidate = _copy_json_mapping(candidate, label="checkpoint candidate")

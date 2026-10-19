@@ -8,10 +8,9 @@ import inspect
 import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from contextlib import suppress
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from loguru import logger
 
@@ -65,6 +64,36 @@ _OUTBOUND_PENDING_LIMIT = 256
 _RESTART_NOTICE_START_TIMEOUT_S = 30.0
 _RESTART_NOTICE_START_POLL_S = 0.25
 ORIGIN_REPLY_FINGERPRINTS_MAX_SIZE = 1000
+
+_CleanupResult = TypeVar("_CleanupResult")
+
+
+async def _join_owned_cleanup(task: asyncio.Task[_CleanupResult]) -> _CleanupResult:
+    """Join same-loop cleanup even after repeated owner cancellation.
+
+    Cancellation is reported only after the owned task releases its resources;
+    a simultaneous cleanup failure is retained rather than masked.
+    """
+    interrupted = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.cancelled():
+                interrupted = True
+        except BaseException:
+            break
+    try:
+        result = task.result()
+    except BaseException as exc:
+        if interrupted:
+            raise BaseExceptionGroup(
+                "channel cleanup failed after cancellation", [asyncio.CancelledError(), exc],
+            ) from None
+        raise
+    if interrupted:
+        raise asyncio.CancelledError()
+    return result
 
 _BOOL_CAMEL_ALIASES: dict[str, str] = {
     "send_progress": "sendProgress",
@@ -147,9 +176,11 @@ class ChannelManager:
         self._outbound_sends = asyncio.Semaphore(_OUTBOUND_CONCURRENCY)
         self._stopping_channels: set[str] = set()
         self._started = False
+        self._acquired = False
+        self._acquiring = False
+        self._channel_stop_tasks: dict[str, tuple[BaseChannel, asyncio.Task[bool]]] = {}
+        self._restart_notice_task: asyncio.Task[None] | None = None
         self._origin_reply_fingerprints: OrderedDict[tuple[str, str, str], str] = OrderedDict()
-
-        self._init_channels()
 
     def _channel_section(
         self,
@@ -233,12 +264,61 @@ class ChannelManager:
         )
         return channel
 
-    def _init_channels(self) -> None:
+    async def acquire(self) -> ChannelManager:
         """Initialize enabled runtimes from dependency-free channel descriptors."""
-        from nanobot.channels.registry import discover_plugins
+        if self._acquired:
+            return self
+        if self._acquiring:
+            raise RuntimeError("channel manager acquisition is already in progress")
+        snapshots = (
+            dict(self.channels),
+            dict(self._channel_owners),
+            dict(self._channel_runtime_specs),
+            dict(self._channel_errors),
+        )
+        self._acquiring = True
+        try:
+            return await self._acquire_channels()
+        except BaseException:
+            channels, owners, runtime_specs, errors = snapshots
+            self.channels.clear()
+            self.channels.update(channels)
+            self._channel_owners.clear()
+            self._channel_owners.update(owners)
+            self._channel_runtime_specs.clear()
+            self._channel_runtime_specs.update(runtime_specs)
+            self._channel_errors.clear()
+            self._channel_errors.update(errors)
+            self._acquired = False
+            raise
+        finally:
+            self._acquiring = False
+
+    async def _acquire_channels(self) -> ChannelManager:
+        from nanobot.channels.registry import (
+            discover_legacy_plugins,
+            discover_plugins,
+            packaged_channel_names,
+        )
         from nanobot.optional_features import check_enabled_channel_dependencies
 
+        reserved_names = set(packaged_channel_names())
         plugins = discover_plugins()
+        extras = self.config.channels.model_extra or {}
+        shared_names = set(self.config.channels.__class__.model_fields)
+        external_enabled = {
+            name
+            for name, section in extras.items()
+            if name not in shared_names
+            and isinstance(section, Mapping)
+            and cast(Mapping[object, object], section).get("enabled") is True
+            and name not in plugins
+        }
+        legacy_plugins = discover_legacy_plugins(
+            external_enabled,
+            reserved_names=reserved_names,
+        )
+        plugins.update(legacy_plugins)
         default_sections: dict[str, Any] = {}
         activations: dict[str, tuple[Any, list[tuple[str, Any]]]] = {}
         enabled_names: set[str] = set()
@@ -250,14 +330,29 @@ class ChannelManager:
             )
             if section is None:
                 continue
+            if name == "telegram" and not plugin.management.multi_instance:
+                self._validate_telegram_allow_from_config(
+                    section,
+                    default_enabled=plugin.default_enabled,
+                )
             try:
                 channel_setup_spec(name, plugin=plugin)
                 specs = channel_instance_specs(plugin, section)
+                if name == "telegram":
+                    for spec in specs:
+                        self._validate_telegram_allow_from_config(
+                            spec.config,
+                            default_enabled=True,
+                        )
                 runtime_specs = [
                     (channel_runtime_name(plugin, spec.instance_id), spec)
                     for spec in specs
                 ]
             except Exception as exc:
+                if name in legacy_plugins:
+                    raise ValueError(
+                        f"Enabled external channel '{name}' has invalid configuration: {exc}"
+                    ) from exc
                 logger.warning("Could not inspect {} channel activation: {}", name, exc)
                 continue
             if not runtime_specs:
@@ -279,38 +374,73 @@ class ChannelManager:
             enabled_names.add(name)
 
         dependency_errors = check_enabled_channel_dependencies(enabled_names, plugins)
+        invalid_external = sorted(set(dependency_errors) & set(legacy_plugins))
+        if invalid_external:
+            raise ValueError(
+                "Enabled external channel dependencies are unavailable: "
+                + ", ".join(invalid_external)
+            )
         for name, error in dependency_errors.items():
             self._mark_channel_error(name, error)
 
-        for name, (plugin, runtime_specs) in activations.items():
-            if name in dependency_errors:
-                continue
-            try:
-                cls = plugin.load_channel_class()
-                built = [
-                    (
-                        runtime_name,
-                        self._build_channel(
-                            name,
-                            cls,
-                            spec.config,
-                            runtime_name=runtime_name,
-                        ),
-                    )
-                    for runtime_name, spec in runtime_specs
-                ]
-                for runtime_name, channel in built:
-                    self.channels[runtime_name] = channel
-                    self._channel_owners[runtime_name] = name
-                    logger.info("{} channel enabled as {}", cls.display_name, runtime_name)
-            except Exception as exc:
-                self._mark_channel_error(
-                    name,
-                    "Channel runtime could not be loaded. Check gateway logs.",
-                )
-                logger.warning("{} channel not available: {}", name, exc)
+        # Import and validate enabled external adapters before constructing any
+        # channel runtime. Disabled and unconfigured entry points never reach
+        # this point and therefore never execute plugin code.
+        external_classes = {
+            name: legacy_plugins[name].load_channel_class()
+            for name in sorted(set(activations) & set(legacy_plugins))
+        }
 
-        self._validate_allow_from()
+        acquired: list[BaseChannel] = []
+        pending_channels: list[tuple[str, str, BaseChannel]] = []
+        try:
+            for name, (plugin, runtime_specs) in activations.items():
+                if name in dependency_errors:
+                    continue
+                cls = external_classes.get(name) or plugin.load_channel_class()
+                for runtime_name, spec in runtime_specs:
+                    channel = self._build_channel(
+                        name,
+                        cls,
+                        spec.config,
+                        runtime_name=runtime_name,
+                    )
+                    acquired.append(channel)
+                    pending_channels.append((name, runtime_name, channel))
+            for name, runtime_name, channel in pending_channels:
+                self.channels[runtime_name] = channel
+                self._channel_owners[runtime_name] = name
+                logger.info("{} channel enabled as {}", channel.display_name, runtime_name)
+            self._validate_allow_from()
+            self._acquired = True
+            return self
+        except BaseException as exc:
+            self.channels.clear()
+            self._channel_owners.clear()
+            rollback = asyncio.create_task(self._rollback_acquired_channels(acquired, exc))
+            await _join_owned_cleanup(rollback)
+            raise AssertionError("acquisition rollback returned without raising")
+
+    async def _rollback_acquired_channels(
+        self,
+        acquired: list[BaseChannel],
+        acquisition_exc: BaseException,
+    ) -> None:
+        cleanup_errors: list[BaseException] = []
+        for channel in reversed(acquired):
+            try:
+                await channel.stop()
+            except BaseException as cleanup_exc:
+                cleanup_errors.append(cleanup_exc)
+        if cleanup_errors:
+            values = [acquisition_exc, *cleanup_errors]
+            if all(isinstance(value, Exception) for value in values):
+                raise ExceptionGroup(
+                    "channel acquisition and rollback failed",
+                    values,  # type: ignore[arg-type]
+                )
+            raise BaseExceptionGroup("channel acquisition and rollback failed", values)
+        raise acquisition_exc
 
     def _mark_channel_error(self, owner: str, message: str) -> None:
         self._mark_runtime_error(
@@ -327,6 +457,28 @@ class ChannelManager:
         for runtime_name in runtime_names:
             self._channel_errors[runtime_name] = message
 
+    @staticmethod
+    def _validate_telegram_allow_from_config(
+        config: Any,
+        *,
+        default_enabled: bool,
+    ) -> None:
+        if isinstance(config, dict):
+            config_data = cast(dict[str, Any], config)
+            enabled = config_data.get("enabled", default_enabled)
+            if "allow_from" in config_data:
+                allow = config_data.get("allow_from")
+            else:
+                allow = config_data.get("allowFrom")
+        else:
+            enabled = getattr(config, "enabled", default_enabled)
+            allow = getattr(config, "allow_from", None)
+        if enabled is not False and not allow:
+            raise SystemExit(
+                "Error: Telegram allowFrom requires at least one sender ID/username "
+                'or "*". Pairing does not replace sender authorization.'
+            )
+
     def _validate_allow_from(self) -> None:
         for name, ch in self.channels.items():
             cfg = ch.config
@@ -338,6 +490,14 @@ class ChannelManager:
                     allow = config_data.get("allowFrom")
             else:
                 allow = getattr(cfg, "allow_from", None)
+
+            owners = getattr(self, "_channel_owners", {})
+            owner = owners.get(name, name)
+            if owner == "telegram":
+                self._validate_telegram_allow_from_config(
+                    cfg,
+                    default_enabled=True,
+                )
             if allow is None:
                 # allowFrom omitted → pairing-only mode.  Unapproved senders
                 # receive a pairing code instead of being silently ignored.
@@ -389,6 +549,7 @@ class ChannelManager:
                 logger.error("Failed to start channel {}: {}", name, public_error)
             else:
                 logger.exception("Failed to start channel {}", name)
+            raise
 
     def _start_channel_task(self, name: str, channel: BaseChannel) -> asyncio.Task[None]:
         logger.info("Starting {} channel...", name)
@@ -397,35 +558,73 @@ class ChannelManager:
         return task
 
     async def _stop_channel(self, name: str) -> bool:
-        self._stopping_channels.add(name)
-        try:
-            await self._cancel_outbound(name)
-            return await self._stop_channel_runtime(name)
-        finally:
-            self._stopping_channels.discard(name)
+        return await self._stop_channel_runtime(name)
 
     async def _stop_channel_runtime(self, name: str) -> bool:
         channel = self.channels.get(name)
         if channel is None:
             self._channel_tasks.pop(name, None)
             return False
+        stop_tasks = getattr(self, "_channel_stop_tasks", None)
+        if stop_tasks is None:
+            stop_tasks = self._channel_stop_tasks = {}
+        previous = stop_tasks.get(name)
+        if previous is not None and previous[0] is channel:
+            if previous[1].done():
+                return False
+            return await _join_owned_cleanup(previous[1])
 
+        # Keep the instance itself, not its recyclable object ID. One entry per
+        # runtime slot also lets a replacement acquire independent ownership.
         task = self._channel_tasks.pop(name, None)
+        cleanup = asyncio.create_task(self._finish_channel_stop(name, channel, task))
+        stop_tasks[name] = (channel, cleanup)
+        return await _join_owned_cleanup(cleanup)
+
+    async def _finish_channel_stop(
+        self, name: str, channel: BaseChannel, task: asyncio.Task[None] | None,
+    ) -> bool:
+        errors: list[BaseException] = []
+        self._stopping_channels.add(name)
+        try:
+            await self._cancel_outbound(name)
+        except BaseException as exc:
+            errors.append(exc)
         try:
             await channel.stop()
             logger.info("Stopped {} channel", name)
-        except asyncio.CancelledError:
-            current_task = asyncio.current_task()
-            if current_task is not None and current_task.cancelling():
-                raise
-            logger.debug("Channel {} stop task was already cancelled", name)
-        except Exception:
+        except asyncio.CancelledError as exc:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                errors.append(exc)
+            else:
+                # Some channels await an already-cancelled server in stop().
+                # This is not owner cancellation (the owner awaits shielded
+                # cleanup), but its start task still has to be joined below.
+                logger.debug("Channel {} stop task was already cancelled", name)
+        except BaseException as exc:
             logger.exception("Error stopping {}", name)
+            errors.append(exc)
 
         if task is not None and not task.done():
             task.cancel()
-            with suppress(asyncio.CancelledError):
-                await task
+            results = await asyncio.gather(task, return_exceptions=True)
+            errors.extend(
+                result
+                for result in results
+                if isinstance(result, BaseException)
+                and not isinstance(result, asyncio.CancelledError)
+            )
+        self._stopping_channels.discard(name)
+        if errors:
+            if len(errors) == 1:
+                raise errors[0]
+            if all(isinstance(error, Exception) for error in errors):
+                raise ExceptionGroup(
+                    f"failed to stop {name} channel",
+                    errors,  # type: ignore[arg-type]
+                )
+            raise BaseExceptionGroup(f"failed to stop {name} channel", errors)
         return True
 
     async def apply_channel_feature_action(
@@ -460,12 +659,22 @@ class ChannelManager:
 
         from nanobot.config.loader import load_config
 
-        self.config = load_config()
-        section = self._channel_section(name, default_enabled=plugin.default_enabled)
+        proposed_config = load_config()
+        section = self._channel_section(
+            name,
+            config=proposed_config,
+            default_enabled=plugin.default_enabled,
+        )
+        if action == "enable" and name == "telegram" and not plugin.management.multi_instance:
+            self._validate_telegram_allow_from_config(
+                section,
+                default_enabled=plugin.default_enabled,
+            )
         channel_setup_spec(name, plugin=plugin)
         instance_id = resolve_channel_action_target(instance_id)
 
         if action == "disable":
+            self.config = proposed_config
             runtime_name = channel_runtime_name(plugin, instance_id)
             runtime_names = (
                 [runtime_name]
@@ -474,9 +683,22 @@ class ChannelManager:
             )
             stopped = False
             for runtime_name in runtime_names:
-                stopped = await self._stop_channel(runtime_name) or stopped
+                try:
+                    stopped = await self._stop_channel(runtime_name) or stopped
+                except BaseException:
+                    logger.exception("Failed to stop {} channel after settings change", runtime_name)
+                    self._channel_errors[runtime_name] = (
+                        "Channel failed to stop. Check gateway logs."
+                    )
+                    return {
+                        "handled": True,
+                        "ok": False,
+                        "requires_restart": False,
+                        "message": f"{name} channel failed to stop. Check gateway logs.",
+                    }
                 self.channels.pop(runtime_name, None)
                 self._channel_owners.pop(runtime_name, None)
+                self._channel_stop_tasks.pop(runtime_name, None)
             self._channel_runtime_specs.pop(runtime_name, None)
             self._channel_errors.pop(runtime_name, None)
             return {
@@ -491,6 +713,12 @@ class ChannelManager:
 
         specs = channel_instance_specs(plugin, section) if section is not None else []
         specs = [spec for spec in specs if spec.instance_id == instance_id]
+        if name == "telegram":
+            for spec in specs:
+                self._validate_telegram_allow_from_config(
+                    spec.config,
+                    default_enabled=True,
+                )
         if not specs:
             return {
                 "handled": True,
@@ -498,6 +726,8 @@ class ChannelManager:
                 "requires_restart": True,
                 "message": f"{name} channel config was not enabled.",
             }
+
+        self.config = proposed_config
 
         runtime_specs = [
             (channel_runtime_name(plugin, spec.instance_id), spec)
@@ -568,9 +798,22 @@ class ChannelManager:
         for runtime_name in sorted(runtime_names_to_replace):
             if runtime_name not in self.channels:
                 continue
-            await self._stop_channel(runtime_name)
+            try:
+                await self._stop_channel(runtime_name)
+            except BaseException:
+                logger.exception("Failed to replace {} channel after settings change", runtime_name)
+                self._channel_errors[runtime_name] = (
+                    "Channel failed to stop. Check gateway logs."
+                )
+                return {
+                    "handled": True,
+                    "ok": False,
+                    "requires_restart": False,
+                    "message": f"{name} channel failed to stop. Check gateway logs.",
+                }
             self.channels.pop(runtime_name, None)
             self._channel_owners.pop(runtime_name, None)
+            self._channel_stop_tasks.pop(runtime_name, None)
 
         for runtime_name, channel in built:
             self.channels[runtime_name] = channel
@@ -598,24 +841,87 @@ class ChannelManager:
         }
 
     async def start_all(self) -> None:
-        """Start all channels and the outbound dispatcher."""
+        """Start all channels, rolling back every earlier start on failure."""
         if not self.channels:
             logger.warning("No channels enabled")
             return
 
         self._started = True
-        # Start outbound dispatcher
         self._dispatch_task = asyncio.create_task(self._dispatch_outbound())
-
-        # Start channels
         tasks: list[asyncio.Task[None]] = []
-        for name, channel in self.channels.items():
-            tasks.append(self._start_channel_task(name, channel))
+        attempted: list[str] = []
+        supervisor: asyncio.Future[list[None]] | None = None
+        try:
+            for name, channel in self.channels.items():
+                attempted.append(name)
+                task = self._start_channel_task(name, channel)
+                tasks.append(task)
+                # Channel start coroutines normally remain pending. Give each
+                # one a turn so immediate setup failures are transactional.
+                await asyncio.sleep(0)
+                if task.done():
+                    task.result()
+            self._restart_notice_task = self._notify_restart_done_if_needed()
+            supervisor = asyncio.gather(*tasks)
+            await asyncio.shield(supervisor)
+        except BaseException as start_exc:
+            current = asyncio.current_task()
+            graceful_shutdown = (
+                isinstance(start_exc, asyncio.CancelledError) and not self._started
+                and current is not None and not current.cancelling()
+            )
+            rollback = asyncio.create_task(
+                self._rollback_startup(
+                    attempted,
+                    supervisor,
+                    start_exc,
+                    graceful_shutdown=graceful_shutdown,
+                ),
+            )
+            await _join_owned_cleanup(rollback)
+            return
 
-        self._notify_restart_done_if_needed()
-
-        # Wait for all to complete (they should run forever)
-        await asyncio.gather(*tasks, return_exceptions=True)
+    async def _rollback_startup(
+        self,
+        attempted: list[str],
+        supervisor: asyncio.Future[list[None]] | None,
+        start_exc: BaseException,
+        *,
+        graceful_shutdown: bool,
+    ) -> None:
+        errors = await self._cancel_restart_notice()
+        for name in reversed(attempted):
+            try:
+                await self._stop_channel_runtime(name)
+            except BaseException as exc:
+                errors.append(exc)
+        if supervisor is not None:
+            await asyncio.gather(supervisor, return_exceptions=True)
+        if self._dispatch_task is not None:
+            self._dispatch_task.cancel()
+            results = await asyncio.gather(self._dispatch_task, return_exceptions=True)
+            errors.extend(
+                result
+                for result in results
+                if isinstance(result, BaseException)
+                and not isinstance(result, asyncio.CancelledError)
+            )
+            if not graceful_shutdown:
+                self._dispatch_task = None
+        self._started = False
+        if errors:
+            values = errors if graceful_shutdown else [start_exc, *errors]
+            if len(values) == 1:
+                raise values[0]
+            if all(isinstance(value, Exception) for value in values):
+                raise ExceptionGroup(
+                    "channel start and rollback failed",
+                    values,  # type: ignore[arg-type]
+                )
+            raise BaseExceptionGroup("channel start and rollback failed", values)
+        if graceful_shutdown:
+            return
+        raise start_exc
 
     def _notify_restart_done_if_needed(self) -> asyncio.Task[None] | None:
         """Schedule restart completion after the target channel starts."""
@@ -623,6 +929,23 @@ class ChannelManager:
         if not notice:
             return None
         return asyncio.create_task(self._send_restart_notice_when_started(notice))
+
+    async def _cancel_restart_notice(self) -> list[BaseException]:
+        task = getattr(self, "_restart_notice_task", None)
+        self._restart_notice_task = None
+        if task is None:
+            return []
+        if not task.done():
+            task.cancel()
+        # Native gather constructs a list of results/exceptions; the getattr
+        # input loses that result type without changing the construction.
+        results = cast(list[object], await asyncio.gather(task, return_exceptions=True))
+        return [
+            result
+            for result in results
+            if isinstance(result, BaseException)
+            and not isinstance(result, asyncio.CancelledError)
+        ]
 
     async def _send_restart_notice_when_started(
         self,
@@ -668,19 +991,40 @@ class ChannelManager:
         )
 
     async def stop_all(self) -> None:
-        """Stop all channels and the dispatcher."""
+        """Stop every owned resource once and surface ordered cleanup failures."""
+        await _join_owned_cleanup(asyncio.create_task(self._stop_all_owned()))
+
+    async def _stop_all_owned(self) -> None:
         logger.info("Stopping all channels...")
         self._started = False
+        errors = await self._cancel_restart_notice()
 
         # Stop dispatcher
         if self._dispatch_task:
             self._dispatch_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._dispatch_task
+            results = await asyncio.gather(self._dispatch_task, return_exceptions=True)
+            errors.extend(
+                result
+                for result in results
+                if isinstance(result, BaseException)
+                and not isinstance(result, asyncio.CancelledError)
+            )
 
         # Stop all channels
-        for name in list(self.channels):
-            await self._stop_channel(name)
+        for name in reversed(list(self.channels)):
+            try:
+                await self._stop_channel(name)
+            except BaseException as exc:
+                errors.append(exc)
+        if len(errors) == 1:
+            raise errors[0]
+        if errors and all(isinstance(error, Exception) for error in errors):
+            raise ExceptionGroup(
+                "channel manager shutdown failed",
+                errors,  # type: ignore[arg-type]
+            )
+        if errors:
+            raise BaseExceptionGroup("channel manager shutdown failed", errors)
 
     @staticmethod
     def _fingerprint_content(content: str) -> str:

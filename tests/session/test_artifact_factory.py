@@ -6,10 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from nanobot.agent.tools.filesystem import ReadFileTool
+from nanobot.context_repo import ContextRepoManager, ManagedContextRepo, ResourceAccessPolicy
 from nanobot.session.artifact import ArtifactValidationError
 from nanobot.session.artifact_factory import ConfiguredArtifactReaderFactory
 from nanobot.session.artifact_store import ArtifactStorageError
-from session.test_artifact_reader import setup_read
+from tests.session.test_artifact_reader import setup_read
 
 
 def test_factory_captures_settings_without_creating_the_private_root(tmp_path: Path) -> None:
@@ -199,3 +201,66 @@ async def test_factory_revalidates_repository_marker_during_store_construction(
         )
         assert factory(writer, False, read_file) is None
     assert not list(root.rglob("*.blob"))
+
+
+def test_factory_policy_roots_ignore_unconfigured_targets_but_retain_restricted_targets(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    context_root = tmp_path / "context"
+    configured_root = tmp_path / "configured"
+    manager = ContextRepoManager([ManagedContextRepo(
+        path=context_root, name="context", managed=True,
+        manifest={"targetRepos": {
+            "unconfigured": {},
+            "restricted": {"path": str(configured_root), "read": [], "write": []},
+        }},
+    )])
+    policy = ResourceAccessPolicy(workspace=workspace, context_manager=manager)
+    read_file = ReadFileTool(workspace=workspace, resource_policy=policy)
+
+    assert any(target.path is None for target in manager.target_repos())
+    assert configured_root not in policy.extra_read_dirs()
+    assert configured_root not in policy.extra_write_dirs()
+    roots = ConfiguredArtifactReaderFactory.read_policy_roots(read_file)
+    assert None not in roots
+    assert all(isinstance(path, Path) for path in roots)
+    assert workspace in roots and context_root in roots and configured_root in roots
+
+    private_root = tmp_path / "private"
+    factory = ConfiguredArtifactReaderFactory(
+        root=private_root, max_blob_bytes=64, max_namespace_bytes=128, static_roots=roots,
+    )
+    assert factory.settings.root == private_root
+    assert not private_root.exists()
+
+
+@pytest.mark.parametrize("overlap", [False, True])
+async def test_factory_unconfigured_targets_do_not_mask_configured_root_policy(
+    tmp_path: Path,
+    overlap: bool,
+) -> None:
+    context_root = tmp_path / "context"
+    configured_root = tmp_path / "configured"
+    root = configured_root / "private" if overlap else tmp_path / "private"
+    async with setup_read(tmp_path) as (writer, read_file, _store, _descriptor, _content):
+        manager = ContextRepoManager([ManagedContextRepo(
+            path=context_root, name="context", managed=True,
+            manifest={"targetRepos": {
+                "unconfigured": {},
+                "restricted": {"path": str(configured_root), "read": [], "write": []},
+            }},
+        )])
+        read_file._resource_policy = ResourceAccessPolicy(
+            workspace=writer.store._backend.workspace, context_manager=manager,
+        )
+        factory = ConfiguredArtifactReaderFactory(
+            root=root, max_blob_bytes=64, max_namespace_bytes=128,
+        )
+        reader = factory(writer, False, read_file)
+        if overlap:
+            assert reader is None
+            assert not root.exists()
+        else:
+            assert reader is not None
+            assert reader.store.root == root

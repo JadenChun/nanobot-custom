@@ -103,7 +103,7 @@ class CronPayload:
             to=data.get("to"),
             additional_destinations=[
                 entry if isinstance(entry, CronDestination) else CronDestination(**entry)
-                for entry in (get_camel_snake(data, "additionalDestinations", "additional_destinations", []) or [])
+                for entry in (get_camel_snake(data, "additionalDestinations", "additional_destinations", cast(list[Any], [])) or cast(list[Any], []))
             ],
             channel_meta=dict(
                 get_camel_snake(data, "channelMeta", "channel_meta", {}) or {}
@@ -154,15 +154,15 @@ class CronJobState:
 
     @classmethod
     def from_store_dict(cls, data: dict[str, Any]) -> CronJobState:
-        history = get_camel_snake(data, "runHistory", "run_history", []) or []
+        history = cast(object, get_camel_snake(data, "runHistory", "run_history", []) or [])
         if not isinstance(history, list):
             raise ValueError("cron run history must be a list")
         parsed_history: list[CronRunRecord] = []
-        for record in history:
+        for record in cast(list[object], history):
             if isinstance(record, CronRunRecord):
                 parsed_history.append(record)
             elif isinstance(record, dict):
-                parsed_history.append(CronRunRecord.from_store_dict(record))
+                parsed_history.append(CronRunRecord.from_store_dict(cast(dict[Any, Any], record)))
             else:
                 raise ValueError("cron run history contains an invalid record")
         return cls(
@@ -299,14 +299,14 @@ class CronStore:
     @classmethod
     def from_store_dict(cls, data: dict[str, Any]) -> CronStore:
         """Decode a detached jobs.json object without service-side mutation."""
-        if not isinstance(data, dict) or "jobs" not in data or not isinstance(data["jobs"], list):
+        if not isinstance(cast(object, data), dict) or "jobs" not in data or not isinstance(data["jobs"], list):
             raise ValueError("legacy jobs store must be an object with a jobs list")
         version = _store_int(data.get("version", 1))
         jobs: list[CronJob] = []
-        for item in data["jobs"]:
+        for item in cast(list[object], data["jobs"]):
             if not isinstance(item, dict):
                 raise ValueError("legacy jobs store contains an invalid job")
-            jobs.append(CronJob.from_store_dict(item))
+            jobs.append(CronJob.from_store_dict(cast(dict[Any, Any], item)))
         return cls(version=version, jobs=jobs)
 
     def to_store_dict(self) -> dict[str, Any]:

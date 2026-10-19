@@ -12,8 +12,9 @@ from __future__ import annotations
 import errno
 import os
 import stat
+from collections.abc import Iterator as _Iterator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Generator, NoReturn, cast
 
 if TYPE_CHECKING:
     from nanobot.session.manager import JsonlSessionStore
@@ -37,7 +38,7 @@ class SourceRootClosedError(SourceRootAuthorityError):
 
 
 def _supports_dir_fd(function: object) -> bool:
-    return function in getattr(os, "supports_dir_fd", set())
+    return function in getattr(os, "supports_dir_fd", set[object]())
 
 
 def _require_platform() -> None:
@@ -89,6 +90,8 @@ class _DescriptorLock:
     def acquire(self, *, blocking: bool) -> None:
         if self._held:
             raise SourceRootAuthorityError("descriptor lock is already held")
+        if fcntl is None:
+            raise SourceRootUnavailableError("flock is unavailable")
         flags = fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB
         try:
             fcntl.flock(self._fd, flags)
@@ -106,6 +109,8 @@ class _DescriptorLock:
         if not self._held:
             return
         try:
+            if fcntl is None:
+                raise SourceRootUnavailableError("flock is unavailable")
             fcntl.flock(self._fd, fcntl.LOCK_UN)
         finally:
             self._held = False
@@ -153,6 +158,7 @@ class SourceRootAuthority:
         if type(backend) is not _backend_type():
             raise SourceRootAuthorityError("invalid source backend")
         path = backend.sessions_dir
+        descriptor: int | None = None
         try:
             initial = path.lstat()
             if stat.S_ISLNK(initial.st_mode) or not stat.S_ISDIR(initial.st_mode):
@@ -165,11 +171,11 @@ class SourceRootAuthority:
             if (initial.st_dev, initial.st_ino) != identity:
                 raise SourceRootUnavailableError("source root changed during pinning")
         except SourceRootAuthorityError:
-            if "descriptor" in locals():
+            if descriptor is not None:
                 os.close(descriptor)
             raise
         except (OSError, ValueError) as exc:
-            if "descriptor" in locals():
+            if descriptor is not None:
                 os.close(descriptor)
             raise SourceRootUnavailableError("source root cannot be pinned") from exc
         return cls(_CAPABILITY, backend, descriptor, identity)
@@ -184,14 +190,23 @@ class SourceRootAuthority:
     def closed(self) -> bool:
         return self._closed
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("source-root authority cannot be serialized")
 
-    def __copy__(self) -> SourceRootAuthority:
+    def __copy__(self) -> NoReturn:
         raise TypeError("source-root authority cannot be copied")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> SourceRootAuthority:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("source-root authority cannot be copied")
+
+    def matches_backend(self, backend: JsonlSessionStore) -> bool:
+        """Compare exact backend identity without returning or admitting that backend."""
+        return self._backend is backend
+
+    def open_entry_iterator(self) -> _Iterator[os.DirEntry[str]]:
+        """Open a real directory iterator after reproving the existing capability checks."""
+        self._require_backend(self._backend)
+        return os.scandir(self._fd)
 
     def _require_backend(self, backend: JsonlSessionStore) -> None:
         if backend is not self._backend:
@@ -224,7 +239,7 @@ class SourceRootAuthority:
     validate = require_current
 
     @contextmanager
-    def operation(self, backend: JsonlSessionStore | None = None) -> Iterator[SourceRootAuthority]:
+    def operation(self, backend: JsonlSessionStore | None = None) -> Generator[SourceRootAuthority, None, None]:
         self.require_current(backend)
         self._active += 1
         try:
@@ -252,7 +267,7 @@ class SourceRootAuthority:
 
     def _open_relative(self, name: str, flags: int, *, mode: int = 0o600) -> int:
         self._require_backend(self._backend)
-        if not isinstance(name, str) or not name or name.startswith("/"):
+        if not isinstance(cast(object, name), str) or not name or name.startswith("/"):
             raise SourceRootAuthorityError("invalid relative source name")
         try:
             descriptor = os.open(
@@ -266,6 +281,10 @@ class SourceRootAuthority:
         return descriptor
 
     def open_regular(self, name: str, *, flags: int = os.O_RDONLY) -> int:
+        if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND):
+            from nanobot.session.mode_storage import require_namespace_write_access
+
+            require_namespace_write_access(self._backend)
         descriptor = self._open_relative(name, flags)
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
@@ -278,6 +297,9 @@ class SourceRootAuthority:
     def open_directory(self, name: str, *, create: bool = False) -> int:
         self._require_backend(self._backend)
         if create:
+            from nanobot.session.mode_storage import require_namespace_write_access
+
+            require_namespace_write_access(self._backend)
             try:
                 os.mkdir(name, 0o700, dir_fd=self._fd)
             except FileExistsError:
@@ -292,6 +314,9 @@ class SourceRootAuthority:
             raise
 
     def lock_file(self, name: str, *, blocking: bool) -> _DescriptorLock:
+        from nanobot.session.mode_storage import require_namespace_write_access
+
+        require_namespace_write_access(self._backend)
         descriptor = self._open_relative(name, os.O_RDWR | os.O_CREAT, mode=0o600)
         try:
             if not stat.S_ISREG(os.fstat(descriptor).st_mode):
@@ -302,6 +327,9 @@ class SourceRootAuthority:
             raise
 
     def lock_nested_file(self, directory: str, name: str, *, blocking: bool) -> _DescriptorLock:
+        from nanobot.session.mode_storage import require_namespace_write_access
+
+        require_namespace_write_access(self._backend)
         parent = self.open_directory(directory, create=True)
         try:
             descriptor = os.open(
@@ -330,6 +358,9 @@ class SourceRootAuthority:
         return value
 
     def unlink_relative(self, name: str) -> None:
+        from nanobot.session.mode_storage import require_namespace_write_access
+
+        require_namespace_write_access(self._backend)
         try:
             os.unlink(name, dir_fd=self._fd)
         except TypeError as exc:
@@ -337,11 +368,17 @@ class SourceRootAuthority:
 
     def fsync_directory(self) -> None:
         self._require_backend(self._backend)
+        from nanobot.session.mode_storage import require_namespace_write_access
+
+        require_namespace_write_access(self._backend)
         os.fsync(self._fd)
 
     def write_text_atomic(self, name: str, text: str, *, mode: int = 0o600) -> None:
         self._require_backend(self._backend)
-        if not isinstance(text, str) or not name or "/" in name:
+        from nanobot.session.mode_storage import require_namespace_write_access
+
+        require_namespace_write_access(self._backend)
+        if not isinstance(cast(object, text), str) or not name or "/" in name:
             raise SourceRootAuthorityError("invalid source replacement")
         temporary = f".{name}.{os.urandom(8).hex()}.tmp"
         descriptor: int | None = None

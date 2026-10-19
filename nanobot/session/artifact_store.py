@@ -15,8 +15,9 @@ import re
 import secrets
 import stat
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterator
+from typing import Callable, Generator, Iterable, Literal, cast
 
 from nanobot.session.artifact import (
     ArtifactDescriptor,
@@ -28,6 +29,7 @@ from nanobot.session.artifact import (
 MAX_RANGE_BYTES = 16_384
 DEFAULT_MAX_BLOB_BYTES = 64 * 1024 * 1024
 DEFAULT_MAX_NAMESPACE_BYTES = 1024 * 1024 * 1024
+MAX_INSPECTION_ENTRIES = 10_000
 _CAPABILITY = object()
 
 
@@ -37,6 +39,43 @@ class ArtifactStorageError(OSError):
 
 class ArtifactStorageBusyError(ArtifactStorageError):
     """The private artifact lock is held by another transaction."""
+
+
+class ArtifactInstallError(ArtifactStorageError):
+    """Content-free failure while installing one missing immutable blob."""
+
+
+class ArtifactInstallCorruptionError(ArtifactInstallError):
+    """An existing blob or crash residue does not match its descriptor."""
+
+
+class ArtifactInstallLimitError(ArtifactInstallError):
+    """A missing blob cannot be installed within the configured limits."""
+
+
+class ArtifactInstallIOError(ArtifactInstallError):
+    """A missing blob was not installed because storage I/O failed."""
+
+
+class ArtifactInstallUncertainError(ArtifactInstallError):
+    """Installation reached the immutable name but durability is uncertain."""
+
+
+@dataclass(frozen=True)
+class ArtifactBlobInstallResult:
+    status: Literal['installed', 'already_present']
+
+
+@dataclass(frozen=True)
+class ArtifactBlobInspection:
+    """Content-free aggregate for one exact artifact namespace."""
+
+    reachable_blobs: int
+    reachable_bytes: int
+    unreachable_blobs: int
+    unreachable_bytes: int
+    missing_blobs: int
+    missing_bytes: int
 
 
 def _private(info: os.stat_result, *, directory: bool, links: int = 1) -> None:
@@ -67,8 +106,8 @@ class PrivateArtifactStore:
         if not root.is_absolute() or root == Path(root.anchor) or '..' in root.parts:
             raise ArtifactValidationError('Artifact root must be an absolute non-root directory')
         parse_artifact_reference('artifact:' + workspace_id)
-        if (not isinstance(session_key, str) or not session_key.strip()
-                or not isinstance(incarnation, str) or not incarnation.strip()
+        if (not isinstance(cast(object, session_key), str) or not session_key.strip()
+                or not isinstance(cast(object, incarnation), str) or not incarnation.strip()
                 or type(generation) is not int or generation < 0
                 or type(max_blob_bytes) is not int or max_blob_bytes <= 0
                 or type(max_namespace_bytes) is not int or max_namespace_bytes < max_blob_bytes):
@@ -89,7 +128,7 @@ class PrivateArtifactStore:
             self._root_identity = (info.st_dev, info.st_ino)
 
     @contextmanager
-    def _root_fd(self, *, create: bool = False) -> Iterator[int]:
+    def _root_fd(self, *, create: bool = False) -> Generator[int, None, None]:
         """Walk from the filesystem anchor without resolving or following links."""
         fd = None
         try:
@@ -112,7 +151,7 @@ class PrivateArtifactStore:
             if self._root_identity is not None and self._root_identity != (info.st_dev, info.st_ino):
                 raise ArtifactStorageError('Artifact root identity changed')
             yield fd
-        except ArtifactStorageBusyError:
+        except ArtifactStorageError:
             raise
         except OSError:
             raise ArtifactStorageError('Private artifact root is unavailable') from None
@@ -121,7 +160,7 @@ class PrivateArtifactStore:
                 os.close(fd)
 
     @contextmanager
-    def transaction(self, *, blocking: bool = True) -> Iterator[ArtifactBlobTransaction]:
+    def transaction(self, *, blocking: bool = True) -> Generator[ArtifactBlobTransaction, None, None]:
         """Hold the store lock before a caller's source-session CAS transaction.
 
         Existing callers wait for the lock by default. A caller that is
@@ -132,7 +171,7 @@ class PrivateArtifactStore:
 
         if type(blocking) is not bool:
             raise ArtifactStorageError('Artifact transaction blocking mode must be boolean')
-        opened = []
+        opened: list[int] = []
         lock_fd = None
         transaction = None
         try:
@@ -175,15 +214,42 @@ class PrivateArtifactStore:
                     raise
                 transaction = ArtifactBlobTransaction(_CAPABILITY, self, parent, lock_fd)
                 yield transaction
-        except ArtifactStorageBusyError:
+        except ArtifactStorageError:
             raise
         except OSError:
             raise ArtifactStorageError('Private artifact transaction failed') from None
         finally:
             if transaction is not None:
-                transaction._active = False
+                ArtifactBlobTransaction.end(transaction)
             if lock_fd is not None:
                 os.close(lock_fd)
+            for fd in reversed(opened):
+                os.close(fd)
+
+    def assert_namespace_binding(
+        self, *, select_store: Callable[[], PrivateArtifactStore],
+        binding_changed: Callable[[Callable[[], os.stat_result], os.stat_result], bool],
+    ) -> None:
+        """Reject a changed namespace; never expose descriptors or admit blob access.
+
+        The transaction selects its store again after the root hook, and compares
+        live identities after its inode hook. Lazy stat results keep that order
+        without moving raw directory descriptors across the ownership boundary.
+        """
+        opened: list[int] = []
+        try:
+            with self._root_fd() as root:
+                parent = root
+                for part in select_store()._parts:
+                    child = os.open(part, _flags(), dir_fd=parent)
+                    opened.append(child)
+                    _private(os.fstat(child), directory=True)
+                    parent = child
+                lock = os.stat('.lock', dir_fd=parent, follow_symlinks=False)
+                _private(lock, directory=False)
+                if binding_changed(lambda: os.fstat(parent), lock):
+                    raise ArtifactStorageError('Artifact namespace or lock binding changed')
+        finally:
             for fd in reversed(opened):
                 os.close(fd)
 
@@ -202,27 +268,25 @@ class ArtifactBlobTransaction:
     def _inode(info: os.stat_result) -> tuple[int, int]:
         return info.st_dev, info.st_ino
 
+    def matches_store(self, store: PrivateArtifactStore | None) -> bool:
+        """Observe exact configured identity only, without admitting a byte operation."""
+        return self._store is store
+
+    def end(self) -> None:
+        """Irreversibly revoke this transaction before its store releases the lock."""
+        self._active = False
+
     def assert_reachable(self) -> None:
         """Recheck namespace/lock binding immediately before descriptor publication."""
         if not self._active:
             raise ArtifactStorageError('Artifact transaction has ended')
-        opened = []
-        try:
-            with self._store._root_fd() as root:
-                parent = root
-                for part in self._store._parts:
-                    child = os.open(part, _flags(), dir_fd=parent)
-                    opened.append(child)
-                    _private(os.fstat(child), directory=True)
-                    parent = child
-                lock = os.stat('.lock', dir_fd=parent, follow_symlinks=False)
-                _private(lock, directory=False)
-                if (self._inode(os.fstat(parent)) != self._directory_identity
-                        or self._inode(lock) != self._lock_identity):
-                    raise ArtifactStorageError('Artifact namespace or lock binding changed')
-        finally:
-            for fd in reversed(opened):
-                os.close(fd)
+        PrivateArtifactStore.assert_namespace_binding(
+            self._store, select_store=lambda: self._store,
+            binding_changed=lambda directory, lock: (
+                self._inode(directory()) != self._directory_identity
+                or self._inode(lock) != self._lock_identity
+            ),
+        )
 
     def _descriptor(self, descriptor: ArtifactDescriptor) -> ArtifactDescriptor:
         if not self._active:
@@ -262,10 +326,60 @@ class ArtifactBlobTransaction:
             total += info.st_size
         return total
 
+    def inspect(self, descriptors: Iterable[ArtifactDescriptor]) -> ArtifactBlobInspection:
+        """Classify immutable blobs without returning names, references, paths, or content."""
+        expected: dict[str, ArtifactDescriptor] = {}
+        for index, candidate in enumerate(descriptors):
+            if index >= MAX_INSPECTION_ENTRIES:
+                raise ArtifactStorageError('Artifact inspection exceeds configured bounds')
+            descriptor = self._descriptor(candidate)
+            if descriptor.artifact_id in expected:
+                raise ArtifactStorageError('Artifact inspection evidence is invalid')
+            expected[descriptor.artifact_id] = descriptor
+
+        reachable_blobs = reachable_bytes = 0
+        unreachable_blobs = unreachable_bytes = 0
+        present: set[str] = set()
+        try:
+            for index, name in enumerate(os.listdir(self._fd)):
+                if index >= MAX_INSPECTION_ENTRIES:
+                    raise ArtifactStorageError('Artifact inspection exceeds configured bounds')
+                info = os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+                if name == '.lock':
+                    _private(info, directory=False)
+                    continue
+                match = re.fullmatch(r'([0-9a-f]{32})\.blob', name)
+                if match is None:
+                    raise ArtifactStorageError('Artifact namespace has an unexpected entry')
+                _private(info, directory=False)
+                identity = match.group(1)
+                descriptor = expected.get(identity)
+                if descriptor is None:
+                    unreachable_blobs += 1
+                    unreachable_bytes += info.st_size
+                    continue
+                self._verified_range(descriptor, offset=0, limit=0, durable=True)
+                present.add(identity)
+                reachable_blobs += 1
+                reachable_bytes += info.st_size
+        except ArtifactStorageError:
+            raise
+        except OSError:
+            raise ArtifactStorageError('Artifact inspection failed') from None
+        missing = [descriptor for identity, descriptor in expected.items() if identity not in present]
+        return ArtifactBlobInspection(
+            reachable_blobs,
+            reachable_bytes,
+            unreachable_blobs,
+            unreachable_bytes,
+            len(missing),
+            sum(descriptor.byte_length for descriptor in missing),
+        )
+
     def put(self, descriptor: ArtifactDescriptor, content: bytes) -> None:
         """Install complete immutable bytes, or verify an identical existing blob."""
         descriptor = self._descriptor(descriptor)
-        if (not isinstance(content, bytes) or len(content) != descriptor.byte_length
+        if (not isinstance(cast(object, content), bytes) or len(content) != descriptor.byte_length
                 or hashlib.sha256(content).hexdigest() != descriptor.sha256):
             raise ArtifactValidationError('Artifact bytes do not match descriptor integrity')
         try:
@@ -314,6 +428,199 @@ class ArtifactBlobTransaction:
         os.fsync(self._fd)
         self.assert_reachable()
 
+    def install_missing(
+        self, descriptor: ArtifactDescriptor, content: bytes
+    ) -> ArtifactBlobInstallResult:
+        """Install only absent content and report immutable reuse distinctly.
+
+        This is the narrow recovery seam.  It never overwrites, removes, or
+        quarantines an existing blob.  Failures after the immutable name is
+        linked are reported as uncertain so an exact retry can verify/reuse it.
+        """
+        descriptor = self._descriptor(descriptor)
+        if (not isinstance(cast(object, content), bytes) or len(content) != descriptor.byte_length
+                or hashlib.sha256(content).hexdigest() != descriptor.sha256):
+            raise ArtifactValidationError('Artifact bytes do not match descriptor integrity')
+        try:
+            content.decode('utf-8')
+        except UnicodeError:
+            raise ArtifactValidationError('Artifact bytes are not UTF-8 text') from None
+        name = descriptor.artifact_id + '.blob'
+        try:
+            os.stat(name, dir_fd=self._fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            raise ArtifactInstallIOError('Artifact installation I/O failed') from None
+        else:
+            try:
+                self._recover_linked_install(descriptor)
+                self._namespace_bytes()
+                self._verified_range(descriptor, offset=0, limit=0, durable=True)
+            except ArtifactStorageError:
+                raise ArtifactInstallCorruptionError('Existing artifact is corrupt') from None
+            except OSError:
+                raise ArtifactInstallUncertainError(
+                    'Artifact installation durability is uncertain'
+                ) from None
+            return ArtifactBlobInstallResult('already_present')
+
+        if descriptor.byte_length > self._store.max_blob_bytes:
+            raise ArtifactInstallLimitError('Artifact installation exceeds configured limits')
+        recovered = self._recover_unlinked_install(descriptor, content)
+        if recovered:
+            return ArtifactBlobInstallResult('installed')
+        try:
+            if self._namespace_bytes() + len(content) > self._store.max_namespace_bytes:
+                raise ArtifactInstallLimitError('Artifact installation exceeds configured limits')
+        except ArtifactInstallLimitError:
+            raise
+        except (ArtifactStorageError, OSError):
+            raise ArtifactInstallIOError('Artifact installation I/O failed') from None
+
+        temporary = '.tmp-' + secrets.token_hex(16)
+        fd = None
+        linked = False
+        try:
+            fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+                         | os.O_NONBLOCK, 0o600, dir_fd=self._fd)
+            _private(os.fstat(fd), directory=False)
+            remaining = memoryview(content)
+            while remaining:
+                written = os.write(fd, remaining)
+                if written <= 0:
+                    raise OSError
+                remaining = remaining[written:]
+            os.fsync(fd)
+            os.link(temporary, name, src_dir_fd=self._fd, dst_dir_fd=self._fd,
+                    follow_symlinks=False)
+            linked = True
+            os.close(fd)
+            fd = None
+            os.unlink(temporary, dir_fd=self._fd)
+            os.fsync(self._fd)
+            self._verified_range(descriptor, offset=0, limit=0, durable=True)
+            self.assert_reachable()
+            return ArtifactBlobInstallResult('installed')
+        except BaseException as exc:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if not linked:
+                try:
+                    os.unlink(temporary, dir_fd=self._fd)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    pass
+            if not isinstance(exc, Exception):
+                raise
+            if linked:
+                raise ArtifactInstallUncertainError(
+                    'Artifact installation durability is uncertain'
+                ) from None
+            if isinstance(exc, ArtifactInstallError):
+                raise
+            raise ArtifactInstallIOError('Artifact installation I/O failed') from None
+
+    def _recover_unlinked_install(self, descriptor: ArtifactDescriptor, content: bytes) -> bool:
+        """Adopt one exact pre-link crash residue without touching other stages."""
+        try:
+            self._namespace_bytes()
+            stages = [
+                entry for entry in os.listdir(self._fd)
+                if re.fullmatch(r'\.tmp-[0-9a-f]{32}', entry) is not None
+            ]
+        except ArtifactStorageError:
+            raise ArtifactInstallCorruptionError('Artifact staging evidence is corrupt') from None
+        except OSError:
+            raise ArtifactInstallIOError('Artifact installation I/O failed') from None
+        if not stages:
+            return False
+        if len(stages) != 1:
+            raise ArtifactInstallCorruptionError('Artifact staging evidence is ambiguous')
+
+        stage = stages[0]
+        fd = None
+        try:
+            fd = os.open(stage, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=self._fd)
+            before = os.fstat(fd)
+            _private(before, directory=False)
+            if before.st_size != descriptor.byte_length:
+                raise ArtifactStorageError('Artifact staging length mismatch')
+            digest, position = hashlib.sha256(), 0
+            decoder = codecs.getincrementaldecoder('utf-8')()
+            while chunk := os.read(fd, 65_536):
+                if position + len(chunk) > descriptor.byte_length:
+                    raise ArtifactStorageError('Artifact staging grew during read')
+                if chunk != content[position:position + len(chunk)]:
+                    raise ArtifactStorageError('Artifact staging content mismatch')
+                digest.update(chunk)
+                decoder.decode(chunk)
+                position += len(chunk)
+            decoder.decode(b'', final=True)
+            after = os.fstat(fd)
+            _private(after, directory=False)
+            if (
+                position != descriptor.byte_length
+                or digest.hexdigest() != descriptor.sha256
+                or (before.st_dev, before.st_ino, before.st_size,
+                    before.st_mtime_ns, before.st_ctime_ns)
+                != (after.st_dev, after.st_ino, after.st_size,
+                    after.st_mtime_ns, after.st_ctime_ns)
+            ):
+                raise ArtifactStorageError('Artifact staging integrity verification failed')
+            os.fsync(fd)
+            os.close(fd)
+            fd = None
+        except ArtifactStorageError:
+            raise ArtifactInstallCorruptionError('Artifact staging evidence is corrupt') from None
+        except UnicodeError:
+            raise ArtifactInstallCorruptionError('Artifact staging evidence is corrupt') from None
+        except OSError:
+            raise ArtifactInstallIOError('Artifact installation I/O failed') from None
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+
+        name = descriptor.artifact_id + '.blob'
+        linked = False
+        try:
+            os.link(stage, name, src_dir_fd=self._fd, dst_dir_fd=self._fd,
+                    follow_symlinks=False)
+            linked = True
+            expected_inode = self._inode(before)
+            if any(
+                self._inode(os.stat(entry, dir_fd=self._fd, follow_symlinks=False))
+                != expected_inode
+                for entry in (stage, name)
+            ):
+                raise ArtifactStorageError('Artifact staging binding changed')
+            os.unlink(stage, dir_fd=self._fd)
+            os.fsync(self._fd)
+            self._verified_range(descriptor, offset=0, limit=0, durable=True)
+            self.assert_reachable()
+            return True
+        except BaseException as exc:
+            if not isinstance(exc, Exception):
+                raise
+            if linked:
+                raise ArtifactInstallUncertainError(
+                    'Artifact installation durability is uncertain'
+                ) from None
+            if isinstance(exc, ArtifactInstallError):
+                raise
+            if isinstance(exc, ArtifactStorageError):
+                raise ArtifactInstallCorruptionError(
+                    'Artifact staging evidence is corrupt'
+                ) from None
+            raise ArtifactInstallIOError('Artifact installation I/O failed') from None
+
     def _recover_linked_install(self, descriptor: ArtifactDescriptor) -> None:
         """Recover only a verified blob's single matching internal staging link."""
         name = descriptor.artifact_id + '.blob'
@@ -321,7 +628,7 @@ class ArtifactBlobTransaction:
         if info.st_nlink != 2:
             return
         _private(info, directory=False, links=2)
-        matches = []
+        matches: list[str] = []
         for entry in os.listdir(self._fd):
             if re.fullmatch(r'\.tmp-[0-9a-f]{32}', entry) is None:
                 continue

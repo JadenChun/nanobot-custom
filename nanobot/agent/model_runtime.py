@@ -114,7 +114,7 @@ class ModelRuntimeResolver:
         exists in the authoritative catalog; a snapshot whose explicit preset
         disagrees with ``name`` is rejected rather than silently corrected.
         """
-        if not isinstance(name, str) or not name.strip():
+        if not isinstance(cast(object, name), str) or not name.strip():
             raise ValueError("model_preset must be a non-empty string")
         if type(snapshot) is not ProviderSnapshot:
             raise TypeError("snapshot must be a ProviderSnapshot")

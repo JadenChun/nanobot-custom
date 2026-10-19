@@ -1,4 +1,8 @@
 import json
+from collections.abc import Iterator
+
+import pytest
+from tiktoken import Encoding, load
 
 from nanobot.utils import helpers
 from nanobot.utils.helpers import (
@@ -18,7 +22,48 @@ class _BrokenCounterProvider:
         raise RuntimeError("counter unavailable")
 
 
-def test_estimate_prompt_tokens_chain_falls_back_without_provider_counter() -> None:
+@pytest.fixture(autouse=True)
+def isolated_token_caches() -> Iterator[None]:
+    """Neither real nor synthetic encodings may leak between these unit tests."""
+    # Tests replace the loader fault seam before fixture teardown.
+    clear_encoding = helpers._get_token_encoding.cache_clear
+    clear_tools = helpers._TOOLS_TOKEN_CACHE.clear
+    clear_encoding()
+    clear_tools()
+    try:
+        yield
+    finally:
+        clear_encoding()
+        clear_tools()
+
+
+@pytest.fixture
+def unit_encoding(monkeypatch: pytest.MonkeyPatch) -> Encoding:
+    """Exercise real BPE offline; this vocabulary is not model-specific cl100k_base."""
+    def refuse_asset_read(blobpath: str, expected_hash: str | None = None) -> bytes:
+        raise AssertionError("unit token counter must not load external encoding assets")
+
+    monkeypatch.setattr(load, "read_file_cached", refuse_asset_read)
+    ranks = {bytes([value]): value for value in range(256)}
+    character = "你".encode("utf-8")
+    ranks[character[:2]] = 256
+    ranks[character] = 257
+    encoding = Encoding(
+        name="nanobot-offline-unit-bpe", pat_str=r"[\s\S]+",
+        mergeable_ranks=ranks, special_tokens={},
+    )
+
+    def get_encoding(name: str) -> Encoding:
+        assert name == "cl100k_base"
+        return encoding
+
+    monkeypatch.setattr(helpers.tiktoken, "get_encoding", get_encoding)
+    return encoding
+
+
+def test_estimate_prompt_tokens_chain_falls_back_without_provider_counter(
+    unit_encoding: Encoding,
+) -> None:
     tokens, source = estimate_prompt_tokens_chain(
         _NoCounterProvider(),
         "test-model",
@@ -29,7 +74,9 @@ def test_estimate_prompt_tokens_chain_falls_back_without_provider_counter() -> N
     assert source == "tiktoken"
 
 
-def test_estimate_prompt_tokens_chain_falls_back_when_provider_counter_fails() -> None:
+def test_estimate_prompt_tokens_chain_falls_back_when_provider_counter_fails(
+    unit_encoding: Encoding,
+) -> None:
     tokens, source = estimate_prompt_tokens_chain(
         _BrokenCounterProvider(),
         "test-model",
@@ -42,6 +89,7 @@ def test_estimate_prompt_tokens_chain_falls_back_when_provider_counter_fails() -
 
 def test_estimate_prompt_tokens_uses_conservative_fallback_when_tiktoken_fails(
     monkeypatch,
+    unit_encoding: Encoding,
 ) -> None:
     monkeypatch.setattr(
         helpers,
@@ -63,6 +111,21 @@ def test_estimate_prompt_tokens_uses_conservative_fallback_when_tiktoken_fails(
     assert tokens >= actual_tokens
     assert chain_tokens == tokens
     assert source == "heuristic"
+
+
+@pytest.mark.parametrize("text", ["hello", "你" * 1_000, "🙂你", "line\n你"])
+def test_unit_encoding_is_real_bpe_without_external_assets(
+    unit_encoding: Encoding, text: str,
+) -> None:
+    encoded = unit_encoding.encode(text)
+    assert unit_encoding.decode(encoded) == text
+    assert 0 < len(encoded) <= len(text.encode("utf-8"))
+    if "你" in text:
+        assert len(encoded) < len(text.encode("utf-8"))
+    messages = [{"role": "user", "content": text}]
+    tokens, source = estimate_prompt_tokens_chain(_NoCounterProvider(), "test-model", messages)
+    assert tokens == len(encoded) + 4
+    assert source == "tiktoken"
 
 
 def test_estimate_message_tokens_uses_utf8_byte_fallback(monkeypatch) -> None:
@@ -153,3 +216,8 @@ def test_estimate_prompt_tokens_recomputes_when_tool_items_change(monkeypatch) -
     after_tools = "\n" + json.dumps(tools, ensure_ascii=False)
     assert before_tools in fake_encoding.encoded
     assert after_tools in fake_encoding.encoded
+
+
+def test_module_local_setup_does_not_replay_other_test_caches() -> None:
+    assert helpers._get_token_encoding.cache_info().currsize == 0
+    assert helpers._TOOLS_TOKEN_CACHE == {}

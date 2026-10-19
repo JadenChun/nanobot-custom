@@ -326,10 +326,10 @@ class ExecTool(Tool):
                     timeout=prepared.timeout,
                 )
             except asyncio.TimeoutError:
-                await self._kill_process_tree(process)
+                await self.kill_process_tree(process)
                 return ToolResult.error(f"Error: Command timed out after {prepared.timeout} seconds")
             except asyncio.CancelledError:
-                await self._kill_process_tree(process)
+                await self.kill_process_tree(process)
                 raise
 
             # Safety-net reap: asyncio *should* have reaped the child via
@@ -367,7 +367,7 @@ class ExecTool(Tool):
             # Kill and reap the child if it was spawned but an unexpected
             # error prevented communicate() from completing.
             if process is not None:
-                await self._kill_process_tree(process)
+                await self.kill_process_tree(process)
             return ToolResult.error(f"Error executing command: {str(e)}")
 
     async def _execute_session(
@@ -488,6 +488,14 @@ class ExecTool(Tool):
 
         effective_timeout = self._resolve_timeout(timeout)
         env = self._build_env()
+        # Git may be invoked inside a compound command or an interactive session.
+        # Apply its noninteractive defaults at the shared preparation boundary,
+        # preserving the caller's explicit SSH command without copying all env vars.
+        env.setdefault("GIT_TERMINAL_PROMPT", "0")
+        env.setdefault(
+            "GIT_SSH_COMMAND",
+            os.environ.get("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10"),
+        )
 
         if self.path_prepend or self.path_append:
             if _IS_WINDOWS:
@@ -709,7 +717,7 @@ class ExecTool(Tool):
             _reap_pid(process.pid)
 
     @staticmethod
-    async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
+    async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
         """Kill a session process and descendants, then reap the root process."""
         owner = ExecTool._process_tree_owner(process)
         try:

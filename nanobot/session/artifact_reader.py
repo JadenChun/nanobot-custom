@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Literal
 
 from nanobot.agent.tools.filesystem import ReadFileTool
-from nanobot.agent.tools.read_provenance import FilesystemReadReceipt, revalidate_read_receipt
+from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
 from nanobot.config.paths import get_media_dir
 from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.session.artifact import (
@@ -23,8 +23,6 @@ from nanobot.session.artifact_store import (
     ArtifactBlobTransaction,
     PrivateArtifactStore,
 )
-from nanobot.session.artifact_verification import verify_published_artifact
-from nanobot.session.execution_owner import execution_transaction
 
 if TYPE_CHECKING:
     from nanobot.session.source_store import SourceSnapshot
@@ -54,9 +52,9 @@ class ArtifactReader:
                 or self.mode not in {'root_history', 'isolated_stream'}
                 or (self.mode == 'root_history' and self.writer.parent_stream_id is not None)):
             raise ArtifactValidationError('Invalid artifact read admission')
-        backend = self.writer.store._backend
+        location = self.writer.store.select_artifact_location_metadata()
         self._validate_private_root()
-        if (self.store.workspace_id != backend.sessions_dir.name
+        if (self.store.workspace_id != location.workspace_id
                 or self.store.session_key != self.writer.owner.key):
             raise ArtifactValidationError('Artifact store does not match read admission')
         if self.grants is not None:
@@ -65,25 +63,18 @@ class ArtifactReader:
     def _validate_private_root(self) -> None:
         if self.location_validator is not None:
             self.location_validator()
-        backend = self.writer.store._backend
-        access = current_tool_workspace(self.read_file._workspace,
-            restrict_to_workspace=self.read_file._restrict_to_workspace,
-            sandbox_restricts_workspace=self.read_file._sandbox_restricts_workspace)
-        roots = [backend.workspace.resolve(), get_media_dir().resolve(),
-                 *[root.resolve() for root in self.read_file._extra_read_allowed_dirs]]
-        if self.read_file._workspace is not None:
-            roots.append(self.read_file._workspace.resolve())
-        if self.read_file._resource_policy is not None:
-            roots.extend(root.resolve() for root in self.read_file._resource_policy.extra_read_dirs())
-        if any(self.store.root == root or self.store.root.is_relative_to(root) for root in roots):
-            raise ArtifactValidationError('Artifact store must be outside readable roots')
-        if access.project_path is not None:
-            root = access.project_path.resolve()
-            if self.store.root == root or self.store.root.is_relative_to(root):
-                raise ArtifactValidationError('Artifact store is inside the active project')
-        if any(path.resolve().is_relative_to(self.store.root)
-               for path in self.read_file._extra_read_allowed_files):
-            raise ArtifactValidationError('Artifact store has a public file allowlist')
+        location = self.writer.store.select_artifact_location_metadata()
+        ReadFileTool.validate_artifact_private_location(
+            reader=self,
+            source_location=location,
+            select_workspace_access=lambda: current_tool_workspace,
+            media_root=lambda: get_media_dir(),
+            validation_error=lambda message: ArtifactValidationError(message),
+        )
+
+    def revalidate_private_location(self) -> None:
+        """Retain the original live private-root policy and its late-bound hook."""
+        self._validate_private_root()
 
     def _native_permitted(self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot) -> bool:
         event = next((row for row in snapshot.events if row.get('_event_id') == descriptor.event_id), None)
@@ -101,6 +92,10 @@ class ArtifactReader:
         self.writer.owner.validate_dispatch()
         if self.writer.failed:
             raise ArtifactValidationError('Artifact grant issuer is unavailable')
+
+    def require_grant_issuer(self) -> None:
+        """Recheck this invocation through the existing late-bound issuer hook."""
+        self._validate_grant_issuer()
 
     def _descriptor_for_id(self, identity: str, snapshot: SourceSnapshot) -> ArtifactDescriptor:
         descriptor = next((item for item in published_artifacts(
@@ -132,46 +127,54 @@ class ArtifactReader:
             raise ArtifactValidationError('Artifact source admission changed')
         if require_native and not self._native_permitted(descriptor, snapshot):
             raise ArtifactValidationError('Artifact is outside the admitted stream')
-        access = current_tool_workspace(
-            self.read_file._workspace,
-            restrict_to_workspace=self.read_file._restrict_to_workspace,
-            sandbox_restricts_workspace=self.read_file._sandbox_restricts_workspace,
-        )
         # Owner, invocation stream, and private-root checks above remain
         # invocation-local. The shared helper only attests source receipts,
         # current policy, manifest membership, and durable blob integrity.
-        return verify_published_artifact(
+        return self.read_file.verify_artifact_evidence(
             descriptor,
             snapshot,
             blobs,
             store=self.store,
-            workspace=access.project_path,
-            policy=self.read_file._resource_policy,
-            resolve_read=self.read_file._resolve_read,
         )
 
     def authorize_source(self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot) -> FilesystemReadReceipt:
         """Validate producer/scope/policy before publication or inline fallback."""
+        return self._verify_native_source_locked(descriptor, snapshot)
+
+    def _verify_native_source_locked(
+        self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot
+    ) -> FilesystemReadReceipt:
+        """Prove native canonical source using an already-locked exact snapshot."""
         self._validate_grant_issuer()
         if not self._native_permitted(descriptor, snapshot):
             raise ArtifactValidationError('Artifact is outside the admitted stream')
         receipt = attested_artifact_origin(descriptor, snapshot, workspace_id=self.store.workspace_id)
-        access = current_tool_workspace(
-            self.read_file._workspace,
-            restrict_to_workspace=self.read_file._restrict_to_workspace,
-            sandbox_restricts_workspace=self.read_file._sandbox_restricts_workspace,
-        )
-        revalidate_read_receipt(
-            receipt,
-            workspace=access.project_path,
-            policy=self.read_file._resource_policy,
-            resolve_read=self.read_file._resolve_read,
-        )
+        self.read_file.revalidate_artifact_source(receipt)
         return receipt
 
+    def verify_native_source_in_snapshot(
+        self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot,
+    ) -> FilesystemReadReceipt:
+        """Reprove real native source under the caller's retained source transaction."""
+        return self._verify_native_source_locked(descriptor, snapshot)
+
     def verify_published(self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot,
-                         blobs: ArtifactBlobTransaction) -> None:
+                          blobs: ArtifactBlobTransaction) -> None:
         self._verify_descriptor(descriptor, snapshot, blobs, require_native=True)
+
+    def verify_received_descriptor(
+        self, descriptor: ArtifactDescriptor, snapshot: SourceSnapshot,
+        blobs: ArtifactBlobTransaction,
+    ) -> None:
+        """Check received evidence only; this neither grants access nor returns text."""
+        self._verify_descriptor(descriptor, snapshot, blobs, require_native=False)
+
+    def verify_native_artifact(self, identity: str, snapshot: SourceSnapshot,
+                               blobs: ArtifactBlobTransaction) -> ArtifactDescriptor:
+        """Resolve and verify native evidence; this never issues a grant or reads text."""
+        descriptor = self._descriptor_for_id(identity, snapshot)
+        self._verify_descriptor(descriptor, snapshot, blobs, require_native=True)
+        return descriptor
 
     def read(self, reference: str, *, offset: int = 0, max_bytes: int = 8192) -> ArtifactReadResult:
         self._validate_private_root()
@@ -182,7 +185,7 @@ class ArtifactReader:
         writer, owner = self.writer, self.writer.owner
         owner.validate_dispatch()
         with self.store.transaction() as blobs:
-            with execution_transaction(writer.store._backend, owner.key, owner):
+            with writer.store.execution_transaction(owner.key, owner):
                 owner.validate_dispatch()
                 snapshot = owner.read_snapshot()
                 descriptor = self._descriptor_for_id(identity, snapshot)

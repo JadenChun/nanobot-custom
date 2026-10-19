@@ -17,13 +17,14 @@ import stat
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, NoReturn, cast
 
 from nanobot.session.source import SourceValidationError
 from nanobot.session.source_root import SourceRootAuthority, SourceRootAuthorityError
 
 if TYPE_CHECKING:
     from nanobot.session.manager import JsonlSessionStore
+    from nanobot.session.source_store import SourceSessionStore
 
 
 class SourceDiscoveryError(RuntimeError):
@@ -162,10 +163,10 @@ def _directory_identity(path: Path) -> tuple[int, int, int]:
     return raw.st_dev, raw.st_ino, raw.st_mode & stat.S_IFMT(raw.st_mode)
 
 
-def _strict_object(value: object) -> dict[str, Any] | None:
+def _strict_object(value: object) -> dict[object, object] | None:
     if not isinstance(value, dict):
         return None
-    return value
+    return cast(dict[object, object], value)
 
 
 class SourceDiscoveryCursor:
@@ -196,7 +197,7 @@ class SourceDiscoveryCursor:
             self._owns_authority = True
             issued_authority = True
         else:
-            if root_authority._backend is not backend:
+            if not root_authority.matches_backend(backend):
                 raise TypeError("root_authority must belong to the exact backend")
             self._owns_authority = own_root_authority
         try:
@@ -240,6 +241,10 @@ class SourceDiscoveryCursor:
     def root_authority(self) -> SourceRootAuthority:
         return self._root_authority
 
+    def matches_source_store(self, source: SourceSessionStore) -> bool:
+        """Observe exact backends in discovery-then-source order, not root equivalence."""
+        return source.matches_backend(self._backend)
+
     def _close_iterator(self) -> None:
         iterator = self._iterator
         self._iterator = None
@@ -248,7 +253,7 @@ class SourceDiscoveryCursor:
             if callable(close):
                 close()
 
-    def _invalidate_root(self, message: str, *, cause: BaseException | None = None) -> None:
+    def _invalidate_root(self, message: str, *, cause: BaseException | None = None) -> NoReturn:
         self._closed = True
         self._release_resources()
         if cause is None:
@@ -273,8 +278,8 @@ class SourceDiscoveryCursor:
     def _open_iterator(self) -> Iterator[os.DirEntry[str]]:
         self._check_root()
         try:
-            return os.scandir(self._root_authority._fd)
-        except OSError as exc:
+            return self._root_authority.open_entry_iterator()
+        except (OSError, SourceRootAuthorityError) as exc:
             self._invalidate_root("source directory is unavailable", cause=exc)
 
     def _read_candidate(self, entry: os.DirEntry[str]) -> str | None:
@@ -334,9 +339,9 @@ class SourceDiscoveryCursor:
                 return None
             try:
                 decoded = line.decode("utf-8", "strict")
-                from nanobot.session.source_store import _object_pairs
+                from nanobot.session.source_store import reject_duplicate_source_keys
 
-                value = json.loads(decoded, object_pairs_hook=_object_pairs)
+                value = json.loads(decoded, object_pairs_hook=reject_duplicate_source_keys)
             except (UnicodeError, ValueError, TypeError, RecursionError):
                 return None
             header = _strict_object(value)
@@ -345,7 +350,7 @@ class SourceDiscoveryCursor:
             if header.get("key") != key:
                 return None
             metadata = header.get("metadata")
-            if not isinstance(metadata, dict) or type(metadata.get("source_schema_version")) is not int or metadata.get("source_schema_version") != 1:
+            if not isinstance(metadata, dict) or type(cast(dict[object, object], metadata).get("source_schema_version")) is not int or cast(dict[object, object], metadata).get("source_schema_version") != 1:
                 return None
             return key
         except (

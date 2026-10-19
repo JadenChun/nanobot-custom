@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
@@ -20,7 +20,7 @@ from nanobot.bus.outbound_events import (
 from nanobot.bus.queue import MessageBus
 from nanobot.bus.runtime_events import RuntimeEventPublisher
 from nanobot.channels.notification_routes import notification_metadata
-from nanobot.events import AgentEvent, EventSink
+from nanobot.events import NO_EVENTS, AgentEvent, EventSink
 from nanobot.providers.base import LLMUsage
 from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
 
@@ -39,6 +39,7 @@ class TurnRoute:
 
 
 TurnRoutePolicy = Callable[[InboundMessage, str, TurnRoute], TurnRoute]
+TurnOutputHook = Callable[[OutboundMessage], Awaitable[None]]
 
 
 def _bind_events(
@@ -81,6 +82,13 @@ class TurnDeliveryFactory:
         self.bus = bus
         self.runtime_event_publisher = RuntimeEventPublisher(bus)
         self.route_policy = route_policy
+        self._suppressed_output_sessions: set[str] = set()
+
+    def suppress_session_output(self, session_key: str, suppressed: bool) -> None:
+        if suppressed:
+            self._suppressed_output_sessions.add(session_key)
+        else:
+            self._suppressed_output_sessions.discard(session_key)
 
     def create(
         self,
@@ -88,6 +96,8 @@ class TurnDeliveryFactory:
         session_key: str,
         *,
         enable_stream: bool = False,
+        suppress_channel_output: bool = False,
+        trusted_output_hook: TurnOutputHook | None = None,
     ) -> TurnDelivery:
         route = self._default_route(msg, session_key)
         if self.route_policy is not None:
@@ -101,6 +111,8 @@ class TurnDeliveryFactory:
             session_key=session_key,
             route=route,
             enable_stream=enable_stream,
+            suppress_channel_output=suppress_channel_output,
+            trusted_output_hook=trusted_output_hook,
         )
 
     def unrouted(self, msg: InboundMessage, session_key: str) -> TurnDelivery:
@@ -117,12 +129,32 @@ class TurnDeliveryFactory:
             ),
         )
 
+    def silent(self, msg: InboundMessage, session_key: str) -> TurnDelivery:
+        """Give a direct scheduled turn a route without channel event authority.
+
+        Direct canonical turns do not call ``complete`` on this delivery.  The
+        event sink must also be closed: disabling lifecycle alone would still
+        route stream and compaction events to a channel.
+        """
+        delivery = TurnDelivery(
+            bus=self.bus,
+            runtime_event_publisher=self.runtime_event_publisher,
+            input_message=msg,
+            session_key=session_key,
+            route=TurnRoute(msg.channel, msg.chat_id, dict(msg.metadata or {})),
+            silent=True,
+        )
+        delivery.events = NO_EVENTS
+        return delivery
+
     def session_events(
         self,
         session_key: str,
         session_metadata: dict[str, Any],
     ) -> EventSink:
         """Bind idle notifications to one route without acquiring a turn owner."""
+        if session_key in self._suppressed_output_sessions:
+            return EventSink()
         saved_route = session_metadata.get("_compaction_route")
         if isinstance(saved_route, dict):
             saved_route = cast(dict[str, Any], saved_route)
@@ -184,6 +216,9 @@ class TurnDelivery:
     session_key: str
     route: TurnRoute
     enable_stream: bool = False
+    silent: bool = False
+    suppress_channel_output: bool = False
+    trusted_output_hook: TurnOutputHook | None = None
     delivery_message: InboundMessage = field(init=False)
     lifecycle_message: InboundMessage = field(init=False)
     _stream_base_id: str | None = field(init=False, default=None)
@@ -197,7 +232,10 @@ class TurnDelivery:
 
     def __post_init__(self) -> None:
         self._routed_events = _bind_events(self.bus, self.route)
-        self.events = EventSink(self._publish_event, self._routed_events.accepts)
+        self.events = (
+            NO_EVENTS if self.suppress_channel_output
+            else EventSink(self._publish_event, self._routed_events.accepts)
+        )
         self.delivery_message = dataclasses.replace(
             self.input_message,
             channel=self.route.channel,
@@ -216,6 +254,11 @@ class TurnDelivery:
 
     def remember_session_route(self, session_metadata: dict[str, Any]) -> None:
         """Keep only routing fields needed to deliver a later idle notification."""
+        if self.silent:
+            return
+        if self.suppress_channel_output:
+            session_metadata.pop("_compaction_route", None)
+            return
         # Keep the storage key readable by older gateways.
         session_metadata["_compaction_route"] = {
             "channel": self.route.channel,
@@ -305,7 +348,10 @@ class TurnDelivery:
         if response is not None:
             completed_channel = response.channel
             completed_chat_id = response.chat_id
-            if response.channel != "websocket" or stop_reason != "error":
+            if self.trusted_output_hook is not None:
+                await self.trusted_output_hook(response)
+            elif (not self.suppress_channel_output
+                    and (response.channel != "websocket" or stop_reason != "error")):
                 await self.bus.publish_outbound(response)
         elif self.lifecycle_message.channel == "cli":
             await self.bus.publish_outbound(
@@ -334,14 +380,16 @@ class TurnDelivery:
             )
 
     async def fail(self, *, publish_completion: bool) -> None:
-        await self.bus.publish_outbound(
-            OutboundMessage(
-                channel=self.lifecycle_message.channel,
-                chat_id=self.lifecycle_message.chat_id,
-                content="Sorry, I encountered an error.",
-                metadata=dict(self.lifecycle_message.metadata or {}),
-            )
+        response = OutboundMessage(
+            channel=self.lifecycle_message.channel,
+            chat_id=self.lifecycle_message.chat_id,
+            content="Sorry, I encountered an error.",
+            metadata=dict(self.lifecycle_message.metadata or {}),
         )
+        if self.trusted_output_hook is not None:
+            await self.trusted_output_hook(response)
+        elif not self.suppress_channel_output:
+            await self.bus.publish_outbound(response)
         if publish_completion:
             await self.runtime_event_publisher.turn_completed(
                 channel=self.lifecycle_message.channel,

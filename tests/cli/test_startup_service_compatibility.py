@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import json
 import plistlib
 import shlex
 import subprocess
@@ -18,6 +19,7 @@ from typer.testing import CliRunner
 
 from nanobot.cli import log_control
 from nanobot.cli.gateway import create_gateway_app
+from nanobot.config.loader import load_config, set_config_path
 from nanobot.config.schema import Config
 from nanobot.gateway import GatewayRuntimePaths, GatewayStartOptions, GatewayStatus, RuntimeResult
 from nanobot.gateway.runtime import GatewayRuntime, build_gateway_command
@@ -27,6 +29,26 @@ from nanobot.gateway.service import (
     GatewayServiceResult,
 )
 from nanobot.process_runtime import ProcessStartOptions
+
+
+def _synthetic_runtime_config(tmp_path: Path, monkeypatch) -> Path:
+    """Use the real loader/context on disposable paths, not unbound defaults."""
+    workspace = tmp_path / "workspace"
+    instance = tmp_path / "instance"
+    workspace.mkdir()
+    instance.mkdir()
+    path = instance / "config.json"
+    path.write_text(json.dumps({
+        "agents": {"defaults": {
+            "workspace": str(workspace), "idleCompactAfterMinutes": 0,
+            "dream": {"enabled": False}, "idleCompaction": {"enabled": False},
+        }},
+        "gateway": {"heartbeat": {"enabled": False}},
+    }))
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", None)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "synthetic-home")
+    set_config_path(path)
+    return path
 
 
 def test_agent_and_gateway_help_accept_compatibility_log_file() -> None:
@@ -81,6 +103,7 @@ def test_cli_log_reconfiguration_replaces_only_owned_console_sink(
     tmp_path: Path,
 ) -> None:
     """Agent and gateway logging leave application-owned Loguru sinks intact."""
+    config_path = _synthetic_runtime_config(tmp_path, monkeypatch)
     foreign_output = io.StringIO()
     cli_output = io.StringIO()
     foreign_sink_id = logger.add(foreign_output, format="{message}")
@@ -95,7 +118,7 @@ def test_cli_log_reconfiguration_replaces_only_owned_console_sink(
         create_gateway_app(
             console=Console(file=io.StringIO()),
             log_handler_id=cli_sink_id,
-            load_runtime_config=lambda _config, _workspace: Config(),
+            load_runtime_config=lambda _config, _workspace: load_config(config_path),
             run_gateway=lambda _config, **_kwargs: None,
         ),
         name="gateway",
@@ -230,6 +253,7 @@ def test_foreground_gateway_releases_compatibility_file_sink_on_completion(
     fails: bool,
 ) -> None:
     """A foreground gateway releases its selected file after any exit path."""
+    config_path = _synthetic_runtime_config(tmp_path, monkeypatch)
     app = typer.Typer()
     log_path = tmp_path / "gateway.log"
     original_file_sink_id = log_control._compatibility_file_sink_id
@@ -244,7 +268,7 @@ def test_foreground_gateway_releases_compatibility_file_sink_on_completion(
         create_gateway_app(
             console=Console(file=io.StringIO()),
             log_handler_id=0,
-            load_runtime_config=lambda _config, _workspace: Config(),
+            load_runtime_config=lambda _config, _workspace: load_config(config_path),
             run_gateway=run_gateway,
         ),
         name="gateway",
@@ -335,6 +359,7 @@ def test_gateway_commands_propagate_log_path_without_parent_file_sink(
     tmp_path: Path,
 ) -> None:
     """Detached, restart, service, and foreground forms use the selected path."""
+    config_path = _synthetic_runtime_config(tmp_path, monkeypatch)
     runner = CliRunner()
     app = typer.Typer()
     paths = GatewayRuntimePaths.for_instance(data_dir=tmp_path)
@@ -382,7 +407,7 @@ def test_gateway_commands_propagate_log_path_without_parent_file_sink(
         create_gateway_app(
             console=Console(),
             log_handler_id=0,
-            load_runtime_config=lambda _config, _workspace: Config(),
+            load_runtime_config=lambda _config, _workspace: load_config(config_path),
             run_gateway=run_gateway,
             runtime_factory=lambda **_kwargs: Runtime(),
             service_factory=Service,

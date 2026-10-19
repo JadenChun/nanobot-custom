@@ -11,6 +11,8 @@ from nanobot.agent.hooks import create_file_edit_activity_hook
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.context import current_request_context
 from nanobot.agent.tools.filesystem import WriteFileTool
+from nanobot.agent.turn import RunPolicyContext
+from nanobot.agent.turn import TurnContext as RunContext
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.outbound_events import (
     GoalStatusEvent,
@@ -22,7 +24,7 @@ from nanobot.bus.outbound_events import (
     TurnEndEvent,
 )
 from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMResponse, ToolCallRequest
+from nanobot.providers.base import GenerationSettings, LLMResponse, ToolCallRequest
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.session.webui_turns import WebuiTurnCoordinator, WebuiTurnRoutePolicy
 from nanobot.utils.progress_events import output_events
@@ -30,19 +32,50 @@ from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
 )
+from tests.agent.p6_admitted_fixtures import AgentInputs, AsyncAdmittedFactory
+from tests.agent.p6_admitted_fixtures import admitted_async as admitted_async
 
 
-def _make_loop(tmp_path: Path) -> AgentLoop:
-    bus = MessageBus()
-    provider = MagicMock()
-    provider.get_default_model.return_value = "test-model"
-    return AgentLoop(
-        bus=bus,
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-        hook_factories=[create_file_edit_activity_hook],
-    )
+async def _make_loop(
+    tmp_path: Path,
+    admitted_async: AsyncAdmittedFactory,
+    provider: MagicMock | None = None,
+    *,
+    model: str = "test-model",
+    file_edits: bool = True,
+    keys: tuple[str, ...] = (),
+) -> AgentLoop:
+    if provider is None:
+        provider = MagicMock()
+        provider.get_default_model.return_value = model
+    provider.generation = GenerationSettings()
+    provider.supports_bound_conversation_state.return_value = False
+    provider.can_resume_conversation_state.return_value = False
+
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus,
+            provider=provider,
+            workspace=inputs.config.workspace_path,
+            model=model,
+            hook_factories=[create_file_edit_activity_hook] if file_edits else [],
+            session_manager=inputs.sessions,
+            tool_registry=inputs.tools,
+            cron_service=inputs.cron,
+            turn_delivery_factory=inputs.delivery,
+            tools_config=inputs.config.tools,
+            restrict_to_workspace=True,
+            session_ttl_minutes=0,
+        )
+
+    return await admitted_async(tmp_path, build, keys=keys)
+
+
+def _run_context(loop: AgentLoop) -> RunContext:
+    return RunContext(policy=RunPolicyContext(
+        workspace=loop.workspace,
+        context_manager=loop.context.context_manager,
+    ))
 
 
 def _attach_webui_runtime_events(loop: AgentLoop, bus: MessageBus) -> None:
@@ -59,8 +92,8 @@ class TestToolEventProgress:
     """_run_agent_loop emits structured tool_events via on_progress."""
 
     @pytest.mark.asyncio
-    async def test_start_and_finish_events_emitted(self, tmp_path: Path) -> None:
-        loop = _make_loop(tmp_path)
+    async def test_start_and_finish_events_emitted(self, tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> None:
+        loop = await _make_loop(tmp_path, admitted_async)
         tool_call = ToolCallRequest(id="call1", name="custom_tool", arguments={"path": "foo.txt"})
         calls = iter([
             LLMResponse(content="Visible", tool_calls=[tool_call]),
@@ -84,6 +117,7 @@ class TestToolEventProgress:
         result = await loop._run_agent_loop(
             TranscriptInput(history=[], current_message=None),
             runtime=loop.llm_runtime(),
+            run_context=_run_context(loop),
             events=output_events(on_progress=on_progress),
         )
 
@@ -123,8 +157,9 @@ class TestToolEventProgress:
         ]
 
     @pytest.mark.asyncio
-    async def test_write_file_emits_file_edit_progress(self, tmp_path: Path) -> None:
-        loop = _make_loop(tmp_path)
+    async def test_write_file_emits_file_edit_progress(self, tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> None:
+        loop = await _make_loop(tmp_path, admitted_async)
+        tmp_path = loop.workspace
         target = tmp_path / "foo.txt"
         target.write_text("old\n", encoding="utf-8")
         tool_call = ToolCallRequest(
@@ -157,6 +192,7 @@ class TestToolEventProgress:
         result = await loop._run_agent_loop(
             TranscriptInput(history=[], current_message=None),
             runtime=loop.llm_runtime(),
+            run_context=_run_context(loop),
             events=output_events(on_progress=on_progress),
         )
 
@@ -183,21 +219,23 @@ class TestToolEventProgress:
     async def test_file_edit_snapshot_skipped_when_progress_callback_cannot_emit_file_edits(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        loop = _make_loop(tmp_path)
+        loop = await _make_loop(tmp_path, admitted_async)
+        tmp_path = loop.workspace
         target = tmp_path / "foo.txt"
         target.write_text("old\n", encoding="utf-8")
         prepare_file_edit_trackers = MagicMock()
 
-        class ObservableWriteTool:
+        class ObservableWriteTool(WriteFileTool):
             name = "write_file"
 
             async def execute(self, path: str, content: str) -> str:
                 target.write_text(content, encoding="utf-8")
                 return "ok"
 
-        tool = ObservableWriteTool()
+        tool = ObservableWriteTool(workspace=tmp_path)
         tool_call = ToolCallRequest(
             id="call-write",
             name="write_file",
@@ -229,6 +267,7 @@ class TestToolEventProgress:
         result = await loop._run_agent_loop(
             TranscriptInput(history=[], current_message=None),
             runtime=loop.llm_runtime(),
+            run_context=_run_context(loop),
             events=output_events(on_progress=on_progress),
         )
 
@@ -237,8 +276,8 @@ class TestToolEventProgress:
         prepare_file_edit_trackers.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_exec_does_not_emit_file_edit_progress(self, tmp_path: Path) -> None:
-        loop = _make_loop(tmp_path)
+    async def test_exec_does_not_emit_file_edit_progress(self, tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> None:
+        loop = await _make_loop(tmp_path, admitted_async)
         tool_call = ToolCallRequest(
             id="call-exec",
             name="exec",
@@ -269,18 +308,22 @@ class TestToolEventProgress:
         await loop._run_agent_loop(
             TranscriptInput(history=[], current_message=None),
             runtime=loop.llm_runtime(),
+            run_context=_run_context(loop),
             events=output_events(on_progress=on_progress),
         )
 
         assert file_events == []
 
     @pytest.mark.asyncio
-    async def test_bus_progress_forwards_tool_events_to_outbound_metadata(self, tmp_path: Path) -> None:
+    async def test_bus_progress_forwards_tool_events_to_outbound_metadata(self, tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> None:
         """When run() handles a bus message, _tool_events lands in OutboundMessage metadata."""
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("telegram:chat1",),
+        )
+        bus = loop.bus
 
         tool_call = ToolCallRequest(id="tc1", name="exec", arguments={"command": "ls"})
         calls = iter([
@@ -343,11 +386,14 @@ class TestToolEventProgress:
         assert finish["result"] == "file.txt"
 
     @pytest.mark.asyncio
-    async def test_bus_progress_forwards_file_edit_events_without_channel_branch(self, tmp_path: Path) -> None:
-        bus = MessageBus()
+    async def test_bus_progress_forwards_file_edit_events_without_channel_branch(self, tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> None:
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("telegram:chat1",),
+        )
+        bus = loop.bus
         edit_events = [{
             "call_id": "call-write",
             "tool": "write_file",
@@ -373,9 +419,8 @@ class TestToolEventProgress:
         assert outbound.event.file_edit_events == edit_events
 
     @pytest.mark.asyncio
-    async def test_goal_turn_keeps_file_edit_progress_for_webui(self, tmp_path: Path) -> None:
+    async def test_goal_turn_keeps_file_edit_progress_for_webui(self, tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> None:
         """The /goal command rewrites the prompt but must not bypass WebUI file-edit progress."""
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
         call_count = 0
@@ -402,14 +447,12 @@ class TestToolEventProgress:
 
         provider.chat_stream_with_retry = chat_stream_with_retry
         provider.chat_with_retry = AsyncMock()
-        loop = AgentLoop(
-            bus=bus,
-            provider=provider,
-            workspace=tmp_path,
-            model="test-model",
-            hook_factories=[create_file_edit_activity_hook],
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=True, keys=("websocket:chat1",),
         )
-        tool = WriteFileTool(workspace=tmp_path)
+        bus = loop.bus
+        tool = WriteFileTool(workspace=loop.workspace)
         loop.tools.get_definitions = MagicMock(return_value=[
             {"type": "function", "function": {"name": "write_file"}},
         ])
@@ -458,14 +501,18 @@ class TestToolEventProgress:
     async def test_non_streaming_channel_does_not_publish_codex_progress_deltas(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
         """Non-streaming channels should get one final reply, not token progress spam."""
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "openai-codex/gpt-5.5"
         provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="Hello", tool_calls=[]))
         provider.chat_stream_with_retry = AsyncMock()
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="openai-codex/gpt-5.5")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="openai-codex/gpt-5.5",
+            file_edits=False, keys=("whatsapp:chat1",),
+        )
+        bus = loop.bus
         loop.tools.get_definitions = MagicMock(return_value=[])
 
         await loop._dispatch(InboundMessage(
@@ -489,9 +536,9 @@ class TestToolEventProgress:
     async def test_streaming_channel_streams_provider_deltas_for_codex_style_provider(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
         """Streaming channels still receive provider deltas through stream events."""
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "openai-codex/gpt-5.5"
 
@@ -502,7 +549,11 @@ class TestToolEventProgress:
 
         provider.chat_stream_with_retry = chat_stream_with_retry
         provider.chat_with_retry = AsyncMock()
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="openai-codex/gpt-5.5")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="openai-codex/gpt-5.5",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.tools.get_definitions = MagicMock(return_value=[])
 
@@ -539,8 +590,8 @@ class TestToolEventProgress:
     async def test_length_recovery_keeps_one_user_visible_stream(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
         responses = iter([
@@ -555,7 +606,11 @@ class TestToolEventProgress:
 
         provider.chat_stream_with_retry = chat_stream_with_retry
         provider.chat_with_retry = AsyncMock()
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.tools.get_definitions = MagicMock(return_value=[])
 
@@ -583,8 +638,8 @@ class TestToolEventProgress:
     async def test_length_recovery_streams_non_delta_terminal_segment(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
         call_count = 0
@@ -599,7 +654,11 @@ class TestToolEventProgress:
 
         provider.chat_stream_with_retry = chat_stream_with_retry
         provider.chat_with_retry = AsyncMock()
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.tools.get_definitions = MagicMock(return_value=[])
 
@@ -628,8 +687,8 @@ class TestToolEventProgress:
     async def test_length_recovery_at_max_iterations_streams_only_missing_tail(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
 
@@ -641,7 +700,11 @@ class TestToolEventProgress:
         provider.chat_with_retry = AsyncMock(
             return_value=LLMResponse(content="summary", finish_reason="stop")
         )
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.max_iterations = 1
         loop.tools.get_definitions = MagicMock(return_value=[])
@@ -671,11 +734,15 @@ class TestToolEventProgress:
     async def test_cancelled_length_recovery_closes_merged_stream(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
 
         async def cancel_after_merge(
             _msg: InboundMessage,
@@ -688,7 +755,7 @@ class TestToolEventProgress:
             await delivery.events.emit(StreamEndEvent(resuming=True, merge_next=True))
             raise asyncio.CancelledError
 
-        loop._process_message = cancel_after_merge  # type: ignore[method-assign]
+        loop._process_turn = cancel_after_merge  # type: ignore[method-assign]
 
         with pytest.raises(asyncio.CancelledError):
             await loop._dispatch(InboundMessage(
@@ -714,9 +781,9 @@ class TestToolEventProgress:
     async def test_non_streamed_finalization_is_delivered_as_regular_message(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
         """A no-tools finalization must not be dropped after empty stream retries."""
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "openai-codex/gpt-5.5"
         provider.chat_stream_with_retry = AsyncMock(side_effect=[
@@ -726,12 +793,11 @@ class TestToolEventProgress:
         provider.chat_with_retry = AsyncMock(
             return_value=LLMResponse(content="final answer", tool_calls=[]),
         )
-        loop = AgentLoop(
-            bus=bus,
-            provider=provider,
-            workspace=tmp_path,
-            model="openai-codex/gpt-5.5",
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="openai-codex/gpt-5.5",
+            file_edits=False, keys=("websocket:chat1",),
         )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.tools.get_definitions = MagicMock(return_value=[])
 
@@ -761,8 +827,8 @@ class TestToolEventProgress:
     async def test_independent_late_subagent_result_gets_complete_webui_turn(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "openai-codex/gpt-5.5"
         first_request_started = asyncio.Event()
@@ -786,12 +852,11 @@ class TestToolEventProgress:
 
         provider.chat_stream_with_retry = chat_stream_with_retry
         provider.chat_with_retry = AsyncMock()
-        loop = AgentLoop(
-            bus=bus,
-            provider=provider,
-            workspace=tmp_path,
-            model="openai-codex/gpt-5.5",
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="openai-codex/gpt-5.5",
+            file_edits=False, keys=("websocket:chat-a",),
         )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.tools.get_definitions = MagicMock(return_value=[])
         loop.tools.prepare_call = MagicMock(return_value=(None, {}, None))
@@ -915,9 +980,9 @@ class TestToolEventProgress:
     async def test_stream_timeout_recovery_continues_in_new_segment(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
         """Recovered streaming output should use a new stream segment."""
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "openai-codex/gpt-5.5"
 
@@ -929,7 +994,11 @@ class TestToolEventProgress:
 
         provider.chat_stream_with_retry = chat_stream_with_retry
         provider.chat_with_retry = AsyncMock()
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="openai-codex/gpt-5.5")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="openai-codex/gpt-5.5",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.tools.get_definitions = MagicMock(return_value=[])
 
@@ -973,9 +1042,10 @@ class TestToolEventProgress:
     async def test_streamed_content_is_not_repeated_before_tool_execution(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
         """If content was already streamed, tool setup should not repeat it."""
-        loop = _make_loop(tmp_path)
+        loop = await _make_loop(tmp_path, admitted_async)
         tool_call = ToolCallRequest(id="call1", name="custom_tool", arguments={"path": "foo.txt"})
         calls = iter([
             LLMResponse(content="I will inspect it.", tool_calls=[tool_call]),
@@ -1012,6 +1082,7 @@ class TestToolEventProgress:
         result = await loop._run_agent_loop(
             TranscriptInput(history=[], current_message=None),
             runtime=loop.llm_runtime(),
+            run_context=_run_context(loop),
             events=output_events(on_progress=on_progress, on_stream=on_stream),
             streaming=True,
         )
@@ -1022,12 +1093,15 @@ class TestToolEventProgress:
         assert all(item[0] != "I will inspect it." for item in progress)
 
     @pytest.mark.asyncio
-    async def test_websocket_dispatch_publishes_final_turn_end_marker(self, tmp_path: Path) -> None:
-        bus = MessageBus()
+    async def test_websocket_dispatch_publishes_final_turn_end_marker(self, tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> None:
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
         provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="Done", tool_calls=[]))
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.tools.get_definitions = MagicMock(return_value=[])
 
@@ -1056,17 +1130,21 @@ class TestToolEventProgress:
     async def test_websocket_dispatch_publishes_turn_end_after_error(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
     ) -> None:
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
 
         async def raise_from_turn(*_args, **_kwargs):
             raise RuntimeError("boom")
 
-        loop._process_message = raise_from_turn  # type: ignore[method-assign]
+        loop._process_turn = raise_from_turn  # type: ignore[method-assign]
 
         await loop._dispatch(InboundMessage(
             channel="websocket",
@@ -1092,8 +1170,7 @@ class TestToolEventProgress:
         assert outbound.index(turn_end_msgs[0]) < outbound.index(statuses[-1])
 
     @pytest.mark.asyncio
-    async def test_webui_title_generation_runs_after_turn_end(self, tmp_path: Path) -> None:
-        bus = MessageBus()
+    async def test_webui_title_generation_runs_after_turn_end(self, tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> None:
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
         title_started = asyncio.Event()
@@ -1110,7 +1187,11 @@ class TestToolEventProgress:
             return LLMResponse(content="Generated title", tool_calls=[])
 
         provider.chat_with_retry = AsyncMock(side_effect=chat_with_retry)
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.tools.get_definitions = MagicMock(return_value=[])
 
@@ -1152,13 +1233,17 @@ class TestToolEventProgress:
     async def test_webui_title_generation_uses_turn_model_snapshot(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
         provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="Done", tool_calls=[]))
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.tools.get_definitions = MagicMock(return_value=[])
 
@@ -1247,13 +1332,17 @@ class TestToolEventProgress:
     async def test_webui_turn_without_opt_in_does_not_schedule_title(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
         metadata: dict[str, object],
     ) -> None:
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
         provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="Done"))
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
         loop.tools.get_definitions = MagicMock(return_value=[])
         session = loop.sessions.get_or_create("websocket:chat1")
@@ -1284,13 +1373,17 @@ class TestToolEventProgress:
     async def test_webui_command_turn_does_not_schedule_title_generation(
         self,
         tmp_path: Path,
+        admitted_async: AsyncAdmittedFactory,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        bus = MessageBus()
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
         provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="Done", tool_calls=[]))
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("websocket:chat1",),
+        )
+        bus = loop.bus
         _attach_webui_runtime_events(loop, bus)
 
         async def fake_title_after_turn(**_kwargs: object) -> bool:
@@ -1314,12 +1407,15 @@ class TestToolEventProgress:
         assert scheduled == []
 
     @pytest.mark.asyncio
-    async def test_non_websocket_dispatch_does_not_publish_turn_end_marker(self, tmp_path: Path) -> None:
-        bus = MessageBus()
+    async def test_non_websocket_dispatch_does_not_publish_turn_end_marker(self, tmp_path: Path, admitted_async: AsyncAdmittedFactory) -> None:
         provider = MagicMock()
         provider.get_default_model.return_value = "test-model"
         provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="Done", tool_calls=[]))
-        loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+        loop = await _make_loop(
+            tmp_path, admitted_async, provider, model="test-model",
+            file_edits=False, keys=("slack:chat1",),
+        )
+        bus = loop.bus
         loop.tools.get_definitions = MagicMock(return_value=[])
 
         await loop._dispatch(InboundMessage(

@@ -8,9 +8,10 @@ parse → serialize round-trip so the model can continue reasoning.
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from nanobot.providers.base import ToolCallRequest
 from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-
 
 GEMINI_EXTRA = {"google": {"thought_signature": "sig-abc-123"}}
 
@@ -210,7 +211,8 @@ def test_parse_chunks_dict_accumulates_reasoning_content() -> None:
 
 # ── Model switching: stale extras shouldn't break other providers ─────
 
-def test_stale_extra_content_in_tool_calls_survives_sanitize() -> None:
+@pytest.mark.parametrize("has_result", [False, True])
+def test_stale_extra_content_in_tool_calls_survives_sanitize(has_result) -> None:
     """When switching from Gemini to OpenAI, extra_content inside tool_calls
     should survive message sanitization (it lives inside the tool_call dict,
     not at message level, so it bypasses _ALLOWED_MSG_KEYS filtering)."""
@@ -228,6 +230,15 @@ def test_stale_extra_content_in_tool_calls_survives_sanitize() -> None:
         }],
     }]
 
+    if has_result:
+        messages.append({"role": "tool", "tool_call_id": "call_1", "content": "done"})
+
     sanitized = provider._sanitize_messages(messages)
 
+    if not has_result:
+        # A trailing assistant message is unsupported prefill, not replay history.
+        assert sanitized == []
+        return
+
     assert sanitized[0]["tool_calls"][0]["extra_content"] == GEMINI_EXTRA
+    assert sanitized[1]["tool_call_id"] == sanitized[0]["tool_calls"][0]["id"]

@@ -34,9 +34,94 @@ import platform
 import random
 import tempfile
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nanobot.agent.tools.base import Tool
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from typing import Literal, Protocol
+
+    class _Point(Protocol):
+        x: float
+        y: float
+
+    class _Size(Protocol):
+        width: float
+        height: float
+
+    class _Rect(Protocol):
+        size: _Size
+
+    class _Screen(Protocol):
+        def frame(self) -> _Rect: ...
+
+    class _ScreenClass(Protocol):
+        def __getattr__(self, name: Literal["mainScreen"]) -> Callable[[], _Screen | None]: ...
+
+    class _URLClass(Protocol):
+        def __getattr__(self, name: Literal["fileURLWithPath_"]) -> Callable[[str], object]: ...
+
+    class _AppKitBridge(Protocol):
+        NSScreen: _ScreenClass
+        NSURL: _URLClass
+
+    class _ScrollWheelEvent(Protocol):
+        def __call__(self, source: None, unit: int, count: int, *wheels: int) -> object: ...
+
+    class _QuartzBridge(Protocol):
+        CGRectInfinite: _Rect
+        # Only the metadata-declared dynamic constants used by this backend.
+        def __getattr__(
+            self,
+            name: Literal[
+                "kCGEventFlagMaskAlternate",
+                "kCGEventFlagMaskCommand",
+                "kCGEventFlagMaskControl",
+                "kCGEventFlagMaskSecondaryFn",
+                "kCGEventFlagMaskShift",
+                "kCGEventLeftMouseDown",
+                "kCGEventLeftMouseDragged",
+                "kCGEventLeftMouseUp",
+                "kCGEventMouseMoved",
+                "kCGEventOtherMouseDown",
+                "kCGEventOtherMouseUp",
+                "kCGEventRightMouseDown",
+                "kCGEventRightMouseUp",
+                "kCGHIDEventTap",
+                "kCGImageAlphaPremultipliedLast",
+                "kCGMouseButtonCenter",
+                "kCGMouseButtonLeft",
+                "kCGMouseButtonRight",
+                "kCGMouseEventClickState",
+                "kCGNullWindowID",
+                "kCGScrollEventUnitLine",
+                "kCGWindowImageDefault",
+                "kCGWindowListOptionOnScreenOnly",
+            ],
+        ) -> int: ...
+
+        CGEventCreate: Callable[[None], object]
+        CGEventGetLocation: Callable[[object], _Point]
+        CGWindowListCreateImage: Callable[[_Rect, int, int, int], object | None]
+        CGImageDestinationCreateWithURL: Callable[[object, str, int, None], object | None]
+        CGImageDestinationAddImage: Callable[[object, object, None], None]
+        CGImageDestinationFinalize: Callable[[object], bool]
+        CGImageSourceCreateWithURL: Callable[[object, None], object | None]
+        CGImageSourceGetCount: Callable[[object], int]
+        CGImageSourceCreateImageAtIndex: Callable[[object, int, None], object | None]
+        CGImageGetColorSpace: Callable[[object], object]
+        CGBitmapContextCreate: Callable[[None, int, int, int, int, object, int], object | None]
+        CGRectMake: Callable[[float, float, float, float], _Rect]
+        CGContextDrawImage: Callable[[object, _Rect, object], None]
+        CGBitmapContextCreateImage: Callable[[object], object]
+        CGEventCreateMouseEvent: Callable[[None, int, tuple[float, float], int], object]
+        CGEventPost: Callable[[int, object], None]
+        CGEventSetIntegerValueField: Callable[[object, int, int], None]
+        CGEventCreateKeyboardEvent: Callable[[None, int, bool], object]
+        CGEventKeyboardSetUnicodeString: Callable[[object, int, str], None]
+        CGEventSetFlags: Callable[[object, int], None]
+        CGEventCreateScrollWheelEvent: _ScrollWheelEvent
 
 
 # Cap on the inline screenshot payload we'll attach to a tool result. Larger
@@ -47,16 +132,18 @@ from nanobot.agent.tools.base import Tool
 # also inflates the wire size by ~33%. Override via env NANOBOT_DESKTOP_USE_MAX_INLINE_BYTES.
 _DEFAULT_MAX_INLINE_SCREENSHOT_BYTES = 900 * 1024
 try:
-    _MAX_INLINE_SCREENSHOT_BYTES = int(
+    _max_inline_screenshot_bytes = int(
         os.environ.get(
             "NANOBOT_DESKTOP_USE_MAX_INLINE_BYTES",
             _DEFAULT_MAX_INLINE_SCREENSHOT_BYTES,
         )
     )
-    if _MAX_INLINE_SCREENSHOT_BYTES <= 0:
-        _MAX_INLINE_SCREENSHOT_BYTES = _DEFAULT_MAX_INLINE_SCREENSHOT_BYTES
+    if _max_inline_screenshot_bytes <= 0:
+        _max_inline_screenshot_bytes = _DEFAULT_MAX_INLINE_SCREENSHOT_BYTES
 except (TypeError, ValueError):
-    _MAX_INLINE_SCREENSHOT_BYTES = _DEFAULT_MAX_INLINE_SCREENSHOT_BYTES
+    _max_inline_screenshot_bytes = _DEFAULT_MAX_INLINE_SCREENSHOT_BYTES
+
+_MAX_INLINE_SCREENSHOT_BYTES = _max_inline_screenshot_bytes
 
 # Resolutions that vision-capable models tend to be trained on. We downscale
 # coordinates to whichever one matches the screen's aspect ratio so the model
@@ -502,11 +589,11 @@ class DesktopUseTool(Tool):
     def _require_coord(value: Any, name: str = "coordinate") -> tuple[int, int]:
         if (
             not isinstance(value, (list, tuple))
-            or len(value) != 2
-            or not all(isinstance(v, (int, float)) for v in value)
+            or len(cast("list[object] | tuple[object, ...]", value)) != 2
+            or not all(isinstance(v, (int, float)) for v in cast("list[object] | tuple[object, ...]", value))
         ):
             raise _DesktopError(f"{name} must be [x, y] with two numbers")
-        return int(value[0]), int(value[1])
+        return int(cast("list[int | float] | tuple[int | float, ...]", value)[0]), int(cast("list[int | float] | tuple[int | float, ...]", value)[1])
 
     @staticmethod
     def _ok(payload: dict[str, Any]) -> str:
@@ -551,16 +638,20 @@ class _MacBackend(_Backend):
 
     def __init__(self) -> None:
         try:
-            import Quartz  # type: ignore
             import AppKit  # type: ignore
+            import Quartz  # type: ignore
         except ImportError as exc:
             raise _DesktopError(
                 "macOS desktop backend requires PyObjC. Install with: "
                 "pip install 'pyobjc-framework-Quartz' 'pyobjc-framework-Cocoa' "
                 "(or `pip install nanobot-ai[desktop]` when shipped)."
             ) from exc
-        self.Quartz = Quartz
-        self.AppKit = AppKit
+        # PyObjC Quartz/Cocoa 12.2.2 dynamically export this optional SDK surface
+        # (CoreGraphics/ImageIO and AppKit metadata). These owner-only casts
+        # describe that installed-SDK invariant, not admission of replacement
+        # modules: no members are inspected until the original operation needs them.
+        self.Quartz = cast("_QuartzBridge", Quartz)
+        self.AppKit = cast("_AppKitBridge", AppKit)
 
     # -- screen / cursor info --------------------------------------------------
 
@@ -587,12 +678,12 @@ class _MacBackend(_Backend):
     # -- screenshot ------------------------------------------------------------
 
     def screenshot(self, path: str) -> None:
-        Q = self.Quartz
-        image = Q.CGWindowListCreateImage(
-            Q.CGRectInfinite,
-            Q.kCGWindowListOptionOnScreenOnly,
-            Q.kCGNullWindowID,
-            Q.kCGWindowImageDefault,
+        quartz = self.Quartz
+        image = quartz.CGWindowListCreateImage(
+            quartz.CGRectInfinite,
+            quartz.kCGWindowListOptionOnScreenOnly,
+            quartz.kCGNullWindowID,
+            quartz.kCGWindowImageDefault,
         )
         if image is None:
             raise _DesktopError(
@@ -600,104 +691,104 @@ class _MacBackend(_Backend):
                 "Recording permission in System Settings > Privacy & Security."
             )
         url = self._file_url(path)
-        dest = Q.CGImageDestinationCreateWithURL(url, "public.png", 1, None)
+        dest = quartz.CGImageDestinationCreateWithURL(url, "public.png", 1, None)
         if dest is None:
             raise _DesktopError(f"failed to create image destination for {path}")
-        Q.CGImageDestinationAddImage(dest, image, None)
-        if not Q.CGImageDestinationFinalize(dest):
+        quartz.CGImageDestinationAddImage(dest, image, None)
+        if not quartz.CGImageDestinationFinalize(dest):
             raise _DesktopError(f"failed to write screenshot to {path}")
 
     def resize_png(self, path: str, width: int, height: int) -> None:
-        Q = self.Quartz
+        quartz = self.Quartz
         url = self._file_url(path)
-        src = Q.CGImageSourceCreateWithURL(url, None)
-        if src is None or Q.CGImageSourceGetCount(src) == 0:
+        src = quartz.CGImageSourceCreateWithURL(url, None)
+        if src is None or quartz.CGImageSourceGetCount(src) == 0:
             raise _DesktopError(f"cannot read PNG for resize: {path}")
-        original = Q.CGImageSourceCreateImageAtIndex(src, 0, None)
+        original = quartz.CGImageSourceCreateImageAtIndex(src, 0, None)
         if original is None:
             raise _DesktopError(f"cannot decode PNG for resize: {path}")
-        color_space = Q.CGImageGetColorSpace(original)
-        ctx = Q.CGBitmapContextCreate(
+        color_space = quartz.CGImageGetColorSpace(original)
+        ctx = quartz.CGBitmapContextCreate(
             None, width, height, 8, 0, color_space,
-            Q.kCGImageAlphaPremultipliedLast,
+            quartz.kCGImageAlphaPremultipliedLast,
         )
         if ctx is None:
             raise _DesktopError(f"failed to create bitmap context for resize: {path}")
-        rect = Q.CGRectMake(0, 0, width, height)
-        Q.CGContextDrawImage(ctx, rect, original)
-        scaled = Q.CGBitmapContextCreateImage(ctx)
-        dest = Q.CGImageDestinationCreateWithURL(url, "public.png", 1, None)
-        Q.CGImageDestinationAddImage(dest, scaled, None)
-        if not Q.CGImageDestinationFinalize(dest):
+        rect = quartz.CGRectMake(0, 0, width, height)
+        quartz.CGContextDrawImage(ctx, rect, original)
+        scaled = quartz.CGBitmapContextCreateImage(ctx)
+        dest = quartz.CGImageDestinationCreateWithURL(url, "public.png", 1, None)
+        quartz.CGImageDestinationAddImage(dest, scaled, None)
+        if not quartz.CGImageDestinationFinalize(dest):
             raise _DesktopError(f"failed to write resized PNG: {path}")
 
-    def _file_url(self, path: str):
+    def _file_url(self, path: str) -> object:
         return self.AppKit.NSURL.fileURLWithPath_(path)
 
     # -- mouse -----------------------------------------------------------------
 
     def mouse_move(self, x: int, y: int) -> None:
-        Q = self.Quartz
+        quartz = self.Quartz
         cx, cy = self.cursor_position()
         dx, dy = x - cx, y - cy
         dist = (dx * dx + dy * dy) ** 0.5
         if dist < 2:
-            evt = Q.CGEventCreateMouseEvent(
-                None, Q.kCGEventMouseMoved, (x, y), Q.kCGMouseButtonLeft
+            evt = quartz.CGEventCreateMouseEvent(
+                None, quartz.kCGEventMouseMoved, (x, y), quartz.kCGMouseButtonLeft
             )
-            Q.CGEventPost(Q.kCGHIDEventTap, evt)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, evt)
             return
         steps = max(5, min(40, int(dist / 8)))
         for i in range(1, steps + 1):
             ix = cx + dx * i / steps
             iy = cy + dy * i / steps
-            evt = Q.CGEventCreateMouseEvent(
-                None, Q.kCGEventMouseMoved, (ix, iy), Q.kCGMouseButtonLeft
+            evt = quartz.CGEventCreateMouseEvent(
+                None, quartz.kCGEventMouseMoved, (ix, iy), quartz.kCGMouseButtonLeft
             )
-            Q.CGEventPost(Q.kCGHIDEventTap, evt)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, evt)
             time.sleep(0.015)
 
     def mouse_click(self, x: int, y: int, button: str, clicks: int) -> None:
-        Q = self.Quartz
+        quartz = self.Quartz
         button_map = {
-            "left": (Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp, Q.kCGMouseButtonLeft),
-            "right": (Q.kCGEventRightMouseDown, Q.kCGEventRightMouseUp, Q.kCGMouseButtonRight),
-            "middle": (Q.kCGEventOtherMouseDown, Q.kCGEventOtherMouseUp, Q.kCGMouseButtonCenter),
+            "left": (quartz.kCGEventLeftMouseDown, quartz.kCGEventLeftMouseUp, quartz.kCGMouseButtonLeft),
+            "right": (quartz.kCGEventRightMouseDown, quartz.kCGEventRightMouseUp, quartz.kCGMouseButtonRight),
+            "middle": (quartz.kCGEventOtherMouseDown, quartz.kCGEventOtherMouseUp, quartz.kCGMouseButtonCenter),
         }
         if button not in button_map:
             raise _DesktopError(f"unknown mouse button: {button}")
         down_t, up_t, btn = button_map[button]
         for i in range(clicks):
-            down = Q.CGEventCreateMouseEvent(None, down_t, (x, y), btn)
-            up = Q.CGEventCreateMouseEvent(None, up_t, (x, y), btn)
-            Q.CGEventSetIntegerValueField(down, Q.kCGMouseEventClickState, i + 1)
-            Q.CGEventSetIntegerValueField(up, Q.kCGMouseEventClickState, i + 1)
-            Q.CGEventPost(Q.kCGHIDEventTap, down)
-            Q.CGEventPost(Q.kCGHIDEventTap, up)
+            down = quartz.CGEventCreateMouseEvent(None, down_t, (x, y), btn)
+            up = quartz.CGEventCreateMouseEvent(None, up_t, (x, y), btn)
+            quartz.CGEventSetIntegerValueField(down, quartz.kCGMouseEventClickState, i + 1)
+            quartz.CGEventSetIntegerValueField(up, quartz.kCGMouseEventClickState, i + 1)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, down)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, up)
             if clicks > 1 and i < clicks - 1:
                 time.sleep(0.05)
 
     def mouse_drag(self, x1: int, y1: int, x2: int, y2: int) -> None:
-        Q = self.Quartz
-        btn = Q.kCGMouseButtonLeft
-        down = Q.CGEventCreateMouseEvent(None, Q.kCGEventLeftMouseDown, (x1, y1), btn)
-        Q.CGEventPost(Q.kCGHIDEventTap, down)
+        quartz = self.Quartz
+        btn = quartz.kCGMouseButtonLeft
+        down = quartz.CGEventCreateMouseEvent(None, quartz.kCGEventLeftMouseDown, (x1, y1), btn)
+        quartz.CGEventPost(quartz.kCGHIDEventTap, down)
         time.sleep(0.05)
         # Animate to make the move visible.
         steps = 20
         for i in range(1, steps + 1):
             ix = x1 + (x2 - x1) * i / steps
             iy = y1 + (y2 - y1) * i / steps
-            drag = Q.CGEventCreateMouseEvent(
-                None, Q.kCGEventLeftMouseDragged, (ix, iy), btn
+            drag = quartz.CGEventCreateMouseEvent(
+                None, quartz.kCGEventLeftMouseDragged, (ix, iy), btn
             )
-            Q.CGEventPost(Q.kCGHIDEventTap, drag)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, drag)
             time.sleep(0.01)
-        up = Q.CGEventCreateMouseEvent(None, Q.kCGEventLeftMouseUp, (x2, y2), btn)
-        Q.CGEventPost(Q.kCGHIDEventTap, up)
+        up = quartz.CGEventCreateMouseEvent(None, quartz.kCGEventLeftMouseUp, (x2, y2), btn)
+        quartz.CGEventPost(quartz.kCGHIDEventTap, up)
 
     def scroll(self, direction: str, amount: int) -> None:
-        Q = self.Quartz
+        quartz = self.Quartz
         dy = dx = 0
         magnitude = amount * 3  # ~3 pixel lines per notch
         if direction == "up":
@@ -708,15 +799,15 @@ class _MacBackend(_Backend):
             dx = -magnitude
         elif direction == "right":
             dx = magnitude
-        evt = Q.CGEventCreateScrollWheelEvent(
-            None, Q.kCGScrollEventUnitLine, 2, dy, dx
+        evt = quartz.CGEventCreateScrollWheelEvent(
+            None, quartz.kCGScrollEventUnitLine, 2, dy, dx
         )
-        Q.CGEventPost(Q.kCGHIDEventTap, evt)
+        quartz.CGEventPost(quartz.kCGHIDEventTap, evt)
 
     # -- keyboard --------------------------------------------------------------
 
     def type_text(self, text: str, delay_ms: int, delays_ms: list[int] | None = None) -> None:
-        Q = self.Quartz
+        quartz = self.Quartz
         # When per-character delays are supplied (humanize mode), use them
         # in order; otherwise fall back to the uniform fixed delay.
         if delays_ms:
@@ -724,16 +815,16 @@ class _MacBackend(_Backend):
         else:
             delays_iter = None
         for ch in text:
-            evt_down = Q.CGEventCreateKeyboardEvent(None, 0, True)
-            evt_up = Q.CGEventCreateKeyboardEvent(None, 0, False)
+            evt_down = quartz.CGEventCreateKeyboardEvent(None, 0, True)
+            evt_up = quartz.CGEventCreateKeyboardEvent(None, 0, False)
             # Unicode injection: bypass keycode mapping. Each event carries
             # the literal UTF-16 char; this is how Anthropic's xdotool path
             # ultimately gets translated on Linux too.
             buf = ch.encode("utf-16-le")
-            Q.CGEventKeyboardSetUnicodeString(evt_down, len(buf) // 2, ch)
-            Q.CGEventKeyboardSetUnicodeString(evt_up, len(buf) // 2, ch)
-            Q.CGEventPost(Q.kCGHIDEventTap, evt_down)
-            Q.CGEventPost(Q.kCGHIDEventTap, evt_up)
+            quartz.CGEventKeyboardSetUnicodeString(evt_down, len(buf) // 2, ch)
+            quartz.CGEventKeyboardSetUnicodeString(evt_up, len(buf) // 2, ch)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, evt_down)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, evt_up)
             # Pick the delay for this keystroke. With humanize mode the
             # generator may yield MORE entries than chars (each entry is
             # "the gap after position k"); the first entry is the pre-first
@@ -750,56 +841,56 @@ class _MacBackend(_Backend):
                 time.sleep(cur / 1000.0)
 
     def key_chord(self, chord: str) -> None:
-        Q = self.Quartz
+        quartz = self.Quartz
         keycode, flags, modifier_only = self._resolve_chord(chord)
         if modifier_only:
             # Tap a modifier on its own: brief down -> up of the modifier's
             # physical keycode. The flags themselves are implicit.
-            down = Q.CGEventCreateKeyboardEvent(None, keycode, True)
-            up = Q.CGEventCreateKeyboardEvent(None, keycode, False)
-            Q.CGEventPost(Q.kCGHIDEventTap, down)
-            Q.CGEventPost(Q.kCGHIDEventTap, up)
+            down = quartz.CGEventCreateKeyboardEvent(None, keycode, True)
+            up = quartz.CGEventCreateKeyboardEvent(None, keycode, False)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, down)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, up)
             return
         mod_keycodes = self._chord_modifier_keycodes(chord)
         for mk in mod_keycodes:
-            mod_down = Q.CGEventCreateKeyboardEvent(None, mk, True)
-            Q.CGEventPost(Q.kCGHIDEventTap, mod_down)
-        down = Q.CGEventCreateKeyboardEvent(None, keycode, True)
-        up = Q.CGEventCreateKeyboardEvent(None, keycode, False)
+            mod_down = quartz.CGEventCreateKeyboardEvent(None, mk, True)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, mod_down)
+        down = quartz.CGEventCreateKeyboardEvent(None, keycode, True)
+        up = quartz.CGEventCreateKeyboardEvent(None, keycode, False)
         if flags:
-            Q.CGEventSetFlags(down, flags)
-            Q.CGEventSetFlags(up, flags)
-        Q.CGEventPost(Q.kCGHIDEventTap, down)
-        Q.CGEventPost(Q.kCGHIDEventTap, up)
+            quartz.CGEventSetFlags(down, flags)
+            quartz.CGEventSetFlags(up, flags)
+        quartz.CGEventPost(quartz.kCGHIDEventTap, down)
+        quartz.CGEventPost(quartz.kCGHIDEventTap, up)
         for mk in reversed(mod_keycodes):
-            mod_up = Q.CGEventCreateKeyboardEvent(None, mk, False)
-            Q.CGEventPost(Q.kCGHIDEventTap, mod_up)
+            mod_up = quartz.CGEventCreateKeyboardEvent(None, mk, False)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, mod_up)
 
     def hold_key(self, chord: str, duration: float) -> None:
-        Q = self.Quartz
+        quartz = self.Quartz
         keycode, flags, modifier_only = self._resolve_chord(chord)
         if modifier_only:
-            down = Q.CGEventCreateKeyboardEvent(None, keycode, True)
-            up = Q.CGEventCreateKeyboardEvent(None, keycode, False)
-            Q.CGEventPost(Q.kCGHIDEventTap, down)
+            down = quartz.CGEventCreateKeyboardEvent(None, keycode, True)
+            up = quartz.CGEventCreateKeyboardEvent(None, keycode, False)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, down)
             time.sleep(duration)
-            Q.CGEventPost(Q.kCGHIDEventTap, up)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, up)
             return
         mod_keycodes = self._chord_modifier_keycodes(chord)
         for mk in mod_keycodes:
-            mod_down = Q.CGEventCreateKeyboardEvent(None, mk, True)
-            Q.CGEventPost(Q.kCGHIDEventTap, mod_down)
-        down = Q.CGEventCreateKeyboardEvent(None, keycode, True)
-        up = Q.CGEventCreateKeyboardEvent(None, keycode, False)
+            mod_down = quartz.CGEventCreateKeyboardEvent(None, mk, True)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, mod_down)
+        down = quartz.CGEventCreateKeyboardEvent(None, keycode, True)
+        up = quartz.CGEventCreateKeyboardEvent(None, keycode, False)
         if flags:
-            Q.CGEventSetFlags(down, flags)
-            Q.CGEventSetFlags(up, flags)
-        Q.CGEventPost(Q.kCGHIDEventTap, down)
+            quartz.CGEventSetFlags(down, flags)
+            quartz.CGEventSetFlags(up, flags)
+        quartz.CGEventPost(quartz.kCGHIDEventTap, down)
         time.sleep(duration)
-        Q.CGEventPost(Q.kCGHIDEventTap, up)
+        quartz.CGEventPost(quartz.kCGHIDEventTap, up)
         for mk in reversed(mod_keycodes):
-            mod_up = Q.CGEventCreateKeyboardEvent(None, mk, False)
-            Q.CGEventPost(Q.kCGHIDEventTap, mod_up)
+            mod_up = quartz.CGEventCreateKeyboardEvent(None, mk, False)
+            quartz.CGEventPost(quartz.kCGHIDEventTap, mod_up)
 
     def _resolve_chord(self, chord: str) -> tuple[int, int, bool]:
         """Parse 'Cmd+Shift+S' / 'Return' / 'Shift' into (keycode, flags, modifier_only).
@@ -810,19 +901,19 @@ class _MacBackend(_Backend):
         and ``flags`` is 0 — callers should not apply flags on top, because
         macOS derives the flag bit from the physical key event itself.
         """
-        Q = self.Quartz
+        quartz = self.Quartz
         parts = [p.strip() for p in chord.split("+") if p.strip()]
         if not parts:
             raise _DesktopError(f"empty key chord: {chord!r}")
         mods = 0
         key_name: str | None = None
         mod_map = {
-            "cmd": Q.kCGEventFlagMaskCommand, "command": Q.kCGEventFlagMaskCommand,
-            "shift": Q.kCGEventFlagMaskShift,
-            "alt": Q.kCGEventFlagMaskAlternate, "option": Q.kCGEventFlagMaskAlternate,
-            "opt": Q.kCGEventFlagMaskAlternate,
-            "ctrl": Q.kCGEventFlagMaskControl, "control": Q.kCGEventFlagMaskControl,
-            "fn": Q.kCGEventFlagMaskSecondaryFn,
+            "cmd": quartz.kCGEventFlagMaskCommand, "command": quartz.kCGEventFlagMaskCommand,
+            "shift": quartz.kCGEventFlagMaskShift,
+            "alt": quartz.kCGEventFlagMaskAlternate, "option": quartz.kCGEventFlagMaskAlternate,
+            "opt": quartz.kCGEventFlagMaskAlternate,
+            "ctrl": quartz.kCGEventFlagMaskControl, "control": quartz.kCGEventFlagMaskControl,
+            "fn": quartz.kCGEventFlagMaskSecondaryFn,
         }
         # Physical virtual keycodes for the modifier keys themselves
         # (kVK_Shift, kVK_Command, kVK_Option, kVK_Control, kVK_Function).

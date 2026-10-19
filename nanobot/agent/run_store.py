@@ -74,6 +74,32 @@ class RunStore:
 
     create = save
 
+    def insert_cancelled_terminal(self, record: RunRecord | Mapping[str, Any]) -> bool:
+        """Insert a cancelled terminal record without ever replacing an existing ID."""
+        record = self._coerce_record(record)
+        if record.status is not RunStatus.CANCELLED:
+            raise ValueError("cancelled terminal record required")
+        path = self.path_for(record.run_id)
+        payload = record.to_dict()
+        fd, temp_name = tempfile.mkstemp(
+            prefix=f".{path.stem}.", suffix=".tmp", dir=path.parent
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                # Same-directory hard linking is atomic and insert-only. No
+                # replacement fallback is safe, including on unsupported hosts.
+                os.link(temp_name, path)
+            except FileExistsError:
+                return False
+            return True
+        finally:
+            os.unlink(temp_name)
+
     def load(self, run_id: str) -> RunRecord | None:
         """Load one record, returning ``None`` when it does not exist/parse."""
         path = self.path_for(run_id)

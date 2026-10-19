@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from nanobot.agent import memory_recovery as receipt_codec
+from nanobot.agent import memory_recovery_conversion_apply as application
+from nanobot.agent import memory_recovery_quarantine_storage as quarantine
 from nanobot.agent import memory_recovery_storage as storage
 from nanobot.agent import memory_recovery_target_verify as target_verify
 from nanobot.agent import memory_recovery_transaction as transaction
@@ -41,13 +43,13 @@ def _hash(data: bytes) -> str:
 def _source_state(raw: bytes, receipt: receipt_codec.MemoryReceipt, source: transaction.SourceTransition,
                   proposed: bytes) -> str:
     if len(raw) == source.old_size and _hash(raw) == source.old_digest:
-        payload, derived = preparation._source_proposal(raw, receipt)
+        payload, derived = preparation.derive_recovery_source_proposal(raw, receipt)
         if payload != source.to_payload() or derived != proposed:
             _fail()
         return "old"
     if len(raw) != source.new_size or _hash(raw) != source.new_digest or raw != proposed:
         _fail()
-    header, events = preparation._session_records(raw, receipt.session_key or "")
+    header, events = preparation.parse_recovery_session_records(raw, receipt.session_key or "")
     if (
         type(header["generation"]) is not int
         or type(header["revision"]) is not int
@@ -60,7 +62,7 @@ def _source_state(raw: bytes, receipt: receipt_codec.MemoryReceipt, source: tran
         or source.old_cursor != receipt.start_offset
         or source.new_cursor != receipt.end_offset
         or not source.old_cursor < source.new_cursor <= len(events)
-        or preparation._legacy_chunk_digest(events[source.old_cursor:source.new_cursor])
+        or preparation.legacy_transaction_chunk_digest(events[source.old_cursor:source.new_cursor])
         != receipt.chunk_digest
     ):
         _fail()
@@ -70,18 +72,18 @@ def _source_state(raw: bytes, receipt: receipt_codec.MemoryReceipt, source: tran
 def _proof(
     authority: storage.WorkspaceMemoryAuthority,
     operation: storage.WorkspaceMemoryOperation,
-    receipt_snapshot: storage.MemoryTargetSnapshot,
+    receipt_snapshot: storage.MemoryTargetSnapshot | quarantine.ValidatedQuarantineCopy,
     workspace_id: str,
     records: tuple[ManifestRecord, ...],
+    *, read_only: bool = False,
 ) -> tuple[receipt_codec.MemoryReceipt, transaction.CapturedTransactionPayload,
            transaction.PreparedTransactionPayload, transaction.HistoryAppliedTransactionPayload,
            transaction.MemoryAppliedTransactionPayload, bytes]:
     if tuple(record.phase for record in records) not in {_PREFIX, (*_PREFIX, "OFFSET_APPLIED")}:
         _fail()
-    raw = receipt_snapshot.content
-    if raw is None:
-        _fail()
-    receipt = receipt_codec._validate_payload(receipt_codec._decode(raw), raw)
+    raw = application.receipt_evidence_bytes(receipt_snapshot)
+    application.require_conversion_receipt_binding(authority, receipt_snapshot)
+    receipt = receipt_codec.decode_memory_receipt_bytes(raw)
     captured = transaction.capture_transaction_payload(
         receipt, workspace_id=workspace_id, workspace_identity=operation.workspace_identity,
     )
@@ -90,10 +92,11 @@ def _proof(
     prepared = transaction.decode_transaction_payload(
         "PREPARED", records[1].payload, captured=captured,
     )
-    if preparation._receipt_stat(receipt_snapshot) != prepared.receipt_stat.to_payload():
+    if application.receipt_evidence_stat(receipt_snapshot) != prepared.receipt_stat.to_payload():
         _fail()
-    conversion = preparation._conversion_evidence(
+    conversion = preparation.require_transaction_conversion_evidence(
         authority, captured, records[0], receipt_snapshot, receipt, operation,
+        read_only=read_only,
     )
     if conversion.disposition != "convert" or conversion.outputs is None or conversion.canonical_row is None:
         _fail()
@@ -113,47 +116,45 @@ def _proof(
     cursor_bytes = snapshots[".cursor"].content
     if history_bytes is None or cursor_bytes is None:
         _fail()
-    marker = preparation._verified_marker_row(
+    marker = preparation.read_verified_transaction_marker_row(
         authority, conversion, receipt, history_bytes, cursor_bytes,
     )
     if _hash(marker) != prepared.history_row_digest:
         _fail()
     for name, data in (("history.jsonl", history_bytes), (".cursor", cursor_bytes)):
-        history._check_new_target_blob(authority, prepared.targets[name].new, data)
-        if not memory_stage._same_snapshot(
+        history.require_transaction_target_blob(authority, prepared.targets[name].new, data)
+        if not memory_stage.transaction_snapshots_match(
             snapshots[name], target_verify.durably_verify_target(operation, snapshots[name], data)
         ):
             _fail()
     memory_snapshot = snapshots["MEMORY.md"]
     transition = prepared.targets["MEMORY.md"]
-    expected_memory = (
-        receipt.memory_output.encode("utf-8") if prepared.memory_action == "replace"
-        else memory_snapshot.content
-    )
+    expected_memory = memory_snapshot.content
     if prepared.memory_action == "replace":
         if receipt.memory_output is None or receipt.reference_only:
             _fail()
+        expected_memory = receipt.memory_output.encode("utf-8")
         if not (
-            memory_stage._authorized_new_snapshot(memory_snapshot, transition.new, expected_memory, transition.old)
-            or (memory_stage._snapshot_matches_old(memory_snapshot, transition.old)
+            memory_stage.transaction_snapshot_is_authorized_new(memory_snapshot, transition.new, expected_memory, transition.old)
+            or (memory_stage.transaction_snapshot_matches_old(memory_snapshot, transition.old)
                 and memory_snapshot.content == expected_memory)
         ):
             _fail()
     elif prepared.memory_action == "preserve":
-        if not receipt.reference_only or not memory_stage._snapshot_matches_old(memory_snapshot, transition.old):
+        if not receipt.reference_only or not memory_stage.transaction_snapshot_matches_old(memory_snapshot, transition.old):
             _fail()
     else:
         _fail()
-    memory_stage._check_memory_blob(authority, transition.new, expected_memory)
-    if not memory_stage._same_snapshot(
-        memory_snapshot, memory_stage._durably_verify_memory(operation, memory_snapshot, expected_memory)
+    memory_stage.require_transaction_memory_blob(authority, transition.new, expected_memory)
+    if not memory_stage.transaction_snapshots_match(
+        memory_snapshot, memory_stage.durably_verify_transaction_memory(operation, memory_snapshot, expected_memory)
     ):
         _fail()
     source = prepared.source
     proposed = authority.read_blob(source.new_digest)
-    if proposed is None or len(proposed) != source.new_size or _hash(proposed) != source.new_digest:
+    if cast(object, proposed) is None or len(proposed) != source.new_size or _hash(proposed) != source.new_digest:
         _fail()
-    preparation._receipt_bound(authority, receipt_snapshot)
+    application.require_conversion_receipt_binding(authority, receipt_snapshot)
     return receipt, captured, prepared, applied_history, applied_memory, proposed
 
 
@@ -170,10 +171,10 @@ def reconcile_memory_recovery_transaction_offset(
             if receipt_snapshot.content is None:
                 _fail()
             with operation.borrow_pending_receipt_parent(receipt_snapshot) as scope:
-                if not memory_stage._same_snapshot(receipt_snapshot, scope.snapshot_target()):
+                if not memory_stage.transaction_snapshots_match(receipt_snapshot, scope.snapshot_target()):
                     _fail()
             raw = receipt_snapshot.content
-            receipt = receipt_codec._validate_payload(receipt_codec._decode(raw), raw)
+            receipt = receipt_codec.decode_memory_receipt_bytes(raw)
             captured = transaction.capture_transaction_payload(
                 receipt, workspace_id=workspace_id, workspace_identity=operation.workspace_identity,
             )
@@ -211,7 +212,7 @@ def reconcile_memory_recovery_transaction_offset(
                 checked.verify_recovery_source_bytes(proposed)
                 if _proof(authority, operation, receipt_snapshot, workspace_id, manifest.load())[-1] != proposed:
                     _fail()
-                preparation._receipt_bound(authority, receipt_snapshot)
+                preparation.require_transaction_receipt_binding(authority, receipt_snapshot)
                 if len(records) == 5:
                     current = manifest.load()
                     if current != records:

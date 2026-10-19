@@ -16,6 +16,11 @@ from nanobot.providers.openai_codex_oauth import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolated_authority(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NANOBOT_CODEX_AUTH_PATH", str(tmp_path / "codex.json"))
+
+
 def _authorization_url(state: str = "expected-state") -> str:
     return f"{codex_oauth.OPENAI_CODEX_PROVIDER.authorize_url}?{urlencode({'state': state})}"
 
@@ -42,6 +47,7 @@ def _fake_interactive_login(
         provider,
         proxy,
         open_browser,
+        storage,
     ) -> OAuthToken:
         captured.update(
             provider=provider,

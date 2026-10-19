@@ -1,31 +1,46 @@
 import asyncio
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.tools.session_messages import SendSessionMessageTool
 from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMResponse
+from nanobot.providers.base import GenerationSettings, LLMResponse
 from nanobot.runtime_context import public_history_message
 from nanobot.session.session_messages import SESSION_MESSAGE_METADATA_KEY
+from tests.agent import p6_admitted_fixtures
+from tests.agent.test_loop_runner_integration import _execute_inbound
+
+admitted_async = p6_admitted_fixtures.admitted_async
+_run_agent = AgentLoop.run
 
 
-def _loop(tmp_path: Path) -> AgentLoop:
+async def _loop(tmp_path: Path, admitted_async, *, session_tool=False) -> AgentLoop:
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
-    provider.generation = SimpleNamespace(max_tokens=4096)
+    provider.generation = GenerationSettings()
+    provider.supports_bound_conversation_state.return_value = False
+    provider.can_resume_conversation_state.return_value = False
     provider.chat_with_retry = AsyncMock(
         return_value=LLMResponse(content="Reviewed", tool_calls=[], usage=None)
     )
-    return AgentLoop(
-        bus=MessageBus(),
-        provider=provider,
-        workspace=tmp_path,
-        model="test-model",
-    )
+    def build(inputs):
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            model="test-model", session_manager=inputs.sessions,
+            tool_registry=inputs.tools, cron_service=inputs.cron,
+            turn_delivery_factory=inputs.delivery, enable_legacy_auto_compact=False,
+        )
+
+    loop = await admitted_async(tmp_path, build, keys=("telegram:target",))
+    assert not loop.tools.has("send_session_message")
+    if session_tool:
+        # The foreground manifest does not install this optional tool. Its
+        # runtime-context contribution must be tested with the real tool present.
+        loop.tools.register(SendSessionMessageTool(sessions=loop.sessions, bus=loop.bus))
+    return loop
 
 
 def _message(content: str = "Please review") -> InboundMessage:
@@ -49,16 +64,19 @@ def _message(content: str = "Please review") -> InboundMessage:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("session_tool", [False, True])
 async def test_session_message_runs_as_user_input_and_replies_on_target_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    admitted_async,
+    session_tool,
 ) -> None:
     monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path / "state")
-    loop = _loop(tmp_path)
+    loop = await _loop(tmp_path, admitted_async, session_tool=session_tool)
     loop.sessions.save(loop.sessions.get_or_create("telegram:target"))
     msg = _message()
 
-    response = await loop._process_message(msg)
+    response = await _execute_inbound(loop, msg)
 
     assert response is not None
     assert (response.channel, response.chat_id, response.content) == (
@@ -71,8 +89,11 @@ async def test_session_message_runs_as_user_input_and_replies_on_target_route(
         row for row in reversed(provider_messages) if row.get("role") == "user"
     )
     assert provider_input["content"].startswith("Please review")
-    assert "Message from @luma." in provider_input["content"]
-    assert "Reply with send_session_message." in provider_input["content"]
+    if session_tool:
+        assert "Message from @luma." in provider_input["content"]
+        assert "Reply with send_session_message." in provider_input["content"]
+    else:
+        assert provider_input["content"] == "Please review"
 
     stored = loop.sessions.get_or_create("telegram:target").messages
     user_row = next(row for row in stored if row.get("role") == "user")
@@ -81,14 +102,18 @@ async def test_session_message_runs_as_user_input_and_replies_on_target_route(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("session_tool", [False, True])
 async def test_session_message_text_is_not_dispatched_as_a_slash_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    admitted_async,
+    session_tool,
 ) -> None:
     monkeypatch.setattr("nanobot.config.paths.get_data_dir", lambda: tmp_path / "state")
-    loop = _loop(tmp_path)
+    loop = await _loop(tmp_path, admitted_async, session_tool=session_tool)
     loop.sessions.save(loop.sessions.get_or_create("telegram:target"))
-    task = asyncio.create_task(loop.run())
+    # Invoke only this real consumer while the fixture's external-effect fences remain.
+    task = asyncio.create_task(_run_agent(loop))
     try:
         await loop.bus.publish_inbound(_message("/stop"))
         response = await asyncio.wait_for(loop.bus.consume_outbound(), timeout=2)

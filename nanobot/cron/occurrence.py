@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast
 
 from nanobot.cron.action_store import CronActionStoreError
 from nanobot.cron.definition_store import (
@@ -85,7 +85,8 @@ def _copy_json_mapping(value: Mapping[str, Any], *, label: str) -> dict[str, Any
         raise CronOccurrenceRuntimeError(f"{label} must contain finite JSON data") from exc
     if not isinstance(copied, dict):  # pragma: no cover - mappings encode as objects
         raise CronOccurrenceRuntimeError(f"{label} must be a JSON object")
-    return copied
+    # JSON decoding constructs string-keyed objects with opaque wire values.
+    return cast(dict[str, Any], copied)
 
 
 def _destination_policy(definition: CronDefinition) -> dict[str, Any]:
@@ -107,6 +108,15 @@ def _destination_policy(definition: CronDefinition) -> dict[str, Any]:
     )
 
 
+def destination_policy(definition: CronDefinition) -> dict[str, object]:
+    """Return the existing detached policy without granting delivery authority."""
+    return _destination_policy(definition)
+
+
+def scheduler_destination_policy_conflicts(definition: CronDefinition, record: OccurrenceRecord) -> bool:
+    return _destination_policy(definition) != record.destination_policy
+
+
 class CronOccurrenceRuntime:
     """Admission adapter over committed definitions and durable occurrences."""
 
@@ -115,9 +125,9 @@ class CronOccurrenceRuntime:
         definition_store: CronDefinitionStore,
         occurrence_store: CronOccurrenceStore,
     ) -> None:
-        if not isinstance(definition_store, CronDefinitionStore):
+        if not isinstance(cast(object, definition_store), CronDefinitionStore):
             raise TypeError("definition_store must be a CronDefinitionStore")
-        if not isinstance(occurrence_store, CronOccurrenceStore):
+        if not isinstance(cast(object, occurrence_store), CronOccurrenceStore):
             raise TypeError("occurrence_store must be a CronOccurrenceStore")
         if definition_store.action_store.namespace != occurrence_store.namespace:
             raise ValueError("definition and occurrence stores must share one namespace")
@@ -126,7 +136,7 @@ class CronOccurrenceRuntime:
         self.owner = new_occurrence_owner()
 
     def _committed_definition(self, job_id: str) -> CronDefinition:
-        if not isinstance(job_id, str) or not job_id:
+        if not isinstance(cast(object, job_id), str) or not job_id:
             raise ValueError("job_id must be a non-empty string")
         try:
             replay = self.definition_store.replay()
@@ -147,6 +157,10 @@ class CronOccurrenceRuntime:
                 f"cron definition {job_id!r} does not exist"
             )
         return definition
+
+    def committed_definition(self, job_id: str) -> CronDefinition:
+        """Read through the original replay and pending-checkpoint fences."""
+        return self._committed_definition(job_id)
 
     @staticmethod
     def _validate_expected_definition(

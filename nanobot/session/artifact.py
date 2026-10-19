@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from nanobot.session.source import (
     SourceValidationError,
@@ -61,25 +62,39 @@ class FilesystemArtifactOrigin:
 
 
 def _origin(raw: object) -> FilesystemArtifactOrigin:
-    if not isinstance(raw, dict) or set(raw) != {'kind', 'access_class', 'repository', 'relative_path'}:
+    if not isinstance(raw, dict):
         raise ArtifactValidationError('Invalid artifact source locator')
-    if raw['kind'] != 'filesystem':
+    # Only the container type is claimed here; every value is still untrusted.
+    record = cast(dict[object, object], raw)
+    if set(record) != {'kind', 'access_class', 'repository', 'relative_path'}:
+        raise ArtifactValidationError('Invalid artifact source locator')
+    if record['kind'] != 'filesystem':
         raise ArtifactValidationError('Unsupported artifact provenance adapter')
-    access = raw['access_class']
+    access = record['access_class']
     if access not in ('workspace', 'context_repository', 'target_repository'):
         raise ArtifactValidationError('Invalid artifact source access class')
-    repository = raw['repository']
+    repository = record['repository']
     if access == 'workspace':
         if repository is not None:
             raise ArtifactValidationError('Workspace artifact cannot claim a repository')
     else:
         repository = _identity(repository)
-    path = raw['relative_path']
+    path = record['relative_path']
     if (not isinstance(path, str) or not path or '\\' in path or ':' in path
             or any(ord(char) < 32 or ord(char) == 127 for char in path)
             or any(part in ('', '.', '..') for part in path.split('/'))):
         raise ArtifactValidationError('Invalid relative artifact source locator')
     return FilesystemArtifactOrigin('filesystem', access, repository, path)
+
+
+def parse_filesystem_artifact_origin(raw: object) -> FilesystemArtifactOrigin:
+    """Validate recorded locator metadata without granting filesystem access."""
+    return _origin(raw)
+
+
+def select_filesystem_artifact_origin_parser() -> Callable[[object], FilesystemArtifactOrigin]:
+    """Select the current syntax parser before inspecting an untrusted container."""
+    return _origin
 
 
 @dataclass(frozen=True)
@@ -118,33 +133,39 @@ def parse_artifact_descriptor(raw: object) -> ArtifactDescriptor:
     fields = {'schema_version', 'artifact_id', 'workspace_id', 'session_key', 'incarnation',
               'generation', 'event_id', 'execution_id', 'stream_id', 'run_id', 'block_index',
               'mime_type', 'byte_length', 'sha256', 'created_at', 'source_access'}
-    if not isinstance(raw, dict) or set(raw) != fields:
+    if not isinstance(raw, dict):
         raise ArtifactValidationError('Invalid artifact descriptor schema')
-    if type(raw['schema_version']) is not int or raw['schema_version'] != 1:
+    record = cast(dict[object, object], raw)
+    if set(record) != fields:
+        raise ArtifactValidationError('Invalid artifact descriptor schema')
+    if type(record['schema_version']) is not int or record['schema_version'] != 1:
         raise ArtifactValidationError('Unsupported artifact descriptor version')
+    counters: dict[str, int] = {}
     for name in ('generation', 'byte_length'):
-        if type(raw[name]) is not int or raw[name] < 0:
+        value = record[name]
+        if type(value) is not int or value < 0:
             raise ArtifactValidationError('Invalid artifact counter')
-    block = raw['block_index']
+        counters[name] = value
+    block = record['block_index']
     if block is not None and (type(block) is not int or block < 0):
         raise ArtifactValidationError('Invalid artifact text block selector')
-    digest = raw['sha256']
+    digest = record['sha256']
     if not isinstance(digest, str) or _DIGEST.fullmatch(digest) is None:
         raise ArtifactValidationError('Invalid artifact content digest')
-    if raw['mime_type'] != 'text/plain; charset=utf-8':
+    if record['mime_type'] != 'text/plain; charset=utf-8':
         raise ArtifactValidationError('Unsupported artifact content type')
-    timestamp = raw['created_at']
+    timestamp = record['created_at']
     try:
         if not isinstance(timestamp, str) or datetime.fromisoformat(timestamp).tzinfo is None:
             raise ValueError
     except ValueError:
         raise ArtifactValidationError('Invalid artifact timestamp') from None
     return ArtifactDescriptor(
-        1, _opaque_id(raw['artifact_id']), _opaque_id(raw['workspace_id']),
-        _identity(raw['session_key']), _identity(raw['incarnation']), raw['generation'],
-        _identity(raw['event_id']), _identity(raw['execution_id']), _identity(raw['stream_id']),
-        _identity(raw['run_id']), block, raw['mime_type'], raw['byte_length'], digest,
-        timestamp, _origin(raw['source_access']),
+        1, _opaque_id(record['artifact_id']), _opaque_id(record['workspace_id']),
+        _identity(record['session_key']), _identity(record['incarnation']), counters['generation'],
+        _identity(record['event_id']), _identity(record['execution_id']), _identity(record['stream_id']),
+        _identity(record['run_id']), block, 'text/plain; charset=utf-8', counters['byte_length'], digest,
+        timestamp, _origin(record['source_access']),
     )
 
 
@@ -179,12 +200,18 @@ def bound_artifact_text(descriptor: ArtifactDescriptor, snapshot: SourceSnapshot
     if descriptor.block_index is None:
         text = content
     else:
-        if not isinstance(content, list) or descriptor.block_index >= len(content):
+        if not isinstance(content, list):
             raise ArtifactValidationError('Artifact text block is absent')
-        block = content[descriptor.block_index]
-        if not isinstance(block, dict) or block.get('type') != 'text':
+        blocks = cast(list[object], content)
+        if descriptor.block_index >= len(blocks):
+            raise ArtifactValidationError('Artifact text block is absent')
+        block = blocks[descriptor.block_index]
+        if not isinstance(block, dict):
             raise ArtifactValidationError('Artifact selector does not identify text')
-        text = block.get('text')
+        block_fields = cast(dict[object, object], block)
+        if block_fields.get('type') != 'text':
+            raise ArtifactValidationError('Artifact selector does not identify text')
+        text = block_fields.get('text')
     if not isinstance(text, str):
         raise ArtifactValidationError('Artifact source is not text')
     try:
@@ -206,16 +233,22 @@ def published_artifacts(snapshot: SourceSnapshot, *, workspace_id: str) -> tuple
     metadata = snapshot.header.get('metadata', {})
     if not isinstance(metadata, dict):
         raise ArtifactValidationError('Invalid artifact manifest metadata')
-    if 'artifact_manifest' not in metadata:
+    metadata_fields = cast(dict[object, object], metadata)
+    if 'artifact_manifest' not in metadata_fields:
         return ()
-    manifest = metadata['artifact_manifest']
-    if (not isinstance(manifest, dict) or set(manifest) != {'schema_version', 'descriptors'}
-            or type(manifest['schema_version']) is not int or manifest['schema_version'] != 1
-            or not isinstance(manifest['descriptors'], dict)):
+    manifest = metadata_fields['artifact_manifest']
+    if not isinstance(manifest, dict):
         raise ArtifactValidationError('Invalid artifact manifest schema')
-    descriptors = []
-    bindings = set()
-    for artifact_id, raw in manifest['descriptors'].items():
+    manifest_fields = cast(dict[object, object], manifest)
+    if (set(manifest_fields) != {'schema_version', 'descriptors'}
+            or type(manifest_fields['schema_version']) is not int or manifest_fields['schema_version'] != 1):
+        raise ArtifactValidationError('Invalid artifact manifest schema')
+    raw_descriptors = manifest_fields['descriptors']
+    if not isinstance(raw_descriptors, dict):
+        raise ArtifactValidationError('Invalid artifact manifest schema')
+    descriptors: list[ArtifactDescriptor] = []
+    bindings: set[tuple[str, int | None]] = set()
+    for artifact_id, raw in cast(dict[object, object], raw_descriptors).items():
         descriptor = parse_artifact_descriptor(raw)
         if artifact_id != descriptor.artifact_id or descriptor.idempotency_key in bindings:
             raise ArtifactValidationError('Conflicting artifact manifest identity')
@@ -233,16 +266,20 @@ def _declared_tool_name(snapshot: SourceSnapshot, execution_id: str) -> str:
         execution_ids = event.get('_execution_ids')
         if not isinstance(execution_ids, list):
             continue
+        ids = cast(list[object], execution_ids)
         try:
-            index = execution_ids.index(execution_id)
+            index = ids.index(execution_id)
         except ValueError:
             continue
         calls = event.get('tool_calls')
-        if not isinstance(calls, list) or index >= len(calls):
+        if not isinstance(calls, list):
             break
-        call = calls[index]
-        function = call.get('function') if isinstance(call, dict) else None
-        name = function.get('name') if isinstance(function, dict) else None
+        call_items = cast(list[object], calls)
+        if index >= len(call_items):
+            break
+        call = call_items[index]
+        function = cast(dict[object, object], call).get('function') if isinstance(call, dict) else None
+        name = cast(dict[object, object], function).get('name') if isinstance(function, dict) else None
         if isinstance(name, str) and name:
             return name
         break

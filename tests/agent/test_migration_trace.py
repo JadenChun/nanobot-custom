@@ -10,7 +10,6 @@ from nanobot.agent.trace import sanitize_trace
 from nanobot.agent.turn import TraceMode, TurnRequest
 from nanobot.events import NO_EVENTS
 from nanobot.runtime_context import RUNTIME_CONTEXT_HISTORY_META
-from nanobot.session.manager import Session
 
 from .test_migration_canonical_admission import host
 
@@ -42,9 +41,10 @@ def test_trace_is_detached_bounded_and_structurally_private():
 
 def stage_host(tmp_path, *, fail=False):
     loop = host(tmp_path)
-    session = Session(key='cli:test')
+    session = loop.sessions.get_or_create('cli:test')
     session.add_run_message('previous', 'user', 'previous secret')
-    loop.sessions = SimpleNamespace(save=Mock(), source_backend=lambda key: None)
+    # Keep the real admission/cancellation protocol; mock only the save seam.
+    loop.sessions.save = Mock()
     loop.runtime_event_publisher = SimpleNamespace(session_turn_persisted=AsyncMock())
     delivery = SimpleNamespace(session_key=session.key, streaming=False, events=NO_EVENTS,
                                record_latency=Mock())

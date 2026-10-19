@@ -3,10 +3,10 @@
 `nanobot.cron.occurrence_store.CronOccurrenceStore` is an isolated, private
 ledger for synthetic scheduled fires. It is not wired to cron dispatch while
 the migration guard and cron admission fence remain in place. The low-level
-store intentionally exposes only the scheduled-claim primitive; Package D's
-`CronOccurrenceRuntime` supplies the shared identity and reconciliation seam
-for timer, manual, and system attempts. It still does not execute any of
-those sources.
+store supplies an exact scheduled claim and, in the later dormant extension
+below, a one-shot computation-start gate. Package D's `CronOccurrenceRuntime`
+supplies the shared identity and reconciliation seam for timer, manual, and
+system attempts; none of those sources is automatically dispatched.
 
 Each occurrence ID is a SHA-256 digest of the schema tag and these typed
 values: store namespace, job ID, job revision, and scheduled fire time in
@@ -43,11 +43,14 @@ records and exposes every outstanding claim via `reconciliation_required()`.
 A new process must treat those records as non-executable and `claim_scheduled`
 returns a reconciliation-required error for the same identity. Opening another
 process never invalidates a live owner. An authorized reconciliation flow may
-call `reclaim_after_reconciliation` only after the predecessor runtime is
-fenced and external evidence establishes `confirmed_not_started` or
-`confirmed_compensated`; it must supply the predecessor owner and generation.
-The ledger lock serializes that successor transition, but does not substitute
-for the runtime/process lifecycle fence.
+call `reclaim_after_reconciliation` only after external evidence establishes
+`confirmed_not_started` or `confirmed_compensated`; it must supply the
+predecessor owner and generation. The store non-blockingly acquires the same
+persistent per-occurrence execution lock used by canonical execution before it
+rereads and replaces that exact predecessor. A live execution therefore
+returns an explicit busy error without changing the record. The short ledger
+lock is acquired only after the per-occurrence lock and never spans a model
+await.
 
 Computation must call `complete()` successfully before a future delivery layer
 derives sends from the frozen policy. Replace or fsync errors return no claim or
@@ -77,5 +80,46 @@ failure.
 
 This package does not establish external exactly-once delivery. The later cron
 runtime package must use the durable canonical completion as its only input to
-destination receipt and uncertain-send reconciliation, and must hold the
-appropriate process/turn fence before invoking reconciliation reclamation.
+destination receipt and uncertain-send reconciliation. Explicit occurrence
+reclamation still requires exact predecessor evidence; the store itself now
+enforces exclusion from any live canonical execution with the per-occurrence
+OS lock.
+
+2026-09-29 dormant per-occurrence execution-fence extension: canonical
+execution first acquires `.execution.<occurrence-id>.lock`, a persistent private
+regular owner file whose validated name is derived only from the 64-hex
+occurrence ID. It retains the nonblocking OS lock through start reproof, the
+model turn, durable completion, projection/outbox preparation, and optional
+visible-chat linking. The file is created descriptor-relatively with
+`O_NOFOLLOW|O_NONBLOCK`, exact mode `0600`, one link, file and directory fsync,
+and pre/post-flock plus release binding checks; it is never unlinked. Existing
+execution-lock entries are constructor-validated with the same exact grammar
+and safety properties. Every acquisition repeats both fsync barriers before
+flock authority, including an existing residue left visible by an earlier
+failed create or fsync acknowledgement.
+
+The store issues a nonserializable `OccurrenceExecutionFence` only for its
+exact process-local claim. Store-private issuance state binds the capability to
+the occurrence ID, owner/generation, canonical frozen snapshot and policy,
+acquisition PID and asyncio task, active/started state, held root binding, and
+lock descriptor/inode. Copies, reconstruction, serialization, foreign-store or
+foreign-task use, mutation, inactive reuse, stale claims, and fork inheritance
+fail closed. A process-global weak registry and child fork hook close inherited
+descriptors without `LOCK_UN`, so the child cannot act or prolong the parent's
+lock.
+
+`begin_execution(claim, fence)` reproves that exact active fence and the
+still-claimed durable owner/generation/frozen inputs under the short ledger
+lock before consuming the one-shot local start marker. Claimed-to-completed
+mutation requires the same active, started fence; identical completion retry
+remains available only while it is held. Failure or cancellation releases the
+OS lock, retains the consumed local marker, and leaves an incomplete durable
+claim for explicit reconciliation. A completed occurrence recovers by durable
+projection, outbox preparation, and visible linking without recomputation.
+There is no timeout, lease expiry, waiting takeover, inferred resolution, or
+automatic reclaim.
+
+Process death can still leave detached external effects whose completion is
+not represented in this private ledger. Those effects remain operator evidence
+and compensation responsibility; the store never infers their outcome. No
+production scheduling or automatic reconciliation is authorized by this API.

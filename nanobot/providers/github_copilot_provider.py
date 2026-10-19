@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import os
 import time
@@ -15,9 +14,14 @@ from typing import Any, cast
 
 import httpx
 from oauth_cli_kit.models import OAuthToken
-from oauth_cli_kit.storage import FileTokenStorage
 
 from nanobot.providers.base import LLMResponse, ProviderCallContext
+from nanobot.providers.copilot_auth import (
+    get_copilot_authority,
+    get_copilot_bearer_view,
+    get_copilot_identity,
+)
+from nanobot.providers.oauth_credentials import OAuthToken as CanonicalToken
 from nanobot.providers.oauth_model_catalog import (
     OAuthModelCatalog,
     OAuthModelCatalogSnapshot,
@@ -47,22 +51,21 @@ def _resolve(env_var: str, default: str) -> str:
     return value.strip() if value and value.strip() else default
 
 
-def get_storage() -> FileTokenStorage:
-    return FileTokenStorage(
-        token_filename=TOKEN_FILENAME,
-        app_name=TOKEN_APP_NAME,
-        import_codex_cli=False,
-    )
+class _AuthorityStorageView:
+    """Compatibility read view; all writes are owned by the authority."""
+
+    def load(self) -> OAuthToken | None:
+        token = get_copilot_identity()
+        if token is None:
+            return None
+        return OAuthToken(token.access, token.refresh, token.expires_at_ms, token.account_id)
+
+    def get_token_path(self) -> Any:
+        return get_copilot_authority().paths.canonical
 
 
-def _copilot_headers(token: str) -> dict[str, str]:
-    return {
-        "Authorization": f"token {token}",
-        "Accept": "application/json",
-        "User-Agent": USER_AGENT,
-        "Editor-Version": EDITOR_VERSION,
-        "Editor-Plugin-Version": EDITOR_PLUGIN_VERSION,
-    }
+def get_storage() -> _AuthorityStorageView:
+    return _AuthorityStorageView()
 
 
 def _load_github_token() -> OAuthToken | None:
@@ -83,6 +86,8 @@ def login_github_copilot(
 ) -> OAuthToken:
     """Run GitHub device flow and persist the GitHub OAuth token used for Copilot."""
     del prompt_fn
+    authority = get_copilot_authority()
+    generation = authority.begin_login()
     printer = print_fn or print
     timeout = httpx.Timeout(20.0, connect=20.0)
 
@@ -150,8 +155,7 @@ def login_github_copilot(
             if error == "access_denied":
                 raise RuntimeError("GitHub device flow was denied.")
             if error:
-                desc = poll_payload.get("error_description") or error
-                raise RuntimeError(str(desc))
+                raise RuntimeError("GitHub device flow failed.")
             time.sleep(current_interval)
         else:
             raise RuntimeError("GitHub device flow timed out.")
@@ -169,14 +173,22 @@ def login_github_copilot(
         account_id = user_payload.get("login") or str(user_payload.get("id") or "") or None
 
     expires_ms = int((time.time() + token_expires_in) * 1000)
-    token = OAuthToken(
-        access=str(access_token),
-        refresh="",
-        expires=expires_ms,
-        account_id=str(account_id) if account_id else None,
+    committed = authority.commit_login(
+        CanonicalToken(
+            str(access_token),
+            "",
+            expires_ms,
+            str(account_id) if account_id else None,
+        ),
+        generation,
     )
-    get_storage().save(token)
-    return token
+    invalidate_github_copilot_model_catalog()
+    return OAuthToken(
+        committed.access,
+        committed.refresh,
+        committed.expires_at_ms,
+        str(account_id) if account_id else None,
+    )
 
 
 class GitHubCopilotProvider(OpenAICompatProvider):
@@ -188,9 +200,6 @@ class GitHubCopilotProvider(OpenAICompatProvider):
         *,
         provider_name: str = "github_copilot",
     ):
-        self._copilot_access_token: str | None = None
-        self._copilot_expires_at: float = 0.0
-        self._copilot_token_lock: asyncio.Lock = asyncio.Lock()
         super().__init__(
             api_key="no-key",
             api_base=_resolve("NANOBOT_COPILOT_BASE_URL", DEFAULT_COPILOT_BASE_URL),
@@ -205,46 +214,7 @@ class GitHubCopilotProvider(OpenAICompatProvider):
         )
 
     async def _get_copilot_access_token(self) -> str:
-        now = time.time()
-        if self._copilot_access_token and now < self._copilot_expires_at - _EXPIRY_SKEW_SECONDS:
-            return self._copilot_access_token
-
-        async with self._copilot_token_lock:
-            # Re-check after acquiring the lock: another task may have refreshed
-            # the token while we were waiting.
-            now = time.time()
-            if self._copilot_access_token and now < self._copilot_expires_at - _EXPIRY_SKEW_SECONDS:
-                return self._copilot_access_token
-
-            github_token = _load_github_token()
-            if not github_token or not github_token.access:
-                raise RuntimeError(
-                    "GitHub Copilot is not logged in. Run: nanobot provider login github-copilot"
-                )
-
-            timeout = httpx.Timeout(20.0, connect=20.0)
-            async with httpx.AsyncClient(
-                timeout=timeout, follow_redirects=True, trust_env=True
-            ) as client:
-                response = await client.get(
-                    _resolve("NANOBOT_COPILOT_TOKEN_URL", DEFAULT_COPILOT_TOKEN_URL),
-                    headers=_copilot_headers(github_token.access),
-                )
-                response.raise_for_status()
-                payload = response.json()
-
-            token = payload.get("token")
-            if not token:
-                raise RuntimeError("GitHub Copilot token exchange returned no token.")
-
-            expires_at = payload.get("expires_at")
-            if isinstance(expires_at, (int, float)):
-                self._copilot_expires_at = float(expires_at)
-            else:
-                refresh_in = payload.get("refresh_in") or 1500
-                self._copilot_expires_at = time.time() + int(refresh_in)
-            self._copilot_access_token = str(token)
-            return self._copilot_access_token
+        return (await __import__("asyncio").to_thread(get_copilot_bearer_view)).bearer
 
     async def _refresh_client_api_key(self) -> str:
         token = await self._get_copilot_access_token()
@@ -309,25 +279,41 @@ class GitHubCopilotProvider(OpenAICompatProvider):
 def get_github_copilot_model_catalog(
     proxy: str | None = None,
 ) -> OAuthModelCatalogSnapshot:
-    storage = get_storage()
-    token = storage.load()
-    account_key = _catalog_account_key(getattr(token, "account_id", None))
+    view = get_copilot_authority().get_view_or_import()
+    account_key = _catalog_account_key(None if view is None else view.token.account_id)
+    generation = "absent" if view is None else view.generation
     cache_key = (
-        f"{storage.get_token_path()}\0{account_key}\0"
+        f"{generation}\0{account_key}\0"
         f"{_resolve('NANOBOT_COPILOT_BASE_URL', DEFAULT_COPILOT_BASE_URL)}\0{proxy or ''}"
     )
-    return _GITHUB_COPILOT_MODEL_CATALOG.get(cache_key=cache_key, proxy=proxy)
+
+    def generation_is_current() -> bool:
+        try:
+            latest = get_copilot_authority().get_view_or_import()
+        except Exception:
+            return False
+        return latest is not None and latest.generation == generation
+
+    return _GITHUB_COPILOT_MODEL_CATALOG.get(
+        cache_key=cache_key,
+        proxy=proxy,
+        fetch=lambda selected_proxy: _fetch_github_copilot_models(
+            selected_proxy,
+            expected_generation=generation,
+        ),
+        generation_check=generation_is_current,
+    )
 
 
 def invalidate_github_copilot_model_catalog() -> None:
     _GITHUB_COPILOT_MODEL_CATALOG.invalidate()
 
 
-def _fetch_github_copilot_models(proxy: str | None) -> tuple[ProviderModelSpec, ...]:
-    github_token = get_storage().load()
-    if not github_token or not github_token.access:
-        raise RuntimeError("GitHub Copilot is not logged in")
-
+def _fetch_github_copilot_models(
+    proxy: str | None,
+    *,
+    expected_generation: str | None = None,
+) -> tuple[ProviderModelSpec, ...]:
     common_headers = {
         "Accept": "application/json",
         "User-Agent": USER_AGENT,
@@ -337,21 +323,9 @@ def _fetch_github_copilot_models(proxy: str | None) -> tuple[ProviderModelSpec, 
     client_kwargs: dict[str, Any] = {"timeout": 20.0, "follow_redirects": True}
     if proxy:
         client_kwargs.update(proxy=proxy, trust_env=False)
+    bearer_view = get_copilot_bearer_view(expected_generation=expected_generation)
     with httpx.Client(**client_kwargs) as client:
-        exchange = client.get(
-            _resolve("NANOBOT_COPILOT_TOKEN_URL", DEFAULT_COPILOT_TOKEN_URL),
-            headers={**common_headers, "Authorization": f"token {github_token.access}"},
-        )
-        exchange.raise_for_status()
-        exchange_mapping = _catalog_mapping(exchange.json())
-        copilot_token = exchange_mapping.get("token")
-        if not isinstance(copilot_token, str) or not copilot_token:
-            raise RuntimeError("GitHub Copilot token exchange returned no token")
-        endpoint_base = _catalog_first_text(
-            _catalog_mapping(exchange_mapping.get("endpoints")),
-            "api",
-        )
-        base_url = endpoint_base or _resolve(
+        base_url = bearer_view.endpoint or _resolve(
             "NANOBOT_COPILOT_BASE_URL",
             DEFAULT_COPILOT_BASE_URL,
         )
@@ -362,7 +336,7 @@ def _fetch_github_copilot_models(proxy: str | None) -> tuple[ProviderModelSpec, 
         )
         response = client.get(
             models_url,
-            headers={**common_headers, "Authorization": f"Bearer {copilot_token}"},
+            headers={**common_headers, "Authorization": f"Bearer {bearer_view.bearer}"},
         )
     response.raise_for_status()
     return _parse_github_copilot_models(response.json())

@@ -8,11 +8,290 @@ import os
 import shutil
 import stat
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from nanobot.agent import memory_recovery_storage as storage
+
+_R2_SLOT_CASES = (
+    ("require_entry_binding", "_entry_binding", (object(),), {}),
+    ("read_verified_entry", "_open_verified_file", ("slot",), {
+        "content_digest": "digest", "expected": b"bytes", "missing_code": "missing",
+        "conflict_code": "conflict", "allowed_links": frozenset((1, 2)), "fsync": True,
+    }),
+    ("require_entry_relationship", "_validate_relationship", (object(), None), {}),
+    ("create_durable_companion", "_create_companion", ("slot", b"bytes"), {}),
+    ("require_final_state", "_compare_final_state", (object(), None, object(), None), {}),
+    ("finish_durable_publication", "_durable_success", ("slot",), {
+        "content_digest": "digest", "expected": b"bytes",
+        "retained_companion_identity": (1, 2),
+    }),
+)
+
+
+@pytest.mark.parametrize("mode", ["instance", "class", "subclass"])
+@pytest.mark.parametrize("fault", [None, RuntimeError("ordinary"), KeyboardInterrupt("system")])
+@pytest.mark.parametrize("case", _R2_SLOT_CASES)
+def test_r2_new_slot_operations_exact_dynamic_delegation(case, fault, mode, monkeypatch):
+    public, private, args, kwargs = case
+    calls = []
+    result = object()
+
+    def helper(*actual, **keywords):
+        calls.append((actual, keywords))
+        if fault is not None:
+            raise fault
+        return result
+
+    class Store(storage._ImmutableSlotStore):
+        pass
+
+    owner = Store if mode == "subclass" else storage._ImmutableSlotStore
+    store = object.__new__(owner)
+    if mode == "instance":
+        monkeypatch.setattr(store, private, helper)
+    else:
+        monkeypatch.setattr(owner, private, lambda self, *actual, **keywords: helper(*actual, **keywords))
+    invoke = getattr(store, public)
+    if fault is None:
+        returned = invoke(*args, **kwargs)
+        if public in ("read_verified_entry", "create_durable_companion", "finish_durable_publication"):
+            assert returned is result
+        else:
+            assert returned is None
+    else:
+        with pytest.raises(type(fault)) as raised:
+            invoke(*args, **kwargs)
+        assert raised.value is fault
+    assert calls == [(args, kwargs)]
+
+
+@pytest.mark.parametrize("fault", [RuntimeError("namespace"), KeyboardInterrupt("namespace")])
+def test_r2_namespace_private_lookup_after_input_validation_before_pid(fault, monkeypatch):
+    trace = []
+
+    class Authority(storage.WorkspaceMemoryAuthority):
+        @property
+        def _namespace_actions(self):
+            trace.append("binder")
+            raise fault
+
+    authority = object.__new__(Authority)
+    namespace = object.__new__(storage.ImmutableEvidenceNamespace)
+    monkeypatch.setattr(storage.os, "getpid", lambda: trace.append("pid") or 1)
+    with pytest.raises(storage.MemoryStorageError):
+        storage.ImmutableEvidenceNamespace.__init__(
+            namespace, authority, "invalid", "a" * 64, _capability=storage._NAMESPACE_CAPABILITY,
+        )
+    assert trace == [] and set(vars(namespace)) == {"_authority"}
+    with pytest.raises(type(fault)) as raised:
+        storage.ImmutableEvidenceNamespace.__init__(
+            namespace, authority, "transactions", "a" * 64,
+            _capability=storage._NAMESPACE_CAPABILITY,
+        )
+    assert raised.value is fault and trace == ["binder"]
+    assert set(vars(namespace)) == {"_authority", "kind", "identity"}
+
+
+def test_r2_fd_none_defensive_branch_and_new_namespace_admission(monkeypatch):
+    calls = []
+    monkeypatch.setattr(storage.os, "open", lambda *args: calls.append("open") or None)
+    monkeypatch.setattr(storage, "_close", lambda fd: calls.append(("close", fd)))
+    with pytest.raises(storage.MemoryStorageError) as raised:
+        storage._open_directory_path(Path("/"))
+    assert raised.value.code == "invalid" and calls == ["open", ("close", None)]
+    authority = object.__new__(storage.WorkspaceMemoryAuthority)
+    result = object()
+    monkeypatch.setattr(authority, "_namespace_actions", lambda: calls.append("namespace") or result)
+    with pytest.raises(storage.MemoryStorageError):
+        authority.bind_namespace_actions(_capability=object())
+    assert calls == ["open", ("close", None)]
+    assert authority.bind_namespace_actions(_capability=storage._NAMESPACE_CAPABILITY) is result
+    assert calls == ["open", ("close", None), "namespace"]
+
+
+def test_r2_new_records_admission_freevars_and_acyclic_release():
+    import gc
+    import weakref
+    from dataclasses import FrozenInstanceError
+
+    authority = object.__new__(storage.WorkspaceMemoryAuthority)
+    operation = object.__new__(storage.WorkspaceMemoryOperation)
+    target = object.__new__(storage.BoundMemoryTarget)
+    factories = (
+        (storage.WorkspaceMemoryOperation._operation_binding_push, operation, (),
+         storage._OPERATION_CAPABILITY, storage._OperationBindingPush),
+        (storage.WorkspaceMemoryOperation._target_binding_push, operation, (object(), False, "name"),
+         storage._BOUND_TARGET_CAPABILITY, storage._OperationTargetBindingPush),
+        (storage.BoundMemoryTarget._action_binding_push, target, (object(),),
+         storage._BOUND_TARGET_CAPABILITY, storage._BoundActionBindingPush),
+    )
+    records = []
+    for factory, receiver, args, capability, record_type in factories:
+        with pytest.raises(storage.MemoryStorageError) as raised:
+            factory(receiver, *args, _capability=object())
+        assert raised.value.code == "invalid"
+        record = factory(receiver, *args, _capability=capability)
+        records.append(record)
+        assert type(record) is record_type
+        with pytest.raises(TypeError):
+            record_type(apply=lambda binder: None)
+        with pytest.raises(FrozenInstanceError):
+            record.apply = lambda binder: None
+        assert "push" not in record.apply.__code__.co_freevars
+        assert all(cell.cell_contents is not record for cell in record.apply.__closure__)
+        assert vars(receiver) == {}
+    initialization = storage.BoundMemoryTarget._initialization_hooks(
+        target, storage._BOUND_RECEIPT_TARGET_CAPABILITY,
+    )
+    with pytest.raises(TypeError):
+        storage._BoundInitialization(retain_owner=lambda owner: None)
+    with pytest.raises(FrozenInstanceError):
+        initialization.retain_owner = lambda owner: None
+    for field in initialization.__dataclass_fields__:
+        callback = getattr(initialization, field)
+        assert all(cell.cell_contents is not initialization for cell in callback.__closure__)
+    sources = (
+        (storage.WorkspaceMemoryAuthority.initialize_operation_actions, authority,
+         storage._OPERATION_CAPABILITY),
+        (storage.WorkspaceMemoryAuthority.bind_operation_target_actions, authority,
+         storage._BOUND_TARGET_CAPABILITY),
+        (storage.WorkspaceMemoryAuthority.capture_bound_validator, authority,
+         storage._BOUND_TARGET_CAPABILITY),
+        (storage.WorkspaceMemoryOperation.initialize_bound_actions, operation,
+         storage._BOUND_RECEIPT_TARGET_CAPABILITY),
+        (storage.WorkspaceMemoryOperation.initialize_bound_owner, operation,
+         storage._BOUND_TARGET_CAPABILITY),
+        (storage.WorkspaceMemoryOperation.initialize_bound_context, operation,
+         storage._BOUND_TARGET_CAPABILITY),
+    )
+    for invoke, receiver, capability in sources:
+        for supplied in (None, object()):
+            with pytest.raises(storage.MemoryStorageError) as raised:
+                invoke(receiver, object(), _capability=supplied)
+            assert raised.value.code == "invalid"
+        with pytest.raises(storage.MemoryStorageError) as raised:
+            invoke(receiver, object(), _capability=capability)
+        assert raised.value.code == "invalid"
+    assert vars(authority) == vars(operation) == vars(target) == {}
+    reference = weakref.ref(target)
+    gc.collect()
+    gc.disable()
+    try:
+        del records, record, receiver, factories, sources, initialization, callback
+        del target
+        assert reference() is None
+    finally:
+        gc.enable()
+
+
+@pytest.mark.parametrize("fault", [None, RuntimeError("ordinary"), KeyboardInterrupt("system")])
+@pytest.mark.parametrize("case", _R2_SLOT_CASES)
+def test_r2_original_authority_adapters_preserve_private_seams(case, fault, monkeypatch):
+    _, private, args, kwargs = case
+    calls = []
+    result = object()
+
+    def helper(*actual, **keywords):
+        calls.append((actual, keywords))
+        if fault is not None:
+            raise fault
+        return result
+
+    store = object.__new__(storage._ImmutableSlotStore)
+    monkeypatch.setattr(store, private, helper)
+    authority = object.__new__(storage.WorkspaceMemoryAuthority)
+    authority._blob_store = store
+    if private == "_open_verified_file":
+        args = ("slot", "digest")
+        kwargs = {key: value for key, value in kwargs.items() if key != "content_digest"}
+    elif private == "_durable_success":
+        args = ("slot", b"bytes")
+        kwargs = {"retained_companion_identity": (1, 2)}
+    invoke = getattr(authority, private)
+    if fault is None:
+        returned = invoke(*args, **kwargs)
+        if private in ("_open_verified_file", "_create_companion", "_durable_success"):
+            assert returned is result
+        else:
+            assert returned is None
+    else:
+        with pytest.raises(type(fault)) as raised:
+            invoke(*args, **kwargs)
+        assert raised.value is fault
+    expected_args, expected_kwargs = case[2:]
+    if private == "_open_verified_file":
+        expected_kwargs = {**expected_kwargs, "content_digest": "digest"}
+    elif private == "_durable_success":
+        expected_kwargs = {"content_digest": "slot", "expected": b"bytes",
+                           "retained_companion_identity": (1, 2)}
+    assert calls == [(expected_args, expected_kwargs)]
+
+
+@pytest.mark.parametrize("value", ["42", 42])
+def test_r2_uid_conversion_and_noncallable_fallback(value, monkeypatch):
+    trace = []
+
+    class Converted:
+        def __int__(self):
+            trace.append("int")
+            return 42
+
+    class Indexed:
+        def __index__(self):
+            trace.append("index")
+            return 42
+
+    for result in (value, Converted(), Indexed()):
+        monkeypatch.setattr(storage, "os", SimpleNamespace(
+            geteuid=lambda: trace.append("effective") or result,
+            getuid=lambda: trace.append("fallback") or 77,
+        ))
+        assert storage._uid() == 42
+    assert trace == ["effective", "effective", "int", "effective", "index"]
+    monkeypatch.setattr(storage, "os", SimpleNamespace(geteuid=object(), getuid=lambda: 77))
+    assert storage._uid() == 77
+    monkeypatch.setattr(storage, "os", SimpleNamespace(getuid=lambda: "88"))
+    assert storage._uid() == 88
+
+
+@pytest.mark.parametrize("fault", [RuntimeError("ordinary"), KeyboardInterrupt("system")])
+@pytest.mark.parametrize("point", ["lookup", "call", "conversion", "fallback"])
+def test_r2_uid_fault_identity_and_order(fault, point, monkeypatch):
+    trace = []
+
+    class Result:
+        def __int__(self):
+            trace.append("conversion")
+            raise fault
+
+    class Source:
+        @property
+        def geteuid(self):
+            trace.append("lookup")
+            if point == "lookup":
+                raise fault
+            return None if point == "fallback" else self.effective
+
+        def effective(self):
+            trace.append("call")
+            if point == "call":
+                raise fault
+            return Result()
+
+        def getuid(self):
+            trace.append("fallback")
+            raise fault
+
+    monkeypatch.setattr(storage, "os", Source())
+    with pytest.raises(type(fault)) as raised:
+        storage._uid()
+    assert raised.value is fault
+    assert trace == {"lookup": ["lookup"], "call": ["lookup", "call"],
+                     "conversion": ["lookup", "call", "conversion"],
+                     "fallback": ["lookup", "fallback"]}[point]
 
 
 def _storage_capable() -> bool:
@@ -1386,3 +1665,73 @@ def test_no_mutable_replacement_or_cleanup_primitives_are_used() -> None:
     source = Path(storage.__file__).read_text(encoding="utf-8")
     for forbidden in ("os.replace(", "os.rename(", "os.chmod(", "os.unlink("):
         assert forbidden not in source
+
+
+def test_namespace_constructor_cannot_select_another_authority_actions(tmp_path: Path) -> None:
+    first_path = tmp_path / "first"
+    second_path = tmp_path / "second"
+    first_path.mkdir()
+    second_path.mkdir()
+    with storage.WorkspaceMemoryAuthority(first_path) as first:
+        with storage.WorkspaceMemoryAuthority(second_path) as second:
+            other = second.open_evidence_namespace("transactions", "a" * 64)
+            with pytest.raises(TypeError):
+                storage.ImmutableEvidenceNamespace(
+                    first, "transactions", "b" * 64,
+                    _capability=storage._NAMESPACE_CAPABILITY, _actions=other._actions,
+                )
+            assert not first._namespaces
+            assert second._namespaces == [other]
+            namespace = first.open_evidence_namespace("transactions", "b" * 64)
+            assert namespace._authority is first
+            assert first._namespaces == [namespace]
+            assert second._namespaces == [other]
+            namespace.publish_record("genesis.json", b"qualified")
+            namespace.close()
+            assert not first._namespaces
+            assert second._namespaces == [other]
+
+
+def test_namespace_registration_append_then_raise_discards_only_failed_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with storage.WorkspaceMemoryAuthority(tmp_path) as authority:
+        previous = authority.open_evidence_namespace("transactions", "a" * 64)
+        namespaces_before = list(authority._namespaces)
+        original_register = authority._register_namespace
+        failed_scopes: list[storage.ImmutableEvidenceNamespace] = []
+        owned_fds: list[int] = []
+        registration_error = RuntimeError("namespace registration failure")
+
+        def failed_register(namespace: storage.ImmutableEvidenceNamespace) -> None:
+            original_register(namespace)
+            failed_scopes.append(namespace)
+            assert namespace._kind_fd is not None
+            assert namespace._record_fd is not None
+            owned_fds.extend((namespace._kind_fd, namespace._record_fd))
+            raise registration_error
+
+        with monkeypatch.context() as failure:
+            failure.setattr(authority, "_register_namespace", failed_register)
+            with pytest.raises(RuntimeError) as raised:
+                authority.open_evidence_namespace("transactions", "b" * 64)
+            assert raised.value is registration_error
+        assert authority._namespaces == namespaces_before
+        assert len(failed_scopes) == 1
+        failed = failed_scopes[0]
+        assert failed._active is False
+        assert failed._kind_fd is None
+        assert failed._record_fd is None
+        for fd in owned_fds:
+            with pytest.raises(OSError):
+                os.fstat(fd)
+        previous.publish_record("genesis.json", b"previous remains usable")
+        retried = authority.open_evidence_namespace("transactions", "b" * 64)
+        assert authority._namespaces == [previous, retried]
+        retried.publish_record("genesis.json", b"retry remains usable")
+        retried.close()
+        assert authority._namespaces == [previous]
+        authority.close()
+        assert not authority._namespaces
+        assert previous._kind_fd is None
+        assert previous._record_fd is None

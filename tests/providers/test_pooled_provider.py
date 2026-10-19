@@ -47,6 +47,45 @@ class Leaf(LLMProvider):
         return await self.chat_stream(provider_context=provider_context, **kwargs)
 
 
+def test_generation_constructor_and_assignment_preserve_exact_leaf_identity():
+    from nanobot.providers.base import GenerationSettings
+
+    leaves = [Leaf(key, []) for key in ('a', 'b', 'c')]
+    original = GenerationSettings(max_tokens=71, temperature=0.25, reasoning_effort='high')
+    leaves[0].generation = original
+    pool = PooledProvider(leaves, ['a', 'b', 'c'])
+
+    assert 'generation' not in LLMProvider.__dict__
+    assert pool.generation is original
+    assert all(leaf.generation is original for leaf in leaves)
+    replacement = GenerationSettings(max_tokens=83, temperature=0.5)
+    pool.generation = replacement
+    assert pool.generation is replacement
+    assert all(leaf.generation is replacement for leaf in leaves)
+
+
+def test_generation_identity_propagates_through_nested_legacy_pool():
+    from types import SimpleNamespace
+
+    from nanobot.providers.base import GenerationSettings
+    from nanobot.providers.legacy_fallback_provider import LegacyFallbackProvider
+
+    first, second, third = (Leaf(key, []) for key in ('a', 'b', 'c'))
+    original = GenerationSettings(max_tokens=71)
+    first.generation = original
+    legacy = LegacyFallbackProvider(
+        first, [SimpleNamespace(model='fallback')], lambda _: second,
+    )
+    pool = PooledProvider([legacy, third], ['a', 'c'])
+
+    assert pool.generation is legacy.generation is original
+    assert all(leaf.generation is original for leaf in (first, second, third))
+    replacement = GenerationSettings(max_tokens=83)
+    pool.generation = replacement
+    assert pool.generation is legacy.generation is replacement
+    assert all(leaf.generation is replacement for leaf in (first, second, third))
+
+
 def error(status=429, text='quota exceeded', kind='rate_limit'):
     return LLMResponse(content=text, finish_reason='error', error_status_code=status, error_kind=kind)
 
@@ -299,3 +338,61 @@ async def test_concurrent_requests_keep_context_and_credentials_local():
     assert leaf.api_key == 'a' and other.api_key == 'b'
     assert not other.calls
     assert [call['messages'][0]['content'] for call in leaf.calls] == ['one', 'two']
+
+
+@pytest.mark.parametrize('raises', [False, True])
+async def test_pool_tracks_variadic_callbacks_before_await_and_captures_each(raises):
+    terminal = error()
+    names = ('on_content_delta', 'on_thinking_delta', 'on_tool_call_delta')
+    calls = []
+
+    async def content(*args, **kwargs):
+        calls.append(('content', args, kwargs))
+        if raises:
+            raise ValueError('callback failed after delivery')
+
+    async def thinking(*args, **kwargs):
+        calls.append(('thinking', args, kwargs))
+        if raises:
+            raise ValueError('callback failed after delivery')
+
+    async def tool(*args, **kwargs):
+        calls.append(('tool', args, kwargs))
+        if raises:
+            raise ValueError('callback failed after delivery')
+
+    class VariadicLeaf(Leaf):
+        async def chat_stream(self, **kwargs):
+            for name in names:
+                try:
+                    await kwargs[name]('first', {'second': name}, named=name)
+                except ValueError:
+                    pass
+            return await self.chat(**kwargs)
+
+    first, spare = VariadicLeaf('a', [terminal]), Leaf('b', [])
+    pool = PooledProvider([first, spare], ['a', 'b'])
+    result = await pool.chat_stream(messages=[], **dict(zip(names, (content, thinking, tool))))
+    assert result is terminal
+    assert spare.calls == []
+    assert calls == [(label, ('first', {'second': name}), {'named': name})
+                     for label, name in zip(('content', 'thinking', 'tool'), names)]
+
+
+async def test_pool_exhaustion_keeps_last_slot_tagging_and_stop_cell():
+    state = ProviderConversationState(kind='fixture', provider='fixture', model='fixture-model',
+                                      version=1, payload={'opaque': 'last'})
+    terminal = error()
+    terminal.provider_state = state
+    first, last = Leaf('a', [error()]), Leaf('b', [terminal])
+    pool = PooledProvider([first, last], ['a', 'b'])
+    stopped, attempts = [False], [0]
+    result = await pool._attempt(dict(messages=[]), stream=False, observed=False,
+                                 stopped=stopped, attempts=attempts)
+    assert stopped == ['exhausted']
+    assert attempts == [2]
+    assert result.content == terminal.content
+    assert result.provider_state is not state
+    assert state.payload == {'opaque': 'last'}
+    assert pool._leaf_state(0, result.provider_state, 'fixture-model') is None
+    assert pool._leaf_state(1, result.provider_state, 'fixture-model').payload == state.payload

@@ -1,7 +1,7 @@
 """Detached opt-in public execution traces; persisted detail remains internal."""
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 from nanobot.agent.message_content import content_to_text
 from nanobot.runtime_context import public_history_message
@@ -19,10 +19,10 @@ def sanitize_trace(messages: Any) -> list[dict[str, Any]]:
         return []
 
     detached: list[dict[str, Any]] = []
-    for raw in messages:
+    for raw in cast(Sequence[object], messages):
         if not isinstance(raw, Mapping):
             continue
-        raw = public_history_message(raw)
+        raw = public_history_message(cast(Mapping[Any, Any], raw))
         role = raw.get("role")
         if not isinstance(role, str) or role not in {"user", "assistant", "tool"} or raw.get("_hidden_history"):
             continue
@@ -31,11 +31,11 @@ def sanitize_trace(messages: Any) -> list[dict[str, Any]]:
         if "content" in raw:
             content = raw.get("content")
             if isinstance(content, list):
-                content = [block for block in content if not (
-                    isinstance(block, Mapping) and block.get("type") in
+                content = [cast(object, block) for block in cast(list[object], content) if not (
+                    isinstance(block, Mapping) and cast(Mapping[object, object], block).get("type") in
                     ("thinking", "reasoning", "redacted_thinking", "reasoning_content")
                 )]
-            elif isinstance(content, Mapping) and content.get("type") in (
+            elif isinstance(content, Mapping) and cast(Mapping[object, object], content).get("type") in (
                 "thinking", "reasoning", "redacted_thinking", "reasoning_content"
             ):
                 content = None
@@ -45,14 +45,14 @@ def sanitize_trace(messages: Any) -> list[dict[str, Any]]:
 
         if role == "assistant" and isinstance(raw.get("tool_calls"), Sequence):
             calls: list[dict[str, str]] = []
-            for raw_call in raw["tool_calls"]:
+            for raw_call in cast(Sequence[object], raw["tool_calls"]):
                 if not isinstance(raw_call, Mapping):
                     continue
-                function = raw_call.get("function")
-                name = function.get("name") if isinstance(function, Mapping) else raw_call.get("name")
+                function = cast(Mapping[object, object], raw_call).get("function")
+                name = cast(Mapping[object, object], function).get("name") if isinstance(function, Mapping) else cast(Mapping[object, object], raw_call).get("name")
                 call: dict[str, str] = {}
-                if raw_call.get("id"):
-                    call["id"] = str(raw_call["id"])
+                if cast(Mapping[object, object], raw_call).get("id"):
+                    call["id"] = str(cast(Mapping[object, object], raw_call)["id"])
                 if name:
                     call["name"] = str(name)
                 if call:
@@ -67,4 +67,3 @@ def sanitize_trace(messages: Any) -> list[dict[str, Any]]:
 
         detached.append(entry)
     return detached
-

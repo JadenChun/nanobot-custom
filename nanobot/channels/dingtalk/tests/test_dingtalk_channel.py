@@ -1,5 +1,6 @@
 import asyncio
 import json
+import socket
 import zipfile
 from io import BytesIO
 from types import SimpleNamespace
@@ -26,6 +27,33 @@ from nanobot.channels.dingtalk.runtime import (
     DingTalkConfig,
     NanobotDingTalkHandler,
 )
+
+
+@pytest.fixture
+def remote_media_dns(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Declare finite DNS inputs for mock-HTTP units, not native transport tests."""
+    addresses = {
+        "example.com": "93.184.216.34",
+        "example.org": "93.184.216.35",
+        "127.0.0.1": "127.0.0.1",
+        "private.example.test": "127.0.0.1",
+    }
+    lookups: list[str] = []
+
+    def resolve(
+        hostname: str,
+        port: None,
+        family: int,
+        socket_type: int,
+    ) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+        assert (port, family, socket_type) == (None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        lookups.append(hostname)
+        if hostname not in addresses:
+            raise socket.gaierror(socket.EAI_NONAME, f"Unknown unit-test hostname: {hostname}")
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (addresses[hostname], 0))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    return lookups
 
 
 class _FakeResponse:
@@ -848,6 +876,7 @@ async def test_download_dingtalk_file(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("remote_media_dns")
 async def test_read_media_bytes_rejects_private_http_target_before_fetch() -> None:
     """Remote media fetches must not reach loopback/private addresses."""
     channel = DingTalkChannel(
@@ -872,6 +901,51 @@ async def test_read_media_bytes_rejects_private_http_target_before_fetch() -> No
 
 
 @pytest.mark.asyncio
+async def test_read_media_bytes_rejects_private_dns_target_before_fetch(
+    remote_media_dns: list[str],
+) -> None:
+    channel = DingTalkChannel(
+        DingTalkConfig(client_id="app", client_secret="secret", allow_from=["*"]),
+        MessageBus(),
+    )
+    url = "https://private.example.test/admin.txt"
+    channel._http = _FakeHttp(responses=[_FakeResponse(200, content=b"internal secret", url=url)])
+
+    data, filename, content_type = await channel._read_media_bytes(url)
+
+    assert (data, filename, content_type) == (None, None, None)
+    assert channel._http.calls == []
+    assert dingtalk_module.validate_url_target(url) == (
+        False,
+        "Blocked: private.example.test resolves to private/internal address 127.0.0.1",
+    )
+    assert remote_media_dns == ["private.example.test", "private.example.test"]
+
+
+@pytest.mark.asyncio
+async def test_read_media_bytes_rejects_unresolved_hostname_before_fetch(
+    remote_media_dns: list[str],
+) -> None:
+    channel = DingTalkChannel(
+        DingTalkConfig(client_id="app", client_secret="secret", allow_from=["*"]),
+        MessageBus(),
+    )
+    url = "https://unresolved.example.test/file.txt"
+    channel._http = _FakeHttp(responses=[_FakeResponse(200, content=b"unreachable", url=url)])
+
+    data, filename, content_type = await channel._read_media_bytes(url)
+
+    assert (data, filename, content_type) == (None, None, None)
+    assert channel._http.calls == []
+    assert dingtalk_module.validate_url_target(url) == (
+        False,
+        "Cannot resolve hostname: unresolved.example.test",
+    )
+    assert remote_media_dns == ["unresolved.example.test", "unresolved.example.test"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("remote_media_dns")
 async def test_read_media_bytes_rejects_private_redirect_result() -> None:
     """A public-looking media URL must not be accepted after redirecting private."""
     channel = DingTalkChannel(
@@ -896,6 +970,7 @@ async def test_read_media_bytes_rejects_private_redirect_result() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("remote_media_dns")
 async def test_read_media_bytes_rejects_oversized_remote_response(monkeypatch) -> None:
     """DingTalk media downloads should enforce a byte cap before upload."""
     monkeypatch.setattr(dingtalk_module, "DINGTALK_MAX_REMOTE_MEDIA_BYTES", 8, raising=False)
@@ -917,9 +992,11 @@ async def test_read_media_bytes_rejects_oversized_remote_response(monkeypatch) -
     data, filename, content_type = await channel._read_media_bytes("https://example.com/large.txt")
 
     assert (data, filename, content_type) == (None, None, None)
+    assert len(channel._http.calls) == 1
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("remote_media_dns")
 async def test_read_media_bytes_does_not_follow_remote_redirects_by_default() -> None:
     """Redirects are refused by default instead of followed into internal networks."""
     channel = DingTalkChannel(
@@ -943,6 +1020,7 @@ async def test_read_media_bytes_does_not_follow_remote_redirects_by_default() ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("remote_media_dns")
 async def test_read_media_bytes_follows_safe_redirect_when_explicitly_enabled() -> None:
     """Operators can opt in to public redirects without enabling private redirects."""
     channel = DingTalkChannel(
@@ -981,6 +1059,7 @@ async def test_read_media_bytes_follows_safe_redirect_when_explicitly_enabled() 
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("remote_media_dns")
 async def test_read_media_bytes_blocks_cross_host_redirect_without_allowlist() -> None:
     """Redirect opt-in should not allow arbitrary cross-host redirects by default."""
     channel = DingTalkChannel(
@@ -1015,6 +1094,7 @@ async def test_read_media_bytes_blocks_cross_host_redirect_without_allowlist() -
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("remote_media_dns")
 async def test_read_media_bytes_allows_cross_host_redirect_when_allowlisted() -> None:
     """Operators can explicitly allow a known CDN/download host for redirects."""
     channel = DingTalkChannel(
@@ -1053,6 +1133,7 @@ async def test_read_media_bytes_allows_cross_host_redirect_when_allowlisted() ->
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("remote_media_dns")
 async def test_read_media_bytes_blocks_private_redirect_even_when_redirects_enabled() -> None:
     """Redirect opt-in must still validate each hop before fetching it."""
     channel = DingTalkChannel(
@@ -1259,6 +1340,7 @@ async def test_send_media_ref_short_circuits_on_transport_error() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("remote_media_dns")
 async def test_send_media_ref_short_circuits_on_download_transport_error() -> None:
     """When the image URL send returns an API error (False) but the download
     for the fallback hits a transport error, it must re-raise rather than
@@ -1292,6 +1374,7 @@ async def test_send_media_ref_short_circuits_on_download_transport_error() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("remote_media_dns")
 async def test_send_media_ref_short_circuits_on_upload_transport_error() -> None:
     """When download succeeds but upload hits a transport error, must re-raise."""
     config = DingTalkConfig(client_id="app", client_secret="secret", allow_from=["*"])

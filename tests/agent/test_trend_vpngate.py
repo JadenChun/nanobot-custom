@@ -6,7 +6,6 @@ import io
 
 from nanobot.agent.tools.trend_vpngate import parse_api_response
 
-
 PROFILE = """client
 dev tun
 proto tcp

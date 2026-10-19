@@ -27,6 +27,11 @@ def get_runtime_subdir(name: str) -> Path:
     return ensure_dir(get_data_dir() / name)
 
 
+def get_default_sessions_root() -> Path:
+    """Resolve the configured sessions directory without creating any path."""
+    return (get_config_path().parent / "sessions").expanduser().resolve(strict=False)
+
+
 def get_media_dir(channel: str | None = None) -> Path:
     """Return the media directory, optionally namespaced per channel."""
     base = get_runtime_subdir("media")

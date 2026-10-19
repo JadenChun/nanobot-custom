@@ -130,7 +130,7 @@ def eligible_boundaries(events: list[dict[str, Any]], *, eligible_ids: frozenset
     if type(previous_boundary) is not int or not 0 <= previous_boundary <= len(selected):
         raise SourceValidationError('Invalid previous projection boundary')
     visible = {node.event_id for node in source_nodes(selected, stream_id=stream_id)}
-    boundaries = []
+    boundaries: list[int] = []
     for boundary in range(previous_boundary + 1, len(selected) + 1):
         identity = selected[boundary - 1]['_event_id']
         if identity in visible and identity not in eligible_ids:
@@ -145,7 +145,8 @@ def eligible_boundaries(events: list[dict[str, Any]], *, eligible_ids: frozenset
 
 def project_events(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
     """Public root history and exact event identities, without agent imports."""
-    messages, identities = [], []
+    messages: list[dict[str, Any]] = []
+    identities: list[str] = []
     for event in events:
         if event.get('_parent_stream_id') is not None or event.get('_command'):
             continue

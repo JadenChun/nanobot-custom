@@ -12,8 +12,8 @@ from nanobot.session.manager import JsonlSessionStore, Session, SessionWriteConf
 from nanobot.session.source import SourceValidationError, prefix_digest
 from nanobot.session.source_store import SourceSessionStore
 from nanobot.session.turn_writer import SourceTurnWriter
-from session.test_artifact import fixture
-from session.test_source_turn_writer import assistant, result
+from tests.session.test_artifact import fixture
+from tests.session.test_source_turn_writer import assistant, result
 
 
 @asynccontextmanager

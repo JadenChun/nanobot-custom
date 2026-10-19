@@ -1,4 +1,7 @@
-"""Tests for SubagentManager lifecycle — spawn, run, announce, cancel."""
+"""Dormant SubagentManager adapter lifecycle with injected tools and runners.
+
+These tests exercise task bookkeeping, not admission of retired background tools.
+"""
 
 import asyncio
 import time
@@ -15,6 +18,7 @@ from nanobot.agent.subagent import (
     _SubagentHook,
 )
 from nanobot.agent.tools.context import current_request_context
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMUsage
 from nanobot.utils.llm_runtime import LLMRuntime
@@ -30,7 +34,14 @@ def _manager(tmp_path: Path, **kw) -> SubagentManager:
         max_tool_result_chars=16_000,
     )
     defaults.update(kw)
-    return SubagentManager(**defaults)
+    manager = SubagentManager(**defaults)
+    # The upstream background tool scope is intentionally not in our manifest.
+    # Lifecycle tests already inject their runner; isolate its tool/prompt inputs
+    # too, without patching the loader or production migration guard.
+    manager._build_tools = MagicMock(side_effect=lambda **_kwargs: ToolRegistry())
+    manager._build_subagent_prompt = MagicMock(return_value="isolated lifecycle test")
+    manager.runner.run = AsyncMock(side_effect=AssertionError("test must supply a runner"))
+    return manager
 
 
 def _runtime(*, model: str = "test-model", temperature: float = 0.1) -> LLMRuntime:
@@ -63,6 +74,18 @@ async def _drain_subagent_tasks(sm: SubagentManager) -> None:
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_real_legacy_tool_factory_rejects_unsupported_scope(tmp_path):
+    manager = SubagentManager(
+        workspace=tmp_path, bus=MessageBus(), max_tool_result_chars=16_000,
+    )
+    try:
+        with pytest.raises(ValueError, match="Unsupported runtime tool scope"):
+            manager._build_tools()
+    finally:
+        await manager.close()
 
 
 @pytest.mark.asyncio
@@ -124,11 +147,9 @@ class TestLegacyCompatibility:
         provider = MagicMock(spec=LLMProvider)
         provider.generation = GenerationSettings(temperature=0.2, max_tokens=2048)
         with pytest.warns(DeprecationWarning, match="provider"):
-            sm = SubagentManager(
+            sm = _manager(
+                tmp_path,
                 provider=provider,
-                workspace=tmp_path,
-                bus=MessageBus(),
-                max_tool_result_chars=16_000,
                 model="legacy-model",
             )
         sm.runner.run = AsyncMock(return_value=AgentRunResult(
@@ -187,6 +208,9 @@ class TestSpawn:
         result = await sm.spawn("do something", runtime=_runtime())
         assert "started" in result
         assert "id:" in result
+        await _drain_subagent_tasks(sm)
+        sm.runner.run.assert_awaited_once()
+        await sm.close()
 
     @pytest.mark.asyncio
     async def test_creates_task_in_running_tasks(self, tmp_path):

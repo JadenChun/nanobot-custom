@@ -4,7 +4,7 @@ import pytest
 
 from nanobot.providers.openai_compat_provider import (
     OpenAICompatProvider,
-    _is_reasoning_model,
+    _requires_max_completion_tokens,
 )
 from nanobot.providers.registry import find_by_name
 
@@ -28,7 +28,7 @@ from nanobot.providers.registry import find_by_name
     ],
 )
 def test_reasoning_model_detected(model: str) -> None:
-    assert _is_reasoning_model(model) is True
+    assert _requires_max_completion_tokens(model) is True
 
 
 @pytest.mark.parametrize(
@@ -46,16 +46,18 @@ def test_reasoning_model_detected(model: str) -> None:
     ],
 )
 def test_classic_model_not_reasoning(model: str) -> None:
-    assert _is_reasoning_model(model) is False
+    assert _requires_max_completion_tokens(model) is False
 
 
 def test_build_kwargs_uses_max_completion_tokens_for_reasoning_model() -> None:
-    spec = find_by_name("github_copilot")
+    spec = find_by_name("aihubmix")
+    assert spec is not None
+    assert spec.supports_max_completion_tokens is False
     provider = OpenAICompatProvider(api_key="x", default_model="gpt-5.4", spec=spec)
     kwargs = provider._build_kwargs(
         messages=[{"role": "user", "content": "hi"}],
         tools=None,
-        model="github-copilot/gpt-5.4",
+        model="aihubmix/gpt-5.4",
         max_tokens=2048,
         temperature=0.3,
         reasoning_effort=None,
@@ -69,7 +71,29 @@ def test_build_kwargs_uses_max_completion_tokens_for_reasoning_model() -> None:
 
 
 def test_build_kwargs_keeps_max_tokens_for_classic_model() -> None:
+    spec = find_by_name("aihubmix")
+    assert spec is not None
+    assert spec.supports_max_completion_tokens is False
+    provider = OpenAICompatProvider(api_key="x", default_model="gpt-4o", spec=spec)
+    kwargs = provider._build_kwargs(
+        messages=[{"role": "user", "content": "hi"}],
+        tools=None,
+        model="aihubmix/gpt-4o",
+        max_tokens=1024,
+        temperature=0.3,
+        reasoning_effort=None,
+        tool_choice=None,
+    )
+    assert kwargs["model"] == "gpt-4o"
+    assert kwargs["max_tokens"] == 1024
+    assert "max_completion_tokens" not in kwargs
+    assert kwargs["temperature"] == 0.3
+
+
+def test_build_kwargs_uses_max_completion_tokens_for_copilot_classic_model() -> None:
     spec = find_by_name("github_copilot")
+    assert spec is not None
+    assert spec.supports_max_completion_tokens is True
     provider = OpenAICompatProvider(api_key="x", default_model="gpt-4o", spec=spec)
     kwargs = provider._build_kwargs(
         messages=[{"role": "user", "content": "hi"}],
@@ -81,6 +105,6 @@ def test_build_kwargs_keeps_max_tokens_for_classic_model() -> None:
         tool_choice=None,
     )
     assert kwargs["model"] == "gpt-4o"
-    assert kwargs["max_tokens"] == 1024
-    assert "max_completion_tokens" not in kwargs
+    assert kwargs["max_completion_tokens"] == 1024
+    assert "max_tokens" not in kwargs
     assert kwargs["temperature"] == 0.3

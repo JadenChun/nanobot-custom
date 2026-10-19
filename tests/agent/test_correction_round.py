@@ -1,53 +1,50 @@
-"""Focused regression checks for the second-round persistence hardening."""
+"""Retained utility and current-owner fail-closed memory regressions."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from nanobot.agent.memory import MemoryConsolidator, MemoryStore
-from nanobot.cron.service import CronService
-from nanobot.cron.types import CronSchedule
-from nanobot.providers.base import (
-    GenerationSettings,
-    LLMProvider,
-    LLMResponse,
-    ToolCallRequest,
+from nanobot.agent.memory import Consolidator, MemoryStore
+from nanobot.agent.memory_recovery import MemoryReceiptRecoveryRequired
+from nanobot.agent.memory_recovery_coordinator import (
+    OfflineMemoryRecoveryError,
+    reconcile_pending_memory_receipt_offline,
 )
+from nanobot.agent.memory_recovery_receipt_finalizer import (
+    OfflineReceiptFinalizationError,
+    finalize_pending_memory_receipt_offline,
+)
+from nanobot.agent.turn import TurnResult
+from nanobot.cron.action_store import CronActionStore
+from nanobot.cron.canonical_execution import execute_claimed_fresh_text
+from nanobot.cron.completion import CronCompletionProjector
+from nanobot.cron.definition_store import CronDefinitionAction, CronDefinitionStore
+from nanobot.cron.delivery_runtime import CronDeliveryRuntime
+from nanobot.cron.delivery_store import CronDeliveryOutboxStore
+from nanobot.cron.occurrence_store import CronOccurrenceStore, OccurrenceExecutionStartedError
+from nanobot.cron.service import CronService, _job_definition
+from nanobot.cron.types import CronSchedule
+from nanobot.providers.base import LLMResponse
+from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
 from nanobot.session.manager import SessionManager, SessionWriteConflict
 from nanobot.utils.prompt_budget import (
     AsyncPortableFileLock,
     PromptBudget,
-    PromptBudgetExceeded,
     reduce_messages_to_budget,
 )
-
-
-class _DirectProvider(LLMProvider):
-    def __init__(self) -> None:
-        super().__init__()
-        self.generation = GenerationSettings(max_tokens=0, context_window_tokens=2048)
-        self.calls = 0
-
-    def estimate_prompt_tokens(self, messages, _tools, _model):
-        return sum(len(str(message.get("content", ""))) for message in messages), "test"
-
-    async def chat(self, messages, **_kwargs):
-        self.calls += 1
-        return LLMResponse(content="ok")
-
-    async def chat_stream(self, messages, on_content_delta=None, **_kwargs):
-        self.calls += 1
-        if on_content_delta:
-            await on_content_delta("ok")
-        return LLMResponse(content="ok")
-
-    def get_default_model(self) -> str:
-        return "test"
+from tests.agent.p6_memory_contract_fixtures import (
+    SummaryProvider,
+    concrete_provider,
+    file_snapshot,
+    fitting_prefix,
+    provider_limits,
+    receipt_layout,
+    summary_runtime,
+)
 
 
 @pytest.mark.asyncio
@@ -65,15 +62,6 @@ async def test_async_lock_cancellation_does_not_leak(tmp_path: Path) -> None:
     replacement = AsyncPortableFileLock(path)
     await asyncio.wait_for(replacement.__aenter__(), timeout=1)
     await replacement.__aexit__(None, None, None)
-
-
-@pytest.mark.asyncio
-async def test_direct_provider_transport_is_budget_guarded() -> None:
-    provider = _DirectProvider()
-    with pytest.raises(PromptBudgetExceeded):
-        await provider.chat([{"role": "user", "content": "x" * 5000}])
-    assert provider.calls == 0
-    assert (await provider.chat([{"role": "user", "content": "fit"}])).content == "ok"
 
 
 def test_reducer_keeps_late_system_and_removes_invalid_tool_group() -> None:
@@ -121,7 +109,7 @@ def test_session_generation_rejects_stale_append_and_merges_identical_messages(t
     merged = SessionManager(tmp_path).get_or_create("cli:revision")
     assert [item["content"] for item in merged.messages] == ["same", "same", "same"]
 
-    stale.clear(expected_revision=stale.revision)
+    stale.clear()
     latest = first_manager.get_or_create("cli:revision")
     latest.add_message("assistant", "new generation")
     first_manager.save(latest)
@@ -131,183 +119,185 @@ def test_session_generation_rejects_stale_append_and_merges_identical_messages(t
 
 
 @pytest.mark.asyncio
-async def test_memory_receipt_digest_conflict_preserves_new_memory(tmp_path: Path) -> None:
-    store = MemoryStore(tmp_path)
-    sessions = SessionManager(tmp_path)
-    session = sessions.get_or_create("cli:digest")
-    session.messages = [{"role": "user", "content": "source"}]
-    sessions.save(session)
-    store.write_long_term("newer")
-    receipt = store._make_receipt(
-        messages=session.messages,
-        history_entry="old summary",
-        memory_output="obsolete",
-        session_key=session.key,
-        start_offset=0,
-        end_offset=1,
-        session_generation=session.generation,
-    )
-    store._write_receipt_unlocked(receipt)
-    store.write_long_term("newest")
-
-    assert store.recover_pending_receipt(sessions)
-    assert store.read_long_term() == "newest"
-    assert session.last_consolidated == 0
-    assert not store.pending_receipt_file.exists()
+async def test_direct_provider_transport_is_budget_guarded():
+    provider, calls = concrete_provider(content="ok")
+    oversized = [{"role": "user", "content": "x" * 5000}]
+    with pytest.raises(FinalizedRequestBudgetExceeded):
+        await provider.chat_once(messages=oversized, max_tokens=1, provider_context=provider_limits(2048))
+    assert calls == []
+    result = await provider.chat_once(messages=[{"role": "user", "content": "fit"}],
+                                     max_tokens=1, provider_context=provider_limits(2048))
+    assert result.content == "ok"
+    assert calls == ["chat"]
+    assert oversized == [{"role": "user", "content": "x" * 5000}]
 
 
-def test_consolidation_cap_returns_fitting_prefix(tmp_path: Path) -> None:
-    class Counter:
-        def estimate_prompt_tokens(self, messages, _tools, _model):
-            return len(messages[-1].get("content", "")), "test"
+@pytest.mark.asyncio
+async def test_offline_receipt_digest_conflict_preserves_new_memory_and_evidence(tmp_path):
+    workspace, sessions, source, pending = receipt_layout(tmp_path, base=b"newer", end=1, output="obsolete")
+    memory = workspace / "memory" / "MEMORY.md"
+    memory.write_bytes(b"newest")
+    raw, receipt_stat, source_raw = pending.read_bytes(), pending.stat(), source.read_bytes()
+    for _ in range(2):
+        with pytest.raises(OfflineMemoryRecoveryError):
+            reconcile_pending_memory_receipt_offline(workspace, sessions_root=sessions)
+        with pytest.raises(OfflineReceiptFinalizationError):
+            finalize_pending_memory_receipt_offline(workspace, sessions_root=sessions)
+        assert memory.read_text() == "newest"
+        assert memory.read_bytes() == b"newest"
+        header = json.loads(source.read_bytes().splitlines()[0])
+        assert header["last_consolidated"] == 0
+        assert header["last_archived"] == 0
+        assert source.read_bytes() == source_raw
+        assert pending.read_bytes() == raw and pending.stat() == receipt_stat
+        with pytest.raises(MemoryReceiptRecoveryRequired):
+            MemoryStore(workspace, sessions_root=sessions)
+    # Base-digest validation can follow conversion; its durable residue is not rolled back.
+    assert (workspace / "memory" / ".recovery").is_dir()
 
-    sessions = SessionManager(tmp_path)
-    consolidator = MemoryConsolidator(
-        tmp_path,
-        Counter(),
-        "test",
-        sessions,
-        context_window_tokens=10_000,
-        build_messages=lambda **_kwargs: [],
-        get_tool_definitions=lambda: [],
-        max_completion_tokens=0,
-    )
-    consolidator._SAFETY_BUFFER = 0
-    session = sessions.get_or_create("cli:cap")
-    session.messages = [
+
+@pytest.mark.asyncio
+async def test_governor_selects_largest_fitting_closed_source_prefix(tmp_path):
+    rows = [
         {"role": "user", "content": "first"},
         *({"role": "assistant", "content": "x"} for _ in range(189)),
         {"role": "user", "content": "next"},
         *({"role": "assistant", "content": "x"} for _ in range(20)),
     ]
-    start, end, _chunk = consolidator._select_consolidation_chunk(session) or (-1, -1, [])
-    assert (start, end) == (0, 190)
+    chunk, after = await fitting_prefix(tmp_path / "source", rows, 190)
+    assert (0, after.checkpoint["boundary"]) == (0, 190)
+    assert chunk == rows[:190]
+    assert len(after.events) == 211
+
+
+def _cron_service(root):
+    namespace = "cron:q1-no-resurrection"
+    definitions = CronDefinitionStore(CronActionStore(root, namespace=namespace))
+    occurrences = CronOccurrenceStore(root / "occurrences", namespace=namespace)
+    projector = CronCompletionProjector(occurrences, root / "runs")
+    outbox = CronDeliveryOutboxStore(root / "outbox", namespace=namespace)
+    return CronService(
+        root / "jobs.json", definition_store=definitions, occurrence_store=occurrences,
+        completion_projector=projector,
+        delivery_runtime=CronDeliveryRuntime(outbox, occurrence_store=occurrences),
+    )
 
 
 @pytest.mark.asyncio
-async def test_cron_completion_merges_runtime_state_without_resurrecting_removed_job(
-    tmp_path: Path,
-) -> None:
-    store_path = tmp_path / "cron" / "jobs.json"
-    entered = asyncio.Event()
-    release = asyncio.Event()
-
-    async def on_job(_job):
-        entered.set()
-        await release.wait()
-        return SimpleNamespace(status="completed", content="done")
-
-    service = CronService(store_path, on_job=on_job)
+async def test_cron_completion_merges_runtime_state_without_resurrecting_removed_job(tmp_path):
+    root = tmp_path / "cron"
+    service = _cron_service(root)
     job = service.add_job("race", CronSchedule(kind="every", every_ms=1000), "run")
-    execution = asyncio.create_task(service.run_job(job.id))
-    await entered.wait()
-    external = CronService(store_path)
-    assert external.remove_job(job.id)
-    external.add_job("added", CronSchedule(kind="every", every_ms=1000), "add")
-    release.set()
-    await execution
+    job.payload.execution_mode = "legacy_fresh"
+    job.payload.session_key = f"cron:{job.id}"
+    job.payload.origin_channel = "cli"
+    job.payload.origin_chat_id = "direct"
+    service._definition_action(CronDefinitionAction.update(
+        _job_definition(job, job_instance_id=job.job_instance_id),
+        expected_job_instance_id=job.job_instance_id,
+        expected_definition_revision=job.definition_revision,
+    ))
+    job = service.get_job(job.id)
+    assert job is not None
+    claim = service.claim_scheduled_occurrence(
+        job.id, 1_700_000_000_000, owner="worker",
+        expected_job_instance_id=job.job_instance_id,
+        expected_definition_revision=job.definition_revision,
+    )
+    entered, release = asyncio.Event(), asyncio.Event()
 
-    payload = json.loads(store_path.read_text(encoding="utf-8"))
-    assert [item["name"] for item in payload["jobs"]] == ["added"]
+    class PausingAgent:
+        calls = 0
+
+        async def execute_silent_cron_turn(self, request):
+            self.calls += 1
+            entered.set()
+            await release.wait()
+            return TurnResult(run_id=claim.run_id, content="done")
+
+    agent = PausingAgent()
+    execution = asyncio.create_task(execute_claimed_fresh_text(service, agent, claim))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    external = _cron_service(root)
+    try:
+        current = external.get_job(job.id)
+        assert current is not None
+        assert external.remove_job(job.id, expected_job_instance_id=current.job_instance_id,
+                                   expected_definition_revision=current.definition_revision) == "removed"
+        external.add_job("added", CronSchedule(kind="every", every_ms=1000), "add")
+    finally:
+        release.set()
+    result, projection, outbox = await asyncio.wait_for(execution, timeout=2)
+    assert [job.name for job in external.list_jobs(include_disabled=True)] == ["added"]
+    reopened = _cron_service(root)
+    assert [job.name for job in reopened.list_jobs(include_disabled=True)] == ["added"]
+    assert reopened.occurrence_store.get(claim.occurrence_id).state == "completed"
+    assert projection.completion["result"] == result.content == "done"
+    assert outbox.run_id == claim.run_id
+    assert agent.calls == 1
+    with pytest.raises(OccurrenceExecutionStartedError):
+        await execute_claimed_fresh_text(service, agent, claim)
+    assert agent.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_memory_read_stays_live_while_consolidations_serialize(tmp_path: Path) -> None:
-    """A normal memory snapshot must not wait on a provider-held transaction."""
+async def test_storage_free_summaries_keep_memory_reads_live_without_global_serialization(tmp_path):
+    class PausingProvider(SummaryProvider):
+        def __init__(self):
+            super().__init__([LLMResponse(content="S1"), LLMResponse(content="S2")])
+            self.entered, self.release = asyncio.Event(), asyncio.Event()
 
-    class _PausingProvider:
-        def __init__(self) -> None:
-            self.calls = 0
-            self.prompts: list[list[dict[str, object]]] = []
-            self.first_started = asyncio.Event()
-            self.release_first = asyncio.Event()
-
-        async def chat_with_retry(self, **kwargs: object) -> LLMResponse:
+        async def chat(self, messages, **kwargs):
             call = self.calls
-            self.calls += 1
-            self.prompts.append(kwargs["messages"])  # type: ignore[arg-type]
+            response = await super().chat(messages, **kwargs)
             if call == 0:
-                self.first_started.set()
-                await self.release_first.wait()
-            update = "M1" if call == 0 else "M1\nM2"
-            return LLMResponse(
-                content=None,
-                tool_calls=[ToolCallRequest(
-                    id=f"save-{call}",
-                    name="save_memory",
-                    arguments={
-                        "history_entry": f"summary-{call}",
-                        "memory_update": update,
-                    },
-                )],
-            )
+                self.entered.set()
+                await self.release.wait()
+            return response
 
-    store = MemoryStore(tmp_path)
-    store.write_long_term("M0")
-    provider = _PausingProvider()
-    first = asyncio.create_task(store.consolidate(
-        [{"role": "user", "content": "first"}],
-        provider,
-        "test-model",
-    ))
-    await asyncio.wait_for(provider.first_started.wait(), timeout=1)
-
-    second = asyncio.create_task(store.consolidate(
-        [{"role": "user", "content": "second"}],
-        provider,
-        "test-model",
-    ))
-    await asyncio.sleep(0)
-    snapshot = asyncio.create_task(asyncio.to_thread(store.read_long_term))
+    store = MemoryStore(tmp_path, sessions_root=tmp_path / "sessions")
+    store.memory_file.write_bytes(b"M0")
+    before = file_snapshot(tmp_path)
+    provider = PausingProvider()
+    runtime = summary_runtime(provider)
+    sources = [[{"role": "user", "content": content}] for content in ("first", "second")]
+    first = asyncio.create_task(Consolidator.summarize_source_chunk(sources[0], None,
+                                   runtime=runtime, max_output_tokens=256))
+    await asyncio.wait_for(provider.entered.wait(), timeout=1)
     try:
-        observed = await asyncio.wait_for(asyncio.shield(snapshot), timeout=0.1)
-    except asyncio.TimeoutError:
-        provider.release_first.set()
-        await asyncio.gather(first, second, snapshot)
-        pytest.fail("normal memory reads waited on the provider-held transaction lock")
-
-    provider.release_first.set()
-    first_result, second_result, observed = await asyncio.gather(first, second, snapshot)
-
-    assert first_result is True
-    assert second_result is True
+        second_result = await asyncio.wait_for(Consolidator.summarize_source_chunk(sources[1], None,
+                                 runtime=runtime, max_output_tokens=256), timeout=1)
+        observed = await asyncio.wait_for(asyncio.to_thread(store.read_memory), timeout=0.5)
+    finally:
+        provider.release.set()
+    first_result = await asyncio.wait_for(first, timeout=1)
+    assert first_result.summary == "S1" and first_result.status == "complete" and first_result.calls == 1
+    assert second_result.summary == "S2" and second_result.status == "complete" and second_result.calls == 1
     assert provider.calls == 2
-    assert "M1" in str(provider.prompts[1][-1]["content"])
-    assert store.read_long_term() == "M1\nM2"
-    assert observed in {"M0", "M1", "M1\nM2"}
-    history = store.history_file.read_text(encoding="utf-8")
-    assert "summary-0" in history
-    assert "summary-1" in history
+    assert [json.loads(prompt[1]["content"]) for prompt in provider.prompts] == [
+        {"previous_summary": None, "events": sources[0]},
+        {"previous_summary": None, "events": sources[1]},
+    ]
+    assert "M0" not in str(provider.prompts) and "M1" not in str(provider.prompts)
+    assert observed == "M0"
+    assert store.read_memory() == "M0"
+    assert file_snapshot(tmp_path) == before
 
 
 def test_scheduled_ring_preserves_approval_state_and_legacy_defaults(tmp_path: Path) -> None:
-    from nanobot.agent.loop import AgentLoop
-
     manager = SessionManager(tmp_path)
-    loop = AgentLoop.__new__(AgentLoop)
-    loop.sessions = manager
-    loop._mirror_task_session_to_visible_chat(
-        session_key="cron:job-approval",
-        channel="telegram",
-        chat_id="approval",
-        task_text="blocked instruction",
-        response_text="approval needed",
-        approval_granted=False,
-        run_id="run-blocked",
-        status="approval_required",
-        stop_reason="approval_required",
+    visible = manager.get_or_create("telegram:approval")
+    visible.add_scheduled_run(
+        job_id="job-approval", run_id="run-blocked", instruction="blocked instruction",
+        result="approval needed", detail_session_key="cron:job-approval",
+        approval_granted=False, status="approval_required", stop_reason="approval_required",
     )
-    loop._mirror_task_session_to_visible_chat(
-        session_key="cron:job-approved",
-        channel="telegram",
-        chat_id="approval",
-        task_text="approved instruction",
-        response_text="completed result",
-        approval_granted=True,
-        run_id="run-approved",
-        status="completed",
+    visible.add_scheduled_run(
+        job_id="job-approved", run_id="run-approved", instruction="approved instruction",
+        result="completed result", detail_session_key="cron:job-approved",
+        approval_granted=True, status="completed",
     )
-
+    manager.save(visible)
     loaded = SessionManager(tmp_path).get_or_create("telegram:approval")
     ring = loaded.recent_scheduled_runs()
     assert ring[0]["approval_granted"] is False

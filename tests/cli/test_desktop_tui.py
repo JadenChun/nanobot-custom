@@ -15,6 +15,29 @@ DESKTOP_ID = "d4f6cc96-a3a2-4a68-9a45-cec04b79ab53"
 GATEWAY_ID = "d4f6cc96-a3a2-4a68-9a45-cec04b79ab54"
 
 
+@pytest.fixture
+def admitted_desktop(monkeypatch, tmp_path):
+    """Explicit positive-test admission; never enable the installed candidate."""
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "absent-home"))
+
+
+def _admitted_resolver_command():
+    # A parent monkeypatch cannot reach an isolated child. Admit only this frozen
+    # test process, then execute the actual script with its standalone semantics.
+    script = str(Path(desktop_tui.__file__).resolve())
+    bootstrap = """
+import pathlib, runpy, sys
+script = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(script.parents[2]))
+from nanobot import migration_guard
+migration_guard.require_runtime_ready = lambda: None
+sys.argv = sys.argv[1:]
+runpy.run_path(str(script), run_name='__main__')
+"""
+    return [sys.executable, "-I", "-S", "-c", bootstrap, script, "--resolve"]
+
+
 def connection(**overrides):
     return {
         "protocolVersion": 1, "gatewayId": GATEWAY_ID,
@@ -37,13 +60,13 @@ def target(**overrides):
     {"wsUrl": "ws://user@127.0.0.1:8765/ws"}, {"wsUrl": "ws://127.0.0.1:8765/ws#fragment"},
     {"apiUrl": "http://127.0.0.1:8765/api"}, {"apiToken": ""}, {"wsToken": "secret\n"},
 ])
-def test_resolver_rejects_unusable_or_unsafe_connection(monkeypatch, overrides):
+def test_resolver_rejects_unusable_or_unsafe_connection(monkeypatch, overrides, admitted_desktop):
     monkeypatch.setattr(desktop_tui, "discover_desktop_target", lambda: target(**overrides))
     with pytest.raises(DesktopTargetError):
         desktop_tui.resolve_request(json.dumps({"instanceId": DESKTOP_ID, "gatewayId": GATEWAY_ID}).encode())
 
 
-def test_resolver_revalidates_both_instances_for_each_refresh(monkeypatch):
+def test_resolver_revalidates_both_instances_for_each_refresh(monkeypatch, admitted_desktop):
     chosen = target()
     monkeypatch.setattr(desktop_tui, "discover_desktop_target", lambda: chosen)
     request = json.dumps({"instanceId": DESKTOP_ID, "gatewayId": GATEWAY_ID}).encode()
@@ -59,7 +82,7 @@ def test_resolver_revalidates_both_instances_for_each_refresh(monkeypatch):
         desktop_tui.resolve_request(request)
 
 
-def test_launcher_has_no_gateway_ownership_and_no_credentials_in_child_env(monkeypatch):
+def test_launcher_has_no_gateway_ownership_and_no_credentials_in_child_env(monkeypatch, admitted_desktop):
     chosen = target()
     monkeypatch.setattr(tui_launcher, "resolve_tui_command", lambda: ["terminal-client"])
     monkeypatch.setattr(tui_launcher, "_ensure_gateway", lambda *a, **k: pytest.fail("must not own gateway"))
@@ -98,7 +121,7 @@ def test_launcher_has_no_gateway_ownership_and_no_credentials_in_child_env(monke
     process.terminate.assert_not_called()
 
 
-def test_protocol_probe_is_isolated_in_a_real_child(monkeypatch):
+def test_protocol_probe_is_isolated_in_a_real_child(monkeypatch, admitted_desktop):
     # Older clients ignore --desktop-protocol and consume normal connection env.
     # Probe them without credentials or terminal input, before allowing launch.
     command = [sys.executable, "-I", "-S", "-c", """
@@ -122,7 +145,7 @@ else:
     assert desktop_tui.launch_desktop_tui(target()) == 0
 
 
-def test_unsupported_desktop_does_not_install_or_launch_a_client(monkeypatch):
+def test_unsupported_desktop_does_not_install_or_launch_a_client(monkeypatch, admitted_desktop):
     chosen = target()
     chosen.request.return_value = DesktopReply("ready", frozenset({"webui"}))
     monkeypatch.setattr(tui_launcher, "resolve_tui_command", lambda: pytest.fail("unsupported target"))
@@ -130,7 +153,7 @@ def test_unsupported_desktop_does_not_install_or_launch_a_client(monkeypatch):
         desktop_tui.launch_desktop_tui(chosen)
 
 
-def test_incompatible_tui_fails_without_fallback(monkeypatch):
+def test_incompatible_tui_fails_without_fallback(monkeypatch, admitted_desktop):
     monkeypatch.setattr(tui_launcher, "resolve_tui_command", lambda: ["old-client"])
     monkeypatch.setattr(desktop_tui.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 1, b"", b""))
     monkeypatch.setattr(desktop_tui.subprocess, "Popen", lambda *a, **kw: pytest.fail("cannot start client"))
@@ -148,13 +171,13 @@ def test_bare_command_uses_attachment_and_preserves_return_code(monkeypatch):
 
 
 def test_standalone_resolver_is_silent_on_invalid_input(tmp_path):
-    script = str(Path(desktop_tui.__file__).resolve())
-    result = subprocess.run([sys.executable, "-I", "-S", script, "--resolve"],
+    command = _admitted_resolver_command()
+    result = subprocess.run(command,
                             input=b'{"apiToken":"synthetic"}\n', capture_output=True, timeout=5)
     assert result.returncode == 3
     assert result.stdout == result.stderr == b""
     with (tmp_path / "not-a-pipe").open("wb") as output:
-        result = subprocess.run([sys.executable, "-I", "-S", script, "--resolve"],
+        result = subprocess.run(command,
                                 input=b"{}\n", stdout=output, stderr=subprocess.PIPE, timeout=5)
     assert result.returncode == 3
     assert (tmp_path / "not-a-pipe").read_bytes() == b""
@@ -183,7 +206,7 @@ def test_resolver_output_accepts_only_anonymous_ipc(tmp_path):
 
 
 @pytest.mark.parametrize("args", [["--config", "elsewhere"], ["gateway", "stop"], ["--help"], ["webui"]])
-def test_desktop_only_entry_never_forwards_unknown_commands(args, monkeypatch):
+def test_desktop_only_entry_never_forwards_unknown_commands(args, monkeypatch, admitted_desktop):
     monkeypatch.setattr(sys, "argv", ["nanobot-desktop-tui", *args])
     monkeypatch.setattr(desktop_tui, "discover_desktop_target", lambda: pytest.fail("explicit command"))
     with pytest.raises(SystemExit) as error:
@@ -191,7 +214,7 @@ def test_desktop_only_entry_never_forwards_unknown_commands(args, monkeypatch):
     assert error.value.code == 2
 
 
-def test_desktop_cache_avoids_default_python_data_root(monkeypatch, tmp_path):
+def test_desktop_cache_avoids_default_python_data_root(monkeypatch, tmp_path, admitted_desktop):
     monkeypatch.setenv("NANOBOT_DESKTOP_CLIENT_CACHE", str(tmp_path))
     observed = []
     def resolve(**kwargs):
@@ -201,3 +224,36 @@ def test_desktop_cache_avoids_default_python_data_root(monkeypatch, tmp_path):
     with pytest.raises(DesktopTargetError):
         desktop_tui.launch_desktop_tui(target())
     assert observed == [{"data_dir": tmp_path}]
+
+
+@pytest.mark.parametrize("entry", ["resolve", "launch", "main"])
+def test_desktop_entries_require_migration_admission(entry, monkeypatch):
+    from nanobot.migration_guard import MigrationIncompleteError
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("migration guard must run before discovery, connection or launch")
+
+    monkeypatch.setattr(desktop_tui, "discover_desktop_target", forbidden)
+    monkeypatch.setattr(desktop_tui, "_connection", forbidden)
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    monkeypatch.setattr(sys, "argv", ["nanobot-desktop-tui", "--resolve"])
+    with pytest.raises(MigrationIncompleteError):
+        if entry == "resolve":
+            desktop_tui.resolve_request(b"{}")
+        elif entry == "launch":
+            desktop_tui.launch_desktop_tui(target())
+        else:
+            desktop_tui.main()
+
+
+def test_standalone_resolver_keeps_production_migration_guard():
+    script = str(Path(desktop_tui.__file__).resolve())
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", script, "--resolve"],
+        input=b'{"apiToken":"synthetic-private-input"}\n',
+        capture_output=True, timeout=5,
+    )
+    assert result.returncode == 1
+    assert result.stdout == b""
+    assert b"MigrationIncompleteError" in result.stderr
+    assert b"synthetic-private-input" not in result.stderr

@@ -1027,12 +1027,38 @@ def test_update_agent_settings_marks_timezone_as_manual(
         lambda: "Asia/Shanghai",
     )
     config_path = tmp_path / "config.json"
-    save_config(Config(), config_path)
+    config = Config.model_validate({
+        "agents": {"defaults": {"timezone": "UTC", "timezoneMode": "auto"}},
+    })
+    save_config(config, config_path)
     monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    initial = load_config(config_path)
+    assert initial.agents.defaults.timezone == "Asia/Shanghai"
+    assert initial.agents.defaults.timezone_mode == "auto"
 
     payload = update_agent_settings({"timezone": ["Asia/Shanghai"]})
 
     assert payload["requires_restart"] is False
+    saved = load_config(config_path)
+    assert saved.agents.defaults.timezone == "Asia/Shanghai"
+    assert saved.agents.defaults.timezone_mode == "manual"
+
+
+def test_update_agent_settings_changed_timezone_requires_restart(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("nanobot.config.timezone.get_localzone_name", lambda: "Asia/Shanghai")
+    config_path = tmp_path / "config.json"
+    save_config(Config(), config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    initial = load_config(config_path)
+    assert initial.agents.defaults.timezone == "UTC"
+    assert initial.agents.defaults.timezone_mode == "manual"
+
+    payload = update_agent_settings({"timezone": ["Asia/Shanghai"]})
+
+    assert payload["requires_restart"] is True
     saved = load_config(config_path)
     assert saved.agents.defaults.timezone == "Asia/Shanghai"
     assert saved.agents.defaults.timezone_mode == "manual"
@@ -1669,16 +1695,19 @@ def test_openai_codex_oauth_status_uses_available_token(
         {
             "access": "access-token",
             "refresh": "refresh-token",
-            "expires": 2_000_000_000_000,
+                "expires_at_ms": 2_000_000_000_000,
             "account_id": "acct-codex",
         },
     )()
-    monkeypatch.setattr("oauth_cli_kit.storage.FileTokenStorage.load", lambda _self: token)
+    monkeypatch.setattr(
+        "nanobot.providers.codex_auth.get_codex_authority",
+        lambda: SimpleNamespace(get_view_or_import=lambda: SimpleNamespace(token=token)),
+    )
 
     status = _oauth_provider_status(find_by_name("openai_codex"))
 
     assert status["configured"] is True
-    assert status["account"] == "acct-codex"
+    assert status["account"] is None
 
 
 def test_openai_codex_oauth_status_uses_refreshable_expired_token(
@@ -1690,11 +1719,14 @@ def test_openai_codex_oauth_status_uses_refreshable_expired_token(
         {
             "access": "access-token",
             "refresh": "refresh-token",
-            "expires": 1,
+                "expires_at_ms": 1,
             "account_id": "acct-codex",
         },
     )()
-    monkeypatch.setattr("oauth_cli_kit.storage.FileTokenStorage.load", lambda _self: token)
+    monkeypatch.setattr(
+        "nanobot.providers.codex_auth.get_codex_authority",
+        lambda: SimpleNamespace(get_view_or_import=lambda: SimpleNamespace(token=token)),
+    )
 
     status = _oauth_provider_status(find_by_name("openai_codex"))
 
@@ -1708,7 +1740,10 @@ def test_openai_codex_oauth_status_rejects_unavailable_token(
     def fake_load(_self):
         raise RuntimeError("refresh failed")
 
-    monkeypatch.setattr("oauth_cli_kit.storage.FileTokenStorage.load", fake_load)
+    monkeypatch.setattr(
+        "nanobot.providers.codex_auth.get_codex_authority",
+        lambda: SimpleNamespace(get_view_or_import=lambda: fake_load(None)),
+    )
 
     status = _oauth_provider_status(find_by_name("openai_codex"))
 

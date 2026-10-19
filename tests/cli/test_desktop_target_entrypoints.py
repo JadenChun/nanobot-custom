@@ -1,93 +1,64 @@
-"""The picker covers retained launchers without intercepting explicit commands."""
+"""Classic launchers do not implicitly attach to an optional desktop runtime."""
 
 import pytest
-from prompt_toolkit.application import create_app_session
-from prompt_toolkit.input import create_pipe_input
-from prompt_toolkit.output import DummyOutput
 from typer.testing import CliRunner
 
 from nanobot.cli import commands, desktop_target, entry
 
 
-@pytest.mark.parametrize("args", [[], ["webui"]])
-def test_retained_launcher_attaches_without_starting_python(monkeypatch, args):
-    seen = []
+@pytest.fixture
+def no_desktop_discovery(monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("classic entrypoint must not discover, prompt, or attach to desktop")
 
-    def dispatch(raw):
-        seen.append(raw)
-        return 0
-
-    monkeypatch.setattr(desktop_target, "dispatch_bare_desktop_target", dispatch)
-    monkeypatch.setattr(entry, "_run_agent", lambda *_a, **_kw: pytest.fail("agent started"))
-    # Callback exits before webui can inspect/load config or start its runtime.
-    monkeypatch.setattr(
-        "nanobot.cli.webui._resolve_webui_config_path",
-        lambda *_a, **_kw: pytest.fail("Python WebUI started"),
-    )
-    result = CliRunner().invoke(commands.app, args)
-    assert result.exit_code == 0, result.output
-    assert seen == [args]
+    monkeypatch.setattr(desktop_target, "_interactive_shell", lambda: True)
+    monkeypatch.setattr(desktop_target, "discover_desktop_target", forbidden)
+    monkeypatch.setattr(desktop_target, "dispatch_bare_desktop_target", forbidden)
+    monkeypatch.setattr(desktop_target, "_choose_target", forbidden)
 
 
-@pytest.mark.parametrize("args", [[], ["webui"]])
+@pytest.mark.usefixtures("no_desktop_discovery")
 @pytest.mark.parametrize("launcher", ["modern", "retained"])
-def test_launcher_picker_ctrl_c_does_not_start_python(monkeypatch, args, launcher):
-    class Target:
-        def request(self, operation):
-            assert operation == "status", "cancelled picker must not request attachment"
-            return desktop_target.DesktopReply("ready", frozenset({"webui", "tui"}))
-
-    monkeypatch.setattr(desktop_target, "_interactive_shell", lambda: True)
-    monkeypatch.setattr(desktop_target, "discover_desktop_target", Target)
-    monkeypatch.setattr(entry, "_run_agent", lambda *_a, **_kw: pytest.fail("agent started"))
-    monkeypatch.setattr(
-        "nanobot.cli.webui._resolve_webui_config_path",
-        lambda *_a, **_kw: pytest.fail("Python WebUI started"),
-    )
-    monkeypatch.setattr(entry.sys, "argv", ["nanobot", *args])
-    with create_pipe_input() as pipe_input:
-        with create_app_session(input=pipe_input, output=DummyOutput()):
-            pipe_input.send_text("\x03")
-            if launcher == "retained":
-                result = CliRunner().invoke(commands.app, args)
-                assert result.exit_code == 130, result.output
-            else:
-                with pytest.raises(SystemExit) as exc:
-                    entry.main()
-                assert exc.value.code == 130
-
-
-@pytest.mark.parametrize("args", [["agent", "--help"], ["--help"], ["--version"],
-                                  ["webui", "--no-open"], ["webui", "--port", "8765"]])
-def test_retained_launcher_explicit_commands_never_discover(monkeypatch, args):
-    monkeypatch.setattr(desktop_target, "_interactive_shell", lambda: True)
-    monkeypatch.setattr(
-        desktop_target, "discover_desktop_target", lambda: pytest.fail("explicit discovery")
-    )
-    class PythonWebuiReachedError(Exception):
-        pass
-
-    def stop_webui(*_args, **_kwargs):
-        raise PythonWebuiReachedError
-
-    monkeypatch.setattr("nanobot.cli.webui._resolve_webui_config_path", stop_webui)
-    result = CliRunner().invoke(commands.app, args)
-    if args[0] == "webui":
-        assert isinstance(result.exception, PythonWebuiReachedError), result.output
-    else:
+@pytest.mark.parametrize("args", [[], ["--help"], ["--version"], ["agent", "--help"],
+                                  ["webui", "--help"], ["gateway", "--help"]])
+def test_help_and_metadata_never_start_runtime(monkeypatch, args, launcher):
+    monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready",
+                        lambda: pytest.fail("help must not request runtime admission"))
+    if launcher == "retained":
+        result = CliRunner().invoke(commands.app, args)
         assert result.exit_code == 0, result.output
+    else:
+        monkeypatch.setattr(entry.sys, "argv", ["nanobot", *args])
+        with pytest.raises(SystemExit) as exc:
+            entry.main()
+        assert exc.value.code == 0
 
 
-def test_modern_webui_invocation_prompts_once(monkeypatch):
-    calls = []
+@pytest.mark.usefixtures("no_desktop_discovery")
+@pytest.mark.parametrize("launcher", ["modern", "retained"])
+@pytest.mark.parametrize("args", [["webui"], ["webui", "--no-open"],
+                                  ["webui", "--port", "8765"], ["agent"],
+                                  ["agent", "--classic"], ["agent", "-m", "hello"]])
+def test_execution_loads_config_before_desktop_discovery(
+    monkeypatch, tmp_path, capsys, args, launcher,
+):
+    config_path = tmp_path / "invalid.json"
+    config_path.write_text("{broken", encoding="utf-8")
+    original_config = config_path.read_bytes()
+    invocation_args = [*args, "--config", str(config_path)]
 
-    def dispatch(args):
-        calls.append(args)
-        return 0
+    if launcher == "retained":
+        result = CliRunner().invoke(commands.app, invocation_args)
+        assert result.exit_code == 1, result.output
+        output = result.output
+    else:
+        monkeypatch.setattr(entry.sys, "argv", ["nanobot", *invocation_args])
+        with pytest.raises(SystemExit) as exc:
+            entry.main()
+        assert exc.value.code == 1
+        captured = capsys.readouterr()
+        output = captured.out + captured.err
 
-    monkeypatch.setattr(desktop_target, "dispatch_bare_desktop_target", dispatch)
-    monkeypatch.setattr(entry.sys, "argv", ["nanobot", "webui"])
-    with pytest.raises(SystemExit) as exc:
-        entry.main()
-    assert exc.value.code == 0
-    assert calls == [["webui"]]
+    assert "Invalid configuration" in output
+    assert "Traceback" not in output
+    assert config_path.read_bytes() == original_config

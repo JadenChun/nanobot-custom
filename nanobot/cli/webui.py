@@ -34,7 +34,7 @@ from nanobot.cli.webui_support import (
     _webui_display_url,
     _webui_endpoint_reachable,
 )
-from nanobot.config.paths import get_workspace_path
+from nanobot.config.paths import get_default_sessions_root
 from nanobot.utils.helpers import sync_workspace_templates
 from nanobot.webui.dev import (
     WebUIDevError,
@@ -97,8 +97,15 @@ def webui(
     ),
 ) -> None:
     """Prepare the local WebUI, start the gateway, and open the browser workbench."""
-    from nanobot.migration_guard import require_runtime_ready
-    require_runtime_ready()
+    if background:
+        from nanobot.migration_guard import require_runtime_ready
+
+        require_runtime_ready()
+    from nanobot.agent.memory_recovery_startup_admission import (
+        StartupReceiptAdmissionError,
+        admitted_startup_mutation,
+        require_startup_receipt_admission,
+    )
     from nanobot.config.loader import resolve_config_env_vars, save_config
     from nanobot.gateway import (
         GatewayClientLease,
@@ -170,15 +177,37 @@ def webui(
         console.print(f"[red]Error: invalid WebUI channel config: {exc}[/red]")
         raise typer.Exit(1) from exc
 
-    if created_config or provider_error or changed_webui or workspace:
-        save_config(setup_config, config_path)
-        console.print(f"[green]✓[/green] Saved config: {config_path}")
-
-    workspace_path = get_workspace_path(setup_config.workspace_path)
-    workspace_path.mkdir(parents=True, exist_ok=True)
-    sync_workspace_templates(workspace_path)
+    workspace_path = setup_config.workspace_path.resolve(strict=False)
+    if setup_config.runtime_data_dir is not None:
+        sessions_root = setup_config.runtime_data_dir / "sessions"
+    elif config:
+        sessions_root = config_path.parent / "sessions"
+    else:
+        sessions_root = get_default_sessions_root()
+    try:
+        require_startup_receipt_admission(workspace_path, sessions_root=sessions_root)
+        with admitted_startup_mutation(workspace_path, sessions_root=sessions_root):
+            if created_config or provider_error or changed_webui or workspace:
+                save_config(setup_config, config_path)
+                console.print(f"[green]✓[/green] Saved config: {config_path}")
+            workspace_path.mkdir(parents=True, exist_ok=True)
+            sync_workspace_templates(workspace_path)
+    except StartupReceiptAdmissionError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(1) from None
 
     runtime_config = _load_runtime_config(str(config_path), workspace)
+    runtime_sessions_root = (runtime_config.runtime_data_dir or config_path.parent) / "sessions"
+    from nanobot.runtime_composition import RuntimePreflightError, runtime_preflight
+
+    def recheck_startup_admission() -> None:
+        try:
+            runtime_preflight(runtime_config, sessions_root=runtime_sessions_root)
+        except (StartupReceiptAdmissionError, RuntimePreflightError) as exc:
+            console.print(f"[red]Error: {exc}[/red]")
+            raise typer.Exit(1) from None
+
+    recheck_startup_admission()
     effective_gateway_port = gateway_port if gateway_port is not None else runtime_config.gateway.port
 
     dev_browser_url = webui_dev_browser_url(webui_url) if dev else None
@@ -211,6 +240,7 @@ def webui(
         webui_bundle_mode = _webui_build_mode_for_interactive(yes=yes)
         _prepare_webui_bundle_for_gateway(runtime_config, mode=webui_bundle_mode)
 
+    recheck_startup_admission()
     instance = GatewayInstance.resolve(
         config_path=config_path,
         workspace=workspace,
@@ -220,12 +250,14 @@ def webui(
 
     def ensure_shared_gateway(*, client_lease: GatewayClientLease) -> None:
         """Start or refresh the one managed gateway shared by local clients."""
+        recheck_startup_admission()
         result = client_lease.ensure_on_demand_gateway(start_options)
         restarted = False
         restart_attempted = False
         if not result.ok and result.message == "gateway_already_running" and changed_webui:
             restart_attempted = True
             console.print("[yellow]WebUI config changed; restarting the background gateway.[/yellow]")
+            recheck_startup_admission()
             result = runtime.restart(start_options, timeout_s=20)
             restarted = result.ok
         if not result.ok and (restart_attempted or result.message != "gateway_already_running"):
@@ -292,6 +324,7 @@ def webui(
 
             try:
                 assert dev_browser_url is not None
+                recheck_startup_admission()
                 with run_webui_dev_server(
                     target_url=webui_dev_proxy_target(webui_url),
                     browser_url=dev_browser_url,
@@ -338,6 +371,7 @@ def webui(
         if dev_browser_url:
             dev_proxy_target = webui_dev_proxy_target(webui_url)
             try:
+                recheck_startup_admission()
                 with run_webui_dev_server(
                     target_url=dev_proxy_target,
                     browser_url=dev_browser_url,

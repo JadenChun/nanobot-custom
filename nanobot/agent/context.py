@@ -1,10 +1,12 @@
 """Context builder for assembling agent prompts."""
 
 import base64
+import json
 import mimetypes
 import platform
 import uuid
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
@@ -23,8 +25,10 @@ from nanobot.bus.events import (
 from nanobot.context_repo import ContextRepoManager
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
+    RUNTIME_CONTEXT_TAG,
     RuntimeContextBlock,
     append_runtime_context,
+    wrap_runtime_context_lines,
 )
 from nanobot.security.workspace_access import WorkspaceScopeResolver
 from nanobot.session.keys import last_channel_from_metadata
@@ -32,8 +36,18 @@ from nanobot.session.manager import Session
 from nanobot.session.source_projection import RuntimeNode, SourceNode
 from nanobot.session.source_request import RequestNode, SourceTranscript
 from nanobot.session.summary import SessionSummary
+from nanobot.utils import helpers
 from nanobot.utils.helpers import detect_image_mime, load_bundled_template
 from nanobot.utils.prompt_templates import render_template
+
+
+class _LegacyChatIdDefault(Enum):
+    OMITTED = "omitted"
+
+
+def _legacy_metadata_value(value: str) -> str:
+    """Keep legacy metadata on one data line, without allowing prompt delimiters."""
+    return json.dumps(value)[1:-1].replace("[", "\\u005b").replace("]", "\\u005d")
 
 
 def session_extra(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -95,11 +109,12 @@ class ContextBuilder:
 
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
     _SKIPPABLE_DEFAULTS = {"AGENTS.md", "USER.md"}
+    _RUNTIME_CONTEXT_TAG = RUNTIME_CONTEXT_TAG
 
-    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None, *, context_paths: list[Path] | None = None, context_manager: ContextRepoManager | None = None):
+    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None, *, context_paths: list[Path] | None = None, context_manager: ContextRepoManager | None = None, sessions_root: Path | None = None):
         self.workspace = workspace
         self.timezone = timezone
-        self.memory = MemoryStore(workspace)
+        self.memory = MemoryStore(workspace, sessions_root=sessions_root)
         self.context_manager = context_manager or ContextRepoManager.from_config(context_paths=context_paths)
         self.context_paths = self.context_manager.paths
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None,
@@ -144,7 +159,7 @@ class ContextBuilder:
             content = memory_file.read_text(encoding="utf-8")
             if content.strip():
                 parts.append(f"# Context Memory ({memory_file.parent.parent.name})\n\n{content}")
-        run_summaries = []
+        run_summaries: list[str] = []
         for run_file in self.context_manager.run_summary_files():
             content = run_file.read_text(encoding="utf-8").strip()
             if content:
@@ -266,6 +281,7 @@ class ContextBuilder:
         *,
         media: list[str] | None = None,
         channel: str | None = None,
+        chat_id: str | None | _LegacyChatIdDefault = _LegacyChatIdDefault.OMITTED,
         current_role: str = "user",
         session_summary: SessionSummary | None = None,
         runtime_context_blocks: Sequence[RuntimeContextBlock] | None = None,
@@ -273,6 +289,21 @@ class ContextBuilder:
         include_memory: bool = True,
     ) -> list[dict[str, Any]]:
         """Compatibility wrapper for callers that need merged adjacent roles."""
+        blocks = runtime_context_blocks
+        if (current_message is not None and current_role == "user"
+                and not isinstance(chat_id, _LegacyChatIdDefault)):
+            # Only explicit legacy calls acquire routing/time context. Canonical
+            # transcripts remain metadata-free unless their caller supplies it.
+            lines = [f"Current Time: {_legacy_metadata_value(helpers.current_time_str(self.timezone))}"]
+            if channel and chat_id:
+                lines.extend([
+                    f"Channel: {_legacy_metadata_value(channel)}",
+                    f"Chat ID: {_legacy_metadata_value(chat_id)}",
+                ])
+            blocks = [
+                RuntimeContextBlock("legacy_session", wrap_runtime_context_lines(lines)),
+                *(runtime_context_blocks or ()),
+            ]
         messages = self.build_transcript(
             TranscriptInput(
                 history=history,
@@ -280,7 +311,7 @@ class ContextBuilder:
                 media=media,
                 current_role=current_role,
                 session_summary=session_summary,
-                runtime_context_blocks=runtime_context_blocks,
+                runtime_context_blocks=blocks,
             ),
             channel=channel,
             workspace=workspace,

@@ -242,9 +242,15 @@ class _FakeApplicationFactory:
 
 
 @pytest.fixture
-def offline_composition(tmp_path, monkeypatch):
+async def offline_composition(tmp_path, monkeypatch):
     """Build deterministic production objects while denying network/process escape."""
     monkeypatch.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)
+    # The fake Telegram transport never uses optional PTB Webhooks. Production
+    # dependency preflight remains covered separately and must stay enabled.
+    monkeypatch.setattr(
+        "nanobot.optional_features.check_enabled_channel_dependencies",
+        lambda _names, _plugins: {},
+    )
     lifecycle_started = asyncio.Event()
     _FakeApplicationFactory.started = lifecycle_started
     _FakeApplicationFactory.builders = []
@@ -305,6 +311,7 @@ def offline_composition(tmp_path, monkeypatch):
         tools_config=config.tools,
     )
     manager = ChannelManager(config, bus, webui_static_dist=True)
+    await manager.acquire()
     channel = manager.channels["telegram"]
     assert isinstance(channel, TelegramChannel)
     bot = _FakeBot()
@@ -322,6 +329,24 @@ def offline_composition(tmp_path, monkeypatch):
         webui_dist=webui_dist,
         workspace=workspace,
     )
+
+
+async def test_missing_telegram_extra_still_fences_headless_activation(tmp_path, monkeypatch) -> None:
+    """The offline composition seam must not weaken production dependency admission."""
+    monkeypatch.setattr("nanobot.optional_features.extra_installed", lambda *_args: False)
+    config = Config.model_validate({
+        "channels": {
+            "websocket": {"enabled": False},
+            "telegram": {"enabled": True, "token": "synthetic-token", "allowFrom": ["42"]},
+        },
+    })
+    config.bind_source_path(tmp_path / "instance" / "config.json")
+
+    manager = ChannelManager(config, MessageBus(), webui_static_dist=False)
+    await manager.acquire()
+
+    assert "telegram" not in manager.channels
+    assert "preinstall" in manager._channel_errors["telegram"].lower()
 
 
 def _telegram_update(*, sender_id: int = 42, chat_id: int = 123, message_id: int = 101):
@@ -587,6 +612,7 @@ async def test_cancelled_turn_has_no_delivery_and_structured_tool_error_is_termi
     )], expected_calls=1)
     env.bus = MessageBus()
     env.manager = ChannelManager(env.config, env.bus, webui_static_dist=True)
+    await env.manager.acquire()
     env.channel = env.manager.channels["telegram"]
     assert isinstance(env.channel, TelegramChannel)
     await _replace_loop(env, tool_provider, tool_registry=tool_registry)

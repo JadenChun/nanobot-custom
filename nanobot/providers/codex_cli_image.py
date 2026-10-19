@@ -22,7 +22,7 @@ from nanobot.utils.helpers import detect_image_mime
 if TYPE_CHECKING:
     from nanobot.config.schema import ImageConfig
 
-_LOCKS: WeakKeyDictionary = WeakKeyDictionary()
+_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, dict[Path, asyncio.Lock]] = WeakKeyDictionary()
 
 
 def codex_home(configured: str = "") -> Path:
@@ -34,7 +34,7 @@ def resolve_command(command: str) -> str | None:
 
 
 def _snapshot(root: Path) -> dict[Path, tuple[int, int, str, int, int]]:
-    files = {}
+    files: dict[Path, tuple[int, int, str, int, int]] = {}
     if not root.exists():
         return files
     for path in root.rglob('*'):
@@ -85,7 +85,7 @@ class CodexCLIImageGenerationClient(ImageGenerationProvider):
             after = _snapshot(root)
             fresh = {path for path, stamp in after.items() if path not in before or before[path][2] != stamp[2]}
             emitted = result.stdout.decode("utf-8", errors="replace") + "\n" + result.stderr.decode("utf-8", errors="replace")
-            candidates = set()
+            candidates: set[Path] = set()
             references = re.findall(r"(?<![\w./\\])(?:[A-Za-z]:[\\/]|/)[^\s\"'`<>|]*?\.(?:png|jpg|jpeg|webp)\b", emitted, re.IGNORECASE)
             for reported in references:
                 resolved = Path(reported).resolve()

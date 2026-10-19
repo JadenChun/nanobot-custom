@@ -24,7 +24,12 @@
       "allowFrom": {
         "label": "許可するユーザー",
         "placeholder": "* または Telegram ユーザー ID",
-        "help": "ペアリングコードを使う場合は空欄にします。"
+        "help": "Required: add at least one Telegram sender ID/username or \"*\". Pairing is additional and does not replace sender authorization."
+      },
+      "allowChats": {
+        "label": "許可するチャット",
+        "placeholder": "Telegram グループチャット ID",
+        "help": "グループの制限は任意です。送信者も許可されたユーザーである必要があります。"
       },
       "groupPolicy": {
         "label": "グループでの動作",

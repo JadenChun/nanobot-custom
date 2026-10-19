@@ -771,12 +771,13 @@ async def test_manager_surfaces_actionable_weixin_auth_error_without_traceback(
         WeixinConfig(enabled=True, allow_from=["*"], state_dir=str(tmp_path)),
         MessageBus(),
     )
+    failure = WeixinAuthError(
+        "getupdates",
+        errcode=-14,
+        errmsg="stale",
+    )
     channel.start = AsyncMock(  # type: ignore[method-assign]
-        side_effect=WeixinAuthError(
-            "getupdates",
-            errcode=-14,
-            errmsg="stale",
-        )
+        side_effect=failure,
     )
     errors: list[str] = []
     tracebacks: list[str] = []
@@ -793,8 +794,10 @@ async def test_manager_surfaces_actionable_weixin_auth_error_without_traceback(
     manager = manager_mod.ChannelManager.__new__(manager_mod.ChannelManager)
     manager._channel_errors = {}
 
-    await manager._start_channel("weixin", channel)
+    with pytest.raises(WeixinAuthError, match="WeChat getupdates failed") as raised:
+        await manager._start_channel("weixin", channel)
 
+    assert raised.value is failure
     assert manager._channel_errors["weixin"] == (
         "WeChat login expired. Scan again to reconnect."
     )

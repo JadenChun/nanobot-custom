@@ -11,9 +11,9 @@ from typing import Any
 
 import pytest
 
+from nanobot.agent import memory_recovery_startup_admission as admission
 from nanobot.agent import memory_recovery_storage as storage
 from nanobot.agent.memory_recovery import MemoryReceiptRecoveryRequiredError
-from nanobot.session import manager as session_manager_module
 from nanobot.session.manager import JsonlSessionStore
 
 
@@ -288,11 +288,10 @@ def test_constructor_waits_for_authority_then_rechecks_published_receipt(
         _finish_processes(authority, constructor)
 
     assert constructor_started
-    assert constructor_result.get(timeout=2) == (
-        "error",
-        MemoryReceiptRecoveryRequiredError.__name__,
-        "memory recovery required",
-    )
+    error, kind, message = constructor_result.get(timeout=2)
+    assert error == "error"
+    assert kind == "StartupReceiptAdmissionError"
+    assert message == "memory recovery required"
     assert authority_result.get(timeout=2) == ("ok",)
     assert (workspace / "memory" / ".consolidation.pending.json").read_bytes() == _receipt_bytes()
     assert source.read_bytes() == source_bytes
@@ -367,7 +366,7 @@ def test_receipt_published_after_preflight_blocks_before_session_setup(
     source_stat = _snapshot(source)
     sessions_root = tmp_path / "private-sessions"
     receipt = workspace / "memory" / ".consolidation.pending.json"
-    real_preflight = session_manager_module.require_memory_receipt_recovery
+    real_preflight = admission.require_memory_receipt_recovery
     calls = 0
 
     def publish_after_preflight(path: Path) -> None:
@@ -379,7 +378,7 @@ def test_receipt_published_after_preflight_blocks_before_session_setup(
             receipt.chmod(0o600)
 
     monkeypatch.setattr(
-        session_manager_module,
+        admission,
         "require_memory_receipt_recovery",
         publish_after_preflight,
     )
@@ -469,7 +468,7 @@ def test_constructor_fails_closed_when_posix_gate_capability_is_unavailable(
 
     monkeypatch.setattr(storage._fcntl, "LOCK_NB", None)
 
-    with pytest.raises(storage.MemoryStorageUnavailableError):
+    with pytest.raises(MemoryReceiptRecoveryRequiredError, match="memory recovery required"):
         JsonlSessionStore(workspace, sessions_root=sessions_root)
 
     assert not sessions_root.exists()

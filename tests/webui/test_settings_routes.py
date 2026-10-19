@@ -526,3 +526,74 @@ async def test_version_check_route_enforces_auth_and_bounds_failures(
     assert failed.status_code == 500
     assert json.loads(failed.body) == {"error": "version check failed"}
     assert "upstream secret body" not in failed.body.decode()
+
+
+@pytest.mark.parametrize("case", [
+    "success", "unauthorized", "mutation-refusal", "refresh-refusal", "refresh-error",
+    "refresh-cancel",
+])
+@pytest.mark.asyncio
+async def test_gateway_refresh_notification_preserves_model_route_order_and_errors(
+    monkeypatch, tmp_path: Path, case: str,
+) -> None:
+    from nanobot.cli.gateway_runtime import _webui_refresh_notification
+    from nanobot.providers.unconfigured_provider import UnconfiguredProvider
+    from nanobot.utils.llm_runtime import LLMRuntime
+    from nanobot.webui.settings_contracts import WebUISettingsError
+
+    runtime = LLMRuntime.capture(
+        UnconfiguredProvider("test/model"), "test/model", context_window_tokens=4096,
+    )
+    error = (
+        asyncio.CancelledError("synthetic cancellation") if case == "refresh-cancel"
+        else RuntimeError("synthetic refresh failure") if case == "refresh-error"
+        else WebUISettingsError("synthetic refusal", status=409)
+    )
+    seen: list[str] = []
+
+    def mutate(query, *, config_path=None, rename_model_preset=None):
+        assert query == {"name": ["test"], "new_name": ["next"]}
+        assert config_path == tmp_path / "config.json"
+        seen.append("mutate")
+        if case == "mutation-refusal":
+            raise error
+        return {"updated": True}
+
+    def refresh() -> LLMRuntime:
+        assert seen == ["mutate"]
+        seen.append("refresh")
+        if case.startswith("refresh-"):
+            raise error
+        return runtime
+
+    monkeypatch.setattr("nanobot.webui.settings_routes.update_model_configuration", mutate)
+    notify = _webui_refresh_notification(refresh)
+    path = "/api/settings/model-configurations/update"
+    router = _router(
+        config_path=tmp_path / "config.json", authorized=case != "unauthorized",
+        refresh_runtime_config=notify,
+    )
+    request = _mutation_request(path, {"name": "test", "new_name": "next"})
+    assert seen == []
+
+    if case in {"refresh-error", "refresh-cancel"}:
+        with pytest.raises(type(error)) as caught:
+            await router.dispatch(None, request, path)
+        assert caught.value is error
+        assert seen == ["mutate", "refresh"]
+    else:
+        response = await router.dispatch(None, request, path)
+        assert response is not None
+        if case == "success":
+            assert response.status_code == 200
+            assert json.loads(response.body)["updated"] is True
+            assert "test/model" not in response.body.decode()
+            assert seen == ["mutate", "refresh"]
+        elif case == "unauthorized":
+            assert response.status_code == 401
+            assert json.loads(response.body) == {"error": "Unauthorized"}
+            assert seen == []
+        else:
+            assert response.status_code == 409
+            assert json.loads(response.body) == {"error": "synthetic refusal"}
+            assert seen == (["mutate"] if case == "mutation-refusal" else ["mutate", "refresh"])

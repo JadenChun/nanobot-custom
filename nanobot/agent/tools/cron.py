@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from contextvars import ContextVar, Token
-from copy import deepcopy
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext, current_request_context
@@ -26,10 +27,27 @@ from nanobot.cron.service import (
     CronService,
 )
 from nanobot.cron.types import CronDestination, CronJob, CronJobState, CronSchedule
+from nanobot.runtime_context import RUNTIME_CONTEXT_INPUT_META
 from nanobot.session.keys import UNIFIED_SESSION_KEY
 
 _MAX_DESTINATIONS = 256
 _MAX_IDENTIFIER_BYTES = 512
+
+
+def _snapshot_origin_metadata(
+    metadata: Mapping[str, object] | Mapping[object, object],
+) -> dict[str, object]:
+    """Detach complete finite-JSON fields, excluding live runtime context."""
+    snapshot: dict[str, object] = {}
+    for key, value in metadata.items():
+        if not isinstance(key, str) or key == RUNTIME_CONTEXT_INPUT_META:
+            continue
+        try:
+            encoded = json.dumps(value, allow_nan=False, sort_keys=True)
+            snapshot[key] = json.loads(encoded)
+        except (TypeError, ValueError, RecursionError):
+            continue
+    return snapshot
 
 _ADDITIONAL_DESTINATION = ObjectSchema(
     properties={
@@ -119,7 +137,7 @@ class CronTool(Tool):
         session_key = (
             raw_key if ctx.session_key == UNIFIED_SESSION_KEY else (ctx.session_key or "")
         )
-        return session_key, ctx.channel or "", ctx.chat_id or "", deepcopy(dict(ctx.metadata or {}))
+        return session_key, ctx.channel or "", ctx.chat_id or "", _snapshot_origin_metadata(ctx.metadata or {})
 
     @staticmethod
     def _turn_route(context: TurnContext) -> tuple[str, str, str, dict[str, Any]]:
@@ -129,14 +147,14 @@ class CronTool(Tool):
             return "", "", "", {}
         route = request.route or request.delivery_target
         if route is None:
-            return "", "", "", deepcopy(dict(request.metadata or {}))
+            return "", "", "", _snapshot_origin_metadata(request.metadata or {})
         channel = route.channel or ""
         chat_id = route.chat_id or route.to or route.recipient or ""
         raw_key = f"{channel}:{chat_id}" if channel and chat_id else ""
         session_key = (
             raw_key if request.session_key == UNIFIED_SESSION_KEY else (request.session_key or "")
         )
-        return session_key, channel, chat_id, deepcopy(dict(request.metadata or {}))
+        return session_key, channel, chat_id, _snapshot_origin_metadata(request.metadata or {})
 
     @staticmethod
     def _additional_destinations(
@@ -175,7 +193,7 @@ class CronTool(Tool):
             target = target.strip()
             if not channel or not target:
                 return [], ToolResult.error(
-                    f"Error: additional_destinations[{index}] channel and to must be nonblank"
+                    "Error: each additional destination requires channel and to"
                 )
             if len(channel.encode("utf-8")) > _MAX_IDENTIFIER_BYTES:
                 return [], ToolResult.error(
@@ -267,10 +285,10 @@ class CronTool(Tool):
             errors.append("job_id is required when action='remove'")
         additional = params.get("additional_destinations")
         if isinstance(additional, list):
-            for index, item in enumerate(additional):
-                if type(item) is dict and set(item) == {"channel", "to"}:
+            for index, item in enumerate(cast(list[object], additional)):
+                if type(item) is dict and set(cast(dict[object, object], item)) == {"channel", "to"}:
                     for field in ("channel", "to"):
-                        value = item[field]
+                        value = cast(dict[object, object], item)[field]
                         if type(value) is str and not value.strip():
                             errors.append(
                                 f"additional_destinations[{index}] {field} must be nonblank"
@@ -488,6 +506,11 @@ class CronTool(Tool):
         for j in jobs:
             timing = self._format_timing(j.schedule)
             parts = [f"- {j.name} (id: {j.id}, {timing})"]
+            destinations = j.payload.delivery_destinations()
+            if destinations:
+                parts.append("  Delivery: " + ", ".join(
+                    f"{destination.channel}:{destination.to}" for destination in destinations
+                ))
             if j.payload.kind == "system_event":
                 parts.append(f"  Purpose: {self._system_job_purpose(j)}")
                 parts.append("  Protected: visible for inspection, but cannot be removed.")

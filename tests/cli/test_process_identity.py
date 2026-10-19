@@ -62,18 +62,16 @@ def test_bare_console_command_preserves_help_without_launching_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     identities: list[list[str]] = []
-    launches: list[tuple[list[str], str]] = []
     monkeypatch.setattr("nanobot.cli.commands.set_cli_process_identity", identities.append)
     monkeypatch.setattr(
-        "nanobot.cli.entry._run_agent",
-        lambda args, *, prog_name: launches.append((args, prog_name)),
+        "nanobot.migration_guard.require_runtime_ready",
+        lambda: pytest.fail("bare help must not request runtime admission"),
     )
 
     result = CliRunner().invoke(app, [])
 
     assert result.exit_code == 0
     assert identities == [["agent"]]
-    assert launches == []
     assert "Usage:" in result.stdout
 
 

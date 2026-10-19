@@ -24,7 +24,12 @@
       "allowFrom": {
         "label": "허용된 사용자",
         "placeholder": "* 또는 Telegram 사용자 ID",
-        "help": "페어링 코드를 사용하려면 비워 두세요."
+        "help": "Required: add at least one Telegram sender ID/username or \"*\". Pairing is additional and does not replace sender authorization."
+      },
+      "allowChats": {
+        "label": "허용된 채팅",
+        "placeholder": "Telegram 그룹 채팅 ID",
+        "help": "그룹 제한은 선택 사항입니다. 발신자도 허용된 사용자여야 합니다."
       },
       "groupPolicy": {
         "label": "그룹 동작",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -46,6 +47,15 @@ def _job(service: CronService):
         CronSchedule(kind="every", every_ms=60_000),
         "send report",
     )
+
+
+def _complete(service: CronService, claim, completion, **kwargs):
+    async def execute():
+        with service.occurrence_store.acquire_execution_fence(claim) as fence:
+            service.occurrence_store.begin_execution(claim, fence)
+            return service.complete_occurrence(claim, completion, fence=fence, **kwargs)
+
+    return asyncio.run(execute())
 
 
 def test_definition_bound_claim_retry_is_exact_and_identity_is_frozen(tmp_path: Path) -> None:
@@ -139,7 +149,7 @@ def test_definition_change_and_delete_reject_stale_occurrence_admission(tmp_path
         )
 
 
-def test_completion_is_bound_to_run_identity_and_idempotent(tmp_path: Path) -> None:
+async def test_completion_is_bound_to_run_identity_and_idempotent(tmp_path: Path) -> None:
     service = _service(tmp_path)
     job = _job(service)
     claim = service.claim_scheduled_occurrence(
@@ -150,16 +160,20 @@ def test_completion_is_bound_to_run_identity_and_idempotent(tmp_path: Path) -> N
         expected_definition_revision=job.definition_revision,
     )
 
-    first = service.complete_occurrence(
-        claim,
-        {"status": "ok", "result": "computed"},
-        provenance={"session_key": "telegram:42", "source": "timer"},
-    )
-    duplicate = service.complete_occurrence(
-        claim,
-        {"result": "computed", "status": "ok"},
-        provenance={"source": "timer", "session_key": "telegram:42"},
-    )
+    with service.occurrence_store.acquire_execution_fence(claim) as fence:
+        service.occurrence_store.begin_execution(claim, fence)
+        first = service.complete_occurrence(
+            claim,
+            {"status": "ok", "result": "computed"},
+            provenance={"session_key": "telegram:42", "source": "timer"},
+            fence=fence,
+        )
+        duplicate = service.complete_occurrence(
+            claim,
+            {"result": "computed", "status": "ok"},
+            provenance={"source": "timer", "session_key": "telegram:42"},
+            fence=fence,
+        )
     assert duplicate == first
     assert first.occurrence_id == claim.occurrence_id
     assert first.run_id == claim.run_id
@@ -191,7 +205,7 @@ def test_completion_projection_failure_is_recoverable_and_claimed_is_never_succe
     monkeypatch.setattr(projector, "_replace_projection", lambda *_args: (_ for _ in ()).throw(OSError("disk")))
 
     with pytest.raises(OSError, match="disk"):
-        service.complete_occurrence(claim, {"status": "ok", "result": "computed"})
+        _complete(service, claim, {"status": "ok", "result": "computed"})
     assert service.occurrence_store.get(claim.occurrence_id).state == "completed"
 
     monkeypatch.setattr(projector, "_replace_projection", original_replace)
@@ -219,7 +233,8 @@ def test_restart_reprojects_completed_and_exposes_claimed_state(tmp_path: Path) 
         expected_job_instance_id=job.job_instance_id,
         expected_definition_revision=job.definition_revision,
     )
-    service.complete_occurrence(
+    _complete(
+        service,
         completed_claim,
         {"status": "ok", "result": "computed"},
         provenance={"session_key": "telegram:42"},
@@ -322,7 +337,7 @@ def test_completion_rejects_symlinked_ancestor_and_live_root_swap(tmp_path: Path
     root.rename(tmp_path / "old-runs")
     root.mkdir(mode=0o700)
     with pytest.raises(CronCompletionConflictError, match="root binding"):
-        service.complete_occurrence(claim, {"status": "ok", "result": "computed"})
+        _complete(service, claim, {"status": "ok", "result": "computed"})
 
 
 def test_completion_rejects_root_swap_after_lock_acquisition(
@@ -350,7 +365,7 @@ def test_completion_rejects_root_swap_after_lock_acquisition(
 
     monkeypatch.setattr(projector, "_replace_projection", replace_after_swap)
     with pytest.raises(CronCompletionConflictError, match="root.*binding"):
-        service.complete_occurrence(claim, {"status": "ok", "result": "computed"})
+        _complete(service, claim, {"status": "ok", "result": "computed"})
     assert not (root / projector._projection_name(claim.run_id)).exists()
 
 
@@ -364,7 +379,7 @@ def test_oversized_valid_projection_is_rejected_before_reading(tmp_path: Path, m
         expected_job_instance_id=job.job_instance_id,
         expected_definition_revision=job.definition_revision,
     )
-    projection = service.complete_occurrence(claim, {"status": "ok", "result": "computed"})
+    projection = _complete(service, claim, {"status": "ok", "result": "computed"})
     path = service.completion_projector.projection_path(projection.run_id)
     payload = path.read_bytes()
     path.write_bytes(payload + b" " * 32)

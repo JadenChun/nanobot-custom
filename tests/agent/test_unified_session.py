@@ -15,14 +15,14 @@ import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.file_state import FileStateStore
+from nanobot.agent.turn import TurnRequest, TurnResult
 from nanobot.bus.events import InboundMessage
-from nanobot.bus.queue import MessageBus
 from nanobot.command.builtin import cmd_new, register_builtin_commands
 from nanobot.command.router import CommandContext, CommandRouter
 from nanobot.config.schema import AgentDefaults, Config
@@ -30,27 +30,34 @@ from nanobot.providers.base import GenerationSettings
 from nanobot.session.keys import UNIFIED_SESSION_KEY
 from nanobot.session.manager import SessionManager
 from nanobot.utils.llm_runtime import LLMRuntime
+from tests.agent.p6_admitted_fixtures import (
+    AgentInputs,
+)
+from tests.agent.p6_admitted_fixtures import (
+    admitted_async as admitted_async,
+)
+from tests.agent.p6_admitted_fixtures import (
+    admitted_sync as admitted_sync,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_loop(tmp_path: Path, unified_session: bool = False) -> AgentLoop:
-    """Create a minimal AgentLoop for dispatch-level tests."""
-    bus = MessageBus()
+def _build_loop(unified_session: bool):
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
 
-    with patch("nanobot.agent.loop.SessionManager"), \
-         patch("nanobot.agent.loop.SubagentManager") as mock_sub_mgr:
-        mock_sub_mgr.return_value.cancel_by_session = AsyncMock(return_value=0)
-        loop = AgentLoop(
-            bus=bus,
-            provider=provider,
-            workspace=tmp_path,
-            unified_session=unified_session,
+    def build(inputs: AgentInputs) -> AgentLoop:
+        return AgentLoop(
+            bus=inputs.bus, provider=provider, workspace=inputs.config.workspace_path,
+            unified_session=unified_session, session_manager=inputs.sessions,
+            tool_registry=inputs.tools, cron_service=inputs.cron,
+            turn_delivery_factory=inputs.delivery, tools_config=inputs.config.tools,
+            restrict_to_workspace=True, enable_legacy_auto_compact=False,
         )
-    return loop
+
+    return build
 
 
 def _runtime(provider) -> LLMRuntime:
@@ -81,17 +88,17 @@ class TestUnifiedSessionDispatch:
     """AgentLoop._dispatch() session key rewriting logic."""
 
     @pytest.mark.asyncio
-    async def test_unified_session_rewrites_key_to_unified_default(self, tmp_path: Path):
+    async def test_unified_session_rewrites_key_to_unified_default(self, admitted_async, tmp_path: Path):
         """When unified_session=True, all messages use 'unified:default' as session key."""
-        loop = _make_loop(tmp_path, unified_session=True)
+        loop = await admitted_async(tmp_path, _build_loop(True))
 
         captured: list[str] = []
 
-        async def fake_process(msg, **kwargs):
-            captured.append(msg.session_key)
-            return None
+        async def fake_process(request: TurnRequest, **kwargs) -> TurnResult:
+            captured.append(request.session_key)
+            return TurnResult()
 
-        loop._process_message = fake_process  # type: ignore[method-assign]
+        loop.execute_turn = fake_process  # type: ignore[method-assign]
 
         msg = _make_msg(channel="telegram", chat_id="111")
         await loop._dispatch(msg)
@@ -99,17 +106,17 @@ class TestUnifiedSessionDispatch:
         assert captured == ["unified:default"]
 
     @pytest.mark.asyncio
-    async def test_unified_session_different_channels_share_same_key(self, tmp_path: Path):
+    async def test_unified_session_different_channels_share_same_key(self, admitted_async, tmp_path: Path):
         """Messages from different channels all resolve to the same session key."""
-        loop = _make_loop(tmp_path, unified_session=True)
+        loop = await admitted_async(tmp_path, _build_loop(True))
 
         captured: list[str] = []
 
-        async def fake_process(msg, **kwargs):
-            captured.append(msg.session_key)
-            return None
+        async def fake_process(request: TurnRequest, **kwargs) -> TurnResult:
+            captured.append(request.session_key)
+            return TurnResult()
 
-        loop._process_message = fake_process  # type: ignore[method-assign]
+        loop.execute_turn = fake_process  # type: ignore[method-assign]
 
         await loop._dispatch(_make_msg(channel="telegram", chat_id="111"))
         await loop._dispatch(_make_msg(channel="discord", chat_id="222"))
@@ -118,17 +125,17 @@ class TestUnifiedSessionDispatch:
         assert captured == ["unified:default", "unified:default", "unified:default"]
 
     @pytest.mark.asyncio
-    async def test_unified_session_disabled_preserves_original_key(self, tmp_path: Path):
+    async def test_unified_session_disabled_preserves_original_key(self, admitted_async, tmp_path: Path):
         """When unified_session=False (default), session key is channel:chat_id as usual."""
-        loop = _make_loop(tmp_path, unified_session=False)
+        loop = await admitted_async(tmp_path, _build_loop(False))
 
         captured: list[str] = []
 
-        async def fake_process(msg, **kwargs):
-            captured.append(msg.session_key)
-            return None
+        async def fake_process(request: TurnRequest, **kwargs) -> TurnResult:
+            captured.append(request.session_key)
+            return TurnResult()
 
-        loop._process_message = fake_process  # type: ignore[method-assign]
+        loop.execute_turn = fake_process  # type: ignore[method-assign]
 
         msg = _make_msg(channel="telegram", chat_id="999")
         await loop._dispatch(msg)
@@ -136,26 +143,26 @@ class TestUnifiedSessionDispatch:
         assert captured == ["telegram:999"]
 
     @pytest.mark.asyncio
-    async def test_unified_session_respects_existing_override(self, tmp_path: Path):
+    async def test_unified_session_respects_existing_override(self, admitted_async, tmp_path: Path):
         """If session_key_override is already set (e.g. Telegram thread), it is NOT overwritten."""
-        loop = _make_loop(tmp_path, unified_session=True)
+        loop = await admitted_async(tmp_path, _build_loop(True))
 
         captured: list[str] = []
 
-        async def fake_process(msg, **kwargs):
-            captured.append(msg.session_key)
-            return None
+        async def fake_process(request: TurnRequest, **kwargs) -> TurnResult:
+            captured.append(request.session_key)
+            return TurnResult()
 
-        loop._process_message = fake_process  # type: ignore[method-assign]
+        loop.execute_turn = fake_process  # type: ignore[method-assign]
 
         msg = _make_msg(channel="telegram", chat_id="111", session_key_override="telegram:thread:42")
         await loop._dispatch(msg)
 
         assert captured == ["telegram:thread:42"]
 
-    def test_unified_session_default_is_false(self, tmp_path: Path):
+    def test_unified_session_default_is_false(self, admitted_sync, tmp_path: Path):
         """unified_session defaults to False — no behavior change for existing users."""
-        loop = _make_loop(tmp_path)
+        loop = admitted_sync(tmp_path, _build_loop(False))
         assert loop._unified_session is False
 
 
@@ -343,9 +350,9 @@ class TestStopCommandWithUnifiedSession:
     """Verify /stop command works correctly with unified session enabled."""
 
     @pytest.mark.asyncio
-    async def test_active_tasks_use_effective_key_in_unified_mode(self, tmp_path: Path):
+    async def test_active_tasks_use_effective_key_in_unified_mode(self, admitted_async, tmp_path: Path):
         """When unified_session=True, tasks are stored under UNIFIED_SESSION_KEY."""
-        loop = _make_loop(tmp_path, unified_session=True)
+        loop = await admitted_async(tmp_path, _build_loop(True))
 
         # Create a message from telegram channel
         msg = _make_msg(channel="telegram", chat_id="123456")
@@ -369,11 +376,11 @@ class TestStopCommandWithUnifiedSession:
         assert "telegram:123456" not in loop._active_tasks
 
     @pytest.mark.asyncio
-    async def test_stop_command_finds_task_in_unified_mode(self, tmp_path: Path):
+    async def test_stop_command_finds_task_in_unified_mode(self, admitted_async, tmp_path: Path):
         """cmd_stop can cancel tasks when unified_session=True."""
         from nanobot.command.builtin import cmd_stop
 
-        loop = _make_loop(tmp_path, unified_session=True)
+        loop = await admitted_async(tmp_path, _build_loop(True))
 
         # Create a long-running task stored under UNIFIED_SESSION_KEY
         async def long_running():
@@ -401,11 +408,11 @@ class TestStopCommandWithUnifiedSession:
         assert "Stopped 1 task" in result.content
 
     @pytest.mark.asyncio
-    async def test_stop_command_uses_effective_key_without_session_override(self, tmp_path: Path):
+    async def test_stop_command_uses_effective_key_without_session_override(self, admitted_async, tmp_path: Path):
         """Priority /stop must cancel the unified session even before dispatch rewrites the message."""
         from nanobot.command.builtin import cmd_stop
 
-        loop = _make_loop(tmp_path, unified_session=True)
+        loop = await admitted_async(tmp_path, _build_loop(True))
 
         async def long_running():
             await asyncio.sleep(10)
@@ -426,11 +433,11 @@ class TestStopCommandWithUnifiedSession:
         assert "Stopped 1 task" in result.content
 
     @pytest.mark.asyncio
-    async def test_stop_command_cross_channel_in_unified_mode(self, tmp_path: Path):
+    async def test_stop_command_cross_channel_in_unified_mode(self, admitted_async, tmp_path: Path):
         """In unified mode, /stop from one channel cancels tasks from another channel."""
         from nanobot.command.builtin import cmd_stop
 
-        loop = _make_loop(tmp_path, unified_session=True)
+        loop = await admitted_async(tmp_path, _build_loop(True))
 
         # Create tasks from different channels, all stored under UNIFIED_SESSION_KEY
         async def long_running():

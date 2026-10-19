@@ -36,7 +36,7 @@ import weakref
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Self
+from typing import Callable, NoReturn, Protocol, Self, cast
 
 try:  # pragma: no cover - platform qualification is tested through the gate.
     import fcntl as _fcntl
@@ -61,6 +61,7 @@ _PRIVATE_DIRECTORY_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
 _READ_CHUNK = 64 * 1024
 _MEMORY_TARGET_MAX_BYTES = 64 * 1024 * 1024
+MEMORY_TARGET_MAX_BYTES = _MEMORY_TARGET_MAX_BYTES
 _MEMORY_TARGET_NAMES = frozenset(
     (
         "MEMORY.md",
@@ -225,37 +226,93 @@ class MemoryTargetSnapshot:
 
         return self._stat_identity
 
+    def issuance_comparison(
+        self, *, _capability: object | None = None,
+    ) -> _TargetSnapshotSeal:
+        if _capability is not _SNAPSHOT_CAPABILITY:
+            raise _error("invalid") from None
+        identity = self._stat_identity
+        stat_seal = (
+            None
+            if identity is None
+            else (
+                identity.device,
+                identity.inode,
+                identity.mode,
+                identity.uid,
+                identity.gid,
+                identity.links,
+                identity.size,
+                identity.mtime_ns,
+                identity.ctime_ns,
+            )
+        )
+        return self._name, self._content, stat_seal, self._epoch
+
+    def qualify_for_authority(
+        self, authority: WorkspaceMemoryAuthority, epoch: int, allow_receipt: bool,
+        *, _capability: object | None = None,
+    ) -> None:
+        if _capability is not _SNAPSHOT_CAPABILITY:
+            raise _error("invalid") from None
+        if self._authority is not authority:
+            raise _error("invalid") from None
+        if self._epoch != epoch:
+            raise _error("binding") from None
+        if (
+            type(self._name) is not str
+            or self._name not in _MEMORY_TARGET_NAMES
+            or (self._name == _RECEIPT_TARGET_NAME and not allow_receipt)
+            or (self._content is None) != (self._stat_identity is None)
+            or (
+                self._stat_identity is not None
+                and type(self._stat_identity) is not MemoryTargetStatIdentity
+            )
+            or (
+                self._content is not None
+                and (
+                    type(self._content) is not bytes
+                    or len(self._content) > _MEMORY_TARGET_MAX_BYTES
+                    or self._stat_identity is None
+                    or self._stat_identity.size != len(self._content)
+                )
+            )
+        ):
+            raise _error("invalid") from None
+        WorkspaceMemoryAuthority.require_issued_snapshot(
+            authority, self, _capability=_SNAPSHOT_CAPABILITY,
+        )
+        if allow_receipt:
+            identity = self._stat_identity
+            if self._name != _RECEIPT_TARGET_NAME:
+                raise _error("invalid") from None
+            if self._content is None or identity is None:
+                raise _error("invalid") from None
+            if (
+                not stat.S_ISREG(identity.mode)
+                or identity.uid != _uid()
+                or identity.links != 1
+                or stat.S_IMODE(identity.mode) != _PRIVATE_FILE_MODE
+            ):
+                raise _error("corrupt") from None
+
     def __repr__(self) -> str:
         return "<MemoryTargetSnapshot>"
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("memory target snapshot cannot be serialized")
 
-    def __copy__(self) -> Self:
+    def __copy__(self) -> NoReturn:
         raise TypeError("memory target snapshot cannot be copied")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("memory target snapshot cannot be copied")
 
 
 def _target_snapshot_seal(snapshot: MemoryTargetSnapshot) -> _TargetSnapshotSeal:
-    identity = snapshot._stat_identity
-    stat_seal = (
-        None
-        if identity is None
-        else (
-            identity.device,
-            identity.inode,
-            identity.mode,
-            identity.uid,
-            identity.gid,
-            identity.links,
-            identity.size,
-            identity.mtime_ns,
-            identity.ctime_ns,
-        )
+    return MemoryTargetSnapshot.issuance_comparison(
+        snapshot, _capability=_SNAPSHOT_CAPABILITY,
     )
-    return snapshot._name, snapshot._content, stat_seal, snapshot._epoch
 
 
 def _target_stat_identity(info: os.stat_result) -> MemoryTargetStatIdentity:
@@ -348,14 +405,12 @@ def _same_identity_shape(first: os.stat_result, second: os.stat_result) -> bool:
 
 
 def _uid() -> int:
-    get_effective = getattr(os, "geteuid", None)
+    # The construction source is os.geteuid, whose stdlib contract returns int.
+    # Patched callables remain called and converted at the original point.
+    get_effective: Callable[[], int] | None = getattr(os, "geteuid", None)
     if callable(get_effective):
         return int(get_effective())
     return int(os.getuid())
-
-
-def _supports_dir_fd(function: object) -> bool:
-    return function in getattr(os, "supports_dir_fd", set())
 
 
 def _require_capabilities() -> None:
@@ -374,9 +429,9 @@ def _require_capabilities() -> None:
     if not all(isinstance(getattr(_fcntl, name, None), int) for name in ("LOCK_EX", "LOCK_UN")):
         raise MemoryStorageUnavailableError()
     required = {os.open, os.stat, os.mkdir, os.link}
-    if not required <= getattr(os, "supports_dir_fd", set()):
+    if not required <= getattr(os, "supports_dir_fd", set[object]()):
         raise MemoryStorageUnavailableError()
-    if os.link not in getattr(os, "supports_follow_symlinks", set()):
+    if os.link not in getattr(os, "supports_follow_symlinks", set[object]()):
         raise MemoryStorageUnavailableError()
 
 
@@ -390,6 +445,12 @@ def _require_lock_gate_capabilities() -> None:
         or not isinstance(getattr(_fcntl, "LOCK_NB", None), int)
     ):
         raise MemoryStorageUnavailableError()
+
+
+def require_memory_lock_gate_capabilities() -> None:
+    """Require the supported descriptor and flock capabilities for a lock-only gate."""
+
+    _require_lock_gate_capabilities()
 
 
 def _dir_flags() -> int:
@@ -414,6 +475,38 @@ def _write_flags() -> int:
     if isinstance(cloexec, int):
         flags |= cloexec
     return flags
+
+
+class RecoveryDescriptorOpener(Protocol):
+    """The descriptor syscall collaborator captured by a recovery consumer."""
+
+    def __call__(
+        self, path: str, flags: int, mode: int = 0o777, *, dir_fd: int | None = None,
+    ) -> int: ...
+
+
+def open_recovery_absolute_directory(opener: RecoveryDescriptorOpener, path: str) -> int:
+    """Open an absolute directory with the recovery directory flags."""
+    return opener(path, _dir_flags())
+
+
+def open_recovery_relative_directory(
+    opener: RecoveryDescriptorOpener, name: str, parent_fd: int,
+) -> int:
+    """Open a directory relative to the caller-owned parent descriptor."""
+    return opener(name, _dir_flags(), dir_fd=parent_fd)
+
+
+def open_recovery_read_leaf(opener: RecoveryDescriptorOpener, name: str, parent_fd: int) -> int:
+    """Open a read leaf relative to the caller-owned parent descriptor."""
+    return opener(name, _leaf_flags(), dir_fd=parent_fd)
+
+
+def create_recovery_exclusive_leaf(
+    opener: RecoveryDescriptorOpener, name: str, parent_fd: int,
+) -> int:
+    """Create a private exclusive leaf relative to the caller-owned parent."""
+    return opener(name, _write_flags(), 0o600, dir_fd=parent_fd)
 
 
 def _canonical_workspace(value: Path | str) -> Path:
@@ -479,7 +572,7 @@ def _open_directory_path(path: Path) -> int:
                 raise
             _close(fd)
             fd = child
-        if fd is None:  # pragma: no cover - absolute non-root paths always have components.
+        if cast(object, fd) is None:  # pragma: no cover - absolute non-root paths always have components.
             raise _error("invalid") from None
         return fd
     except MemoryStorageError:
@@ -497,6 +590,36 @@ def _stat_entry(parent_fd: int, name: str) -> os.stat_result | None:
         return None
     except (OSError, TypeError, ValueError):
         raise _error("io") from None
+
+
+def memory_target_stat_identity(info: os.stat_result) -> MemoryTargetStatIdentity:
+    """Describe observed target metadata without issuing a snapshot or authority."""
+
+    return _target_stat_identity(info)
+
+
+def require_safe_memory_target(name: str, info: os.stat_result) -> None:
+    """Validate ordinary-memory or private-receipt target metadata."""
+
+    _valid_memory_target(name, info)
+
+
+def stat_recovery_descriptor(fd: int, *, code: str = "io") -> os.stat_result:
+    """Read owned descriptor metadata with the storage boundary's fixed error mapping."""
+
+    return _fstat(fd, code=code)
+
+
+def stat_recovery_entry(parent_fd: int, name: str) -> os.stat_result | None:
+    """Read one descriptor-relative entry without following its symlink."""
+
+    return _stat_entry(parent_fd, name)
+
+
+def close_recovery_descriptor(fd: int | None) -> None:
+    """Close an owned optional descriptor with the existing cleanup policy."""
+
+    _close(fd)
 
 
 def _check_directory_binding(
@@ -566,6 +689,7 @@ def _open_child_directory(
     *,
     create: bool,
     workspace_memory: bool = False,
+    sync_existing: bool = True,
 ) -> int:
     """Open one private directory and bind its name to its descriptor."""
 
@@ -600,17 +724,32 @@ def _open_child_directory(
             raise _error("binding") from None
         # Existing directories use the same repair path as newly-created
         # ones.  A prior failed parent fsync is therefore repaired on retry.
-        _sync_directory_boundary(
-            parent_fd,
-            name,
-            child,
-            workspace_memory=workspace_memory,
-            expected_mode=expected_mode,
-        )
+        if sync_existing:
+            _sync_directory_boundary(
+                parent_fd,
+                name,
+                child,
+                workspace_memory=workspace_memory,
+                expected_mode=expected_mode,
+            )
         return child
     except BaseException:
         _close(child)
         raise
+
+
+def open_recovery_private_directory(
+    parent_fd: int,
+    name: str,
+    *,
+    create: bool,
+    sync_existing: bool = True,
+) -> int:
+    """Open a checked private recovery directory, retaining binding and durability checks."""
+
+    return _open_child_directory(
+        parent_fd, name, create=create, sync_existing=sync_existing,
+    )
 
 
 def _validate_digest(value: str) -> str:
@@ -659,6 +798,43 @@ class _ImmutableSlotStore:
 
     def _fd(self) -> int:
         return self._directory_fd()
+
+    def require_entry_binding(self, entry: _Entry) -> None:
+        self._entry_binding(entry)
+
+    def read_verified_entry(
+        self, name: str, *, content_digest: str | None, expected: bytes | None,
+        missing_code: str, conflict_code: str,
+        allowed_links: set[int] | frozenset[int], fsync: bool = False,
+    ) -> _Entry:
+        return self._open_verified_file(
+            name, content_digest=content_digest, expected=expected,
+            missing_code=missing_code, conflict_code=conflict_code,
+            allowed_links=allowed_links, fsync=fsync,
+        )
+
+    def require_entry_relationship(self, target: _Entry, companion: _Entry | None) -> None:
+        self._validate_relationship(target, companion)
+
+    def create_durable_companion(self, target_name: str, content: bytes) -> _Entry:
+        return self._create_companion(target_name, content)
+
+    def require_final_state(
+        self, before_target: _Entry, before_companion: _Entry | None,
+        after_target: _Entry | None, after_companion: _Entry | None,
+    ) -> None:
+        self._compare_final_state(
+            before_target, before_companion, after_target, after_companion,
+        )
+
+    def finish_durable_publication(
+        self, target_name: str, *, content_digest: str | None, expected: bytes | None,
+        retained_companion_identity: tuple[int, int] | None = None,
+    ) -> bytes:
+        return self._durable_success(
+            target_name, content_digest=content_digest, expected=expected,
+            retained_companion_identity=retained_companion_identity,
+        )
 
     def _entry_binding(self, entry: _Entry) -> None:
         current = _stat_entry(self._fd(), entry.name)
@@ -976,6 +1152,8 @@ class _ImmutableSlotStore:
         ):
             raise _error("binding") from None
         self._assert_binding()
+        if after_directory_target is None:
+            raise _error("missing") from None
         return after_directory_target.data or b""
 
     def publish(self, target_name: str, content: bytes, *, content_digest: str | None) -> None:
@@ -1077,7 +1255,8 @@ def _check_workspace_memory_lock_binding(workspace_fd: int, lock_fd: int) -> Non
 
 
 def _open_or_create_workspace_memory_lock(
-    workspace_fd: int, check_binding: Callable[[int], None] | None = None
+    workspace_fd: int, check_binding: Callable[[int], None] | None = None,
+    *, create: bool = True,
 ) -> int:
     """Open or exclusively create the persistent private workspace lock."""
 
@@ -1097,6 +1276,8 @@ def _open_or_create_workspace_memory_lock(
             lock_fd = os.open(_LOCK_NAME, flags, dir_fd=workspace_fd)
             break
         except FileNotFoundError:
+            if not create:
+                raise _error("missing") from None
             try:
                 lock_fd = os.open(
                     _LOCK_NAME,
@@ -1125,12 +1306,13 @@ def _open_or_create_workspace_memory_lock(
         raise
 
 
-class _WorkspaceMemoryLockGate(AbstractContextManager[Self]):
+class _WorkspaceMemoryLockGate(AbstractContextManager["_WorkspaceMemoryLockGate"]):
     """A process- and thread-bound lock gate without a recovery-layout policy."""
 
-    def __init__(self, workspace: Path | str) -> None:
+    def __init__(self, workspace: Path | str, *, existing_only: bool = False) -> None:
         _require_lock_gate_capabilities()
         self._workspace_path = _canonical_workspace(workspace)
+        self._existing_only = existing_only
         self._workspace_fd: int | None = None
         self._lock_fd: int | None = None
         self._lock_anchor_fd: int | None = None
@@ -1142,6 +1324,23 @@ class _WorkspaceMemoryLockGate(AbstractContextManager[Self]):
         self._used = False
         self._active = False
         self._lock_held = False
+
+    def uses_existing_layout_only(self) -> bool:
+        """Observe constructor policy only; this does not establish a live lock."""
+        return self._existing_only
+
+    @property
+    def workspace_identity(self) -> tuple[int, int]:
+        """Identify the locked directory without lending its descriptor.
+
+        Consumers must still require the current lock before using their own
+        directory pins; the returned inode identity is not an admission token.
+        """
+        self.require_current()
+        binding = self._workspace_binding
+        if binding is None:
+            raise _error("closed") from None
+        return binding.st_dev, binding.st_ino
 
     @property
     def workspace(self) -> Path:
@@ -1155,13 +1354,13 @@ class _WorkspaceMemoryLockGate(AbstractContextManager[Self]):
 
         return self._workspace_path / _LOCK_NAME
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("workspace memory lock gate cannot be serialized")
 
-    def __copy__(self) -> Self:
+    def __copy__(self) -> NoReturn:
         raise TypeError("workspace memory lock gate cannot be copied")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("workspace memory lock gate cannot be copied")
 
     def __enter__(self) -> Self:
@@ -1182,7 +1381,9 @@ class _WorkspaceMemoryLockGate(AbstractContextManager[Self]):
             workspace_fd = None
 
             assert self._workspace_fd is not None
-            lock_fd = _open_or_create_workspace_memory_lock(self._workspace_fd)
+            lock_fd = _open_or_create_workspace_memory_lock(
+                self._workspace_fd, create=not self._existing_only
+            )
             lock_binding = _fstat(lock_fd, code="binding")
             try:
                 lock_anchor_fd = os.dup(lock_fd)
@@ -1393,13 +1594,118 @@ class _WorkspaceMemoryLockGate(AbstractContextManager[Self]):
         return _same_binding(binding, current)
 
 
+WorkspaceMemoryLockGate = _WorkspaceMemoryLockGate
+
+
 def open_workspace_memory_lock(workspace: Path | str) -> _WorkspaceMemoryLockGate:
     """Return a single-use lock gate without requiring memory recovery storage."""
 
     return _WorkspaceMemoryLockGate(workspace)
 
 
-class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
+def open_existing_workspace_memory_lock(workspace: Path | str) -> _WorkspaceMemoryLockGate:
+    """Acquire an existing lock without creating a workspace or recovery layout."""
+
+    return _WorkspaceMemoryLockGate(workspace, existing_only=True)
+
+
+@dataclass(frozen=True, slots=True)
+class _OperationHooks:
+    operation: WorkspaceMemoryOperation
+    check_owner: Callable[[], None]
+    check_new: Callable[[], None]
+    check_issued: Callable[[int], None]
+    check_current: Callable[[int], None]
+    check_bound_current: Callable[[int], None]
+    activate: Callable[[int, tuple[int, int]], None]
+    rollback: Callable[[], None]
+    identity: Callable[[], tuple[int, int]]
+    check_exit: Callable[[], bool]
+    finish: Callable[[], None]
+    add_parent: Callable[[BoundMemoryTarget], None]
+    remove_parent: Callable[[BoundMemoryTarget], None]
+    check_parent: Callable[[BoundMemoryTarget], None]
+
+
+@dataclass(frozen=True, slots=True)
+class _OperationActions:
+    enter: Callable[[], None]
+    require_current: Callable[[], None]
+    workspace_identity: Callable[[], tuple[int, int]]
+    exit: Callable[[], None]
+    borrow_target: Callable[[MemoryTargetSnapshot], BoundMemoryTarget]
+    borrow_receipt: Callable[[MemoryTargetSnapshot], BoundMemoryTarget]
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundHooks:
+    bound: BoundMemoryTarget
+    check_owner: Callable[[], None]
+    check_new: Callable[[], None]
+    check_epoch: Callable[[int], None]
+    check_snapshot: Callable[[int], None]
+    activate: Callable[[int, tuple[int, int]], None]
+    rollback: Callable[[], None]
+    check_registered: Callable[[], None]
+    check_parent_present: Callable[[], None]
+    check_local_current: Callable[[], None]
+    duplicate_parent: Callable[[], int]
+    check_exit: Callable[[], bool]
+    finish: Callable[[], None]
+    close_parent: Callable[[], None]
+
+
+@dataclass(frozen=True, slots=True)
+class _BoundActions:
+    enter: Callable[[], None]
+    require_current: Callable[[], None]
+    duplicate_dir_fd: Callable[[], int]
+    snapshot_target: Callable[[], MemoryTargetSnapshot]
+    exit: Callable[[], None]
+
+
+@dataclass(frozen=True, slots=True)
+class _NamespaceActions:
+    check_process: Callable[[], None]
+    check_binding: Callable[[], None]
+    open_children: Callable[[str, str], tuple[int, int]]
+    check_kind_binding: Callable[[str, os.stat_result], None]
+    register: Callable[[ImmutableEvidenceNamespace], None]
+    unregister: Callable[[ImmutableEvidenceNamespace], None]
+
+
+_OperationActionBinder = Callable[[_OperationHooks], _OperationActions]
+_AuthorityBoundActionBinder = Callable[
+    [_OperationHooks, _BoundHooks, int, bool, str], _BoundActions
+]
+_OperationBoundActionBinder = Callable[[_BoundHooks, bool, str], _BoundActions]
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class _BoundInitialization:
+    retain_owner: Callable[[WorkspaceMemoryAuthority], None]
+    capture_validator: Callable[[_BoundInitialization], None]
+    retain_validator: Callable[[Callable[[MemoryTargetSnapshot, int, bool], None]], None]
+    retain_thread: Callable[[threading.Thread], None]
+    retain_epoch: Callable[[int | None], None]
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class _OperationBindingPush:
+    apply: Callable[[_OperationActionBinder], None]
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class _OperationTargetBindingPush:
+    apply: Callable[[_AuthorityBoundActionBinder], _BoundActions]
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class _BoundActionBindingPush:
+    apply: Callable[[_OperationBoundActionBinder], None]
+
+
+class WorkspaceMemoryAuthority(AbstractContextManager["WorkspaceMemoryAuthority"]):
     """A process-local authority for one private workspace memory namespace.
 
     Constructing this object does not create files.  Entering the context
@@ -1408,9 +1714,10 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
     ``read_blob`` require the context to be active.
     """
 
-    def __init__(self, workspace: Path | str) -> None:
+    def __init__(self, workspace: Path | str, *, existing_only: bool = False) -> None:
         _require_capabilities()
         self._workspace_path = _canonical_workspace(workspace)
+        self._existing_only = existing_only
         self._workspace_fd: int | None = None
         self._lock_fd: int | None = None
         self._memory_fd: int | None = None
@@ -1445,6 +1752,10 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
             self._sync_digest_directory,
         )
 
+    def uses_existing_layout_only(self) -> bool:
+        """Observe constructor policy only; this does not issue or admit a borrow."""
+        return self._existing_only
+
     @property
     def workspace(self) -> Path:
         """The resolved caller workspace alias, for diagnostics and tests."""
@@ -1474,6 +1785,220 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
                 _thread=threading.current_thread(),
             )
 
+    def _check_operation_locked(self, hooks: _OperationHooks, *, bound: bool = False) -> None:
+        hooks.check_owner()
+        if threading.current_thread() is not self._activation_thread:
+            raise _error("closed") from None
+        if bound:
+            hooks.check_bound_current(self._activation_epoch)
+        else:
+            hooks.check_current(self._activation_epoch)
+        if not self._active or not self._lock_held or hooks.operation not in self._borrowers:
+            raise _error("closed") from None
+
+    def _bind_operation_actions(self, hooks: _OperationHooks) -> _OperationActions:
+        # The constructor invokes this binder only after capability qualification.
+        def enter() -> None:
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._require_process_owner()
+                hooks.check_new()
+                hooks.check_owner()
+                if threading.current_thread() is not self._activation_thread:
+                    raise _error("closed") from None
+                if (
+                    not self._active or not self._lock_held
+                    or self._workspace_identity is None
+                ):
+                    raise _error("closed") from None
+                epoch = self._activation_epoch
+                hooks.check_issued(epoch)
+                self._assert_binding()
+                if not self._active or not self._lock_held or self._activation_epoch != epoch:
+                    raise _error("closed") from None
+                hooks.check_issued(epoch)
+                identity = self._workspace_identity
+                try:
+                    self._register_operation(hooks.operation)
+                    hooks.activate(epoch, identity)
+                except BaseException:
+                    self._unregister_operation(hooks.operation)
+                    hooks.rollback()
+                    raise
+
+        def current() -> None:
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._require_process_owner()
+                self._check_operation_locked(hooks)
+                self._assert_binding()
+
+        def identity() -> tuple[int, int]:
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._require_process_owner()
+                hooks.check_owner()
+                return hooks.identity()
+
+        def exit_operation() -> None:
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._require_process_owner()
+                if not hooks.check_exit():
+                    return
+                hooks.finish()
+                self._unregister_operation(hooks.operation)
+
+        def borrow(snapshot: MemoryTargetSnapshot, receipt: bool) -> BoundMemoryTarget:
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._require_process_owner()
+                self._check_operation_locked(hooks)
+                epoch = self._activation_epoch
+                self._validate_snapshot(snapshot, epoch, receipt)
+                if receipt and (snapshot.name != _RECEIPT_TARGET_NAME or not snapshot.exists):
+                    raise _error("invalid") from None
+                self._assert_binding()
+
+                return BoundMemoryTarget(
+                    hooks.operation, snapshot,
+                    _capability=_BOUND_RECEIPT_TARGET_CAPABILITY if receipt else _BOUND_TARGET_CAPABILITY,
+                )
+
+        def borrow_target(snapshot: MemoryTargetSnapshot) -> BoundMemoryTarget:
+            return borrow(snapshot, False)
+
+        def borrow_receipt(snapshot: MemoryTargetSnapshot) -> BoundMemoryTarget:
+            return borrow(snapshot, True)
+
+        return _OperationActions(enter, current, identity, exit_operation, borrow_target, borrow_receipt)
+
+    def _bind_bound_actions(
+        self, operation: _OperationHooks, hooks: _BoundHooks, epoch: int, receipt: bool,
+        name: str,
+    ) -> _BoundActions:
+        def operation_current() -> None:
+            hooks.check_owner()
+            self._check_operation_locked(operation, bound=True)
+            hooks.check_epoch(epoch)
+            # The bound scope retains the epoch from its issuance, not reentry.
+            if epoch != self._activation_epoch:
+                raise _error("closed") from None
+
+        def current_locked() -> None:
+            operation_current()
+            hooks.check_registered()
+            operation.check_parent(hooks.bound)
+            hooks.check_snapshot(epoch)
+            hooks.check_parent_present()
+            self._assert_binding()
+            hooks.check_local_current()
+
+        def enter() -> None:
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._require_process_owner()
+                hooks.check_new()
+                operation_current()
+                hooks.check_snapshot(epoch)
+                self._assert_binding()
+                source_fd = self._memory_fd
+                if source_fd is None:
+                    raise _error("closed") from None
+                try:
+                    memory_fd = os.dup(source_fd)
+                except (OSError, TypeError, ValueError):
+                    raise _error("io") from None
+                try:
+                    source_info = _fstat(source_fd, code="binding")
+                    duplicate_info = _fstat(memory_fd, code="binding")
+                    _workspace_memory_directory(duplicate_info)
+                    if not _same_binding(source_info, duplicate_info):
+                        raise _error("binding") from None
+                    self._assert_binding()
+                    try:
+                        operation.add_parent(hooks.bound)
+                        hooks.activate(memory_fd, _identity(duplicate_info))
+                    except BaseException:
+                        operation.remove_parent(hooks.bound)
+                        hooks.rollback()
+                        raise
+                except BaseException:
+                    _close(memory_fd)
+                    raise
+
+        def current() -> None:
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._require_process_owner()
+                current_locked()
+
+        def duplicate() -> int:
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._require_process_owner()
+                current_locked()
+                return hooks.duplicate_parent()
+
+        def snapshot() -> MemoryTargetSnapshot:
+            current()
+            # Preserve the original reader's two separately observable validations.
+            issued = self.snapshot_target(name)
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._require_process_owner()
+                current_locked()
+                self._validate_snapshot(issued, epoch, receipt)
+                if issued.name != name:
+                    raise _error("binding") from None
+                return issued
+
+        def exit_bound() -> None:
+            self._require_process_owner()
+            with self._lifecycle_lock:
+                self._require_process_owner()
+                operation.check_owner()
+                if not hooks.check_exit():
+                    return
+                hooks.finish()
+                operation.remove_parent(hooks.bound)
+                hooks.close_parent()
+
+        return _BoundActions(enter, current, duplicate, snapshot, exit_bound)
+
+    def _namespace_actions(self) -> _NamespaceActions:
+        return _NamespaceActions(
+            self._assert_process,
+            self._assert_binding,
+            self._open_namespace_children,
+            self._check_namespace_kind_binding,
+            self._register_namespace,
+            self._unregister_namespace,
+        )
+
+    def _open_namespace_children(self, kind: str, identity: str) -> tuple[int, int]:
+        kind_fd: int | None = None
+        record_fd: int | None = None
+        try:
+            kind_fd = _open_child_directory(
+                self._recovery_fd_or_closed(), kind,
+                create=not self._existing_only, sync_existing=not self._existing_only,
+            )
+            record_fd = _open_child_directory(
+                kind_fd, identity,
+                create=not self._existing_only, sync_existing=not self._existing_only,
+            )
+            return kind_fd, record_fd
+        except BaseException:
+            _close(record_fd)
+            _close(kind_fd)
+            raise
+
+    def _check_namespace_kind_binding(self, kind: str, info: os.stat_result) -> None:
+        entry = _stat_entry(self._recovery_fd_or_closed(), kind)
+        if entry is None or not _same_binding(entry, info):
+            raise _error("binding") from None
+
     def open_evidence_namespace(
         self, kind: str, identity: str
     ) -> ImmutableEvidenceNamespace:
@@ -1492,13 +2017,13 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
 
     open_namespace = open_evidence_namespace
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("memory recovery authority cannot be serialized")
 
-    def __copy__(self) -> Self:
+    def __copy__(self) -> NoReturn:
         raise TypeError("memory recovery authority cannot be copied")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("memory recovery authority cannot be copied")
 
     def __enter__(self) -> Self:
@@ -1537,13 +2062,23 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
             self._memory_fd = _open_child_directory(
                 self._workspace_fd,
                 _MEMORY_NAME,
-                create=True,
+                create=not self._existing_only,
                 workspace_memory=True,
+                sync_existing=not self._existing_only,
             )
             self._memory_mode = stat.S_IMODE(_fstat(self._memory_fd).st_mode)
-            self._recovery_fd = _open_child_directory(self._memory_fd, _RECOVERY_NAME, create=True)
-            self._blobs_fd = _open_child_directory(self._recovery_fd, _BLOBS_NAME, create=True)
-            self._digest_fd = _open_child_directory(self._blobs_fd, _DIGEST_DIR_NAME, create=True)
+            self._recovery_fd = _open_child_directory(
+                self._memory_fd, _RECOVERY_NAME, create=not self._existing_only,
+                sync_existing=not self._existing_only,
+            )
+            self._blobs_fd = _open_child_directory(
+                self._recovery_fd, _BLOBS_NAME, create=not self._existing_only,
+                sync_existing=not self._existing_only,
+            )
+            self._digest_fd = _open_child_directory(
+                self._blobs_fd, _DIGEST_DIR_NAME, create=not self._existing_only,
+                sync_existing=not self._existing_only,
+            )
             self._assert_binding()
             self._require_process_owner()
             with self._lifecycle_lock:
@@ -1612,7 +2147,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         self._memory_mode = None
         self._target_snapshot_issuance.clear()
         for namespace in tuple(self._namespaces):
-            namespace._close_from_authority()
+            namespace.close()
         self._namespaces.clear()
         if self._lock_held and self._lock_fd is not None and _fcntl is not None:
             try:
@@ -1638,7 +2173,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
     def _open_or_create_lock(self) -> int:
         assert self._workspace_fd is not None
         return _open_or_create_workspace_memory_lock(
-            self._workspace_fd, self._check_lock_binding
+            self._workspace_fd, self._check_lock_binding, create=not self._existing_only,
         )
 
     def _check_lock_binding(self, lock_fd: int) -> None:
@@ -1717,7 +2252,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
                 raise _error("binding") from None
 
     def _entry_binding(self, entry: _Entry) -> None:
-        self._blob_store._entry_binding(entry)
+        self._blob_store.require_entry_binding(entry)
 
     def _open_verified_file(
         self,
@@ -1730,7 +2265,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         allowed_links: set[int] | frozenset[int],
         fsync: bool = False,
     ) -> _Entry:
-        return self._blob_store._open_verified_file(
+        return self._blob_store.read_verified_entry(
             name,
             content_digest=digest,
             expected=expected,
@@ -1741,7 +2276,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         )
 
     def _validate_relationship(self, target: _Entry, companion: _Entry | None) -> None:
-        self._blob_store._validate_relationship(target, companion)
+        self._blob_store.require_entry_relationship(target, companion)
 
     def _state(self, digest: str, *, expected: bytes | None) -> tuple[_Entry | None, _Entry | None]:
         return self._blob_store.state(digest, content_digest=digest, expected=expected)
@@ -1772,7 +2307,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         self._assert_binding()
 
     def _create_companion(self, digest: str, content: bytes) -> _Entry:
-        return self._blob_store._create_companion(digest, content)
+        return self._blob_store.create_durable_companion(digest, content)
 
     def _compare_final_state(
         self,
@@ -1781,7 +2316,7 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         after_target: _Entry | None,
         after_companion: _Entry | None,
     ) -> None:
-        self._blob_store._compare_final_state(
+        self._blob_store.require_final_state(
             before_target,
             before_companion,
             after_target,
@@ -1795,12 +2330,70 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
         *,
         retained_companion_identity: tuple[int, int] | None = None,
     ) -> bytes:
-        return self._blob_store._durable_success(
+        return self._blob_store.finish_durable_publication(
             digest,
             content_digest=digest,
             expected=content,
             retained_companion_identity=retained_companion_identity,
         )
+
+    def _validate_snapshot(
+        self,
+        snapshot: MemoryTargetSnapshot,
+        epoch: int,
+        allow_receipt: bool,
+    ) -> None:
+        if type(snapshot) is not MemoryTargetSnapshot:
+            raise _error("invalid") from None
+        MemoryTargetSnapshot.qualify_for_authority(
+            snapshot, self, epoch, allow_receipt, _capability=_SNAPSHOT_CAPABILITY,
+        )
+
+    def require_issued_snapshot(
+        self, snapshot: MemoryTargetSnapshot, *, _capability: object | None = None,
+    ) -> None:
+        if _capability is not _SNAPSHOT_CAPABILITY:
+            raise _error("invalid") from None
+        self._require_issued_target_snapshot_locked(snapshot)
+
+    def capture_bound_validator(
+        self, hooks: _BoundInitialization, *, _capability: object | None = None,
+    ) -> None:
+        if (_capability is not _BOUND_TARGET_CAPABILITY
+                and _capability is not _BOUND_RECEIPT_TARGET_CAPABILITY):
+            raise _error("invalid") from None
+        if type(hooks) is not _BoundInitialization:
+            raise _error("invalid") from None
+        validator = self._validate_snapshot
+        hooks.retain_validator(validator)
+
+    def initialize_operation_actions(
+        self, push: _OperationBindingPush, *, _capability: object | None = None,
+    ) -> None:
+        if _capability is not _OPERATION_CAPABILITY:
+            raise _error("invalid") from None
+        if type(push) is not _OperationBindingPush:
+            raise _error("invalid") from None
+        binder = self._bind_operation_actions
+        push.apply(binder)
+
+    def bind_operation_target_actions(
+        self, push: _OperationTargetBindingPush, *, _capability: object | None = None,
+    ) -> _BoundActions:
+        if _capability is not _BOUND_TARGET_CAPABILITY:
+            raise _error("invalid") from None
+        if type(push) is not _OperationTargetBindingPush:
+            raise _error("invalid") from None
+        binder = self._bind_bound_actions
+        return push.apply(binder)
+
+    def bind_namespace_actions(
+        self, *, _capability: object | None = None,
+    ) -> _NamespaceActions:
+        if _capability is not _NAMESPACE_CAPABILITY:
+            raise _error("invalid") from None
+        return self._namespace_actions()
+
 
     def _register_target_snapshot_locked(self, snapshot: MemoryTargetSnapshot) -> None:
         """Seal an issued snapshot without retaining it after callers release it."""
@@ -1810,9 +2403,11 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
 
         def forget(reference: weakref.ReferenceType[MemoryTargetSnapshot]) -> None:
             authority = authority_ref()
-            if authority is None:
+            if authority is None or authority._pid != os.getpid():
                 return
             with authority._lifecycle_lock:
+                if authority._pid != os.getpid():
+                    return
                 issued = authority._target_snapshot_issuance.get(snapshot_id)
                 if issued is not None and issued[0] is reference:
                     del authority._target_snapshot_issuance[snapshot_id]
@@ -1964,12 +2559,14 @@ class WorkspaceMemoryAuthority(AbstractContextManager[Self]):
     get = read_blob
 
 
-class WorkspaceMemoryOperation(AbstractContextManager[Self]):
+class WorkspaceMemoryOperation(AbstractContextManager["WorkspaceMemoryOperation"]):
     """An opaque, one-shot lease on one authority activation."""
 
     _NEW = "new"
     _ACTIVE = "active"
     _CLOSED = "closed"
+
+    _actions: _OperationActions
 
     def __init__(
         self,
@@ -1992,181 +2589,209 @@ class WorkspaceMemoryOperation(AbstractContextManager[Self]):
         self._epoch: int | None = None
         self._workspace_identity: tuple[int, int] | None = None
         self._target_parent_borrowers: set[BoundMemoryTarget] = set()
+        self._hooks = _OperationHooks(
+            self, self._require_owner, self._check_new, self._check_issued, self._check_current,
+            self._check_bound_current, self._activate, self._rollback,
+            self._identity, self._check_exit, self._finish,
+            self._add_parent, self._remove_parent, self._check_parent,
+        )
+        # Derive actions from the exact retained owner, never a selectable binder.
+        binding_push = WorkspaceMemoryOperation._operation_binding_push(
+            self, _capability=_OPERATION_CAPABILITY,
+        )
+        WorkspaceMemoryAuthority.initialize_operation_actions(
+            authority, binding_push, _capability=_OPERATION_CAPABILITY,
+        )
+
+    def _operation_binding_push(
+        self, *, _capability: object | None = None,
+    ) -> _OperationBindingPush:
+        if _capability is not _OPERATION_CAPABILITY:
+            raise _error("invalid") from None
+
+        def apply(binder: _OperationActionBinder) -> None:
+            self._actions = binder(self._hooks)
+
+        push = object.__new__(_OperationBindingPush)
+        object.__setattr__(push, "apply", apply)
+        return push
+
+    def _target_binding_push(
+        self, hooks: _BoundHooks, receipt: bool, name: str,
+        *, _capability: object | None = None,
+    ) -> _OperationTargetBindingPush:
+        if _capability is not _BOUND_TARGET_CAPABILITY:
+            raise _error("invalid") from None
+
+        def apply(binder: _AuthorityBoundActionBinder) -> _BoundActions:
+            return binder(self._hooks, hooks, self._epoch or 0, receipt, name)
+
+        push = object.__new__(_OperationTargetBindingPush)
+        object.__setattr__(push, "apply", apply)
+        return push
+
+    def initialize_bound_owner(
+        self, hooks: _BoundInitialization, *, _capability: object | None = None,
+    ) -> None:
+        if (_capability is not _BOUND_TARGET_CAPABILITY
+                and _capability is not _BOUND_RECEIPT_TARGET_CAPABILITY):
+            raise _error("invalid") from None
+        if type(hooks) is not _BoundInitialization:
+            raise _error("invalid") from None
+        hooks.retain_owner(self._authority)
+        hooks.capture_validator(hooks)
+
+    def initialize_bound_context(
+        self, hooks: _BoundInitialization, *, _capability: object | None = None,
+    ) -> None:
+        if (_capability is not _BOUND_TARGET_CAPABILITY
+                and _capability is not _BOUND_RECEIPT_TARGET_CAPABILITY):
+            raise _error("invalid") from None
+        if type(hooks) is not _BoundInitialization:
+            raise _error("invalid") from None
+        hooks.retain_thread(self._thread)
+        hooks.retain_epoch(self._epoch)
+
+    def initialize_bound_actions(
+        self, push: _BoundActionBindingPush, *, _capability: object | None = None,
+    ) -> None:
+        if (_capability is not _BOUND_TARGET_CAPABILITY
+                and _capability is not _BOUND_RECEIPT_TARGET_CAPABILITY):
+            raise _error("invalid") from None
+        if type(push) is not _BoundActionBindingPush:
+            raise _error("invalid") from None
+        binder = self._bind_bound_actions
+        push.apply(binder)
+
+    def is_owned_by(self, authority: object) -> bool:
+        return self._authority is authority
+
+    def matches_authority_observation(self, observe: Callable[[], object]) -> bool:
+        """Compare issuer identity before a caller's live observation, without admission."""
+        return self._authority is observe()
+
+    def _bind_bound_actions(
+        self, hooks: _BoundHooks, receipt: bool, name: str,
+    ) -> _BoundActions:
+        binding_push = WorkspaceMemoryOperation._target_binding_push(
+            self, hooks, receipt, name, _capability=_BOUND_TARGET_CAPABILITY,
+        )
+        return WorkspaceMemoryAuthority.bind_operation_target_actions(
+            self._authority, binding_push, _capability=_BOUND_TARGET_CAPABILITY,
+        )
+
+    @property
+    def workspace(self) -> Path:
+        """Return the bound path without exposing the owning authority."""
+        # The existing identity accessor owns the active, process/thread-bound
+        # lease check under the lifecycle lock. A registered lease prevents the
+        # authority from closing, and its informational path is immutable.
+        _ = self.workspace_identity
+        return self._authority.workspace
 
     @property
     def workspace_identity(self) -> tuple[int, int]:
         """Return the bound workspace inode identity for this active lease."""
 
-        self._require_process_owner()
-        with self._authority._lifecycle_lock:
-            self._require_process_owner()
-            self._require_owner()
-            if self._state != self._ACTIVE or self._workspace_identity is None:
-                raise _error("closed") from None
-            return self._workspace_identity
+        return self._actions.workspace_identity()
 
     def borrow_target_parent(self, snapshot: MemoryTargetSnapshot) -> BoundMemoryTarget:
         """Issue scoped parent access anchored to an issued target snapshot."""
 
-        authority = self._authority
-        self._require_process_owner()
-        with authority._lifecycle_lock:
-            self._require_process_owner()
-            self._require_owner()
-            self._require_active_authority_owner()
-            if (
-                self._state != self._ACTIVE
-                or not self._registered
-                or self._epoch is None
-                or self._epoch != authority._activation_epoch
-                or not authority._active
-                or not authority._lock_held
-                or self not in authority._borrowers
-            ):
-                raise _error("closed") from None
-            BoundMemoryTarget._validate_snapshot(snapshot, authority, self._epoch)
-            authority._assert_binding()
-            return BoundMemoryTarget(
-                self,
-                snapshot,
-                _capability=_BOUND_TARGET_CAPABILITY,
-            )
+        return self._actions.borrow_target(snapshot)
 
     def borrow_pending_receipt_parent(
         self, snapshot: MemoryTargetSnapshot
     ) -> BoundMemoryTarget:
         """Issue scoped parent access for one present, verified receipt snapshot."""
 
-        authority = self._authority
-        self._require_process_owner()
-        with authority._lifecycle_lock:
-            self._require_process_owner()
-            self._require_owner()
-            self._require_active_authority_owner()
-            if (
-                self._state != self._ACTIVE
-                or not self._registered
-                or self._epoch is None
-                or self._epoch != authority._activation_epoch
-                or not authority._active
-                or not authority._lock_held
-                or self not in authority._borrowers
-            ):
-                raise _error("closed") from None
-            BoundMemoryTarget._validate_snapshot(
-                snapshot,
-                authority,
-                self._epoch,
-                allow_receipt=True,
-            )
-            if snapshot._name != _RECEIPT_TARGET_NAME or not snapshot.exists:
-                raise _error("invalid") from None
-            authority._assert_binding()
-            return BoundMemoryTarget(
-                self,
-                snapshot,
-                _capability=_BOUND_RECEIPT_TARGET_CAPABILITY,
-            )
+        return self._actions.borrow_receipt(snapshot)
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("memory recovery operation cannot be serialized")
 
-    def __copy__(self) -> Self:
+    def __copy__(self) -> NoReturn:
         raise TypeError("memory recovery operation cannot be copied")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("memory recovery operation cannot be copied")
 
     def _require_owner(self) -> None:
-        authority = self._authority
-        current_pid = os.getpid()
-        current_thread = threading.current_thread()
-        if (
-            current_pid != self._pid
-            or current_pid != authority._pid
-            or current_thread is not self._thread
-        ):
+        if self._pid != os.getpid() or self._thread is not threading.current_thread():
             raise _error("closed") from None
 
-    def _require_active_authority_owner(self) -> None:
+    def _check_new(self) -> None:
+        if self._state != self._NEW:
+            raise _error("closed") from None
+
+    def _check_issued(self, epoch: int) -> None:
+        if self._issued_epoch != epoch:
+            raise _error("closed") from None
+
+    def _check_current(self, epoch: int) -> None:
+        if self._state != self._ACTIVE or not self._registered or self._epoch != epoch:
+            raise _error("closed") from None
+
+    def _check_bound_current(self, epoch: int) -> None:
+        self._check_current(epoch)
+        if self._issued_epoch != epoch:
+            raise _error("closed") from None
+
+    def _activate(self, epoch: int, identity: tuple[int, int]) -> None:
+        self._epoch = epoch
+        self._workspace_identity = identity
+        self._registered = True
+        self._state = self._ACTIVE
+
+    def _rollback(self) -> None:
+        self._epoch = None
+        self._workspace_identity = None
+        self._registered = False
+        self._state = self._NEW
+
+    def _identity(self) -> tuple[int, int]:
+        if self._state != self._ACTIVE or self._workspace_identity is None:
+            raise _error("closed") from None
+        return self._workspace_identity
+
+    def _check_exit(self) -> bool:
         self._require_owner()
-        if threading.current_thread() is not self._authority._activation_thread:
+        if self._state == self._CLOSED:
+            return False
+        if self._state != self._ACTIVE or not self._registered:
+            raise _error("closed") from None
+        if self._target_parent_borrowers:
+            raise _error("borrowed") from None
+        return True
+
+    def _finish(self) -> None:
+        self._registered = False
+        self._state = self._CLOSED
+
+    def _add_parent(self, bound: BoundMemoryTarget) -> None:
+        self._target_parent_borrowers.add(bound)
+
+    def _remove_parent(self, bound: BoundMemoryTarget) -> None:
+        self._target_parent_borrowers.discard(bound)
+
+    def _check_parent(self, bound: BoundMemoryTarget) -> None:
+        if bound not in self._target_parent_borrowers:
             raise _error("closed") from None
 
     def __enter__(self) -> Self:
-        authority = self._authority
-        self._require_process_owner()
-        with authority._lifecycle_lock:
-            self._require_process_owner()
-            if self._state != self._NEW:
-                raise _error("closed") from None
-            self._require_active_authority_owner()
-            if (
-                not authority._active
-                or not authority._lock_held
-                or authority._workspace_identity is None
-                or self._issued_epoch != authority._activation_epoch
-            ):
-                raise _error("closed") from None
-            epoch = authority._activation_epoch
-            authority._assert_binding()
-            if (
-                not authority._active
-                or not authority._lock_held
-                or authority._activation_epoch != epoch
-                or self._issued_epoch != epoch
-            ):
-                raise _error("closed") from None
-            self._epoch = epoch
-            self._workspace_identity = authority._workspace_identity
-            authority._register_operation(self)
-            self._registered = True
-            self._state = self._ACTIVE
-            return self
+        self._actions.enter()
+        return self
 
     def require_current(self) -> None:
         """Require that this lease still belongs to its active authority epoch."""
 
-        authority = self._authority
-        self._require_process_owner()
-        with authority._lifecycle_lock:
-            self._require_process_owner()
-            self._require_active_authority_owner()
-            if (
-                self._state != self._ACTIVE
-                or not self._registered
-                or self._epoch is None
-                or self._epoch != authority._activation_epoch
-                or not authority._active
-                or not authority._lock_held
-                or self not in authority._borrowers
-            ):
-                raise _error("closed") from None
-            authority._assert_binding()
+        self._actions.require_current()
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        authority = self._authority
-        self._require_process_owner()
-        with authority._lifecycle_lock:
-            self._require_process_owner()
-            self._require_owner()
-            if self._state == self._CLOSED:
-                return
-            if self._state != self._ACTIVE or not self._registered:
-                raise _error("closed") from None
-            if self._target_parent_borrowers:
-                raise _error("borrowed") from None
-            self._registered = False
-            self._state = self._CLOSED
-            authority._unregister_operation(self)
-
-    def _require_process_owner(self) -> None:
-        current_pid = os.getpid()
-        if self._pid != current_pid or self._authority._pid != current_pid:
-            raise _error("closed") from None
+        self._actions.exit()
 
 
-class BoundMemoryTarget(AbstractContextManager[Self]):
+class BoundMemoryTarget(AbstractContextManager["BoundMemoryTarget"]):
     """A scoped parent-directory borrow anchored to one issued target snapshot.
 
     The scope retains a private duplicate of the authority's pinned ``memory``
@@ -2179,6 +2804,12 @@ class BoundMemoryTarget(AbstractContextManager[Self]):
     _NEW = "new"
     _ACTIVE = "active"
     _CLOSED = "closed"
+
+    _authority: WorkspaceMemoryAuthority
+    _validate_snapshot: Callable[[MemoryTargetSnapshot, int, bool], None]
+    _thread: threading.Thread
+    _epoch: int | None
+    _actions: _BoundActions
 
     def __init__(
         self,
@@ -2194,67 +2825,81 @@ class BoundMemoryTarget(AbstractContextManager[Self]):
         else:
             raise _error("invalid") from None
         self._operation = operation
-        self._authority = operation._authority
+        initialization = BoundMemoryTarget._initialization_hooks(self, _capability)
+        WorkspaceMemoryOperation.initialize_bound_owner(
+            operation, initialization, _capability=_capability,
+        )
         self._snapshot = snapshot
         self._pid = os.getpid()
-        self._thread = operation._thread
-        self._epoch = operation._epoch
-        self._snapshot_name = snapshot._name
-        self._snapshot_content = snapshot._content
-        self._snapshot_stat_identity = snapshot._stat_identity
+        WorkspaceMemoryOperation.initialize_bound_context(
+            operation, initialization, _capability=_capability,
+        )
+        self._snapshot_name = snapshot.name
+        self._snapshot_content = snapshot.content
+        self._snapshot_stat_identity = snapshot.stat_identity
         self._state = self._NEW
         self._registered = False
         self._memory_fd: int | None = None
         self._memory_identity: tuple[int, int] | None = None
+        hooks = _BoundHooks(
+            self, self._require_owner, self._check_new, self._check_epoch,
+            self._require_snapshot_unchanged,
+            self._activate, self._rollback, self._check_registered,
+            self._check_parent_present, self._check_local_current,
+            self._duplicate_parent, self._check_exit, self._finish, self._close_parent,
+        )
+        binding_push = BoundMemoryTarget._action_binding_push(
+            self, hooks, _capability=_capability,
+        )
+        WorkspaceMemoryOperation.initialize_bound_actions(
+            operation, binding_push, _capability=_capability,
+        )
 
-    @staticmethod
-    def _validate_snapshot(
-        snapshot: MemoryTargetSnapshot,
-        authority: WorkspaceMemoryAuthority,
-        epoch: int,
-        *,
-        allow_receipt: bool = False,
-    ) -> None:
-        if type(snapshot) is not MemoryTargetSnapshot:
+    def _initialization_hooks(self, capability: object) -> _BoundInitialization:
+        if (capability is not _BOUND_TARGET_CAPABILITY
+                and capability is not _BOUND_RECEIPT_TARGET_CAPABILITY):
             raise _error("invalid") from None
-        if snapshot._authority is not authority:
-            raise _error("invalid") from None
-        if snapshot._epoch != epoch:
-            raise _error("binding") from None
-        if (
-            type(snapshot._name) is not str
-            or snapshot._name not in _MEMORY_TARGET_NAMES
-            or (snapshot._name == _RECEIPT_TARGET_NAME and not allow_receipt)
-            or (snapshot._content is None) != (snapshot._stat_identity is None)
-            or (
-                snapshot._stat_identity is not None
-                and type(snapshot._stat_identity) is not MemoryTargetStatIdentity
+
+        def retain_owner(owner: WorkspaceMemoryAuthority) -> None:
+            self._authority = owner
+
+        def retain_validator(
+            validator: Callable[[MemoryTargetSnapshot, int, bool], None],
+        ) -> None:
+            self._validate_snapshot = validator
+
+        def capture_validator(initialization: _BoundInitialization) -> None:
+            WorkspaceMemoryAuthority.capture_bound_validator(
+                self._authority, initialization, _capability=capability,
             )
-            or (
-                snapshot._content is not None
-                and (
-                    type(snapshot._content) is not bytes
-                    or len(snapshot._content) > _MEMORY_TARGET_MAX_BYTES
-                    or snapshot._stat_identity is None
-                    or snapshot._stat_identity.size != len(snapshot._content)
-                )
-            )
-        ):
+
+        def retain_thread(thread: threading.Thread) -> None:
+            self._thread = thread
+
+        def retain_epoch(epoch: int | None) -> None:
+            self._epoch = epoch
+
+        hooks = object.__new__(_BoundInitialization)
+        object.__setattr__(hooks, "retain_owner", retain_owner)
+        object.__setattr__(hooks, "capture_validator", capture_validator)
+        object.__setattr__(hooks, "retain_validator", retain_validator)
+        object.__setattr__(hooks, "retain_thread", retain_thread)
+        object.__setattr__(hooks, "retain_epoch", retain_epoch)
+        return hooks
+
+    def _action_binding_push(
+        self, hooks: _BoundHooks, *, _capability: object | None = None,
+    ) -> _BoundActionBindingPush:
+        if (_capability is not _BOUND_TARGET_CAPABILITY
+                and _capability is not _BOUND_RECEIPT_TARGET_CAPABILITY):
             raise _error("invalid") from None
-        authority._require_issued_target_snapshot_locked(snapshot)
-        if allow_receipt:
-            identity = snapshot._stat_identity
-            if snapshot._name != _RECEIPT_TARGET_NAME:
-                raise _error("invalid") from None
-            if snapshot._content is None or identity is None:
-                raise _error("invalid") from None
-            if (
-                not stat.S_ISREG(identity.mode)
-                or identity.uid != _uid()
-                or identity.links != 1
-                or stat.S_IMODE(identity.mode) != _PRIVATE_FILE_MODE
-            ):
-                raise _error("corrupt") from None
+
+        def apply(binder: _OperationBoundActionBinder) -> None:
+            self._actions = binder(hooks, self._receipt_scope, self._snapshot_name)
+
+        push = object.__new__(_BoundActionBindingPush)
+        object.__setattr__(push, "apply", apply)
+        return push
 
     @property
     def name(self) -> str:
@@ -2264,193 +2909,116 @@ class BoundMemoryTarget(AbstractContextManager[Self]):
         return self._snapshot_name
 
     def duplicate_dir_fd(self) -> int:
-        """Return a caller-owned duplicate of the verified parent descriptor.
+        """Return a caller-owned duplicate; exiting this scope never revokes it."""
 
-        The caller must close the returned descriptor. It remains caller-owned
-        if this scope exits; the scope never closes a descriptor it did not
-        create, and it cannot revoke duplicates handed to callers.
-        """
+        return self._actions.duplicate_dir_fd()
 
-        authority = self._authority
-        self._require_process_owner()
-        with authority._lifecycle_lock:
-            self._require_process_owner()
-            self._require_current_locked()
-            memory_fd = self._memory_fd
-            if memory_fd is None:
-                raise _error("closed") from None
-            try:
-                return os.dup(memory_fd)
-            except (OSError, TypeError, ValueError):
-                raise _error("io") from None
-
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("bound memory target cannot be serialized")
 
-    def __copy__(self) -> Self:
+    def __copy__(self) -> NoReturn:
         raise TypeError("bound memory target cannot be copied")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("bound memory target cannot be copied")
 
     def __enter__(self) -> Self:
-        authority = self._authority
-        self._require_process_owner()
-        with authority._lifecycle_lock:
-            self._require_process_owner()
-            if self._state != self._NEW:
-                raise _error("closed") from None
-            self._require_active_operation_locked()
-            epoch = self._operation._epoch
-            if epoch is None:
-                raise _error("closed") from None
-            self._require_snapshot_unchanged(epoch)
-            authority._assert_binding()
-            source_fd = authority._memory_fd
-            if source_fd is None:
-                raise _error("closed") from None
-            memory_fd: int | None = None
-            try:
-                memory_fd = os.dup(source_fd)
-            except (OSError, TypeError, ValueError):
-                raise _error("io") from None
-            try:
-                source_info = _fstat(source_fd, code="binding")
-                duplicate_info = _fstat(memory_fd, code="binding")
-                _workspace_memory_directory(duplicate_info)
-                if not _same_binding(source_info, duplicate_info):
-                    raise _error("binding") from None
-                authority._assert_binding()
-                self._operation._target_parent_borrowers.add(self)
-                self._memory_fd = memory_fd
-                self._memory_identity = _identity(duplicate_info)
-                self._registered = True
-                self._state = self._ACTIVE
-                memory_fd = None
-                return self
-            finally:
-                _close(memory_fd)
+        self._actions.enter()
+        return self
 
     def require_current(self) -> None:
         """Verify this parent borrow still belongs to its live operation epoch."""
 
-        authority = self._authority
-        self._require_process_owner()
-        with authority._lifecycle_lock:
-            self._require_process_owner()
-            self._require_current_locked()
+        self._actions.require_current()
 
-    def _require_current_locked(self) -> None:
-        self._require_active_operation_locked()
-        if (
-            self._state != self._ACTIVE
-            or not self._registered
-            or self not in self._operation._target_parent_borrowers
-        ):
+    def _require_owner(self) -> None:
+        if self._pid != os.getpid() or threading.current_thread() is not self._thread:
             raise _error("closed") from None
-        self._require_snapshot_unchanged(self._epoch or 0)
+
+    def _check_new(self) -> None:
+        if self._state != self._NEW:
+            raise _error("closed") from None
+
+    def _check_epoch(self, epoch: int) -> None:
+        if self._epoch != epoch:
+            raise _error("closed") from None
+
+    def _require_snapshot_unchanged(self, epoch: int) -> None:
+        self._validate_snapshot(self._snapshot, epoch, self._receipt_scope)
+        if (
+            self._snapshot.name != self._snapshot_name
+            or self._snapshot.content != self._snapshot_content
+            or self._snapshot.stat_identity != self._snapshot_stat_identity
+        ):
+            raise _error("invalid") from None
+
+    def _activate(self, memory_fd: int, identity: tuple[int, int]) -> None:
+        self._memory_fd = memory_fd
+        self._memory_identity = identity
+        self._registered = True
+        self._state = self._ACTIVE
+
+    def _rollback(self) -> None:
+        # The action still owns its local duplicate and closes it on failure.
+        self._memory_fd = None
+        self._memory_identity = None
+        self._registered = False
+        self._state = self._NEW
+
+    def _check_registered(self) -> None:
+        if self._state != self._ACTIVE or not self._registered:
+            raise _error("closed") from None
+
+    def _check_parent_present(self) -> None:
+        if self._memory_fd is None or self._memory_identity is None:
+            raise _error("closed") from None
+
+    def _check_local_current(self) -> None:
         memory_fd = self._memory_fd
         memory_identity = self._memory_identity
         if memory_fd is None or memory_identity is None:
             raise _error("closed") from None
-        self._authority._assert_binding()
         info = _fstat(memory_fd, code="binding")
         _workspace_memory_directory(info)
         if _identity(info) != memory_identity:
             raise _error("binding") from None
 
-    def _require_snapshot_unchanged(self, epoch: int) -> None:
-        self._validate_snapshot(
-            self._snapshot,
-            self._authority,
-            epoch,
-            allow_receipt=self._receipt_scope,
-        )
-        if (
-            self._snapshot._name != self._snapshot_name
-            or self._snapshot._content != self._snapshot_content
-            or self._snapshot._stat_identity != self._snapshot_stat_identity
-        ):
-            raise _error("invalid") from None
+    def _duplicate_parent(self) -> int:
+        memory_fd = self._memory_fd
+        if memory_fd is None:
+            raise _error("closed") from None
+        try:
+            return os.dup(memory_fd)
+        except (OSError, TypeError, ValueError):
+            raise _error("io") from None
 
-    def _require_active_operation_locked(self) -> None:
+    def _check_exit(self) -> bool:
         self._require_owner()
-        operation = self._operation
-        authority = self._authority
-        epoch = self._epoch
-        if (
-            operation._state != operation._ACTIVE
-            or not operation._registered
-            or epoch is None
-            or operation._epoch != epoch
-            or operation._issued_epoch != epoch
-            or epoch != authority._activation_epoch
-            or not authority._active
-            or not authority._lock_held
-            or operation not in authority._borrowers
-            or threading.current_thread() is not authority._activation_thread
-        ):
-            raise _error("closed") from None
+        if self._state == self._CLOSED:
+            return False
+        self._check_registered()
+        return True
 
-    def _require_owner(self) -> None:
-        current_pid = os.getpid()
-        if (
-            current_pid != self._pid
-            or current_pid != self._authority._pid
-            or current_pid != self._operation._pid
-            or threading.current_thread() is not self._thread
-        ):
-            raise _error("closed") from None
+    def _finish(self) -> None:
+        self._registered = False
+        self._state = self._CLOSED
 
-    def _require_process_owner(self) -> None:
-        current_pid = os.getpid()
-        if (
-            current_pid != self._pid
-            or current_pid != self._authority._pid
-            or current_pid != self._operation._pid
-        ):
-            raise _error("closed") from None
+    def _close_parent(self) -> None:
+        memory_fd = self._memory_fd
+        self._memory_fd = None
+        self._memory_identity = None
+        _close(memory_fd)
 
     def snapshot_target(self) -> MemoryTargetSnapshot:
         """Read the bound target through the authority's verified no-follow reader."""
 
-        self.require_current()
-        snapshot = self._authority.snapshot_target(self._snapshot_name)
-        authority = self._authority
-        self._require_process_owner()
-        with authority._lifecycle_lock:
-            self._require_process_owner()
-            self._require_current_locked()
-            self._validate_snapshot(
-                snapshot,
-                authority,
-                self._epoch or 0,
-                allow_receipt=self._receipt_scope,
-            )
-            if snapshot._name != self._snapshot_name:
-                raise _error("binding") from None
-            return snapshot
+        return self._actions.snapshot_target()
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        self._require_process_owner()
-        authority = self._authority
-        with authority._lifecycle_lock:
-            self._require_process_owner()
-            self._require_owner()
-            if self._state == self._CLOSED:
-                return
-            if self._state != self._ACTIVE or not self._registered:
-                raise _error("closed") from None
-            self._registered = False
-            self._state = self._CLOSED
-            self._operation._target_parent_borrowers.discard(self)
-            memory_fd = self._memory_fd
-            self._memory_fd = None
-            self._memory_identity = None
-            _close(memory_fd)
+        self._actions.exit()
 
 
-class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
+class ImmutableEvidenceNamespace(AbstractContextManager["ImmutableEvidenceNamespace"]):
     """A descriptor-bound immutable record namespace under one chain identity."""
 
     def __init__(
@@ -2466,6 +3034,9 @@ class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
         self._authority = authority
         self.kind = _validate_evidence_kind(kind)
         self.identity = _validate_digest(identity)
+        self._actions = WorkspaceMemoryAuthority.bind_namespace_actions(
+            authority, _capability=_NAMESPACE_CAPABILITY,
+        )
         self._kind_fd: int | None = None
         self._record_fd: int | None = None
         self._kind_identity: tuple[int, int] | None = None
@@ -2475,12 +3046,9 @@ class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
         kind_fd: int | None = None
         record_fd: int | None = None
         try:
-            authority._assert_process()
-            authority._assert_binding()
-            kind_fd = _open_child_directory(
-                authority._recovery_fd_or_closed(), self.kind, create=True
-            )
-            record_fd = _open_child_directory(kind_fd, self.identity, create=True)
+            self._actions.check_process()
+            self._actions.check_binding()
+            kind_fd, record_fd = self._actions.open_children(self.kind, self.identity)
             self._kind_fd = kind_fd
             self._record_fd = record_fd
             kind_fd = None
@@ -2494,7 +3062,7 @@ class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
             )
             self._active = True
             self._assert_binding()
-            authority._register_namespace(self)
+            self._actions.register(self)
         except BaseException:
             self._active = False
             _close(record_fd)
@@ -2503,6 +3071,9 @@ class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
             _close(self._kind_fd)
             self._record_fd = None
             self._kind_fd = None
+            # Registration may append before failing. Remove only this exact
+            # scope; previous namespaces and their owned descriptors survive.
+            self._actions.unregister(self)
             raise
 
     @property
@@ -2517,13 +3088,13 @@ class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
 
     record_directory = directory
 
-    def __reduce__(self) -> object:
+    def __reduce__(self) -> NoReturn:
         raise TypeError("memory recovery namespace cannot be serialized")
 
-    def __copy__(self) -> Self:
+    def __copy__(self) -> NoReturn:
         raise TypeError("memory recovery namespace cannot be copied")
 
-    def __deepcopy__(self, memo: dict[int, object]) -> Self:
+    def __deepcopy__(self, memo: dict[int, object]) -> NoReturn:
         raise TypeError("memory recovery namespace cannot be copied")
 
     def __enter__(self) -> Self:
@@ -2550,16 +3121,16 @@ class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
         _close(record_fd)
         _close(kind_fd)
         if was_active:
-            self._authority._unregister_namespace(self)
+            self._actions.unregister(self)
 
     def _assert_process(self) -> None:
         if not self._active or self._pid != os.getpid():
             raise _error("closed") from None
-        self._authority._assert_process()
+        self._actions.check_process()
 
     def _assert_binding(self) -> None:
         self._assert_process()
-        self._authority._assert_binding()
+        self._actions.check_binding()
         kind_fd = self._kind_fd
         record_fd = self._record_fd
         kind_identity = self._kind_identity
@@ -2570,9 +3141,7 @@ class ImmutableEvidenceNamespace(AbstractContextManager[Self]):
         _private_directory(kind_info)
         if _identity(kind_info) != kind_identity:
             raise _error("binding") from None
-        recovery_entry = _stat_entry(self._authority._recovery_fd_or_closed(), self.kind)
-        if recovery_entry is None or not _same_binding(recovery_entry, kind_info):
-            raise _error("binding") from None
+        self._actions.check_kind_binding(self.kind, kind_info)
         record_info = _fstat(record_fd, code="binding")
         _private_directory(record_info)
         if _identity(record_info) != record_identity:
@@ -2626,7 +3195,14 @@ def open_workspace_memory(workspace: Path | str) -> WorkspaceMemoryAuthority:
     return WorkspaceMemoryAuthority(workspace)
 
 
+def open_existing_workspace_memory(workspace: Path | str) -> WorkspaceMemoryAuthority:
+    """Open a complete existing authority layout without creating or repairing it."""
+
+    return WorkspaceMemoryAuthority(workspace, existing_only=True)
+
+
 __all__ = [
+    "MEMORY_TARGET_MAX_BYTES",
     "MemoryRecoveryStorage",
     "MemoryRecoveryStorageError",
     "MemoryStorageBindingError",
@@ -2642,6 +3218,15 @@ __all__ = [
     "ImmutableEvidenceNamespace",
     "WorkspaceMemoryAuthority",
     "WorkspaceMemoryAuthorityError",
+    "WorkspaceMemoryLockGate",
     "WorkspaceMemoryOperation",
+    "close_recovery_descriptor",
+    "memory_target_stat_identity",
+    "open_existing_workspace_memory",
+    "open_recovery_private_directory",
     "open_workspace_memory",
+    "require_memory_lock_gate_capabilities",
+    "require_safe_memory_target",
+    "stat_recovery_descriptor",
+    "stat_recovery_entry",
 ]
