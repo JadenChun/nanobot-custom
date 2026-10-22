@@ -47,6 +47,7 @@ from tests.agent.p6_memory_contract_fixtures import (
     source_state,
     source_store,
 )
+from tests.state_stat import content_stat
 
 
 class _DeterministicCounter:
@@ -366,15 +367,15 @@ async def test_offline_receipt_reconcile_replay_finalize_and_stale_offset_preser
     workspace, sessions, source, pending = receipt_layout(tmp_path / "positive")
     memory = workspace / "memory"
     original_events = source.read_bytes().splitlines()[1:]
-    raw, pending_stat = pending.read_bytes(), pending.stat()
+    raw, pending_stat = pending.read_bytes(), content_stat(pending.stat())
     result = reconcile_pending_memory_receipt_offline(workspace, sessions_root=sessions)
     assert result.phase == "COMPLETE"
-    assert pending.read_bytes() == raw and pending.stat() == pending_stat
+    assert pending.read_bytes() == raw and content_stat(pending.stat()) == pending_stat
     targets = [pending, source, memory / "history.jsonl", memory / "MEMORY.md", memory / ".cursor"]
-    completed = {path: (path.read_bytes(), path.stat()) for path in targets}
+    completed = {path: (path.read_bytes(), content_stat(path.stat())) for path in targets}
     replay = reconcile_pending_memory_receipt_offline(workspace, sessions_root=sessions)
     assert replay.phase == "COMPLETE" and replay.identity == result.identity
-    assert {path: (path.read_bytes(), path.stat()) for path in targets} == completed
+    assert {path: (path.read_bytes(), content_stat(path.stat())) for path in targets} == completed
     header = json.loads(source.read_bytes().splitlines()[0])
     assert header["last_consolidated"] == 2
     assert header["last_archived"] == 2
@@ -399,12 +400,12 @@ async def test_offline_receipt_reconcile_replay_finalize_and_stale_offset_preser
     )
     visible = [stale_source, stale_pending, stale_workspace / "memory" / "MEMORY.md",
                stale_workspace / "memory" / "HISTORY.md"]
-    before = {path: (path.read_bytes(), path.stat()) for path in visible}
+    before = {path: (path.read_bytes(), content_stat(path.stat())) for path in visible}
     with pytest.raises(OfflineMemoryRecoveryError):
         reconcile_pending_memory_receipt_offline(stale_workspace, sessions_root=stale_sessions)
     with pytest.raises(OfflineReceiptFinalizationError):
         finalize_pending_memory_receipt_offline(stale_workspace, sessions_root=stale_sessions)
-    assert {path: (path.read_bytes(), path.stat()) for path in visible} == before
+    assert {path: (path.read_bytes(), content_stat(path.stat())) for path in visible} == before
     assert json.loads(stale_source.read_bytes().splitlines()[0])["last_consolidated"] == 2
     assert json.loads(stale_source.read_bytes().splitlines()[0])["last_archived"] == 2
     assert not (stale_workspace / "memory" / "history.jsonl").exists()

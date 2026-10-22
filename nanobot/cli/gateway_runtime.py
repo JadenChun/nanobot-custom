@@ -262,7 +262,7 @@ def _run_gateway(
     log_file: str | None = None,
     session_authority: SessionAuthority | None = None,
 ) -> None:
-    """Run one acquired gateway graph; Stage 1 keeps all automation inactive."""
+    """Run one acquired gateway graph with explicitly enabled edge runtimes."""
     sessions_root = (
         config.runtime_data_dir / "sessions"
         if config.runtime_data_dir is not None
@@ -420,6 +420,9 @@ def _run_gateway(
         assert channels is not None
         tasks: list[asyncio.Task[Any]] = []
         shutdown = asyncio.Event()
+        processes = None
+        cron_gateway = None
+        telegram_busy = None
 
         def disconnect_webui() -> None:
             pass
@@ -459,6 +462,34 @@ def _run_gateway(
             await handle.mcp.connect()
             assert recovery is not None
             await recovery.scan()
+            if config.gateway.telegram_busy.enabled:
+                from nanobot.channels.telegram.gateway_busy import GatewayTelegramBusy
+                from nanobot.channels.telegram.runtime import TelegramChannel
+
+                telegram = channels.get_channel("telegram")
+                if not isinstance(telegram, TelegramChannel):
+                    raise ValueError("Telegram busy input requires the enabled Telegram channel")
+                telegram_busy = GatewayTelegramBusy(config, agent, telegram)
+            if config.gateway.cron.enabled:
+                from nanobot.cron.gateway import GatewayCron
+
+                root = composition.preflight.runtime_data_root
+                if root is None:
+                    raise RuntimeError("scheduled execution requires an instance runtime data root")
+                cron_gateway = GatewayCron(config.gateway.cron, handle.cron, agent, handle.sessions,
+                    channels, config.workspace_path, root,
+                    is_codex=lambda: agent.provider.provider_name == "openai_codex")
+            if config.gateway.process_continuations:
+                import hashlib
+
+                from nanobot.process_completion import ProcessCompletionRuntime
+
+                root = composition.preflight.runtime_data_root
+                if root is None:
+                    raise RuntimeError("process continuations require an instance runtime data root")
+                identity = hashlib.sha256(str(config.workspace_path).encode()).hexdigest()[:24]
+                processes = ProcessCompletionRuntime(root / "process-completions" / identity, agent)
+                agent.install_process_completion_sink(processes)
 
             def schedule_webui(awaitable: Awaitable[None]) -> None:
                 agent.schedule_background(cast(Coroutine[Any, Any, None], awaitable))
@@ -475,7 +506,8 @@ def _run_gateway(
             )
             console.print("[yellow]○[/yellow] Dream: inactive (P5 Stage 1)")
             console.print("[yellow]○[/yellow] Heartbeat: inactive (P5 Stage 1)")
-            console.print("[yellow]○[/yellow] Cron: definitions only; runtime inactive")
+            console.print("[yellow]○[/yellow] Cron: waiting for channels" if cron_gateway is not None
+                          else "[yellow]○[/yellow] Cron: definitions only; runtime inactive")
             options = instance.start_options(port=port, log_file=log_file)
 
             async def monitor_clients() -> None:
@@ -498,6 +530,12 @@ def _run_gateway(
                     asyncio.create_task(channels.start_all()),
                     asyncio.create_task(monitor_clients()),
                 ])
+                if processes is not None:
+                    processes.start()
+                if cron_gateway is not None:
+                    tasks.append(asyncio.create_task(cron_gateway.run()))
+                if telegram_busy is not None:
+                    tasks.append(asyncio.create_task(telegram_busy.run()))
                 if health_server_enabled:
                     tasks.append(asyncio.create_task(_health_server(config.gateway.host, port, channels)))
                 if webui_dev_server is not None:
@@ -522,6 +560,12 @@ def _run_gateway(
             logger.exception("WebUI development server failed")
             return True
         finally:
+            if telegram_busy is not None:
+                await telegram_busy.aclose()
+            if cron_gateway is not None:
+                await cron_gateway.aclose()
+            if processes is not None:
+                await processes.aclose()
             await _close_gateway_runtime(
                 handle, composition, tasks,
                 disconnect_webui=disconnect_webui, restore=restore,

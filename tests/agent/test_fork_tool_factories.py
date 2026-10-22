@@ -51,12 +51,13 @@ def test_non_core_scope_stops_snapshot_discovery_factory_and_registry(context):
 
 def test_exact_default_main_tools_and_dependency_handoff(context, monkeypatch):
     monkeypatch.delenv('NANOBOT_TREND_VPN_TOOLS_ENABLED', raising=False)
-    monkeypatch.setattr('nanobot.agent.tools.fork_factories.vpn_tools_enabled', lambda: False)
+    monkeypatch.setattr('nanobot.extensions.optional_tools.vpn_tools_enabled', lambda: False)
     names, registry = load(context, monkeypatch)
     assert set(names) == {'read_file', 'write_file', 'edit_file', 'list_dir', 'exec',
                           'exec_session', 'list_exec_sessions', 'web_search',
                           'web_fetch', 'message', 'plan_task', 'delegate_task', 'review_work',
-                          'explore', 'agent_browser', 'agent_device', 'generate_image'}
+                          'explore', 'agent_browser', 'agent_device', 'generate_image',
+                          'repository_catalog', 'save_knowledge'}
     assert registry.get('write_file')._resource_policy is context.fork_dependencies.resource_policy
     assert registry.get('write_file')._lock_registry is context.fork_dependencies.file_locks
     assert registry.get('agent_browser').working_dir == context.workspace
@@ -84,7 +85,7 @@ def test_crawler_requires_both_switches(context, monkeypatch, enabled, flag):
     from dataclasses import replace
 
     context.fork_dependencies = replace(context.fork_dependencies, crawler_enabled=enabled)
-    monkeypatch.setattr('nanobot.agent.tools.fork_factories.crawl_tools_enabled', lambda: flag)
+    monkeypatch.setattr('nanobot.extensions.optional_tools.crawl_tools_enabled', lambda: flag)
     names, _ = load(context, monkeypatch)
     assert ('crawl_research' in names) == (enabled and flag)
     assert 'social_crawl' not in names

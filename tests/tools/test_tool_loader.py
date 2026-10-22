@@ -473,6 +473,7 @@ def test_loader_registers_same_tools_as_old_hardcoded(loader_context):
         "exec", "exec_session", "list_exec_sessions",
         "web_search", "web_fetch",
         "message", "cron", "plan_task", "delegate_task", "review_work", "explore",
+        "repository_catalog", "save_knowledge",
     }
     actual = set(registered)
     assert expected <= actual, f"Missing tools: {expected - actual}"

@@ -76,6 +76,12 @@ def _inode(info: os.stat_result) -> tuple[int, int]:
     return info.st_dev, info.st_ino
 
 
+def _content_stat(info: os.stat_result) -> tuple[int, ...]:
+    """Reading may update atime; content and ownership must remain stable."""
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_uid,
+            info.st_gid, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def _private(info: os.stat_result, *, directory: bool, links: int = 1) -> None:
     """Reject non-private, foreign, linked, or wrong-type filesystem objects."""
     expected = stat.S_ISDIR if directory else stat.S_ISREG
@@ -275,7 +281,7 @@ class _PrivateFiles(CronOccurrenceStore):
                     if not part:
                         break
                     data += part
-                if len(data) != info.st_size or os.fstat(fd) != info:
+                if len(data) != info.st_size or _content_stat(os.fstat(fd)) != _content_stat(info):
                     raise OccurrenceCorruptError("scheduler state mutated during read")
                 _check_scheduler_file(held.root_fd, "state.json", fd, inode, data)
                 wire = _strict_json_loads(data, label="scheduler state")
@@ -701,7 +707,7 @@ class SchedulerStore:
                 if not part:
                     break
                 data += part
-            if len(data) != info.st_size or os.fstat(fd) != info:
+            if len(data) != info.st_size or _content_stat(os.fstat(fd)) != _content_stat(info):
                 raise OccurrenceCorruptError("scheduler state mutated during read")
             if not reconciliation_refresh and self._state_content is not None and data != self._state_content:
                 raise OccurrenceCorruptError("scheduler state content replaced")

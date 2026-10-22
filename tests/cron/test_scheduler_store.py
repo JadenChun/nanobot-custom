@@ -138,3 +138,14 @@ def test_v1_reads_publish_nothing_and_cannot_accept_bridge_field(tmp_path):
     assert (path.stat().st_ino, path.stat().st_mtime_ns, path.read_bytes()) == before
     with pytest.raises(OccurrenceCorruptError):
         authority._validate({**authority.read(), "bridges": []})
+
+
+def test_state_read_allows_filesystem_access_time_update(tmp_path):
+    authority = store(tmp_path)
+    path = authority.root / "state.json"
+    before = path.stat()
+    # A normal first read on a relatime filesystem updates atime. This is not
+    # a competing writer and must not invalidate an otherwise stable snapshot.
+    os.utime(path, ns=(0, before.st_mtime_ns))
+    assert authority.read()["generation"] == 0
+    assert path.stat().st_mtime_ns == before.st_mtime_ns

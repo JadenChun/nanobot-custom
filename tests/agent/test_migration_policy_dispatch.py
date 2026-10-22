@@ -98,7 +98,8 @@ async def test_delegation_captures_crawler_capacity_without_mutating_provider(tm
     manager.crawler_runner.run = AsyncMock(return_value=AgentRunResult("done", []))
     await manager._run_role(role="crawler", prompt="test", assignment="test", tools=ToolRegistry(),
                             max_iterations=2, runner=manager.crawler_runner, model="crawler",
-                            max_input_tokens=20000, max_output_tokens=2000)
+                            max_input_tokens=20000, max_output_tokens=2000,
+                            runtime_override=manager._crawler_runtime)
     spec = manager.crawler_runner.run.call_args.args[0]
     assert spec.runtime.provider is crawler
     assert spec.runtime.context_window_tokens == 20000

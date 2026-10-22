@@ -24,6 +24,8 @@ from nanobot.webui.dev import WebUIDevError
 def _run_foreground_gateway(
     tmp_path, monkeypatch, *, content, dream, heartbeat, cursor,
     pending=None, setup_error=None, termination="complete",
+    process_continuations=False,
+    scheduled_execution=False,
 ):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -66,7 +68,8 @@ def _run_foreground_gateway(
             "workspace": str(workspace), "sessionTtlMinutes": 0,
             "idleCompaction": {"enabled": False}, "dream": {"enabled": dream},
         }},
-        "gateway": {"heartbeat": {"enabled": heartbeat}},
+        "gateway": {"heartbeat": {"enabled": heartbeat}, "processContinuations": process_continuations,
+                    "cron": {"enabled": scheduled_execution}},
         "channels": {"websocket": {"enabled": False}},
         "tools": {
             "exec": {"enable": False}, "agentBrowser": {"enabled": False},
@@ -85,6 +88,8 @@ def _run_foreground_gateway(
     lifecycle = []
     runtime_tasks = []
     shutdown_events = []
+    process_runtimes = []
+    install_process_sink = AgentLoop.install_process_completion_sink
     define = RuntimeComposition.define
     agent_run = AgentLoop.run
     agent_close = AgentLoop.aclose
@@ -136,6 +141,10 @@ def _run_foreground_gateway(
         compositions.append(value)
         return value
 
+    def capture_process_sink(agent, sink):
+        process_runtimes.append(sink)
+        install_process_sink(agent, sink)
+
     def forbidden(*_args, **_kwargs):
         violations.append("forbidden effect attempted")
         raise AssertionError("foreground gateway must not start legacy automation or external effects")
@@ -155,8 +164,11 @@ def _run_foreground_gateway(
         assert handle.cron_runtime is None
         assert handle.cron.on_job is None
         assert not handle.cron._running
-        assert handle.cron.occurrence_store is None
+        assert (handle.cron.occurrence_store is not None) is scheduled_execution
         assert handle.cron.store_path == workspace / "cron" / "jobs.json"
+        assert len(process_runtimes) == int(process_continuations)
+        if process_runtimes:
+            assert process_runtimes[0]._started and not process_runtimes[0]._closed
         if termination == "failure":
             raise WebUIDevError("injected post-start failure")
         if termination == "shutdown":
@@ -173,6 +185,7 @@ def _run_foreground_gateway(
     monkeypatch.setattr("nanobot.providers.factory.build_provider_snapshot", lambda *_: snapshot)
     monkeypatch.setattr(UnconfiguredProvider, "chat", forbidden)
     monkeypatch.setattr(AgentLoop, "run", run_agent)
+    monkeypatch.setattr(AgentLoop, "install_process_completion_sink", capture_process_sink)
     monkeypatch.setattr(AgentLoop, "aclose", close_agent)
     monkeypatch.setattr(AgentLoop, "_aclose_operation", close_agent_operation)
     monkeypatch.setattr(MCPProvider, "connect", connect_mcp)
@@ -210,7 +223,7 @@ def _run_foreground_gateway(
     assert violations == []
     assert observed == [RuntimeState.READY]
     assert compositions[0].state is RuntimeState.CLOSED
-    assert len(runtime_tasks) == 1 and len(runtime_tasks[0]) == 5
+    assert len(runtime_tasks) == 1 and len(runtime_tasks[0]) == 5 + int(scheduled_execution)
     assert all(task.done() for task in runtime_tasks[0])
     assert lifecycle.count("foreground-task-joined") == 3
     assert lifecycle.count("agent-joined") == 1
@@ -231,7 +244,7 @@ def _run_foreground_gateway(
     after = {p.relative_to(workspace): p.read_bytes()
              for p in (workspace / "memory").rglob("*") if p.is_file()}
     assert after == before
-    assert not (config.runtime_data_dir / "cron-runtime").exists()
+    assert (config.runtime_data_dir / "cron-runtime").exists() is scheduled_execution
     automation_after = {
         p.relative_to(workspace): p.read_bytes()
         for folder in automation_folders
@@ -240,6 +253,24 @@ def _run_foreground_gateway(
     assert automation_after == automation_before
     if pending is not None:
         assert automation_before
+    if process_continuations:
+        assert process_runtimes[0]._closed
+        assert not process_runtimes[0]._tasks
+        assert process_runtimes[0].path.is_relative_to(config.runtime_data_dir)
+
+
+def test_gateway_owns_explicit_process_completion_runtime(tmp_path, monkeypatch):
+    _run_foreground_gateway(tmp_path, monkeypatch, content="", dream=False, heartbeat=False,
+                            cursor=0, process_continuations=True)
+
+
+def test_gateway_owns_explicit_scheduled_execution_runtime(tmp_path, monkeypatch):
+    # croniter probes platform architecture once at import. Load dependencies
+    # before this fixture denies all subprocess effects during gateway work.
+    import nanobot.cron.gateway  # noqa: F401
+
+    _run_foreground_gateway(tmp_path, monkeypatch, content="", dream=False, heartbeat=False,
+                            cursor=0, scheduled_execution=True)
 
 
 @pytest.mark.parametrize("dream,heartbeat", [(False, False), (True, False), (False, True), (True, True)])

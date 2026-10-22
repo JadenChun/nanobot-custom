@@ -128,7 +128,9 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(
     tmp_path: Path, admitted_async,
 ) -> None:
     # The normal request needs a checkpoint, but the archive request must still fit.
-    loop = await _make_loop(tmp_path, admitted_async, context_window_tokens=8_000, max_tokens=2_000)
+    # Leave room for the current policy in the archive request. A substantial
+    # current-user delta pressures the main request while H alone still fits.
+    loop = await _make_loop(tmp_path, admitted_async, context_window_tokens=9_000, max_tokens=2_000)
     loop.provider.chat_with_retry = AsyncMock(
         return_value=LLMResponse(content="ok", tool_calls=[], usage=None)
     )
@@ -141,13 +143,14 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(
     for index in range(70):
         session.messages.extend(_tool_round(f"older-{index}"))
     session.add_message("assistant", "older final")
+    current_question = "new question " * 250
 
     result = await _execute_inbound(loop,
         InboundMessage(
             channel="cli",
             sender_id="user",
             chat_id="test",
-            content="new question",
+            content=current_question,
         )
     )
 
@@ -157,6 +160,7 @@ async def test_runner_checkpoint_keeps_current_user_as_replay_boundary(
     assert "new question" in sent_text
     assert [message["role"] for message in sent_messages] == ["system", "user", "user"]
     assert sent_messages[1]["content"] == SUMMARY_CONTINUATION_TEXT
+    assert sent_messages[2]["content"] == current_question
     assert any(message.get("content") == "long older turn" for message in session.messages)
     assert result.status is RunStatus.COMPLETED and result.content == "ok"
     assert loop.provider.chat_with_retry.await_count == 2

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal, NoReturn, SupportsIndex, cast
@@ -15,12 +16,14 @@ from nanobot.cron.composition import ClaimedTextCompositionResult, compose_claim
 from nanobot.cron.definition_store import CronDefinition
 from nanobot.cron.delivery_runtime import CronDeliveryRuntime
 from nanobot.cron.delivery_store import CronDeliveryOutboxStore
+from nanobot.cron.job_hooks import CronJobHooks
 from nanobot.cron.occurrence import CronOccurrenceRuntime, destination_policy
 from nanobot.cron.occurrence_store import (
     CronOccurrenceStore,
     OccurrenceClaim,
     TriggeredOccurrenceIdentity,
 )
+from nanobot.cron.quota_recovery import CronQuotaRecovery
 from nanobot.cron.schedule import ScheduleClock
 from nanobot.cron.scheduler import Scheduler
 from nanobot.cron.scheduler_store import SchedulerConflictError, SchedulerStore, TriggerInputs
@@ -42,6 +45,30 @@ class CronRuntimeInjection:
     clock: ScheduleClock
     manual_authorizer: Callable[[str, str, str], bool]
     drain_timeout: float = 5.0
+
+
+class SystemScheduleClock:
+    def wall_time_ms(self) -> int:
+        return time.time_ns() // 1_000_000
+
+    def monotonic_time(self) -> float:
+        return time.monotonic()
+
+    async def sleep(self, seconds: float) -> None:
+        await asyncio.sleep(seconds)
+
+
+@dataclass(frozen=True)
+class GatewayCronOptions:
+    """Production inputs supplied only by the normal gateway owner."""
+
+    clock: ScheduleClock
+    drain_timeout: float = 5.0
+    poll_interval: float = 1.0
+
+    @staticmethod
+    def manual_authorizer(_job_id: str, _instance: str, _revision: str) -> bool:
+        return False
 
 
 class TriggerCapability:
@@ -71,11 +98,16 @@ class InternalController:
 class CronRuntime:
     def __init__(self, service: CronService, agent: SilentCronAgent, sessions: SessionManager,
                  channels: ExactChannelAuthority, root: Path, runtime_identity: str,
-                 injection: CronRuntimeInjection):
+                 injection: CronRuntimeInjection | GatewayCronOptions, *, job_hooks: CronJobHooks | None = None,
+                 quota_recovery: CronQuotaRecovery | None = None):
         if service.occurrence_store is not None or service.on_job is not None:
             raise ValueError("dormant graph requires definition-only service without callbacks")
         self.service, self.agent, self.sessions, self.channels = service, agent, sessions, channels
         self.injection = injection
+        self.job_hooks = job_hooks
+        self.quota_recovery = quota_recovery
+        self._quota_controller: InternalController | None = None
+        self._job_locks: dict[str, asyncio.Lock] = {}
         if injection.drain_timeout <= 0:
             raise ValueError("drain timeout must be positive")
         namespace = service.action_store.namespace
@@ -90,7 +122,8 @@ class CronRuntime:
         self.sender = CronChannelSender(channels)
         self.store = SchedulerStore(root / "scheduler", namespace=namespace, runtime_identity=runtime_identity)
         self.scheduler = Scheduler(service.definition_store, service.occurrence_runtime,
-                                   self.store, injection.clock, self._dispatch)
+                                   self.store, injection.clock, self._dispatch,
+                                   refresh_committed_revisions=isinstance(injection, GatewayCronOptions))
         self._accepting = False
         self._tasks: set[asyncio.Task[ClaimedTextCompositionResult]] = set()
         self._task_errors: list[BaseException] = []
@@ -104,6 +137,14 @@ class CronRuntime:
             raise SchedulerConflictError("closed cron runtime cannot reacquire")
         self.scheduler.acquire_and_reconcile()
         self._accepting = True
+        try:
+            if self.quota_recovery is not None:
+                self.quota_recovery.recover(self.service)
+                self._quota_controller = self.construct_internal_controller("quota-retry")
+        except BaseException:
+            self.stop_claiming()
+            self.scheduler.release_lease()
+            raise
 
     def start_timer_task(self) -> None:
         """Separate explicit offline injection; acquisition itself starts no task."""
@@ -113,16 +154,56 @@ class CronRuntime:
 
     async def _run_timer(self) -> None:
         while self._accepting:
+            await self.run_due_quota_retries()
             await self.scheduler.wake_once()
-            await self.injection.clock.sleep(0.05)
+            interval = self.injection.poll_interval if isinstance(self.injection, GatewayCronOptions) else 0.05
+            await self.injection.clock.sleep(interval)
+
+    async def run_timer(self) -> None:
+        """Run under the gateway's supervision; exceptions stop that owner."""
+        self.start_timer_task()
+        assert self._timer_task is not None
+        await asyncio.shield(self._timer_task)
+
+    def status(self) -> dict[str, object]:
+        running = self._accepting and self._timer_task is not None and not self._timer_task.done()
+        pending = self.quota_recovery.pending() if self.quota_recovery is not None else []
+        return {"enabled": running, "state": "running" if running else "inactive",
+                "jobs": len(self.service.list_jobs(include_disabled=True)),
+                "active_executions": len(self._tasks),
+                "quota_retries": [item.model_dump() for item in pending]}
+
+    async def run_due_quota_retries(self) -> None:
+        if self.quota_recovery is None or self._quota_controller is None:
+            return
+        for pending in self.quota_recovery.pending():
+            if pending.state != "pending" or pending.retry_at_ms > self.injection.clock.wall_time_ms():
+                continue
+            try:
+                capability = self._quota_controller.request("quota:" + pending.origin,
+                    pending.job_id, pending.instance, pending.revision)
+            except SchedulerConflictError:
+                self.quota_recovery.mark(pending, "unknown")
+                continue
+            self.quota_recovery.mark(pending, "dispatching")
+            await self.execute_now(capability)
 
     async def _dispatch(self, claim: OccurrenceClaim, pre_begin: Callable[[], object]) -> object:
         if not self._accepting:
             raise SchedulerConflictError("cron ingress fenced")
-        task = asyncio.create_task(compose_claimed_text_occurrence(
-            self.service, self.agent, claim, self.sender, visible_sessions=self.sessions,
-            pre_begin=pre_begin,
-        ))
+        async def compose() -> ClaimedTextCompositionResult:
+            async def admitted() -> ClaimedTextCompositionResult:
+                return await compose_claimed_text_occurrence(
+                    self.service, self.agent, claim, self.sender, visible_sessions=self.sessions,
+                    pre_begin=pre_begin, job_hooks=self.job_hooks, quota_recovery=self.quota_recovery)
+
+            if self.quota_recovery is None:
+                return await admitted()
+            lock = self._job_locks.setdefault(claim.identity.job_id, asyncio.Lock())
+            async with lock:
+                return await admitted()
+
+        task = asyncio.create_task(compose())
         self._tasks.add(task)
         task.add_done_callback(self._completed_task)
         return await asyncio.shield(task)

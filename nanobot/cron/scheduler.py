@@ -36,11 +36,13 @@ def _exclusion(record: OccurrenceRecord) -> ObservedOccurrence:
 class Scheduler:
     def __init__(self, definitions: CronDefinitionStore, occurrences: CronOccurrenceRuntime,
                  store: SchedulerStore, clock: ScheduleClock,
-                 dispatch: Callable[[OccurrenceClaim, Callable[[], None]], Awaitable[object]]):
+                 dispatch: Callable[[OccurrenceClaim, Callable[[], None]], Awaitable[object]],
+                 *, refresh_committed_revisions: bool = False):
         if definitions.action_store.namespace != store.namespace or occurrences.definition_store is not definitions:
             raise ValueError("scheduler graph authorities must be exact and share namespace")
         self.definitions, self.occurrences, self.store, self.clock = definitions, occurrences, store, clock
         self._dispatch = dispatch
+        self._refresh_committed_revisions = refresh_committed_revisions
         self._lease: SchedulerLease | None = None
         self._accepting = False
 
@@ -135,13 +137,30 @@ class Scheduler:
         state = self.store.read()
         records = self.occurrences.occurrence_store.inspect_records()
         self._prove_records(state, records)
+        # New definitions committed while this lease is held begin at their
+        # exact commit boundary. Existing cursors retain all pending due work.
+        # Acquisition separately classifies downtime as missed; no old claim
+        # or delivered occurrence is ever replayed here.
+        successor = deepcopy(state)
+        for definition, commit in committed:
+            if any(item["key"] == _key(definition) for item in state["cursors"]):
+                continue
+            if not self._refresh_committed_revisions:
+                raise SchedulerConflictError("new revision requires scheduler reacquisition")
+            lower = commit["commit_clock_ms"]
+            if commit["schedule"]["kind"] == "at":
+                lower = min(lower, commit["schedule"]["atMs"] - 1)
+            self._advance(successor, definition, commit, lower, lower, "missed", [])
+        if successor != state:
+            successor["generation"] += 1
+            self._lease.reprove()
+            self.store.compare_and_swap(state, successor)
+            state = successor
         candidates: list[tuple[int, str, CronDefinition, ScheduleCommit, ScheduleCursor]] = []
         for definition, commit in committed:
             cursor = next((item for item in state["cursors"] if item["key"] == _key(definition)), None)
             if cursor is None:
-                # New revisions must receive acquisition-style classification;
-                # they are never admitted by guessing an initial cursor.
-                raise SchedulerConflictError("new revision requires scheduler reacquisition")
+                raise SchedulerConflictError("committed revision has no scheduler cursor")
             fire = cursor["next_fire"]
             if fire is not None and fire <= self.clock.wall_time_ms():
                 candidates.append((fire, definition.job_id, definition, commit, cursor))

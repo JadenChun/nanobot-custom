@@ -20,7 +20,11 @@ from loguru import logger
 from pydantic import Field
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import ToolContext, current_request_session_key
+from nanobot.agent.tools.context import (
+    ToolContext,
+    current_request_context,
+    current_request_session_key,
+)
 from nanobot.agent.tools.exec_session import (
     DEFAULT_EXEC_SESSION_MANAGER,
     DEFAULT_MAX_OUTPUT_CHARS,
@@ -145,6 +149,10 @@ class _PreparedCommand:
             minimum=0,
             maximum=MAX_YIELD_MS,
             nullable=True,
+        ),
+        notify_on_exit=BooleanSchema(
+            description="Continue this conversation when a background process exits (gateway feature).",
+            default=False,
         ),
         max_output_chars=IntegerSchema(
             description="Session output limit in characters (default 10000, max 50000).",
@@ -293,6 +301,7 @@ class ExecTool(Tool):
         login: bool | None = None, yield_time_ms: int | None = None,
         max_output_chars: int | None = None,
         max_output_tokens: int | None = None,
+        notify_on_exit: bool = False,
         **kwargs: Any,
     ) -> str:
         command = command or cmd
@@ -306,8 +315,8 @@ class ExecTool(Tool):
         if isinstance(prepared, str):
             return prepared
 
-        if yield_time_ms is not None:
-            return await self._execute_session(prepared, yield_time_ms, max_output_chars)
+        if yield_time_ms is not None or notify_on_exit:
+            return await self._execute_session(prepared, yield_time_ms, max_output_chars, notify_on_exit=notify_on_exit)
 
         process: asyncio.subprocess.Process | None = None
         try:
@@ -375,6 +384,8 @@ class ExecTool(Tool):
         prepared: _PreparedCommand,
         yield_time_ms: int | None,
         max_output_chars: int | None,
+        *,
+        notify_on_exit: bool = False,
     ) -> str:
         try:
             session_id, poll = await self._session_manager.start(
@@ -386,6 +397,8 @@ class ExecTool(Tool):
                 login=prepared.login,
                 yield_time_ms=clamp_session_int(yield_time_ms, DEFAULT_YIELD_MS, 0, MAX_YIELD_MS),
                 owner_session_key=current_request_session_key(),
+                notify_on_exit=notify_on_exit,
+                origin=current_request_context(),
                 max_output_chars=clamp_session_int(
                     max_output_chars,
                     DEFAULT_MAX_OUTPUT_CHARS,

@@ -35,6 +35,23 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+@pytest.mark.parametrize("content", ["{", "[]", "null", '"invalid"'])
+def test_invalid_manifest_cannot_become_an_unrestricted_plain_repo(
+    tmp_path: Path, content: str,
+) -> None:
+    (tmp_path / "nanobot.context.json").write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError, match="manifest"):
+        ContextRepoManager.from_config(context_repos=[str(tmp_path)])
+
+
+def test_plain_repository_without_manifest_remains_supported(tmp_path: Path) -> None:
+    manager = ContextRepoManager.from_config(context_repos=[str(tmp_path)])
+    assert manager.repos[0].managed is False
+    ResourceAccessPolicy(workspace=tmp_path, context_manager=manager).validate_path(
+        tmp_path / "ordinary-file.md", "write",
+    )
+
+
 def test_context_repo_manager_loads_manifest_and_contracts(tmp_path: Path) -> None:
     repo = tmp_path / "pota"
     (repo / "skills" / "seo-writer").mkdir(parents=True)

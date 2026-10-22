@@ -8,6 +8,7 @@ other P6 fixtures, while retaining receipt checks and durable session leases.
 from __future__ import annotations
 
 import errno
+import shutil
 import socket
 import sys
 from pathlib import Path
@@ -42,9 +43,11 @@ def main() -> None:
                 raise PermissionError(errno.EPERM, "smoke fixture network effect denied")
         if event == "subprocess.Popen":
             executable, arguments, _cwd, _env = args
-            if executable not in {"/bin/sh", "/bin/bash"} or list(arguments) != [
-                executable, "-c", "printf shell-ok",
-            ]:
+            shells = {"/bin/sh", "/bin/bash", shutil.which("bash")}
+            if executable not in shells or list(arguments) not in (
+                [executable, "-c", "printf shell-ok"],
+                [executable, "-l", "-c", "printf shell-ok"],
+            ):
                 raise PermissionError(errno.EPERM, "smoke fixture subprocess denied")
         if event in {"os.system", "os.exec", "os.posix_spawn"}:
             raise PermissionError(errno.EPERM, "smoke fixture process effect denied")

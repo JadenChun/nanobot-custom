@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
+import re
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, Mapping, cast, overload
 
 from nanobot.utils.dict_keys import get_camel_snake
 
@@ -55,6 +57,111 @@ class CronDestination:
     to: str
 
 
+def cron_thread_id(metadata: Mapping[str, object]) -> int | None:
+    """Only a frozen Telegram topic is supported by text-only cron delivery."""
+    if set(metadata) - {"message_thread_id"}:
+        raise ValueError("unsupported cron channel metadata/media plan")
+    value = metadata.get("message_thread_id")
+    if value is not None and (type(value) is not int or value <= 0):
+        raise ValueError("cron message_thread_id must be a positive integer")
+    return value
+
+
+DEFAULT_STATUS_REGEX = r"(?im)^\*\*Internal status:\*\*\s*([A-Za-z_]+)"
+CONTRACT_FIELD_ALIASES = {
+    "planningMode": "planning_mode",
+    "skipVerification": "skip_verification",
+    "alertChannel": "alert_channel",
+    "alertTo": "alert_to",
+    "postDeliveryCommand": "post_delivery_command",
+}
+CONTRACT_FIELDS = set(CONTRACT_FIELD_ALIASES) | {"verifiers"}
+
+
+def _command_argv(value: object) -> tuple[str, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError("cron command argv must be a list of strings")
+    items = cast(list[object] | tuple[object, ...], value)
+    if not items or not all(isinstance(item, str) for item in items) or not items[0]:
+        raise ValueError("cron command argv must contain an executable and string arguments")
+    return tuple(cast(str, item) for item in items)
+
+
+@dataclass(frozen=True)
+class CronVerifier:
+    """An external evidence check, executed as argv without a shell.
+
+    Success requires exit zero and JSON containing ``verified: true`` or
+    ``ok: true``. Commands and report conventions belong to the configured job.
+    """
+
+    name: str
+    argv: tuple[str, ...]
+    cwd: str | None = None
+    timeout: float = 120.0
+    status_file: str | None = None
+    status_regex: str = DEFAULT_STATUS_REGEX
+
+    @classmethod
+    def from_store_dict(cls, value: object) -> CronVerifier:
+        if not isinstance(value, Mapping):
+            raise ValueError("cron verifier must be an object")
+        data = cast(Mapping[str, object], value)
+        allowed = {"name", "argv", "cwd", "timeout", "statusFile", "status_file", "statusRegex", "status_regex"}
+        if set(data) - allowed:
+            raise ValueError("cron verifier has unknown fields")
+        for camel, snake in (("statusFile", "status_file"), ("statusRegex", "status_regex")):
+            if camel in data and snake in data:
+                raise ValueError(f"cron verifier has both {camel} and {snake}")
+        name = data.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("cron verifier name must be a non-empty string")
+        argv = _command_argv(data.get("argv"))
+        cwd = data.get("cwd")
+        status_file = data.get("statusFile", data.get("status_file"))
+        for item in (cwd, status_file):
+            if item is not None and (not isinstance(item, str) or not item):
+                raise ValueError("cron verifier paths must be non-empty strings or null")
+        timeout = data.get("timeout", 120.0)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("cron verifier timeout must be finite and positive")
+        regex = data.get("statusRegex", data.get("status_regex", DEFAULT_STATUS_REGEX))
+        if not isinstance(regex, str):
+            raise ValueError("cron verifier status regex must be a string")
+        try:
+            compiled = re.compile(regex)
+        except re.error as exc:
+            raise ValueError("cron verifier status regex is invalid") from exc
+        if compiled.groups < 1:
+            raise ValueError("cron verifier status regex must capture a status")
+        return cls(name, argv, cast(str | None, cwd), float(timeout), cast(str | None, status_file), regex)
+
+    def to_store_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "argv": list(self.argv), "cwd": self.cwd,
+                "timeout": self.timeout, "statusFile": self.status_file, "statusRegex": self.status_regex}
+
+
+def validate_contract_fields(data: Mapping[str, object]) -> None:
+    """Validate optional fields without inserting defaults into signed definitions."""
+    mode = data.get("planningMode")
+    if mode is not None and mode not in ("on", "off", "agent"):
+        raise ValueError("cron planning mode is invalid")
+    if "skipVerification" in data and type(data["skipVerification"]) is not bool:
+        raise ValueError("cron skipVerification must be a boolean")
+    for name in ("alertChannel", "alertTo"):
+        value = data.get(name)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ValueError(f"cron {name} must be a non-empty string or null")
+    verifiers = data.get("verifiers", [])
+    if not isinstance(verifiers, list):
+        raise ValueError("cron verifiers must be a list")
+    for verifier in cast(list[object], verifiers):
+        CronVerifier.from_store_dict(verifier)
+    command = data.get("postDeliveryCommand")
+    if command is not None:
+        _command_argv(command)
+
+
 @dataclass
 class CronPayload:
     """What to do when the job runs."""
@@ -71,6 +178,30 @@ class CronPayload:
     origin_channel: str | None = None
     origin_chat_id: str | None = None
     origin_metadata: dict[str, Any] = field(default_factory=dict)
+    planning_mode: Literal["on", "off", "agent"] | None = None
+    skip_verification: bool = False
+    alert_channel: str | None = None
+    alert_to: str | None = None
+    verifiers: list[CronVerifier] = field(default_factory=list)
+    post_delivery_command: list[str] | None = None
+
+    def alert_destination(self) -> CronDestination | None:
+        if not self.alert_to:
+            return None
+        return CronDestination(self.alert_channel or self.channel or "telegram", self.alert_to)
+
+    def contract_fields(self) -> dict[str, Any]:
+        """Omit defaults to preserve existing definition hashes and wire shapes."""
+        result: dict[str, Any] = {}
+        for key, value in (("planningMode", self.planning_mode), ("alertChannel", self.alert_channel),
+                           ("alertTo", self.alert_to), ("postDeliveryCommand", self.post_delivery_command)):
+            if value is not None:
+                result[key] = list(value) if isinstance(value, list) else value
+        if self.skip_verification:
+            result["skipVerification"] = True
+        if self.verifiers:
+            result["verifiers"] = [verifier.to_store_dict() for verifier in self.verifiers]
+        return result
 
     def delivery_destinations(self) -> list[CronDestination]:
         """Return de-duplicated primary and additional result destinations."""
@@ -115,6 +246,12 @@ class CronPayload:
             origin_metadata=dict(
                 get_camel_snake(data, "originMetadata", "origin_metadata", {}) or {}
             ),
+            planning_mode=get_camel_snake(data, "planningMode", "planning_mode"),
+            skip_verification=get_camel_snake(data, "skipVerification", "skip_verification", False),
+            alert_channel=get_camel_snake(data, "alertChannel", "alert_channel"),
+            alert_to=get_camel_snake(data, "alertTo", "alert_to"),
+            verifiers=[CronVerifier.from_store_dict(value) for value in cast(list[object], data.get("verifiers", []))],
+            post_delivery_command=get_camel_snake(data, "postDeliveryCommand", "post_delivery_command"),
         )
 
 
@@ -151,6 +288,8 @@ class CronJobState:
     last_error: str | None = None
     last_run_status: str | None = None
     run_history: list[CronRunRecord] = field(default_factory=list)
+    retry_at_ms: int | None = None
+    rate_limit_retries: int = 0
 
     @classmethod
     def from_store_dict(cls, data: dict[str, Any]) -> CronJobState:
@@ -176,6 +315,8 @@ class CronJobState:
             last_error=get_camel_snake(data, "lastError", "last_error"),
             last_run_status=get_camel_snake(data, "lastRunStatus", "last_run_status"),
             run_history=parsed_history,
+            retry_at_ms=_store_int(get_camel_snake(data, "retryAtMs", "retry_at_ms"), None),
+            rate_limit_retries=_store_int(get_camel_snake(data, "rateLimitRetries", "rate_limit_retries", 0)),
         )
 
 
@@ -262,6 +403,7 @@ class CronJob:
                 "originChannel": self.payload.origin_channel,
                 "originChatId": self.payload.origin_chat_id,
                 "originMetadata": dict(self.payload.origin_metadata),
+                **self.payload.contract_fields(),
             },
             "state": {
                 "nextRunAtMs": self.state.next_run_at_ms,
@@ -281,6 +423,8 @@ class CronJob:
                     }
                     for record in self.state.run_history
                 ],
+                **({"retryAtMs": self.state.retry_at_ms} if self.state.retry_at_ms is not None else {}),
+                **({"rateLimitRetries": self.state.rate_limit_retries} if self.state.rate_limit_retries else {}),
             },
             "createdAtMs": self.created_at_ms,
             "updatedAtMs": self.updated_at_ms,

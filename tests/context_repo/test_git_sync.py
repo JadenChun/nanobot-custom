@@ -47,7 +47,7 @@ def test_select_changed_paths_filters_include_and_exclude(tmp_path: Path) -> Non
     assert sorted(selected) == ["data/seo-pipeline.json", "outputs/draft.md"]
 
 
-def test_sync_context_repo_recovers_pull_conflict_by_reapplying_selected_changes(tmp_path: Path) -> None:
+def test_sync_context_repo_preserves_both_sides_of_pull_conflict(tmp_path: Path) -> None:
     remote = tmp_path / "remote.git"
     seed = tmp_path / "seed"
     local = tmp_path / "local"
@@ -76,7 +76,7 @@ def test_sync_context_repo_recovers_pull_conflict_by_reapplying_selected_changes
 
     (local / draft).write_text("local managed change\n", encoding="utf-8")
 
-    assert sync_context_repo(
+    assert not sync_context_repo(
         local,
         include_paths=["agent-workspace/outputs/**"],
         exclude_paths=[],
@@ -88,10 +88,11 @@ def test_sync_context_repo_recovers_pull_conflict_by_reapplying_selected_changes
 
     verify = tmp_path / "verify"
     _git(tmp_path, "clone", str(remote), str(verify))
-    assert (verify / draft).read_text(encoding="utf-8") == "local managed change\n"
+    assert (verify / draft).read_text(encoding="utf-8") == "remote change\n"
+    assert _git_out(local, "log", "origin/main..HEAD", "--oneline")
 
 
-def test_sync_context_repo_recovers_push_rejection_conflict(
+def test_sync_context_repo_preserves_both_sides_of_push_rejection_conflict(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -133,7 +134,7 @@ def test_sync_context_repo_recovers_push_rejection_conflict(
 
     monkeypatch.setattr(git_sync, "_run_git", run_git_with_remote_race)
 
-    assert sync_context_repo(
+    assert not sync_context_repo(
         local,
         include_paths=["agent-workspace/outputs/**"],
         exclude_paths=[],
@@ -142,11 +143,9 @@ def test_sync_context_repo_recovers_push_rejection_conflict(
 
     assert pushed_remote_update is True
     assert (local / draft).read_text(encoding="utf-8") == "local managed change\n"
-    # The new contract intentionally leaves unselected dirty files
-    # untouched in the working tree. We assert instead that the
-    # selected change was pushed to the remote after recovery.
-    assert _git_out(local, "log", "origin/main..HEAD", "--oneline") == ""
+    assert _git_out(local, "status", "--porcelain") == ""
+    assert _git_out(local, "log", "origin/main..HEAD", "--oneline")
 
     verify = tmp_path / "verify-push-rejection"
     _git(tmp_path, "clone", str(remote), str(verify))
-    assert (verify / draft).read_text(encoding="utf-8") == "local managed change\n"
+    assert (verify / draft).read_text(encoding="utf-8") == "remote race change\n"

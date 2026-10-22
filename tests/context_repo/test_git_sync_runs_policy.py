@@ -17,9 +17,9 @@ from nanobot.context_repo.manager import (
     ManagedContextRepo,
 )
 from nanobot.utils.git_sync import (
-    _matches,
     _select_changed_paths,
     _validate_ahead_commits,
+    matches_sync_path,
     sync_context_repo,
 )
 
@@ -121,10 +121,10 @@ def test_effective_policy_excludes_agent_workspace_runs(tmp_path: Path) -> None:
     exclude = repo.sync_exclude_patterns()
 
     # The broad include patterns are present...
-    assert _matches("agent-workspace/runs/test.json", include)
-    assert _matches("runs/test.json", include)
+    assert matches_sync_path("agent-workspace/runs/test.json", include)
+    assert matches_sync_path("runs/test.json", include)
     # ...but the explicit neverCommit exclude also matches.
-    assert _matches("agent-workspace/runs/test.json", exclude)
+    assert matches_sync_path("agent-workspace/runs/test.json", exclude)
     # Exclude wins for the combined decision.
     assert _select_changed_paths(
         local,

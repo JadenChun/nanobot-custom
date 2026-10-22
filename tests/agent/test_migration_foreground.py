@@ -27,7 +27,7 @@ def build(config):
 
 
 def test_shared_identity_and_disabled_crawler_does_not_construct_provider(engine_config, monkeypatch):
-    monkeypatch.setattr('nanobot.agent.foreground.build_provider_snapshot', Mock(side_effect=AssertionError('provider constructed')))
+    monkeypatch.setattr('nanobot.extensions.crawler.build_provider_snapshot', Mock(side_effect=AssertionError('provider constructed')))
     deps = build(engine_config)
     manager = deps.foreground_manager
     assert deps.resource_policy is manager.resource_policy
@@ -91,7 +91,8 @@ async def test_runtime_inheritance_is_immutable_and_crawler_is_independent(engin
     await manager._run_role(role='planner', prompt='plan', assignment='task', tools=ToolRegistry(), max_iterations=1)
     assert observed[-1].generation.max_tokens == 256 and observed[-1].context_window_tokens == 9000
     with request_context(RequestContext(channel='cli', chat_id='test', runtime=runtime_two)):
-        await manager._run_role(role='crawler', prompt='crawl', assignment='task', tools=ToolRegistry(), max_iterations=1)
+        await manager._run_role(role='crawler', prompt='crawl', assignment='task', tools=ToolRegistry(), max_iterations=1,
+                                runtime_override=manager._crawler_runtime)
     assert observed[-1] is manager._crawler_runtime
 
 
@@ -110,8 +111,8 @@ def test_crawler_uses_explicit_snapshot_without_main_fallbacks(engine_config, mo
         assert copied.agents.defaults.fallback_models == [] and copied.agents.defaults.fallback == []
         return ProviderSnapshot(provider=crawler_provider, model=preset.model,
             context_window_tokens=preset.context_window_tokens, signature=('crawler',), generation=preset.to_generation_settings())
-    monkeypatch.setattr('nanobot.agent.foreground.crawl_tools_enabled', lambda: enabled_by_environment)
-    monkeypatch.setattr('nanobot.agent.foreground.build_provider_snapshot', snapshot)
+    monkeypatch.setattr('nanobot.extensions.crawler.crawl_tools_enabled', lambda: enabled_by_environment)
+    monkeypatch.setattr('nanobot.extensions.crawler.build_provider_snapshot', snapshot)
     deps = build(config)
     assert deps.crawler_enabled is enabled_by_environment
     assert len(seen) == int(enabled_by_environment)
@@ -141,8 +142,8 @@ async def test_configured_context_repositories_reach_prompt_and_tool_policy(engi
 def test_configured_crawler_failure_does_not_fall_back_to_main(engine_config, monkeypatch):
     engine_config.agents.crawler.enabled = True
     engine_config.agents.crawler.provider = 'missing-provider'
-    monkeypatch.setattr('nanobot.agent.foreground.crawl_tools_enabled', lambda: True)
-    monkeypatch.setattr('nanobot.agent.foreground.build_provider_snapshot', Mock(side_effect=ValueError('crawler configuration invalid')))
+    monkeypatch.setattr('nanobot.extensions.crawler.crawl_tools_enabled', lambda: True)
+    monkeypatch.setattr('nanobot.extensions.crawler.build_provider_snapshot', Mock(side_effect=ValueError('crawler configuration invalid')))
     with pytest.raises(ValueError, match='crawler configuration invalid'):
         build(engine_config)
 

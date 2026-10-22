@@ -29,6 +29,7 @@ from nanobot.cron.delivery_store import (
     DeliverySendFence,
 )
 from nanobot.cron.occurrence_store import CronOccurrenceStore
+from nanobot.cron.types import cron_thread_id
 
 _MAX_IDENTIFIER_BYTES = 512
 _MAX_REASON_BYTES = 512
@@ -270,6 +271,7 @@ class DispatchRequest:
     channel: str
     to: str
     messages: tuple[DispatchMessage, ...]
+    message_thread_id: int | None = None
 
     if TYPE_CHECKING:
         # Construction accepts raw bundles; __post_init__ validates and narrows
@@ -284,10 +286,13 @@ class DispatchRequest:
             channel: str,
             to: str,
             messages: Sequence[object],
+            message_thread_id: int | None = None,
         ) -> None:
             ...
 
     def __post_init__(self) -> None:
+        if self.message_thread_id is not None:
+            cron_thread_id({"message_thread_id": self.message_thread_id})
         for name in ("outbox_id", "destination_id", "action_id", "request_digest"):
             value = getattr(self, name)
             if (
@@ -541,6 +546,10 @@ def _destination_for_claim(record: DeliveryOutboxRecord, claim: DeliveryClaim) -
 
 def _request_from_record(record: DeliveryOutboxRecord, claim: DeliveryClaim) -> DispatchRequest:
     destination = _destination_for_claim(record, claim)
+    policy = record.destination_policy
+    thread = None
+    if (destination.channel, destination.to) == (policy.get("channel"), policy.get("to")):
+        thread = cron_thread_id(policy.get("channelMeta", {}))
     return DispatchRequest(
         outbox_id=claim.outbox_id,
         destination_id=claim.destination_id,
@@ -550,6 +559,7 @@ def _request_from_record(record: DeliveryOutboxRecord, claim: DeliveryClaim) -> 
         channel=destination.channel,
         to=destination.to,
         messages=record.messages,
+        message_thread_id=thread,
     )
 
 

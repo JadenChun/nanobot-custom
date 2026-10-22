@@ -5,20 +5,14 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
-from dataclasses import dataclass
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
+from filelock import FileLock, Timeout
 from loguru import logger
 
 from nanobot.utils.secret_scan import find_secrets_in_blob
-
-
-@dataclass(frozen=True)
-class _PathSnapshot:
-    rel_path: str
-    content: bytes | None
 
 
 def _run_git(repo: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
@@ -31,6 +25,7 @@ def _run_git(repo: Path, *args: str, timeout: int = 30) -> subprocess.CompletedP
         cwd=str(repo),
         capture_output=True,
         text=True,
+        errors="surrogateescape",
         timeout=timeout,
         env=env,
     )
@@ -48,6 +43,12 @@ def is_git_repo(path: Path) -> bool:
         return result.returncode == 0 and result.stdout.strip() == "true"
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
+
+
+def git_repo_root(path: Path) -> Path | None:
+    """Resolve an existing working tree without cloning or running a shell."""
+    result = _run_git(path, "rev-parse", "--show-toplevel")
+    return Path(result.stdout.strip()).resolve() if result.returncode == 0 else None
 
 
 def has_unmerged_paths(repo: Path) -> bool:
@@ -71,30 +72,25 @@ def has_changes(repo: Path) -> bool:
 def _changed_paths(repo: Path) -> list[str]:
     """Return changed paths relative to repo root, including untracked files."""
     try:
-        result = _run_git(repo, "status", "--porcelain")
+        result = _run_git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return []
     if result.returncode != 0:
         return []
     paths: list[str] = []
-    for line in result.stdout.splitlines():
-        if len(line) < 4:
+    entries = iter(result.stdout.split("\0"))
+    for entry in entries:
+        if len(entry) < 4:
             continue
-        raw = line[3:].strip()
-        if " -> " in raw:
-            raw = raw.rsplit(" -> ", 1)[1]
-        raw = raw.strip('"')
-        if raw:
-            if raw.endswith("/") and (repo / raw).is_dir():
-                for child in sorted((repo / raw).rglob("*")):
-                    if child.is_file():
-                        paths.append(child.relative_to(repo).as_posix())
-            else:
-                paths.append(raw)
+        paths.append(entry[3:])
+        if "R" in entry[:2] or "C" in entry[:2]:
+            source = next(entries, "")
+            if source:
+                paths.append(source)
     return paths
 
 
-def _matches(path: str, patterns: list[str]) -> bool:
+def matches_sync_path(path: str, patterns: list[str]) -> bool:
     clean = path.strip("/")
     for pattern in patterns:
         pat = pattern.strip().strip("/")
@@ -119,34 +115,12 @@ def _select_changed_paths(
         return changed
     selected: list[str] = []
     for path in changed:
-        if include_paths is not None and not _matches(path, include_paths):
+        if include_paths is not None and not matches_sync_path(path, include_paths):
             continue
-        if exclude_paths and _matches(path, exclude_paths):
+        if exclude_paths and matches_sync_path(path, exclude_paths):
             continue
         selected.append(path)
     return selected
-
-
-def _snapshot_paths(repo: Path, paths: list[str]) -> list[_PathSnapshot]:
-    snapshots: list[_PathSnapshot] = []
-    for rel_path in paths:
-        path = repo / rel_path
-        if path.exists() and path.is_file():
-            snapshots.append(_PathSnapshot(rel_path=rel_path, content=path.read_bytes()))
-        else:
-            snapshots.append(_PathSnapshot(rel_path=rel_path, content=None))
-    return snapshots
-
-
-def _restore_snapshots(repo: Path, snapshots: list[_PathSnapshot]) -> None:
-    for snapshot in snapshots:
-        path = repo / snapshot.rel_path
-        if snapshot.content is None:
-            if path.exists() and path.is_file():
-                path.unlink()
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(snapshot.content)
 
 
 def _upstream_ref(repo: Path) -> str | None:
@@ -161,13 +135,17 @@ def _upstream_ref(repo: Path) -> str | None:
 def _commit_selected_paths(repo: Path, selected_paths: list[str], message: str) -> bool:
     if not selected_paths:
         return True
+    staged = _run_git(repo, "diff", "--cached", "--name-only", "-z")
+    if staged.returncode != 0 or set(staged.stdout.split("\0")) & set(selected_paths):
+        logger.error("Selected knowledge paths already have staged work; refusing to replace it")
+        return False
 
     add = _run_git(repo, "add", "-A", "--", *selected_paths)
     if add.returncode != 0:
         logger.error("Context repo git add failed: {}", _git_output(add))
         return False
 
-    commit = _run_git(repo, "commit", "-m", message)
+    commit = _run_git(repo, "commit", "--only", "-m", message, "--", *selected_paths)
     if commit.returncode != 0:
         output = _git_output(commit)
         if "nothing to commit" in output:
@@ -178,7 +156,7 @@ def _commit_selected_paths(repo: Path, selected_paths: list[str], message: str) 
 
 
 def sync_with_remote(repo: Path) -> bool:
-    """Fetch and rebase onto the configured upstream before local commits/pushes."""
+    """Integrate upstream without stashing, rebasing, or replacing local history."""
     if has_unmerged_paths(repo):
         logger.error("Context repo has unresolved git conflicts; refusing to sync: {}", repo)
         return False
@@ -188,120 +166,44 @@ def sync_with_remote(repo: Path) -> bool:
         logger.error("Context repo git fetch failed: {}", _git_output(fetch))
         return False
 
-    pull = _run_git(repo, "pull", "--rebase", "--autostash", timeout=60)
-    if pull.returncode != 0:
-        logger.error("Context repo git pull --rebase failed: {}", _git_output(pull))
-        _abort_interrupted_rebase(repo)
-        return False
-
-    if has_unmerged_paths(repo):
-        logger.error("Context repo has unresolved conflicts after pull; refusing to sync: {}", repo)
-        _abort_interrupted_rebase(repo)
-        return False
-    return True
-
-
-def sync_with_remote_reapplying_changes(
-    repo: Path,
-    *,
-    selected_paths: list[str],
-    all_changed_paths: list[str],
-    snapshots: list[_PathSnapshot],
-) -> bool:
-    """Sync with remote and recover conflicts by replaying selected local edits."""
-    if sync_with_remote(repo):
-        return True
-
-    if not selected_paths:
-        return False
-
-    unselected = sorted(set(all_changed_paths) - set(selected_paths))
-    if unselected:
-        logger.error(
-            "Context repo sync conflict needs developer attention; unselected local changes would be at risk: {}",
-            ", ".join(unselected),
-        )
-        return False
-
-    _abort_interrupted_rebase(repo)
-
-    fetch = _run_git(repo, "fetch", "--prune", timeout=60)
-    if fetch.returncode != 0:
-        logger.error("Context repo git fetch failed during recovery: {}", _git_output(fetch))
-        return False
-
     upstream = _upstream_ref(repo)
     if not upstream:
         return False
-
-    reset = _run_git(repo, "reset", "--hard", upstream, timeout=60)
-    if reset.returncode != 0:
-        logger.error("Context repo git reset recovery failed: {}", _git_output(reset))
+    if _run_git(repo, "merge-base", "--is-ancestor", upstream, "HEAD").returncode == 0:
+        return True
+    fast_forward = _run_git(repo, "merge-base", "--is-ancestor", "HEAD", upstream).returncode == 0
+    if not fast_forward and has_changes(repo):
+        logger.error("Context repo has local edits and diverging history; refusing automatic merge")
         return False
-
-    try:
-        _restore_snapshots(repo, snapshots)
-    except OSError as exc:
-        logger.error("Context repo snapshot restore failed during recovery: {}", exc)
-        return False
-
+    merge = _run_git(repo, "merge", "--ff-only" if fast_forward else "--no-edit", upstream, timeout=60)
+    if merge.returncode == 0:
+        return True
     if has_unmerged_paths(repo):
-        logger.error("Context repo still has unresolved conflicts after recovery: {}", repo)
-        return False
-    logger.info("Context repo recovered from sync conflict by replaying selected changes: {}", repo)
-    return True
+        abort = _run_git(repo, "merge", "--abort")
+        if abort.returncode != 0:
+            logger.error("Context repo merge abort failed; manual reconciliation required")
+    logger.error("Context repo merge refused; local and upstream history retained")
+    return False
 
 
-def _abort_interrupted_rebase(repo: Path) -> None:
-    """Return the repo to its pre-rebase state when an autonomous pull conflicts."""
-    git_dir = repo / ".git"
-    if not ((git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()):
-        return
-    abort = _run_git(repo, "rebase", "--abort", timeout=30)
-    if abort.returncode != 0:
-        logger.error("Context repo git rebase --abort failed: {}", _git_output(abort))
+class _AheadCommit(TypedDict):
+    sha: str
+    short: str
+    paths: list[str]
 
 
-def _ahead_commit_summaries(repo: Path, upstream: str) -> list[dict[str, Any]]:
-    """Return one summary per commit in upstream..HEAD with hash and paths.
-
-    Each item has keys: ``sha`` (full), ``short`` (7-char), ``paths`` (list of
-    relative paths touched by the commit), ``subject``.
-    """
-    fmt = "%H%x1f%h%x1f%s%x1f"
-    result = _run_git(
-        repo,
-        "log",
-        f"{upstream}..HEAD",
-        "--pretty=format:" + fmt,
-        "--name-only",
-        timeout=60,
-    )
+def _ahead_commit_summaries(repo: Path, upstream: str) -> list[_AheadCommit]:
+    """Inspect exact paths, including merge resolutions and unusual filenames."""
+    result = _run_git(repo, "rev-list", f"{upstream}..HEAD", timeout=60)
     if result.returncode != 0:
-        logger.error("Context repo ahead-commit log failed: {}", _git_output(result))
-        return []
-    summaries: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    for line in result.stdout.splitlines():
-        if not line:
-            continue
-        if "\x1f" in line:
-            if current is not None:
-                summaries.append(current)
-            sha, short, subject = line.split("\x1f", 2)
-            current = {
-                "sha": sha.strip(),
-                "short": short.strip(),
-                "subject": subject.strip(),
-                "paths": [],
-            }
-        else:
-            if current is not None:
-                p = line.strip()
-                if p:
-                    current["paths"].append(p)
-    if current is not None:
-        summaries.append(current)
+        raise OSError("could not inspect ahead commits")
+    summaries: list[_AheadCommit] = []
+    for sha in result.stdout.splitlines():
+        changed = _run_git(repo, "diff-tree", "--root", "-m", "--no-commit-id", "--name-only", "-r", "-z", sha)
+        if changed.returncode != 0:
+            raise OSError("could not inspect ahead commit paths")
+        summaries.append({"sha": sha, "short": sha[:7],
+                          "paths": list(dict.fromkeys(path for path in changed.stdout.split("\0") if path))})
     return summaries
 
 
@@ -309,7 +211,10 @@ def _commit_blob(repo: Path, sha: str, path: str) -> str | None:
     """Return the blob text for one path in a given commit, or None if absent."""
     result = _run_git(repo, "show", f"{sha}:{path}", timeout=30)
     if result.returncode != 0:
-        return None
+        absent = _run_git(repo, "ls-tree", "-z", sha, "--", path)
+        if absent.returncode == 0 and not absent.stdout:
+            return None  # The commit deletes this path.
+        raise OSError("could not inspect a committed blob")
     return result.stdout
 
 
@@ -338,9 +243,9 @@ def _validate_ahead_commits(
         for path in summary["paths"]:
             allowed = (
                 include_paths is None
-                or _matches(path, include_paths)
+                or matches_sync_path(path, include_paths)
             )
-            excluded = bool(exclude_paths) and _matches(path, exclude_paths)
+            excluded = bool(exclude_paths) and matches_sync_path(path, exclude_paths)
             if not allowed or excluded:
                 errors.append(
                     f"commit {commit} contains prohibited path {path}"
@@ -372,125 +277,65 @@ def sync_context_repo(
     exclude_paths: list[str] | None = None,
     message: str = "nanobot: auto-sync context updates",
 ) -> bool:
-    """Commit and push any changes in the context repo.
+    """Save selected changes and synchronize under a shared Git-directory lock.
 
-    Returns True if sync succeeded (or nothing to sync), False on failure.
-
-    The push safety check is based on the actual content and path list of the
-    local-ahead commits (upstream..HEAD), not on the current working-tree
-    state. Once a managed change has been committed, an empty working-tree
-    ``selected_paths`` is normal and must NOT block the push of a valid
-    commit.
+    A conflict retains local commits and upstream history for reconciliation.
+    Unrelated index/worktree changes are never stashed or committed. Callers
+    must opt in only designated knowledge repositories to automatic sync.
     """
-    if not is_git_repo(repo):
-        logger.debug("Context path is not a git repo, skipping sync: {}", repo)
-        return False
-
-    all_changed_paths = _changed_paths(repo)
-    selected_paths = _select_changed_paths(repo, include_paths, exclude_paths)
-    snapshots = _snapshot_paths(repo, selected_paths)
-
-    if not sync_with_remote_reapplying_changes(
-        repo,
-        selected_paths=selected_paths,
-        all_changed_paths=all_changed_paths,
-        snapshots=snapshots,
-    ):
-        return False
-
-    if not has_changes(repo):
-        logger.debug("No working-tree changes in context repo: {}", repo)
-
-    selected_paths = _select_changed_paths(repo, include_paths, exclude_paths)
-
     try:
-        # Commit managed working-tree changes (if any) so the local-ahead
-        # range covers them. The ahead-commit validation below then applies
-        # the same policy to the resulting ahead commits.
-        if selected_paths and not _commit_selected_paths(
-            repo, selected_paths, message
-        ):
+        if not is_git_repo(repo):
             return False
+        common = _run_git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        if common.returncode != 0 or not common.stdout.strip():
+            return False
+        with FileLock(str(Path(common.stdout.strip()) / "nanobot-sync.lock"), timeout=0):
+            return _sync_context_repo_locked(repo, include_paths, exclude_paths, message)
+    except Timeout:
+        logger.warning("Context repo sync already in progress: {}", repo)
+    except (subprocess.TimeoutExpired, OSError):
+        logger.error("Context repo sync unavailable or timed out; local changes retained: {}", repo)
+    return False
 
-        # The push safety decision is now based on the actual ahead-commit
-        # content + path policy, evaluated AFTER each sync_with_remote attempt
-        # so remote advancement is re-validated. This runs whether or not
-        # the working tree had a change to commit -- an operator may have
-        # made a local commit on a different machine and a prior sync run
-        # left an unsafe commit unpushed.
+
+def _sync_context_repo_locked(
+    repo: Path, include_paths: list[str] | None, exclude_paths: list[str] | None, message: str,
+) -> bool:
+    if has_unmerged_paths(repo):
+        return False
+    for marker in ("MERGE_HEAD", "rebase-merge", "rebase-apply", "CHERRY_PICK_HEAD"):
+        location = _run_git(repo, "rev-parse", "--git-path", marker)
+        path = Path(location.stdout.strip())
+        if location.returncode != 0 or (repo / path).exists():
+            logger.error("Context repo has an unfinished Git operation; refusing sync")
+            return False
+    selected = _select_changed_paths(repo, include_paths, exclude_paths)
+    if selected and not _commit_selected_paths(repo, selected, message):
+        return False
+    # Commit before integrating upstream: a conflict can be aborted without
+    # losing the saved knowledge or altering unrelated dirty/staged versions.
+    for attempt in range(4):
+        if not sync_with_remote(repo):
+            return False
         upstream = _upstream_ref(repo)
         if not upstream:
             return False
-
-        # If the working tree was clean, there are no ahead commits either
-        # (otherwise the previous sync would have either pushed them or
-        # refused the push). In that case, there is nothing to do.
-        if not selected_paths:
-            # Verify there are no pre-existing ahead commits from prior runs.
-            existing = _ahead_commit_summaries(repo, upstream)
-            if not existing:
-                logger.debug("No selected changes in context repo: {}", repo)
-                return True
-            # Fall through: existing ahead commits still need to be pushed
-            # (or refused) per the safety policy.
-
-        for attempt in range(4):
-            # Re-sync with remote, then recompute and re-validate ahead commits.
-            if not sync_with_remote_reapplying_changes(
-                repo,
-                selected_paths=selected_paths,
-                all_changed_paths=_changed_paths(repo) or all_changed_paths,
-                snapshots=_snapshot_paths(repo, selected_paths),
-            ):
-                return False
-
-            # The recovery path inside sync_with_remote_reapplying_changes may
-            # have left managed files dirty on disk (after a rebase conflict
-            # was reset and snapshots were restored). Re-commit them so the
-            # local-ahead range is non-empty for the safety check below. This
-            # preserves the unselected dirty files: only the managed files
-            # are staged and committed.
-            current_selected = _select_changed_paths(
-                repo, include_paths, exclude_paths
-            )
-            if current_selected and not _commit_selected_paths(
-                repo, current_selected, message
-            ):
-                return False
-
-            ok, errors = _validate_ahead_commits(
-                repo,
-                upstream=upstream,
-                include_paths=include_paths,
-                exclude_paths=exclude_paths,
-            )
-            if not ok:
-                for line in errors:
-                    logger.error("Context repo push refused: {}", line)
-                return False
-
-            push = _run_git(repo, "push", timeout=60)
-            if push.returncode == 0:
-                logger.info("Context repo synced successfully: {}", repo)
-                return True
-            logger.warning(
-                "Context repo push attempt {} failed: {}",
-                attempt + 1,
-                _git_output(push),
-            )
-            if attempt < 3:
-                import time
-                time.sleep(2 ** (attempt + 1))
-
-        logger.error("Context repo push failed after 4 attempts")
-        return False
-
-    except subprocess.TimeoutExpired:
-        logger.error("Context repo sync timed out: {}", repo)
-        return False
-    except FileNotFoundError:
-        logger.error("git not found on PATH, cannot sync context repo")
-        return False
+        ok, errors = _validate_ahead_commits(
+            repo, upstream=upstream, include_paths=include_paths, exclude_paths=exclude_paths,
+        )
+        if not ok:
+            for line in errors:
+                logger.error("Context repo push refused: {}", line)
+            return False
+        if not _ahead_commit_summaries(repo, upstream):
+            return True
+        push = _run_git(repo, "push", timeout=60)
+        if push.returncode == 0:
+            logger.info("Context repo synced successfully: {}", repo)
+            return True
+        logger.warning("Context repo push attempt {} failed: {}", attempt + 1, _git_output(push))
+    logger.error("Context repo push failed after 4 attempts; local commits retained")
+    return False
 
 
 async def async_sync_context_repo(
@@ -501,13 +346,16 @@ async def async_sync_context_repo(
     message: str = "nanobot: auto-sync context updates",
 ) -> bool:
     """Run sync_context_repo in a thread pool to avoid blocking the event loop."""
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(
-        None,
-        lambda: sync_context_repo(
-            repo,
-            include_paths=include_paths,
-            exclude_paths=exclude_paths,
-            message=message,
-        ),
-    )
+    work = asyncio.create_task(asyncio.to_thread(
+        sync_context_repo, repo, include_paths=include_paths, exclude_paths=exclude_paths, message=message,
+    ))
+    cancelled = False
+    while not work.done():
+        try:
+            await asyncio.shield(work)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = work.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return result

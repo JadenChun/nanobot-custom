@@ -235,6 +235,7 @@ class SkillsLoader:
         sections: list[str] = []
         groups = (
             ("Workspace skills", "workspace", self.workspace_skills),
+            *(("Library skills", "library", root) for root in self.extra_paths),
             ("Agent Plugin skills", "plugin", self.workspace / "plugins"),
             ("Built-in skills", "builtin", self.builtin_skills),
         )
@@ -243,12 +244,14 @@ class SkillsLoader:
                 entry
                 for entry in all_skills
                 if entry["source"] == source and (not exclude or entry["name"] not in exclude)
+                and (source != "library"
+                     or Path(entry["path"]).parent.parent.resolve() == root.resolve())
             ]
             if not entries:
                 continue
 
             resolved_root = root.expanduser().resolve()
-            if use_relative_roots:
+            if use_relative_roots and source != "library":
                 display_root = Path("plugins" if source == "plugin" else "skills")
             else:
                 display_root = resolved_root

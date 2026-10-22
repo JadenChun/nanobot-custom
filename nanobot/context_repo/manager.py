@@ -278,11 +278,12 @@ class ManagedContextRepo:
         if managed:
             try:
                 raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-                if _is_manifest_mapping(raw):
-                    manifest = raw
+                if not _is_manifest_mapping(raw):
+                    raise ValueError("Context repo manifest must be an object")
+                manifest = raw
             except Exception as exc:
                 logger.warning("Failed to load context repo manifest {}: {}", manifest_path, exc)
-                managed = False
+                raise ValueError(f"Invalid context repo manifest: {manifest_path}") from exc
         name = str(manifest.get("name") or config.path.name)
         credential_profile = config.credential_profile or manifest.get("credentialProfile") or manifest.get("credential_profile")
         return cls(

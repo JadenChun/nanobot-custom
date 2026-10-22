@@ -72,12 +72,13 @@ def test_constructor_keeps_existing_raw_input_refusals(messages, error):
 
 
 def test_runtime_retains_generated_dataclass_constructor_and_concrete_stored_annotation():
-    expected = ["outbox_id", "destination_id", "attempt", "action_id", "request_digest", "channel", "to", "messages"]
+    expected = ["outbox_id", "destination_id", "attempt", "action_id", "request_digest", "channel", "to", "messages", "message_thread_id"]
     signature = inspect.signature(DispatchRequest)
     assert list(signature.parameters) == expected
     assert all(parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD for parameter in signature.parameters.values())
-    assert all(parameter.default is inspect.Parameter.empty for parameter in signature.parameters.values())
+    assert all(signature.parameters[name].default is inspect.Parameter.empty for name in expected[:-1])
+    assert signature.parameters["message_thread_id"].default is None
     assert DispatchRequest.__init__.__code__.co_filename == "<string>"
     assert [field.name for field in fields(DispatchRequest)] == expected
-    assert fields(DispatchRequest)[-1].type == "tuple[DispatchMessage, ...]"
+    assert fields(DispatchRequest)[-2].type == "tuple[DispatchMessage, ...]"
     assert signature.parameters["messages"].annotation == "tuple[DispatchMessage, ...]"

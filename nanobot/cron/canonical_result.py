@@ -8,7 +8,7 @@ the model. Unsupported results remain claimed for explicit reconciliation.
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Mapping, cast
 
 from nanobot.agent.turn import RunStatus, TurnResult
 from nanobot.cron.completion import CronCompletionProjection
@@ -26,6 +26,8 @@ def complete_text_cron_result(
     claim: OccurrenceClaim,
     result: TurnResult,
     fence: OccurrenceExecutionFence,
+    *,
+    runtime_metadata: Mapping[str, object] | None = None,
 ) -> tuple[CronCompletionProjection, DeliveryOutboxRecord]:
     """Durably settle one exact completed turn and prepare, but never dispatch, its outbox.
 
@@ -57,6 +59,7 @@ def complete_text_cron_result(
         {
             "status": "ok",
             "result": result.content,
+            **({"runtime_metadata": dict(runtime_metadata)} if runtime_metadata is not None else {}),
             "delivery": {
                 "version": 1,
                 "deliver": deliver,

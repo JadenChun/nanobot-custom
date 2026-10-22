@@ -21,6 +21,7 @@ from nanobot.cron.action_store import (
     ActionStoreGeneration,
     CronActionStore,
 )
+from nanobot.cron.types import CONTRACT_FIELDS, validate_contract_fields
 
 _SCHEMA_VERSION = 1
 _CANDIDATE_KIND = "cron_definition_candidate_v1"
@@ -174,7 +175,14 @@ def _validate_schedule(value: object) -> dict[str, Any]:
 
 def _validate_payload(value: object) -> dict[str, Any]:
     payload = _copy_mapping(value, label="cron definition payload")
-    _require_exact_fields(payload, _PAYLOAD_FIELDS, label="cron definition payload")
+    _require_exact_fields(
+        {name: item for name, item in payload.items() if name not in CONTRACT_FIELDS},
+        _PAYLOAD_FIELDS, label="cron definition payload",
+    )
+    try:
+        validate_contract_fields(payload)
+    except ValueError as exc:
+        raise DefinitionStoreValidationError(str(exc)) from exc
     if payload["kind"] not in {"agent_turn", "system_event"}:
         raise DefinitionStoreValidationError("cron definition payload has an unknown kind")
     _require_string(payload["message"], label="cron definition payload message", empty=True)

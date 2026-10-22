@@ -24,6 +24,7 @@ These tests cover the new contract:
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -97,6 +98,52 @@ def test_h_normal_managed_change_pushes(tmp_path: Path) -> None:
     verify = tmp_path / "verify"
     _git(tmp_path, "clone", str(remote), str(verify))
     assert (verify / "tools" / "new.py").read_text(encoding="utf-8") == "print('new')\n"
+
+
+def test_unrelated_staged_version_is_never_committed_or_changed(tmp_path: Path) -> None:
+    remote, _seed, local = _bootstrap_remote_with_initial(tmp_path)
+    (local / "private.txt").write_text("staged user's work\n")
+    _git(local, "add", "private.txt")
+    staged_before = _git_out(local, "diff", "--cached", "--binary")
+    (local / "private.txt").write_text("later unstaged user's work\n")
+    (local / "tools" / "note with spaces.md").write_text("saved knowledge\n")
+    assert sync_context_repo(local, include_paths=["tools/**"])
+    assert _git_out(local, "diff", "--cached", "--binary") == staged_before
+    assert (local / "private.txt").read_text() == "later unstaged user's work\n"
+    assert _git_out(remote, "ls-tree", "--name-only", "main") == "tools"
+
+
+def test_selected_file_with_an_existing_staged_version_requires_reconciliation(tmp_path):
+    _remote, _seed, local = _bootstrap_remote_with_initial(tmp_path)
+    (local / "tools" / "common.py").write_text("user's staged version\n")
+    _git(local, "add", "tools/common.py")
+    (local / "tools" / "common.py").write_text("a later knowledge edit\n")
+    before = _git_out(local, "diff", "--cached", "--binary")
+    assert not sync_context_repo(local, include_paths=["tools/**"])
+    assert _git_out(local, "diff", "--cached", "--binary") == before
+    assert (local / "tools" / "common.py").read_text() == "a later knowledge edit\n"
+
+
+def test_unicode_and_newline_paths_cannot_bypass_secret_check(tmp_path):
+    remote, _seed, local = _bootstrap_remote_with_initial(tmp_path)
+    secret = "EAA" + "X" * 200
+    (local / "知识\nnote.json").write_text(json.dumps({"access_token": secret}))
+    _git(local, "add", ".")
+    _git(local, "commit", "-m", "local unsynchronized note")
+    assert not sync_context_repo(local, include_paths=["**"])
+    assert _git_out(remote, "ls-tree", "--name-only", "main") == "tools"
+
+
+def test_sync_refuses_overlapping_automatic_sync_lock(tmp_path: Path) -> None:
+    from filelock import FileLock
+
+    _remote, _seed, local = _bootstrap_remote_with_initial(tmp_path)
+    (local / "tools" / "note.md").write_text("pending knowledge\n")
+    before = _git_out(local, "rev-parse", "HEAD")
+    with FileLock(str(local / ".git" / "nanobot-sync.lock")):
+        assert not sync_context_repo(local, include_paths=["tools/**"])
+    assert _git_out(local, "rev-parse", "HEAD") == before
+    assert (local / "tools" / "note.md").read_text() == "pending knowledge\n"
 
 
 # ---------------------------------------------------------------------------
@@ -261,8 +308,8 @@ def test_m_remote_advances_concurrently_is_revalidated(tmp_path: Path) -> None:
             and not pushed_remote_update
         ):
             # Remote advances just before our first push attempt.
-            (other / "tools" / "managed.py").write_text("remote race\n", encoding="utf-8")
-            _git(other, "add", "tools/managed.py")
+            (other / "tools" / "remote.py").write_text("remote race\n", encoding="utf-8")
+            _git(other, "add", "tools/remote.py")
             _git(other, "commit", "-m", "remote race")
             _git(other, "push")
             pushed_remote_update = True
@@ -280,10 +327,11 @@ def test_m_remote_advances_concurrently_is_revalidated(tmp_path: Path) -> None:
         git_sync._run_git = original_run_git  # type: ignore[assignment]
 
     assert pushed_remote_update is True
-    # Local edit wins after the reconciling rebase + replay + revalidation.
+    # Non-conflicting remote work and saved local knowledge both survive.
     verify = tmp_path / "verify"
     _git(tmp_path, "clone", str(remote), str(verify))
     assert (verify / "tools" / "managed.py").read_text(encoding="utf-8") == "local managed\n"
+    assert (verify / "tools" / "remote.py").read_text(encoding="utf-8") == "remote race\n"
 
 
 # ---------------------------------------------------------------------------

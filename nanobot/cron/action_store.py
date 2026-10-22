@@ -1509,6 +1509,8 @@ class CronActionStore:
             raise ActionStoreLegacyConversionError("legacy cron schedule is missing expr")
 
     def _validate_legacy_payload(self, value: object) -> None:
+        from nanobot.cron.types import CONTRACT_FIELD_ALIASES, validate_contract_fields
+
         data = self._legacy_mapping(value, label="legacy cron payload")
         self._legacy_known_fields(
             data,
@@ -1516,6 +1518,7 @@ class CronActionStore:
                 "kind", "message", "deliver", "channel", "to", "additionalDestinations", "additional_destinations",
                 "channelMeta", "channel_meta", "sessionKey", "session_key", "executionMode", "execution_mode",
                 "originChannel", "origin_channel", "originChatId", "origin_chat_id", "originMetadata", "origin_metadata",
+                *CONTRACT_FIELD_ALIASES, *CONTRACT_FIELD_ALIASES.values(), "verifiers",
             },
             label="legacy cron payload",
         )
@@ -1549,19 +1552,32 @@ class CronActionStore:
         mode = self._legacy_field(data, "executionMode", "execution_mode", default="session_bound")
         if mode not in {"session_bound", "legacy_fresh"}:
             raise ActionStoreLegacyConversionError("legacy cron execution mode is invalid")
+        contract = {
+            camel: self._legacy_field(data, camel, snake)
+            for camel, snake in CONTRACT_FIELD_ALIASES.items()
+            if camel in data or snake in data
+        }
+        if "verifiers" in data:
+            contract["verifiers"] = data["verifiers"]
+        try:
+            validate_contract_fields(contract)
+        except ValueError as exc:
+            raise ActionStoreLegacyConversionError(str(exc)) from exc
 
     def _validate_legacy_state(self, value: object) -> None:
         data = self._legacy_mapping(value, label="legacy cron state")
         self._legacy_known_fields(
             data,
-            {"nextRunAtMs", "next_run_at_ms", "lastRunAtMs", "last_run_at_ms", "lastStatus", "last_status", "lastError", "last_error", "lastRunStatus", "last_run_status", "runHistory", "run_history"},
+            {"nextRunAtMs", "next_run_at_ms", "lastRunAtMs", "last_run_at_ms", "lastStatus", "last_status", "lastError", "last_error", "lastRunStatus", "last_run_status", "runHistory", "run_history", "retryAtMs", "retry_at_ms", "rateLimitRetries", "rate_limit_retries"},
             label="legacy cron state",
         )
         for camel, snake, label in (
             ("nextRunAtMs", "next_run_at_ms", "legacy cron next run"),
             ("lastRunAtMs", "last_run_at_ms", "legacy cron last run"),
+            ("retryAtMs", "retry_at_ms", "legacy cron retry timestamp"),
         ):
             self._legacy_int(self._legacy_field(data, camel, snake, default=None), label=label, nullable=True)
+        self._legacy_int(self._legacy_field(data, "rateLimitRetries", "rate_limit_retries", default=0), label="legacy cron rate-limit retries")
         last_status = self._legacy_field(data, "lastStatus", "last_status", default=None)
         if last_status is not None and last_status not in {"ok", "error", "skipped"}:
             raise ActionStoreLegacyConversionError("legacy cron last status is invalid")

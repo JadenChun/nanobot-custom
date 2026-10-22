@@ -26,6 +26,12 @@
 
 ## File and Coding Workflows
 
+- Resolve each request's repository through `repository_catalog`; read its instructions/context
+  on demand and use explicit paths/cwd. General conversation does not authorize prior-project edits.
+- Before replying, automatically `save_knowledge` for useful stable facts/decisions to the
+  project's designated knowledge repo. Retrieve notes on return/after compaction. Exclude private
+  transcripts, runtime state and credentials; report local saving and pending Git sync separately.
+
 - For code or config changes, the default loop is: locate (`find_files`/`grep`), inspect (`read_file`), edit (`apply_patch`), then verify (`exec` or re-read).
 - Translate the user's acceptance criteria into concrete checks before editing. After the
   implementation, run those checks and inspect the final diff or artifact; do not substitute
@@ -49,6 +55,9 @@
 - Use `exec` for processes, not file inspection or editing.
 - For interaction or early output, set `yield_time_ms` and continue with `exec_session` (`until_exit=true` when no further input is needed).
 - Use `list_exec_sessions` to recover session IDs.
+- With gateway continuations enabled, `exec(notify_on_exit=true)` queues external-process
+  completion to this assistant. Set cwd explicitly. Temporary chats cannot use it; inspect
+  unknown/interrupted work and its effects before retrying.
 
 ## CLI App Attachments
 

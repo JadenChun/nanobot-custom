@@ -27,6 +27,28 @@ def _channel(bot: object | None = None) -> TelegramChannel:
     return channel
 
 
+@pytest.mark.parametrize("reported_thread", [42, 43, None])
+async def test_topic_delivery_checks_provider_thread_before_confirming_receipt(reported_thread):
+    calls = []
+
+    class Bot:
+        async def send_message(self, **kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(message_id=1, chat=SimpleNamespace(id=-123), date=None,
+                                   message_thread_id=reported_thread)
+
+    channel = _channel(Bot())
+    pending = channel.send_thread_text_with_receipt("-123", ("topic report",), message_thread_id=42,
+                                                    action_id=ACTION_ID, request_digest=REQUEST_DIGEST)
+    if reported_thread == 42:
+        receipt = await pending
+        assert receipt.parts[0].provider_chat_id == -123
+    else:
+        with pytest.raises(RuntimeError, match="thread_receipt_mismatch"):
+            await pending
+    assert len(calls) == 1 and calls[0]["message_thread_id"] == 42
+
+
 async def test_complete_bundle_returns_ordered_content_free_receipt() -> None:
     class Bot:
         def __init__(self) -> None:

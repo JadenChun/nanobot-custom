@@ -176,6 +176,14 @@ class ReceiptCapableTextChannel(Protocol):
         ...
 
 
+@runtime_checkable
+class ThreadReceiptCapableTextChannel(Protocol):
+    async def send_thread_text_with_receipt(
+        self, target: str, messages: Sequence[str], *, message_thread_id: int,
+        action_id: str, request_digest: str,
+    ) -> ChannelTextReceipt: ...
+
+
 def validate_receipt_binding(
     receipt: ChannelTextReceipt,
     *,

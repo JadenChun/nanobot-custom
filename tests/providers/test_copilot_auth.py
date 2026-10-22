@@ -14,11 +14,40 @@ from nanobot.providers import copilot_auth
 def _isolated_auth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     auth_file = tmp_path / "copilot_auth.json"
     monkeypatch.setenv("NANOBOT_COPILOT_AUTH_PATH", str(auth_file))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OAUTH_CLI_KIT_TOKEN_PATH", raising=False)
     return auth_file
 
 
 def test_is_authenticated_false_when_no_file(_isolated_auth: Path) -> None:
     assert copilot_auth.is_authenticated() is False
+
+
+@pytest.mark.parametrize("field", ["github_token", "access"])
+def test_imports_the_original_nanobot_default_without_changing_its_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _isolated_auth: Path, field: str,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("OAUTH_CLI_KIT_TOKEN_PATH", raising=False)
+    legacy = tmp_path / ".nanobot" / "copilot_auth.json"
+    legacy.parent.mkdir()
+    legacy.write_text(json.dumps({field: "legacy-github-token"}), encoding="utf-8")
+    original = legacy.read_bytes()
+    token = copilot_auth.get_copilot_authority().get_cached_or_import()
+    assert token is not None and token.access == "legacy-github-token"
+    assert legacy.read_bytes() == original
+    assert json.loads(_isolated_auth.read_text())["token"]["access"] == token.access
+
+
+def test_explicit_legacy_import_path_does_not_fall_back_to_another_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("OAUTH_CLI_KIT_TOKEN_PATH", str(tmp_path / "missing.json"))
+    legacy = tmp_path / ".nanobot" / "copilot_auth.json"
+    legacy.parent.mkdir()
+    legacy.write_text(json.dumps({"github_token": "other-identity"}), encoding="utf-8")
+    assert copilot_auth.get_copilot_authority().get_cached_or_import() is None
 
 
 @pytest.mark.parametrize("use_override", [True, False])

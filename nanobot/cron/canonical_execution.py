@@ -24,7 +24,7 @@ from nanobot.cron.definition_store import CronDefinition
 from nanobot.cron.delivery_store import DeliveryOutboxRecord
 from nanobot.cron.occurrence_store import OccurrenceClaim
 from nanobot.cron.service import CronService
-from nanobot.cron.types import CronPayload
+from nanobot.cron.types import CronPayload, cron_thread_id
 from nanobot.session.manager import SessionManager
 
 
@@ -56,18 +56,25 @@ def _request_for_claim(claim: OccurrenceClaim) -> TurnRequest:
         if frozen.get(key) != definition.definition["payload"][key]:
             raise ValueError("claimed cron destination policy conflicts with frozen definition")
     destinations = payload.delivery_destinations()
+    thread_id = cron_thread_id(payload.channel_meta)
+    visible_key = f"{channel}:{chat_id}" + (f":topic:{thread_id}" if thread_id is not None else "")
+    instruction = payload.message
+    if payload.planning_mode == "on":
+        instruction = "Plan this task before taking actions.\n\n" + instruction
+    elif payload.planning_mode == "off":
+        instruction = "Complete this task directly; do not run a separate planning stage.\n\n" + instruction
     return TurnRequest(
-        content=payload.message,
+        content=instruction,
         source=TurnSource.CRON,
         session_key=f"cron:{definition.job_id}",
-        route=DeliveryTarget(channel=channel, chat_id=chat_id),
+        route=DeliveryTarget(channel=channel, chat_id=chat_id, thread_id=str(thread_id) if thread_id is not None else None),
         run_id=claim.run_id,
         history_mode=HistoryMode.FRESH,
         scheduled_link=ScheduledTurnLink(
             job_id=definition.job_id,
             job_name=definition.definition["name"],
-            instruction=payload.message,
-            visible_session_key=f"{channel}:{chat_id}",
+            instruction=instruction,
+            visible_session_key=visible_key,
             additional_destinations=tuple(
                 DeliveryTarget(channel=destination.channel, chat_id=destination.to)
                 for destination in destinations
@@ -75,7 +82,8 @@ def _request_for_claim(claim: OccurrenceClaim) -> TurnRequest:
             ),
             occurrence_id=claim.occurrence_id,
         ),
-        metadata={"cron_job_id": definition.job_id, "cron_occurrence_id": claim.occurrence_id},
+        metadata={"cron_job_id": definition.job_id, "cron_occurrence_id": claim.occurrence_id,
+                  **({"message_thread_id": thread_id} if thread_id is not None else {})},
     )
 
 

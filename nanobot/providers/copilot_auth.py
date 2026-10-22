@@ -4,7 +4,8 @@ Two-stage credential model used by GitHub Copilot (and matched by every
 open-source Copilot integration — copilot.vim, aider, opencode, etc.):
 
 1. **GitHub OAuth token** (long-lived; obtained via GitHub device-code flow
-   against the public Copilot client ID). Stored in ``~/.nanobot/copilot_auth.json``.
+   against the public Copilot client ID). Stored in
+   ``~/.nanobot/auth/github-copilot.json``; older locations are imported.
 2. **Copilot internal bearer** (short-lived, ~30 minutes; minted by exchanging
    the GitHub token at ``https://api.github.com/copilot_internal/v2/token``).
    Cached in memory and on disk; refreshed automatically a few minutes before
@@ -75,13 +76,22 @@ def _legacy_auth_path() -> Path:
 
 
 def _load_auth() -> dict[str, Any]:
-    path = _legacy_auth_path()
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    paths = [_legacy_auth_path()]
+    if not os.environ.get("OAUTH_CLI_KIT_TOKEN_PATH"):
+        home = Path(os.environ.get("HOME", str(Path.home())))
+        paths.append(home / ".nanobot" / "copilot_auth.json")
+    for path in paths:
+        try:
+            raw: object = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(raw, dict):
+                continue
+            # JSON object keys are strings; token contents are checked below.
+            data = cast(dict[str, Any], raw)
+            if isinstance(data.get("github_token") or data.get("access"), str):
+                return data
+        except (OSError, UnicodeError, ValueError):
+            continue
+    return {}
 
 
 def _import_legacy_token() -> str | None:

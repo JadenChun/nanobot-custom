@@ -2,10 +2,11 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
     from nanobot.events import AgentEvent
+    from nanobot.security.workspace_access import WorkspaceScope
 
 # Optional ``OutboundMessage.metadata`` key for structured, channel-agnostic UI
 # payloads. Value is JSON-serializable with at least ``kind``; rich clients may
@@ -35,6 +36,16 @@ class InboundMessage:
     session_key_override: str | None = None  # Optional override for thread-scoped sessions
     require_existing_session: bool = False
     input_role: Literal["user", "system"] | None = None
+    # Trusted local jobs may retain a turn scope without changing the chat's
+    # selected project. This capability is never decoded from wire metadata.
+    workspace_scope: "WorkspaceScope | None" = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.workspace_scope is not None:
+            from nanobot.security.workspace_access import WorkspaceScope
+
+            if not isinstance(cast(object, self.workspace_scope), WorkspaceScope):
+                raise TypeError("workspace scope requires a trusted local WorkspaceScope")
 
     @property
     def session_key(self) -> str:

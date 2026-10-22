@@ -199,6 +199,9 @@ def agent(
     try:
         # Reject local setup errors before acquiring durable runtime resources.
         # Provider clients themselves are still created by the owned graph below.
+        from nanobot.runtime_composition import runtime_preflight
+
+        runtime_preflight(runtime_config, sessions_root=sessions_root, startup_receipt_admitted=True)
         validate_provider_setup(runtime_config)
         from nanobot.runtime_composition import RuntimeComposition, RuntimeFactories
 

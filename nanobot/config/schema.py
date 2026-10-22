@@ -693,6 +693,51 @@ class ApiConfig(Base):
         )
 
 
+class GatewayCronConfig(Base):
+    """Explicit gateway-only timer admission; SDK/API construction stays inert."""
+
+    enabled: StrictBool = False
+    poll_interval_s: float = Field(default=1.0, ge=0.05, le=60, allow_inf_nan=False)
+    readiness_timeout_s: float = Field(default=60.0, gt=0, le=600, allow_inf_nan=False)
+    drain_timeout_s: float = Field(default=5.0, gt=0, le=300, allow_inf_nan=False)
+    adapter_cwd: str | None = None
+    codex_quota_retry: StrictBool = True
+
+
+class TelegramBusyConfig(Base):
+    """Selected regular Telegram owner; temporary/cross-channel admission is separate."""
+
+    enabled: StrictBool = False
+    session_key: str = Field(default="", max_length=256)
+    owner_sender_ids: list[str] = Field(default_factory=list, max_length=64)
+    owner_chat_ids: list[str] = Field(default_factory=list, max_length=64)
+    control_provider: str = ""
+    control_model: str = ""
+    tool_scope: list[str] | None = Field(default=None, max_length=4096)
+    automation_scope: list[str] | None = Field(default=None, max_length=4096)
+    limits: BusyControlConfig = Field(default_factory=BusyControlConfig)
+    inbox: BusyInboxConfig = Field(default_factory=BusyInboxConfig)
+
+    @model_validator(mode="after")
+    def validate_enabled_owner(self) -> TelegramBusyConfig:
+        if self.enabled:
+            if (not self.session_key.startswith("telegram:") or not self.owner_sender_ids
+                    or not self.owner_chat_ids or not self.control_model.strip()
+                    or not self.control_provider.strip() or self.control_provider == "auto"):
+                raise ValueError("Telegram busy input needs a regular Telegram session, owners, chats and explicit control provider/model")
+            for value in self.owner_sender_ids:
+                if not value.isdecimal() or int(value) <= 0 or str(int(value)) != value:
+                    raise ValueError("Telegram busy owners must be canonical numeric user IDs")
+            for value in self.owner_chat_ids:
+                try:
+                    valid = bool(value) and value != "0" and str(int(value)) == value
+                except ValueError:
+                    valid = False
+                if not valid:
+                    raise ValueError("Telegram busy chats must be canonical numeric chat IDs")
+        return self
+
+
 class GatewayConfig(Base):
     """Gateway/server configuration."""
 
@@ -700,6 +745,9 @@ class GatewayConfig(Base):
     port: int = 18790
     restart_mode: Literal["auto", "exec", "spawn", "exit"] = "auto"
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
+    process_continuations: bool = False
+    cron: GatewayCronConfig = Field(default_factory=GatewayCronConfig)
+    telegram_busy: TelegramBusyConfig = Field(default_factory=TelegramBusyConfig)
 
 
 class MCPServerConfig(Base):

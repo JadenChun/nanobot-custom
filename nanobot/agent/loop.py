@@ -61,7 +61,7 @@ from nanobot.agent.tools.context import (
     bind_request_context,
     reset_request_context,
 )
-from nanobot.agent.tools.exec_session import ExecSessionManager
+from nanobot.agent.tools.exec_session import ExecCompletionSink, ExecSessionManager
 from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from nanobot.agent.tools.message import capture_message_deliveries
 from nanobot.agent.tools.registry import ToolRegistry
@@ -1060,6 +1060,10 @@ class AgentLoop:
     async def submit_local_trigger_turn(self, msg: InboundMessage) -> OutboundMessage | None:
         return await self._local_trigger_turns.submit(msg)
 
+    def install_process_completion_sink(self, sink: ExecCompletionSink) -> None:
+        """Attach the gateway-owned process edge; direct SDK use stays explicit."""
+        self._exec_session_manager.install_completion_sink(sink)
+
     def _own_busy_inbox(self, inbox: SessionBusyInbox, *,
                        automation_scope: tuple[str, ...]) -> BusyInboxConsumer:
         """Explicit dormant adapter seam; inbound metadata cannot register an owner."""
@@ -1405,7 +1409,7 @@ class AgentLoop:
 
     def _request_context_for_turn(self, ctx: TurnContext) -> RequestContext:
         assert ctx.session is not None
-        scope = self.workspace_scopes.for_turn(
+        scope = ctx.msg.workspace_scope or self.workspace_scopes.for_turn(
             channel=ctx.delivery.route.channel,
             message_metadata=ctx.msg.metadata,
             session_metadata=ctx.session.metadata,
@@ -1422,6 +1426,8 @@ class AgentLoop:
             sender_id=ctx.msg.sender_id,
             turn_id=ctx.turn_id,
             workspace=scope.project_path,
+            workspace_scope=scope,
+            persistent_session=ctx.session.policy.persist and not ctx.ephemeral,
         )
 
     async def _resolve_runtime_context_for_turn(
@@ -2305,7 +2311,7 @@ class AgentLoop:
         )
         active_session_key = session.key if session else request_ctx.session_key
         request_metadata = request_ctx.metadata
-        effective_scope = self.workspace_scopes.for_turn(
+        effective_scope = request_ctx.workspace_scope or self.workspace_scopes.for_turn(
             channel=request_ctx.channel,
             message_metadata=request_metadata,
             session_metadata=session.metadata if session is not None else None,
@@ -3564,7 +3570,9 @@ class AgentLoop:
             or target is None or not target.channel or not target.chat_id
             or request.scheduled_link.job_id != request.session_key.removeprefix("cron:")
             or request.scheduled_link.instruction != request.content
-            or request.scheduled_link.visible_session_key != f"{target.channel}:{target.chat_id}"
+            or request.scheduled_link.visible_session_key != (
+                f"{target.channel}:{target.chat_id}" + (f":topic:{target.thread_id}" if target.thread_id is not None else "")
+            )
         ):
             raise ValueError("silent cron execution requires fresh occurrence provenance and route")
         if request.approval.granted or (request.approval_grant and request.approval_grant.granted):

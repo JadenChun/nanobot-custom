@@ -8,7 +8,6 @@ from nanobot.agent.tools.agent_browser import AgentBrowserTool
 from nanobot.agent.tools.agent_device import AgentDeviceTool
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.context import ToolContext
-from nanobot.agent.tools.crawler import CrawlResearchTool
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.delegation import DelegateTaskTool, PlanTaskTool, ReviewWorkTool
 from nanobot.agent.tools.desktop_use import DesktopUseTool
@@ -17,16 +16,10 @@ from nanobot.agent.tools.explore import ExploreTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.image_generation import ImageGenerationTool
 from nanobot.agent.tools.message import MessageTool
+from nanobot.agent.tools.repositories import RepositoryCatalogTool, SaveKnowledgeTool
 from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.social_crawl import crawl_tools_enabled
-from nanobot.agent.tools.trend_vpn import (
-    TrendVpnBrowserFetchTool,
-    TrendVpnFetchTool,
-    TrendVpnSessionCloseTool,
-    TrendVpnSessionStartTool,
-    vpn_tools_enabled,
-)
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+from nanobot.extensions.optional_tools import construct_optional_tools
 
 
 @dataclass(frozen=True)
@@ -53,7 +46,8 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
                       ("exec", ExecTool), ("exec_session", ExecSessionTool),
                       ("list_exec_sessions", ListExecSessionsTool), ("web_search", WebSearchTool),
                       ("web_fetch", WebFetchTool), ("message", MessageTool),
-                      ("cron", CronTool), ("generate_image", ImageGenerationTool)):
+                      ("cron", CronTool), ("generate_image", ImageGenerationTool),
+                      ("repository_catalog", RepositoryCatalogTool), ("save_knowledge", SaveKnowledgeTool)):
         upstream(name, cls)
     for name, cls, cfg in (("agent_browser", AgentBrowserTool, ctx.config.agent_browser),
                            ("agent_device", AgentDeviceTool, ctx.config.agent_device)):
@@ -72,13 +66,6 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
                                    lambda cls=cls: cls(deps.foreground_manager)))
     entries.append(ToolFactory("explore", lambda: True, lambda: ExploreTool(
         deps.foreground_manager, max_iterations=deps.explore_max_iterations)))
-    entries.append(ToolFactory("crawl_research", lambda: deps.crawler_enabled and crawl_tools_enabled(),
-                               lambda: CrawlResearchTool(deps.foreground_manager)))
-    for name, cls in (("trend_vpn_session_start", TrendVpnSessionStartTool),
-                      ("trend_vpn_fetch", TrendVpnFetchTool),
-                      ("trend_vpn_browser_fetch", TrendVpnBrowserFetchTool),
-                      ("trend_vpn_session_close", TrendVpnSessionCloseTool)):
-        entries.append(ToolFactory(name, vpn_tools_enabled, cls))
     result: list[Tool] = []
     for entry in entries:
         if not entry.enabled():
@@ -87,4 +74,5 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
         if tool.name != entry.name:
             raise ValueError(f"Tool factory name mismatch: expected {entry.name}")
         result.append(tool)
+    result.extend(construct_optional_tools(ctx))
     return result

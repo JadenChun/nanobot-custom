@@ -7,6 +7,7 @@ from nanobot.agent.turn import RunStatus, TurnResult
 from nanobot.channels.delivery_contract import ChannelTextPartReceipt, ChannelTextReceipt
 from nanobot.cron.action_store import CronActionStore
 from nanobot.cron.callback_store import CronCallbackStore
+from nanobot.cron.canonical_execution import build_claimed_fresh_request
 from nanobot.cron.channel_sender import CronChannelSender
 from nanobot.cron.completion import CronCompletionProjector
 from nanobot.cron.composition import (
@@ -21,7 +22,7 @@ from nanobot.cron.service import CronService, _job_definition
 from nanobot.cron.types import CronDestination, CronSchedule
 
 
-def _claimed(tmp_path: Path, channels=("telegram", "telegram"), *, deliver=True):
+def _claimed(tmp_path: Path, channels=("telegram", "telegram"), *, deliver=True, payload_overrides=None, timezone=None):
     root = tmp_path / "cron"
     namespace = "cron:composition-tests:" + tmp_path.name
     definitions = CronDefinitionStore(CronActionStore(root, namespace=namespace))
@@ -37,7 +38,8 @@ def _claimed(tmp_path: Path, channels=("telegram", "telegram"), *, deliver=True)
         ),
     )
     job = service.add_job(
-        "report", CronSchedule(kind="every", every_ms=60_000), "compute",
+        "report", (CronSchedule(kind="cron", expr="0 9 * * *", tz=timezone) if timezone
+                   else CronSchedule(kind="every", every_ms=60_000)), "compute",
         deliver=deliver,
         channel=channels[0] if deliver else None,
         to="A" if deliver else None,
@@ -49,6 +51,8 @@ def _claimed(tmp_path: Path, channels=("telegram", "telegram"), *, deliver=True)
     job.payload.session_key = f"cron:{job.id}"
     job.payload.origin_channel = channels[0] if deliver else "cli"
     job.payload.origin_chat_id = "A" if deliver else "direct"
+    for name, value in (payload_overrides or {}).items():
+        setattr(job.payload, name, value)
     service._definition_action(CronDefinitionAction.update(
         _job_definition(job, job_instance_id=job.job_instance_id),
         expected_job_instance_id=job.job_instance_id,
@@ -78,6 +82,28 @@ class ReceiptChannel:
             request_digest=request_digest,
             parts=(ChannelTextPartReceipt(0, 0, 0, len(self.calls), int(target == "B") + 1),),
         )
+
+
+async def test_frozen_topic_is_preserved_only_for_primary_destination(tmp_path):
+    service, claim = _claimed(tmp_path, payload_overrides={"channel_meta": {"message_thread_id": 42}})
+    observed = []
+    sent = []
+
+    class TopicChannel(ReceiptChannel):
+        async def send_thread_text_with_receipt(self, target, messages, *, message_thread_id, action_id, request_digest):
+            observed.append((target, message_thread_id))
+            return await self.send_text_with_receipt(target, messages, action_id=action_id, request_digest=request_digest)
+
+    sender = CronChannelSender(lambda _name: TopicChannel(sent))
+    agent = AsyncMock()
+    agent.execute_silent_cron_turn.return_value = TurnResult(run_id=claim.run_id, content="topic result")
+    result = await compose_claimed_text_occurrence(service, agent, claim, sender)
+    assert observed == [("A", 42)]
+    assert [target for target, _ in sent] == ["A", "B"]
+    assert len(result.deliveries) == 2
+    request = build_claimed_fresh_request(claim)
+    assert request.route.thread_id == "42"
+    assert request.scheduled_link.visible_session_key == "telegram:A:topic:42"
 
 
 @pytest.mark.parametrize(("field", "error_type", "message"), [

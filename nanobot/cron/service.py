@@ -67,6 +67,7 @@ from nanobot.cron.types import (
     CronPayload,
     CronSchedule,
     CronStore,
+    CronVerifier,
 )
 
 CRON_DEFINITION_ONLY_DIAGNOSTIC = (
@@ -246,6 +247,7 @@ def _job_definition(job: CronJob, *, job_instance_id: str) -> CronDefinition:
             "originChannel": payload.origin_channel,
             "originChatId": payload.origin_chat_id,
             "originMetadata": deepcopy(payload.origin_metadata),
+            **payload.contract_fields(),
         },
         "deleteAfterRun": job.delete_after_run,
     }
@@ -377,6 +379,8 @@ class CronService:
         self._running = False
         self._active_executions = 0
         self._store_dirty = False
+        self._fresh_job_validator: Callable[[CronJob], None] | None = None
+        self._runtime_status: Callable[[], dict[str, object]] | None = None
         # Kept as an observable compatibility path.  No writer in this class
         # opens it; the action store lock is the sole mutation boundary.
         self._run_records_dir = path.parent / "runs"
@@ -862,6 +866,13 @@ class CronService:
         origin_chat_id: str | None = None,
         origin_metadata: dict[str, Any] | None = None,
         additional_destinations: list[CronDestination] | None = None,
+        *,
+        planning_mode: Literal["on", "off", "agent"] | None = None,
+        skip_verification: bool = False,
+        alert_channel: str | None = None,
+        alert_to: str | None = None,
+        verifiers: list[CronVerifier] | None = None,
+        post_delivery_command: list[str] | None = None,
     ) -> CronJob:
         """Create and checkpoint one typed definition."""
         _validate_schedule_for_add(schedule)
@@ -894,10 +905,24 @@ class CronService:
                 origin_channel=origin_channel,
                 origin_chat_id=origin_chat_id,
                 origin_metadata=deepcopy(origin_metadata or {}),
+                planning_mode=planning_mode,
+                skip_verification=skip_verification,
+                alert_channel=alert_channel,
+                alert_to=alert_to,
+                verifiers=deepcopy(verifiers or []),
+                post_delivery_command=deepcopy(post_delivery_command),
             ),
             state=CronJobState(),
             delete_after_run=delete_after_run,
         )
+        if self._fresh_job_validator is not None:
+            job.payload.execution_mode = "legacy_fresh"
+            job.payload.session_key = f"cron:{job.id}"
+            job.payload.origin_channel = channel or "cli"
+            job.payload.origin_chat_id = str(to or "direct")
+            if "message_thread_id" in job.payload.origin_metadata:
+                job.payload.channel_meta["message_thread_id"] = job.payload.origin_metadata["message_thread_id"]
+            self._fresh_job_validator(job)
         instance = _stable_job_instance_id(self.action_store.namespace, job.id)
         action = CronDefinitionAction.create(_job_definition(job, job_instance_id=instance))
         settled = self._definition_action(action)
@@ -1122,6 +1147,8 @@ class CronService:
 
     def status(self) -> dict[str, object]:
         """Return management status while exposing the execution fence."""
+        if self._runtime_status is not None:
+            return self._runtime_status()
         store = self._require_store()
         return {
             "enabled": self._running,
@@ -1129,6 +1156,13 @@ class CronService:
             "next_wake_at_ms": None,
             "migration_diagnostic": CRON_DEFINITION_ONLY_DIAGNOSTIC,
         }
+
+    def configure_gateway_execution(self, validator: Callable[[CronJob], None],
+                                    status: Callable[[], dict[str, object]]) -> None:
+        """Opt new gateway jobs into fresh execution before accepting messages."""
+        if self._fresh_job_validator is not None:
+            raise ValueError("gateway cron execution is already configured")
+        self._fresh_job_validator, self._runtime_status = validator, status
 
 
 def _stable_job_instance_id(namespace: str, job_id: str) -> str:

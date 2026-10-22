@@ -38,13 +38,13 @@ def _load_with_guarded_runtime(
     *,
     core_tools: list[Tool],
 ) -> list[str]:
-    """Exercise registration while keeping the production migration guard intact."""
+    """Registration is definition-only; runtime admission belongs to composition."""
     with (
         patch("nanobot.migration_guard.require_runtime_ready") as ready,
         patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=core_tools),
     ):
         names = loader.load(ctx, registry)
-    ready.assert_called_once_with()
+    ready.assert_not_called()
     return names
 
 

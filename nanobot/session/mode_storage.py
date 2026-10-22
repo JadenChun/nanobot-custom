@@ -1084,8 +1084,18 @@ class SessionModeStorage:
 
     def list_namespace(self) -> tuple[str, ...]:
         self._require_current()
-        descriptor = os.dup(self._namespace_fd)
+        descriptor = -1
         try:
+            descriptor = os.open(
+                ".",
+                os.O_RDONLY
+                | os.O_DIRECTORY
+                | os.O_NOFOLLOW
+                | getattr(os, "O_CLOEXEC", 0),
+                dir_fd=self._namespace_fd,
+            )
+            if self._identity(descriptor) != self._namespace_identity:
+                raise _mode_error()
             names = os.listdir(descriptor)
             if len(names) > MODE_ENUM_LIMIT:
                 raise _mode_error()
@@ -1094,7 +1104,8 @@ class SessionModeStorage:
         except OSError:
             raise _mode_error() from None
         finally:
-            os.close(descriptor)
+            if descriptor >= 0:
+                os.close(descriptor)
 
     def install_session_file(self, staged_name: str, target_name: str) -> None:
         source_parent, source_leaf = self._parent(staged_name)

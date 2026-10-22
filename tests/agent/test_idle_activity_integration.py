@@ -1,6 +1,7 @@
 """Foreground idle-activity admission stays dormant until explicitly injected."""
 
 import asyncio
+from dataclasses import replace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -30,6 +31,16 @@ def upgrade(loop: AgentLoop, key: str = "cli:idle"):
     )
     loop.sessions.invalidate(key)
     return backend, snapshot
+
+
+def _use_republication_boundary(loop):
+    """Hold follow-ups for cleanup when that is the seam under test."""
+    run = loop.runner.run
+
+    async def without_injections(spec):
+        return await run(replace(spec, injection_callback=None, terminal_injection_callback=None))
+
+    loop.runner.run = without_injections
 
 
 class _IdleIntegration:
@@ -445,6 +456,7 @@ async def test_activity_identity_clears_when_cleanup_cannot_republish(engine_con
 
     provider = BlockingProvider([LLMResponse(content="first")])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    _use_republication_boundary(loop)
     backend, _ = upgrade(loop, "telegram:idle")
     integration = _IdleIntegration(backend)
     loop._idle_integration = integration
@@ -457,8 +469,9 @@ async def test_activity_identity_clears_when_cleanup_cannot_republish(engine_con
         await loop.bus.publish_inbound(InboundMessage(
             channel="telegram", chat_id="idle", sender_id="user", content="queued",
         ))
-        while len(integration.calls) < 2:
-            await asyncio.sleep(0)
+        async with asyncio.timeout(2):
+            while len(integration.calls) < 2:
+                await asyncio.sleep(0)
         assert len(loop._admitted_activity_messages) == 1
 
         def fail_republish(_message):
@@ -466,8 +479,9 @@ async def test_activity_identity_clears_when_cleanup_cannot_republish(engine_con
 
         loop.bus.publish_inbound_nowait = fail_republish
         release_first.set()
-        while "telegram:idle" not in loop._pending_republish:
-            await asyncio.sleep(0)
+        async with asyncio.timeout(2):
+            while "telegram:idle" not in loop._pending_republish:
+                await asyncio.sleep(0)
         assert len(loop._admitted_activity_messages) == 1
         assert len(loop._pending_republish["telegram:idle"]) == 1
         retained = loop._pending_republish["telegram:idle"][0]
@@ -580,6 +594,7 @@ async def test_pending_activity_commit_survives_callback_failure_on_republish(
         LLMResponse(content="third"),
     ])
     loop = AgentLoop.from_config(engine_config, tool_registry=ToolRegistry(), provider=provider)
+    _use_republication_boundary(loop)
     backend, _ = upgrade(loop, "telegram:idle")
     integration = FailsOnPendingCallback(backend)
     loop._idle_integration = integration

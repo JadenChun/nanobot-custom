@@ -8,10 +8,12 @@ import uuid
 from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, Protocol
+
+from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import ToolContext, current_request_session_key
+from nanobot.agent.tools.context import RequestContext, ToolContext, current_request_session_key
 from nanobot.agent.tools.schema import (
     BooleanSchema,
     IntegerSchema,
@@ -29,6 +31,23 @@ MAX_OUTPUT_CHARS = 50_000
 OUTPUT_DRAIN_GRACE_S = 0.1
 
 
+@dataclass(frozen=True)
+class ExecCompletion:
+    output: str
+    exit_code: int | None
+    timed_out: bool = False
+    terminated: bool = False
+    state: Literal["completed", "cancelled", "unknown"] = "completed"
+
+
+class ExecCompletionSink(Protocol):
+    def started(self, session_id: str, command: str, cwd: str, origin: RequestContext) -> None: ...
+    def inline_completed(self, session_id: str) -> None: ...
+    def finished(self, session_id: str, result: ExecCompletion) -> None: ...
+    def cancelled(self, session_id: str, reason: str) -> None: ...
+    def result(self, session_id: str, owner_session_key: str | None) -> ExecCompletion | None: ...
+
+
 @dataclass(slots=True)
 class _SessionPoll:
     output: str
@@ -39,6 +58,7 @@ class _SessionPoll:
     terminated: bool = False
     stdin_closed: bool = False
     truncated_chars: int = 0
+    completion_state: str | None = None
 
 
 @dataclass(slots=True)
@@ -258,6 +278,10 @@ class _ExecSession:
                     timeout=2.0,
                 )
 
+    async def expire(self) -> None:
+        self._timed_out = True
+        await self.kill()
+
     async def _wait_for_buffered_output(self) -> None:
         deadline = time.monotonic() + OUTPUT_DRAIN_GRACE_S
         while time.monotonic() < deadline:
@@ -274,6 +298,14 @@ class ExecSessionManager:
         self._sessions: dict[str, _ExecSession] = {}
         self._lock = asyncio.Lock()
         self._closed = False
+        self._completion_sink: ExecCompletionSink | None = None
+        self._monitors: dict[str, asyncio.Task[None]] = {}
+        self._cancel_reasons: dict[str, str] = {}
+
+    def install_completion_sink(self, sink: ExecCompletionSink) -> None:
+        if self._closed or self._completion_sink is not None:
+            raise RuntimeError("process completion sink requires an open, unregistered manager")
+        self._completion_sink = sink
 
     async def start(
         self,
@@ -287,15 +319,31 @@ class ExecSessionManager:
         yield_time_ms: int,
         max_output_chars: int,
         owner_session_key: str | None = None,
+        notify_on_exit: bool = False,
+        origin: RequestContext | None = None,
     ) -> tuple[str, _SessionPoll]:
         async with self._lock:
             if self._closed:
                 raise RuntimeError("exec session manager is closed")
             await self._cleanup_locked()
+            for identity, task in tuple(self._monitors.items()):
+                if task.done():
+                    task.result()
+                    self._monitors.pop(identity)
             if len(self._sessions) >= self.max_sessions:
                 raise RuntimeError(f"maximum exec sessions reached ({self.max_sessions})")
-            process = await self._spawn(command, cwd, env, shell_program, login)
             session_id = uuid.uuid4().hex[:12]
+            sink = self._completion_sink if notify_on_exit else None
+            if notify_on_exit:
+                if sink is None or origin is None or not owner_session_key or origin.session_key != owner_session_key:
+                    raise ValueError("background continuation requires an enabled gateway and an owned request")
+                sink.started(session_id, command, cwd, origin)
+            try:
+                process = await self._spawn(command, cwd, env, shell_program, login)
+            except BaseException:
+                if sink is not None:
+                    sink.cancelled(session_id, "spawn_failed")
+                raise
             session = _ExecSession(
                 session_id=session_id,
                 process=process,
@@ -307,11 +355,44 @@ class ExecSessionManager:
             )
             self._sessions[session_id] = session
 
-        poll = await session.poll(yield_time_ms, max_output_chars)
+        try:
+            poll = await session.poll(yield_time_ms, max_output_chars)
+        except BaseException:
+            if sink is not None:
+                await session.kill()
+                sink.cancelled(session_id, "initial_turn_interrupted")
+            raise
         if poll.done:
             async with self._lock:
                 self._sessions.pop(session_id, None)
+            if sink is not None:
+                sink.inline_completed(session_id)
+        elif sink is not None:
+            task = asyncio.create_task(self._watch_completion(session, sink, poll.output))
+            self._monitors[session_id] = task
+            task.add_done_callback(self._monitor_done)
         return session_id, poll
+
+    @staticmethod
+    def _monitor_done(task: asyncio.Task[None]) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("Process completion could not settle; retained job requires inspection: {}", type(task.exception()).__name__)
+
+    async def _watch_completion(self, session: _ExecSession, sink: ExecCompletionSink, initial_output: str) -> None:
+        try:
+            remaining = session.deadline - time.monotonic()
+            await asyncio.wait_for(session.process.wait(), timeout=remaining if remaining != float("inf") else None)
+        except asyncio.TimeoutError:
+            await session.expire()
+        poll = await session.poll(0, MAX_OUTPUT_CHARS)
+        reason = self._cancel_reasons.pop(session.session_id, None)
+        if reason is not None:
+            sink.cancelled(session.session_id, reason)
+        else:
+            output, _omitted = _truncate_output("\n".join(part for part in (initial_output, poll.output) if part), MAX_OUTPUT_CHARS)
+            sink.finished(session.session_id, ExecCompletion(output, poll.exit_code, poll.timed_out))
+        async with self._lock:
+            self._sessions.pop(session.session_id, None)
 
     async def write(
         self,
@@ -328,6 +409,11 @@ class ExecSessionManager:
             await self._cleanup_locked()
             session = self._sessions.get(session_id)
         if session is None:
+            if self._completion_sink is not None and not (chars or close_stdin or terminate):
+                completed = self._completion_sink.result(session_id, owner_session_key)
+                if completed is not None:
+                    return _SessionPoll(completed.output, True, completed.exit_code, timed_out=completed.timed_out,
+                                        terminated=completed.terminated, completion_state=completed.state)
             raise KeyError(session_id)
         if session.owner_session_key and session.owner_session_key != owner_session_key:
             raise KeyError(session_id)
@@ -343,6 +429,8 @@ class ExecSessionManager:
                 raise RuntimeError(error)
             stdin_closed = True
         if terminate:
+            if session_id in self._monitors:
+                self._cancel_reasons[session_id] = "terminated"
             await session.kill()
         poll = await session.poll(
             yield_time_ms,
@@ -379,6 +467,8 @@ class ExecSessionManager:
         async with self._lock:
             self._closed = True
             sessions: list[_ExecSession] = list(self._sessions.values())
+            self._cancel_reasons.update({session.session_id: "runtime_shutdown" for session in sessions
+                                         if session.session_id in self._monitors})
             self._sessions.clear()
         results: list[None | BaseException] = list(await asyncio.gather(
             *(session.kill() for session in sessions),
@@ -399,6 +489,9 @@ class ExecSessionManager:
                 "failed to close exec sessions",
                 [result for _, result in failures],
             )
+        monitors = list(self._monitors.values())
+        self._monitors.clear()
+        await asyncio.gather(*monitors)
         return len(sessions)
 
     async def terminate_by_owner(self, owner_session_key: str) -> int:
@@ -407,6 +500,8 @@ class ExecSessionManager:
             victims: list[_ExecSession] = []
             for sid, s in list(self._sessions.items()):
                 if s.owner_session_key == owner_session_key:
+                    if sid in self._monitors:
+                        self._cancel_reasons[sid] = "owner_cancelled"
                     victims.append(self._sessions.pop(sid))
         results: list[None | BaseException] = list(await asyncio.gather(
             *(s.kill() for s in victims),
@@ -438,6 +533,8 @@ class ExecSessionManager:
         ]
         for session_id in stale:
             session = self._sessions[session_id]
+            if session_id in self._monitors:
+                self._cancel_reasons[session_id] = "idle_timeout"
             await session.kill()
             self._sessions.pop(session_id, None)
 
@@ -486,7 +583,9 @@ def format_session_poll(session_id: str, poll: _SessionPoll) -> str:
         parts.append("Session terminated.")
     if poll.stdin_closed:
         parts.append("Stdin closed.")
-    if poll.done:
+    if poll.completion_state == "unknown":
+        parts.append("Process outcome unknown after interruption; inspect retained effects before retrying.")
+    elif poll.done:
         parts.append(f"Exit code: {poll.exit_code}")
     else:
         parts.append(f"Process running. session_id: {session_id}")

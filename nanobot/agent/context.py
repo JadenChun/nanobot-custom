@@ -23,6 +23,7 @@ from nanobot.bus.events import (
     InboundMessage,
 )
 from nanobot.context_repo import ContextRepoManager
+from nanobot.context_repo.catalog import RepositoryCatalog
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
     RUNTIME_CONTEXT_TAG,
@@ -30,7 +31,7 @@ from nanobot.runtime_context import (
     append_runtime_context,
     wrap_runtime_context_lines,
 )
-from nanobot.security.workspace_access import WorkspaceScopeResolver
+from nanobot.security.workspace_access import WorkspaceScopeResolver, current_tool_workspace
 from nanobot.session.keys import last_channel_from_metadata
 from nanobot.session.manager import Session
 from nanobot.session.source_projection import RuntimeNode, SourceNode
@@ -117,6 +118,7 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace, sessions_root=sessions_root)
         self.context_manager = context_manager or ContextRepoManager.from_config(context_paths=context_paths)
         self.context_paths = self.context_manager.paths
+        self.repositories = RepositoryCatalog.for_workspace(workspace, sessions_root=sessions_root)
         self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None,
                                    extra_paths=self.context_manager.skill_roots())
 
@@ -139,6 +141,13 @@ class ContextBuilder:
         if self.context_paths:
             parts.append("# Context Repositories\n\n" + self.context_manager.prompt_summary()
                          + "\nFollow each repository's writable, protected, store and proposal policies.")
+        access = current_tool_workspace(root)
+        allowed_roots = ([access.allowed_root, *self.context_manager.read_roots()]
+                         if access.allowed_root is not None else None)
+        catalog = self.repositories.prompt_summary(allowed_roots=allowed_roots)
+        if catalog:
+            parts.append("# Repository Catalog\n\nMetadata for discovery; read the selected repository's "
+                         "instructions and relevant files on demand. Use absolute paths when switching work.\n" + catalog)
         parts.append(render_template("agent/tool_contract.md"))
 
         project_path = root.expanduser().resolve()

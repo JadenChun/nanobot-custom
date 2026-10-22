@@ -36,10 +36,11 @@ def link_completed_text_result(
     result = completion.get("result")
     delivery = completion.get("delivery")
     if (
-        set(completion) != {
+        set(completion) - {"runtime_metadata"} != {
             "status", "result", "delivery", "run_id", "occurrence_id",
             "job_id", "job_revision", "generation",
         }
+        or ("runtime_metadata" in completion and not isinstance(completion["runtime_metadata"], dict))
         or completion.get("status") != "ok" or not isinstance(result, str) or not result.strip()
         or not isinstance(delivery, dict) or set(cast(dict[object, object], delivery)) != {"version", "deliver", "messages"}
         or type(cast(dict[object, object], delivery).get("deliver")) is not bool

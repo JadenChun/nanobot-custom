@@ -336,6 +336,40 @@ def test_build_skills_summary_keeps_absolute_roots_for_selected_project(tmp_path
     assert str(project.resolve()) not in summary
 
 
+@pytest.mark.parametrize("selected_project", [False, True])
+def test_external_libraries_are_discoverable_without_loading_their_bodies(
+    tmp_path: Path, selected_project: bool,
+) -> None:
+    workspace, builtin = tmp_path / "agent", tmp_path / "builtin"
+    first, second = tmp_path / "client-one" / "skills", tmp_path / "client-two" / "skills"
+    _write_skill(workspace / "skills", "local", body="# Local")
+    _write_skill(first, "local", body="# Shadowed library")
+    shared = _write_skill(first, "shared")
+    shared.write_text(
+        "---\nname: shared\ndescription: Inspect client evidence.\n---\n"
+        "DO_NOT_PRELOAD_THIS_WORKFLOW_BODY\n", encoding="utf-8",
+    )
+    _write_skill(second, "shared", body="# Shadowed second library")
+    _write_skill(second, "other", body="# Other")
+    _write_skill(second, "disabled", body="# Disabled")
+    _write_skill(builtin, "shared", body="# Shadowed builtin")
+    loader = SkillsLoader(
+        workspace, builtin_skills_dir=builtin, extra_paths=[first, second],
+        disabled_skills={"disabled"},
+    )
+    summary = loader.build_skills_summary(
+        workspace=tmp_path / "project" if selected_project else workspace,
+    )
+    assert summary.count("**shared**") == 1
+    assert "**other**" in summary
+    assert "**disabled**" not in summary
+    assert str(first.resolve()) in summary and str(second.resolve()) in summary
+    assert "Inspect client evidence." in summary
+    assert "DO_NOT_PRELOAD_THIS_WORKFLOW_BODY" not in summary
+    assert "**shared**" not in loader.build_skills_summary(exclude={"shared"})
+    assert loader.load_skill("shared") == shared.read_text()
+
+
 def test_bundled_update_setup_description_is_valid_yaml(tmp_path: Path) -> None:
     metadata = SkillsLoader(tmp_path).get_skill_metadata("update-setup")
 

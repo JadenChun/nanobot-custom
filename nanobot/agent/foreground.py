@@ -5,12 +5,11 @@ from pathlib import Path
 
 from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.tools.context import ForkToolDependencies
-from nanobot.agent.tools.social_crawl import crawl_tools_enabled
 from nanobot.agent.write_guard import FileLockRegistry
-from nanobot.config.schema import Config, ModelPresetConfig, ToolsConfig
+from nanobot.config.schema import Config, ToolsConfig
 from nanobot.context_repo import ContextRepoManager
-from nanobot.providers.factory import build_provider_snapshot
-from nanobot.utils.llm_runtime import LLMRuntime, runtime_from_provider_snapshot
+from nanobot.extensions.crawler import crawler_settings
+from nanobot.utils.llm_runtime import LLMRuntime
 
 
 def validate_foreground_dependencies(
@@ -39,22 +38,7 @@ def build_foreground_dependencies(
         context_paths=defaults.context_paths if defaults else None,
         context_repos=defaults.context_repos if defaults else None,
     )
-    crawler = config.agents.crawler if config is not None else None
-    crawler_enabled = bool(crawler and crawler.enabled and crawl_tools_enabled())
-    crawler_runtime = None
-    if crawler_enabled:
-        assert config is not None and crawler is not None
-        crawler_config = config.model_copy(deep=True)
-        crawler_config.agents.defaults.fallback = []
-        crawler_config.agents.defaults.fallback_models = []
-        preset = ModelPresetConfig(
-            model=crawler.model or config.resolve_preset().model,
-            provider=crawler.provider or 'auto', temperature=0.1,
-            max_tokens=crawler.max_tokens.output,
-            context_window_tokens=crawler.max_tokens.input,
-            reasoning_effort=crawler.reasoning_effort,
-        )
-        crawler_runtime = runtime_from_provider_snapshot(build_provider_snapshot(crawler_config, preset=preset))
+    optional = crawler_settings(config)
     locks = FileLockRegistry()
     manager = ForegroundAgentManager(
         provider=runtime.provider, model=runtime.model, runtime=runtime,
@@ -64,10 +48,10 @@ def build_foreground_dependencies(
         agent_browser_config=tools_config.agent_browser,
         agent_device_config=tools_config.agent_device,
         exec_config=tools_config.exec, mcp_servers=tools_config.mcp_servers,
-        crawler_runtime=crawler_runtime,
-        crawler_max_iterations=crawler.max_tool_iterations if crawler else 20,
-        crawler_max_input_tokens=crawler.max_tokens.input if crawler else 20000,
-        crawler_max_output_tokens=crawler.max_tokens.output if crawler else 2000,
-        crawler_reasoning_effort=crawler.reasoning_effort if crawler else 'low',
+        crawler_runtime=optional.runtime,
+        crawler_max_iterations=optional.max_iterations,
+        crawler_max_input_tokens=optional.max_input_tokens,
+        crawler_max_output_tokens=optional.max_output_tokens,
+        crawler_reasoning_effort=optional.reasoning_effort,
     )
-    return ForkToolDependencies(manager, manager.resource_policy, locks, crawler_enabled=crawler_enabled)
+    return ForkToolDependencies(manager, manager.resource_policy, locks, crawler_enabled=optional.enabled)

@@ -563,11 +563,26 @@ class TelegramChannel(BaseChannel):
         # this lock and can therefore still interleave with this dormant path.
         self._receipt_target_locks: dict[tuple[int, int | None] | int, asyncio.Lock] = {}
         self._busy_inbox: TelegramBusyInbox | None = None
+        self._authenticated_startup: Callable[[TelegramChannel], Awaitable[None]] | None = None
 
     def _require_app(self) -> TelegramApplication:
         if self._app is None:
             raise RuntimeError("Telegram application is not started")
         return self._app
+
+    @property
+    def authenticated_account_id(self) -> str | None:
+        return str(self._bot_user_id) if type(self._bot_user_id) is int and self._bot_user_id > 0 else None
+
+    def install_authenticated_startup(self, callback: Callable[[TelegramChannel], Awaitable[None]]) -> None:
+        """Install a local owner before receiving any provider updates."""
+        if self._running or self._authenticated_startup is not None:
+            raise RuntimeError("Telegram startup owner must be installed before channel start")
+        self._authenticated_startup = callback
+
+    def remove_authenticated_startup(self, callback: Callable[[TelegramChannel], Awaitable[None]]) -> None:
+        if self._authenticated_startup == callback:
+            self._authenticated_startup = None
 
     def register_busy_inbox(self, edge: TelegramBusyInbox) -> None:
         """Bind one AgentLoop-owned edge after this bot's identity is known."""
@@ -792,6 +807,8 @@ class TelegramChannel(BaseChannel):
         self._bot_user_id = getattr(bot_info, "id", None)
         self._bot_username = getattr(bot_info, "username", None)
         self.logger.info("bot @{} connected", bot_info.username)
+        if self._authenticated_startup is not None:
+            await self._authenticated_startup(self)
 
         try:
             await self._app.bot.set_my_commands(self.BOT_COMMANDS)
@@ -1270,6 +1287,26 @@ class TelegramChannel(BaseChannel):
         action_id: str,
         request_digest: str,
     ) -> ChannelTextReceipt:
+        return await self._send_text_bundle_with_receipt(target, messages, action_id=action_id,
+                                                        request_digest=request_digest)
+
+    @property
+    def receipt_transport_ready(self) -> bool:
+        return self._app is not None and self._app_ready.is_set()
+
+    async def send_thread_text_with_receipt(
+        self, target: str, messages: Sequence[str], *, message_thread_id: int,
+        action_id: str, request_digest: str,
+    ) -> ChannelTextReceipt:
+        if type(message_thread_id) is not int or message_thread_id <= 0:
+            raise ChannelDeliveryPreflightError("invalid_thread")
+        return await self._send_text_bundle_with_receipt(target, messages, message_thread_id=message_thread_id,
+                                                        action_id=action_id, request_digest=request_digest)
+
+    async def _send_text_bundle_with_receipt(
+        self, target: str, messages: Sequence[str], *, action_id: str, request_digest: str,
+        message_thread_id: int | None = None,
+    ) -> ChannelTextReceipt:
         """Send one text bundle with no hidden retries and strict acknowledgements.
 
         The process-local lock prevents two receipt-path bundles for the same
@@ -1339,21 +1376,24 @@ class TelegramChannel(BaseChannel):
             self._receipt_target_locks[chat_id] = lock
         async with lock:
             receipts: list[ChannelTextPartReceipt] = []
+            thread_options = {"message_thread_id": message_thread_id} if message_thread_id is not None else {}
             for message_index, part_index, markdown, html in rendered:
                 try:
                     try:
                         response = await app.bot.send_message(
-                            chat_id=chat_id, text=html, parse_mode="HTML"
+                            chat_id=chat_id, text=html, parse_mode="HTML", **thread_options,
                         )
                     except BadRequest as exc:
                         if not self._is_html_parse_rejection(exc):
                             raise ChannelDeliveryRejectedError("provider_rejected") from exc
                         try:
-                            response = await app.bot.send_message(chat_id=chat_id, text=markdown)
+                            response = await app.bot.send_message(chat_id=chat_id, text=markdown, **thread_options)
                         except BadRequest as plain_exc:
                             raise ChannelDeliveryRejectedError(
                                 "provider_rejected"
                             ) from plain_exc
+                    if message_thread_id is not None and response.message_thread_id != message_thread_id:
+                        raise RuntimeError("telegram_thread_receipt_mismatch")
                     receipt_part = self._receipt_part(
                         response,
                         index=len(receipts),

@@ -19,6 +19,7 @@ from nanobot.agent import memory_recovery_transaction_prepare as transaction_pre
 from nanobot.agent import memory_recovery_transaction_terminal as transaction_terminal
 from nanobot.agent.memory_recovery_manifest import MemoryRecoveryManifest
 from nanobot.session.manager import JsonlSessionStore
+from tests.state_stat import content_stat
 
 KEY = "telegram:offline-receipt"
 WORKSPACE_ID = "a" * 32
@@ -79,21 +80,21 @@ def test_reconcile_from_receipt_only_and_replay(tmp_path: Path) -> None:
     workspace, sessions, source = _fixture(tmp_path)
     memory = workspace / "memory"
     pending = memory / ".consolidation.pending.json"
-    before = (pending.read_bytes(), pending.stat())
+    before = (pending.read_bytes(), content_stat(pending.stat()))
     result = coordinator.reconcile_pending_memory_receipt_offline(
         workspace, sessions_root=sessions,
     )
     assert result.phase == "COMPLETE"
     assert pending.read_bytes() == before[0]
-    assert pending.stat() == before[1]
+    assert content_stat(pending.stat()) == before[1]
     assert (memory / "history.jsonl").read_bytes().count(b"offline-marker") == 1
     assert json.loads(source.read_bytes().splitlines()[0])["last_consolidated"] == 2
-    targets = {p.name: (p.read_bytes(), p.stat()) for p in (pending, source,
+    targets = {p.name: (p.read_bytes(), content_stat(p.stat())) for p in (pending, source,
         memory / "history.jsonl", memory / "MEMORY.md", memory / ".cursor")}
     assert coordinator.reconcile_pending_memory_receipt_offline(
         workspace, sessions_root=sessions,
     ).phase == "COMPLETE"
-    assert {p.name: (p.read_bytes(), p.stat()) for p in (pending, source,
+    assert {p.name: (p.read_bytes(), content_stat(p.stat())) for p in (pending, source,
         memory / "history.jsonl", memory / "MEMORY.md", memory / ".cursor")} == targets
 
 

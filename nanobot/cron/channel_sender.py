@@ -10,6 +10,7 @@ from nanobot.channels.delivery_contract import (
     ChannelDeliveryRejectedError,
     PartialChannelTextDeliveryError,
     ReceiptCapableTextChannel,
+    ThreadReceiptCapableTextChannel,
     validate_receipt_binding,
 )
 from nanobot.cron.delivery_runtime import (
@@ -49,12 +50,17 @@ class CronChannelSender:
             return PermanentNotSent("unsupported_receipt_transport")
         messages = tuple(message.content for message in request.messages)
         try:
-            receipt = await channel.send_text_with_receipt(
-                request.to,
-                messages,
-                action_id=request.action_id,
-                request_digest=request.request_digest,
-            )
+            if request.message_thread_id is not None:
+                if not isinstance(channel, ThreadReceiptCapableTextChannel):
+                    return PermanentNotSent("unsupported_topic_transport")
+                receipt = await channel.send_thread_text_with_receipt(
+                    request.to, messages, message_thread_id=request.message_thread_id,
+                    action_id=request.action_id, request_digest=request.request_digest,
+                )
+            else:
+                receipt = await channel.send_text_with_receipt(
+                    request.to, messages, action_id=request.action_id, request_digest=request.request_digest,
+                )
         except ChannelDeliveryPreflightError as exc:
             return ConfirmedNotSent(exc.reason_code)
         except ChannelDeliveryRejectedError as exc:

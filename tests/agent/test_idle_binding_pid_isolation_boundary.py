@@ -3,6 +3,7 @@
 import gc
 import os
 import traceback
+from pathlib import Path
 from types import CodeType
 
 import pytest
@@ -36,7 +37,7 @@ def test_real_snapshot_gc_does_not_contaminate_registry_pid_probe(tmp_path, monk
     def observe_real_pid():
         if collecting[0]:
             origins.append([
-                (frame.filename.split("/source/")[-1], frame.name, frame.lineno)
+                (str(Path(frame.filename).resolve()), frame.name, frame.lineno)
                 for frame in traceback.extract_stack()
                 if frame.name == "forget"
             ])
@@ -65,7 +66,7 @@ def test_real_snapshot_gc_does_not_contaminate_registry_pid_probe(tmp_path, monk
                     assert len(origins) == 14
                     assert all(
                         len(stack) == 1
-                        and stack[0][0] == "nanobot/agent/memory_recovery_storage.py"
+                        and stack[0][0] == str(Path(storage.__file__).resolve())
                         and stack[0][1] == "forget"
                         and stack[0][2] in forget_lines
                         for stack in origins
