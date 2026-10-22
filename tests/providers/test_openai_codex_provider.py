@@ -98,3 +98,86 @@ async def test_consume_sse_path_stores_safe_ids() -> None:
     call_id, item_id = tool_calls[0].id.split("|", 1)
     assert len(call_id) <= 64
     assert len(item_id) <= 64
+
+
+@pytest.mark.asyncio
+async def test_consume_sse_response_failed_is_retryable_transient() -> None:
+    from nanobot.providers.openai_codex_provider import _CodexHTTPError, _consume_sse
+
+    lines = ['data: {"type":"response.failed"}', ""]
+
+    class _Response:
+        async def aiter_lines(self):
+            for line in lines:
+                yield line
+
+    with pytest.raises(_CodexHTTPError) as excinfo:
+        await _consume_sse(_Response())
+
+    assert excinfo.value.status_code == 502
+    assert excinfo.value.retry_after is not None
+    assert excinfo.value.retry_after > 0
+    assert excinfo.value.error_code == "codex_response_failed"
+
+
+@pytest.mark.asyncio
+async def test_codex_transient_error_is_retried(monkeypatch) -> None:
+    from nanobot.providers import openai_codex_provider as mod
+
+    class _Token:
+        account_id = "acct"
+        access = "token"
+
+    provider = mod.OpenAICodexProvider()
+    calls = {"n": 0}
+
+    async def flaky_request(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise mod._CodexHTTPError(
+                "Codex response failed",
+                status_code=502,
+                retry_after=15.0,
+                error_type="server_error",
+                error_code="codex_response_failed",
+            )
+        return "recovered", [], "stop", []
+
+    monkeypatch.setattr(mod, "_request_codex", flaky_request)
+    monkeypatch.setattr(mod, "get_codex_token", lambda: _Token())
+
+    async def _no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(mod.asyncio, "sleep", _no_sleep)
+
+    response = await provider.chat_with_retry([{"role": "user", "content": "hi"}])
+
+    assert calls["n"] == 2
+    assert response.finish_reason == "stop"
+    assert response.content == "recovered"
+
+
+@pytest.mark.asyncio
+async def test_codex_transport_error_is_transient(monkeypatch) -> None:
+    import httpx
+
+    from nanobot.providers import openai_codex_provider as mod
+
+    class _Token:
+        account_id = "acct"
+        access = "token"
+
+    provider = mod.OpenAICodexProvider()
+
+    async def boom(*args, **kwargs):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(mod, "_request_codex", boom)
+    monkeypatch.setattr(mod, "get_codex_token", lambda: _Token())
+
+    response = await provider.chat([{"role": "user", "content": "hi"}])
+
+    assert response.finish_reason == "error"
+    assert response.error_status_code == 503
+    assert provider._is_transient_response(response) is True

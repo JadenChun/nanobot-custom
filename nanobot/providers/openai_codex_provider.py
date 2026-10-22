@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from collections.abc import Awaitable, Callable
 from typing import Any, AsyncGenerator
 
@@ -17,6 +18,10 @@ from nanobot.providers.codex_auth import get_token as get_codex_token
 DEFAULT_CODEX_URL = "https://chatgpt.com/backend-api/codex/responses"
 DEFAULT_ORIGINATOR = "codex_cli_rs"
 _MAX_CODEX_ID_LEN = 64
+# Transient Codex failures (SSE ``response.failed``/``error`` events and
+# transport errors) are retried by the shared provider retry wrapper. A
+# non-zero ``retry_after`` makes that wrapper wait before the next attempt.
+_CODEX_TRANSIENT_RETRY_AFTER = max(0.0, float(os.environ.get("CODEX_RETRY_AFTER_SECONDS", "15")))
 
 
 class OpenAICodexProvider(LLMProvider):
@@ -92,6 +97,19 @@ class OpenAICodexProvider(LLMProvider):
                 error_status_code=e.status_code,
                 error_type=e.error_type,
                 error_code=e.error_code,
+            )
+        except httpx.TransportError as e:
+            msg = f"Error calling Codex: {e}"
+            logger.warning(
+                "Codex transport error ({}); retrying after {:.0f}s",
+                type(e).__name__, _CODEX_TRANSIENT_RETRY_AFTER,
+            )
+            return LLMResponse(
+                content=msg, finish_reason="error",
+                retry_after=_CODEX_TRANSIENT_RETRY_AFTER,
+                error_status_code=503,
+                error_type="server_error",
+                error_code="codex_transport_error",
             )
         except Exception as e:
             msg = f"Error calling Codex: {e}"
@@ -446,7 +464,16 @@ async def _consume_sse(
             status = (event.get("response") or {}).get("status")
             finish_reason = _map_finish_reason(status)
         elif event_type in {"error", "response.failed"}:
-            raise RuntimeError("Codex response failed")
+            # Treat a server-side stream failure as transient so the shared
+            # retry wrapper (chat_with_retry / chat_stream_with_retry) retries
+            # after a delay instead of ending the agent turn immediately.
+            raise _CodexHTTPError(
+                "Codex response failed",
+                status_code=502,
+                retry_after=_CODEX_TRANSIENT_RETRY_AFTER,
+                error_type="server_error",
+                error_code="codex_response_failed",
+            )
 
     return content, tool_calls, finish_reason, []
 
