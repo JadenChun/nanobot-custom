@@ -1,9 +1,21 @@
 """Tool registry for dynamic tool management."""
 
-from collections.abc import Iterator
-from typing import Any
+from __future__ import annotations
 
-from nanobot.agent.tools.base import Tool
+import json
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, cast
+
+from nanobot.agent.tools.base import Tool, ToolResult
+from nanobot.agent.tools.context import ContextAware, current_request_context
+from nanobot.agent.tools.producer_adapters import accepted_producer_receipt
+
+if TYPE_CHECKING:
+    from nanobot.runtime_context import RuntimeContextProvider
+
+
+def is_tool_error_result(result: Any) -> bool:
+    return isinstance(result, ToolResult) and result.is_error
 
 
 class ToolRegistry:
@@ -15,53 +27,274 @@ class ToolRegistry:
 
     def __init__(self):
         self._tools: dict[str, Tool] = {}
+        self._cached_definitions: list[dict[str, Any]] | None = None
 
     def register(self, tool: Tool) -> None:
         """Register a tool."""
+        if tool.name in self._tools:
+            raise ValueError(f"Duplicate tool registration: {tool.name}")
         self._tools[tool.name] = tool
+        self._cached_definitions = None
+
+    def replace(self, tool: Tool) -> None:
+        """Explicitly replace an existing registration during validated reload."""
+        if tool.name not in self._tools:
+            raise ValueError(f"Cannot replace unregistered tool: {tool.name}")
+        self._tools[tool.name] = tool
+        self._cached_definitions = None
 
     def unregister(self, name: str) -> None:
         """Unregister a tool by name."""
         self._tools.pop(name, None)
+        self._cached_definitions = None
 
     def get(self, name: str) -> Tool | None:
         """Get a tool by name."""
         return self._tools.get(name)
 
+    def get_runtime_context_providers(self) -> list[RuntimeContextProvider]:
+        """Return tool-owned providers in stable tool-name order."""
+        providers: list[RuntimeContextProvider] = []
+        for name in sorted(self._tools):
+            provider = self._tools[name].runtime_context_provider()
+            if provider is not None:
+                providers.append(provider)
+        return providers
+
+    @staticmethod
+    def _lookup_key(name: str) -> str:
+        """Normalize names for suggestions only; never for execution."""
+        return "".join(ch.lower() for ch in name if ch.isalnum())
+
+    def _suggest_name(self, name: str) -> str | None:
+        key = self._lookup_key(str(name or ""))
+        if not key:
+            return None
+        matches = [
+            registered
+            for registered in self._tools
+            if self._lookup_key(registered) == key
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
     def has(self, name: str) -> bool:
         """Check if a tool is registered."""
-        return name in self._tools
+        return self.get(name) is not None
+
+    @staticmethod
+    def _schema_name(schema: dict[str, Any]) -> str:
+        """Extract a normalized tool name from either OpenAI or flat schemas."""
+        fn = schema.get("function")
+        if isinstance(fn, dict):
+            name = cast(dict[str, Any], fn).get("name")
+            if isinstance(name, str):
+                return name
+        name = schema.get("name")
+        return name if isinstance(name, str) else ""
 
     def get_definitions(self) -> list[dict[str, Any]]:
-        """Get all tool definitions in OpenAI format."""
-        return [tool.to_schema() for tool in self._tools.values()]
+        """Get tool definitions with stable ordering for cache-friendly prompts.
 
-    def iter_tools(self) -> Iterator[Tool]:
-        """Iterate over registered tool instances."""
-        return iter(self._tools.values())
+        Built-in tools are sorted first as a stable prefix, then MCP tools are
+        sorted and appended. The result is cached until the next
+        register/unregister call.
+        """
+        if self._cached_definitions is None:
+            definitions = [tool.to_schema() for tool in self._tools.values()]
+            builtins: list[dict[str, Any]] = []
+            mcp_tools: list[dict[str, Any]] = []
+            for schema in definitions:
+                name = self._schema_name(schema)
+                if name.startswith("mcp_"):
+                    mcp_tools.append(schema)
+                else:
+                    builtins.append(schema)
 
-    async def execute(self, name: str, params: dict[str, Any]) -> Any:
-        """Execute a tool by name with given parameters."""
-        _HINT = "\n\n[Analyze the error above and try a different approach.]"
+            builtins.sort(key=self._schema_name)
+            mcp_tools.sort(key=self._schema_name)
+            self._cached_definitions = builtins + mcp_tools
 
-        tool = self._tools.get(name)
+        return self._cached_definitions
+
+    def prepare_call(
+        self,
+        name: str,
+        params: Any,
+    ) -> tuple[Tool | None, Any, str | None]:
+        """Resolve, cast, and validate one tool call."""
+        tool = self.get(name)
         if not tool:
-            return f"Error: Tool '{name}' not found. Available: {', '.join(self.tool_names)}"
+            suggestion = self._suggest_name(str(name))
+            hint = f" Did you mean '{suggestion}'? Tool names must match exactly." if suggestion else ""
+            return None, params, (
+                ToolResult.error(
+                    f"Error: Tool '{name}' not found.{hint} Available: {', '.join(self.tool_names)}"
+                )
+            )
+        # Compatibility for external tools that still implement the legacy
+        # setter protocol. Built-ins read the authoritative ContextVar
+        # directly and never copy routing state.
+        if isinstance(tool, ContextAware) and (ctx := current_request_context()) is not None:
+            tool.set_context(ctx)
+
+        params = self._coerce_params(tool, params)
+        if not isinstance(params, dict):
+            return tool, params, (
+                ToolResult.error(
+                    f"Error: Tool '{name}' parameters must be a JSON object, got "
+                    f"{type(params).__name__}. Use named parameters like "
+                    'tool_name(param1="value1", param2="value2") matching the tool schema.'
+                )
+            )
+
+        cast_params = tool.cast_params(cast(dict[str, Any], params))
+        errors = tool.validate_params(cast_params)
+        if errors:
+            return tool, cast_params, (
+                ToolResult.error(f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors))
+            )
+        return tool, cast_params, None
+
+    @classmethod
+    def _coerce_argument_value(cls, value: Any) -> Any:
+        if value is None:
+            return {}
+        if not isinstance(value, str):
+            return value
+
+        stripped = value.strip()
+        if not stripped:
+            return {}
+
+        if not stripped.startswith(("{", "[")):
+            return value
 
         try:
-            # Attempt to cast parameters to match schema types
-            params = tool.cast_params(params)
-            
-            # Validate parameters
-            errors = tool.validate_params(params)
-            if errors:
-                return f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors) + _HINT
-            result = await tool.execute(**params)
-            if isinstance(result, str) and result.startswith("Error"):
-                return result + _HINT
-            return result
-        except Exception as e:
-            return f"Error executing {name}: {str(e)}" + _HINT
+            parsed = json.loads(stripped)
+        except Exception:
+            return value
+
+        return parsed
+
+    @classmethod
+    def _coerce_params(cls, tool: Tool, params: Any) -> Any:
+        params = cls._coerce_argument_value(params)
+        return cls._unwrap_arguments_payload(tool, params)
+
+    @classmethod
+    def _unwrap_arguments_payload(cls, tool: Tool, params: Any) -> Any:
+        if not isinstance(params, dict):
+            return params
+        arguments_payload = cast(dict[str, Any], params)
+        if set(arguments_payload) != {"arguments"}:
+            return arguments_payload
+        properties = (tool.parameters or {}).get("properties", {})
+        if isinstance(properties, dict) and "arguments" in properties:
+            return arguments_payload
+        return cls._coerce_argument_value(arguments_payload.get("arguments"))
+
+    @staticmethod
+    async def execute_prepared(tool: Tool, params: dict[str, Any], context: Any = None) -> Any:
+        """Execute a validated call once, retaining terminal fork metadata."""
+        from nanobot.agent.turn import ToolOutcome
+
+        result = (await tool.execute_with_context(context, **params)
+                  if context is not None else await tool.execute(**params))
+        outcome = result if isinstance(result, ToolOutcome) else ToolOutcome(content=result)
+        if outcome.producer_receipt is not None:
+            if not accepted_producer_receipt(tool, outcome.content, outcome.producer_receipt):
+                # Strip only untrusted producer authority.  Other independently
+                # validated terminal, retrieval, and handoff behavior must retain
+                # its existing handling below.
+                outcome = replace(outcome, producer_receipt=None)
+
+        if outcome.retrieval_receipt is not None:
+            from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt, ReadArtifactTool
+
+            receipt = outcome.retrieval_receipt
+            if (type(tool) is not ReadArtifactTool or type(receipt) is not ArtifactRetrievalReceipt
+                    or not receipt.matches(outcome.content)):
+                outcome = ToolOutcome(outcome.content, outcome.stop_reason, outcome.policy_metadata,
+                                      producer_receipt=outcome.producer_receipt)
+        if outcome.handoff_receipt is not None:
+            receipt = outcome.handoff_receipt
+            if not ToolRegistry._accepts_handoff_receipt(tool, receipt, context):
+                outcome = ToolOutcome(
+                    outcome.content,
+                    outcome.stop_reason,
+                    outcome.policy_metadata,
+                    producer_receipt=outcome.producer_receipt,
+                    retrieval_receipt=outcome.retrieval_receipt,
+                )
+        # Tool output is opaque text.  In particular, command-like tools can
+        # successfully report a payload that starts with ``Error``.  Only the
+        # structured result marker (or an explicit ToolOutcome stop state
+        # supplied by the tool) establishes terminal semantics.
+        if is_tool_error_result(outcome.content):
+            return ToolOutcome(content=outcome.content, stop_reason=outcome.stop_reason or "tool_error",
+                               policy_metadata=outcome.policy_metadata)
+        return outcome
+
+    @staticmethod
+    def _accepts_handoff_receipt(tool: Tool, receipt: object, context: Any) -> bool:
+        """Retain receipts only from the child selector or concrete foreground wrappers."""
+        from nanobot.agent.tools.artifact_handoff import ArtifactHandoffTool
+
+        if type(tool) is ArtifactHandoffTool:
+            return tool.accepts_receipt(receipt)
+
+        from nanobot.agent.tools.delegation import (
+            DelegateTaskTool,
+            PlanTaskTool,
+            ReviewWorkTool,
+        )
+        from nanobot.agent.tools.explore import ExploreTool
+        from nanobot.agent.turn import TurnContext
+        from nanobot.session.artifact_grants import ArtifactHandoffReceipt
+
+        return (
+            type(tool) in {DelegateTaskTool, ExploreTool, PlanTaskTool, ReviewWorkTool}
+            and isinstance(context, TurnContext)
+            and context.source_writer is not None
+            and isinstance(receipt, ArtifactHandoffReceipt)
+            and receipt.targets_parent_writer(context.source_writer)
+        )
+
+    async def execute(self, name: str, params: Any, context: Any = None, *, execution_context: Any = None) -> Any:
+        """Preserve contextual outcomes and upstream preparation/legacy errors."""
+        from nanobot.agent.turn import ToolOutcome
+
+        context = context if context is not None else execution_context
+        hint = "\n\n[Analyze the error above and try a different approach.]"
+        try:
+            tool, params, error = self.prepare_call(name, params)
+            if error:
+                outcome = ToolOutcome(content=ToolResult.error(str(error) + hint), stop_reason="tool_error")
+            else:
+                assert tool is not None
+                outcome = await self.execute_prepared(tool, params, context)
+                if outcome.stop_reason == "tool_error" and isinstance(outcome.content, str):
+                    outcome = ToolOutcome(content=ToolResult.error(outcome.content + hint),
+                                          stop_reason=outcome.stop_reason, policy_metadata=outcome.policy_metadata)
+        except Exception as exc:
+            outcome = ToolOutcome(content=ToolResult.error(f"Error executing {name}: {exc}" + hint),
+                                  stop_reason="tool_error")
+        return outcome if context is not None else outcome.content
+
+    async def execute_with_context(self, name: str, params: Any, context: Any) -> Any:
+        return await self.execute(name, params, context=context)
+
+    def iter_tools(self):
+        return iter(self._tools.values())
+
+    def filtered(self, names: list[str]) -> ToolRegistry:
+        registry = ToolRegistry()
+        for name in names:
+            if name in self._tools:
+                registry.register(self._tools[name])
+        return registry
 
     @property
     def tool_names(self) -> list[str]:
@@ -72,13 +305,4 @@ class ToolRegistry:
         return len(self._tools)
 
     def __contains__(self, name: str) -> bool:
-        return name in self._tools
-
-    def filtered(self, names: list[str]) -> "ToolRegistry":
-        """Return a new registry containing only the named tools."""
-        reg = ToolRegistry()
-        for name in names:
-            tool = self._tools.get(name)
-            if tool is not None:
-                reg.register(tool)
-        return reg
+        return self.has(name)

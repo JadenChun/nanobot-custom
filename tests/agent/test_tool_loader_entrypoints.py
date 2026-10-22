@@ -1,0 +1,320 @@
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.context import ToolContext
+from nanobot.agent.tools.loader import ToolLoader
+from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
+from nanobot.config.schema import ToolsConfig
+
+
+class _NamedTool(Tool):
+    def __init__(self, name: str, result: Any = "ok") -> None:
+        self._name = name
+        self._result = result
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._name
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs: Any) -> Any:
+        return self._result
+
+
+def _load_with_guarded_runtime(
+    loader: ToolLoader,
+    ctx: ToolContext,
+    registry: ToolRegistry,
+    *,
+    core_tools: list[Tool],
+) -> list[str]:
+    """Registration is definition-only; runtime admission belongs to composition."""
+    with (
+        patch("nanobot.migration_guard.require_runtime_ready") as ready,
+        patch("nanobot.agent.tools.fork_factories.construct_core_tools", return_value=core_tools),
+    ):
+        names = loader.load(ctx, registry)
+    ready.assert_not_called()
+    return names
+
+
+def test_loader_discovers_entry_point_tools():
+    """Simulate an entry-point plugin being discovered."""
+    mock_ep = MagicMock()
+    mock_ep.name = "my_plugin"
+
+    class _FakeTool(Tool):
+        __name__ = "FakeTool"
+        _plugin_discoverable = True
+        _scopes = {"core"}
+
+        @property
+        def name(self) -> str:
+            return "fake_tool"
+
+        @property
+        def description(self) -> str:
+            return "A fake tool for testing."
+
+        @property
+        def parameters(self) -> dict:
+            return {"type": "object"}
+
+        @classmethod
+        def enabled(cls, ctx):
+            return True
+
+        @classmethod
+        def create(cls, ctx):
+            return MagicMock()
+
+        async def execute(self, **_):
+            return "ok"
+
+    mock_ep.load.return_value = _FakeTool
+
+    with patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]):
+        loader = ToolLoader()
+        discovered = loader._discover_plugins()
+
+    assert "my_plugin" in discovered
+    assert discovered["my_plugin"] is _FakeTool
+
+
+def test_loader_skips_abstract_entry_point_tools():
+    """Verify abstract tool classes registered via entry_points are skipped."""
+    mock_ep = MagicMock()
+    mock_ep.name = "abstract_plugin"
+
+    class _AbstractTool(Tool):
+        __name__ = "AbstractTool"
+        _plugin_discoverable = True
+        _scopes = {"core"}
+
+        @classmethod
+        def enabled(cls, ctx):
+            return True
+
+        @classmethod
+        def create(cls, ctx):
+            return MagicMock()
+
+        # Intentionally missing abstract properties (name, description, parameters, execute)
+
+    mock_ep.load.return_value = _AbstractTool
+
+    with patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]):
+        loader = ToolLoader()
+        discovered = loader._discover_plugins()
+
+    assert "abstract_plugin" not in discovered
+
+
+@pytest.mark.asyncio
+async def test_loader_entry_point_error_wrapper_preserves_tool_api(tmp_path):
+    """Only adapt legacy plugin error strings; keep the wrapped tool API intact."""
+    mock_ep = MagicMock()
+    mock_ep.name = "api_plugin"
+
+    class _ApiPluginTool(Tool):
+        config_key = "api_plugin"
+
+        @property
+        def name(self) -> str:
+            return "api_plugin"
+
+        @property
+        def description(self) -> str:
+            return "Entry-point plugin with custom tool API methods."
+
+        @property
+        def parameters(self) -> dict:
+            return {"type": "object", "properties": {"value": {"type": "string"}}}
+
+        @property
+        def read_only(self) -> bool:
+            return True
+
+        @property
+        def concurrency_safe(self) -> bool:
+            return False
+
+        def cast_params(self, params: dict) -> dict:
+            return {"value": str(params["value"])}
+
+        def validate_params(self, params: dict) -> list[str]:
+            return [] if params == {"value": "1"} else ["bad value"]
+
+        def to_schema(self) -> dict:
+            return {"name": self.name, "custom": True}
+
+        async def execute(self, **_):
+            return "Error: plugin failed"
+
+    mock_ep.load.return_value = _ApiPluginTool
+
+    registry = ToolRegistry()
+    with patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]):
+        _load_with_guarded_runtime(
+            ToolLoader(test_classes=[]),
+            ToolContext(config=ToolsConfig(), workspace=str(tmp_path)),
+            registry,
+            core_tools=[],
+        )
+
+    tool = registry.get("api_plugin")
+    assert tool is not None
+    assert tool.config_key == "api_plugin"
+    assert tool.read_only is True
+    assert tool.concurrency_safe is False
+    assert tool.cast_params({"value": 1}) == {"value": "1"}
+    assert tool.validate_params({"value": "1"}) == []
+    assert tool.to_schema() == {"name": "api_plugin", "custom": True}
+
+    result = await tool.execute(value="1")
+    assert is_tool_error_result(result) is True
+    assert str(result) == "Error: plugin failed"
+
+
+def test_loader_rejects_core_plugin_name_collision_before_registration(tmp_path):
+    mock_ep = MagicMock()
+    mock_ep.name = "plugin"
+
+    class _CollidingPlugin(Tool):
+        @property
+        def name(self) -> str:
+            return "shared"
+
+        @property
+        def description(self) -> str:
+            return "plugin"
+
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs: Any) -> Any:
+            return "ok"
+
+    mock_ep.load.return_value = _CollidingPlugin
+    registry = ToolRegistry()
+    with patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]):
+        with pytest.raises(ValueError, match="Duplicate tool registration"):
+            _load_with_guarded_runtime(
+                ToolLoader(test_classes=[]),
+                ToolContext(config=ToolsConfig(), workspace=str(tmp_path)),
+                registry,
+                core_tools=[_NamedTool("shared")],
+            )
+
+    assert registry.tool_names == []
+
+
+def test_loader_rejects_plugin_schema_name_collision_before_registration(tmp_path):
+    mock_ep = MagicMock()
+    mock_ep.name = "plugin"
+
+    class _SchemaCollisionPlugin(_NamedTool):
+        @classmethod
+        def create(cls, ctx: ToolContext) -> Tool:
+            return cls("plugin")
+
+        def to_schema(self) -> dict[str, Any]:
+            return {"name": "shared", "custom": True}
+
+    mock_ep.load.return_value = _SchemaCollisionPlugin
+    registry = ToolRegistry()
+    with patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]):
+        with pytest.raises(ValueError, match="schema"):
+            _load_with_guarded_runtime(
+                ToolLoader(test_classes=[]),
+                ToolContext(config=ToolsConfig(), workspace=str(tmp_path)),
+                registry,
+                core_tools=[_NamedTool("shared")],
+            )
+
+    assert registry.tool_names == []
+
+
+def test_loader_rejects_duplicate_plugin_tool_names_before_registration(tmp_path):
+    first = MagicMock()
+    first.name = "a-plugin"
+    second = MagicMock()
+    second.name = "z-plugin"
+
+    class _FirstPlugin(_NamedTool):
+        @classmethod
+        def create(cls, ctx: ToolContext) -> Tool:
+            return cls("shared-plugin")
+
+    class _SecondPlugin(_NamedTool):
+        @classmethod
+        def create(cls, ctx: ToolContext) -> Tool:
+            return cls("shared-plugin")
+
+    first.load.return_value = _FirstPlugin
+    second.load.return_value = _SecondPlugin
+    registry = ToolRegistry()
+    with patch("nanobot.agent.tools.loader.entry_points", return_value=[second, first]):
+        with pytest.raises(ValueError, match="Duplicate tool registration"):
+            _load_with_guarded_runtime(
+                ToolLoader(test_classes=[]),
+                ToolContext(config=ToolsConfig(), workspace=str(tmp_path)),
+                registry,
+                core_tools=[],
+            )
+
+    assert registry.tool_names == []
+
+
+@pytest.mark.asyncio
+async def test_loader_wraps_plugin_contextual_legacy_error(tmp_path):
+    mock_ep = MagicMock()
+    mock_ep.name = "contextual-plugin"
+    observed_context: list[object] = []
+
+    class _ContextualPlugin(Tool):
+        @property
+        def name(self) -> str:
+            return "contextual_plugin"
+
+        @property
+        def description(self) -> str:
+            return "context-aware plugin"
+
+        @property
+        def parameters(self) -> dict[str, Any]:
+            return {"type": "object", "properties": {}}
+
+        async def execute(self, **kwargs: Any) -> Any:
+            raise AssertionError("contextual override was not used")
+
+        async def execute_with_context(self, context: Any, **kwargs: Any) -> Any:
+            observed_context.append(context)
+            return "Error: contextual plugin failed"
+
+    mock_ep.load.return_value = _ContextualPlugin
+    registry = ToolRegistry()
+    with patch("nanobot.agent.tools.loader.entry_points", return_value=[mock_ep]):
+        _load_with_guarded_runtime(
+            ToolLoader(test_classes=[]),
+            ToolContext(config=ToolsConfig(), workspace=str(tmp_path)),
+            registry,
+            core_tools=[],
+        )
+
+    context = object()
+    result = await registry.execute("contextual_plugin", {}, context=context)
+
+    assert observed_context == [context]
+    assert is_tool_error_result(result.content)

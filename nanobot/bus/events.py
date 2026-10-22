@@ -1,11 +1,25 @@
 """Event types for the message bus."""
 
-import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-DeliveryStatus = Literal["success", "failed", "unknown"]
+if TYPE_CHECKING:
+    from nanobot.events import AgentEvent
+    from nanobot.security.workspace_access import WorkspaceScope
+
+# Optional ``OutboundMessage.metadata`` key for structured, channel-agnostic UI
+# payloads. Value is JSON-serializable with at least ``kind``; rich clients may
+# render it and other channels may ignore unknown keys.
+OUTBOUND_META_AGENT_UI = "_agent_ui"
+
+# Internal-only inbound metadata minted by trusted transports and runtime
+# services. Never accept these keys verbatim from an untrusted client.
+INBOUND_META_RUNTIME_CONTROL = "_runtime_control"
+INBOUND_META_USER_SHELL = "_user_shell"
+RUNTIME_CONTROL_ACK = "_ack"
+RUNTIME_CONTROL_IMAGE_GENERATION_RELOAD = "image_generation_reload"
+RUNTIME_CONTROL_SESSION_DISCARD = "session_discard"
 
 
 @dataclass
@@ -20,43 +34,40 @@ class InboundMessage:
     media: list[str] = field(default_factory=list)  # Media URLs
     metadata: dict[str, Any] = field(default_factory=dict)  # Channel-specific data
     session_key_override: str | None = None  # Optional override for thread-scoped sessions
+    require_existing_session: bool = False
+    input_role: Literal["user", "system"] | None = None
+    # Trusted local jobs may retain a turn scope without changing the chat's
+    # selected project. This capability is never decoded from wire metadata.
+    workspace_scope: "WorkspaceScope | None" = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.workspace_scope is not None:
+            from nanobot.security.workspace_access import WorkspaceScope
+
+            if not isinstance(cast(object, self.workspace_scope), WorkspaceScope):
+                raise TypeError("workspace scope requires a trusted local WorkspaceScope")
 
     @property
     def session_key(self) -> str:
         """Unique key for session identification."""
         return self.session_key_override or f"{self.channel}:{self.chat_id}"
 
-
-@dataclass
-class DeliveryResult:
-    """Terminal downstream result for one outbound message.
-
-    Transport acknowledgement only.  Three distinct states:
-
-    * ``success``  — the channel accepted the message (e.g. Telegram's
-      ``send_message`` returned).  NOT proof the recipient read it.
-    * ``failed``   — the dispatcher exhausted its send retries and the channel
-      raised.  This is a CONFIRMED transport failure.
-    * ``unknown``  — the caller's bounded acknowledgement wait elapsed before
-      the final send result was observed (or no result could be determined).
-      The send may still succeed late; this is NOT a confirmed failure and must
-      not be treated as delivered or auto-resent.
-
-    ``.success`` is kept as a convenience property for callers that only care
-    about the positive case.
-    """
-
-    status: DeliveryStatus
-    error: str | None = None
-
     @property
-    def success(self) -> bool:
-        return self.status == "success"
+    def is_user_input(self) -> bool:
+        """Whether this message should enter the conversation as user input."""
+        if self.input_role is not None:
+            return self.input_role == "user"
+        return self.channel != "system"
 
 
 @dataclass
 class OutboundMessage:
-    """Message to send to a chat channel."""
+    """Message to send to a chat channel.
+
+    ``event`` carries internal runtime/UI semantics. ``metadata`` is reserved
+    for channel routing context (``message_id``, thread ids, etc.) and optional
+    ``OUTBOUND_META_AGENT_UI`` blobs for rich clients.
+    """
 
     channel: str
     chat_id: str
@@ -64,12 +75,5 @@ class OutboundMessage:
     reply_to: str | None = None
     media: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        # Runtime-only delivery acknowledgement.  Deliberately a plain instance
-        # attribute (NOT a dataclass field) so dataclasses.asdict()/astuple()/
-        # fields() can never include a Future.  The channel dispatcher resolves
-        # it after the final downstream send attempt.  None = fire-and-forget.
-        self.delivery_ack: asyncio.Future[DeliveryResult] | None = None
-
-
+    buttons: list[list[str]] = field(default_factory=list)
+    event: "AgentEvent | None" = None

@@ -14,6 +14,67 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypedDict
+
+if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletionContentPartParam
+
+
+class FrameEvent(TypedDict):
+    time: float
+    reason: str
+    priority: int
+
+
+class OCRResult(TypedDict):
+    enabled: bool
+    text: str
+    excerpt: str
+    word_count: int
+
+
+class StoryboardFrame(TypedDict):
+    index: int
+    timestamp_seconds: float
+    timestamp: str
+    reason: str
+    path: str
+    ocr_text: str
+    ocr_excerpt: str
+    ocr_word_count: int
+
+
+class SemanticFrame(TypedDict):
+    index: int
+    timestamp: str
+    reason: str
+    viewer_value: str
+    summary: str
+    confidence: float
+
+
+class SemanticStoryboard(TypedDict):
+    generator: str
+    overall_summary: str
+    video_flow: str
+    frames: list[SemanticFrame]
+
+
+class VideoSource(TypedDict):
+    path: str
+    size_bytes: int
+    mtime_ns: int
+    duration_seconds: float
+
+
+class StoryboardManifest(TypedDict):
+    source: VideoSource
+    parameters: dict[str, object]
+    ocr_enabled: bool
+    semantic_enabled: bool
+    frame_count: int
+    frames: list[StoryboardFrame]
+    semantic_storyboard: SemanticStoryboard
 
 PTS_TIME_RE = re.compile(r"pts_time:([0-9.]+)")
 WHITESPACE_RE = re.compile(r"\s+")
@@ -83,11 +144,11 @@ def _detect_scene_times(video_path: Path, scene_threshold: float) -> list[float]
     return times
 
 
-def _add_gap_frames(events: list[dict[str, object]], max_gap_seconds: float) -> list[dict[str, object]]:
+def _add_gap_frames(events: list[FrameEvent], max_gap_seconds: float) -> list[FrameEvent]:
     if not events:
         return []
 
-    filled: list[dict[str, object]] = [events[0]]
+    filled: list[FrameEvent] = [events[0]]
     for event in events[1:]:
         previous = filled[-1]
         prev_time = float(previous["time"])
@@ -99,8 +160,8 @@ def _add_gap_frames(events: list[dict[str, object]], max_gap_seconds: float) -> 
     return filled
 
 
-def _enforce_min_spacing(events: list[dict[str, object]], min_spacing_seconds: float) -> list[dict[str, object]]:
-    selected: list[dict[str, object]] = []
+def _enforce_min_spacing(events: list[FrameEvent], min_spacing_seconds: float) -> list[FrameEvent]:
+    selected: list[FrameEvent] = []
     for event in sorted(events, key=lambda item: (float(item["time"]), -int(item["priority"]))):
         if not selected:
             selected.append(event)
@@ -116,7 +177,7 @@ def _enforce_min_spacing(events: list[dict[str, object]], min_spacing_seconds: f
     return selected
 
 
-def _cap_events(events: list[dict[str, object]], max_frames: int) -> list[dict[str, object]]:
+def _cap_events(events: list[FrameEvent], max_frames: int) -> list[FrameEvent]:
     if len(events) <= max_frames:
         return events
     if max_frames <= 1:
@@ -137,9 +198,9 @@ def _build_events(
     min_spacing_seconds: float,
     max_gap_seconds: float,
     max_frames: int,
-) -> list[dict[str, object]]:
+) -> list[FrameEvent]:
     end_time = max(duration_seconds - 0.05, 0.0)
-    raw_events: list[dict[str, object]] = [
+    raw_events: list[FrameEvent] = [
         {"time": 0.0, "reason": "start", "priority": 3},
         *({"time": time, "reason": "scene", "priority": 2} for time in scene_times if 0.0 < time < end_time),
         {"time": end_time, "reason": "end", "priority": 3},
@@ -174,7 +235,7 @@ def _extract_frame(video_path: Path, timestamp_seconds: float, output_path: Path
     _run(cmd)
 
 
-def _load_manifest(manifest_path: Path) -> dict | None:
+def _load_manifest(manifest_path: Path) -> dict[str, Any] | None:
     if not manifest_path.is_file():
         return None
     try:
@@ -184,14 +245,14 @@ def _load_manifest(manifest_path: Path) -> dict | None:
 
 
 def _cache_valid(
-    manifest: dict | None,
+    manifest: dict[str, Any] | None,
     video_path: Path,
     params: dict[str, object],
     output_dir: Path,
 ) -> bool:
     if not manifest:
         return False
-    source = manifest.get("source") or {}
+    source: Any = manifest.get("source") or {}
     expected = {
         "path": str(video_path.resolve()),
         "size_bytes": video_path.stat().st_size,
@@ -203,7 +264,7 @@ def _cache_valid(
     if manifest.get("parameters") != params:
         return False
 
-    for frame in manifest.get("frames") or []:
+    for frame in manifest.get("frames") or ():
         path = output_dir / str(frame.get("path") or "")
         if not path.is_file():
             return False
@@ -229,7 +290,7 @@ def _default_viewer_value(reason: str) -> str:
     }.get(reason, "proof")
 
 
-def _default_semantic_summary(frame: dict[str, object]) -> str:
+def _default_semantic_summary(frame: StoryboardFrame) -> str:
     excerpt = str(frame.get("ocr_excerpt") or "").strip()
     reason = str(frame.get("reason") or "scene")
     if excerpt:
@@ -242,7 +303,7 @@ def _default_semantic_summary(frame: dict[str, object]) -> str:
     }.get(reason, "Meaningful frame from the video.")
 
 
-def _ocr_frame(frame_path: Path) -> dict[str, object]:
+def _ocr_frame(frame_path: Path) -> OCRResult:
     if not shutil.which("tesseract"):
         return {"enabled": False, "text": "", "excerpt": "", "word_count": 0}
 
@@ -267,7 +328,7 @@ def _ocr_frame(frame_path: Path) -> dict[str, object]:
     }
 
 
-def _sample_frames_for_semantics(frames: list[dict[str, object]], max_frames: int) -> list[dict[str, object]]:
+def _sample_frames_for_semantics(frames: list[StoryboardFrame], max_frames: int) -> list[StoryboardFrame]:
     if len(frames) <= max_frames:
         return frames
     if max_frames <= 1:
@@ -286,8 +347,8 @@ def _encode_frame_data_url(frame_path: Path) -> str:
     return f"data:image/jpeg;base64,{encoded}"
 
 
-def _build_fallback_semantic_storyboard(frames: list[dict[str, object]]) -> dict[str, object]:
-    semantic_frames = []
+def _build_fallback_semantic_storyboard(frames: list[StoryboardFrame]) -> SemanticStoryboard:
+    semantic_frames: list[SemanticFrame] = []
     for frame in frames:
         semantic_frames.append({
             "index": frame["index"],
@@ -306,13 +367,13 @@ def _build_fallback_semantic_storyboard(frames: list[dict[str, object]]) -> dict
 
 
 def _generate_semantic_storyboard(
-    frames: list[dict[str, object]],
+    frames: list[StoryboardFrame],
     output_dir: Path,
     *,
     semantic_enabled: bool,
     semantic_model: str,
     semantic_max_frames: int,
-) -> dict[str, object]:
+) -> SemanticStoryboard:
     if not semantic_enabled:
         return _build_fallback_semantic_storyboard(frames)
 
@@ -326,7 +387,7 @@ def _generate_semantic_storyboard(
         return _build_fallback_semantic_storyboard(frames)
 
     sampled_frames = _sample_frames_for_semantics(frames, semantic_max_frames)
-    content: list[dict[str, object]] = [{
+    content: list[ChatCompletionContentPartParam] = [{
         "type": "text",
         "text": (
             "Analyze these storyboard frames from a source video. "
@@ -359,9 +420,9 @@ def _generate_semantic_storyboard(
         )
         raw = response.choices[0].message.content or ""
         payload = json.loads(raw)
-        semantic_frames = []
+        semantic_frames: list[SemanticFrame] = []
         by_index = {int(frame["index"]): frame for frame in frames}
-        for item in payload.get("frames") or []:
+        for item in payload.get("frames") or ():
             index = int(item.get("index"))
             source = by_index.get(index)
             if not source:
@@ -388,7 +449,7 @@ def _generate_semantic_storyboard(
         return _build_fallback_semantic_storyboard(frames)
 
 
-def _build_storyboard_markdown(manifest: dict[str, object]) -> str:
+def _build_storyboard_markdown(manifest: StoryboardManifest) -> str:
     frames = manifest["frames"]
     lines = [
         "# Video Storyboard",
@@ -425,7 +486,7 @@ def _build_storyboard_markdown(manifest: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _build_storyboard_text(manifest: dict[str, object]) -> str:
+def _build_storyboard_text(manifest: StoryboardManifest) -> str:
     frames = manifest["frames"]
     lines = [
         "VIDEO STORYBOARD",
@@ -444,7 +505,7 @@ def _build_storyboard_text(manifest: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _build_semantic_storyboard_markdown(manifest: dict[str, object]) -> str:
+def _build_semantic_storyboard_markdown(manifest: StoryboardManifest) -> str:
     semantic = manifest["semantic_storyboard"]
     lines = [
         "# Semantic Video Storyboard",
@@ -473,7 +534,7 @@ def _build_semantic_storyboard_markdown(manifest: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _build_semantic_storyboard_text(manifest: dict[str, object]) -> str:
+def _build_semantic_storyboard_text(manifest: StoryboardManifest) -> str:
     semantic = manifest["semantic_storyboard"]
     lines = [
         "SEMANTIC VIDEO STORYBOARD",
@@ -491,7 +552,7 @@ def _build_semantic_storyboard_text(manifest: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _write_storyboards(output_dir: Path, manifest: dict[str, object]) -> None:
+def _write_storyboards(output_dir: Path, manifest: StoryboardManifest) -> None:
     (output_dir / "storyboard.md").write_text(_build_storyboard_markdown(manifest), encoding="utf-8")
     (output_dir / "storyboard.txt").write_text(_build_storyboard_text(manifest), encoding="utf-8")
     (output_dir / "semantic-storyboard.md").write_text(
@@ -534,7 +595,7 @@ def main() -> int:
 
     ocr_enabled = bool(shutil.which("tesseract")) and not args.no_ocr
     semantic_enabled = not args.no_semantic
-    params = {
+    params: dict[str, object] = {
         "scene_threshold": args.scene_threshold,
         "min_spacing_seconds": args.min_spacing_seconds,
         "max_gap_seconds": args.max_gap_seconds,
@@ -546,8 +607,8 @@ def main() -> int:
         "semantic_max_frames": args.semantic_max_frames,
     }
     manifest_path = output_dir / "manifest.json"
-    manifest = _load_manifest(manifest_path)
-    if not args.force and _cache_valid(manifest, video_path, params, output_dir):
+    cached_manifest = _load_manifest(manifest_path)
+    if not args.force and _cache_valid(cached_manifest, video_path, params, output_dir):
         print(json.dumps({"status": "cached", "output_dir": str(output_dir), "manifest": str(manifest_path)}))
         return 0
 
@@ -566,14 +627,14 @@ def main() -> int:
         shutil.rmtree(frames_dir)
     frames_dir.mkdir(parents=True, exist_ok=True)
 
-    manifest_frames: list[dict[str, object]] = []
+    manifest_frames: list[StoryboardFrame] = []
     for index, event in enumerate(events, start=1):
         timestamp_seconds = float(event["time"])
         reason = str(event["reason"])
         filename = f"frame-{index:03d}-{_timestamp_token(timestamp_seconds)}-{reason}.jpg"
         frame_path = frames_dir / filename
         _extract_frame(video_path, timestamp_seconds, frame_path, args.width)
-        ocr = _ocr_frame(frame_path) if ocr_enabled else {
+        ocr: OCRResult = _ocr_frame(frame_path) if ocr_enabled else {
             "enabled": False,
             "text": "",
             "excerpt": "",
@@ -590,7 +651,14 @@ def main() -> int:
             "ocr_word_count": ocr["word_count"],
         })
 
-    manifest = {
+    semantic_storyboard = _generate_semantic_storyboard(
+        manifest_frames,
+        output_dir,
+        semantic_enabled=semantic_enabled,
+        semantic_model=args.semantic_model,
+        semantic_max_frames=args.semantic_max_frames,
+    )
+    manifest: StoryboardManifest = {
         "source": {
             "path": str(video_path),
             "size_bytes": video_path.stat().st_size,
@@ -602,14 +670,8 @@ def main() -> int:
         "semantic_enabled": semantic_enabled,
         "frame_count": len(manifest_frames),
         "frames": manifest_frames,
+        "semantic_storyboard": semantic_storyboard,
     }
-    manifest["semantic_storyboard"] = _generate_semantic_storyboard(
-        manifest_frames,
-        output_dir,
-        semantic_enabled=semantic_enabled,
-        semantic_model=args.semantic_model,
-        semantic_max_frames=args.semantic_max_frames,
-    )
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     _write_storyboards(output_dir, manifest)
 

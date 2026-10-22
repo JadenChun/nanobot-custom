@@ -1,0 +1,7 @@
+{
+  "passed": 246,
+  "skipped": 6,
+  "raw_evidence": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p2-factories-pyd1h9w2",
+  "environment": "clean home, explicit env, network denied",
+  "junit_sha256": "7e395dab9deffa57b8b2ad2d20eaebdf9b844dcf00c05c9005c6c3f77a04434e"
+}

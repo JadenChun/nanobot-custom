@@ -1,0 +1,44 @@
+{
+  "staging": "4aa562d92828189b3fcefad079773efbab1d715a",
+  "p0_checkpoint": "b98d731a",
+  "upstream": "f47b8f23155ddec23cfb80ec001b544d495df89c",
+  "run": {
+    "command": [
+      "/usr/bin/sandbox-exec",
+      "-p",
+      "(version 1) (allow default) (deny network*)",
+      "/Users/jaden/Documents/github/nanobot-migration-integration/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/migration/test_p1_foundation.py",
+      "tests/agent/test_turn_contracts.py",
+      "tests/agent/test_run_store.py",
+      "tests/context_repo/test_manager_policy.py",
+      "tests/deploy/test_deployment_bundle.py",
+      "--junitxml=/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p1-validation-teu9p0uz/junit.xml"
+    ],
+    "environment": {
+      "HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p1-validation-teu9p0uz/home",
+      "PATH": "/Users/jaden/Documents/github/nanobot-migration-integration/.venv/bin:/usr/bin:/bin",
+      "PYTHONPATH": "/Users/jaden/Documents/github/nanobot-migration-integration",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PYTHONNOUSERSITE": "1",
+      "XDG_CONFIG_HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p1-validation-teu9p0uz/config",
+      "XDG_CACHE_HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p1-validation-teu9p0uz/cache",
+      "XDG_DATA_HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p1-validation-teu9p0uz/data"
+    }
+  },
+  "result": {
+    "foundation_passed": 32,
+    "combined_passed": 49,
+    "combined_failed": 5,
+    "skipped": 0
+  },
+  "evidence_sha256": {
+    "junit.xml": "6a2656f875ad7b783818480a78f54a7f7ba0c1fc253ab804527c1aa5168ae45a",
+    "pytest.log": "5ebce0e56009e3c003d04c4723da5b6fea144a7003b31c22010ecb0f37f2a128",
+    "invocation.json": "798ad37a141a57c759aaf38513ad561a8c18d9540b626f31e951f5ffaaacc2ec"
+  },
+  "durable_case_sha256": "d5cdcd6352e76ca0ced20c964f2e521c05de86b9f361af60db415e21ec1558a0"
+}

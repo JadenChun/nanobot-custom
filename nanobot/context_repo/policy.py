@@ -9,7 +9,6 @@ from pathlib import Path
 
 from nanobot.context_repo.manager import ContextRepoManager, ManagedContextRepo, ManagedTargetRepo
 
-
 _PATHISH_CHARS = {"/", "\\"}
 
 

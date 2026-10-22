@@ -1,0 +1,1762 @@
+{
+  "date": "2026-10-02",
+  "kind": "Complete Q1 source-qualification backlog, not acceptance",
+  "report": "../../.assets/releases/p6-ac3-followup.QnTGmA/ac3-followup-source-strict.json",
+  "report_sha256": "58d693f8c83c6bacc47346d338352120a8c7cecec0ed352a4cffc54ccf6d9585",
+  "source_boundary": "Reported source files match current candidate bytes; documentation-only plan publication may follow",
+  "files_analyzed": 463,
+  "diagnostics": 3977,
+  "missing_imports": 0,
+  "policy": {
+    "mode": "strict",
+    "target_python": "3.11",
+    "changed": false,
+    "host_python": "3.13.2",
+    "host": "macOS arm64"
+  },
+  "completion": "Every package closes only with suitable regression evidence; Q1 closes only with full unchanged checker exit0/zero errors and full source acceptance, not a diagnostic-count reduction",
+  "packages": [
+    {
+      "id": "core_execution",
+      "status": "OPEN",
+      "diagnostics": 488,
+      "files": [
+        {
+          "path": "nanobot/agent/capabilities.py",
+          "sha256": "f4d294636d60af346fcbc99685f5a5ebacca73d4e60cdd4751d1df077e7a9b65",
+          "diagnostics": 2,
+          "by_rule": {
+            "reportUnnecessaryIsInstance": 2
+          }
+        },
+        {
+          "path": "nanobot/agent/context.py",
+          "sha256": "06f35c8063d4fb8414dc6f1f86c3ad594e098197bde5d208441d955ac4189b86",
+          "diagnostics": 2,
+          "by_rule": {
+            "reportUnknownArgumentType": 1,
+            "reportUnknownMemberType": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/context_budget.py",
+          "sha256": "2d6f2a431a2e17641c38e814e50d28d24434f5c7aec340f23092a30c5a0c50a3",
+          "diagnostics": 2,
+          "by_rule": {
+            "reportAttributeAccessIssue": 1,
+            "reportUnknownMemberType": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/context_governance.py",
+          "sha256": "572ce59072e0c9bd7e6fb05331faff9a9622460f16a4ac54b2b46849e485947d",
+          "diagnostics": 6,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportPrivateUsage": 3,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/delegation.py",
+          "sha256": "38f7a7762d2f0928afc3aa8ed8e8a652db64f107d175bb4126d3d06b1996a8d5",
+          "diagnostics": 64,
+          "by_rule": {
+            "reportAbstractUsage": 8,
+            "reportArgumentType": 33,
+            "reportAssignmentType": 1,
+            "reportMissingTypeArgument": 3,
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 5,
+            "reportUnknownMemberType": 3,
+            "reportUnknownParameterType": 3,
+            "reportUnknownVariableType": 7
+          }
+        },
+        {
+          "path": "nanobot/agent/idle_compaction.py",
+          "sha256": "519a79708d6366a4373ad5c33914c979d19267f48acf51215c5a0e9ab316b102",
+          "diagnostics": 38,
+          "by_rule": {
+            "reportArgumentType": 5,
+            "reportAssignmentType": 1,
+            "reportCallIssue": 1,
+            "reportOptionalMemberAccess": 5,
+            "reportUnknownArgumentType": 10,
+            "reportUnknownMemberType": 3,
+            "reportUnknownVariableType": 8,
+            "reportUnnecessaryIsInstance": 4,
+            "reportUnusedExcept": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/idle_runtime.py",
+          "sha256": "d2310fba07d9cb653963f3766f719ab529a66ec481dec37ff912bb52a222a9e1",
+          "diagnostics": 69,
+          "by_rule": {
+            "reportArgumentType": 7,
+            "reportIncompatibleMethodOverride": 4,
+            "reportPossiblyUnboundVariable": 1,
+            "reportPrivateUsage": 27,
+            "reportRedeclaration": 1,
+            "reportUnknownArgumentType": 6,
+            "reportUnknownMemberType": 2,
+            "reportUnknownVariableType": 6,
+            "reportUnnecessaryCast": 1,
+            "reportUnnecessaryIsInstance": 14
+          }
+        },
+        {
+          "path": "nanobot/agent/idle_scanner.py",
+          "sha256": "13103ced4abcfe3c49c8ceda6f32e0befe8a946521eaa1c3cc3ba0e38d5fea70",
+          "diagnostics": 32,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportCallIssue": 1,
+            "reportPrivateUsage": 14,
+            "reportReturnType": 1,
+            "reportUnknownArgumentType": 4,
+            "reportUnknownMemberType": 2,
+            "reportUnknownVariableType": 1,
+            "reportUnnecessaryCast": 5,
+            "reportUnnecessaryComparison": 1,
+            "reportUnnecessaryIsInstance": 2
+          }
+        },
+        {
+          "path": "nanobot/agent/idle_summary.py",
+          "sha256": "4af222829b504f58a49cf250fdf27a6c0a1920f574436f83247ddf994c5f657b",
+          "diagnostics": 95,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportAttributeAccessIssue": 12,
+            "reportIncompatibleMethodOverride": 1,
+            "reportOptionalMemberAccess": 4,
+            "reportPrivateUsage": 34,
+            "reportUnknownArgumentType": 3,
+            "reportUnknownMemberType": 13,
+            "reportUnknownVariableType": 10,
+            "reportUnnecessaryCast": 8,
+            "reportUnnecessaryComparison": 2,
+            "reportUnnecessaryIsInstance": 6,
+            "reportUnusedFunction": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/legacy_history_codec.py",
+          "sha256": "06bc8509349a53c45f52a8cd46469c5f6b44fc3b4dd846dd1d1b7c20505af978",
+          "diagnostics": 3,
+          "by_rule": {
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/agent/loop.py",
+          "sha256": "f831d5397e84a99981bad386cd3e6f609307e58e5ad6f3beab0491ec6e70126c",
+          "diagnostics": 44,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportDeprecated": 3,
+            "reportOptionalMemberAccess": 6,
+            "reportPossiblyUnboundVariable": 4,
+            "reportRedeclaration": 1,
+            "reportReturnType": 1,
+            "reportUnknownArgumentType": 7,
+            "reportUnknownMemberType": 6,
+            "reportUnknownVariableType": 9,
+            "reportUnnecessaryComparison": 1,
+            "reportUnnecessaryIsInstance": 5
+          }
+        },
+        {
+          "path": "nanobot/agent/message_content.py",
+          "sha256": "e442cd6f3216633fa0b8cd87859f44d44a357f2fd8453b627e38e60b6053bde0",
+          "diagnostics": 3,
+          "by_rule": {
+            "reportUnknownArgumentType": 2,
+            "reportUnknownVariableType": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/model_runtime.py",
+          "sha256": "abae54e0a9f4dd2670311a0e5ead99d05010d543225bc80a45b898268993a5bc",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/policy.py",
+          "sha256": "138221e2dca20bf048436a99f2f28c372b1b413ebc8441e222e890e9bf8bc02a",
+          "diagnostics": 19,
+          "by_rule": {
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 4,
+            "reportUnknownMemberType": 5,
+            "reportUnknownVariableType": 6,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/agent/trace.py",
+          "sha256": "bd12d10fb56ab6b22128aa619b780b3953bc141404cd78e4ffd354c55d5e960d",
+          "diagnostics": 14,
+          "by_rule": {
+            "reportUnknownArgumentType": 3,
+            "reportUnknownMemberType": 6,
+            "reportUnknownVariableType": 5
+          }
+        },
+        {
+          "path": "nanobot/agent/turn.py",
+          "sha256": "d03fbb964e1d901994eeb27dea34c9ef505dcba2dca10f7aae57a9c08d649b59",
+          "diagnostics": 52,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportUnknownArgumentType": 21,
+            "reportUnknownMemberType": 4,
+            "reportUnknownVariableType": 10,
+            "reportUnnecessaryIsInstance": 15
+          }
+        },
+        {
+          "path": "nanobot/nanobot.py",
+          "sha256": "467ba915b7b4b2fd926f8999e4a7339b75e4300adb56d996714c253fff0464d1",
+          "diagnostics": 10,
+          "by_rule": {
+            "reportOptionalMemberAccess": 8,
+            "reportPrivateUsage": 2
+          }
+        },
+        {
+          "path": "nanobot/runtime_composition.py",
+          "sha256": "2830e75128f4000275cf618b92f400db41432bf4470c7eac2b16ffc4e34e6d3f",
+          "diagnostics": 32,
+          "by_rule": {
+            "reportMissingParameterType": 7,
+            "reportUnknownArgumentType": 7,
+            "reportUnknownMemberType": 5,
+            "reportUnknownParameterType": 7,
+            "reportUnknownVariableType": 4,
+            "reportUnnecessaryIsInstance": 2
+          }
+        }
+      ]
+    },
+    {
+      "id": "cron",
+      "status": "OPEN",
+      "diagnostics": 565,
+      "files": [
+        {
+          "path": "nanobot/cron/action_store.py",
+          "sha256": "fe43847babb0030363e1d0ef7651394fec8c5e717454eb0f60853efd2ea0f3e0",
+          "diagnostics": 30,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportOptionalMemberAccess": 4,
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 16,
+            "reportUnknownVariableType": 4,
+            "reportUnnecessaryIsInstance": 4
+          }
+        },
+        {
+          "path": "nanobot/cron/callback_store.py",
+          "sha256": "2b8e01d592080b508f64a6a4ccedbf945c8d7c7b17c6bab14b4419fac6619b01",
+          "diagnostics": 6,
+          "by_rule": {
+            "reportOptionalMemberAccess": 4,
+            "reportPrivateUsage": 1,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/cron/canonical_execution.py",
+          "sha256": "51b8d7237ec0fd1e4d73597c95cc4b74b69ca9ea0a1d9ee8b7f543c08241b669",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/cron/canonical_result.py",
+          "sha256": "c638f83f66d4cd0e3241f66cea2b2ab732cb9c44f6077646e32bcfa3713d3343",
+          "diagnostics": 2,
+          "by_rule": {
+            "reportUnnecessaryIsInstance": 2
+          }
+        },
+        {
+          "path": "nanobot/cron/channel_sender.py",
+          "sha256": "1e2bd95fca12eddf0567afc4dd96f69634c56299b5d534ffd6dc64bd17fcee63",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportReturnType": 1
+          }
+        },
+        {
+          "path": "nanobot/cron/completion.py",
+          "sha256": "1fe043056e3c9713e93efb81483a3c1c8d410235c2b1c06a1fea50dba7bcbf55",
+          "diagnostics": 37,
+          "by_rule": {
+            "reportOptionalMemberAccess": 4,
+            "reportPrivateUsage": 2,
+            "reportUnknownArgumentType": 19,
+            "reportUnknownVariableType": 7,
+            "reportUnnecessaryIsInstance": 5
+          }
+        },
+        {
+          "path": "nanobot/cron/composition.py",
+          "sha256": "0bc5d93c8d374cb78e9850845a8b17a474126a32dd39fc8229e1a164d5f8713b",
+          "diagnostics": 7,
+          "by_rule": {
+            "reportPrivateUsage": 2,
+            "reportUnnecessaryIsInstance": 5
+          }
+        },
+        {
+          "path": "nanobot/cron/definition_store.py",
+          "sha256": "51b72a8e8971429854f5606323d9136a393f87be58bd195c03f85804250bba67",
+          "diagnostics": 32,
+          "by_rule": {
+            "reportPrivateUsage": 12,
+            "reportUnknownArgumentType": 11,
+            "reportUnknownVariableType": 6,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/cron/delivery_reconciliation.py",
+          "sha256": "47a4f7793f1256474616f7bc44cf6b8a3b96278f1da147f94ab75d9df6a15c5d",
+          "diagnostics": 84,
+          "by_rule": {
+            "reportPossiblyUnboundVariable": 1,
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 68,
+            "reportUnknownVariableType": 14
+          }
+        },
+        {
+          "path": "nanobot/cron/delivery_runtime.py",
+          "sha256": "6e169efbfab887b94cf78e5dbb919dd14b45ee3c83511d299dfcaa3c6c11ff10",
+          "diagnostics": 38,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportGeneralTypeIssues": 1,
+            "reportPossiblyUnboundVariable": 2,
+            "reportReturnType": 1,
+            "reportUnknownArgumentType": 14,
+            "reportUnknownVariableType": 13,
+            "reportUnnecessaryIsInstance": 6
+          }
+        },
+        {
+          "path": "nanobot/cron/delivery_store.py",
+          "sha256": "36acfa5de5e72d0ac5d988246390e6159ef3a3ad4c1be2692ee6a4b0422f1b60",
+          "diagnostics": 83,
+          "by_rule": {
+            "reportArgumentType": 3,
+            "reportIncompatibleMethodOverride": 1,
+            "reportOptionalMemberAccess": 21,
+            "reportPossiblyUnboundVariable": 1,
+            "reportPrivateUsage": 18,
+            "reportUnknownArgumentType": 21,
+            "reportUnknownMemberType": 4,
+            "reportUnknownVariableType": 4,
+            "reportUnnecessaryIsInstance": 8,
+            "reportUnusedVariable": 2
+          }
+        },
+        {
+          "path": "nanobot/cron/occurrence.py",
+          "sha256": "22cfea8b2484b5c827accc22ccd5f944cf67e4a7fa4560f7de0446c5c4410467",
+          "diagnostics": 4,
+          "by_rule": {
+            "reportUnknownVariableType": 1,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/cron/occurrence_store.py",
+          "sha256": "054b69aa2b6b486625dfd7336bf114b17f0fe7e670b51c4bf39a05dcfceb9fac",
+          "diagnostics": 46,
+          "by_rule": {
+            "reportIncompatibleMethodOverride": 1,
+            "reportOptionalMemberAccess": 15,
+            "reportPrivateUsage": 20,
+            "reportUnknownArgumentType": 2,
+            "reportUnnecessaryIsInstance": 8
+          }
+        },
+        {
+          "path": "nanobot/cron/runtime.py",
+          "sha256": "24224475b2dfd3dfe3786e1507e704c21cc2bb4d2a6c540334331ccc075977cf",
+          "diagnostics": 24,
+          "by_rule": {
+            "reportArgumentType": 4,
+            "reportIncompatibleMethodOverride": 1,
+            "reportMissingTypeArgument": 2,
+            "reportOptionalMemberAccess": 2,
+            "reportPrivateUsage": 6,
+            "reportUnknownMemberType": 5,
+            "reportUnknownParameterType": 1,
+            "reportUnknownVariableType": 1,
+            "reportUnnecessaryIsInstance": 2
+          }
+        },
+        {
+          "path": "nanobot/cron/runtime_inspection.py",
+          "sha256": "80400d58028996236b00e819313f7ba3d28fdf2488248b1ecd024dd4e458dc03",
+          "diagnostics": 38,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportMissingTypeArgument": 3,
+            "reportPrivateUsage": 27,
+            "reportUnknownMemberType": 1,
+            "reportUnknownParameterType": 3,
+            "reportUnknownVariableType": 3
+          }
+        },
+        {
+          "path": "nanobot/cron/scheduler.py",
+          "sha256": "a52d2a24d3f825adfa4f9fe8b040d1fdd343a7870afc361803701650754daeca",
+          "diagnostics": 29,
+          "by_rule": {
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 13,
+            "reportUnknownLambdaType": 2,
+            "reportUnknownMemberType": 7,
+            "reportUnknownVariableType": 6
+          }
+        },
+        {
+          "path": "nanobot/cron/scheduler_store.py",
+          "sha256": "8cbdebff8b40aeed45cbb97ace7e07fd209e04ae320a22876e87ee780e74088c",
+          "diagnostics": 74,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportDeprecated": 1,
+            "reportIncompatibleMethodOverride": 1,
+            "reportIndexIssue": 4,
+            "reportPrivateUsage": 29,
+            "reportUnknownArgumentType": 15,
+            "reportUnknownMemberType": 13,
+            "reportUnknownVariableType": 8,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/cron/service.py",
+          "sha256": "13912a04e8e8ff83f36c32583816c49d54b259f5f76b7704fd658dd3e383e03b",
+          "diagnostics": 11,
+          "by_rule": {
+            "reportOptionalMemberAccess": 2,
+            "reportUnnecessaryIsInstance": 6,
+            "reportUnusedFunction": 3
+          }
+        },
+        {
+          "path": "nanobot/cron/types.py",
+          "sha256": "c15843661e3aa795d46e2d783001d08a0ec87c2f56130009101dfdf69aed5942",
+          "diagnostics": 9,
+          "by_rule": {
+            "reportUnknownArgumentType": 4,
+            "reportUnknownVariableType": 4,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/cron/visible_link.py",
+          "sha256": "163f118cb6ab3402a517d957a62bb5bc4651b8ff651a54349dadc57b119ed8fc",
+          "diagnostics": 9,
+          "by_rule": {
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 3,
+            "reportUnknownMemberType": 4,
+            "reportUnnecessaryIsInstance": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "ingress_config_support",
+      "status": "OPEN",
+      "diagnostics": 374,
+      "files": [
+        {
+          "path": "nanobot/_integration_diagnostics.py",
+          "sha256": "8144db5dda0c708fafedf1702bc9e754bd6e82fba53040dcf238e0b3cc9acc3f",
+          "diagnostics": 68,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportPrivateUsage": 8,
+            "reportUnknownArgumentType": 38,
+            "reportUnknownMemberType": 10,
+            "reportUnknownVariableType": 10
+          }
+        },
+        {
+          "path": "nanobot/_migration_preflight.py",
+          "sha256": "60884ccc23bde791855d354fa9463d8fa249ebbe58fa435730b4f82656f0eacd",
+          "diagnostics": 13,
+          "by_rule": {
+            "reportAttributeAccessIssue": 1,
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 2,
+            "reportUnknownMemberType": 3,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/api/server.py",
+          "sha256": "f8a97d0ae49e6f121bb71697e85022abd545ef34980f411b1de2437652dc4bf7",
+          "diagnostics": 5,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportUnknownArgumentType": 3,
+            "reportUnknownVariableType": 1
+          }
+        },
+        {
+          "path": "nanobot/cli/agent.py",
+          "sha256": "32594fed4ad854f69e055a8dab85b606dc2a35806dab9de2606c886d506c41e5",
+          "diagnostics": 22,
+          "by_rule": {
+            "reportMissingParameterType": 7,
+            "reportOptionalMemberAccess": 2,
+            "reportUnknownArgumentType": 2,
+            "reportUnknownMemberType": 2,
+            "reportUnknownParameterType": 7,
+            "reportUnknownVariableType": 2
+          }
+        },
+        {
+          "path": "nanobot/cli/commands.py",
+          "sha256": "bbba9ce666b30433915101f4d5136a62d68c2418d776580b00690aaffc37effc",
+          "diagnostics": 7,
+          "by_rule": {
+            "reportAbstractUsage": 1,
+            "reportArgumentType": 1,
+            "reportDeprecated": 1,
+            "reportGeneralTypeIssues": 1,
+            "reportMissingParameterType": 1,
+            "reportUnknownArgumentType": 1,
+            "reportUnknownParameterType": 1
+          }
+        },
+        {
+          "path": "nanobot/cli/cron_delivery.py",
+          "sha256": "f7bade02f6b93002e8d501e8abd4279caff8c22f7fe79248ac2988305e70880f",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportUnknownArgumentType": 1
+          }
+        },
+        {
+          "path": "nanobot/cli/cron_runtime.py",
+          "sha256": "ca0f11a6ebb3d1f1a3fe1de2739a1595bbd7b3b4ac305b7badce46ee42d50b6c",
+          "diagnostics": 9,
+          "by_rule": {
+            "reportMissingParameterType": 1,
+            "reportUnknownLambdaType": 3,
+            "reportUnknownParameterType": 1,
+            "reportUnknownVariableType": 4
+          }
+        },
+        {
+          "path": "nanobot/cli/entry.py",
+          "sha256": "12c48629fc468000c13ce2ad9d0bcbba65f84ec0807f3a9ca2654ac2dfac8dfd",
+          "diagnostics": 4,
+          "by_rule": {
+            "reportUnusedFunction": 3,
+            "reportUnusedImport": 1
+          }
+        },
+        {
+          "path": "nanobot/cli/gateway.py",
+          "sha256": "a20ca758cbacab76ab4ae13d5b9745622479044b94f9f9881a56d54c5a0b8ed1",
+          "diagnostics": 3,
+          "by_rule": {
+            "reportUnknownLambdaType": 2,
+            "reportUnknownMemberType": 1
+          }
+        },
+        {
+          "path": "nanobot/cli/gateway_runtime.py",
+          "sha256": "9c733359c68507687be0cd3902240f0deab6a9a4acb3ffbdfbce5a309f018b48",
+          "diagnostics": 55,
+          "by_rule": {
+            "reportArgumentType": 3,
+            "reportMissingParameterType": 11,
+            "reportOptionalMemberAccess": 3,
+            "reportUnknownArgumentType": 17,
+            "reportUnknownMemberType": 7,
+            "reportUnknownParameterType": 11,
+            "reportUnknownVariableType": 2,
+            "reportUnusedFunction": 1
+          }
+        },
+        {
+          "path": "nanobot/cli/log_control.py",
+          "sha256": "87e537373e04a11f4cd4a0104c3c4dfecc4019787f7f76fc137749ccc67d9990",
+          "diagnostics": 2,
+          "by_rule": {
+            "reportUnknownArgumentType": 1,
+            "reportUnknownLambdaType": 1
+          }
+        },
+        {
+          "path": "nanobot/cli/migration_preflight.py",
+          "sha256": "2d5def4cded80d9295c72a5f65fa812f8fe7b1db5996e8c4b575404d37a98de3",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportMissingParameterType": 1
+          }
+        },
+        {
+          "path": "nanobot/cli/onboard.py",
+          "sha256": "6e28931a99642c328f5d0a5e583419c4344bc2cf86a3730df0eb433ebbd3539f",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportPrivateUsage": 1
+          }
+        },
+        {
+          "path": "nanobot/cli/provider.py",
+          "sha256": "ec4af45d3f9d6c7a824f7fa5efa4770883e351240d3ca903d42f92656a1b4cdd",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportUnusedFunction": 1
+          }
+        },
+        {
+          "path": "nanobot/config/loader.py",
+          "sha256": "41a8a4ed567917572840452cc58c6196dc35c19280880707b0309ae9fa73f76c",
+          "diagnostics": 2,
+          "by_rule": {
+            "reportUnknownMemberType": 1,
+            "reportUnknownVariableType": 1
+          }
+        },
+        {
+          "path": "nanobot/config/schema.py",
+          "sha256": "5d278102a4413fb70e5a5c03e0041b94cc6d5ce149c72c95d7374cca7b80f526",
+          "diagnostics": 49,
+          "by_rule": {
+            "reportUnknownArgumentType": 11,
+            "reportUnknownMemberType": 18,
+            "reportUnknownVariableType": 19,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/crawler/worker.py",
+          "sha256": "1449ed2f4e36e71c14edae91e95bebe3501c3e64f9abced1891596cfd761b7a8",
+          "diagnostics": 24,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportMissingTypeStubs": 3,
+            "reportUnknownArgumentType": 4,
+            "reportUnknownLambdaType": 1,
+            "reportUnknownMemberType": 5,
+            "reportUnknownVariableType": 8,
+            "reportUnusedImport": 1
+          }
+        },
+        {
+          "path": "nanobot/sdk/clients.py",
+          "sha256": "d34b33d00469788e84b5a69d8306657a7fff73be9904f0b519ed43b9b9eac7a4",
+          "diagnostics": 2,
+          "by_rule": {
+            "reportUnnecessaryIsInstance": 2
+          }
+        },
+        {
+          "path": "nanobot/skills/video-understanding/scripts/extract_keyframes.py",
+          "sha256": "b133dc36b16c671e5db5cfd72eec265b820879b2ad93160c505353d4be41e547",
+          "diagnostics": 76,
+          "by_rule": {
+            "reportArgumentType": 20,
+            "reportGeneralTypeIssues": 3,
+            "reportIndexIssue": 14,
+            "reportMissingTypeArgument": 2,
+            "reportUnknownArgumentType": 8,
+            "reportUnknownMemberType": 15,
+            "reportUnknownParameterType": 2,
+            "reportUnknownVariableType": 12
+          }
+        },
+        {
+          "path": "nanobot/utils/evaluator.py",
+          "sha256": "ecbdb2e30e3bafb71e9d1c08d4534642476fe2218442b5f2a7a0c64ea3db6357",
+          "diagnostics": 8,
+          "by_rule": {
+            "reportArgumentType": 8
+          }
+        },
+        {
+          "path": "nanobot/utils/prompt_budget.py",
+          "sha256": "a45c579080ef8cc035c2e54ead0806ce82cd838057eb83731dd0fc5a8c9ee211",
+          "diagnostics": 11,
+          "by_rule": {
+            "reportMissingTypeArgument": 1,
+            "reportUnknownArgumentType": 2,
+            "reportUnknownMemberType": 2,
+            "reportUnknownParameterType": 1,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 1,
+            "reportUnusedVariable": 1
+          }
+        },
+        {
+          "path": "nanobot/utils/secret_scan.py",
+          "sha256": "50764a7759ab9e0857d486261016651b13021f90062d77f48faceea39421e11d",
+          "diagnostics": 9,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportUnknownArgumentType": 2,
+            "reportUnknownVariableType": 4,
+            "reportUnnecessaryContains": 1,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/webui/ws_http.py",
+          "sha256": "743d58e7b1a61ab675a0a872bc43e79f3aaeec6c654d9b3630b60b03b1f38932",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportOptionalMemberAccess": 1
+          }
+        }
+      ]
+    },
+    {
+      "id": "providers",
+      "status": "OPEN",
+      "diagnostics": 439,
+      "files": [
+        {
+          "path": "nanobot/providers/base.py",
+          "sha256": "7f6ed4e0e012218cd4bb46e8e4964de1e218984166f81524c7ed1b7d8dc13044",
+          "diagnostics": 6,
+          "by_rule": {
+            "reportMissingParameterType": 3,
+            "reportUnknownParameterType": 2,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/providers/codex_auth.py",
+          "sha256": "db423de93e74fdebcabbdf00a757374d7df756899266e25361257d2362d70da2",
+          "diagnostics": 16,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportMissingTypeStubs": 2,
+            "reportUnknownArgumentType": 4,
+            "reportUnknownMemberType": 6,
+            "reportUnknownVariableType": 3
+          }
+        },
+        {
+          "path": "nanobot/providers/codex_cli_image.py",
+          "sha256": "c49c9297e36cdd9938e7c2d54485b2658c554941c519174fda35b78777555a25",
+          "diagnostics": 40,
+          "by_rule": {
+            "reportMissingTypeArgument": 1,
+            "reportUnknownArgumentType": 5,
+            "reportUnknownMemberType": 21,
+            "reportUnknownVariableType": 13
+          }
+        },
+        {
+          "path": "nanobot/providers/conversation_state.py",
+          "sha256": "f460b7cc6e64eb41f8829bb2e7de5033fe6112940c67cfb3a069277037d3e439",
+          "diagnostics": 23,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportIncompatibleMethodOverride": 2,
+            "reportPrivateUsage": 11,
+            "reportUnknownArgumentType": 2,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/providers/copilot_auth.py",
+          "sha256": "94ad9e8e6db92fc1e6e9d283d173b02fb5a53cca0ba36ae98ec5b8b993e15f8d",
+          "diagnostics": 15,
+          "by_rule": {
+            "reportUnknownArgumentType": 2,
+            "reportUnknownMemberType": 7,
+            "reportUnknownVariableType": 6
+          }
+        },
+        {
+          "path": "nanobot/providers/factory.py",
+          "sha256": "4405abb2f6d02ae9f1ee36c3833a5ecdbf6d8c389a274c5ba2f592aa9e210f5c",
+          "diagnostics": 5,
+          "by_rule": {
+            "reportOptionalMemberAccess": 2,
+            "reportUnknownArgumentType": 2,
+            "reportUnknownLambdaType": 1
+          }
+        },
+        {
+          "path": "nanobot/providers/github_copilot_provider.py",
+          "sha256": "ac44935bad9392cfe21485c1b5e8334430ee7920ed4cc2cfeb24f3c30e51284e",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportUnusedFunction": 1
+          }
+        },
+        {
+          "path": "nanobot/providers/image_generation.py",
+          "sha256": "77e843d0ee4288f77f070fbf9af0bbba75e3abf17a1cc25a79eb4f9f69b344a2",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportArgumentType": 1
+          }
+        },
+        {
+          "path": "nanobot/providers/key_pool.py",
+          "sha256": "f6b73ab25591bd1c3c01ac70673d3bb3330c71a91b684fc7ec46ca6f08f03c17",
+          "diagnostics": 3,
+          "by_rule": {
+            "reportUnknownArgumentType": 1,
+            "reportUnknownMemberType": 1,
+            "reportUnknownVariableType": 1
+          }
+        },
+        {
+          "path": "nanobot/providers/legacy_fallback_provider.py",
+          "sha256": "684e4adad329232e86bc2c66b84e793ae5dd74484c0cbbc3c6d49aa7b9463164",
+          "diagnostics": 155,
+          "by_rule": {
+            "reportMissingParameterType": 32,
+            "reportPossiblyUnboundVariable": 1,
+            "reportUnknownArgumentType": 43,
+            "reportUnknownMemberType": 41,
+            "reportUnknownParameterType": 22,
+            "reportUnknownVariableType": 16
+          }
+        },
+        {
+          "path": "nanobot/providers/oauth_credentials.py",
+          "sha256": "6673f89a872cc9f05f9ddb30a3dd73a01d58e4ed934b3e1d8791c5e8f147b8ac",
+          "diagnostics": 69,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportDeprecated": 2,
+            "reportIncompatibleMethodOverride": 1,
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 25,
+            "reportUnknownMemberType": 6,
+            "reportUnknownVariableType": 26,
+            "reportUnnecessaryComparison": 1,
+            "reportUnnecessaryIsInstance": 5,
+            "reportUnusedVariable": 1
+          }
+        },
+        {
+          "path": "nanobot/providers/openai_codex_oauth.py",
+          "sha256": "e4143a29bfc4653ee1db8b57187af40283130fa27fbe6153d7740b1a7fab11c0",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportArgumentType": 1
+          }
+        },
+        {
+          "path": "nanobot/providers/openai_compat_provider.py",
+          "sha256": "eb3304e88817bbd790fe754155361d0f7704eccafe3fc056716c59e27c68c7d5",
+          "diagnostics": 3,
+          "by_rule": {
+            "reportAssignmentType": 3
+          }
+        },
+        {
+          "path": "nanobot/providers/pooled_provider.py",
+          "sha256": "5694b1d82541eb26d762dd3ecb00b90b20ceaf32df2ab029095a9c31a99a0ad6",
+          "diagnostics": 84,
+          "by_rule": {
+            "reportIncompatibleVariableOverride": 1,
+            "reportMissingParameterType": 28,
+            "reportPossiblyUnboundVariable": 2,
+            "reportUnknownArgumentType": 25,
+            "reportUnknownMemberType": 10,
+            "reportUnknownParameterType": 12,
+            "reportUnknownVariableType": 4,
+            "reportUnnecessaryComparison": 2
+          }
+        },
+        {
+          "path": "nanobot/providers/request_budget.py",
+          "sha256": "b53bad4e407c871926b0a37a61e39cf7d4e4f3ca14db0e6ab574c46a1051013f",
+          "diagnostics": 17,
+          "by_rule": {
+            "reportRedeclaration": 1,
+            "reportUnknownArgumentType": 5,
+            "reportUnknownMemberType": 2,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 6
+          }
+        }
+      ]
+    },
+    {
+      "id": "storage_recovery_context",
+      "status": "OPEN",
+      "diagnostics": 1527,
+      "files": [
+        {
+          "path": "nanobot/agent/memory.py",
+          "sha256": "64cd6cacb6eb882bce406fd77360a60b1f8ca751723b4ef00a132422686d8445",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery.py",
+          "sha256": "5fb7f6c4af92c241ff6107effc78a53089fe40e0655ca17547aedbee43f9ed65",
+          "diagnostics": 3,
+          "by_rule": {
+            "reportUnknownVariableType": 3
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_conversion.py",
+          "sha256": "7524acfb16f5d35cdf4edfeb0cfd52042b1f2f2057a387264f5f207c0e4c3e1b",
+          "diagnostics": 111,
+          "by_rule": {
+            "reportArgumentType": 8,
+            "reportOptionalMemberAccess": 1,
+            "reportPrivateUsage": 2,
+            "reportUnknownArgumentType": 67,
+            "reportUnknownMemberType": 3,
+            "reportUnknownVariableType": 21,
+            "reportUnnecessaryComparison": 8,
+            "reportUnusedFunction": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_conversion_apply.py",
+          "sha256": "141b1d1f8b2e726c0327527f4484d289ba4976cd7853abae6012aa82755fb892",
+          "diagnostics": 16,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportAttributeAccessIssue": 2,
+            "reportGeneralTypeIssues": 4,
+            "reportPrivateUsage": 4,
+            "reportUnknownMemberType": 2,
+            "reportUnusedFunction": 2
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_conversion_finalize.py",
+          "sha256": "52e0f04f01e79b121694b41b372e40dea80e60b8380a02c5a32362a049d8f914",
+          "diagnostics": 41,
+          "by_rule": {
+            "reportArgumentType": 8,
+            "reportMissingTypeArgument": 1,
+            "reportOptionalMemberAccess": 9,
+            "reportPrivateUsage": 20,
+            "reportUnknownArgumentType": 1,
+            "reportUnknownParameterType": 1,
+            "reportUnnecessaryComparison": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_conversion_runtime.py",
+          "sha256": "9bcbe4228a08fdd0234607fb6341e09a5a3991102d57da467cf631b8cd3e6ecc",
+          "diagnostics": 4,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportPossiblyUnboundVariable": 1,
+            "reportPrivateUsage": 2
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_coordinator.py",
+          "sha256": "f1257914e0b7af8436c2d9adcd38ebff5324ad6c3080949861d39ae1a8f5cd58",
+          "diagnostics": 6,
+          "by_rule": {
+            "reportPossiblyUnboundVariable": 2,
+            "reportPrivateUsage": 4
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_historical_seal.py",
+          "sha256": "e68652a75b39a8acbaf379625778952df0c70a60d0ace46b22700d1a33346dc1",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_legacy_archive.py",
+          "sha256": "27c315a2e5aa48a3f4ebd33f46ef6e695226619fb81f356089cbde0d5db42e89",
+          "diagnostics": 11,
+          "by_rule": {
+            "reportPossiblyUnboundVariable": 5,
+            "reportUnknownArgumentType": 6
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_manifest.py",
+          "sha256": "320d343133adbcf88be55d3be67c6a4f2f179c44bd732c9c634bbc16b1a734c0",
+          "diagnostics": 39,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportAttributeAccessIssue": 1,
+            "reportGeneralTypeIssues": 1,
+            "reportOperatorIssue": 2,
+            "reportUnknownArgumentType": 13,
+            "reportUnknownMemberType": 8,
+            "reportUnknownVariableType": 11,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_marker.py",
+          "sha256": "f0c97669cd8f5c9827634ce94d7e6c3d455694305024b0f03a0bf6f2bb19a2a5",
+          "diagnostics": 3,
+          "by_rule": {
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_quarantine_storage.py",
+          "sha256": "1bdc02b22196e1a6f072bdcfe3340462768104a52440d7990e600c0cc2cf2d3d",
+          "diagnostics": 87,
+          "by_rule": {
+            "reportArgumentType": 8,
+            "reportIncompatibleMethodOverride": 1,
+            "reportPossiblyUnboundVariable": 3,
+            "reportPrivateUsage": 32,
+            "reportUnknownArgumentType": 24,
+            "reportUnknownMemberType": 1,
+            "reportUnknownVariableType": 8,
+            "reportUnnecessaryComparison": 3,
+            "reportUnnecessaryIsInstance": 7
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_startup_admission.py",
+          "sha256": "6ca3745a9d1bfa997e24b98375d77563533063dd38e8598c29a53501d03f0465",
+          "diagnostics": 9,
+          "by_rule": {
+            "reportDeprecated": 1,
+            "reportPrivateUsage": 4,
+            "reportUnknownArgumentType": 1,
+            "reportUnknownMemberType": 1,
+            "reportUnknownVariableType": 2
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_storage.py",
+          "sha256": "d24418a6a9395beb1126ccc787d5ac94bf9b8f329b2790075e7b034a0bfa4c15",
+          "diagnostics": 133,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportGeneralTypeIssues": 5,
+            "reportIncompatibleMethodOverride": 6,
+            "reportOptionalMemberAccess": 1,
+            "reportPrivateUsage": 114,
+            "reportUnknownArgumentType": 3,
+            "reportUnnecessaryComparison": 1,
+            "reportUnusedFunction": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_target_mutation.py",
+          "sha256": "7450d1145cce401d82ad01b7d80ca9db3992d9c7e45f42a49d9daf78f8f1e0a2",
+          "diagnostics": 5,
+          "by_rule": {
+            "reportUnknownArgumentType": 2,
+            "reportUnknownVariableType": 2,
+            "reportUnnecessaryComparison": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_target_verify.py",
+          "sha256": "2b6c25f3da9056d74b8dd779f96701a1350646c497e7d1ec74656b9c8091e73b",
+          "diagnostics": 14,
+          "by_rule": {
+            "reportPrivateUsage": 10,
+            "reportUnknownArgumentType": 3,
+            "reportUnnecessaryComparison": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_transaction.py",
+          "sha256": "6cc21f59b01d41e421449f8b517f231ed12cffcbf81228aea90fa1cd9784267c",
+          "diagnostics": 103,
+          "by_rule": {
+            "reportArgumentType": 4,
+            "reportOperatorIssue": 1,
+            "reportPrivateUsage": 4,
+            "reportUnknownArgumentType": 71,
+            "reportUnknownVariableType": 15,
+            "reportUnnecessaryComparison": 8
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_transaction_history.py",
+          "sha256": "4de15ae97915adc30151c0d1dc05ad4d92a2e2f9385d69794e56445a17512735",
+          "diagnostics": 13,
+          "by_rule": {
+            "reportPrivateUsage": 12,
+            "reportReturnType": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_transaction_memory.py",
+          "sha256": "b3e1a72106cf9e2f370c535ad4cbd2163a2ff76ee25731e7b07ccadd94d60d08",
+          "diagnostics": 23,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportPrivateUsage": 21,
+            "reportReturnType": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_transaction_offset.py",
+          "sha256": "3d6561e322213acdee49c00aa4c098711020dca0f7a059c2c3ee7cc2a00a21e2",
+          "diagnostics": 29,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportOptionalMemberAccess": 1,
+            "reportPossiblyUnboundVariable": 2,
+            "reportPrivateUsage": 23,
+            "reportReturnType": 1,
+            "reportUnnecessaryComparison": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_transaction_prepare.py",
+          "sha256": "c798e4c7e2fa2c152109a474fe9442daac8000fb4bc36ec636b6a917b7f4cbb6",
+          "diagnostics": 38,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportPrivateUsage": 5,
+            "reportReturnType": 1,
+            "reportUnknownArgumentType": 13,
+            "reportUnknownMemberType": 11,
+            "reportUnknownVariableType": 7
+          }
+        },
+        {
+          "path": "nanobot/agent/memory_recovery_transaction_terminal.py",
+          "sha256": "3eb8ce53028082a49b947acddc47cee4cf7673cd2c565ba669d09f9a64029c0f",
+          "diagnostics": 13,
+          "by_rule": {
+            "reportMissingTypeArgument": 1,
+            "reportPrivateUsage": 8,
+            "reportUnknownParameterType": 1,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/context_repo/manager.py",
+          "sha256": "ac7b2bba5ac145111de5ba583d477ac085206730933eea1eedc6c80f6d38372c",
+          "diagnostics": 58,
+          "by_rule": {
+            "reportUnknownArgumentType": 22,
+            "reportUnknownMemberType": 12,
+            "reportUnknownVariableType": 24
+          }
+        },
+        {
+          "path": "nanobot/session/artifact.py",
+          "sha256": "6fdb61e4d15c5488f80051733c958372f64f0e09601b9e083c293072b485c278",
+          "diagnostics": 46,
+          "by_rule": {
+            "reportUnknownArgumentType": 23,
+            "reportUnknownMemberType": 7,
+            "reportUnknownVariableType": 16
+          }
+        },
+        {
+          "path": "nanobot/session/artifact_factory.py",
+          "sha256": "f7aa7637ccb1b8eb9db038811c0f53ec4d246398faf54c53ffce0e1026475ec3",
+          "diagnostics": 7,
+          "by_rule": {
+            "reportPrivateUsage": 6,
+            "reportUnknownVariableType": 1
+          }
+        },
+        {
+          "path": "nanobot/session/artifact_grants.py",
+          "sha256": "7cbef037b29b5c8e90c009a2035c059a26e8468ca23f6b9471e37c9255406514",
+          "diagnostics": 33,
+          "by_rule": {
+            "reportIncompatibleMethodOverride": 4,
+            "reportPrivateUsage": 23,
+            "reportUnknownArgumentType": 2,
+            "reportUnknownVariableType": 1,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/session/artifact_operator.py",
+          "sha256": "0908bf56ce2d59579bb27b445791aa8442c89beac55404f9db2824c09caa24fd",
+          "diagnostics": 5,
+          "by_rule": {
+            "reportGeneralTypeIssues": 2,
+            "reportPrivateUsage": 3
+          }
+        },
+        {
+          "path": "nanobot/session/artifact_projection.py",
+          "sha256": "f23c8170f0eb6207ed35dae8e71663b74ce6b4afd0cc55ae7e0c12442a1688b4",
+          "diagnostics": 18,
+          "by_rule": {
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 5,
+            "reportUnknownMemberType": 8,
+            "reportUnknownVariableType": 4
+          }
+        },
+        {
+          "path": "nanobot/session/artifact_reader.py",
+          "sha256": "4d2d63fbe99b56ab85b34fb536966f062efb8f104b4470b1d9b5127202d888dd",
+          "diagnostics": 22,
+          "by_rule": {
+            "reportPrivateUsage": 22
+          }
+        },
+        {
+          "path": "nanobot/session/artifact_rematerialization.py",
+          "sha256": "13e1bfd9da96d6cc9b41574ba0374f1c8de1d76594881f14255f7bdb037b7c97",
+          "diagnostics": 4,
+          "by_rule": {
+            "reportPrivateUsage": 4
+          }
+        },
+        {
+          "path": "nanobot/session/artifact_store.py",
+          "sha256": "dc1c3eddbf848b92928586a587593d2dfe986e82267c6abc0876eb26f6a0c093",
+          "diagnostics": 22,
+          "by_rule": {
+            "reportDeprecated": 2,
+            "reportPrivateUsage": 3,
+            "reportUnknownArgumentType": 7,
+            "reportUnknownMemberType": 3,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 4
+          }
+        },
+        {
+          "path": "nanobot/session/artifact_verification.py",
+          "sha256": "664f9867a9fa830d09fe009bcf1b717b70c49b39f3125662a2243c93b6fbc5c1",
+          "diagnostics": 2,
+          "by_rule": {
+            "reportPrivateUsage": 1,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/session/checked_source.py",
+          "sha256": "75e3e479913f1060e4076dc295a65b45dd990bff6557839230559c6645be9451",
+          "diagnostics": 31,
+          "by_rule": {
+            "reportArgumentType": 4,
+            "reportAssignmentType": 9,
+            "reportAttributeAccessIssue": 1,
+            "reportCallIssue": 1,
+            "reportOptionalMemberAccess": 3,
+            "reportPrivateUsage": 1,
+            "reportReturnType": 1,
+            "reportUnknownArgumentType": 2,
+            "reportUnknownVariableType": 1,
+            "reportUnnecessaryComparison": 1,
+            "reportUnnecessaryIsInstance": 7
+          }
+        },
+        {
+          "path": "nanobot/session/checkpoint_admission.py",
+          "sha256": "9316e9c8ed2e2c7cdc5f83e3c1d0d23e91863260c8ca218f49f56bba2a61ebd1",
+          "diagnostics": 7,
+          "by_rule": {
+            "reportUnknownArgumentType": 3,
+            "reportUnknownMemberType": 3,
+            "reportUnknownVariableType": 1
+          }
+        },
+        {
+          "path": "nanobot/session/checkpoint_dependencies.py",
+          "sha256": "f86e78bec628f935c934f50a939a90c6d4d0b8ed8d1588202842cf71150f4137",
+          "diagnostics": 37,
+          "by_rule": {
+            "reportArgumentType": 3,
+            "reportPossiblyUnboundVariable": 1,
+            "reportPrivateUsage": 3,
+            "reportUnknownArgumentType": 9,
+            "reportUnknownMemberType": 13,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 5
+          }
+        },
+        {
+          "path": "nanobot/session/context_checkpoint.py",
+          "sha256": "8223cc465fd992a0de9555a9dfa2b90b7297903af1a3a80a708047f6e19bb2d9",
+          "diagnostics": 10,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportUnknownArgumentType": 4,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/session/execution_owner.py",
+          "sha256": "fc95cf702d7b90a4469b77ddf429cc9187003b36e7086b6aa1f0662f80a362c3",
+          "diagnostics": 25,
+          "by_rule": {
+            "reportDeprecated": 4,
+            "reportPrivateUsage": 11,
+            "reportUnknownArgumentType": 2,
+            "reportUnknownMemberType": 7,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/session/idle_checkpoint.py",
+          "sha256": "0efe23bd5033ba7b1d1f45c3d4add7445549a940c73e1e10fccc02f3b4234cf2",
+          "diagnostics": 89,
+          "by_rule": {
+            "reportIncompatibleMethodOverride": 2,
+            "reportPrivateUsage": 78,
+            "reportUnknownArgumentType": 4,
+            "reportUnknownVariableType": 2,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/session/idle_compaction.py",
+          "sha256": "368b662a28d6d085ccf2f26e786eab13250aa23698cf700108a4e7583d5c9a1e",
+          "diagnostics": 12,
+          "by_rule": {
+            "reportUnknownArgumentType": 2,
+            "reportUnknownMemberType": 6,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/session/legacy_receipt_source.py",
+          "sha256": "ea13e972ecec039ea009d42dfd2d05173e7910c80f42d4461384bd84d50b6f9c",
+          "diagnostics": 11,
+          "by_rule": {
+            "reportUnknownArgumentType": 6,
+            "reportUnknownMemberType": 1,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/session/manager.py",
+          "sha256": "b1eaee5e3746ee2fb93d3b9c6a4591661608ed6690a978c1f0c0bf32e976f3ba",
+          "diagnostics": 65,
+          "by_rule": {
+            "reportPrivateUsage": 46,
+            "reportUnknownArgumentType": 5,
+            "reportUnknownMemberType": 2,
+            "reportUnknownVariableType": 8,
+            "reportUnnecessaryIsInstance": 4
+          }
+        },
+        {
+          "path": "nanobot/session/mode_storage.py",
+          "sha256": "59f90f5e9182fa50eaa460206514f4d7b2a65c3dda15415833099bda1472a9ee",
+          "diagnostics": 10,
+          "by_rule": {
+            "reportIncompatibleMethodOverride": 1,
+            "reportPossiblyUnboundVariable": 1,
+            "reportPrivateUsage": 4,
+            "reportUnnecessaryIsInstance": 2,
+            "reportUnusedFunction": 2
+          }
+        },
+        {
+          "path": "nanobot/session/recovery_locator.py",
+          "sha256": "20a704e520e249f3f5253b85d65f22a7a3824bb048a512c9d9f3d0e403e12594",
+          "diagnostics": 13,
+          "by_rule": {
+            "reportArgumentType": 7,
+            "reportUnknownArgumentType": 4,
+            "reportUnnecessaryIsInstance": 2
+          }
+        },
+        {
+          "path": "nanobot/session/runtime_authority.py",
+          "sha256": "1b27c2b1de420dac8d0c078ad9beefb5f9a7bbc3f8c05d135607f2d989fc7e18",
+          "diagnostics": 4,
+          "by_rule": {
+            "reportPrivateUsage": 4
+          }
+        },
+        {
+          "path": "nanobot/session/session_export.py",
+          "sha256": "7a2cacf552ce495b1bc6b492f462b086259709e4bb876af3d3acf15d0fbbfe15",
+          "diagnostics": 39,
+          "by_rule": {
+            "reportPrivateUsage": 3,
+            "reportUnknownArgumentType": 13,
+            "reportUnknownMemberType": 11,
+            "reportUnknownVariableType": 12
+          }
+        },
+        {
+          "path": "nanobot/session/session_mode.py",
+          "sha256": "9b7a9c4d16b769dbfa51982894e05814715c2d54022acb8c9beba4230c860de0",
+          "diagnostics": 122,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportDeprecated": 2,
+            "reportPossiblyUnboundVariable": 1,
+            "reportPrivateUsage": 22,
+            "reportUnknownArgumentType": 23,
+            "reportUnknownMemberType": 46,
+            "reportUnknownVariableType": 20,
+            "reportUnnecessaryCast": 4,
+            "reportUnnecessaryIsInstance": 2
+          }
+        },
+        {
+          "path": "nanobot/session/source.py",
+          "sha256": "94c36d190aa61952bf1aa27a623b413cd53c5b18a144a369b580d26ba4011922",
+          "diagnostics": 18,
+          "by_rule": {
+            "reportUnknownArgumentType": 6,
+            "reportUnknownMemberType": 2,
+            "reportUnknownVariableType": 5,
+            "reportUnnecessaryIsInstance": 5
+          }
+        },
+        {
+          "path": "nanobot/session/source_compaction.py",
+          "sha256": "4b1e6728e57b66d32d042840deac272ac177215df199850ea0cdba9640b70a9a",
+          "diagnostics": 4,
+          "by_rule": {
+            "reportUnknownArgumentType": 2,
+            "reportUnknownMemberType": 2
+          }
+        },
+        {
+          "path": "nanobot/session/source_discovery.py",
+          "sha256": "6ac7a7f6d8c67fdcea42a8da49c0b92cef1f23191a4551cedad573c127ff2516",
+          "diagnostics": 9,
+          "by_rule": {
+            "reportPossiblyUnboundVariable": 1,
+            "reportPrivateUsage": 3,
+            "reportReturnType": 1,
+            "reportUnknownArgumentType": 1,
+            "reportUnknownMemberType": 2,
+            "reportUnknownVariableType": 1
+          }
+        },
+        {
+          "path": "nanobot/session/source_projection.py",
+          "sha256": "c556d7ffa9c6858d63757b6e661744227329b0eea15d17d0b1d7f7ea3cde1051",
+          "diagnostics": 6,
+          "by_rule": {
+            "reportUnknownArgumentType": 1,
+            "reportUnknownMemberType": 3,
+            "reportUnknownVariableType": 2
+          }
+        },
+        {
+          "path": "nanobot/session/source_request.py",
+          "sha256": "29f15ccb212233d3f6dfae5d7364b77dc515246effa451628c9230660eb7bc5d",
+          "diagnostics": 12,
+          "by_rule": {
+            "reportUnknownArgumentType": 1,
+            "reportUnknownMemberType": 3,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 5
+          }
+        },
+        {
+          "path": "nanobot/session/source_root.py",
+          "sha256": "4d762058d017bd945b0352569f1ed4f7f1661100c24d9cbe202a8da7b5967a7f",
+          "diagnostics": 13,
+          "by_rule": {
+            "reportDeprecated": 1,
+            "reportIncompatibleMethodOverride": 1,
+            "reportOptionalMemberAccess": 6,
+            "reportPossiblyUnboundVariable": 2,
+            "reportUnknownArgumentType": 1,
+            "reportUnnecessaryIsInstance": 2
+          }
+        },
+        {
+          "path": "nanobot/session/source_store.py",
+          "sha256": "30017188074df1732841be4c7f2a39ab1ffaf6150c6134dcf36b9e5980e78037",
+          "diagnostics": 53,
+          "by_rule": {
+            "reportArgumentType": 2,
+            "reportDeprecated": 1,
+            "reportPrivateUsage": 7,
+            "reportUnknownArgumentType": 14,
+            "reportUnknownMemberType": 13,
+            "reportUnknownVariableType": 10,
+            "reportUnnecessaryComparison": 1,
+            "reportUnnecessaryIsInstance": 5
+          }
+        },
+        {
+          "path": "nanobot/session/turn_writer.py",
+          "sha256": "1e7692f8fe7e286d2c82bc120eef0ca119d79aae3e0c2112df884bb84ffc2e4e",
+          "diagnostics": 17,
+          "by_rule": {
+            "reportUnknownArgumentType": 2,
+            "reportUnknownMemberType": 10,
+            "reportUnknownVariableType": 5
+          }
+        }
+      ]
+    },
+    {
+      "id": "tools_channels",
+      "status": "OPEN",
+      "diagnostics": 584,
+      "files": [
+        {
+          "path": "nanobot/agent/tools/agent_browser.py",
+          "sha256": "c3b1d42c21716c5f4a7f46b04bf760719428a290fa6a2138fa5fba66f00afb64",
+          "diagnostics": 4,
+          "by_rule": {
+            "reportIncompatibleMethodOverride": 1,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/agent_device.py",
+          "sha256": "3f32b12383a3cfda13a6173708193ea40d798f2360553ef140998ebb206f8673",
+          "diagnostics": 4,
+          "by_rule": {
+            "reportIncompatibleMethodOverride": 1,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/artifact.py",
+          "sha256": "9355f6d52a5c7b7a3ef775c8f312a60ee8c86a200d27e2adc0a5dadfb20680b3",
+          "diagnostics": 15,
+          "by_rule": {
+            "reportAssignmentType": 4,
+            "reportIncompatibleMethodOverride": 5,
+            "reportUnknownArgumentType": 6
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/artifact_handoff.py",
+          "sha256": "b452332a4d47a7ca6f265e250f0d304f8895ba9f3afa5fe5a625d056cd8be416",
+          "diagnostics": 9,
+          "by_rule": {
+            "reportAssignmentType": 4,
+            "reportIncompatibleMethodOverride": 5
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/crawler.py",
+          "sha256": "9b53c38d587e9acd30e581f0a40ee0df38e364002599ba7da550b1ee71daa172",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportIncompatibleMethodOverride": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/cron.py",
+          "sha256": "e6071f8d8ba8bc77d89003b1af86ac9e558b3716d2bba6bfd3a60957fa2a1d9e",
+          "diagnostics": 7,
+          "by_rule": {
+            "reportUnknownArgumentType": 5,
+            "reportUnknownVariableType": 2
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/delegation.py",
+          "sha256": "43053de8c6a3357cc2e4034aa21fb4b03df31ab24f5f7f0afc238200cf4b14b4",
+          "diagnostics": 25,
+          "by_rule": {
+            "reportAssignmentType": 9,
+            "reportIncompatibleMethodOverride": 13,
+            "reportReturnType": 3
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/desktop_use.py",
+          "sha256": "3f0af0d6c287d40c5542b96d34313fd524edd060a88b92ecd704d639e4252352",
+          "diagnostics": 320,
+          "by_rule": {
+            "reportAttributeAccessIssue": 127,
+            "reportConstantRedefinition": 2,
+            "reportIncompatibleMethodOverride": 1,
+            "reportUnknownArgumentType": 7,
+            "reportUnknownMemberType": 136,
+            "reportUnknownParameterType": 1,
+            "reportUnknownVariableType": 46
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/explore.py",
+          "sha256": "c26278a51ad19f0305fc770957b305e30218ddb0fcf51d90cc5e4305d3700f95",
+          "diagnostics": 16,
+          "by_rule": {
+            "reportAssignmentType": 3,
+            "reportIncompatibleMethodOverride": 4,
+            "reportReturnType": 1,
+            "reportUnknownVariableType": 8
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/filesystem.py",
+          "sha256": "3ed1fbcd6cc15d5b50865a11d7377303f7ebed6ccd6a4f0e90ccebc05497b6e9",
+          "diagnostics": 14,
+          "by_rule": {
+            "reportGeneralTypeIssues": 2,
+            "reportUnknownArgumentType": 3,
+            "reportUnknownMemberType": 3,
+            "reportUnknownVariableType": 3,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/fork_factories.py",
+          "sha256": "adc456ceedfd502601fcdd97bca94236e14c3994906b3e8d77d19421d0ce14cd",
+          "diagnostics": 5,
+          "by_rule": {
+            "reportUnknownMemberType": 1,
+            "reportUnknownVariableType": 1,
+            "reportUnnecessaryComparison": 3
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/image.py",
+          "sha256": "9488adfe7bab04d8b31ef26d9a82a7507e72b8433f9a60834b5c728e1424e5a1",
+          "diagnostics": 20,
+          "by_rule": {
+            "reportAssignmentType": 3,
+            "reportIncompatibleMethodOverride": 4,
+            "reportUnknownArgumentType": 1,
+            "reportUnknownLambdaType": 2,
+            "reportUnknownMemberType": 6,
+            "reportUnknownVariableType": 4
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/image_generation.py",
+          "sha256": "00ba62f07c9948445b585a464ebd9509cdd915ef3dc49813e9f745d0bc97cc46",
+          "diagnostics": 15,
+          "by_rule": {
+            "reportAbstractUsage": 2,
+            "reportArgumentType": 3,
+            "reportPossiblyUnboundVariable": 2,
+            "reportPrivateUsage": 7,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/producer_adapters.py",
+          "sha256": "deef98913d328965761fbc6a4d892bf0af94482b2f7dd1580d10ce479b2778b9",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportArgumentType": 1
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/read_provenance.py",
+          "sha256": "0f732961e3add9f2ab31505309fa403d41b70e2cc06b5c37c785ae6df9e7613b",
+          "diagnostics": 22,
+          "by_rule": {
+            "reportDeprecated": 1,
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 14,
+            "reportUnknownMemberType": 4,
+            "reportUnknownVariableType": 2
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/social_crawl.py",
+          "sha256": "1ad0f386b26f306c5fce0e5059ec0f8d4f74bbd5fa3a2a3dd3453c8275bc20f6",
+          "diagnostics": 15,
+          "by_rule": {
+            "reportArgumentType": 1,
+            "reportAssignmentType": 3,
+            "reportIncompatibleMethodOverride": 4,
+            "reportUnknownArgumentType": 1,
+            "reportUnknownMemberType": 2,
+            "reportUnknownVariableType": 1,
+            "reportUnnecessaryIsInstance": 3
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/trend_vpn.py",
+          "sha256": "d46cc6d549318098d630ac8c151db769329b74e1bbd8e4415c45c868d4b98583",
+          "diagnostics": 33,
+          "by_rule": {
+            "reportAssignmentType": 12,
+            "reportIncompatibleMethodOverride": 15,
+            "reportUnknownArgumentType": 1,
+            "reportUnknownMemberType": 3,
+            "reportUnknownVariableType": 2
+          }
+        },
+        {
+          "path": "nanobot/agent/tools/trend_vpngate.py",
+          "sha256": "b6804fde57cc59b54271bda00c330e443e344dd9ce4063ed3cfabba120126d0b",
+          "diagnostics": 2,
+          "by_rule": {
+            "reportUnnecessaryIsInstance": 2
+          }
+        },
+        {
+          "path": "nanobot/channels/delivery_contract.py",
+          "sha256": "8cfce3562bc360350cf2d0f4394d11ae294d59243e2444362e48b8bc631260b5",
+          "diagnostics": 2,
+          "by_rule": {
+            "reportReturnType": 1,
+            "reportUnnecessaryIsInstance": 1
+          }
+        },
+        {
+          "path": "nanobot/channels/manager.py",
+          "sha256": "7b5e49c929941cbb6ca2b536b0f824e95342edf1fd0bf1823097d201365480fd",
+          "diagnostics": 3,
+          "by_rule": {
+            "reportUnknownMemberType": 1,
+            "reportUnknownVariableType": 2
+          }
+        },
+        {
+          "path": "nanobot/channels/registry.py",
+          "sha256": "3c24f829888d2f657ee16d4990934bff09325130ae999fbbdbc7fdc01fc4928a",
+          "diagnostics": 1,
+          "by_rule": {
+            "reportPrivateUsage": 1
+          }
+        },
+        {
+          "path": "nanobot/channels/telegram/runtime.py",
+          "sha256": "53cc532aa5ebd71b37af0a8ad681eec205bb28e68e3bdb0c7d6378c397e90651",
+          "diagnostics": 50,
+          "by_rule": {
+            "reportMissingParameterType": 10,
+            "reportOptionalMemberAccess": 1,
+            "reportPrivateUsage": 1,
+            "reportUnknownArgumentType": 7,
+            "reportUnknownMemberType": 21,
+            "reportUnknownParameterType": 3,
+            "reportUnknownVariableType": 4,
+            "reportUnnecessaryIsInstance": 3
+          }
+        }
+      ]
+    }
+  ]
+}

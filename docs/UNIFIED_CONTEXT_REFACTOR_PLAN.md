@@ -1,3 +1,17 @@
+> Historical proposal — superseded, 2026-10-12. The examples below are retained
+> as design history, not a current implementation contract.
+
+`ContextBudgetManager` now performs deterministic request-local reduction only.
+Its obsolete `consolidate(messages)` hook has been retired with owner approval:
+it had no production callers and depended on nonexistent
+`MemoryStore.consolidate`. Reduced provider messages cannot stand in for durable
+session history. Existing persistence remains on the session-owned
+`MemoryArchiver` / `Consolidator.archive_session` pipeline, using the actual
+session, captured range and runtime, with existing cursor/generation/lock gates.
+The snippets below for direct consolidation, provider-based budget compression,
+synthetic memory turns and plain history appends must not be reintroduced from
+this historical plan. This notice does not change current runtime behavior.
+
 # Unified Context Management Refactor - Implementation Plan
 
 ## Overview

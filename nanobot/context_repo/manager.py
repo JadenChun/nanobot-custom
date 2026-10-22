@@ -7,20 +7,28 @@ import os
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, TypeGuard, cast
 
 from loguru import logger
-
 
 _MANIFEST_NAME = "nanobot.context.json"
 
 
-def _as_list(value: Any) -> list[Any]:
+def _as_list(value: object) -> list[object]:
     if value is None:
         return []
     if isinstance(value, list):
-        return value
+        return cast(list[object], value)
     return [value]
+
+
+def _is_manifest_mapping(value: object) -> TypeGuard[dict[str, Any]]:
+    """JSON object boundary; values remain dynamic until their owning accessor."""
+    if not isinstance(value, dict):
+        return False
+    if not all(isinstance(key, str) for key in cast(dict[object, object], value)):
+        raise ValueError("Context repo manifest object keys must be strings")
+    return True
 
 
 def _as_str_list(value: Any) -> list[str]:
@@ -103,7 +111,7 @@ class ManagedTargetRepo:
         context_repo_path: Path,
         raw: Any,
     ) -> "ManagedTargetRepo | None":
-        if not isinstance(raw, dict):
+        if not _is_manifest_mapping(raw):
             return None
 
         path_env = _get_any(raw, "pathEnv", "path_env")
@@ -139,13 +147,13 @@ class ManagedTargetRepo:
 
     @property
     def commands(self) -> dict[str, Any]:
-        value = self.manifest.get("commands") or {}
-        return value if isinstance(value, dict) else {}
+        value = self.manifest.get("commands")
+        return value if _is_manifest_mapping(value) else {}
 
     @property
     def publish_config(self) -> dict[str, Any]:
-        value = self.manifest.get("publish") or {}
-        return value if isinstance(value, dict) else {}
+        value = self.manifest.get("publish")
+        return value if _is_manifest_mapping(value) else {}
 
     def rel_path(self, path: Path) -> str | None:
         if self.path is None:
@@ -216,10 +224,11 @@ class ContextRepoRuntimeConfig:
             return None
         if isinstance(raw, (str, Path)):
             return cls(path=Path(raw).expanduser().resolve(strict=False))
-        if isinstance(raw, dict):
+        if _is_manifest_mapping(raw):
             path = raw.get("path")
             if not path:
                 return None
+            target_paths: Any = _get_any(raw, "targetRepoPaths", "target_repo_paths", default={}) or {}
             return cls(
                 path=Path(str(path)).expanduser().resolve(strict=False),
                 read_only=bool(_get_any(raw, "readOnly", "read_only", default=False)),
@@ -228,7 +237,7 @@ class ContextRepoRuntimeConfig:
                 manifest_name=str(_get_any(raw, "manifest", "manifestName", "manifest_name", default=_MANIFEST_NAME)),
                 target_repo_paths={
                     str(name): str(path)
-                    for name, path in (_get_any(raw, "targetRepoPaths", "target_repo_paths", default={}) or {}).items()
+                    for name, path in target_paths.items()
                 },
             )
         path = getattr(raw, "path", None)
@@ -269,11 +278,12 @@ class ManagedContextRepo:
         if managed:
             try:
                 raw = json.loads(manifest_path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    manifest = raw
+                if not _is_manifest_mapping(raw):
+                    raise ValueError("Context repo manifest must be an object")
+                manifest = raw
             except Exception as exc:
                 logger.warning("Failed to load context repo manifest {}: {}", manifest_path, exc)
-                managed = False
+                raise ValueError(f"Invalid context repo manifest: {manifest_path}") from exc
         name = str(manifest.get("name") or config.path.name)
         credential_profile = config.credential_profile or manifest.get("credentialProfile") or manifest.get("credential_profile")
         return cls(
@@ -290,43 +300,43 @@ class ManagedContextRepo:
 
     @property
     def entrypoints(self) -> dict[str, Any]:
-        value = self.manifest.get("entrypoints") or {}
-        return value if isinstance(value, dict) else {}
+        value = self.manifest.get("entrypoints")
+        return value if _is_manifest_mapping(value) else {}
 
     @property
     def sync_config(self) -> dict[str, Any]:
-        value = self.manifest.get("sync") or {}
-        return value if isinstance(value, dict) else {}
+        value = self.manifest.get("sync")
+        return value if _is_manifest_mapping(value) else {}
 
     @property
     def stores(self) -> dict[str, Any]:
-        value = self.manifest.get("stores") or {}
-        return value if isinstance(value, dict) else {}
+        value = self.manifest.get("stores")
+        return value if _is_manifest_mapping(value) else {}
 
     @property
     def modules(self) -> dict[str, Any]:
-        value = self.manifest.get("modules") or {}
-        return value if isinstance(value, dict) else {}
+        value = self.manifest.get("modules")
+        return value if _is_manifest_mapping(value) else {}
 
     @property
     def user_experience(self) -> dict[str, Any]:
         value = _get_any(self.manifest, "userExperience", "user_experience", default={})
-        return value if isinstance(value, dict) else {}
+        return value if _is_manifest_mapping(value) else {}
 
     @property
     def tools(self) -> dict[str, Any]:
-        value = self.manifest.get("tools") or {}
-        return value if isinstance(value, dict) else {}
+        value = self.manifest.get("tools")
+        return value if _is_manifest_mapping(value) else {}
 
     @property
     def target_repos_config(self) -> dict[str, Any]:
         value = _get_any(self.manifest, "targetRepos", "target_repos", default={})
-        return value if isinstance(value, dict) else {}
+        return value if _is_manifest_mapping(value) else {}
 
     def target_repos(self) -> list[ManagedTargetRepo]:
         targets: list[ManagedTargetRepo] = []
         for name, raw in self.target_repos_config.items():
-            if isinstance(raw, dict) and (override_path := self.target_repo_paths.get(str(name))):
+            if _is_manifest_mapping(raw) and (override_path := self.target_repo_paths.get(str(name))):
                 raw = {**raw, "path": override_path}
             target = ManagedTargetRepo.from_manifest(
                 name=str(name),
@@ -385,7 +395,7 @@ class ManagedContextRepo:
     def store_paths(self, *, direct_edit_only: bool | None = None) -> list[str]:
         paths: list[str] = []
         for store in self.stores.values():
-            if not isinstance(store, dict):
+            if not _is_manifest_mapping(store):
                 continue
             direct_edit = bool(_get_any(store, "directEdit", "direct_edit", default=True))
             if direct_edit_only is not None and direct_edit != direct_edit_only:
@@ -468,7 +478,7 @@ class ManagedContextRepo:
         include = _as_str_list(_get_any(self.sync_config, "include", "paths", default=[]))
         patterns = [*include, *self.writable_patterns()]
         for store in self.stores.values():
-            if isinstance(store, dict):
+            if _is_manifest_mapping(store):
                 patterns.extend(_as_str_list(_get_any(store, "syncPaths", "sync_paths", default=[])))
         return sorted(set(patterns))
 
@@ -495,7 +505,7 @@ class ManagedContextRepo:
             assistant_name = str(_get_any(self.user_experience, "assistantName", "assistant_name", default="assistant")).strip()
             internals = str(_get_any(self.user_experience, "explainInternals", "explain_internals", default="")).strip()
             approvals = str(_get_any(self.user_experience, "approvalStyle", "approval_style", default="")).strip()
-            experience_bits = []
+            experience_bits: list[str] = []
             if mode:
                 experience_bits.append(f"audience={mode}")
             if assistant_name:
@@ -510,7 +520,7 @@ class ManagedContextRepo:
             module_lines: list[str] = []
             for name, module in sorted(self.modules.items()):
                 description = ""
-                if isinstance(module, dict):
+                if _is_manifest_mapping(module):
                     description = str(module.get("description") or "").strip()
                 module_file = self.path / "modules" / str(name) / "MODULE.md"
                 location = f"; contract: {module_file}" if module_file.is_file() else ""
@@ -518,9 +528,9 @@ class ManagedContextRepo:
                 module_lines.append(f"{name}{suffix}{location}")
             lines.append(f"  Modules: {'; '.join(module_lines)}")
         if self.stores:
-            store_lines = []
+            store_lines: list[str] = []
             for name, store in sorted(self.stores.items()):
-                if isinstance(store, dict):
+                if _is_manifest_mapping(store):
                     direct = _get_any(store, "directEdit", "direct_edit", default=True)
                     via = _get_any(store, "writeVia", "write_via", default="")
                     suffix = f" via {via}" if via else ""

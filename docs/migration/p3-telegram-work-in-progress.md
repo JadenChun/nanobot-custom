@@ -1,0 +1,35 @@
+# P3 Telegram adapter work in progress
+
+This is a historical work log. Its earlier pending/review statements are
+preserved as evidence and are superseded by the current closure status below.
+
+Checkpoint adapter changes restore allowChats and legacy fast-command configuration fields in the upstream Telegram runtime. Authorization uses the staging explicit sender allowlist, supplemented by chat restrictions; pairing approvals do not bypass allowFrom. Gates run before enqueue and processing, start/help replies, and callback acknowledgment. Buffered album flush rechecks current sender/chat policy. Deployment guidance now correctly requires sender authorization; allowChats alone cannot grant access. The manifest and WebUI setup expose allowChats.
+
+124 combined Telegram authorization, channel reasoning/concurrency/coalescing, command router/Dream, and Codex-auth tests passed with network denied. Scoped Ruff passed. The focused Telegram module contains 31 cases. One upstream default assertion was updated to the retained disabled tool-hints contract. Installed optional test dependencies in the integration venv: python-telegram-bot 22.8, python-socks 2.8.2, tornado 6.5.8. No Telegram API calls or live tokens were used.
+
+The retained tests/channels/test_telegram_channel.py currently cannot collect because its old package-level imports do not match the upstream package layout. Do not erase or relabel this baseline; adapt its differential fixtures in subsequent work.
+
+Authorization review identified an album-owned typing task leak after revocation; corrected with identity-based cancellation and newer-task preservation tests. Fast commands now execute only configured argv after authorization, with suffix normalization, reply/thread routing, and owned-process timeout/cancellation cleanup. Read-only narrow lifecycle recheck found no further defect after switching to the shared process-tree cleanup helper and shielding cleanup through repeated cancellation. Windows operational qualification remains unrun. Quota menu/help/priority routing and MYT reset display are restored with topic metadata and sanitized errors. Result-only mode suppresses ordinary progress/reasoning while preserving explicit tool hints and final media; ordering/concurrency tests pass. At this historical checkpoint it was not yet accepted: full settings serialization, older Telegram differential fixture adaptation, Windows qualification and complete channel regression evidence remained. The P3 authentication credential-store policy was also pending then; both statements are superseded by the closure below. Runtime guard stays enabled.
+
+Follow-up work: actual WebUI partial-save plus Config reload test passes, preserving fast command map/workdir/timeout and sender constraints when allowChats changes (32 focused tests). A separate copy of retained staging tests, test_telegram_migration_differential.py, is being adapted to the upstream runtime ABI; original fixtures remain untouched. Initial copied run: 17 passed, 36 failed, primarily stale fake lifecycle/logging/event/reply-context interfaces. This suite is not accepted or green. After adapting app-ready and media fake fields, it exposed missing short-caption behavior. Runtime now captions the first successful attachment for eligible short text, preserves text fallback on attachment failure, and excludes buttons/progress. Two short/long attachment checks pass; remaining differential adaptation and caption edge-case review are pending.
+
+Further differential progress: updated copied fixtures for explicit stream kwargs, typed ProgressEvent, async reply extraction, bound logger, liveness-wrapper identity, and app readiness. Tests preserve content/routing/error-severity assertions; overflow HTML-normalization edit is explicitly accepted as upstream formatting behavior. Restored resuming typing, media-only default caption, bounded initial stream chunk, and content-free group-ID diagnostic. 122 combined differential/authorization/manager tests passed after caption failure-edge fixtures.
+
+Review remains CORRECT: initial rollover can fail after the first send; replay of the same delta can append it twice and recent last_edit can suppress the needed retry. Intermediate overflow progress is only committed after tail success, risking duplicate completed chunks. Must add failure/retry fixtures and repair accepted-delta/incremental rollover bookkeeping before accepting or committing these runtime changes. Caption/resuming/diagnostic review found no further defect. This is not full migration acceptance.
+
+Rollover correction implemented (review pending): ChannelManager assigns a fresh private delivery ID once per retry chain in copied metadata, overriding caller-supplied IDs. Telegram serializes stream mutation per chat, stores the latest accepted ID, and freezes pending chunks/cursor. Acknowledged edits/sends advance the cursor; pending chunks drain before a newer same-stream event or end, independently of debounce. Direct calls without IDs remain append-only. Initial/edit/intermediate/tail failure fixtures and stable/fresh manager-ID fixtures pass. 126 combined channel tests passed, then all 13 manager reasoning tests passed after adding ID coverage. Remote acceptance followed by response loss remains ambiguous; this is local retry-state safety, not exactly-once Telegram delivery.
+
+Narrow review confirmed corrected append/cursor behavior and identified pending topic routing loss when a subsequent event omits thread metadata. Fixed by freezing original thread kwargs with pending chunks and clearing them together; retry-without-topic fixture passes. Final combined five-module channel validation: 127 passed with network denied. Bounded stream/media/settings changes are checkpointed; broader migration and operational qualifications remain incomplete.
+
+Current P3 closure (2026-09-29): the Telegram adapter contract is accepted.
+An enabled configuration with an effective empty `allowFrom` fails before
+dependency loading, startup, or hot mutation; pairing remains secondary and
+cannot bypass sender authorization. An invalid hot update preserves the last
+valid runtime. The accepted evidence is **55 passed** for manager
+hot-reload/policy/authorization and **280 passed** for the separate
+channel/differential/headless/concurrency/package selection; these counts are
+not summed. The broader plugin suite remains unqualified in this environment
+because declared `setproctitle` is absent. See
+[the P3 closure checkpoint](p3-closure-checkpoint.md). The global migration
+guard remains active, and no live Telegram traffic, runtime activation,
+dependency/release qualification, or deployment is authorized.

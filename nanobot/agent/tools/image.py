@@ -11,7 +11,7 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 from loguru import logger
@@ -20,6 +20,27 @@ from nanobot.agent.tools.base import Tool
 
 if TYPE_CHECKING:
     from nanobot.config.schema import ImageConfig
+
+
+if TYPE_CHECKING:
+    from abc import ABCMeta
+
+    class _ConstantToolMetadata(ABCMeta):
+        # Model class-level value lookup, not runtime property descriptors.
+        @property
+        def name(cls) -> str:
+            ...
+
+        @property
+        def description(cls) -> str:
+            ...
+
+        @property
+        def parameters(cls) -> dict[str, object]:
+            ...
+else:
+    # Keep the existing runtime metaclass, abstractness and MRO unchanged.
+    _ConstantToolMetadata = type(Tool)
 
 
 _CURRENT_USER_IMAGE_REQUEST: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -37,35 +58,49 @@ def reset_current_user_image_request(token: contextvars.Token[str | None]) -> No
     _CURRENT_USER_IMAGE_REQUEST.reset(token)
 
 
-class ImageGenerationTool(Tool):
+class ImageGenerationTool(Tool, metaclass=_ConstantToolMetadata):
     """Generate images using AI via OpenRouter API or Codex CLI."""
 
-    name = "generate_image"
-    description = (
-        "Generate an image from a plain natural-language description. "
-        "Describe only the visible image content; do not include workflow notes, "
-        "editorial context, prompt-engineering instructions, or placement labels like "
-        "'hero image' or 'section image'. Returns the file path of the saved image."
-    )
-    parameters = {
-        "type": "object",
-        "properties": {
-            "prompt": {
-                "type": "string",
-                "description": (
-                    "Plain natural-language description of the image to create. "
-                    "Use normal sentences describing the visible scene only."
-                ),
+    # Preserve runtime class constants while declaring the Tool instance contract.
+    if TYPE_CHECKING:
+        @property
+        def name(self) -> str:
+            ...
+
+        @property
+        def description(self) -> str:
+            ...
+
+        @property
+        def parameters(self) -> dict[str, object]:
+            ...
+    else:
+        name = "generate_image"
+        description = (
+            "Generate an image from a plain natural-language description. "
+            "Describe only the visible image content; do not include workflow notes, "
+            "editorial context, prompt-engineering instructions, or placement labels like "
+            "'hero image' or 'section image'. Returns the file path of the saved image."
+        )
+        parameters = {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "Plain natural-language description of the image to create. "
+                        "Use normal sentences describing the visible scene only."
+                    ),
+                },
+                "output_path": {"type": "string", "description": "Where to save the image file"},
+                "aspect_ratio": {
+                    "type": "string",
+                    "description": "Aspect ratio hint (e.g. 16:9, 1:1, 9:16)",
+                    "default": "16:9",
+                },
             },
-            "output_path": {"type": "string", "description": "Where to save the image file"},
-            "aspect_ratio": {
-                "type": "string",
-                "description": "Aspect ratio hint (e.g. 16:9, 1:1, 9:16)",
-                "default": "16:9",
-            },
-        },
-        "required": ["prompt", "output_path"],
-    }
+            "required": ["prompt", "output_path"],
+        }
 
     def __init__(self, config: ImageConfig | None = None, workspace: Path | None = None):
         from nanobot.config.schema import ImageConfig
@@ -129,14 +164,21 @@ class ImageGenerationTool(Tool):
 
         try:
             data = r.json()
-            content = data["choices"][0]["message"]["content"]
+            content: object = data["choices"][0]["message"]["content"]
 
             # Content is a list; find the image_url entry
-            image_data_url = None
+            image_data_url: str | None = None
             if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "image_url":
-                        image_data_url = item.get("image_url", {}).get("url", "")
+                for item in cast(list[object], content):
+                    if isinstance(item, dict) and cast(dict[object, object], item).get("type") == "image_url":
+                        image_entry = cast(dict[object, object], item).get("image_url", {})
+                        if not isinstance(image_entry, dict):
+                            raise ValueError("image_url must be an object")
+                        image_url_value = cast(dict[object, object], image_entry).get("url", "")
+                        if isinstance(image_url_value, str):
+                            image_data_url = image_url_value
+                        elif image_url_value:
+                            raise ValueError("image_url.url must be text")
                         break
             elif isinstance(content, str) and content.startswith("data:image/"):
                 image_data_url = content
@@ -340,7 +382,7 @@ def _find_generated_image(
     root = codex_home / "generated_images"
     if not root.exists():
         return None
-    candidates = []
+    candidates: list[tuple[float, Path]] = []
     for path in root.rglob("*"):
         if not path.is_file() or not _is_image_path(path):
             continue

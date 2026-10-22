@@ -1,0 +1,4 @@
+record_id	run_scope	base_commit	test_files	historical_nodeids	added_nodeids	collected	passed	failed	skipped	errors	warnings	duration_seconds	exit_code	evidence_directory	status
+CANDIDATE-001	corrected integrated candidate	4aa562d92828189b3fcefad079773efbab1d715a	62	868	8	876	876	0	0	0	33	30.93	0	integrated-accepted	PASS; P0-CANDIDATE-ACCEPTED
+CANDIDATE-002	historical-nodeid cross-check	4aa562d92828189b3fcefad079773efbab1d715a	61	868	0	868	868	0	0	0	0	0	0	integrated-accepted	PASS; candidate-only cross-check, historical TSV unchanged
+CANDIDATE-003	added PowerShell launcher coverage	4aa562d92828189b3fcefad079773efbab1d715a	1	0	8	8	8	0	0	0	0	0	0	integrated-accepted	PASS; mocked macOS/PowerShell 7 only

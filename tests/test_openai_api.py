@@ -1,4 +1,4 @@
-"""Focused tests for the fixed-session OpenAI-compatible API."""
+"""Focused checks for the non-streaming OpenAI-compatible HTTP API."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 
+from nanobot.agent.turn import TraceMode, TurnResult, TurnSource
 from nanobot.api.server import (
     API_CHAT_ID,
     API_SESSION_KEY,
@@ -17,9 +18,12 @@ from nanobot.api.server import (
     create_app,
     handle_chat_completions,
 )
+from nanobot.providers.base import LLMUsage
+from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
+from tests.api_http_client import InProcessApiClient
 
 try:
-    from aiohttp.test_utils import TestClient, TestServer
+    from aiohttp import web
 
     HAS_AIOHTTP = True
 except ImportError:
@@ -27,33 +31,35 @@ except ImportError:
 
 pytest_plugins = ("pytest_asyncio",)
 
+API_KEY = "secret"
+AUTH_HEADERS = {"Authorization": f"Bearer {API_KEY}"}
+
 
 def _make_mock_agent(response_text: str = "mock response") -> MagicMock:
     agent = MagicMock()
-    agent.process_direct = AsyncMock(return_value=response_text)
-    agent._connect_mcp = AsyncMock()
-    agent.close_mcp = AsyncMock()
+    agent._execute_direct = AsyncMock(return_value=TurnResult(content=response_text))
+    agent.aclose = AsyncMock()
     return agent
 
 
 @pytest.fixture
-def mock_agent():
+def mock_agent() -> MagicMock:
     return _make_mock_agent()
 
 
 @pytest.fixture
-def app(mock_agent):
-    return create_app(mock_agent, model_name="test-model", request_timeout=10.0)
+def app(mock_agent: MagicMock):
+    return create_app(mock_agent, model_name="test-model", request_timeout=10.0, api_key=API_KEY)
 
 
 @pytest_asyncio.fixture
 async def aiohttp_client():
-    clients: list[TestClient] = []
+    clients: list[InProcessApiClient] = []
 
-    async def _make_client(app):
-        client = TestClient(TestServer(app))
-        await client.start_server()
+    async def _make_client(app: web.Application):
+        client = InProcessApiClient(app)
         clients.append(client)
+        await client.start()
         return client
 
     try:
@@ -64,308 +70,342 @@ async def aiohttp_client():
 
 
 def test_error_json() -> None:
-    resp = _error_json(400, "bad request")
-    assert resp.status == 400
-    body = json.loads(resp.body)
-    assert body["error"]["message"] == "bad request"
-    assert body["error"]["code"] == 400
+    response = _error_json(400, "bad request")
+    assert response.status == 400
+    body = json.loads(response.body)
+    assert body["error"] == {"message": "bad request", "type": "invalid_request_error", "code": 400}
 
 
-def test_chat_completion_response() -> None:
-    result = _chat_completion_response("hello world", "test-model")
-    assert result["object"] == "chat.completion"
-    assert result["model"] == "test-model"
-    assert result["choices"][0]["message"]["content"] == "hello world"
-    assert result["choices"][0]["finish_reason"] == "stop"
-    assert result["id"].startswith("chatcmpl-")
-
-
-@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_missing_messages_returns_400(aiohttp_client, app) -> None:
-    client = await aiohttp_client(app)
-    resp = await client.post("/v1/chat/completions", json={"model": "test"})
-    assert resp.status == 400
+def test_chat_completion_response_includes_usage() -> None:
+    usage = LLMUsage.reported(input_tokens=70, output_tokens=7, total_tokens=175)
+    response = _chat_completion_response("hello world", "test-model", usage)
+    assert response["object"] == "chat.completion"
+    assert response["model"] == "test-model"
+    assert response["choices"][0]["message"]["content"] == "hello world"
+    assert response["choices"][0]["finish_reason"] == "stop"
+    assert response["usage"] == {
+        "prompt_tokens": 70,
+        "completion_tokens": 7,
+        "total_tokens": 175,
+    }
 
 
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_no_user_message_returns_400(aiohttp_client, app) -> None:
-    client = await aiohttp_client(app)
-    resp = await client.post(
+async def test_api_key_protects_api_routes_but_not_health(aiohttp_client, mock_agent: MagicMock) -> None:
+    client = await aiohttp_client(create_app(mock_agent, model_name="test-model", api_key=API_KEY))
+
+    health = await client.get("/health")
+    missing = await client.get("/v1/models")
+    wrong = await client.get("/v1/models", headers={"Authorization": "Bearer wrong"})
+    ok = await client.get("/v1/models", headers=AUTH_HEADERS)
+
+    assert health.status == 200
+    assert missing.status == 401
+    assert wrong.status == 401
+    assert ok.status == 200
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+async def test_models_and_health_keep_their_existing_payloads(aiohttp_client, mock_agent: MagicMock) -> None:
+    client = await aiohttp_client(create_app(mock_agent, model_name="test-model", api_key=API_KEY))
+
+    models = await client.get("/v1/models", headers=AUTH_HEADERS)
+    health = await client.get("/health")
+
+    assert models.status == 200
+    assert (await models.json())["data"][0]["id"] == "test-model"
+    assert health.status == 200
+    assert (await health.json()) == {"status": "ok"}
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+async def test_api_routes_remain_open_without_a_configured_key(aiohttp_client, mock_agent: MagicMock) -> None:
+    client = await aiohttp_client(create_app(mock_agent, model_name="test-model"))
+
+    response = await client.post(
         "/v1/chat/completions",
-        json={"messages": [{"role": "system", "content": "you are a bot"}]},
+        json={"messages": [{"role": "user", "content": "hello"}]},
     )
-    assert resp.status == 400
+
+    assert response.status == 200
+    mock_agent._execute_direct.assert_awaited_once()
 
 
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_stream_true_returns_400(aiohttp_client, app) -> None:
-    client = await aiohttp_client(app)
-    resp = await client.post(
+async def test_preparation_runs_before_each_admitted_turn(aiohttp_client, mock_agent: MagicMock) -> None:
+    events: list[str] = []
+
+    async def prepare() -> None:
+        events.append("prepare")
+
+    async def execute_direct(content: str, **_kwargs) -> TurnResult:
+        events.append(f"execute:{content}")
+        return TurnResult(content="ready")
+
+    mock_agent._execute_direct = execute_direct
+    client = await aiohttp_client(create_app(mock_agent, prepare_agent=prepare))
+    response = await client.post(
         "/v1/chat/completions",
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status == 200
+    assert events == ["prepare", "execute:hello"]
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+async def test_json_schema_errors_do_not_admit_a_turn(aiohttp_client, app, mock_agent: MagicMock) -> None:
+    client = await aiohttp_client(app)
+    for body in (
+        {"model": "test"},
+        {"messages": [{"role": "system", "content": "not a user"}]},
+        {"messages": [{"role": "user", "content": "one"}, {"role": "user", "content": "two"}]},
+    ):
+        response = await client.post("/v1/chat/completions", headers=AUTH_HEADERS, json=body)
+        assert response.status == 400
+    mock_agent._execute_direct.assert_not_awaited()
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+async def test_json_stream_true_is_rejected_without_preparation_or_execution(aiohttp_client, mock_agent: MagicMock) -> None:
+    prepared = False
+
+    async def prepare() -> None:
+        nonlocal prepared
+        prepared = True
+
+    client = await aiohttp_client(create_app(mock_agent, api_key=API_KEY, prepare_agent=prepare))
+    response = await client.post(
+        "/v1/chat/completions",
+        headers=AUTH_HEADERS,
         json={"messages": [{"role": "user", "content": "hello"}], "stream": True},
     )
-    assert resp.status == 400
-    body = await resp.json()
-    assert "stream" in body["error"]["message"].lower()
+
+    assert response.status == 400
+    assert "Streaming is not supported" in (await response.json())["error"]["message"]
+    assert not prepared
+    mock_agent._execute_direct.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_model_mismatch_returns_400() -> None:
+async def test_model_mismatch_returns_400_without_execution(mock_agent: MagicMock) -> None:
     request = MagicMock()
-    request.json = AsyncMock(
-        return_value={
-            "model": "other-model",
-            "messages": [{"role": "user", "content": "hello"}],
-        }
-    )
-    request.app = {
-        "agent_loop": _make_mock_agent(),
-        "model_name": "test-model",
-        "request_timeout": 10.0,
-        "session_lock": asyncio.Lock(),
-    }
+    request.json = AsyncMock(return_value={
+        "model": "other-model",
+        "messages": [{"role": "user", "content": "hello"}],
+    })
+    request.app = {"agent_loop": mock_agent, "model_name": "test-model", "request_timeout": 10.0}
 
-    resp = await handle_chat_completions(request)
-    assert resp.status == 400
-    body = json.loads(resp.body)
-    assert "test-model" in body["error"]["message"]
+    response = await handle_chat_completions(request)
 
-
-@pytest.mark.asyncio
-async def test_single_user_message_required() -> None:
-    request = MagicMock()
-    request.json = AsyncMock(
-        return_value={
-            "messages": [
-                {"role": "user", "content": "hello"},
-                {"role": "assistant", "content": "previous reply"},
-            ],
-        }
-    )
-    request.app = {
-        "agent_loop": _make_mock_agent(),
-        "model_name": "test-model",
-        "request_timeout": 10.0,
-        "session_lock": asyncio.Lock(),
-    }
-
-    resp = await handle_chat_completions(request)
-    assert resp.status == 400
-    body = json.loads(resp.body)
-    assert "single user message" in body["error"]["message"].lower()
-
-
-@pytest.mark.asyncio
-async def test_single_user_message_must_have_user_role() -> None:
-    request = MagicMock()
-    request.json = AsyncMock(
-        return_value={
-            "messages": [{"role": "system", "content": "you are a bot"}],
-        }
-    )
-    request.app = {
-        "agent_loop": _make_mock_agent(),
-        "model_name": "test-model",
-        "request_timeout": 10.0,
-        "session_lock": asyncio.Lock(),
-    }
-
-    resp = await handle_chat_completions(request)
-    assert resp.status == 400
-    body = json.loads(resp.body)
-    assert "single user message" in body["error"]["message"].lower()
+    assert response.status == 400
+    assert "test-model" in json.loads(response.body)["error"]["message"]
+    mock_agent._execute_direct.assert_not_awaited()
 
 
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_successful_request_uses_fixed_api_session(aiohttp_client, mock_agent) -> None:
-    app = create_app(mock_agent, model_name="test-model")
-    client = await aiohttp_client(app)
-    resp = await client.post(
+async def test_request_uses_canonical_result_content_usage_and_api_source(
+    aiohttp_client,
+    mock_agent: MagicMock,
+) -> None:
+    usage = LLMUsage.reported(input_tokens=100, output_tokens=50)
+    mock_agent._execute_direct.return_value = TurnResult(
+        content="canonical response",
+        outbound=None,
+        llm_usage=usage,
+    )
+    client = await aiohttp_client(create_app(mock_agent, model_name="test-model", api_key=API_KEY))
+
+    response = await client.post(
         "/v1/chat/completions",
+        headers=AUTH_HEADERS,
         json={"messages": [{"role": "user", "content": "hello"}]},
     )
-    assert resp.status == 200
-    body = await resp.json()
-    assert body["choices"][0]["message"]["content"] == "mock response"
-    assert body["model"] == "test-model"
-    mock_agent.process_direct.assert_called_once_with(
-        content="hello",
-        session_key=API_SESSION_KEY,
-        channel="api",
-        chat_id=API_CHAT_ID,
-    )
+
+    assert response.status == 200
+    body = await response.json()
+    assert body["choices"][0]["message"]["content"] == "canonical response"
+    assert body["usage"] == {
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "total_tokens": 150,
+    }
+    args = mock_agent._execute_direct.await_args
+    assert args.args == ("hello",)
+    assert args.kwargs == {
+        "media": None,
+        "session_key": API_SESSION_KEY,
+        "channel": "api",
+        "chat_id": API_CHAT_ID,
+        "source": TurnSource.API,
+    }
+    assert args.kwargs.get("trace_mode", TraceMode.NONE) is TraceMode.NONE
 
 
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_followup_requests_share_same_session_key(aiohttp_client) -> None:
-    call_log: list[str] = []
+async def test_optional_session_id_is_routed_to_its_api_session(aiohttp_client) -> None:
+    requests = []
 
-    async def fake_process(content, session_key="", channel="", chat_id=""):
-        call_log.append(session_key)
-        return f"reply to {content}"
+    async def execute_direct(content: str, **kwargs):
+        requests.append((content, kwargs["session_key"]))
+        return TurnResult(content=content)
 
-    agent = MagicMock()
-    agent.process_direct = fake_process
-    agent._connect_mcp = AsyncMock()
-    agent.close_mcp = AsyncMock()
+    agent = _make_mock_agent()
+    agent._execute_direct = execute_direct
+    client = await aiohttp_client(create_app(agent, model_name="m", api_key=API_KEY))
 
-    app = create_app(agent, model_name="m")
-    client = await aiohttp_client(app)
-
-    r1 = await client.post(
+    first = await client.post(
         "/v1/chat/completions",
+        headers=AUTH_HEADERS,
         json={"messages": [{"role": "user", "content": "first"}]},
     )
-    r2 = await client.post(
+    second = await client.post(
         "/v1/chat/completions",
-        json={"messages": [{"role": "user", "content": "second"}]},
+        headers=AUTH_HEADERS,
+        json={"messages": [{"role": "user", "content": "second"}], "session_id": "named"},
     )
 
-    assert r1.status == 200
-    assert r2.status == 200
-    assert call_log == [API_SESSION_KEY, API_SESSION_KEY]
+    assert first.status == 200
+    assert second.status == 200
+    assert requests == [("first", API_SESSION_KEY), ("second", "api:named")]
 
 
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_fixed_session_requests_are_serialized(aiohttp_client) -> None:
-    order: list[str] = []
-
-    async def slow_process(content, session_key="", channel="", chat_id=""):
-        order.append(f"start:{content}")
-        await asyncio.sleep(0.1)
-        order.append(f"end:{content}")
-        return content
-
-    agent = MagicMock()
-    agent.process_direct = slow_process
-    agent._connect_mcp = AsyncMock()
-    agent.close_mcp = AsyncMock()
-
-    app = create_app(agent, model_name="m")
-    client = await aiohttp_client(app)
-
-    async def send(msg: str):
-        return await client.post(
-            "/v1/chat/completions",
-            json={"messages": [{"role": "user", "content": msg}]},
-        )
-
-    r1, r2 = await asyncio.gather(send("first"), send("second"))
-    assert r1.status == 200
-    assert r2.status == 200
-    # Verify serialization: one process must fully finish before the other starts
-    if order[0] == "start:first":
-        assert order.index("end:first") < order.index("start:second")
-    else:
-        assert order.index("end:second") < order.index("start:first")
-
-
-@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_models_endpoint(aiohttp_client, app) -> None:
-    client = await aiohttp_client(app)
-    resp = await client.get("/v1/models")
-    assert resp.status == 200
-    body = await resp.json()
-    assert body["object"] == "list"
-    assert body["data"][0]["id"] == "test-model"
-
-
-@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_health_endpoint(aiohttp_client, app) -> None:
-    client = await aiohttp_client(app)
-    resp = await client.get("/health")
-    assert resp.status == 200
-    body = await resp.json()
-    assert body["status"] == "ok"
-
-
-@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_multimodal_content_extracts_text(aiohttp_client, mock_agent) -> None:
-    app = create_app(mock_agent, model_name="m")
-    client = await aiohttp_client(app)
-    resp = await client.post(
+async def test_media_is_forwarded_through_the_canonical_adapter(aiohttp_client, mock_agent: MagicMock) -> None:
+    client = await aiohttp_client(create_app(mock_agent, model_name="m", api_key=API_KEY))
+    response = await client.post(
         "/v1/chat/completions",
+        headers=AUTH_HEADERS,
         json={
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "describe this"},
-                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
-                    ],
-                }
-            ]
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "describe this"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1n"}},
+            ]}],
         },
     )
-    assert resp.status == 200
-    mock_agent.process_direct.assert_called_once_with(
-        content="describe this",
-        session_key=API_SESSION_KEY,
-        channel="api",
-        chat_id=API_CHAT_ID,
-    )
+
+    assert response.status == 200
+    args = mock_agent._execute_direct.await_args
+    assert args.args == ("describe this",)
+    assert len(args.kwargs["media"] or []) == 1
+    assert args.kwargs["source"] is TurnSource.API
 
 
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_empty_response_retry_then_success(aiohttp_client) -> None:
-    call_count = 0
-
-    async def sometimes_empty(content, session_key="", channel="", chat_id=""):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return ""
-        return "recovered response"
-
-    agent = MagicMock()
-    agent.process_direct = sometimes_empty
-    agent._connect_mcp = AsyncMock()
-    agent.close_mcp = AsyncMock()
-
-    app = create_app(agent, model_name="m")
-    client = await aiohttp_client(app)
-    resp = await client.post(
+async def test_remote_media_returns_400_without_execution(aiohttp_client, mock_agent: MagicMock) -> None:
+    client = await aiohttp_client(create_app(mock_agent, model_name="m", api_key=API_KEY))
+    response = await client.post(
         "/v1/chat/completions",
-        json={"messages": [{"role": "user", "content": "hello"}]},
+        headers=AUTH_HEADERS,
+        json={"messages": [{"role": "user", "content": [
+            {"type": "text", "text": "describe this"},
+            {"type": "image_url", "image_url": {"url": "https://example.com/image.png"}},
+        ]}]},
     )
-    assert resp.status == 200
-    body = await resp.json()
-    assert body["choices"][0]["message"]["content"] == "recovered response"
-    assert call_count == 2
+
+    assert response.status == 400
+    assert "remote image urls are not supported" in (await response.json())["error"]["message"].lower()
+    mock_agent._execute_direct.assert_not_awaited()
 
 
 @pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
-@pytest.mark.asyncio
-async def test_empty_response_falls_back(aiohttp_client) -> None:
-    call_count = 0
+async def test_empty_canonical_result_uses_fallback_after_one_admitted_turn(aiohttp_client) -> None:
+    calls = 0
 
-    async def always_empty(content, session_key="", channel="", chat_id=""):
-        nonlocal call_count
-        call_count += 1
-        return ""
+    async def execute_direct(content: str, **_kwargs) -> TurnResult:
+        nonlocal calls
+        calls += 1
+        return TurnResult(content="", outbound=None)
 
-    agent = MagicMock()
-    agent.process_direct = always_empty
-    agent._connect_mcp = AsyncMock()
-    agent.close_mcp = AsyncMock()
+    agent = _make_mock_agent()
+    agent._execute_direct = execute_direct
+    client = await aiohttp_client(create_app(agent, model_name="m", api_key=API_KEY))
 
-    app = create_app(agent, model_name="m")
-    client = await aiohttp_client(app)
-    resp = await client.post(
+    response = await client.post(
         "/v1/chat/completions",
+        headers=AUTH_HEADERS,
         json={"messages": [{"role": "user", "content": "hello"}]},
     )
-    assert resp.status == 200
-    body = await resp.json()
-    assert body["choices"][0]["message"]["content"] == "I've completed processing but have no response to give."
-    assert call_count == 2
+
+    assert response.status == 200
+    assert (await response.json())["choices"][0]["message"]["content"] == EMPTY_FINAL_RESPONSE_MESSAGE
+    assert calls == 1
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+async def test_preparation_and_admission_share_the_request_timeout(aiohttp_client, mock_agent: MagicMock) -> None:
+    async def prepare() -> None:
+        await asyncio.Event().wait()
+
+    client = await aiohttp_client(create_app(
+        mock_agent,
+        request_timeout=0.01,
+        api_key=API_KEY,
+        prepare_agent=prepare,
+    ))
+    response = await client.post(
+        "/v1/chat/completions",
+        headers=AUTH_HEADERS,
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status == 504
+    mock_agent._execute_direct.assert_not_awaited()
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+async def test_timeout_waiting_for_admission_does_not_poison_the_next_request(aiohttp_client) -> None:
+    admission = asyncio.Lock()
+    effects: list[str] = []
+
+    async def execute_direct(content: str, **_kwargs) -> TurnResult:
+        async with admission:
+            effects.append(content)
+            return TurnResult(content=content)
+
+    agent = _make_mock_agent()
+    agent._execute_direct = execute_direct
+    client = await aiohttp_client(create_app(agent, model_name="m", api_key=API_KEY, request_timeout=0.02))
+    await admission.acquire()
+    try:
+        queued = await client.post(
+            "/v1/chat/completions",
+            headers=AUTH_HEADERS,
+            json={"messages": [{"role": "user", "content": "queued"}]},
+        )
+        assert queued.status == 504
+        assert effects == []
+    finally:
+        admission.release()
+
+    next_response = await client.post(
+        "/v1/chat/completions",
+        headers=AUTH_HEADERS,
+        json={"messages": [{"role": "user", "content": "next"}]},
+    )
+    assert next_response.status == 200
+    assert effects == ["next"]
+
+
+@pytest.mark.skipif(not HAS_AIOHTTP, reason="aiohttp not installed")
+async def test_adapter_failure_retains_the_existing_500_response(aiohttp_client, mock_agent: MagicMock) -> None:
+    mock_agent._execute_direct.side_effect = RuntimeError("boom")
+    client = await aiohttp_client(create_app(mock_agent, api_key=API_KEY))
+
+    response = await client.post(
+        "/v1/chat/completions",
+        headers=AUTH_HEADERS,
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status == 500
+    assert (await response.json())["error"] == {
+        "message": "Internal server error",
+        "type": "server_error",
+        "code": 500,
+    }
+
+
+def test_api_installs_no_second_session_lock(mock_agent: MagicMock) -> None:
+    app = create_app(mock_agent, model_name="test", api_key=API_KEY)
+    assert not any("session_lock" in str(key) for key in app.keys())

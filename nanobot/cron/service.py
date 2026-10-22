@@ -1,389 +1,855 @@
-"""Cron service for scheduling agent tasks."""
+"""Definition-only cron management service during the staged migration.
+
+``CronActionStore`` and ``CronDefinitionStore`` are the only definition
+authority in this module.  The legacy ``jobs.json`` and ``action.jsonl``
+paths are retained as constructor compatibility metadata, but are never read
+or written by the service.  Package D provides occurrence admission and
+completion projection as a dormant substrate; scheduling, execution, runtime
+state mutation, and delivery remain fenced for later packages.
+"""
+
+from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 import uuid
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from types import EllipsisType
+from typing import Any, Callable, Coroutine, Literal, Mapping, cast
 
 from loguru import logger
 
+from nanobot.cron.action_store import (
+    ActionStoreStaleGenerationError,
+    CronActionStore,
+)
+from nanobot.cron.completion import (
+    CronCompletionProjection,
+    CronCompletionProjector,
+)
+from nanobot.cron.definition_store import (
+    CronDefinition,
+    CronDefinitionAction,
+    CronDefinitionStore,
+    CronDefinitionStoreReplay,
+    DefinitionStoreConflictError,
+)
+from nanobot.cron.delivery_runtime import (
+    CRON_DELIVERY_RUNTIME_UNAVAILABLE_DIAGNOSTIC,
+    CronDeliveryRuntime,
+    CronDeliveryRuntimeUnavailableError,
+    Sender,
+    SenderResult,
+)
+from nanobot.cron.delivery_store import (
+    CronDeliveryOutboxStore,
+    DeliveryClaim,
+    DeliveryOutboxRecord,
+)
+from nanobot.cron.occurrence import (
+    CronOccurrenceRuntime,
+    CronOccurrenceRuntimeUnavailableError,
+)
+from nanobot.cron.occurrence_store import (
+    CronOccurrenceStore,
+    OccurrenceClaim,
+    OccurrenceExecutionFence,
+    OccurrenceRecord,
+)
 from nanobot.cron.types import (
     CronDestination,
     CronJob,
     CronJobState,
     CronPayload,
-    CronRunRecord,
     CronSchedule,
     CronStore,
     CronVerifier,
-    DEFAULT_STATUS_REGEX,
 )
+
+CRON_DEFINITION_ONLY_DIAGNOSTIC = (
+    "cron definition-only execution adapter is not installed; execution is fenced "
+    "until Packages D/E install runtime, occurrence, and delivery authorities"
+)
+
+_MAX_DELIVERY_DESTINATIONS = 256
+_MAX_DELIVERY_IDENTIFIER_BYTES = 512
+
+
+class CronJobSkippedError(Exception):
+    """Raised by cron callbacks when a job was intentionally skipped."""
+
+
+class CronDefinitionServiceError(RuntimeError):
+    """Base error for definition-only service management."""
+
+
+class CronDefinitionTokenRequiredError(CronDefinitionServiceError):
+    """A mutation did not provide the exact definition concurrency tokens."""
+
+
+class CronDefinitionConflictError(CronDefinitionServiceError):
+    """A durable action was acknowledged but could not be checkpointed."""
 
 
 def _now_ms() -> int:
+    """Return wall-clock milliseconds for compatibility with callers."""
     return int(time.time() * 1000)
 
 
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
-    """Compute next run time in ms."""
+    """Compute a next run for legacy callers without granting scheduling authority."""
     if schedule.kind == "at":
         return schedule.at_ms if schedule.at_ms and schedule.at_ms > now_ms else None
-
     if schedule.kind == "every":
         if not schedule.every_ms or schedule.every_ms <= 0:
             return None
-        # Next interval from now
         return now_ms + schedule.every_ms
-
     if schedule.kind == "cron" and schedule.expr:
         try:
             from zoneinfo import ZoneInfo
 
             from croniter import croniter
-            # Use caller-provided reference time for deterministic scheduling
-            base_time = now_ms / 1000
-            tz = ZoneInfo(schedule.tz) if schedule.tz else datetime.now().astimezone().tzinfo
-            base_dt = datetime.fromtimestamp(base_time, tz=tz)
-            cron = croniter(schedule.expr, base_dt)
-            next_dt = cron.get_next(datetime)
-            return int(next_dt.timestamp() * 1000)
+
+            base_dt = datetime.fromtimestamp(
+                now_ms / 1000,
+                tz=ZoneInfo(schedule.tz) if schedule.tz else datetime.now().astimezone().tzinfo,
+            )
+            return int(croniter(schedule.expr, base_dt).get_next(datetime).timestamp() * 1000)
         except Exception:
             return None
-
     return None
 
 
 def _validate_schedule_for_add(schedule: CronSchedule) -> None:
-    """Validate schedule fields that would otherwise create non-runnable jobs."""
+    """Validate schedule syntax before it enters the typed definition store."""
     if schedule.tz and schedule.kind != "cron":
         raise ValueError("tz can only be used with cron schedules")
-
-    if schedule.kind == "cron" and schedule.tz:
+    if schedule.kind == "cron":
+        if not schedule.expr or not schedule.expr.strip():
+            raise ValueError("cron schedule requires a non-empty 'expr'")
         try:
-            from zoneinfo import ZoneInfo
+            from croniter import croniter
 
-            ZoneInfo(schedule.tz)
-        except Exception:
-            raise ValueError(f"unknown timezone '{schedule.tz}'") from None
+            croniter(schedule.expr)
+        except Exception as exc:
+            raise ValueError(f"invalid cron expression '{schedule.expr}': {exc}") from None
+        if schedule.tz:
+            try:
+                from zoneinfo import ZoneInfo
+
+                ZoneInfo(schedule.tz)
+            except Exception:
+                raise ValueError(f"unknown timezone '{schedule.tz}'") from None
+
+
+def _validate_delivery_destinations_for_add(
+    *,
+    deliver: bool,
+    channel: str | None,
+    to: str | None,
+    additional_destinations: list[CronDestination] | None,
+) -> None:
+    """Validate admitted delivery identifiers before writing a definition."""
+    if additional_destinations is not None and type(additional_destinations) is not list:
+        raise TypeError("additional_destinations must be a list or None")
+    additional = additional_destinations or []
+    if len(additional) > _MAX_DELIVERY_DESTINATIONS:
+        raise ValueError(
+            f"additional_destinations cannot contain more than {_MAX_DELIVERY_DESTINATIONS} items"
+        )
+
+    candidates: list[tuple[str, str]] = []
+    for label, value in (("delivery channel", channel), ("delivery to", to)):
+        if value is not None and type(value) is not str:
+            raise ValueError(f"{label} must be a string")
+        if isinstance(value, str) and len(value.encode("utf-8")) > _MAX_DELIVERY_IDENTIFIER_BYTES:
+            raise ValueError(f"{label} exceeds the {_MAX_DELIVERY_IDENTIFIER_BYTES}-byte limit")
+    if to:
+        candidates.append((channel or "cli", to))
+    for index, destination in enumerate(additional):
+        if not isinstance(cast(object, destination), CronDestination):
+            raise TypeError(f"additional_destinations[{index}] must be a CronDestination")
+        if type(destination.channel) is not str or type(destination.to) is not str:
+            raise ValueError(f"additional_destinations[{index}] channel and to must be strings")
+        if not destination.channel or not destination.to:
+            raise ValueError(f"additional_destinations[{index}] channel and to must be non-empty")
+        if len(destination.channel.encode("utf-8")) > _MAX_DELIVERY_IDENTIFIER_BYTES:
+            raise ValueError(
+                f"additional_destinations[{index}] channel exceeds the "
+                f"{_MAX_DELIVERY_IDENTIFIER_BYTES}-byte limit"
+            )
+        if len(destination.to.encode("utf-8")) > _MAX_DELIVERY_IDENTIFIER_BYTES:
+            raise ValueError(
+                f"additional_destinations[{index}] to exceeds the "
+                f"{_MAX_DELIVERY_IDENTIFIER_BYTES}-byte limit"
+            )
+        candidates.append((destination.channel, destination.to))
+
+    if deliver and len(set(candidates)) > _MAX_DELIVERY_DESTINATIONS:
+        raise ValueError(
+            f"cron jobs cannot contain more than {_MAX_DELIVERY_DESTINATIONS} unique destinations"
+        )
+
+
+def _normalize_agent_turn_job(_job: CronJob) -> bool:
+    """Compatibility shim; definition reads must not mutate execution fields."""
+    return False
+
+
+legacy_now_ms = _now_ms
+legacy_compute_next_run = _compute_next_run
+legacy_normalize_agent_turn_job = _normalize_agent_turn_job
+
+
+def _definition_revision_action_id(action: CronDefinitionAction) -> str:
+    """Derive an idempotent action identity from the exact typed request."""
+    encoded = json.dumps(
+        action.to_wire(),
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return "cron-definition-" + hashlib.sha256(encoded).hexdigest()
+
+
+def _job_definition(job: CronJob, *, job_instance_id: str) -> CronDefinition:
+    """Project a public job shape into C2's strict definition shape."""
+    payload = job.payload
+    definition: dict[str, Any] = {
+        "id": job.id,
+        "name": job.name,
+        "enabled": job.enabled,
+        "schedule": {
+            "kind": job.schedule.kind,
+            "atMs": job.schedule.at_ms,
+            "everyMs": job.schedule.every_ms,
+            "expr": job.schedule.expr,
+            "tz": job.schedule.tz,
+        },
+        "payload": {
+            "kind": payload.kind,
+            "message": payload.message,
+            "deliver": payload.deliver,
+            "channel": payload.channel,
+            "to": payload.to,
+            "additionalDestinations": [
+                {"channel": destination.channel, "to": destination.to}
+                for destination in payload.additional_destinations
+            ],
+            "channelMeta": deepcopy(payload.channel_meta),
+            "sessionKey": payload.session_key,
+            "executionMode": payload.execution_mode,
+            "originChannel": payload.origin_channel,
+            "originChatId": payload.origin_chat_id,
+            "originMetadata": deepcopy(payload.origin_metadata),
+            **payload.contract_fields(),
+        },
+        "deleteAfterRun": job.delete_after_run,
+    }
+    return CronDefinition.from_definition(definition, job_instance_id=job_instance_id)
+
+
+def _public_job(definition: CronDefinition) -> CronJob:
+    """Project a definition into the compatibility ``CronJob`` API.
+
+    The state and timestamp fields intentionally remain empty: C2 owns
+    definitions only, so filling them from a definition would imply ownership
+    over runtime/history state that has not been migrated yet.
+    """
+    wire = definition.to_wire()
+    return CronJob(
+        id=wire["id"],
+        name=wire["name"],
+        enabled=wire["enabled"],
+        schedule=CronSchedule.from_store_dict(wire["schedule"]),
+        payload=CronPayload.from_store_dict(wire["payload"]),
+        state=CronJobState(),
+        created_at_ms=0,
+        updated_at_ms=0,
+        delete_after_run=wire["deleteAfterRun"],
+        job_instance_id=definition.job_instance_id,
+        definition_revision=definition.definition_revision,
+    )
 
 
 class CronService:
-    """Service for managing and executing scheduled jobs."""
+    """Manage typed cron definitions while all execution remains fenced."""
 
-    _MAX_RUN_HISTORY = 20
+    _MAX_CAS_RETRIES = 3
 
     def __init__(
         self,
         store_path: Path,
         on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None,
+        max_sleep_ms: int = 300_000,
+        *,
+        definition_store: CronDefinitionStore | None = None,
+        action_store: CronActionStore | None = None,
+        namespace: str | None = None,
+        occurrence_store: CronOccurrenceStore | None = None,
+        completion_projector: CronCompletionProjector | None = None,
+        delivery_store: CronDeliveryOutboxStore | None = None,
+        delivery_runtime: CronDeliveryRuntime | None = None,
     ):
-        self.store_path = store_path
+        """Create a service over the C2 definition authority.
+
+        ``store_path`` remains the historical ``jobs.json`` location for
+        callers that still provide it.  Unless a definition store is injected,
+        the parent directory is used as the dedicated v2 action-store root;
+        the path itself is never opened.  Conversion is intentionally absent
+        from construction and must have completed through the stopped-writer
+        converter before converted definitions are visible.
+
+        Delivery is likewise absent unless an explicit E3 runtime or outbox
+        store is injected with the service's exact occurrence authority and
+        namespace.  Ordinary management construction never creates a delivery
+        path or sender.
+        """
+        path = Path(store_path).expanduser()
+        if not path.is_absolute():
+            path = path.resolve()
+        if definition_store is not None and action_store is not None:
+            raise TypeError("provide definition_store or action_store, not both")
+        if definition_store is None:
+            if action_store is None:
+                action_root = path.parent
+                store_namespace = namespace or f"cron:{action_root}"
+                action_store = CronActionStore(action_root, namespace=store_namespace)
+            definition_store = CronDefinitionStore(action_store)
+        elif not isinstance(cast(object, definition_store), CronDefinitionStore):
+            raise TypeError("definition_store must be a CronDefinitionStore")
+
+        if occurrence_store is not None and not isinstance(cast(object, occurrence_store), CronOccurrenceStore):
+            raise TypeError("occurrence_store must be a CronOccurrenceStore")
+        if completion_projector is not None and not isinstance(cast(object, completion_projector), CronCompletionProjector):
+            raise TypeError("completion_projector must be a CronCompletionProjector")
+        if occurrence_store is None and completion_projector is not None:
+            raise ValueError("completion_projector requires an explicitly configured occurrence_store")
+        if (
+            completion_projector is not None
+            and completion_projector.occurrence_store is not occurrence_store
+        ):
+            raise ValueError("completion projector must use the service occurrence store")
+        if (
+            occurrence_store is not None
+            and occurrence_store.namespace != definition_store.action_store.namespace
+        ):
+            raise ValueError("definition and occurrence stores must share one namespace")
+        if delivery_store is not None and not isinstance(cast(object, delivery_store), CronDeliveryOutboxStore):
+            raise TypeError("delivery_store must be a CronDeliveryOutboxStore")
+        if delivery_runtime is not None and not isinstance(cast(object, delivery_runtime), CronDeliveryRuntime):
+            raise TypeError("delivery_runtime must be a CronDeliveryRuntime")
+        if delivery_runtime is not None and delivery_store is not None:
+            if delivery_runtime.outbox_store is not delivery_store:
+                raise ValueError("delivery runtime and delivery store must use one authority")
+        if delivery_runtime is None and delivery_store is not None:
+            if occurrence_store is None:
+                raise ValueError("delivery_store injection requires an explicit occurrence_store")
+            delivery_runtime = CronDeliveryRuntime(delivery_store, occurrence_store=occurrence_store)
+        if delivery_runtime is not None:
+            if delivery_runtime.outbox_store.namespace != definition_store.action_store.namespace:
+                raise ValueError("definition and delivery stores must share one namespace")
+            if occurrence_store is None:
+                raise ValueError("delivery runtime injection requires an explicit occurrence_store")
+            if delivery_runtime.occurrence_store is not occurrence_store:
+                raise ValueError("delivery runtime must use the service occurrence authority")
+            if occurrence_store.namespace != delivery_runtime.outbox_store.namespace:
+                raise ValueError("delivery and occurrence stores must share one namespace")
+
+        self.store_path = path
+        self.definition_store = definition_store
+        self.occurrence_store = occurrence_store
+        self.occurrence_runtime = (
+            None
+            if occurrence_store is None
+            else CronOccurrenceRuntime(definition_store, occurrence_store)
+        )
+        self.completion_projector = completion_projector
+        self.delivery_runtime = delivery_runtime
+        self.delivery_store = None if delivery_runtime is None else delivery_runtime.outbox_store
         self.on_job = on_job
+        self.max_sleep_ms = max_sleep_ms
         self._store: CronStore | None = None
-        self._last_mtime: float = 0.0
-        self._timer_task: asyncio.Task | None = None
+        self._timer_task: asyncio.Task[None] | None = None
         self._running = False
+        self._active_executions = 0
+        self._store_dirty = False
+        self._fresh_job_validator: Callable[[CronJob], None] | None = None
+        self._runtime_status: Callable[[], dict[str, object]] | None = None
+        # Kept as an observable compatibility path.  No writer in this class
+        # opens it; the action store lock is the sole mutation boundary.
+        self._run_records_dir = path.parent / "runs"
 
-    def _load_store(self) -> CronStore:
-        """Load jobs from disk. Reloads automatically if file was modified externally."""
-        if self._store and self.store_path.exists():
-            mtime = self.store_path.stat().st_mtime
-            if mtime != self._last_mtime:
-                logger.info("Cron: jobs.json modified externally, reloading")
-                self._store = None
-        if self._store:
-            return self._store
+    @property
+    def action_store(self) -> CronActionStore:
+        """Return the injected C1/C2 durability authority."""
+        return self.definition_store.action_store
 
-        if self.store_path.exists():
-            try:
-                data = json.loads(self.store_path.read_text(encoding="utf-8"))
-                jobs = []
-                for j in data.get("jobs", []):
-                    jobs.append(CronJob(
-                        id=j["id"],
-                        name=j["name"],
-                        enabled=j.get("enabled", True),
-                        schedule=CronSchedule(
-                            kind=j["schedule"]["kind"],
-                            at_ms=j["schedule"].get("atMs"),
-                            every_ms=j["schedule"].get("everyMs"),
-                            expr=j["schedule"].get("expr"),
-                            tz=j["schedule"].get("tz"),
-                        ),
-                        payload=CronPayload(
-                            kind=j["payload"].get("kind", "agent_turn"),
-                            message=j["payload"].get("message", ""),
-                            deliver=j["payload"].get("deliver", False),
-                            channel=j["payload"].get("channel"),
-                            to=j["payload"].get("to"),
-                            additional_destinations=[
-                                CronDestination(
-                                    channel=str(destination["channel"]),
-                                    to=str(destination["to"]),
-                                )
-                                for destination in j["payload"].get(
-                                    "additionalDestinations",
-                                    j["payload"].get("additional_destinations", []),
-                                ) or []
-                                if isinstance(destination, dict)
-                                and destination.get("channel")
-                                and destination.get("to")
-                            ],
-                            planning_mode=j["payload"].get("planning_mode"),
-                            skip_verification=j["payload"].get("skip_verification", False),
-                            alert_channel=j["payload"].get("alert_channel"),
-                            alert_to=j["payload"].get("alert_to"),
-                            verifiers=[
-                                CronVerifier(
-                                    name=str(v.get("name") or "verifier"),
-                                    argv=tuple(str(a) for a in v.get("argv", [])),
-                                    cwd=v.get("cwd"),
-                                    timeout=float(v.get("timeout", 120.0)),
-                                    status_file=v.get("status_file"),
-                                    status_regex=v.get("status_regex") or DEFAULT_STATUS_REGEX,
-                                )
-                                for v in j["payload"].get("verifiers", []) or []
-                                if isinstance(v, dict) and v.get("argv")
-                            ],
-                            post_delivery_command=(
-                                list(j["payload"]["post_delivery_command"])
-                                if j["payload"].get("post_delivery_command")
-                                else None
-                            ),
-                        ),
-                        state=CronJobState(
-                            next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
-                            last_run_at_ms=j.get("state", {}).get("lastRunAtMs"),
-                            last_status=j.get("state", {}).get("lastStatus"),
-                            last_error=j.get("state", {}).get("lastError"),
-                            retry_at_ms=j.get("state", {}).get("retryAtMs"),
-                            rate_limit_retries=j.get("state", {}).get("rateLimitRetries", 0),
-                            run_history=[
-                                CronRunRecord(
-                                    run_at_ms=r["runAtMs"],
-                                    status=r["status"],
-                                    duration_ms=r.get("durationMs", 0),
-                                    error=r.get("error"),
-                                )
-                                for r in j.get("state", {}).get("runHistory", [])
-                            ],
-                        ),
-                        created_at_ms=j.get("createdAtMs", 0),
-                        updated_at_ms=j.get("updatedAtMs", 0),
-                        delete_after_run=j.get("deleteAfterRun", False),
-                    ))
-                self._store = CronStore(jobs=jobs)
-            except Exception as e:
-                logger.warning("Failed to load cron store: {}", e)
-                self._store = CronStore()
-        else:
-            self._store = CronStore()
+    def claim_occurrence(
+        self,
+        job_id: str,
+        scheduled_fire_time_ms: int,
+        *,
+        source: Literal["timer", "manual", "system"] = "timer",
+        owner: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> OccurrenceClaim:
+        """Admit a definition-bound occurrence without starting execution.
 
+        This substrate method deliberately stops at the durable claim.  The
+        timer, manual runner, system callback, and delivery path remain behind
+        the migration fence below.
+        """
+        if self.occurrence_runtime is None:
+            raise CronOccurrenceRuntimeUnavailableError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
+        return self.occurrence_runtime.claim(
+            job_id=job_id,
+            scheduled_fire_time_ms=scheduled_fire_time_ms,
+            source=source,
+            owner=owner,
+            expected_job_instance_id=expected_job_instance_id,
+            expected_definition_revision=expected_definition_revision,
+        )
+
+    def claim_scheduled_occurrence(
+        self,
+        job_id: str,
+        scheduled_fire_time_ms: int,
+        *,
+        owner: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> OccurrenceClaim:
+        return self.claim_occurrence(
+            job_id,
+            scheduled_fire_time_ms,
+            source="timer",
+            owner=owner,
+            expected_job_instance_id=expected_job_instance_id,
+            expected_definition_revision=expected_definition_revision,
+        )
+
+    claim_timer_occurrence = claim_scheduled_occurrence
+
+    def claim_manual_occurrence(
+        self,
+        job_id: str,
+        scheduled_fire_time_ms: int,
+        *,
+        owner: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> OccurrenceClaim:
+        return self.claim_occurrence(
+            job_id,
+            scheduled_fire_time_ms,
+            source="manual",
+            owner=owner,
+            expected_job_instance_id=expected_job_instance_id,
+            expected_definition_revision=expected_definition_revision,
+        )
+
+    def claim_system_occurrence(
+        self,
+        job_id: str,
+        scheduled_fire_time_ms: int,
+        *,
+        owner: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> OccurrenceClaim:
+        return self.claim_occurrence(
+            job_id,
+            scheduled_fire_time_ms,
+            source="system",
+            owner=owner,
+            expected_job_instance_id=expected_job_instance_id,
+            expected_definition_revision=expected_definition_revision,
+        )
+
+    def complete_occurrence(
+        self,
+        claim: OccurrenceClaim,
+        completion: Mapping[str, Any] | None = None,
+        *,
+        status: str | None = None,
+        result: Any = None,
+        error: str | None | object = None,
+        run_id: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
+        fence: OccurrenceExecutionFence,
+    ) -> CronCompletionProjection:
+        """Persist a canonical completion and fenced history projection."""
+        # The projector distinguishes omitted values with a private sentinel;
+        # service compatibility keeps this public wrapper simple and only
+        # supplies result/error when callers explicitly provide them.
+        kwargs: dict[str, Any] = {
+            "status": status,
+            "run_id": run_id,
+            "provenance": provenance,
+        }
+        if result is not None:
+            kwargs["result"] = result
+        if error is not None:
+            kwargs["error"] = error
+        if self.completion_projector is None:
+            raise CronOccurrenceRuntimeUnavailableError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
+        return self.completion_projector.complete(claim, completion, fence=fence, **kwargs)
+
+    def project_occurrence_completion(
+        self,
+        claim_or_occurrence_id: OccurrenceClaim | str,
+        *,
+        run_id: str | None = None,
+        provenance: Mapping[str, Any] | None = None,
+    ) -> CronCompletionProjection:
+        """Reproject a durable completion after a process or write failure."""
+        if self.completion_projector is None:
+            raise CronOccurrenceRuntimeUnavailableError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
+        return self.completion_projector.project_completed(
+            claim_or_occurrence_id,
+            run_id=run_id,
+            provenance=provenance,
+        )
+
+    def occurrence_reconciliation_required(self) -> list[OccurrenceRecord]:
+        """Expose explicit crash states without treating them as success."""
+        if self.occurrence_runtime is None:
+            raise CronOccurrenceRuntimeUnavailableError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
+        return self.occurrence_runtime.reconciliation_required()
+
+    def _require_delivery_runtime(self) -> CronDeliveryRuntime:
+        """Return the explicitly injected E3 substrate or fail closed."""
+        if self.delivery_runtime is None:
+            raise CronDeliveryRuntimeUnavailableError(
+                CRON_DELIVERY_RUNTIME_UNAVAILABLE_DIAGNOSTIC
+            )
+        return self.delivery_runtime
+
+    def prepare_completed_delivery(self, occurrence_id: str) -> DeliveryOutboxRecord:
+        """Delegate E3 preparation through the exact injected E1 authority."""
+        return self._require_delivery_runtime().prepare_completed(occurrence_id)
+
+    def list_deliveries(self) -> list[DeliveryOutboxRecord]:
+        """List detached E2 outbox records through an explicit E3 injection."""
+        return self._require_delivery_runtime().list()
+
+    def get_delivery(self, outbox_id: str) -> DeliveryOutboxRecord:
+        """Read one detached E2 outbox record through E3."""
+        return self._require_delivery_runtime().get(outbox_id)
+
+    def delivery_status(self, outbox_id: str) -> str:
+        """Return one durable aggregate delivery status."""
+        return self._require_delivery_runtime().status(outbox_id)
+
+    def claim_delivery(
+        self,
+        outbox_id: str,
+        destination_id: str,
+        expected_revision: int,
+        owner: str | None = None,
+    ) -> DeliveryClaim:
+        """Reserve one pending destination through the E2 claim authority."""
+        return self._require_delivery_runtime().claim(
+            outbox_id,
+            destination_id,
+            expected_revision,
+            owner=owner,
+        )
+
+    async def dispatch_delivery(
+        self,
+        claim: DeliveryClaim,
+        sender: Sender | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> SenderResult:
+        """Dispatch one issued claim through the explicitly supplied sender."""
+        return await self._require_delivery_runtime().dispatch(
+            claim,
+            sender=sender,
+            timeout=timeout,
+        )
+
+    def delivery_reconciliation_required(self) -> list[DeliveryOutboxRecord]:
+        """Expose E2 in-flight/uncertain records without auto-retry."""
+        return self._require_delivery_runtime().reconciliation_required()
+
+    def resolve_delivery_after_reconciliation(
+        self,
+        outbox_id: str | DeliveryClaim,
+        destination_id: str | None = None,
+        *,
+        expected_revision: int,
+        action_id: str,
+        request_digest: str,
+        evidence_ref: str,
+        predecessor_fenced_ref: str,
+        resolution: str | Mapping[str, Any],
+        receipt: Mapping[str, Any] | None = None,
+        predecessor_attempt: int | None = None,
+        predecessor_owner: str | None = None,
+        attempt: int | None = None,
+        owner: str | None = None,
+    ) -> DeliveryOutboxRecord:
+        """Forward exact operator evidence; E2 acquires the send fence internally."""
+        return self._require_delivery_runtime().resolve_after_reconciliation(
+            outbox_id,
+            destination_id,
+            expected_revision=expected_revision,
+            action_id=action_id,
+            request_digest=request_digest,
+            evidence_ref=evidence_ref,
+            predecessor_fenced_ref=predecessor_fenced_ref,
+            resolution=resolution,
+            receipt=receipt,
+            predecessor_attempt=predecessor_attempt,
+            predecessor_owner=predecessor_owner,
+            attempt=attempt,
+            owner=owner,
+        )
+
+    # Explicit aliases keep service call sites descriptive without creating a
+    # second delivery authority or any ordinary-construction side effect.
+    prepare_delivery = prepare_completed_delivery
+    prepare_completed = prepare_completed_delivery
+    list_delivery = list_deliveries
+    status_delivery = delivery_status
+    get_delivery_status = delivery_status
+    reconcile_deliveries = delivery_reconciliation_required
+    reconciliation_required = delivery_reconciliation_required
+
+    def _should_persist_store(self) -> bool:
+        """Compatibility answer; runtime snapshots are not service-owned."""
+        return False
+
+    def admission_diagnostic(self, _job: CronJob) -> str:
+        """Return the stable execution fence for every job kind."""
+        return CRON_DEFINITION_ONLY_DIAGNOSTIC
+
+    @property
+    def migration_diagnostic(self) -> str:
+        """Expose the same stable fence for callers without a job object."""
+        return CRON_DEFINITION_ONLY_DIAGNOSTIC
+
+    def _prepare_agent_binding(self, _job: CronJob) -> bool:
+        """Do not rewrite definition payloads while runtime adapters are absent."""
+        return False
+
+    def _prepare_store_agent_bindings(self) -> bool:
+        """Do not mutate loaded definitions during management reads."""
+        return False
+
+    def _replay_and_settle(self) -> CronDefinitionStoreReplay:
+        """Replay C2 and compact converted/pending operations once.
+
+        C2 materializes legacy embedded operations in replay.  The first
+        management read checkpoints that typed result, replacing the legacy
+        representation with the C2 candidate so the operations are not
+        interpreted again on later reads.
+        """
+        raw = self.definition_store.action_store.replay()
+        legacy_snapshot = self.store_path.exists()
+        if legacy_snapshot:
+            candidate = raw.candidate
+            converted_candidate = (
+                candidate is not None
+                and candidate.get("kind") == "legacy_cron_snapshot_candidate"
+            )
+            carried_evidence = (
+                candidate is not None
+                and candidate.get("kind") in {"cron_definition_candidate_v1", "cron_definition_candidate_v2"}
+                and "legacy_conversion_evidence" in candidate
+            )
+            if not converted_candidate and not carried_evidence:
+                raise CronDefinitionServiceError(
+                    "legacy jobs.json detected; explicit stopped-writer conversion is required"
+                )
+        replay = self.definition_store.replay()
+        raw_kind = raw.candidate.get("kind") if raw.candidate is not None else None
+        if raw_kind == "legacy_cron_snapshot_candidate" or replay.pending_actions:
+            replay = self.definition_store.checkpoint(replay)
+        return replay
+
+    def _load_store(self, *, reload_during_execution: bool = False) -> CronStore:
+        """Load only typed definitions into detached public projections."""
+        del reload_during_execution
+        replay = self._replay_and_settle()
+        jobs = [_public_job(definition) for definition in replay.candidate.definitions]
+        self._store = CronStore(version=2, jobs=jobs)
+        self._store_dirty = False
         return self._store
 
+    def _require_store(self, *, reload_during_execution: bool = False) -> CronStore:
+        return self._load_store(reload_during_execution=reload_during_execution)
+
+    def _load_jobs(self) -> None:
+        """Reject the former jobs.json read seam instead of falling back."""
+        raise RuntimeError(
+            "legacy jobs.json is not a cron definition authority; use CronDefinitionStore.replay()"
+        )
+
     def _save_store(self) -> None:
-        """Save jobs to disk."""
-        if not self._store:
-            return
+        """Reject runtime snapshot writes; C2 stores definitions only."""
+        self._store_dirty = False
 
-        self.store_path.parent.mkdir(parents=True, exist_ok=True)
-
-        data = {
-            "version": self._store.version,
-            "jobs": [
-                {
-                    "id": j.id,
-                    "name": j.name,
-                    "enabled": j.enabled,
-                    "schedule": {
-                        "kind": j.schedule.kind,
-                        "atMs": j.schedule.at_ms,
-                        "everyMs": j.schedule.every_ms,
-                        "expr": j.schedule.expr,
-                        "tz": j.schedule.tz,
-                    },
-                    "payload": {
-                        "kind": j.payload.kind,
-                        "message": j.payload.message,
-                        "deliver": j.payload.deliver,
-                        "channel": j.payload.channel,
-                        "to": j.payload.to,
-                        "additionalDestinations": [
-                            {"channel": destination.channel, "to": destination.to}
-                            for destination in j.payload.additional_destinations
-                        ],
-                        "planning_mode": j.payload.planning_mode,
-                        "skip_verification": j.payload.skip_verification,
-                        "alert_channel": j.payload.alert_channel,
-                        "alert_to": j.payload.alert_to,
-                        "verifiers": [
-                            {
-                                "name": v.name,
-                                "argv": list(v.argv),
-                                "cwd": v.cwd,
-                                "timeout": v.timeout,
-                                "status_file": v.status_file,
-                                "status_regex": v.status_regex,
-                            }
-                            for v in j.payload.verifiers
-                        ],
-                        "post_delivery_command": j.payload.post_delivery_command,
-                    },
-                    "state": {
-                        "nextRunAtMs": j.state.next_run_at_ms,
-                        "lastRunAtMs": j.state.last_run_at_ms,
-                        "lastStatus": j.state.last_status,
-                        "lastError": j.state.last_error,
-                        "retryAtMs": j.state.retry_at_ms,
-                        "rateLimitRetries": j.state.rate_limit_retries,
-                        "runHistory": [
-                            {
-                                "runAtMs": r.run_at_ms,
-                                "status": r.status,
-                                "durationMs": r.duration_ms,
-                                "error": r.error,
-                            }
-                            for r in j.state.run_history
-                        ],
-                    },
-                    "createdAtMs": j.created_at_ms,
-                    "updatedAtMs": j.updated_at_ms,
-                    "deleteAfterRun": j.delete_after_run,
-                }
-                for j in self._store.jobs
-            ]
-        }
-
-        self.store_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        self._last_mtime = self.store_path.stat().st_mtime
+    def write_run_record(self, _run_id: str, _record: dict[str, Any]) -> None:
+        """Fence the unbound legacy writer; D uses completion projector instead."""
+        raise CronJobSkippedError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
 
     async def start(self) -> None:
-        """Start the cron service."""
-        self._running = True
-        self._load_store()
-        self._recompute_next_runs()
-        self._save_store()
+        """Start management availability without arming a timer or running jobs."""
+        self._running = False
         self._arm_timer()
-        logger.info("Cron service started with {} jobs", len(self._store.jobs if self._store else []))
+        store = self._load_store()
+        self._running = True
+        self._timer_task = None
+        logger.info(
+            "Cron definition service started with {} definitions; execution fenced",
+            len(store.jobs),
+        )
 
     def stop(self) -> None:
-        """Stop the cron service."""
+        """Stop management availability and cancel any compatibility timer."""
         self._running = False
         if self._timer_task:
             self._timer_task.cancel()
             self._timer_task = None
 
     def _recompute_next_runs(self) -> None:
-        """Recompute next run times for all enabled jobs."""
-        if not self._store:
-            return
-        now = _now_ms()
-        for job in self._store.jobs:
-            if job.enabled:
-                job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
+        """Do not project automatic scheduling into definition state."""
+        return
 
-    def _get_next_wake_ms(self) -> int | None:
-        """Get the earliest next run time across all jobs."""
-        if not self._store:
-            return None
-        times = [j.state.next_run_at_ms for j in self._store.jobs
-                 if j.enabled and j.state.next_run_at_ms]
-        return min(times) if times else None
+    def _get_next_wake_ms(self) -> None:
+        """No wake exists while the timer authority is migration-fenced."""
+        return None
 
     def _arm_timer(self) -> None:
-        """Schedule the next timer tick."""
+        """Keep the timer unarmed until Packages D/E install execution authority."""
         if self._timer_task:
             self._timer_task.cancel()
-
-        next_wake = self._get_next_wake_ms()
-        if not next_wake or not self._running:
-            return
-
-        delay_ms = max(0, next_wake - _now_ms())
-        delay_s = delay_ms / 1000
-
-        async def tick():
-            await asyncio.sleep(delay_s)
-            if self._running:
-                await self._on_timer()
-
-        self._timer_task = asyncio.create_task(tick())
+            self._timer_task = None
 
     async def _on_timer(self) -> None:
-        """Handle timer tick - run due jobs."""
-        self._load_store()
-        if not self._store:
-            return
+        """Ignore timer ticks without selecting, executing, or projecting jobs."""
+        return
 
-        now = _now_ms()
-        due_jobs = [
-            j for j in self._store.jobs
-            if j.enabled and j.state.next_run_at_ms and now >= j.state.next_run_at_ms
-        ]
+    async def _execute_job(self, _job: CronJob) -> None:
+        """Fence direct occurrence execution before any callback or side effect."""
+        raise CronJobSkippedError(CRON_DEFINITION_ONLY_DIAGNOSTIC)
 
-        for job in due_jobs:
-            await self._execute_job(job)
-
-        self._save_store()
-        self._arm_timer()
-
-    async def _execute_job(self, job: CronJob) -> None:
-        """Execute a single job."""
-        start_ms = _now_ms()
-        logger.info("Cron: executing job '{}' ({})", job.name, job.id)
-
-        try:
-            if self.on_job:
-                await self.on_job(job)
-
-            job.state.last_status = "ok"
-            job.state.last_error = None
-            logger.info("Cron: job '{}' completed", job.name)
-
-        except Exception as e:
-            job.state.last_status = "error"
-            job.state.last_error = str(e)
-            logger.error("Cron: job '{}' failed: {}", job.name, e)
-
-        end_ms = _now_ms()
-        job.state.last_run_at_ms = start_ms
-        job.updated_at_ms = end_ms
-
-        job.state.run_history.append(CronRunRecord(
-            run_at_ms=start_ms,
-            status=job.state.last_status,
-            duration_ms=end_ms - start_ms,
-            error=job.state.last_error,
-        ))
-        job.state.run_history = job.state.run_history[-self._MAX_RUN_HISTORY:]
-
-        # A one-shot retry override (for example recovery from a transient
-        # 5-hour provider rate limit) takes precedence over the schedule for
-        # exactly one run.
-        if job.state.retry_at_ms is not None:
-            job.state.next_run_at_ms = job.state.retry_at_ms
-            job.state.retry_at_ms = None
-        # Handle one-shot jobs
-        elif job.schedule.kind == "at":
-            if job.delete_after_run:
-                self._store.jobs = [j for j in self._store.jobs if j.id != job.id]
-            else:
-                job.enabled = False
-                job.state.next_run_at_ms = None
+    def _definition_action(self, action: CronDefinitionAction) -> CronDefinitionStoreReplay:
+        """Append and settle one typed action with a pre-ack CAS retry window."""
+        action_id = _definition_revision_action_id(action)
+        replay = self._replay_and_settle()
+        for _attempt in range(self._MAX_CAS_RETRIES):
+            self._ensure_action_current(action, action_id=action_id, replay=replay)
+            try:
+                self.definition_store.append(
+                    action_id=action_id,
+                    action=action,
+                    expected_generation=replay.generation,
+                )
+            except ActionStoreStaleGenerationError:
+                # No receipt was acknowledged.  Refresh the generation and
+                # retry the same exact request; never append again after a
+                # durable receipt has been returned.
+                replay = self._replay_and_settle()
+                continue
+            break
         else:
-            # Compute next run
-            job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
+            raise CronDefinitionConflictError(
+                "cron definition changed before its durable action receipt was acknowledged"
+            )
 
-    # ========== Public API ==========
+        settled = self.definition_store.replay()
+        if settled.pending_actions:
+            try:
+                settled = self.definition_store.checkpoint(settled)
+            except ActionStoreStaleGenerationError as exc:
+                raise CronDefinitionConflictError(
+                    "cron definition action was durably acknowledged but its checkpoint became stale; retry management read"
+                ) from exc
+        self._store = CronStore(
+            version=2,
+            jobs=[_public_job(definition) for definition in settled.candidate.definitions],
+        )
+        return settled
+
+    @classmethod
+    def _ensure_action_current(
+        cls,
+        action: CronDefinitionAction,
+        *,
+        action_id: str,
+        replay: CronDefinitionStoreReplay,
+    ) -> None:
+        """Reject a stale definition before it can poison the durable journal."""
+        if action_id in {receipt.action_id for receipt in replay.receipts}:
+            return
+        current = cls._find_definition(replay, action.job_id)
+        if action.operation == "create":
+            if current is not None:
+                raise DefinitionStoreConflictError("cron definition already exists")
+            return
+        if current is None:
+            raise DefinitionStoreConflictError("cron definition does not exist")
+        if current.job_instance_id != action.expected_job_instance_id:
+            raise DefinitionStoreConflictError("cron definition job instance does not match")
+        if current.definition_revision != action.expected_definition_revision:
+            raise DefinitionStoreConflictError("cron definition revision does not match")
+
+    @staticmethod
+    def _find_definition(replay: CronDefinitionStoreReplay, job_id: str) -> CronDefinition | None:
+        return next(
+            (definition for definition in replay.candidate.definitions if definition.job_id == job_id),
+            None,
+        )
+
+    @staticmethod
+    def _require_tokens(
+        *,
+        job: CronDefinition,
+        job_instance_id: str | None,
+        definition_revision: str | None,
+    ) -> None:
+        if not job_instance_id:
+            raise CronDefinitionTokenRequiredError(
+                "job_instance_id is required for cron definition mutation"
+            )
+        if not definition_revision:
+            raise CronDefinitionTokenRequiredError(
+                "definition_revision is required for cron definition mutation"
+            )
+        if job_instance_id != job.job_instance_id:
+            raise DefinitionStoreConflictError("cron definition job instance does not match")
+        if definition_revision != job.definition_revision:
+            raise DefinitionStoreConflictError("cron definition revision does not match")
 
     def list_jobs(self, include_disabled: bool = False) -> list[CronJob]:
-        """List all jobs."""
-        store = self._load_store()
-        jobs = store.jobs if include_disabled else [j for j in store.jobs if j.enabled]
-        return sorted(jobs, key=lambda j: j.state.next_run_at_ms or float('inf'))
+        """List detached public projections of typed definitions."""
+        store = self._require_store()
+        jobs = store.jobs if include_disabled else [job for job in store.jobs if job.enabled]
+        return sorted(jobs, key=lambda job: job.id)
+
+    def list_bound_cron_jobs_for_session(
+        self,
+        session_key: str,
+        *,
+        include_disabled: bool = True,
+    ) -> list[CronJob]:
+        """Return typed definitions whose payload carries the session key."""
+        return [
+            job
+            for job in self.list_jobs(include_disabled=include_disabled)
+            if job.payload.session_key == session_key
+        ]
 
     def add_job(
         self,
@@ -394,106 +860,326 @@ class CronService:
         channel: str | None = None,
         to: str | None = None,
         delete_after_run: bool = False,
-        planning_mode: str | None = None,
-        skip_verification: bool = False,
+        channel_meta: dict[str, Any] | None = None,
+        session_key: str | None = None,
+        origin_channel: str | None = None,
+        origin_chat_id: str | None = None,
+        origin_metadata: dict[str, Any] | None = None,
         additional_destinations: list[CronDestination] | None = None,
+        *,
+        planning_mode: Literal["on", "off", "agent"] | None = None,
+        skip_verification: bool = False,
         alert_channel: str | None = None,
         alert_to: str | None = None,
         verifiers: list[CronVerifier] | None = None,
         post_delivery_command: list[str] | None = None,
     ) -> CronJob:
-        """Add a new job."""
-        store = self._load_store()
+        """Create and checkpoint one typed definition."""
         _validate_schedule_for_add(schedule)
-        now = _now_ms()
-
+        _validate_delivery_destinations_for_add(
+            deliver=deliver,
+            channel=channel,
+            to=to,
+            additional_destinations=additional_destinations,
+        )
+        existing = self._require_store().jobs
+        job_id = uuid.uuid4().hex[:8]
+        while any(job.id == job_id for job in existing):
+            job_id = uuid.uuid4().hex[:8]
         job = CronJob(
-            id=str(uuid.uuid4())[:8],
+            id=job_id,
             name=name,
             enabled=True,
-            schedule=schedule,
+            schedule=deepcopy(schedule),
             payload=CronPayload(
                 kind="agent_turn",
                 message=message,
                 deliver=deliver,
                 channel=channel,
                 to=to,
-                additional_destinations=list(additional_destinations or []),
+                additional_destinations=deepcopy(
+                    [] if additional_destinations is None else additional_destinations
+                ),
+                channel_meta=deepcopy(channel_meta or {}),
+                session_key=session_key,
+                origin_channel=origin_channel,
+                origin_chat_id=origin_chat_id,
+                origin_metadata=deepcopy(origin_metadata or {}),
                 planning_mode=planning_mode,
                 skip_verification=skip_verification,
                 alert_channel=alert_channel,
                 alert_to=alert_to,
-                verifiers=list(verifiers or []),
-                post_delivery_command=(
-                    list(post_delivery_command) if post_delivery_command else None
-                ),
+                verifiers=deepcopy(verifiers or []),
+                post_delivery_command=deepcopy(post_delivery_command),
             ),
-            state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
-            created_at_ms=now,
-            updated_at_ms=now,
+            state=CronJobState(),
             delete_after_run=delete_after_run,
         )
+        if self._fresh_job_validator is not None:
+            job.payload.execution_mode = "legacy_fresh"
+            job.payload.session_key = f"cron:{job.id}"
+            job.payload.origin_channel = channel or "cli"
+            job.payload.origin_chat_id = str(to or "direct")
+            if "message_thread_id" in job.payload.origin_metadata:
+                job.payload.channel_meta["message_thread_id"] = job.payload.origin_metadata["message_thread_id"]
+            self._fresh_job_validator(job)
+        instance = _stable_job_instance_id(self.action_store.namespace, job.id)
+        action = CronDefinitionAction.create(_job_definition(job, job_instance_id=instance))
+        settled = self._definition_action(action)
+        result = self._find_definition(settled, job.id)
+        if result is None:  # pragma: no cover - checkpoint/replay invariant
+            raise CronDefinitionServiceError("created cron definition disappeared during checkpoint")
+        logger.info("Cron: added definition '{}' ({})", name, job.id)
+        return _public_job(result)
 
-        store.jobs.append(job)
-        self._save_store()
-        self._arm_timer()
+    def register_system_job(self, job: CronJob) -> CronJob:
+        """Register a system definition without granting it execution authority.
 
-        logger.info("Cron: added job '{}' ({})", name, job.id)
-        return job
+        Existing definitions are left untouched when the legacy startup caller
+        does not provide exact tokens.  This preserves the old idempotent
+        registration shape while preventing an implicit compare-and-swap bypass.
+        """
+        if job.payload.kind != "system_event":
+            raise ValueError("system registration requires a system_event payload")
+        replay = self._replay_and_settle()
+        current = self._find_definition(replay, job.id)
+        if current is None:
+            instance = job.job_instance_id or _stable_job_instance_id(self.action_store.namespace, job.id)
+            action = CronDefinitionAction.create(_job_definition(job, job_instance_id=instance))
+        else:
+            if not job.job_instance_id or not job.definition_revision:
+                return _public_job(current)
+            self._require_tokens(
+                job=current,
+                job_instance_id=job.job_instance_id,
+                definition_revision=job.definition_revision,
+            )
+            action = CronDefinitionAction.update(
+                _job_definition(job, job_instance_id=current.job_instance_id),
+                expected_job_instance_id=current.job_instance_id,
+                expected_definition_revision=current.definition_revision,
+            )
+        settled = self._definition_action(action)
+        result = self._find_definition(settled, job.id)
+        if result is None:  # pragma: no cover - checkpoint/replay invariant
+            raise CronDefinitionServiceError("registered system definition disappeared during checkpoint")
+        return _public_job(result)
 
-    def remove_job(self, job_id: str) -> bool:
-        """Remove a job by ID."""
-        store = self._load_store()
-        before = len(store.jobs)
-        store.jobs = [j for j in store.jobs if j.id != job_id]
-        removed = len(store.jobs) < before
+    def remove_system_job(
+        self,
+        job_id: str,
+        *,
+        job_instance_id: str | None = None,
+        definition_revision: str | None = None,
+    ) -> bool:
+        """Remove a system definition only with exact tokens.
 
-        if removed:
-            self._save_store()
-            self._arm_timer()
-            logger.info("Cron: removed job {}", job_id)
+        The historical startup reconciler has no token parameters, so it is a
+        safe no-op until a later caller supplies the C2 tokens.
+        """
+        replay = self._replay_and_settle()
+        current = self._find_definition(replay, job_id)
+        if current is None or current.definition["payload"]["kind"] != "system_event":
+            return False
+        if not job_instance_id or not definition_revision:
+            return False
+        self._require_tokens(
+            job=current,
+            job_instance_id=job_instance_id,
+            definition_revision=definition_revision,
+        )
+        action = CronDefinitionAction.delete(
+            job_id,
+            expected_job_instance_id=current.job_instance_id,
+            expected_definition_revision=current.definition_revision,
+        )
+        self._definition_action(action)
+        return True
 
-        return removed
+    def remove_job(
+        self,
+        job_id: str,
+        *,
+        job_instance_id: str | None = None,
+        definition_revision: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> Literal["removed", "protected", "not_found"]:
+        """Delete a definition with the exact instance and revision tokens."""
+        if job_instance_id is None:
+            job_instance_id = expected_job_instance_id
+        if definition_revision is None:
+            definition_revision = expected_definition_revision
+        replay = self._replay_and_settle()
+        current = self._find_definition(replay, job_id)
+        if current is None:
+            return "not_found"
+        self._require_tokens(
+            job=current,
+            job_instance_id=job_instance_id,
+            definition_revision=definition_revision,
+        )
+        if current.definition["payload"]["kind"] == "system_event":
+            logger.info("Cron: refused to remove protected system definition {}", job_id)
+            return "protected"
+        self._definition_action(
+            CronDefinitionAction.delete(
+                job_id,
+                expected_job_instance_id=current.job_instance_id,
+                expected_definition_revision=current.definition_revision,
+            )
+        )
+        logger.info("Cron: removed definition {}", job_id)
+        return "removed"
 
-    def enable_job(self, job_id: str, enabled: bool = True) -> CronJob | None:
-        """Enable or disable a job."""
-        store = self._load_store()
-        for job in store.jobs:
-            if job.id == job_id:
-                job.enabled = enabled
-                job.updated_at_ms = _now_ms()
-                if enabled:
-                    job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
-                else:
-                    job.state.next_run_at_ms = None
-                self._save_store()
-                self._arm_timer()
-                return job
-        return None
+    def enable_job(
+        self,
+        job_id: str,
+        enabled: bool = True,
+        *,
+        job_instance_id: str | None = None,
+        definition_revision: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> CronJob | None:
+        """Change only the definition enabled flag with exact CAS tokens."""
+        if job_instance_id is None:
+            job_instance_id = expected_job_instance_id
+        if definition_revision is None:
+            definition_revision = expected_definition_revision
+        replay = self._replay_and_settle()
+        current = self._find_definition(replay, job_id)
+        if current is None:
+            return None
+        self._require_tokens(
+            job=current,
+            job_instance_id=job_instance_id,
+            definition_revision=definition_revision,
+        )
+        if current.definition["payload"]["kind"] == "system_event":
+            return None
+        changed = deepcopy(current.definition)
+        changed["enabled"] = enabled
+        action = CronDefinitionAction.update(
+            CronDefinition.from_definition(changed, job_instance_id=current.job_instance_id),
+            expected_job_instance_id=current.job_instance_id,
+            expected_definition_revision=current.definition_revision,
+        )
+        settled = self._definition_action(action)
+        result = self._find_definition(settled, job_id)
+        return None if result is None else _public_job(result)
 
-    async def run_job(self, job_id: str, force: bool = False) -> bool:
-        """Manually run a job."""
-        store = self._load_store()
-        for job in store.jobs:
-            if job.id == job_id:
-                if not force and not job.enabled:
-                    return False
-                await self._execute_job(job)
-                self._save_store()
-                self._arm_timer()
-                return True
+    def update_job(
+        self,
+        job_id: str,
+        *,
+        name: str | None = None,
+        schedule: CronSchedule | None = None,
+        message: str | None = None,
+        deliver: bool | None = None,
+        channel: str | None | EllipsisType = ...,
+        to: str | None | EllipsisType = ...,
+        delete_after_run: bool | None = None,
+        job_instance_id: str | None = None,
+        definition_revision: str | None = None,
+        expected_job_instance_id: str | None = None,
+        expected_definition_revision: str | None = None,
+    ) -> CronJob | Literal["not_found", "protected"]:
+        """Update definition fields with exact C2 instance/revision tokens."""
+        if job_instance_id is None:
+            job_instance_id = expected_job_instance_id
+        if definition_revision is None:
+            definition_revision = expected_definition_revision
+        replay = self._replay_and_settle()
+        current = self._find_definition(replay, job_id)
+        if current is None:
+            return "not_found"
+        self._require_tokens(
+            job=current,
+            job_instance_id=job_instance_id,
+            definition_revision=definition_revision,
+        )
+        if current.definition["payload"]["kind"] == "system_event":
+            return "protected"
+        changed = deepcopy(current.definition)
+        if schedule is not None:
+            _validate_schedule_for_add(schedule)
+            changed["schedule"] = {
+                "kind": schedule.kind,
+                "atMs": schedule.at_ms,
+                "everyMs": schedule.every_ms,
+                "expr": schedule.expr,
+                "tz": schedule.tz,
+            }
+        if name is not None:
+            changed["name"] = name
+        payload = changed["payload"]
+        if message is not None:
+            payload["message"] = message
+        if deliver is not None:
+            payload["deliver"] = deliver
+        if channel is not ...:
+            payload["channel"] = channel
+        if to is not ...:
+            payload["to"] = to
+        if delete_after_run is not None:
+            changed["deleteAfterRun"] = delete_after_run
+        action = CronDefinitionAction.update(
+            CronDefinition.from_definition(changed, job_instance_id=current.job_instance_id),
+            expected_job_instance_id=current.job_instance_id,
+            expected_definition_revision=current.definition_revision,
+        )
+        settled = self._definition_action(action)
+        result = self._find_definition(settled, job_id)
+        if result is None:  # pragma: no cover - checkpoint/replay invariant
+            raise CronDefinitionServiceError("updated cron definition disappeared during checkpoint")
+        logger.info("Cron: updated definition '{}' ({})", result.definition["name"], job_id)
+        return _public_job(result)
+
+    async def run_job(self, _job_id: str, force: bool = False) -> bool:
+        """Fence manual/forced execution without invoking a callback."""
+        del force
         return False
 
     def get_job(self, job_id: str) -> CronJob | None:
-        """Get a job by ID."""
-        store = self._load_store()
-        return next((j for j in store.jobs if j.id == job_id), None)
+        """Return one detached typed definition projection."""
+        return next((job for job in self._require_store().jobs if job.id == job_id), None)
 
-    def status(self) -> dict:
-        """Get service status."""
-        store = self._load_store()
+    def status(self) -> dict[str, object]:
+        """Return management status while exposing the execution fence."""
+        if self._runtime_status is not None:
+            return self._runtime_status()
+        store = self._require_store()
         return {
             "enabled": self._running,
             "jobs": len(store.jobs),
-            "next_wake_at_ms": self._get_next_wake_ms(),
+            "next_wake_at_ms": None,
+            "migration_diagnostic": CRON_DEFINITION_ONLY_DIAGNOSTIC,
         }
+
+    def configure_gateway_execution(self, validator: Callable[[CronJob], None],
+                                    status: Callable[[], dict[str, object]]) -> None:
+        """Opt new gateway jobs into fresh execution before accepting messages."""
+        if self._fresh_job_validator is not None:
+            raise ValueError("gateway cron execution is already configured")
+        self._fresh_job_validator, self._runtime_status = validator, status
+
+
+def _stable_job_instance_id(namespace: str, job_id: str) -> str:
+    """Derive a stable identity for a newly created definition."""
+    return hashlib.sha256(
+        b"nanobot-cron-job-instance-v1\0"
+        + namespace.encode("utf-8")
+        + b"\0"
+        + job_id.encode("utf-8")
+    ).hexdigest()
+
+
+__all__ = [
+    "CRON_DEFINITION_ONLY_DIAGNOSTIC",
+    "CronDefinitionConflictError",
+    "CronDefinitionServiceError",
+    "CronDefinitionTokenRequiredError",
+    "CronJobSkippedError",
+    "CronService",
+]

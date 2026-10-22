@@ -1,27 +1,42 @@
-"""Planner-only explore tool backed by foreground read-only subagents."""
+"""Foreground read-only exploration tool for the main orchestrator."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nanobot.agent.tools.base import Tool
+from nanobot.agent.turn import ToolOutcome, TurnContext
+
+if TYPE_CHECKING:
+    from nanobot.agent.delegation import ForegroundAgentManager
 
 
 class ExploreTool(Tool):
     """Run a focused read-only exploration pass in separate context."""
 
-    name = "explore"
-    description = (
-        "Launch a foreground read-only explore subagent for broad or repeated investigation "
-        "without filling the planner context with raw search history. Use this only when "
+    @property
+    def name(self) -> str:
+        return "explore"
+
+    @property
+    def description(self) -> str:
+        return self._description
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return self._parameters
+
+    _description = (
+        "Launch a foreground read-only exploration role for broad or repeated investigation "
+        "without filling the main context with raw search history. Use this only when "
         "simple direct read/search tools are insufficient."
     )
-    parameters = {
+    _parameters: dict[str, Any] = {
         "type": "object",
         "properties": {
             "task": {
                 "type": "string",
-                "description": "Specific research task for the explore subagent.",
+                "description": "Specific research task for the exploration role.",
                 "minLength": 3,
             },
             "thoroughness": {
@@ -30,12 +45,18 @@ class ExploreTool(Tool):
                 "enum": ["quick", "medium", "deep"],
                 "default": "medium",
             },
+            "artifact_references": {
+                "type": "array",
+                "items": {"type": "string", "pattern": "^artifact:[0-9a-f]{32}$"},
+                "maxItems": 16,
+                "uniqueItems": True,
+            },
         },
         "required": ["task"],
         "additionalProperties": False,
     }
 
-    def __init__(self, manager: Any, *, max_iterations: int) -> None:
+    def __init__(self, manager: ForegroundAgentManager, *, max_iterations: int) -> None:
         self._manager = manager
         self._max_iterations = max_iterations
 
@@ -43,13 +64,36 @@ class ExploreTool(Tool):
         self,
         task: str,
         thoroughness: str = "medium",
+        artifact_references: list[str] | None = None,
         **_: Any,
-    ) -> str:
+    ) -> str | ToolOutcome:
         result = await self._manager.run_explore(
             task=task,
             thoroughness=thoroughness,
             max_iterations=self._max_iterations,
+            artifact_references=artifact_references,
         )
+
+        if isinstance(result, ToolOutcome):
+            return result
+
+        return self._format_result(result)
+
+    async def execute_with_context(self, context: TurnContext, /, **kwargs: Any) -> str | ToolOutcome:
+        result = await self._manager.run_explore(
+            task=kwargs.get("task", ""),
+            thoroughness=kwargs.get("thoroughness", "medium"),
+            max_iterations=self._max_iterations,
+            turn_context=context,
+            artifact_references=kwargs.get("artifact_references"),
+        )
+        if isinstance(result, ToolOutcome):
+            return result
+        return self._format_result(result)
+
+    @staticmethod
+    def _format_result(result: dict[str, Any]) -> str:
+        """Render normal exploration findings for the outer model."""
 
         lines: list[str] = ["[Explore Findings]"]
         if result.get("partial"):
@@ -57,19 +101,19 @@ class ExploreTool(Tool):
             lines.append(f"Status: partial ({reason})")
         if summary := result.get("summary"):
             lines.extend(["Summary:", summary])
-        findings = result.get("findings") or []
+        findings = result.get("findings") or ()
         if findings:
             lines.append("Findings:")
             lines.extend(f"- {item}" for item in findings)
-        references = result.get("references") or []
+        references = result.get("references") or ()
         if references:
             lines.append("References:")
             lines.extend(f"- {item}" for item in references)
-        open_questions = result.get("open_questions") or []
+        open_questions = result.get("open_questions") or ()
         if open_questions:
             lines.append("Open Questions:")
             lines.extend(f"- {item}" for item in open_questions)
-        searched_areas = result.get("searched_areas") or []
+        searched_areas = result.get("searched_areas") or ()
         if searched_areas:
             lines.append("Searched Areas:")
             lines.extend(f"- {item}" for item in searched_areas)

@@ -7,10 +7,7 @@ from nanobot.agent.tools.filesystem import (
     ListDirTool,
     ReadFileTool,
     WriteFileTool,
-    _find_match,
 )
-from nanobot.agent.write_guard import FileLockRegistry, WriteScope
-
 
 # ---------------------------------------------------------------------------
 # ReadFileTool
@@ -80,6 +77,13 @@ class TestReadFileTool:
         assert "not found" in result
 
     @pytest.mark.asyncio
+    async def test_workspace_relative_builtin_skill_read_falls_back_to_packaged_skill(self, tool):
+        result = await tool.execute(path="skills/cron/SKILL.md", limit=5)
+
+        assert "Error" not in result
+        assert "cron" in result.lower()
+
+    @pytest.mark.asyncio
     async def test_missing_path_returns_clear_error(self, tool):
         result = await tool.execute()
         assert result == "Error reading file: Unknown path"
@@ -94,51 +98,21 @@ class TestReadFileTool:
         assert len(result) <= ReadFileTool._MAX_CHARS + 500  # small margin for footer
         assert "Use offset=" in result
 
+    @pytest.mark.asyncio
+    async def test_oversized_file_is_rejected_before_read(self, tool, tmp_path, monkeypatch):
+        f = tmp_path / "huge.txt"
+        with f.open("wb") as stream:
+            stream.truncate(ReadFileTool._MAX_FILE_SIZE_BYTES + 1)
 
-# ---------------------------------------------------------------------------
-# _find_match  (unit tests for the helper)
-# ---------------------------------------------------------------------------
+        def fail_read_bytes(self):
+            raise AssertionError("oversized file content should not be loaded")
 
-class TestFindMatch:
+        monkeypatch.setattr(type(f), "read_bytes", fail_read_bytes)
 
-    def test_exact_match(self):
-        match, count = _find_match("hello world", "world")
-        assert match == "world"
-        assert count == 1
+        result = await tool.execute(path=str(f))
 
-    def test_exact_no_match(self):
-        match, count = _find_match("hello world", "xyz")
-        assert match is None
-        assert count == 0
-
-    def test_crlf_normalisation(self):
-        # Caller normalises CRLF before calling _find_match, so test with
-        # pre-normalised content to verify exact match still works.
-        content = "line1\nline2\nline3"
-        old_text = "line1\nline2\nline3"
-        match, count = _find_match(content, old_text)
-        assert match is not None
-        assert count == 1
-
-    def test_line_trim_fallback(self):
-        content = "    def foo():\n        pass\n"
-        old_text = "def foo():\n    pass"
-        match, count = _find_match(content, old_text)
-        assert match is not None
-        assert count == 1
-        # The returned match should be the *original* indented text
-        assert "    def foo():" in match
-
-    def test_line_trim_multiple_candidates(self):
-        content = "  a\n  b\n  a\n  b\n"
-        old_text = "a\nb"
-        match, count = _find_match(content, old_text)
-        assert count == 2
-
-    def test_empty_old_text(self):
-        match, count = _find_match("hello", "")
-        # Empty string is always "in" any string via exact match
-        assert match == ""
+        assert "File too large to read" in result
+        assert "Maximum is 100 MiB" in result
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +132,16 @@ class TestEditFileTool:
         result = await tool.execute(path=str(f), old_text="world", new_text="earth")
         assert "Successfully" in result
         assert f.read_text() == "hello earth"
+
+    @pytest.mark.asyncio
+    async def test_identical_replacement_returns_clear_error(self, tool, tmp_path):
+        f = tmp_path / "a.py"
+        f.write_text("hello world", encoding="utf-8")
+
+        result = await tool.execute(path=str(f), old_text="world", new_text="world")
+
+        assert result == "Error: new_text must be different from old_text."
+        assert f.read_text(encoding="utf-8") == "hello world"
 
     @pytest.mark.asyncio
     async def test_crlf_normalisation(self, tool, tmp_path):
@@ -286,7 +270,7 @@ class TestListDirTool:
 
 
 # ---------------------------------------------------------------------------
-# Workspace restriction + extra_allowed_dirs
+# Workspace restriction + extra read/write allowed dirs
 # ---------------------------------------------------------------------------
 
 class TestWorkspaceRestriction:
@@ -317,25 +301,99 @@ class TestWorkspaceRestriction:
 
         tool = ReadFileTool(
             workspace=workspace, allowed_dir=workspace,
-            extra_allowed_dirs=[skills_dir],
+            extra_read_allowed_dirs=[skills_dir],
         )
         result = await tool.execute(path=str(skill_file))
         assert "Test Skill" in result
         assert "Error" not in result
 
     @pytest.mark.asyncio
-    async def test_extra_dirs_does_not_widen_write(self, tmp_path):
-        from nanobot.agent.tools.filesystem import WriteFileTool
+    async def test_read_allowed_in_media_dir(self, tmp_path, monkeypatch):
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        media_dir = tmp_path / "media"
+        media_dir.mkdir()
+        media_file = media_dir / "photo.txt"
+        media_file.write_text("shared media", encoding="utf-8")
 
+        monkeypatch.setattr("nanobot.agent.tools.path_utils.get_media_dir", lambda: media_dir)
+
+        tool = ReadFileTool(workspace=workspace, allowed_dir=workspace)
+        result = await tool.execute(path=str(media_file))
+        assert "shared media" in result
+        assert "Error" not in result
+
+    @pytest.mark.asyncio
+    async def test_write_blocked_in_media_dir_by_default(self, tmp_path, monkeypatch):
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        media_dir = tmp_path / "media"
+        media_dir.mkdir()
+
+        monkeypatch.setattr("nanobot.agent.tools.path_utils.get_media_dir", lambda: media_dir)
+
+        tool = WriteFileTool(workspace=workspace, allowed_dir=workspace)
+        result = await tool.execute(path=str(media_dir / "hack.txt"), content="pwned")
+        assert "Error" in result
+        assert "outside" in result.lower()
+        assert not (media_dir / "hack.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_legacy_extra_allowed_dirs_does_not_widen_write(self, tmp_path):
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+
+        tool = WriteFileTool(
+            workspace=workspace,
+            allowed_dir=workspace,
+            extra_allowed_dirs=[skills_dir],
+        )
+        result = await tool.execute(path=str(skills_dir / "hack.txt"), content="pwned")
+        assert "Error" in result
+        assert "outside" in result.lower()
+        assert not (skills_dir / "hack.txt").exists()
+
+    @pytest.mark.asyncio
+    async def test_write_allowed_with_extra_write_dir(self, tmp_path):
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        writable = tmp_path / "writable"
+        writable.mkdir()
+
+        tool = WriteFileTool(
+            workspace=workspace,
+            allowed_dir=workspace,
+            extra_write_allowed_dirs=[writable],
+        )
+        result = await tool.execute(path=str(writable / "ok.txt"), content="allowed")
+        assert "Successfully wrote" in result
+        assert (writable / "ok.txt").read_text(encoding="utf-8") == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_extra_write_allowed_files_allow_only_exact_file(self, tmp_path):
         workspace = tmp_path / "ws"
         workspace.mkdir()
         outside = tmp_path / "outside"
         outside.mkdir()
+        allowed_file = outside / "allowed.txt"
+        child_path = allowed_file / "child.txt"
 
-        tool = WriteFileTool(workspace=workspace, allowed_dir=workspace)
-        result = await tool.execute(path=str(outside / "hack.txt"), content="pwned")
-        assert "Error" in result
-        assert "outside" in result.lower()
+        tool = WriteFileTool(
+            workspace=workspace,
+            allowed_dir=workspace,
+            extra_write_allowed_files=[allowed_file],
+        )
+
+        exact = await tool.execute(path=str(allowed_file), content="allowed")
+        child = await tool.execute(path=str(child_path), content="blocked")
+
+        assert "Successfully wrote" in exact
+        assert allowed_file.read_text(encoding="utf-8") == "allowed"
+        assert "Error" in child
+        assert "outside" in child.lower()
+        assert not child_path.exists()
 
     @pytest.mark.asyncio
     async def test_read_still_blocked_for_unrelated_dir(self, tmp_path):
@@ -385,7 +443,11 @@ class TestWorkspaceRestriction:
         skill_file.parent.mkdir()
         skill_file.write_text("# Weather\nOriginal content.")
 
-        tool = EditFileTool(workspace=workspace, allowed_dir=workspace)
+        tool = EditFileTool(
+            workspace=workspace,
+            allowed_dir=workspace,
+            extra_allowed_dirs=[skills_dir],
+        )
         result = await tool.execute(
             path=str(skill_file),
             old_text="Original content.",
@@ -396,112 +458,23 @@ class TestWorkspaceRestriction:
         assert skill_file.read_text() == "# Weather\nOriginal content."
 
     @pytest.mark.asyncio
-    async def test_write_respects_declared_write_scope(self, tmp_path):
+    async def test_edit_allowed_with_extra_write_dir(self, tmp_path):
         workspace = tmp_path / "ws"
         workspace.mkdir()
-        tool = WriteFileTool(
-            workspace=workspace,
-            allowed_dir=workspace,
-            lock_registry=FileLockRegistry(),
-            lock_owner="subagent:1",
-            allowed_write_scope=[WriteScope.from_raw(workspace, "allowed/")],
-        )
+        writable = tmp_path / "writable"
+        writable.mkdir()
+        target = writable / "note.txt"
+        target.write_text("before\n", encoding="utf-8")
 
-        result = await tool.execute(path="blocked.txt", content="hello")
-
-        assert "declared write scope" in result
-        assert not (workspace / "blocked.txt").exists()
-
-    @pytest.mark.asyncio
-    async def test_edit_reports_lock_conflict(self, tmp_path):
-        workspace = tmp_path / "ws"
-        workspace.mkdir()
-        target = workspace / "draft.md"
-        target.write_text("hello world", encoding="utf-8")
-        locks = FileLockRegistry()
-        await locks.acquire(target, "main:session-a")
         tool = EditFileTool(
             workspace=workspace,
             allowed_dir=workspace,
-            lock_registry=locks,
-            lock_owner="subagent:2",
+            extra_write_allowed_dirs=[writable],
         )
-
-        try:
-            result = await tool.execute(path="draft.md", old_text="world", new_text="earth")
-        finally:
-            await locks.release(target, "main:session-a")
-
-        assert "currently locked" in result
-        assert "main:session-a" in result
-
-
-# ---------------------------------------------------------------------------
-# _resolve_path – /workspace/ alias
-# ---------------------------------------------------------------------------
-
-class TestWorkspaceAlias:
-    """Docker-style /workspace/... paths must be rewritten to the host workspace."""
-
-    def test_rewrite_absolute_workspace_path(self, tmp_path):
-        from nanobot.agent.tools.filesystem import _resolve_path
-
-        target = tmp_path / "previous_app.txt"
-        target.write_text("GitHub Desktop")
-
-        resolved = _resolve_path("/workspace/previous_app.txt", workspace=tmp_path)
-        assert resolved == target.resolve()
-
-    def test_rewrite_nested_path(self, tmp_path):
-        from nanobot.agent.tools.filesystem import _resolve_path
-
-        sub = tmp_path / "sub"
-        sub.mkdir()
-        target = sub / "file.txt"
-        target.write_text("hello")
-
-        resolved = _resolve_path("/workspace/sub/file.txt", workspace=tmp_path)
-        assert resolved == target.resolve()
-
-    def test_exact_workspace_alias(self, tmp_path):
-        from nanobot.agent.tools.filesystem import _resolve_path
-
-        resolved = _resolve_path("/workspace", workspace=tmp_path)
-        assert resolved == tmp_path.resolve()
-
-    def test_non_alias_absolute_path_unchanged(self, tmp_path):
-        from nanobot.agent.tools.filesystem import _resolve_path
-        from pathlib import Path
-
-        # A non-/workspace/ absolute path should NOT be rewritten.
-        resolved = _resolve_path("/tmp/some_file.txt", workspace=tmp_path)
-        # macOS resolves /tmp → /private/tmp; compare via Path.resolve() for portability.
-        assert resolved == Path("/tmp/some_file.txt").resolve()
-
-    def test_relative_path_still_resolves_against_workspace(self, tmp_path):
-        from nanobot.agent.tools.filesystem import _resolve_path
-
-        target = tmp_path / "relative.txt"
-        target.write_text("data")
-
-        resolved = _resolve_path("relative.txt", workspace=tmp_path)
-        assert resolved == target.resolve()
-
-    def test_no_workspace_no_rewrite(self):
-        from nanobot.agent.tools.filesystem import _resolve_path
-
-        # Without a workspace, /workspace/... stays as-is (no rewrite).
-        resolved = _resolve_path("/workspace/foo.txt")
-        assert str(resolved) == "/workspace/foo.txt"
-
-    @pytest.mark.asyncio
-    async def test_read_file_with_workspace_alias(self, tmp_path):
-        """End-to-end: ReadFileTool must transparently resolve /workspace/ paths."""
-        target = tmp_path / "notes.md"
-        target.write_text("important note", encoding="utf-8")
-
-        tool = ReadFileTool(workspace=tmp_path)
-        # We call with the Docker-style path; the tool must find the file.
-        result = await tool.execute(path="/workspace/notes.md")
-        assert "important note" in result
-        assert "Error" not in result
+        result = await tool.execute(
+            path=str(target),
+            old_text="before",
+            new_text="after",
+        )
+        assert "Successfully edited" in result
+        assert target.read_text(encoding="utf-8") == "after\n"

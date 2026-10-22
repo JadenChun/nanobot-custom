@@ -1,0 +1,11 @@
+{
+  "phase": "P2 adapter checkpoint, not P2 acceptance",
+  "base": "0b5739aa9e283555616f9ae9a32095166bb756a8",
+  "passed": 245,
+  "deselected": 38,
+  "raw_evidence": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p2-validation-hp4eyww8",
+  "network": "denied with sandbox-exec",
+  "home": "fresh temporary home; explicit environment",
+  "selection": "runner core/tool execution/new migration policy, upstream+fork filesystem/MCP, skills, run store, turn contracts, managed paths; -k not connect_mcp_servers and not entry_point and not structured_plugin",
+  "junit_sha256": "690b4a86c95bb10e0e3e4af924e0f0ae3b474ca7465adde707db45c45da53e8e"
+}

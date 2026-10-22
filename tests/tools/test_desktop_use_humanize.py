@@ -7,10 +7,10 @@ import statistics
 import pytest
 
 from nanobot.agent.tools.desktop_use import (
-    DesktopUseTool,
     _FAST_BIGRAMS,
     _HUMAN_MAX_MEAN_MS,
     _HUMAN_MIN_MEAN_MS,
+    DesktopUseTool,
 )
 
 

@@ -1,28 +1,94 @@
 """OpenAI-compatible provider for all non-Anthropic LLM APIs."""
 
+# pyright: reportPrivateImportUsage=false
+
 from __future__ import annotations
 
 import asyncio
-import collections
 import hashlib
+import importlib.util
 import json
+import math
 import os
 import re
 import secrets
 import string
 import time
 import uuid
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from collections import deque
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from ipaddress import ip_address
+from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlparse, urlsplit
 
-import json_repair
 from loguru import logger
-from openai import AsyncOpenAI
+from pydantic.alias_generators import to_snake
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import (
+    FinalizedRequestBudgetExceeded,
+    LLMProvider,
+    LLMResponse,
+    LLMUsage,
+    ProviderCallContext,
+    ProviderConversationState,
+    ProviderConversationTransportReceipt,
+    ToolCallRequest,
+    parse_tool_arguments,
+    resolve_stream_idle_timeout_s,
+    tool_arguments_json_for_replay,
+    track_stream_delivery,
+)
+from nanobot.providers.openai_responses import (
+    ResponsesStreamCapture,
+    build_responses_compaction_state,
+    build_responses_state,
+    consume_sdk_stream,
+    convert_tools,
+    is_compaction_compatibility_error,
+    is_replayable_finish_reason,
+    parse_response_output,
+    prepare_responses_input,
+    resolve_compact_threshold,
+    responses_state_matches,
+)
 
 if TYPE_CHECKING:
+    from openai import AsyncOpenAI as AsyncOpenAIType
+
     from nanobot.providers.registry import ProviderSpec
+
+# Module-level placeholder — set lazily by _ensure_client on first real
+# use, or replaced by tests via ``patch(...)``.  Kept as a plain name so
+# that ``unittest.mock.patch`` can find and replace it.
+AsyncOpenAI: Any = None
+
+_GEMINI_SKIP_THOUGHT_SIGNATURE = "skip_thought_signature_validator"
+
+
+def _is_hosted_web_search_type(value: object) -> bool:
+    return isinstance(value, str) and (
+        value == "web_search" or value.startswith("web_search_")
+    )
+
+
+def _is_hosted_web_search_tool(tool: object) -> bool:
+    if not isinstance(tool, dict):
+        return False
+    tool_type = cast(dict[object, object], tool).get("type")
+    return _is_hosted_web_search_type(tool_type)
+
+
+def _is_named_function_tool(tool: object, name: str) -> bool:
+    """Return whether a Responses tool is a function with the given name."""
+    if not isinstance(tool, dict):
+        return False
+    record = cast(dict[object, object], tool)
+    if record.get("type") != "function":
+        return False
+    function = record.get("function")
+    if isinstance(function, dict):
+        return cast(dict[object, object], function).get("name") == name
+    return record.get("name") == name
 
 _ALLOWED_MSG_KEYS = frozenset({
     "role", "content", "tool_calls", "tool_call_id", "name",
@@ -37,27 +103,132 @@ _DEFAULT_OPENROUTER_HEADERS = {
     "X-OpenRouter-Title": "nanobot",
     "X-OpenRouter-Categories": "cli-agent,personal-agent",
 }
+_KIMI_K3_MODEL = "kimi-k3"
+_KIMI_THINKING_MODELS: frozenset[str] = frozenset({
+    "kimi-k2.5",
+    "kimi-k2.6",
+    "kimi-k2.7",
+    "kimi-k2.7-code",
+    "kimi-k2.7-code-highspeed",
+    "k2.6-code-preview",
+})
+_KIMI_ALWAYS_THINKING_MODELS: frozenset[str] = frozenset({
+    "kimi-k2.7-code",
+    "kimi-k2.7-code-highspeed",
+})
+_KIMI_SERVER_MANAGED_TEMPERATURE_MODELS: frozenset[str] = frozenset({
+    "kimi-k2.5",
+    "kimi-k2.6",
+})
+_DEEPSEEK_MULTIMODAL_MODELS: frozenset[str] = frozenset({
+    "deepseek-v4-flash-vision-exp",
+})
+_TEXT_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
+# Thinking-capable MiMo models per Xiaomi docs (see
+# tests/providers/test_xiaomi_mimo_thinking.py). mimo-v2-flash is omitted
+# because it does not support thinking.
+_MIMO_THINKING_MODELS: frozenset[str] = frozenset({
+    "mimo-v2.5-pro",
+    "mimo-v2.5",
+    "mimo-v2-pro",
+    "mimo-v2-omni",
+})
+_OPENAI_COMPAT_REQUEST_TIMEOUT_S = 120.0
 
-# Model families that use the "reasoning" request shape: they require
-# `max_completion_tokens` instead of `max_tokens` and reject custom
-# `temperature` values. Detection is by model id (post prefix-strip) so it
-# applies regardless of which provider hosts the model (OpenAI direct,
-# GitHub Copilot, Azure, OpenRouter, etc.).
-_REASONING_MODEL_PREFIXES: tuple[str, ...] = (
-    "o1", "o3", "o4",
-    "gpt-5",
-)
+# Maps ProviderSpec.thinking_style → extra_body builder.
+# Each builder takes a bool (thinking_enabled) and returns the dict to
+# merge into extra_body, keeping the style→wire-format mapping in one place.
+_THINKING_STYLE_MAP: dict[
+    str,
+    Callable[[bool], dict[str, Any]],
+] = {
+    "thinking_type": lambda on: {"thinking": {"type": "enabled" if on else "disabled"}},
+    "enable_thinking": lambda on: {"enable_thinking": on},
+    "reasoning_split": lambda on: {"reasoning_split": on},
+}
+_GATEWAY_REASONING_STYLE_MAP: dict[
+    str,
+    Callable[[str], dict[str, Any]],
+] = {
+    "reasoning_effort": lambda effort: {"reasoning": {"effort": effort}},
+}
+_QWEN_THINKING_MODELS: frozenset[str] = frozenset({
+    "qwen3.7-max",
+    "qwen3.7-plus",
+    "qwen3.6-max-preview",
+    "qwen3.6-plus",
+    "qwen3.6-flash",
+    "qwen3.5-plus",
+    "qwen3.5-flash",
+})
+
+_MODEL_THINKING_STYLES: dict[str, str] = {
+    **dict.fromkeys(_KIMI_THINKING_MODELS, "thinking_type"),
+    **dict.fromkeys(_MIMO_THINKING_MODELS, "thinking_type"),
+    **dict.fromkeys(_QWEN_THINKING_MODELS, "enable_thinking"),
+}
 
 
-def _is_reasoning_model(model_name: str) -> bool:
-    """True if the model uses the OpenAI "reasoning" request shape."""
-    if not model_name:
-        return False
-    bare = model_name.split("/")[-1].lower()
-    for prefix in _REASONING_MODEL_PREFIXES:
-        if bare == prefix or bare.startswith(prefix + "-") or bare.startswith(prefix + "."):
-            return True
-    return False
+def _model_slug(model_name: str) -> str:
+    return model_name.lower().rsplit("/", 1)[-1]
+
+
+def _provider_prefix_key(name: str) -> str:
+    return to_snake(name.replace("-", "_")).lower()
+
+
+def _requires_max_completion_tokens(model_name: str) -> bool:
+    """Return True for models that require ``max_completion_tokens``."""
+    slug = _model_slug(model_name)
+    return slug == _KIMI_K3_MODEL or "gpt-5" in slug or any(
+        slug == p or slug.startswith((p + "-", p + ".")) for p in ("o1", "o3", "o4")
+    )
+
+
+def _model_thinking_style(model_name: str) -> str:
+    return _MODEL_THINKING_STYLES.get(_model_slug(model_name), "")
+
+
+def _thinking_styles_for(spec: ProviderSpec | None, model_name: str) -> list[str]:
+    styles: list[str] = []
+    if spec and spec.thinking_style:
+        styles.append(spec.thinking_style)
+    model_style = _model_thinking_style(model_name)
+    if model_style and model_style not in styles:
+        styles.append(model_style)
+    return styles
+
+
+def _thinking_extra_body(style: str, thinking_enabled: bool) -> dict[str, Any] | None:
+    builder = _THINKING_STYLE_MAP.get(style)
+    return builder(thinking_enabled) if builder else None
+
+
+def _gateway_reasoning_extra_body(style: str, effort: str | None) -> dict[str, Any] | None:
+    if not effort:
+        return None
+    builder = _GATEWAY_REASONING_STYLE_MAP.get(style)
+    return builder(effort) if builder else None
+
+
+def _openai_compat_timeout_s() -> float:
+    """Return the bounded request timeout used for OpenAI-compatible providers."""
+    return _float_env("NANOBOT_OPENAI_COMPAT_TIMEOUT_S", _OPENAI_COMPAT_REQUEST_TIMEOUT_S)
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning("Ignoring invalid {}={!r}; using {}", name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("Ignoring non-positive {}={!r}; using {}", name, raw, default)
+        return default
+    return value
 
 
 def _short_tool_id() -> str:
@@ -65,24 +236,87 @@ def _short_tool_id() -> str:
     return "".join(secrets.choice(_ALNUM) for _ in range(9))
 
 
-def _get(obj: Any, key: str) -> Any:
+def _strip_json_fence(text: str) -> str:
+    stripped = text.strip()
+    if not stripped.startswith("```") or not stripped.endswith("```"):
+        return stripped
+    lines = stripped.splitlines()
+    if len(lines) < 2:
+        return stripped
+    return "\n".join(lines[1:-1]).strip()
+
+
+def _extract_text_tool_calls(content: str | None) -> tuple[str | None, list[ToolCallRequest]]:
+    """Normalize common text-format tool call blocks into structured calls."""
+    if not content or "<tool_call>" not in content:
+        return content, []
+
+    tool_calls: list[ToolCallRequest] = []
+    spans: list[tuple[int, int]] = []
+    for match in _TEXT_TOOL_CALL_RE.finditer(content):
+        try:
+            raw_payload: object = json.loads(
+                _strip_json_fence(match.group(1))
+            )
+        except Exception:
+            continue
+        if not isinstance(raw_payload, dict):
+            continue
+        payload = cast(dict[str, Any], raw_payload)
+
+        nested = cast(object, payload.get("tool_call"))
+        if isinstance(nested, dict):
+            payload = cast(dict[str, Any], nested)
+        function = cast(object, payload.get("function"))
+        if not isinstance(function, dict):
+            function = payload
+        function_data = cast(dict[str, Any], function)
+        name = cast(object, function_data.get("name"))
+        if not isinstance(name, str) or not name:
+            continue
+
+        arguments = function_data.get(
+            "arguments",
+            payload.get("arguments", {}),
+        )
+        tool_calls.append(ToolCallRequest(
+            id=str(payload.get("id") or _short_tool_id()),
+            name=name,
+            arguments=parse_tool_arguments(arguments),
+        ))
+        spans.append(match.span())
+
+    if not tool_calls:
+        return content, []
+
+    visible_parts: list[str] = []
+    last = 0
+    for start, end in spans:
+        visible_parts.append(content[last:start])
+        last = end
+    visible_parts.append(content[last:])
+    visible_content = "".join(visible_parts).strip() or None
+    return visible_content, tool_calls
+
+
+def _get(obj: object, key: str) -> Any:
     """Get a value from dict or object attribute, returning None if absent."""
     if isinstance(obj, dict):
-        return obj.get(key)
+        return cast(dict[str, Any], obj).get(key)
     return getattr(obj, key, None)
 
 
-def _coerce_dict(value: Any) -> dict[str, Any] | None:
+def _coerce_dict(value: object) -> dict[str, Any] | None:
     """Try to coerce *value* to a dict; return None if not possible or empty."""
     if value is None:
         return None
     if isinstance(value, dict):
-        return value if value else None
+        return cast(dict[str, Any], value) if value else None
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
-        dumped = model_dump()
+        dumped: object = model_dump()
         if isinstance(dumped, dict) and dumped:
-            return dumped
+            return cast(dict[str, Any], dumped)
     return None
 
 
@@ -128,6 +362,171 @@ def _uses_openrouter_attribution(spec: "ProviderSpec | None", api_base: str | No
     return bool(api_base and "openrouter" in api_base.lower())
 
 
+_RESPONSES_FAILURE_THRESHOLD = 3
+_RESPONSES_PROBE_INTERVAL_S = 300  # 5 minutes
+
+
+def _is_local_endpoint(
+    spec: "ProviderSpec | None",
+    api_base: str | None,
+) -> bool:
+    """Return True when the endpoint is a local or LAN model server.
+
+    Matches either the provider spec's ``is_local`` flag or common private-
+    network patterns in the base URL (localhost, 127.x, 192.168.x, 10.x,
+    172.16-31.x, Docker ``host.docker.internal``).
+    """
+    if spec and spec.is_local:
+        return True
+    if not api_base:
+        return False
+    raw = api_base.strip().lower()
+    parsed = urlparse(raw if "://" in raw else f"//{raw}")
+    try:
+        host = parsed.hostname
+    except ValueError:
+        return False
+    if host in {"localhost", "host.docker.internal"}:
+        return True
+    if not host:
+        return False
+    try:
+        addr = ip_address(host)
+    except ValueError:
+        return False
+    return addr.is_loopback or addr.is_private
+
+
+def _is_direct_openai_base(api_base: str | None) -> bool:
+    """Return True for direct OpenAI endpoints, not generic OpenAI-compatible gateways."""
+    if not api_base:
+        return True
+    normalized = api_base.strip().lower().rstrip("/")
+    return "api.openai.com" in normalized and "openrouter" not in normalized
+
+
+def _normalized_direct_openai_responses_endpoint(api_base: str | None) -> str | None:
+    """Return the sole direct OpenAI Responses base eligible for binding."""
+    if api_base is None:
+        return "https://api.openai.com/v1"
+    try:
+        parsed = urlsplit(api_base.strip())
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.hostname is None
+        or parsed.hostname.lower() != "api.openai.com"
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or port is not None
+        or parsed.path.rstrip("/") not in {"", "/v1"}
+    ):
+        return None
+    return "https://api.openai.com/v1"
+
+
+def _responses_circuit_key(
+    model: str | None,
+    default_model: str,
+    reasoning_effort: str | None,
+) -> str:
+    model_name = (model or default_model).lower()
+    effort = reasoning_effort.lower() if isinstance(reasoning_effort, str) else ""
+    return f"{model_name}:{effort}"
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge *override* into *base*, returning a new dict.
+
+    Nested dicts are merged key-by-key; all other types in *override*
+    replace the corresponding key in *base*.
+    """
+    merged = dict(base)
+    for key, value in override.items():
+        if (
+            key in merged
+            and isinstance(merged[key], dict)
+            and isinstance(value, dict)
+        ):
+            merged[key] = _deep_merge(
+                cast(dict[str, Any], merged[key]),
+                cast(dict[str, Any], value),
+            )
+        else:
+            merged[key] = value
+    return merged
+
+
+def _merge_unique_list(base: object, override: object) -> object:
+    """Append list values while preserving order and removing duplicates."""
+    if not isinstance(base, list) or not isinstance(override, list):
+        return override
+    result: list[object] = []
+    seen: set[str] = set()
+    for value in [
+        *cast(list[object], base),
+        *cast(list[object], override),
+    ]:
+        try:
+            key = json.dumps(value, sort_keys=True, ensure_ascii=False)
+        except Exception:
+            key = repr(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
+
+
+def _merge_chat_extra_body(
+    kwargs: dict[str, Any],
+    extra_body: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge configured Chat Completions fields without clobbering tools."""
+    regular_extra = {key: value for key, value in extra_body.items() if key != "tools"}
+    merged = dict(kwargs)
+    if regular_extra:
+        existing = kwargs.get("extra_body", {})
+        merged["extra_body"] = _deep_merge(existing, regular_extra)
+
+    if "tools" in extra_body:
+        current_tools = kwargs.get("tools")
+        configured_tools = extra_body["tools"]
+        if isinstance(current_tools, list) and isinstance(configured_tools, list):
+            merged["tools"] = [*current_tools, *configured_tools]
+        else:
+            merged["tools"] = configured_tools
+
+    return merged
+
+
+def _merge_responses_extra_body(
+    body: dict[str, Any],
+    extra_body: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge configured Responses API body fields without clobbering tools."""
+    reserved = {"include", "tools"}
+    regular_extra = {key: value for key, value in extra_body.items() if key not in reserved}
+    merged = _deep_merge(body, regular_extra)
+
+    if "include" in extra_body:
+        merged["include"] = _merge_unique_list(body.get("include"), extra_body["include"])
+
+    if "tools" in extra_body:
+        current_tools = body.get("tools")
+        configured_tools = extra_body["tools"]
+        if isinstance(current_tools, list) and isinstance(configured_tools, list):
+            merged["tools"] = [*current_tools, *configured_tools]
+        else:
+            merged["tools"] = configured_tools
+
+    return merged
+
+
 class OpenAICompatProvider(LLMProvider):
     """Unified provider for all OpenAI-compatible APIs.
 
@@ -135,349 +534,146 @@ class OpenAICompatProvider(LLMProvider):
     registry lookups needed.
     """
 
-    _QUOTA_KEY_COOLDOWN_S = 30 * 60.0  # 30m — re-probe exhausted keys within the same session
-    _RATE_LIMIT_KEY_COOLDOWN_S = 60.0
-    _OVERLOAD_KEY_COOLDOWN_S = 15.0
+    _native_compaction_available = True
 
     def __init__(
         self,
         api_key: str | None = None,
-        api_keys: list[str] | None = None,
         api_base: str | None = None,
         default_model: str = "gpt-4o",
         extra_headers: dict[str, str] | None = None,
-        rate_limit: int = 0,
-        timeout: float = 60.0,
         spec: ProviderSpec | None = None,
-        token_provider: Callable[[], str] | None = None,
-        keep_alive_interval: float = 0.0,
+        extra_body: dict[str, Any] | None = None,
+        api_type: str = "auto",
+        extra_query: dict[str, str] | None = None,
+        proxy: str | None = None,
+        provider_name: str = "openai",
+        timeout: float | None = None,
     ):
-        key_pool = [k for k in (api_keys or []) if k]
-        if not key_pool and api_key:
-            key_pool = [api_key]
-        super().__init__(key_pool[0] if key_pool else api_key, api_base)
+        super().__init__(api_key, api_base, provider_name=provider_name)
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("Provider timeout must be finite and positive")
+        self._configured_timeout = max(5.0, timeout) if timeout is not None else None
         self.default_model = default_model
-        self.extra_headers = extra_headers or {}
+        self.extra_headers = dict(extra_headers) if extra_headers is not None else {}
         self._spec = spec
-        self._token_provider = token_provider
-        self._api_keys = key_pool
-        self._request_start_index = 0
-        self._preferred_key_index: int | None = 0 if key_pool else None
-        self._key_retry_after: list[float] = [0.0] * len(key_pool)
-        self._rate_limit = max(0, int(rate_limit))
-        self._request_timeout = max(5.0, float(timeout))
-        self._request_timestamps: collections.deque[float] = collections.deque()
+        self._extra_body = dict(extra_body or {})
+        self._api_type = api_type if spec and spec.name == "openai" else "auto"
+        self._extra_query = dict(extra_query) if extra_query is not None else {}
+        self._proxy = proxy or None
+        self._native_compaction_available = True
 
         effective_base = api_base or (spec.default_api_base if spec else None) or None
-        self._is_opencode_go = bool(spec and spec.name == "opencode_go")
-        self._opencode_session_id = uuid.uuid4().hex
-        if self._is_opencode_go:
-            default_headers = {
-                "x-opencode-session": self._opencode_session_id,
-                "x-opencode-client": "nanobot",
-                "User-Agent": "nanobot",
-            }
-        else:
-            default_headers = {"x-session-affinity": self._opencode_session_id}
-        if _uses_openrouter_attribution(spec, effective_base):
-            default_headers.update(_DEFAULT_OPENROUTER_HEADERS)
-        if extra_headers:
-            default_headers.update(extra_headers)
         self._effective_base = effective_base
-        self._default_headers = default_headers
-        self._keep_alive_interval = max(0.0, float(keep_alive_interval))
-        self._keep_alive_task: asyncio.Task | None = None
-
-        if self.api_key and self._spec and self._spec.env_key:
-            self._setup_env(self.api_key, self.api_base)
-
-    def _key_label(self, index: int | None = None) -> str:
-        """Return a safe label for the active or requested key slot."""
-        if not self._api_keys:
-            return "key#1/1"
-        idx = 0 if index is None else (index % len(self._api_keys))
-        digest = hashlib.sha1(self._api_keys[idx].encode()).hexdigest()[:8]
-        return f"key#{idx + 1}/{len(self._api_keys)}[{digest}]"
-
-    def start_keep_alive(self) -> None:
-        """Start a background keep-alive ping to prevent cold starts.
-        
-        Only effective if keep_alive_interval > 0 was set in constructor.
-        Sends minimal 'ping' requests to keep the LLM warm.
-        """
-        if self._keep_alive_interval <= 0:
-            return
-        if self._keep_alive_task is not None and not self._keep_alive_task.done():
-            return
-        self._keep_alive_task = asyncio.create_task(self._keep_alive_loop())
-        logger.info("Keep-alive ping started (every {:.0f}s)", self._keep_alive_interval)
-
-    def stop_keep_alive(self) -> None:
-        """Stop the keep-alive ping."""
-        if self._keep_alive_task is not None:
-            self._keep_alive_task.cancel()
-            self._keep_alive_task = None
-
-    async def _keep_alive_loop(self) -> None:
-        """Background loop that sends minimal ping requests."""
-        while True:
-            try:
-                await asyncio.sleep(self._keep_alive_interval)
-                await self._send_ping()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.debug("Keep-alive ping failed: {}", e)
-
-    async def _send_ping(self) -> None:
-        """Send a minimal ping request to keep the LLM warm."""
-        client = self._build_client()
-        try:
-            await asyncio.wait_for(
-                client.chat.completions.create(
-                    model=self.default_model,
-                    messages=[
-                        {"role": "system", "content": "Reply with exactly: pong"},
-                        {"role": "user", "content": "ping"},
-                    ],
-                    max_tokens=4,
-                    temperature=0.0,
-                ),
-                timeout=30.0,  # Short timeout for ping
-            )
-            logger.debug("Keep-alive ping: pong received")
-        except Exception as e:
-            logger.debug("Keep-alive ping timeout/error: {}", e)
-
-    def _next_request_start(self) -> int:
-        """Round-robin the starting key so concurrent requests do not share mutable state."""
-        if len(self._api_keys) <= 1:
-            return 0
-        idx = self._request_start_index % len(self._api_keys)
-        self._request_start_index = (idx + 1) % len(self._api_keys)
-        return idx
-
-    def _rotate_candidate_indices(self, indices: list[int]) -> list[int]:
-        """Rotate a candidate key list for fair fallback ordering."""
-        if len(indices) <= 1:
-            return list(indices)
-        offset = self._next_request_start() % len(indices)
-        return indices[offset:] + indices[:offset]
-
-    def _next_request_order(self) -> list[int]:
-        """Choose key order for a request, preferring healthy recent winners."""
-        if not self._api_keys:
-            return []
-        if len(self._api_keys) == 1:
-            return [0]
-
-        now = time.monotonic()
-        ready = [idx for idx, retry_after in enumerate(self._key_retry_after) if retry_after <= now]
-        cooling = [idx for idx, retry_after in enumerate(self._key_retry_after) if retry_after > now]
-        preferred = self._preferred_key_index
-
-        order: list[int] = []
-        if preferred is not None and preferred in ready:
-            order.append(preferred)
-            ready.remove(preferred)
-
-        order.extend(self._rotate_candidate_indices(ready))
-        cooling.sort(key=lambda idx: (self._key_retry_after[idx], idx))
-        order.extend(cooling)
-
-        return order or list(range(len(self._api_keys)))
-
-    @staticmethod
-    def _error_status_code(error: Exception) -> int | None:
-        """Extract an HTTP-like status code from SDK exceptions when available."""
-        status = getattr(error, "status_code", None)
-        if status is None:
-            resp = getattr(error, "response", None)
-            status = getattr(resp, "status_code", None) if resp is not None else None
-        return status if isinstance(status, int) else None
-
-    def _cooldown_seconds_for_error(self, error: Exception) -> float:
-        """Return a cooldown for keys that just failed with provider throttling/quota."""
-        if isinstance(error, TimeoutError):
-            return self._OVERLOAD_KEY_COOLDOWN_S
-        status = self._error_status_code(error)
-        summary = self._error_summary(error).lower()
-        if status == 503 or any(marker in summary for marker in (
-            "high demand",
-            "service unavailable",
-            "temporarily unavailable",
-            "unavailable",
-            "timeout",
-            "timed out",
-        )):
-            return self._OVERLOAD_KEY_COOLDOWN_S
-        if self._is_quota_exhaustion(summary) or any(marker in summary for marker in (
-            "current quota",
-            "plan and billing",
-            "resource_exhausted",
-        )):
-            return self._QUOTA_KEY_COOLDOWN_S
-        return self._RATE_LIMIT_KEY_COOLDOWN_S
-
-    def _record_key_success(self, key_index: int | None) -> None:
-        """Promote a successful key to the preferred starting slot."""
-        if key_index is None or not self._api_keys:
-            return
-        resolved_index = key_index % len(self._api_keys)
-        self._preferred_key_index = resolved_index
-        self._key_retry_after[resolved_index] = 0.0
-
-    def _record_key_failure(self, key_index: int | None, error: Exception) -> float:
-        """Temporarily deprioritize a key that just failed with throttling/quota."""
-        if key_index is None or not self._api_keys:
-            return 0.0
-        resolved_index = key_index % len(self._api_keys)
-        cooldown_s = self._cooldown_seconds_for_error(error)
-        self._key_retry_after[resolved_index] = max(
-            self._key_retry_after[resolved_index],
-            time.monotonic() + cooldown_s,
+        self._default_headers = {"x-session-affinity": uuid.uuid4().hex}
+        if _uses_openrouter_attribution(spec, effective_base):
+            self._default_headers.update(_DEFAULT_OPENROUTER_HEADERS)
+        if self.extra_headers:
+            self._default_headers.update(self.extra_headers)
+        self._api_key_for_client = api_key or "no-key"
+        self._bound_state_credential = api_key if isinstance(api_key, str) and api_key.strip() else None
+        self._bound_state_endpoint = _normalized_direct_openai_responses_endpoint(
+            effective_base
         )
-        return cooldown_s
+        self._bound_state_wire_headers = dict(self._default_headers)
+        self._bound_state_wire_query = dict(self._extra_query)
+        self._bound_state_construction_eligible = (
+            spec is not None
+            and spec.name == "openai"
+            and api_type == "responses"
+            and self._bound_state_credential is not None
+            and self._bound_state_endpoint is not None
+            and extra_headers is None
+            and extra_query is None
+            and not self._extra_body
+        )
+        self._is_local = _is_local_endpoint(spec, effective_base)
 
-    def _build_client(self, key_index: int | None = None) -> AsyncOpenAI:
-        """Build a client for the given key slot without mutating provider state."""
-        active_key = self.api_key
-        if self._api_keys:
-            resolved_index = 0 if key_index is None else (key_index % len(self._api_keys))
-            active_key = self._api_keys[resolved_index]
-        if self._token_provider is not None:
-            try:
-                active_key = self._token_provider()
-            except Exception as exc:
-                raise RuntimeError(f"Failed to obtain auth token: {exc}") from exc
-        if active_key and self._spec and self._spec.env_key:
-            self._setup_env(active_key, self.api_base)
-        return AsyncOpenAI(
-            api_key=active_key or "no-key",
+        # Lazy-init: the OpenAI client and its httpx transport are expensive
+        # to create (~700 ms on Windows). Defer until first use.
+        self._client: AsyncOpenAIType | None = None
+        self._client_lock = asyncio.Lock()
+
+        # Responses API circuit breaker: skip after repeated failures,
+        # probe again after _RESPONSES_PROBE_INTERVAL_S seconds.
+        self._responses_failures: dict[str, int] = {}
+        self._responses_tripped_at: dict[str, float] = {}
+
+    def _build_client(self) -> None:
+        """Create the OpenAI client using the current module-level AsyncOpenAI."""
+        import httpx
+
+        timeout_s = self._configured_timeout if self._configured_timeout is not None else _openai_compat_timeout_s()
+        http_client: httpx.AsyncClient | None = None
+        if self._proxy:
+            http_client = httpx.AsyncClient(
+                timeout=timeout_s,
+                proxy=self._proxy,
+                trust_env=False,
+                follow_redirects=True,
+            )
+        elif self._is_local:
+            # Local model servers (Ollama, llama.cpp, vLLM) often close idle
+            # HTTP connections before the client-side keepalive expires. When
+            # two LLM calls happen seconds apart (e.g. heartbeat _decide then
+            # process_direct), the second call may grab a now-dead pooled
+            # connection, causing a transient APIConnectionError on every first
+            # attempt. Disabling keepalive for local endpoints avoids this by
+            # opening a fresh connection for each request, which is cheap on a
+            # LAN. Cloud providers benefit from keepalive, so we leave the
+            # default pool settings for them.
+            #
+            # Also disable proxy for local endpoints: when the host has
+            # HTTP_PROXY / HTTPS_PROXY / ALL_PROXY set, httpx would try to
+            # route local traffic through the proxy, which typically cannot
+            # reach localhost or LAN addresses.
+            _local_limits = httpx.Limits(keepalive_expiry=0)
+            http_client = httpx.AsyncClient(
+                limits=_local_limits,
+                timeout=timeout_s,
+                transport=httpx.AsyncHTTPTransport(proxy=None, limits=_local_limits),
+            )
+        # else: http_client stays None → SDK creates DefaultAsyncHttpxClient
+        # which already reads proxy env vars via trust_env=True, has proper
+        # connection limits, and follows redirects.
+        self._client = AsyncOpenAI(
+            api_key=self._api_key_for_client,
             base_url=self._effective_base,
             default_headers=self._default_headers,
-            timeout=self._request_timeout,
+            default_query=self._extra_query or None,
+            max_retries=0,
+            timeout=timeout_s,
+            http_client=http_client,
         )
 
-    async def _await_with_timeout(self, awaitable: Awaitable[Any], *, phase: str) -> Any:
-        """Bound a provider SDK awaitable so a bad upstream call cannot hang forever."""
-        try:
-            return await asyncio.wait_for(awaitable, timeout=self._request_timeout)
-        except asyncio.TimeoutError as exc:
-            raise TimeoutError(f"provider {phase} timed out after {self._request_timeout:.0f}s") from exc
+    async def _ensure_client(self) -> AsyncOpenAIType:
+        """Return the shared OpenAI client, creating it on first call."""
+        if self._client is not None:
+            return self._client
+        async with self._client_lock:
+            if self._client is not None:
+                return self._client
+            global AsyncOpenAI
+            if AsyncOpenAI is None:
+                if os.environ.get("LANGFUSE_SECRET_KEY") and importlib.util.find_spec("langfuse"):
+                    from langfuse.openai import AsyncOpenAI as _AsyncOpenAI
+                else:
+                    if os.environ.get("LANGFUSE_SECRET_KEY"):
+                        logger.warning(
+                            "LANGFUSE_SECRET_KEY is set but langfuse is not installed; "
+                            "run `nanobot plugins enable langfuse` to enable tracing"
+                        )
+                    from openai import AsyncOpenAI as _AsyncOpenAI
+                AsyncOpenAI = _AsyncOpenAI
 
-    async def _collect_stream_chunks(
-        self,
-        stream: Any,
-        on_content_delta: Callable[[str], Awaitable[None]] | None,
-    ) -> list[Any]:
-        """Consume a streaming response with an idle timeout between chunks."""
-        chunks: list[Any] = []
-        iterator = stream.__aiter__()
-        try:
-            while True:
-                try:
-                    chunk = await asyncio.wait_for(anext(iterator), timeout=self._request_timeout)
-                except StopAsyncIteration:
-                    break
-                except asyncio.TimeoutError as exc:
-                    raise TimeoutError(
-                        f"provider stream timed out after {self._request_timeout:.0f}s waiting for the next chunk"
-                    ) from exc
+            self._build_client()
+            if self._client is None:
+                raise RuntimeError("OpenAI client initialization did not produce a client")
+            return self._client
 
-                chunks.append(chunk)
-                if on_content_delta and getattr(chunk, "choices", None):
-                    text = getattr(chunk.choices[0].delta, "content", None)
-                    if text:
-                        await on_content_delta(text)
-        finally:
-            close = getattr(stream, "aclose", None)
-            if callable(close):
-                try:
-                    await close()
-                except Exception:
-                    logger.debug("Ignoring stream close failure")
-        return chunks
-
-    def _log_rotation(self, previous_index: int, next_index: int, error: Exception, cooldown_s: float) -> None:
-        """Log a request-local rotation between configured key slots."""
-        logger.warning(
-            "Rotating provider API key from {} to {} after quota/rate-limit response (cooldown {:.0f}s): {}",
-            self._key_label(previous_index),
-            self._key_label(next_index),
-            cooldown_s,
-            self._error_summary(error),
-        )
-
-    @staticmethod
-    def _is_rate_limit_error(exc: Exception) -> bool:
-        """Return True when exception indicates quota/rate limiting or temporary overload.
-        
-        Note: Timeouts are NOT considered rate-limit errors - they indicate
-        connectivity issues, not quota exhaustion.
-        """
-        status = getattr(exc, "status_code", None)
-        if status is None:
-            resp = getattr(exc, "response", None)
-            status = getattr(resp, "status_code", None) if resp is not None else None
-        if status in (429, 503):
-            return True
-        msg = str(exc).lower()
-        # Explicitly exclude timeout-related errors
-        if "timeout" in msg or "timed out" in msg:
-            return False
-        return any(m in msg for m in (
-            "rate limit",
-            "rate_limit",
-            "quota",
-            "resource_exhausted",
-            "429",
-            "unavailable",
-            "service unavailable",
-            "high demand",
-            "503",
-        ))
-
-    async def _wait_for_rate_limit(self) -> None:
-        """Sleep as needed to honor per-provider requests/minute rate_limit."""
-        if self._rate_limit <= 0:
-            return
-
-        now = time.monotonic()
-        window_s = 60.0
-        while self._request_timestamps and self._request_timestamps[0] <= now - window_s:
-            self._request_timestamps.popleft()
-
-        if len(self._request_timestamps) >= self._rate_limit:
-            oldest = self._request_timestamps[0]
-            delay = oldest + window_s - now + 1.0
-            if delay > 0:
-                await asyncio.sleep(delay)
-
-        self._request_timestamps.append(time.monotonic())
-
-    def _setup_env(self, api_key: str, api_base: str | None) -> None:
-        """Set environment variables based on provider spec."""
-        spec = self._spec
-        if not spec or not spec.env_key:
-            return
-        # Keep env vars aligned with the currently active key so follow-up
-        # requests and auxiliary SDK behavior do not get stuck on the first key.
-        os.environ[spec.env_key] = api_key
-        effective_base = api_base or spec.default_api_base
-        for env_name, env_val in spec.env_extras:
-            resolved = env_val.replace("{api_key}", api_key).replace("{api_base}", effective_base)
-            os.environ[env_name] = resolved
-
-    @staticmethod
-    def _error_summary(error: Exception) -> str:
-        """Return a short provider error summary suitable for logs/messages."""
-        body = getattr(error, "doc", None) or getattr(getattr(error, "response", None), "text", None)
-        text = body.strip() if isinstance(body, str) and body.strip() else str(error).strip()
-        return text[:240]
-
-    @staticmethod
+    @classmethod
     def _apply_cache_control(
+        cls,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None]:
@@ -492,7 +688,7 @@ class OpenAICompatProvider(LLMProvider):
                     {"type": "text", "text": content, "cache_control": cache_marker},
                 ]}
             if isinstance(content, list) and content:
-                nc = list(content)
+                nc = list(cast(list[dict[str, Any]], content))
                 nc[-1] = {**nc[-1], "cache_control": cache_marker}
                 return {**msg, "content": nc}
             return msg
@@ -505,7 +701,8 @@ class OpenAICompatProvider(LLMProvider):
         new_tools = tools
         if tools:
             new_tools = list(tools)
-            new_tools[-1] = {**new_tools[-1], "cache_control": cache_marker}
+            for idx in cls._tool_cache_marker_indices(new_tools):
+                new_tools[idx] = {**new_tools[idx], "cache_control": cache_marker}
         return new_messages, new_tools
 
     @staticmethod
@@ -517,34 +714,247 @@ class OpenAICompatProvider(LLMProvider):
             return tool_call_id
         return hashlib.sha1(tool_call_id.encode()).hexdigest()[:9]
 
-    def _sanitize_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _should_normalize_tool_call_ids(self) -> bool:
+        """Return True for providers that reject normal OpenAI tool call IDs."""
+        return bool(self._spec and self._spec.name == "mistral")
+
+    @staticmethod
+    def _coerce_content_to_string(content: Any) -> str | None:
+        """Coerce block/list content into plain text for strict string-only APIs."""
+        if content is None or isinstance(content, str):
+            return content
+        text = OpenAICompatProvider._extract_text_content(content)
+        if isinstance(text, str) and text:
+            return text
+        try:
+            dumped = json.dumps(content, ensure_ascii=False)
+        except Exception:
+            dumped = str(content)
+        return dumped or "(empty)"
+
+    def _sanitize_messages(
+        self,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Strip non-standard keys, normalize tool_call IDs."""
         sanitized = LLMProvider._sanitize_request_messages(messages, _ALLOWED_MSG_KEYS)
         id_map: dict[str, str] = {}
+        pending_tool_ids: dict[str, deque[str]] = {}
+        is_deepseek = bool(self._spec and self._spec.name == "deepseek")
+        model_name = model or self.default_model
+        force_string_content = (
+            is_deepseek and _model_slug(model_name) not in _DEEPSEEK_MULTIMODAL_MODELS
+        )
+        opencode_deepseek = (
+            self._spec is not None
+            and self._spec.name in ("opencode", "opencode_zen", "opencode_go")
+            and _model_slug(model_name).startswith("deepseek-")
+        )
+        normalize_tool_ids = self._should_normalize_tool_call_ids()
+        strip_reasoning = bool(
+            self._spec
+            and getattr(self._spec, "strip_history_reasoning_content", False)
+        )
+        if strip_reasoning:
+            for msg in sanitized:
+                msg.pop("reasoning_content", None)
+        if self._spec and self._spec.name == "gemini":
+            sanitized = self._ensure_gemini_thought_signatures(sanitized)
 
         def map_id(value: Any) -> Any:
             if not isinstance(value, str):
                 return value
+            if not normalize_tool_ids:
+                return value
             return id_map.setdefault(value, self._normalize_tool_call_id(value))
 
+        def unique_tool_id(value: Any, used_ids: set[str], idx: int) -> str:
+            if isinstance(value, str) and value:
+                base = map_id(value)
+            else:
+                base = _short_tool_id()
+            if not isinstance(base, str) or not base:
+                base = _short_tool_id()
+            if base not in used_ids:
+                return base
+            seed = value if isinstance(value, str) and value else base
+            salt = 1
+            while True:
+                candidate = self._normalize_tool_call_id(f"{seed}:{idx}:{salt}")
+                if isinstance(candidate, str) and candidate not in used_ids:
+                    return candidate
+                salt += 1
+
+        def map_tool_result_id(value: Any) -> Any:
+            if not isinstance(value, str):
+                return value
+            queue = pending_tool_ids.get(value)
+            if queue:
+                mapped = queue.popleft()
+                if not queue:
+                    pending_tool_ids.pop(value, None)
+                return mapped
+            return map_id(value)
+
         for clean in sanitized:
-            if isinstance(clean.get("tool_calls"), list):
-                normalized = []
-                for tc in clean["tool_calls"]:
+            tool_calls_value = cast(object, clean.get("tool_calls"))
+            if isinstance(tool_calls_value, list):
+                normalized: list[Any] = []
+                used_ids: set[str] = set()
+                for idx, tc in enumerate(cast(list[object], tool_calls_value)):
                     if not isinstance(tc, dict):
                         normalized.append(tc)
                         continue
-                    tc_clean = dict(tc)
-                    tc_clean["id"] = map_id(tc_clean.get("id"))
+                    tc_clean = dict(cast(dict[str, Any], tc))
+                    raw_id = tc_clean.get("id")
+                    mapped_id = unique_tool_id(raw_id, used_ids, idx)
+                    tc_clean["id"] = mapped_id
+                    used_ids.add(mapped_id)
+                    if isinstance(raw_id, str) and raw_id:
+                        pending_tool_ids.setdefault(raw_id, deque()).append(mapped_id)
+                    function = cast(object, tc_clean.get("function"))
+                    if isinstance(function, dict):
+                        function_clean = dict(cast(dict[str, Any], function))
+                        if "arguments" in function_clean:
+                            function_clean["arguments"] = tool_arguments_json_for_replay(
+                                function_clean.get("arguments")
+                            )
+                        else:
+                            function_clean["arguments"] = "{}"
+                        tc_clean["function"] = function_clean
                     normalized.append(tc_clean)
                 clean["tool_calls"] = normalized
+                if clean.get("role") == "assistant":
+                    # Some OpenAI-compatible gateways reject assistant messages
+                    # that mix non-empty content with tool_calls.
+                    # OpenCode's DeepSeek route requires an empty string here.
+                    clean["content"] = "" if opencode_deepseek else None
             if "tool_call_id" in clean and clean["tool_call_id"]:
-                clean["tool_call_id"] = map_id(clean["tool_call_id"])
-        return sanitized
+                clean["tool_call_id"] = map_tool_result_id(clean["tool_call_id"])
+            if (
+                force_string_content
+                and not (clean.get("role") == "assistant" and clean.get("tool_calls"))
+            ):
+                clean["content"] = self._coerce_content_to_string(clean.get("content"))
+        return self._enforce_role_alternation(sanitized)
+
+    @staticmethod
+    def _gemini_thought_signature(tool_call: dict[str, Any]) -> str | None:
+        """Return Gemini's thought signature attached to a tool call, if any.
+
+        Gemini's OpenAI-compatible endpoint returns tool calls with an
+        ``extra_content`` field: ``{"google": {"thought_signature": "..."}}``.
+        nanobot preserves it through the parse -> serialize round-trip so
+        replayed calls stay valid. Calls produced by other providers (e.g.
+        after a mid-conversation model switch) carry no signature.
+        """
+        extra = tool_call.get("extra_content")
+        if not isinstance(extra, dict):
+            return None
+        google = cast(dict[str, Any], extra).get("google")
+        if not isinstance(google, dict):
+            return None
+        signature = cast(dict[str, Any], google).get("thought_signature")
+        if isinstance(signature, str) and signature:
+            return signature
+        return None
+
+    def _ensure_gemini_thought_signatures(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Keep migrated tool history wire-valid without losing tool context.
+
+        Gemini requires the first call in each function-call step to carry a
+        thought signature. Native parallel calls intentionally leave later
+        calls unsigned, so they must remain in their original order. For a
+        fully unsigned step imported from another provider, Google documents
+        ``skip_thought_signature_validator`` as a last-resort migration value.
+        """
+        kept: list[dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role")
+            calls = msg.get("tool_calls")
+            if role != "assistant" or not isinstance(calls, list) or not calls:
+                kept.append(msg)
+                continue
+
+            call_values = cast(list[object], calls)
+            typed_calls = [
+                cast(dict[str, Any], tool_call)
+                for tool_call in call_values
+                if isinstance(tool_call, dict)
+            ]
+            if not typed_calls:
+                if msg.get("content"):
+                    clean = dict(msg)
+                    clean.pop("tool_calls", None)
+                    kept.append(clean)
+                continue
+
+            clean_calls = typed_calls
+            if self._gemini_thought_signature(typed_calls[0]) is None:
+                first = dict(typed_calls[0])
+                extra_value = first.get("extra_content")
+                extra = dict(cast(dict[str, Any], extra_value)) if isinstance(
+                    extra_value, dict
+                ) else {}
+                google_value = extra.get("google")
+                google = dict(cast(dict[str, Any], google_value)) if isinstance(
+                    google_value, dict
+                ) else {}
+                google["thought_signature"] = _GEMINI_SKIP_THOUGHT_SIGNATURE
+                extra["google"] = google
+                first["extra_content"] = extra
+                clean_calls = [first, *typed_calls[1:]]
+
+            if clean_calls != call_values:
+                msg = dict(msg)
+                msg["tool_calls"] = clean_calls
+            kept.append(msg)
+        return kept
 
     # ------------------------------------------------------------------
     # Build kwargs
     # ------------------------------------------------------------------
+
+    def _request_model_name(self, model_name: str) -> str:
+        spec = self._spec
+        if not spec or "/" not in model_name:
+            return model_name
+        if spec.strip_model_prefix:
+            return model_name.split("/")[-1]
+
+        route_prefixes = getattr(spec, "strip_model_prefixes", ())
+        if not isinstance(route_prefixes, tuple) or not route_prefixes:
+            return model_name
+        typed_route_prefixes = cast(tuple[str, ...], route_prefixes)
+        model_prefix, routed_model = model_name.split("/", 1)
+        model_prefix_key = _provider_prefix_key(model_prefix)
+        if any(
+            _provider_prefix_key(prefix) == model_prefix_key
+            for prefix in typed_route_prefixes
+        ):
+            return routed_model
+        return model_name
+
+    @staticmethod
+    def _supports_temperature(
+        model_name: str,
+        reasoning_effort: str | None = None,
+    ) -> bool:
+        """Return True when the model accepts a temperature parameter.
+
+        Kimi K3 uses a fixed temperature that should be omitted. GPT-5 family
+        and reasoning models (o1/o3/o4) reject temperature when
+        reasoning_effort is set to anything other than ``"none"``.
+        """
+        if _model_slug(model_name) == _KIMI_K3_MODEL:
+            return False
+        if reasoning_effort and reasoning_effort.lower() != "none":
+            return False
+        name = model_name.lower()
+        return not any(token in name for token in ("gpt-5", "o1", "o3", "o4"))
 
     def _build_kwargs(
         self,
@@ -552,7 +962,7 @@ class OpenAICompatProvider(LLMProvider):
         tools: list[dict[str, Any]] | None,
         model: str | None,
         max_tokens: int,
-        temperature: float | None,
+        temperature: float,
         reasoning_effort: str | None,
         tool_choice: str | dict[str, Any] | None,
     ) -> dict[str, Any]:
@@ -560,34 +970,38 @@ class OpenAICompatProvider(LLMProvider):
         spec = self._spec
 
         if spec and spec.supports_prompt_caching:
-            messages, tools = self._apply_cache_control(messages, tools)
+            model_name = model or self.default_model
+            if any(model_name.lower().startswith(k) for k in ("anthropic/", "claude")):
+                messages, tools = self._apply_cache_control(messages, tools)
 
-        if spec and spec.strip_model_prefix:
-            model_name = model_name.split("/")[-1]
+        model_name = self._request_model_name(model_name)
 
-        if spec and spec.name == "opencode_go" and model_name.startswith("minimax-"):
+        if (
+            spec is not None
+            and spec.name in ("opencode", "opencode_zen", "opencode_go")
+            and _model_slug(model_name).startswith("minimax-")
+        ):
             raise ValueError(
-                "OpenCode Go MiniMax models use the Anthropic-style /messages endpoint and "
-                "are not yet supported by Nanobot's OpenAI-compatible provider. "
-                "Please use another OpenCode Go model for now."
+                "OpenCode MiniMax models use the Anthropic-style /messages endpoint; "
+                "they cannot be sent through the OpenAI-compatible chat transport."
             )
 
-        messages = self._split_tool_images_from_messages(messages)
         kwargs: dict[str, Any] = {
             "model": model_name,
-            "messages": self._sanitize_messages(self._sanitize_empty_content(messages)),
+            "messages": self._sanitize_messages(
+                self._sanitize_empty_content(messages),
+                model_name,
+            ),
         }
-        if temperature is not None:
+
+        # GPT-5 and reasoning models (o1/o3/o4) reject temperature when
+        # reasoning_effort is active.  Only include it when safe.
+        if self._supports_temperature(model_name, reasoning_effort):
             kwargs["temperature"] = temperature
 
-        reasoning_model = _is_reasoning_model(model_name)
-        if reasoning_model:
-            # Reasoning models (o1/o3/o4/gpt-5 family) reject `max_tokens` and
-            # custom `temperature`; they require `max_completion_tokens` and
-            # only accept the default temperature.
-            kwargs["max_completion_tokens"] = max(1, max_tokens)
-            kwargs.pop("temperature", None)
-        elif spec and getattr(spec, "supports_max_completion_tokens", False):
+        if (
+            spec and getattr(spec, "supports_max_completion_tokens", False)
+        ) or _requires_max_completion_tokens(model_name):
             kwargs["max_completion_tokens"] = max(1, max_tokens)
         else:
             kwargs["max_tokens"] = max(1, max_tokens)
@@ -599,628 +1013,499 @@ class OpenAICompatProvider(LLMProvider):
                     kwargs.update(overrides)
                     break
 
-        if reasoning_effort:
-            kwargs["reasoning_effort"] = reasoning_effort
+        # Moonshot selects the only valid temperature from the K2.5/K2.6 thinking mode:
+        # 1.0 when enabled and 0.6 when disabled. Omitting the parameter lets the API
+        # apply the matching value for both its default and explicit thinking controls.
+        if (
+            spec
+            and spec.name == "moonshot"
+            and _model_slug(model_name) in _KIMI_SERVER_MANAGED_TEMPERATURE_MODELS
+        ):
+            kwargs.pop("temperature", None)
+
+        # Normalize reasoning_effort into a semantic form (OpenAI vocab)
+        # used for internal decisions, and a wire form actually sent out.
+        # "minimum" is accepted as a DashScope-native alias for "minimal".
+        semantic_effort: str | None = None
+        if isinstance(reasoning_effort, str):
+            semantic_effort = reasoning_effort.lower()
+            if semantic_effort == "minimum":
+                semantic_effort = "minimal"
+
+        wire_effort = reasoning_effort
+        slug = _model_slug(model_name)
+        if slug == _KIMI_K3_MODEL and semantic_effort is not None:
+            # K3 always reasons and currently accepts only the top-level
+            # reasoning_effort="max". Preserve disabled/default semantics by
+            # omitting the field; normalize older enabled presets to "max" so
+            # switching from a K2.x model does not send an unsupported value.
+            if semantic_effort in ("none", "minimal"):
+                wire_effort = None
+            else:
+                semantic_effort = "max"
+                wire_effort = "max"
+        if spec and spec.name == "dashscope" and semantic_effort == "minimal":
+            # DashScope accepts none/minimum/low/medium/high/xhigh; "minimal" 400s.
+            wire_effort = "minimum"
+
+        # Magistral and other providers where reasoning is implicit reject the
+        # reasoning_effort kwarg entirely. Strip it before the remap so we don't
+        # accidentally send "none"/"high" to a model that always reasons.
+        strip_effort = False
+        if spec and getattr(spec, "implicit_reasoning_models", ()):
+            model_lower = model_name.lower()
+            strip_effort = any(
+                pat in model_lower for pat in spec.implicit_reasoning_models
+            )
+
+        # Some providers accept a constrained reasoning_effort vocabulary
+        # (Mistral: only "high"/"none"). Remap from OpenAI vocab to the
+        # provider's accepted set; an empty mapped value means "omit".
+        if (
+            not strip_effort
+            and spec
+            and getattr(spec, "reasoning_effort_remap", ())
+            and isinstance(semantic_effort, str)
+        ):
+            remap = dict(spec.reasoning_effort_remap)
+            mapped = remap.get(semantic_effort)
+            if mapped is not None:
+                wire_effort = mapped or None
+                semantic_effort = mapped or "none"
+
+        if strip_effort:
+            wire_effort = None
+        elif wire_effort and semantic_effort != "none":
+            kwargs["reasoning_effort"] = wire_effort
+
+        # Only send thinking controls when reasoning_effort is explicit so
+        # omitting the config preserves each provider's default.
+        if reasoning_effort is not None:
+            thinking_enabled = semantic_effort not in ("none", "minimal")
+            for thinking_style in _thinking_styles_for(spec, model_name):
+                if not thinking_enabled and slug in _KIMI_ALWAYS_THINKING_MODELS:
+                    continue
+                extra = _thinking_extra_body(thinking_style, thinking_enabled)
+                if extra:
+                    kwargs.setdefault("extra_body", {}).update(extra)
+            gateway_style = getattr(spec, "gateway_reasoning_style", "") if spec else ""
+            if (
+                gateway_style
+                and _model_thinking_style(model_name)
+                and (thinking_enabled or slug not in _KIMI_ALWAYS_THINKING_MODELS)
+            ):
+                extra = _gateway_reasoning_extra_body(gateway_style, semantic_effort)
+                if extra:
+                    kwargs.setdefault("extra_body", {}).update(extra)
+
+            # Moonshot rejects requests that carry both 'reasoning_effort'
+            # and the native 'thinking' param.  We already expressed the
+            # user's intent via the provider-native shape, so drop the
+            # redundant wire-level kwarg.  Only kimi models need this —
+            # Xiaomi's API accepts both params.
+            if slug in _KIMI_THINKING_MODELS:
+                kwargs.pop("reasoning_effort", None)
 
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
 
-        if self._is_opencode_go:
-            kwargs["extra_headers"] = {
-                "x-opencode-request": uuid.uuid4().hex,
-            }
-            # MiMo and DeepSeek models don't support custom temperature; match
-            # opencode TUI behavior (transform.ts::temperature()).
-            if not any(p in model_lower for p in ("glm", "kimi", "qwen", "minimax")):
-                kwargs.pop("temperature", None)
+        # Backfill reasoning_content="" on assistants missing it: DeepSeek
+        # thinking mode rejects history otherwise (#3554, #3584); "" reads
+        # as "no thinking that turn". DeepSeek-V4/reasoner reason natively,
+        # so backfill even without explicit reasoning_effort.
+        explicit_thinking = (
+            reasoning_effort is not None
+            and semantic_effort not in ("none", "minimal")
+            and (
+                (spec and spec.thinking_style)
+                or _model_thinking_style(model_name)
+            )
+        )
+        implicit_deepseek_thinking = (
+            spec is not None
+            and spec.name in ("deepseek", "opencode", "opencode_zen", "opencode_go")
+            and semantic_effort not in ("none", "minimal", "minimum")
+            and any(t in model_name.lower() for t in ("deepseek-v4", "deepseek-reasoner"))
+        )
+        if explicit_thinking or implicit_deepseek_thinking:
+            for msg in kwargs["messages"]:
+                if msg.get("role") == "assistant" and "reasoning_content" not in msg:
+                    msg["reasoning_content"] = ""
+
+        # Merge user-configured extra_body last so ordinary fields can override
+        # provider defaults. Keep configured tools at the top level: the SDK
+        # otherwise lets extra_body.tools replace nanobot's generated functions.
+        if self._extra_body:
+            kwargs = _merge_chat_extra_body(kwargs, self._extra_body)
 
         return kwargs
 
-    # ------------------------------------------------------------------
-    # Responses API (/v1/responses)
-    # ------------------------------------------------------------------
-    #
-    # Some providers (notably GitHub Copilot) require the Responses API for
-    # reasoning models when function tools are attached — chat/completions
-    # rejects `reasoning_effort` in that combination with:
-    #   "Function tools with reasoning_effort are not supported for gpt-5.x
-    #    in /v1/chat/completions. Please use /v1/responses instead."
-    # We route there only for reasoning-model requests on opted-in specs so
-    # the existing chat/completions code path keeps handling everything else.
-
-    def _should_use_responses_api(self, model_name: str) -> bool:
-        spec = self._spec
-        if not spec or not getattr(spec, "use_responses_api", False):
-            return False
-        return _is_reasoning_model(model_name)
-
-    @staticmethod
-    def _stringify_tool_output(content: Any) -> str:
-        if content is None:
-            return ""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, dict):
-                    # Skip image blocks — they're carried separately as
-                    # synthetic user input_image items (see _split_tool_images).
-                    if item.get("type") in ("image_url", "input_image"):
-                        continue
-                    text = item.get("text")
-                    if isinstance(text, str):
-                        parts.append(text)
-                        continue
-                    parts.append(json.dumps(item, ensure_ascii=False))
-                elif isinstance(item, str):
-                    parts.append(item)
-                else:
-                    parts.append(str(item))
-            return "".join(parts)
-
-    @staticmethod
-    def _extract_image_data_url(block: Any) -> str | None:
-        """Return the data URL string from a chat-completions image_url block."""
-        if not isinstance(block, dict):
-            return None
-        if block.get("type") != "image_url":
-            return None
-        iu = block.get("image_url")
-        if isinstance(iu, str):
-            return iu
-        if isinstance(iu, dict):
-            url = iu.get("url")
-            if isinstance(url, str):
-                return url
-        return None
-
-    @classmethod
-    def _split_tool_images(cls, content: Any) -> list[str]:
-        """Return any image data URLs embedded in a tool message's content."""
-        if not isinstance(content, list):
-            return []
-        urls: list[str] = []
-        for item in content:
-            url = cls._extract_image_data_url(item)
-            if url:
-                urls.append(url)
-        return urls
-
-    @classmethod
-    def _split_tool_images_from_messages(
-        cls,
-        messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        """Split image_url blocks out of tool messages into user messages.
-
-        Some providers (e.g. Xiaomi) reject image_url blocks inside
-        role=tool messages.  This mirrors what the Responses API path already
-        does (see ``_messages_to_responses_input``), keeping the chat
-        completions path compatible with the same providers.
-        """
-        result: list[dict[str, Any]] = []
-        for msg in messages:
-            if msg.get("role") != "tool":
-                result.append(msg)
-                continue
-            content = msg.get("content")
-            if not isinstance(content, list):
-                result.append(msg)
-                continue
-            image_urls = cls._split_tool_images(content)
-            if not image_urls:
-                result.append(msg)
-                continue
-            text_only: list[Any] = [
-                item for item in content
-                if not (isinstance(item, dict) and item.get("type") == "image_url")
-            ]
-            tool_msg = dict(msg)
-            tool_msg["content"] = text_only if text_only else "(tool returned image(s))"
-            result.append(tool_msg)
-            user_parts: list[Any] = [
-                {"type": "text",
-                 "text": f"[tool {msg.get('name') or ''} returned the following image(s)]".strip()},
-            ]
-            for url in image_urls:
-                user_parts.append({"type": "image_url", "image_url": {"url": url}})
-            result.append({"role": "user", "content": user_parts})
-        return result
-
-    # ------------------------------------------------------------------
-    # Vision fallback: describe images via a vision-capable model when
-    # the primary model rejects image content.
-    # ------------------------------------------------------------------
-
-    async def _describe_images_via_fallback(
+    def _should_use_responses_api(
         self,
-        messages: list[dict[str, Any]],
-        *,
-        reason: str = "vision",
-    ) -> list[dict[str, Any]] | None:
-        """Describe images via the configured vision fallback model.
+        model: str | None,
+        reasoning_effort: str | None,
+    ) -> bool:
+        """Choose Responses for providers/models that explicitly support it."""
+        if self._api_type == "chat_completions":
+            return False
+        spec_name = self._spec.name if self._spec is not None else None
+        model_name = self._request_model_name(model or self.default_model).lower()
+        supported_models = {
+            supported.lower()
+            for supported in getattr(self._spec, "responses_models", ())
+        }
+        model_responses = any(
+            model_name == supported or model_name.endswith(f"/{supported}")
+            for supported in supported_models
+        )
+        provider_responses = spec_name in ("openai", "github_copilot")
+        if not provider_responses and not model_responses:
+            return False
+        if self._responses_is_required():
+            # Explicit Responses-only request fields are mandatory; do not
+            # consult the circuit breaker or fall back to Chat Completions.
+            return True
+        if provider_responses and (self._spec is None or self._spec.name != "github_copilot"):
+            if not _is_direct_openai_base(self._effective_base):
+                return False
 
-        Collects all ``image_url`` blocks from *messages*, sends them to the
-        vision fallback model (e.g. ``mimo-v2.5``) with a "describe this
-        image" prompt, and replaces each ``image_url`` block with a ``text``
-        block containing the description.
+        wants = False
+        if model_responses:
+            wants = True
+        elif reasoning_effort and reasoning_effort.lower() != "none":
+            wants = True
+        elif any(token in model_name for token in ("gpt-5", "o1", "o3", "o4")):
+            wants = True
+        if not wants:
+            return False
 
-        Returns the modified messages, or ``None`` if no fallback model is
-        configured or the fallback call failed (caller falls back to
-        :meth:`_strip_image_content`).
-        """
-        spec = self._spec
-        if not spec or not getattr(spec, "vision_fallback_model", None):
-            return None
+        return self._responses_circuit_allows_probe(model, reasoning_effort)
 
-        # Collect image_url blocks and their (msg_idx, blk_idx) locations.
-        image_blocks: list[dict[str, Any]] = []
-        image_locations: set[tuple[int, int]] = set()
-        for msg_idx, msg in enumerate(messages):
-            content = msg.get("content")
-            if not isinstance(content, list):
-                continue
-            for blk_idx, block in enumerate(content):
-                if isinstance(block, dict) and block.get("type") == "image_url":
-                    image_blocks.append(block)
-                    image_locations.add((msg_idx, blk_idx))
+    def _responses_is_required(self) -> bool:
+        return self._api_type == "responses" or self._hosted_web_search_enabled()
 
-        if not image_blocks:
-            return None
-
-        vision_model = spec.vision_fallback_model
-        # Build a single user message asking the vision model to describe
-        # every image, preserving order so we can map descriptions back.
-        desc_parts: list[dict[str, Any]] = [{
-            "type": "text",
-            "text": (
-                "Describe each image below. For each image, provide a concise "
-                "but complete description including: UI elements, visible text, "
-                "layout, colors, and current state. Number your descriptions "
-                "Image 1, Image 2, etc. in the order they appear."
-            ),
-        }]
-        desc_parts.extend(image_blocks)
-        vision_messages: list[dict[str, Any]] = [
-            {"role": "user", "content": desc_parts},
-        ]
-
-        try:
-            response = await self._safe_chat(
-                messages=vision_messages,
-                tools=None,
-                model=vision_model,
-                max_tokens=2048,
-                temperature=0.3,
-                reasoning_effort=None,
-                tool_choice=None,
+    def _hosted_web_search_enabled(self) -> bool:
+        extra_body = getattr(self, "_extra_body", {})
+        configured_tools = extra_body.get("tools")
+        if "tools" in extra_body:
+            return isinstance(configured_tools, list) and any(
+                _is_hosted_web_search_tool(tool)
+                for tool in cast(list[object], configured_tools)
             )
-        except Exception as exc:
+        return bool(
+            self._spec
+            and any(
+                _is_hosted_web_search_type(tool_type)
+                for tool_type in getattr(self._spec, "responses_default_tools", ())
+            )
+        )
+
+    def _responses_state_provider(self) -> str:
+        spec_name = self._spec.name if self._spec is not None else "custom"
+        effective_base = self._effective_base or "https://api.openai.com/v1"
+        return f"openai_compat:{spec_name}:{effective_base.rstrip('/')}"
+
+    def _responses_state_model(self, model: str | None) -> str:
+        return self._request_model_name(model or self.default_model)
+
+    def can_resume_conversation_state(
+        self,
+        state: ProviderConversationState,
+        model: str | None = None,
+    ) -> bool:
+        receipt = self.conversation_state_transport_receipt(model)
+        return (
+            receipt is not None
+            and state.transport_receipt == receipt
+            and responses_state_matches(
+            state,
+            provider=self._responses_state_provider(),
+            model=self._responses_state_model(model),
+            )
+        )
+
+    def supports_bound_conversation_state(self) -> bool:
+        """Return whether a fixed direct OpenAI Responses transport is in use."""
+        return (
+            self._bound_state_construction_eligible
+            and self._spec is not None
+            and self._spec.name == "openai"
+            and self._api_type == "responses"
+            and _normalized_direct_openai_responses_endpoint(self._effective_base)
+            == self._bound_state_endpoint
+            and self._default_headers == self._bound_state_wire_headers
+            and self._extra_query == self._bound_state_wire_query
+            and not self._extra_body
+        )
+
+    def conversation_state_transport_receipt(
+        self,
+        model: str | None = None,
+    ) -> ProviderConversationTransportReceipt | None:
+        """Return the immutable direct Responses transport receipt, when eligible."""
+        if not self.supports_bound_conversation_state():
+            return None
+        assert self._bound_state_credential is not None
+        assert self._bound_state_endpoint is not None
+        return ProviderConversationTransportReceipt(
+            provider="openai",
+            account=hashlib.sha256(self._bound_state_credential.encode("utf-8")).hexdigest(),
+            endpoint=self._bound_state_endpoint,
+            protocol="openai.responses.v1",
+            model=self._responses_state_model(model),
+        )
+
+    def supports_native_compaction(self, model: str | None = None) -> bool:
+        """Enable server compaction only on direct OpenAI Responses endpoints."""
+        _ = model
+        if (
+            not self._native_compaction_available
+            or self._api_type == "chat_completions"
+        ):
+            return False
+        if self._spec is not None and self._spec.name != "openai":
+            return False
+        return _is_direct_openai_base(self._effective_base)
+
+    def _responses_circuit_allows_probe(
+        self,
+        model: str | None,
+        reasoning_effort: str | None,
+    ) -> bool:
+        """Return False when the Responses API circuit breaker is open."""
+        key = _responses_circuit_key(model, self.default_model, reasoning_effort)
+        failures = self._responses_failures.get(key, 0)
+        if failures >= _RESPONSES_FAILURE_THRESHOLD:
+            tripped = self._responses_tripped_at.get(key, 0.0)
+            if (time.monotonic() - tripped) < _RESPONSES_PROBE_INTERVAL_S:
+                return False
+            # Half-open: allow one probe attempt
+        return True
+
+    def _record_responses_failure(self, model: str | None, reasoning_effort: str | None) -> None:
+        key = _responses_circuit_key(model, self.default_model, reasoning_effort)
+        count = self._responses_failures.get(key, 0) + 1
+        self._responses_failures[key] = count
+        if count >= _RESPONSES_FAILURE_THRESHOLD:
+            self._responses_tripped_at[key] = time.monotonic()
             logger.warning(
-                "Vision fallback (model={}) call failed: {}. "
-                "Falling back to image stripping.",
-                vision_model, exc,
+                "Responses API circuit open for {} — falling back to Chat Completions",
+                key,
             )
-            return None
 
-        if response.finish_reason == "error" or not response.content:
-            logger.warning(
-                "Vision fallback (model={}) returned an error: {}. "
-                "Falling back to image stripping.",
-                vision_model, (response.content or "")[:200],
-            )
-            return None
-
-        description = response.content.strip()
-        # Split by "Image N" markers if the model followed instructions.
-        segments = re.split(r"\n(?=Image \d+)", description)
-        if len(segments) >= len(image_blocks):
-            descriptions = [s.strip() for s in segments[:len(image_blocks)]]
-        else:
-            # Model didn't number them; use the whole description for each image.
-            descriptions = [description] * len(image_blocks)
-
-        # Replace image_url blocks with text descriptions.
-        result: list[dict[str, Any]] = []
-        img_counter = 0
-        for msg_idx, msg in enumerate(messages):
-            content = msg.get("content")
-            if not isinstance(content, list):
-                result.append(msg)
-                continue
-            new_content: list[Any] = []
-            for blk_idx, block in enumerate(content):
-                if (msg_idx, blk_idx) in image_locations:
-                    path = (block.get("_meta") or {}).get("path", "")
-                    desc = descriptions[img_counter] if img_counter < len(descriptions) else description
-                    note = f"[Image described by {vision_model}"
-                    if path:
-                        note += f" (path={path})"
-                    note += f"]:\n{desc}"
-                    new_content.append({"type": "text", "text": note})
-                    img_counter += 1
-                else:
-                    new_content.append(block)
-            result.append({**msg, "content": new_content})
-        return result
-
-    @classmethod
-    def _content_to_responses_parts(
-        cls,
-        content: Any,
-        role: str,
-    ) -> list[dict[str, Any]] | str | None:
-        """Translate chat-completions content (str/list) to Responses API parts.
-
-        - text blocks become input_text (user/tool) or output_text (assistant).
-        - image_url blocks become input_image with a string data URL (the
-          Responses API rejects the object form `{url: ...}`).
-        """
-        if content is None:
-            return None
-        if isinstance(content, str):
-            return content
-        if not isinstance(content, list):
-            return cls._stringify_tool_output(content)
-        text_type = "output_text" if role == "assistant" else "input_text"
-        out: list[dict[str, Any]] = []
-        for item in content:
-            if isinstance(item, dict):
-                t = item.get("type")
-                if t == "image_url":
-                    url = cls._extract_image_data_url(item)
-                    if url:
-                        # Responses API: image_url must be a plain string.
-                        out.append({"type": "input_image", "image_url": url})
-                    continue
-                if t in ("text", "input_text", "output_text"):
-                    txt = item.get("text")
-                    if isinstance(txt, str):
-                        out.append({"type": text_type, "text": txt})
-                    continue
-                # Pass through already-Responses-shaped parts unchanged.
-                out.append(item)
-            elif isinstance(item, str):
-                out.append({"type": text_type, "text": item})
-        return out or None
+    def _record_responses_success(self, model: str | None, reasoning_effort: str | None) -> None:
+        key = _responses_circuit_key(model, self.default_model, reasoning_effort)
+        self._responses_failures.pop(key, None)
+        self._responses_tripped_at.pop(key, None)
 
     @staticmethod
-    def _stringify_arguments(arguments: Any) -> str:
-        if arguments is None:
-            return "{}"
-        if isinstance(arguments, str):
-            return arguments
-        try:
-            return json.dumps(arguments, ensure_ascii=False)
-        except TypeError:
-            return str(arguments)
+    def _should_fallback_from_responses_error(e: Exception) -> bool:
+        """Fallback only for likely Responses API compatibility errors."""
+        response = getattr(e, "response", None)
+        status_code = getattr(e, "status_code", None)
+        if status_code is None and response is not None:
+            status_code = getattr(response, "status_code", None)
+        if status_code not in {400, 404, 422}:
+            return False
 
-    @classmethod
-    def _messages_to_responses_input(
-        cls,
-        messages: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], str | None]:
-        """Translate chat-completions messages to Responses API input items.
+        body = (
+            getattr(e, "body", None)
+            or getattr(e, "doc", None)
+            or getattr(response, "text", None)
+        )
+        body_text = str(body).lower() if body is not None else ""
+        compatibility_markers = (
+            "responses",
+            "response api",
+            "max_output_tokens",
+            "instructions",
+            "previous_response",
+            "unsupported",
+            "not supported",
+            "unknown parameter",
+            "unrecognized request argument",
+        )
+        return any(marker in body_text for marker in compatibility_markers)
 
-        Returns (input_items, instructions). System messages are collapsed
-        into the top-level `instructions` field; tool/assistant tool_calls
-        become typed function_call / function_call_output items.
-        """
-        input_items: list[dict[str, Any]] = []
-        instruction_parts: list[str] = []
-        for msg in messages:
-            role = msg.get("role")
-            content = msg.get("content")
-            if role == "system":
-                text = cls._stringify_tool_output(content)
-                if text:
-                    instruction_parts.append(text)
-                continue
-            if role == "tool":
-                call_id = msg.get("tool_call_id") or ""
-                input_items.append({
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": cls._stringify_tool_output(content),
-                })
-                # The Responses API has no field for image output on
-                # function_call_output, so any image content returned by a
-                # tool must be re-attached as a subsequent user input_image.
-                image_urls = cls._split_tool_images(content)
-                if image_urls:
-                    parts: list[dict[str, Any]] = [
-                        {"type": "input_text",
-                         "text": f"[tool {msg.get('name') or ''} returned the following image(s)]".strip()},
-                    ]
-                    for url in image_urls:
-                        parts.append({"type": "input_image", "image_url": url})
-                    input_items.append({"role": "user", "content": parts})
-                continue
-            if role == "assistant":
-                converted = cls._content_to_responses_parts(content, role)
-                if isinstance(converted, str) and converted:
-                    input_items.append({
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": converted}],
-                    })
-                elif isinstance(converted, list) and converted:
-                    input_items.append({"role": "assistant", "content": converted})
-                tool_calls = msg.get("tool_calls") or []
-                for tc in tool_calls:
-                    if not isinstance(tc, dict):
-                        continue
-                    fn = tc.get("function") or {}
-                    input_items.append({
-                        "type": "function_call",
-                        "call_id": tc.get("id") or "",
-                        "name": fn.get("name") or "",
-                        "arguments": cls._stringify_arguments(fn.get("arguments")),
-                    })
-                continue
-            # user / developer / other
-            converted = cls._content_to_responses_parts(content, role or "user")
-            if converted is None:
-                continue
-            input_items.append({"role": role or "user", "content": converted})
-        instructions = "\n\n".join(p for p in instruction_parts if p) or None
-        return input_items, instructions
-
-    @staticmethod
-    def _tools_to_responses(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
-        """Flatten chat-completions function tools to Responses API shape."""
-        if not tools:
-            return None
-        out: list[dict[str, Any]] = []
-        for t in tools:
-            if not isinstance(t, dict):
-                out.append(t)
-                continue
-            if t.get("type") == "function" and isinstance(t.get("function"), dict):
-                fn = t["function"]
-                flat: dict[str, Any] = {
-                    "type": "function",
-                    "name": fn.get("name") or "",
-                }
-                if fn.get("description") is not None:
-                    flat["description"] = fn["description"]
-                params = fn.get("parameters")
-                if params is not None:
-                    flat["parameters"] = params
-                if fn.get("strict") is not None:
-                    flat["strict"] = fn["strict"]
-                out.append(flat)
-            else:
-                # Built-in / non-function tools (web_search, file_search, etc.)
-                # already use the flat Responses shape.
-                out.append(t)
-        return out or None
-
-    @staticmethod
-    def _tool_choice_to_responses(
-        tool_choice: str | dict[str, Any] | None,
-    ) -> str | dict[str, Any] | None:
-        if tool_choice is None:
-            return None
-        if isinstance(tool_choice, str):
-            return tool_choice
-        if isinstance(tool_choice, dict):
-            if tool_choice.get("type") == "function" and isinstance(tool_choice.get("function"), dict):
-                return {
-                    "type": "function",
-                    "name": tool_choice["function"].get("name") or "",
-                }
-        return tool_choice
-
-    def _build_responses_kwargs(
+    def _build_responses_body(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         model: str | None,
         max_tokens: int,
+        temperature: float,
         reasoning_effort: str | None,
         tool_choice: str | dict[str, Any] | None,
+        provider_context: ProviderCallContext | None = None,
     ) -> dict[str, Any]:
+        """Build a Responses API body for direct OpenAI requests."""
         model_name = model or self.default_model
-        spec = self._spec
-        if spec and spec.strip_model_prefix:
-            model_name = model_name.split("/")[-1]
-
-        sanitized = self._sanitize_messages(self._sanitize_empty_content(messages))
-        input_items, instructions = self._messages_to_responses_input(sanitized)
-
-        kwargs: dict[str, Any] = {
-            "model": model_name,
-            "input": input_items,
-            "max_output_tokens": max(1, max_tokens),
-        }
-        if instructions:
-            kwargs["instructions"] = instructions
-        if reasoning_effort:
-            kwargs["reasoning"] = {"effort": reasoning_effort}
-
-        flat_tools = self._tools_to_responses(tools)
-        if flat_tools:
-            kwargs["tools"] = flat_tools
-            kwargs["tool_choice"] = self._tool_choice_to_responses(tool_choice) or "auto"
-
-        return kwargs
-
-    def _parse_responses(self, response: Any) -> LLMResponse:
-        response_map = self._maybe_mapping(response)
-        output_items: list[Any]
-        if response_map is not None:
-            output_items = response_map.get("output") or []
-            usage_obj = response_map.get("usage")
-            status = response_map.get("status") or response_map.get("incomplete_details") or ""
-        else:
-            output_items = list(getattr(response, "output", None) or [])
-            usage_obj = getattr(response, "usage", None)
-            status = getattr(response, "status", "") or ""
-
-        content_parts: list[str] = []
-        reasoning_parts: list[str] = []
-        tool_calls: list[ToolCallRequest] = []
-
-        for item in output_items:
-            item_map = self._maybe_mapping(item) or {}
-            item_type = item_map.get("type")
-            if item_type == "message":
-                for c in item_map.get("content") or []:
-                    c_map = self._maybe_mapping(c) or {}
-                    c_type = c_map.get("type")
-                    if c_type in ("output_text", "text"):
-                        text = c_map.get("text")
-                        if isinstance(text, str):
-                            content_parts.append(text)
-                    elif c_type == "refusal":
-                        refusal = c_map.get("refusal")
-                        if isinstance(refusal, str):
-                            content_parts.append(refusal)
-            elif item_type == "function_call":
-                raw_args = item_map.get("arguments")
-                if isinstance(raw_args, str):
-                    try:
-                        args = json_repair.loads(raw_args) if raw_args else {}
-                    except Exception:
-                        args = {}
-                elif isinstance(raw_args, dict):
-                    args = raw_args
-                else:
-                    args = {}
-                call_id = item_map.get("call_id") or item_map.get("id") or _short_tool_id()
-                tool_calls.append(ToolCallRequest(
-                    id=str(call_id),
-                    name=str(item_map.get("name") or ""),
-                    arguments=args if isinstance(args, dict) else {},
-                ))
-            elif item_type == "reasoning":
-                for s in item_map.get("summary") or []:
-                    s_map = self._maybe_mapping(s) or {}
-                    if s_map.get("type") == "summary_text":
-                        text = s_map.get("text")
-                        if isinstance(text, str):
-                            reasoning_parts.append(text)
-
-        usage_map = self._maybe_mapping(usage_obj) or {}
-        if usage_map:
-            prompt_tokens = int(
-                usage_map.get("input_tokens")
-                or usage_map.get("prompt_tokens")
-                or 0
+        model_name = self._request_model_name(model_name)
+        sanitized_messages = self._sanitize_messages(
+            self._sanitize_empty_content(messages),
+            model_name,
+        )
+        sanitized_state = (
+            provider_context.conversation_state
+            if provider_context is not None
+            else None
+        )
+        if sanitized_state is not None:
+            sanitized_state = sanitized_state.with_pending_messages(
+                self._sanitize_messages(
+                    self._sanitize_empty_content(sanitized_state.pending_messages),
+                    model_name,
+                )
             )
-            completion_tokens = int(
-                usage_map.get("output_tokens")
-                or usage_map.get("completion_tokens")
-                or 0
-            )
-            total_tokens = int(
-                usage_map.get("total_tokens")
-                or (prompt_tokens + completion_tokens)
-            )
-            usage = {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-            }
-        else:
-            usage = {}
-
-        if tool_calls:
-            finish_reason = "tool_calls"
-        elif status == "incomplete":
-            finish_reason = "length"
-        else:
-            finish_reason = "stop"
-
-        return LLMResponse(
-            content="".join(content_parts) or None,
-            tool_calls=tool_calls,
-            finish_reason=finish_reason,
-            usage=usage,
-            reasoning_content="\n".join(reasoning_parts) or None,
+        is_deepseek = bool(self._spec and self._spec.name == "deepseek")
+        preserve_reasoning = is_deepseek
+        instructions, input_items, replayed = prepare_responses_input(
+            sanitized_messages,
+            state=sanitized_state,
+            provider=self._responses_state_provider(),
+            model=model_name,
+            preserve_reasoning=preserve_reasoning,
         )
 
-    async def _collect_responses_stream(
-        self,
-        stream: Any,
-        on_content_delta: Callable[[str], Awaitable[None]] | None,
-    ) -> Any:
-        """Consume a Responses API event stream; return the final response object."""
-        final_response: Any = None
-        iterator = stream.__aiter__()
-        try:
-            while True:
-                try:
-                    event = await asyncio.wait_for(anext(iterator), timeout=self._request_timeout)
-                except StopAsyncIteration:
-                    break
-                except asyncio.TimeoutError as exc:
-                    raise TimeoutError(
-                        f"provider stream timed out after {self._request_timeout:.0f}s waiting for the next chunk"
-                    ) from exc
+        body: dict[str, Any] = {
+            "model": model_name,
+            "instructions": instructions or None,
+            "input": input_items,
+            "max_output_tokens": max(1, max_tokens),
+            "store": False,
+            "stream": False,
+        }
+        compact_threshold = resolve_compact_threshold(
+            (
+                provider_context.context_window_tokens
+                if provider_context is not None
+                else None
+            ),
+            max_tokens,
+        )
+        if self.supports_native_compaction(model_name) and compact_threshold is not None:
+            body["context_management"] = [{
+                "type": "compaction",
+                "compact_threshold": compact_threshold,
+            }]
 
-                ev_type = getattr(event, "type", None) or (
-                    event.get("type") if isinstance(event, dict) else None
-                )
-                if ev_type == "response.output_text.delta" and on_content_delta:
-                    delta = getattr(event, "delta", None)
-                    if delta is None and isinstance(event, dict):
-                        delta = event.get("delta")
-                    if isinstance(delta, str) and delta:
-                        await on_content_delta(delta)
-                elif ev_type in ("response.completed", "response.incomplete"):
-                    final_response = getattr(event, "response", None)
-                    if final_response is None and isinstance(event, dict):
-                        final_response = event.get("response")
-                elif ev_type == "response.failed":
-                    err_obj = getattr(event, "response", None) or (
-                        event.get("response") if isinstance(event, dict) else None
-                    )
-                    err_map = self._maybe_mapping(err_obj) or {}
-                    error_info = err_map.get("error") or {}
-                    msg = (
-                        (self._maybe_mapping(error_info) or {}).get("message")
-                        if isinstance(error_info, dict)
-                        else None
-                    ) or str(error_info) or "Responses API request failed"
-                    raise RuntimeError(msg)
-        finally:
-            close = getattr(stream, "aclose", None)
-            if callable(close):
-                try:
-                    await close()
-                except Exception:
-                    logger.debug("Ignoring stream close failure")
-        return final_response
+        if self._supports_temperature(model_name, reasoning_effort):
+            body["temperature"] = temperature
+
+        if not self._supports_temperature(model_name, reasoning_effort) and not preserve_reasoning:
+            body["include"] = ["reasoning.encrypted_content"]
+        if reasoning_effort and (reasoning_effort.lower() != "none" or is_deepseek):
+            body["reasoning"] = {"effort": reasoning_effort}
+        if replayed and "gpt-5.6" in model_name.lower():
+            body.setdefault("reasoning", {})["context"] = "all_turns"
+
+        if tools:
+            body["tools"] = convert_tools(tools)
+            body["tool_choice"] = tool_choice or "auto"
+            if isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
+                function_choice = self._maybe_mapping(tool_choice.get("function"))
+                if function_choice is not None:
+                    # Generic Chat choices need the Responses flat function shape.
+                    body["tool_choice"] = {"type": "function", "name": function_choice.get("name")}
+
+        extra_body = getattr(self, "_extra_body", {})
+        default_tools = getattr(self._spec, "responses_default_tools", ())
+        if "tools" not in extra_body and default_tools:
+            body["tools"] = [
+                *cast(list[object], body.get("tools", [])),
+                *({"type": tool_type} for tool_type in default_tools),
+            ]
+        if extra_body:
+            body = _merge_responses_extra_body(body, extra_body)
+
+        if self._hosted_web_search_enabled():
+            configured_tools = body.get("tools")
+            if isinstance(configured_tools, list):
+                managed_tools: list[object] = []
+                hosted_search_seen = False
+                for tool in cast(list[object], configured_tools):
+                    if _is_named_function_tool(tool, "web_search"):
+                        continue
+                    if _is_hosted_web_search_tool(tool):
+                        if hosted_search_seen:
+                            continue
+                        hosted_search_seen = True
+                    managed_tools.append(tool)
+                body["tools"] = managed_tools
+            if self._spec and self._spec.name == "openai":
+                source_include = "web_search_call.action.sources"
+                configured_include = body.get("include")
+                if isinstance(configured_include, list):
+                    if source_include not in configured_include:
+                        body["include"] = [*configured_include, source_include]
+                else:
+                    body["include"] = [source_include]
+
+        return body
+
+    async def _create_response_with_compaction_fallback(
+        self,
+        client: Any,
+        body: dict[str, Any],
+        provider_context: ProviderCallContext | None = None,
+    ) -> Any:
+        """Retry Responses once without server compaction on compatibility errors."""
+        try:
+            self.validate_finalized_request(
+                body, transport="openai_responses", model=str(body.get("model") or ""),
+                provider_context=provider_context,
+            )
+            return await client.responses.create(**body)
+        except Exception as exc:
+            if (
+                "context_management" not in body
+                or not is_compaction_compatibility_error(exc)
+            ):
+                raise
+            self._native_compaction_available = False
+            body.pop("context_management", None)
+            logger.warning(
+                "Responses server compaction unsupported; disabled for this provider instance "
+                "(status={})",
+                getattr(exc, "status_code", None),
+            )
+            self.validate_finalized_request(
+                body, transport="openai_responses", model=str(body.get("model") or ""),
+                provider_context=provider_context,
+            )
+            return await client.responses.create(**body)
 
     # ------------------------------------------------------------------
     # Response parsing
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _maybe_mapping(value: Any) -> dict[str, Any] | None:
+    def _maybe_mapping(value: object) -> dict[str, Any] | None:
         if isinstance(value, dict):
-            return value
+            return cast(dict[str, Any], value)
         model_dump = getattr(value, "model_dump", None)
         if callable(model_dump):
-            dumped = model_dump()
+            dumped: object = model_dump()
             if isinstance(dumped, dict):
-                return dumped
+                return cast(dict[str, Any], dumped)
         return None
 
     @classmethod
-    def _extract_text_content(cls, value: Any) -> str | None:
+    def _extract_text_content(cls, value: object) -> str | None:
         if value is None:
             return None
         if isinstance(value, str):
             return value
         if isinstance(value, list):
             parts: list[str] = []
-            for item in value:
+            for item in cast(list[object], value):
                 item_map = cls._maybe_mapping(item)
                 if item_map:
+                    # Skip Mistral-style {"type":"thinking","thinking":[...]}
+                    # blocks: their text belongs in reasoning_content.
+                    if item_map.get("type") == "thinking":
+                        continue
                     text = item_map.get("text")
                     if isinstance(text, str):
                         parts.append(text)
@@ -1235,7 +1520,39 @@ class OpenAICompatProvider(LLMProvider):
         return str(value)
 
     @classmethod
-    def _extract_usage(cls, response: Any) -> dict[str, int]:
+    def _extract_thinking_content(cls, value: object) -> str | None:
+        """Extract reasoning text from Mistral-style thinking blocks.
+
+        Mistral returns content as a list mixing
+        ``{"type":"thinking","thinking":[{"type":"text","text":...}]}`` and
+        ``{"type":"text","text":...}``. The thinking text belongs in
+        ``reasoning_content`` so the agent can surface it as a reasoning
+        trace rather than as the assistant's reply.
+        """
+        if not isinstance(value, list):
+            return None
+        parts: list[str] = []
+        for item in cast(list[object], value):
+            item_map = cls._maybe_mapping(item)
+            if not item_map:
+                continue
+            if item_map.get("type") != "thinking":
+                continue
+            inner = item_map.get("thinking")
+            text = cls._extract_text_content(inner)
+            if text:
+                parts.append(text)
+        return "".join(parts) or None
+
+    @classmethod
+    def _extract_usage(cls, response: Any) -> LLMUsage | None:
+        """Extract token usage from an OpenAI-compatible response.
+
+        Handles both dict-based (raw JSON) and object-based (SDK Pydantic)
+        responses. Provider-specific cache fields are normalized once at
+        this Chat Completions wire boundary.
+        """
+        # --- resolve usage object ---
         usage_obj = None
         response_map = cls._maybe_mapping(response)
         if response_map is not None:
@@ -1245,19 +1562,66 @@ class OpenAICompatProvider(LLMProvider):
 
         usage_map = cls._maybe_mapping(usage_obj)
         if usage_map is not None:
-            return {
-                "prompt_tokens": int(usage_map.get("prompt_tokens") or 0),
-                "completion_tokens": int(usage_map.get("completion_tokens") or 0),
-                "total_tokens": int(usage_map.get("total_tokens") or 0),
-            }
+            input_tokens = int(usage_map.get("prompt_tokens") or 0)
+            output_tokens = int(usage_map.get("completion_tokens") or 0)
+        elif usage_obj:
+            input_tokens = int(getattr(usage_obj, "prompt_tokens", 0) or 0)
+            output_tokens = int(getattr(usage_obj, "completion_tokens", 0) or 0)
+        else:
+            return None
 
-        if usage_obj:
-            return {
-                "prompt_tokens": getattr(usage_obj, "prompt_tokens", 0) or 0,
-                "completion_tokens": getattr(usage_obj, "completion_tokens", 0) or 0,
-                "total_tokens": getattr(usage_obj, "total_tokens", 0) or 0,
-            }
-        return {}
+        wire_total = cls._get_nested_int(usage_obj, ("total_tokens",))
+
+        cache_read: int | None = None
+        # --- cached_tokens (normalised across Chat-compatible providers) ---
+        # Try nested paths first (dict), fall back to attribute (SDK object).
+        # Priority order ensures the most specific field wins.
+        for path in (
+            ("prompt_tokens_details", "cached_tokens"),  # OpenAI/Zhipu/MiniMax/Qwen/Mistral/xAI
+            ("cached_tokens",),                          # StepFun/Moonshot (top-level)
+            ("prompt_cache_hit_tokens",),                # DeepSeek/SiliconFlow
+        ):
+            cached = cls._get_nested_int(usage_map, path)
+            if cached is None and usage_obj:
+                cached = cls._get_nested_int(usage_obj, path)
+            if cached is not None:
+                cache_read = cached
+                break
+
+        cache_write = cls._get_nested_int(
+            usage_obj,
+            ("prompt_tokens_details", "cache_write_tokens"),
+        )
+
+        return LLMUsage.reported(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=wire_total,
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
+        )
+
+    @staticmethod
+    def _get_nested_int(obj: object, path: tuple[str, ...]) -> int | None:
+        """Return a present usage count while preserving explicit zero.
+
+        Supports both dict-key access and attribute access so it works
+        uniformly with raw JSON dicts **and** SDK Pydantic models.
+        """
+        current: object = obj
+        for segment in path:
+            if current is None:
+                return None
+            if isinstance(current, dict):
+                current = cast(dict[str, Any], current).get(segment)
+            else:
+                current = getattr(current, segment, None)
+        if current is None or isinstance(current, bool):
+            return None
+        try:
+            return int(cast(Any, current))
+        except (TypeError, ValueError):
+            return None
 
     def _parse(self, response: Any) -> LLMResponse:
         if isinstance(response, str):
@@ -1265,55 +1629,86 @@ class OpenAICompatProvider(LLMProvider):
 
         response_map = self._maybe_mapping(response)
         if response_map is not None:
-            choices = response_map.get("choices") or []
+            choices = cast(
+                list[object],
+                response_map.get("choices") or [],
+            )
             if not choices:
                 content = self._extract_text_content(
                     response_map.get("content") or response_map.get("output_text")
                 )
+                reasoning_content = self._extract_text_content(
+                    response_map.get("reasoning_content")
+                )
                 if content is not None:
                     return LLMResponse(
                         content=content,
+                        reasoning_content=reasoning_content,
                         finish_reason=str(response_map.get("finish_reason") or "stop"),
                         usage=self._extract_usage(response_map),
                     )
-                return LLMResponse(content="Error: API returned empty choices.", finish_reason="error")
+                return LLMResponse(
+                    content="Error: API returned empty choices.",
+                    finish_reason="error",
+                    error_kind="empty",
+                )
 
             choice0 = self._maybe_mapping(choices[0]) or {}
             msg0 = self._maybe_mapping(choice0.get("message")) or {}
             content = self._extract_text_content(msg0.get("content"))
             finish_reason = str(choice0.get("finish_reason") or "stop")
 
-            raw_tool_calls: list[Any] = []
+            raw_tool_calls: list[object] = []
+            # StepFun: fallback to reasoning field when content is empty
+            if not content and msg0.get("reasoning") and self._spec and self._spec.reasoning_as_content:
+                content = self._extract_text_content(msg0.get("reasoning"))
             reasoning_content = msg0.get("reasoning_content")
+            if reasoning_content is None and msg0.get("reasoning"):
+                reasoning_content = self._extract_text_content(msg0.get("reasoning"))
+            # Mistral reasoning models return thinking text inside the content
+            # array; lift it into reasoning_content so the runner records it
+            # under the reasoning trace.
+            spec = getattr(self, "_spec", None)
+            if reasoning_content is None and getattr(spec, "extract_thinking_blocks", False):
+                reasoning_content = self._extract_thinking_content(msg0.get("content"))
             for ch in choices:
                 ch_map = self._maybe_mapping(ch) or {}
                 m = self._maybe_mapping(ch_map.get("message")) or {}
-                tool_calls = m.get("tool_calls")
-                if isinstance(tool_calls, list) and tool_calls:
-                    raw_tool_calls.extend(tool_calls)
+                message_tool_calls = cast(object, m.get("tool_calls"))
+                if isinstance(message_tool_calls, list) and message_tool_calls:
+                    raw_tool_calls.extend(
+                        cast(list[object], message_tool_calls)
+                    )
                     if ch_map.get("finish_reason") in ("tool_calls", "stop"):
                         finish_reason = str(ch_map["finish_reason"])
                 if not content:
                     content = self._extract_text_content(m.get("content"))
-                if not reasoning_content:
+                if reasoning_content is None:
                     reasoning_content = m.get("reasoning_content")
 
-            parsed_tool_calls = []
+            # Deduplicate tool call IDs (same pattern as streaming path)
+            # Some providers reuse the same ID for parallel tool calls.
+            _seen_tc_ids: set[str] = set()
+            parsed_tool_calls: list[ToolCallRequest] = []
             for tc in raw_tool_calls:
                 tc_map = self._maybe_mapping(tc) or {}
                 fn = self._maybe_mapping(tc_map.get("function")) or {}
-                args = fn.get("arguments", {})
-                if isinstance(args, str):
-                    args = json_repair.loads(args)
+                args = parse_tool_arguments(fn.get("arguments", {}))
                 ec, prov, fn_prov = _extract_tc_extras(tc)
+                raw_id = str(tc_map.get("id") or _short_tool_id())
+                if not raw_id or raw_id in _seen_tc_ids:
+                    raw_id = _short_tool_id()
+                _seen_tc_ids.add(raw_id)
                 parsed_tool_calls.append(ToolCallRequest(
-                    id=_short_tool_id(),
+                    id=raw_id,
                     name=str(fn.get("name") or ""),
-                    arguments=args if isinstance(args, dict) else {},
+                    arguments=args,
                     extra_content=ec,
                     provider_specific_fields=prov,
                     function_provider_specific_fields=fn_prov,
                 ))
+            if not parsed_tool_calls:
+                content, parsed_tool_calls = _extract_text_tool_calls(content)
 
             return LLMResponse(
                 content=content,
@@ -1324,48 +1719,54 @@ class OpenAICompatProvider(LLMProvider):
             )
 
         if not response.choices:
-            return LLMResponse(content="Error: API returned empty choices.", finish_reason="error")
+            return LLMResponse(
+                content="Error: API returned empty choices.",
+                finish_reason="error",
+                error_kind="empty",
+            )
 
         choice = response.choices[0]
         msg = choice.message
         content = msg.content
         finish_reason = choice.finish_reason
 
-        raw_tool_calls: list[Any] = []
+        raw_sdk_tool_calls: list[Any] = []
         for ch in response.choices:
             m = ch.message
             if hasattr(m, "tool_calls") and m.tool_calls:
-                raw_tool_calls.extend(m.tool_calls)
+                raw_sdk_tool_calls.extend(m.tool_calls)
                 if ch.finish_reason in ("tool_calls", "stop"):
                     finish_reason = ch.finish_reason
             if not content and m.content:
                 content = m.content
+            if not content and getattr(m, "reasoning", None) and self._spec and self._spec.reasoning_as_content:
+                content = m.reasoning
 
-        tool_calls = []
-        for tc in raw_tool_calls:
-            args = tc.function.arguments
-            if isinstance(args, str):
-                args = json_repair.loads(args)
+        tool_calls: list[ToolCallRequest] = []
+        for tc in raw_sdk_tool_calls:
+            args = parse_tool_arguments(tc.function.arguments)
             ec, prov, fn_prov = _extract_tc_extras(tc)
             tool_calls.append(ToolCallRequest(
-                id=_short_tool_id(),
+                id=str(getattr(tc, "id", None) or _short_tool_id()),
                 name=tc.function.name,
                 arguments=args,
                 extra_content=ec,
                 provider_specific_fields=prov,
                 function_provider_specific_fields=fn_prov,
             ))
+        if not tool_calls:
+            content, tool_calls = _extract_text_tool_calls(content)
+
+        reasoning_content = getattr(msg, "reasoning_content", None)
+        if reasoning_content is None and getattr(msg, "reasoning", None):
+            reasoning_content = msg.reasoning
 
         return LLMResponse(
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason or "stop",
             usage=self._extract_usage(response),
-            reasoning_content=(
-                getattr(msg, "reasoning_content", None)
-                or (getattr(msg, "model_extra", None) or {}).get("reasoning_content")
-                or None
-            ),
+            reasoning_content=reasoning_content,
         )
 
     @classmethod
@@ -1374,7 +1775,7 @@ class OpenAICompatProvider(LLMProvider):
         reasoning_parts: list[str] = []
         tc_bufs: dict[int, dict[str, Any]] = {}
         finish_reason = "stop"
-        usage: dict[str, int] = {}
+        usage: LLMUsage | None = None
 
         def _accum_tc(tc: Any, idx_hint: int) -> None:
             """Accumulate one streaming tool-call delta into *tc_bufs*."""
@@ -1402,6 +1803,21 @@ class OpenAICompatProvider(LLMProvider):
             if fn_prov:
                 buf["fn_prov"] = fn_prov
 
+        def _accum_legacy_function_call(function_call: Any) -> None:
+            """Accumulate legacy ``delta.function_call`` streaming chunks."""
+            if not function_call:
+                return
+            buf = tc_bufs.setdefault(0, {
+                "id": "", "name": "", "arguments": "",
+                "extra_content": None, "prov": None, "fn_prov": None,
+            })
+            fn_name = _get(function_call, "name")
+            if fn_name:
+                buf["name"] = str(fn_name)
+            fn_args = _get(function_call, "arguments")
+            if fn_args:
+                buf["arguments"] += str(fn_args)
+
         for chunk in chunks:
             if isinstance(chunk, str):
                 content_parts.append(chunk)
@@ -1409,7 +1825,10 @@ class OpenAICompatProvider(LLMProvider):
 
             chunk_map = cls._maybe_mapping(chunk)
             if chunk_map is not None:
-                choices = chunk_map.get("choices") or []
+                choices = cast(
+                    list[object],
+                    chunk_map.get("choices") or [],
+                )
                 if not choices:
                     usage = cls._extract_usage(chunk_map) or usage
                     text = cls._extract_text_content(
@@ -1422,14 +1841,27 @@ class OpenAICompatProvider(LLMProvider):
                 if choice.get("finish_reason"):
                     finish_reason = str(choice["finish_reason"])
                 delta = cls._maybe_mapping(choice.get("delta")) or {}
-                text = cls._extract_text_content(delta.get("content"))
+                raw_delta_content = delta.get("content")
+                text = cls._extract_text_content(raw_delta_content)
                 if text:
                     content_parts.append(text)
-                rc = delta.get("reasoning_content")
-                if isinstance(rc, str) and rc:
-                    reasoning_parts.append(rc)
-                for idx, tc in enumerate(delta.get("tool_calls") or []):
+                text = cls._extract_text_content(delta.get("reasoning_content"))
+                if not text:
+                    text = cls._extract_text_content(delta.get("reasoning"))
+                if not text:
+                    # Mistral streams thinking inside the content array as
+                    # {"type":"thinking", thinking:[{"type":"text", ...}]}.
+                    text = cls._extract_thinking_content(raw_delta_content)
+                if text:
+                    reasoning_parts.append(text)
+                for idx, tc in enumerate(
+                    cast(
+                        Iterable[object],
+                        delta.get("tool_calls") or [],
+                    )
+                ):
                     _accum_tc(tc, idx)
+                _accum_legacy_function_call(delta.get("function_call"))
                 usage = cls._extract_usage(chunk_map) or usage
                 continue
 
@@ -1441,41 +1873,169 @@ class OpenAICompatProvider(LLMProvider):
                 finish_reason = choice.finish_reason
             delta = choice.delta
             if delta and delta.content:
-                content_parts.append(delta.content)
+                text = cls._extract_text_content(delta.content)
+                if text:
+                    content_parts.append(text)
+                thinking_text = cls._extract_thinking_content(delta.content)
+                if thinking_text:
+                    reasoning_parts.append(thinking_text)
             if delta:
-                rc = getattr(delta, "reasoning_content", None)
-                if isinstance(rc, str) and rc:
-                    reasoning_parts.append(rc)
-            for tc in (delta.tool_calls or []) if delta else []:
+                reasoning = getattr(delta, "reasoning_content", None)
+                if not reasoning:
+                    reasoning = getattr(delta, "reasoning", None)
+                if reasoning:
+                    text = cls._extract_text_content(reasoning)
+                    if text:
+                        reasoning_parts.append(text)
+            delta_tool_calls = (
+                cast(Iterable[object], getattr(delta, "tool_calls", None) or [])
+                if delta
+                else ()
+            )
+            for tc in delta_tool_calls:
                 _accum_tc(tc, getattr(tc, "index", 0))
+            if delta:
+                _accum_legacy_function_call(getattr(delta, "function_call", None))
+
+        # Some providers (e.g. Zhipu/GLM) reuse the same tool_call id for
+        # parallel tool calls in streaming mode. Deduplicate before building
+        # the response so downstream tool messages don't collide.
+        _seen_tc_ids: set[str] = set()
+        for b in tc_bufs.values():
+            if not b["id"] or b["id"] in _seen_tc_ids:
+                b["id"] = _short_tool_id()
+            _seen_tc_ids.add(b["id"])
+
+        content = "".join(content_parts) or None
+        tool_calls = [
+            ToolCallRequest(
+                id=b["id"] or _short_tool_id(),
+                name=b["name"],
+                arguments=parse_tool_arguments(b["arguments"]),
+                extra_content=b.get("extra_content"),
+                provider_specific_fields=b.get("prov"),
+                function_provider_specific_fields=b.get("fn_prov"),
+            )
+            for b in tc_bufs.values()
+        ]
+        if not tool_calls:
+            content, tool_calls = _extract_text_tool_calls(content)
 
         return LLMResponse(
-            content="".join(content_parts) or None,
-            tool_calls=[
-                ToolCallRequest(
-                    id=b["id"] or _short_tool_id(),
-                    name=b["name"],
-                    arguments=json_repair.loads(b["arguments"]) if b["arguments"] else {},
-                    extra_content=b.get("extra_content"),
-                    provider_specific_fields=b.get("prov"),
-                    function_provider_specific_fields=b.get("fn_prov"),
-                )
-                for b in tc_bufs.values()
-            ],
+            content=content,
+            tool_calls=tool_calls,
             finish_reason=finish_reason,
             usage=usage,
             reasoning_content="".join(reasoning_parts) or None,
         )
 
+    @classmethod
+    def _extract_error_metadata(cls, e: Exception) -> dict[str, Any]:
+        response = getattr(e, "response", None)
+        headers = getattr(response, "headers", None)
+        payload = (
+            getattr(e, "body", None)
+            or getattr(e, "doc", None)
+            or getattr(response, "text", None)
+        )
+        if payload is None and response is not None:
+            response_json = getattr(response, "json", None)
+            if callable(response_json):
+                try:
+                    payload = response_json()
+                except Exception:
+                    payload = None
+        error_type, error_code = LLMProvider._extract_error_type_code(payload)
+
+        status_code = getattr(e, "status_code", None)
+        if status_code is None and response is not None:
+            status_code = getattr(response, "status_code", None)
+
+        should_retry: bool | None = None
+        if headers is not None:
+            raw = headers.get("x-should-retry")
+            if isinstance(raw, str):
+                lowered = raw.strip().lower()
+                if lowered == "true":
+                    should_retry = True
+                elif lowered == "false":
+                    should_retry = False
+
+        error_kind: str | None = None
+        error_name = e.__class__.__name__.lower()
+        if "timeout" in error_name:
+            error_kind = "timeout"
+        elif "connection" in error_name:
+            error_kind = "connection"
+
+        return {
+            "error_status_code": int(status_code) if status_code is not None else None,
+            "error_kind": error_kind,
+            "error_type": error_type,
+            "error_code": error_code,
+            "error_retry_after_s": cls._extract_retry_after_from_headers(headers),
+            "error_should_retry": should_retry,
+        }
+
     @staticmethod
-    def _handle_error(e: Exception) -> LLMResponse:
-        body = getattr(e, "doc", None) or getattr(getattr(e, "response", None), "text", None)
-        msg = f"Error: {body.strip()[:500]}" if body and body.strip() else f"Error calling LLM: {e}"
-        return LLMResponse(content=msg, finish_reason="error")
+    def _handle_error(
+        e: Exception,
+        *,
+        spec: ProviderSpec | None = None,
+        api_base: str | None = None,
+    ) -> LLMResponse:
+        body = (
+            getattr(e, "doc", None)
+            or getattr(e, "body", None)
+            or getattr(getattr(e, "response", None), "text", None)
+        )
+        body_text = body if isinstance(body, str) else str(body) if body is not None else ""
+        msg = f"Error: {body_text.strip()[:500]}" if body_text.strip() else f"Error calling LLM: {e}"
+
+        text = f"{body_text} {e}".lower()
+        if spec and spec.is_local and ("502" in text or "connection" in text or "refused" in text):
+            msg += (
+                "\nHint: this is a local model endpoint. Check that the local server is reachable at "
+                f"{api_base or spec.default_api_base}, and if you are using a proxy/tunnel, make sure it "
+                "can reach your local Ollama/vLLM service instead of routing localhost through the remote host."
+            )
+
+        response = getattr(e, "response", None)
+        retry_after = LLMProvider._extract_retry_after_from_headers(getattr(response, "headers", None))
+        if retry_after is None:
+            retry_after = LLMProvider._extract_retry_after(msg)
+        return LLMResponse(
+            content=msg,
+            finish_reason="error",
+            retry_after=retry_after,
+            **OpenAICompatProvider._extract_error_metadata(e),
+        )
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    async def chat_with_context(
+        self,
+        *,
+        provider_context: ProviderCallContext,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        return await self.chat(
+            **kwargs,
+            provider_context=provider_context,
+        )
+
+    async def chat_stream_with_context(
+        self,
+        *,
+        provider_context: ProviderCallContext,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        return await self.chat_stream(
+            **kwargs,
+            provider_context=provider_context,
+        )
 
     async def chat(
         self,
@@ -1486,95 +2046,64 @@ class OpenAICompatProvider(LLMProvider):
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
+        provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
-        max_attempts = max(1, len(self._api_keys))
-        key_order = self._next_request_order()
-        attempted_labels: list[str] = []
-        last_error: Exception | None = None
-        for attempt in range(max_attempts):
-            key_index = key_order[attempt] if self._api_keys else None
-            attempted_labels.append(self._key_label(key_index))
-            try:
-                resolved_model = (model or self.default_model) or ""
-                use_responses = self._should_use_responses_api(resolved_model)
-                if use_responses:
-                    kwargs = self._build_responses_kwargs(
-                        messages, tools, model, max_tokens,
-                        reasoning_effort, tool_choice,
-                    )
-                else:
-                    kwargs = self._build_kwargs(
+        client = await self._ensure_client()
+        try:
+            if self._should_use_responses_api(model, reasoning_effort):
+                try:
+                    body = self._build_responses_body(
                         messages, tools, model, max_tokens, temperature,
                         reasoning_effort, tool_choice,
+                        provider_context,
                     )
-                
-                # Debug: log request size before sending
-                try:
-                    msg_count = len(messages)
-                    total_chars = sum(len(str(m.get("content", ""))) for m in messages)
-                    logger.debug(
-                        "LLM request: model={}, messages={}, ~{} chars, api_base={}",
-                        resolved_model, msg_count, total_chars, self._api_base,
+                    responses_raw = await self._create_response_with_compaction_fallback(
+                        client,
+                        body,
+                        provider_context,
                     )
-                except Exception:
-                    pass  # Debug logging should never break the request flow
-                
-                await self._wait_for_rate_limit()
-                if len(self._api_keys) > 1:
-                    logger.info(
-                        "Provider request attempt {}/{} using {} model={}",
-                        attempt + 1,
-                        max_attempts,
-                        self._key_label(key_index),
-                        kwargs["model"],
+                    result = parse_response_output(
+                        responses_raw,
+                        state_provider=self._responses_state_provider(),
+                        state_model=str(body["model"]),
+                        state_input_items=cast(list[dict[str, Any]], body["input"]),
+                        transport_receipt=self.conversation_state_transport_receipt(
+                            str(body["model"])
+                        ),
                     )
-                client = self._build_client(key_index)
-                if use_responses:
-                    raw = await self._await_with_timeout(
-                        client.responses.create(**kwargs),
-                        phase="request",
-                    )
-                    response = self._parse_responses(raw)
-                else:
-                    raw = await self._await_with_timeout(
-                        client.chat.completions.create(**kwargs),
-                        phase="request",
-                    )
-                    response = self._parse(raw)
-                self._record_key_success(key_index)
-                if attempt > 0 and self._api_keys:
-                    logger.info(
-                        "Provider request recovered on {} after {} attempt(s)",
-                        self._key_label(key_index),
-                        attempt + 1,
-                    )
-                return response
-            except Exception as e:
-                last_error = e
-                has_remaining_keys = attempt + 1 < max_attempts
-                if has_remaining_keys and self._is_rate_limit_error(e) and self._api_keys:
-                    cooldown_s = self._record_key_failure(key_index, e)
-                    self._log_rotation(key_index or 0, key_order[attempt + 1], e, cooldown_s)
-                    continue
-                if self._is_rate_limit_error(e) and self._api_keys:
-                    self._record_key_failure(key_index, e)
-                    break
-                return self._handle_error(e)
-        if last_error and self._is_rate_limit_error(last_error) and self._api_keys:
-            logger.error(
-                "All configured API keys were rate-limited or out of quota after trying {} keys ({}); last error: {}",
-                len(self._api_keys),
-                ", ".join(attempted_labels),
-                self._error_summary(last_error),
+                    self._record_responses_success(model, reasoning_effort)
+                    return result
+                except FinalizedRequestBudgetExceeded:
+                    raise
+                except Exception as responses_error:
+                    if self._spec and self._spec.name == "github_copilot":
+                        # Copilot gateway exposes GPT-5/o-series only via /responses;
+                        # falling back to /chat/completions cannot succeed and would
+                        # hide the real error.
+                        raise
+                    if self._responses_is_required():
+                        raise
+                    if not self._should_fallback_from_responses_error(responses_error):
+                        raise
+                    self._record_responses_failure(model, reasoning_effort)
+
+            kwargs = self._build_kwargs(
+                messages, tools, model, max_tokens, temperature,
+                reasoning_effort, tool_choice,
             )
-            return LLMResponse(
-                content=(
-                    "Error: All configured API keys were rate-limited or out of quota "
-                    f"after trying {len(self._api_keys)} keys. Last error: {self._error_summary(last_error)}"
-                ),
-                finish_reason="error",
+            self.validate_finalized_request(
+                kwargs, transport="openai_chat_completions",
+                model=str(kwargs.get("model") or ""), provider_context=provider_context,
             )
-        return self._handle_error(last_error or RuntimeError("All API keys exhausted"))
+            chat_raw = cast(
+                Any,
+                await client.chat.completions.create(**kwargs),
+            )
+            return self._parse(chat_raw)
+        except FinalizedRequestBudgetExceeded:
+            raise
+        except Exception as e:
+            return self._handle_error(e, spec=self._spec, api_base=self.api_base)
 
     async def chat_stream(
         self,
@@ -1586,119 +2115,198 @@ class OpenAICompatProvider(LLMProvider):
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
+        on_thinking_delta: Callable[[str], Awaitable[None]] | None = None,
+        on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+        provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
-        max_attempts = max(1, len(self._api_keys))
-        key_order = self._next_request_order()
-        attempted_labels: list[str] = []
-        last_error: Exception | None = None
-
-        delivered_any = False
-        effective_delta = on_content_delta
-        if on_content_delta is not None:
-            user_delta = on_content_delta
-
-            async def _tracked_delta(text: str) -> None:
-                nonlocal delivered_any
-                delivered_any = True
-                await user_delta(text)
-
-            effective_delta = _tracked_delta
-
-        for attempt in range(max_attempts):
-            key_index = key_order[attempt] if self._api_keys else None
-            attempted_labels.append(self._key_label(key_index))
-            try:
-                resolved_model = (model or self.default_model) or ""
-                use_responses = self._should_use_responses_api(resolved_model)
-                if use_responses:
-                    kwargs = self._build_responses_kwargs(
-                        messages, tools, model, max_tokens,
-                        reasoning_effort, tool_choice,
-                    )
-                else:
-                    kwargs = self._build_kwargs(
+        delivered = [False]
+        callbacks: dict[str, Callable[..., Awaitable[None]] | None] = dict(on_content_delta=on_content_delta, on_thinking_delta=on_thinking_delta,
+                         on_tool_call_delta=on_tool_call_delta)
+        track_stream_delivery(callbacks, delivered)
+        on_content_delta = callbacks['on_content_delta']
+        on_thinking_delta = callbacks['on_thinking_delta']
+        on_tool_call_delta = callbacks['on_tool_call_delta']
+        client = await self._ensure_client()
+        idle_timeout_s = self._configured_timeout if self._configured_timeout is not None else resolve_stream_idle_timeout_s()
+        try:
+            if self._should_use_responses_api(model, reasoning_effort):
+                try:
+                    body = self._build_responses_body(
                         messages, tools, model, max_tokens, temperature,
                         reasoning_effort, tool_choice,
+                        provider_context,
                     )
-                kwargs["stream"] = True
-                if not use_responses:
-                    kwargs["stream_options"] = {"include_usage": True}
-                await self._wait_for_rate_limit()
-                if len(self._api_keys) > 1:
-                    logger.info(
-                        "Provider stream attempt {}/{} using {} model={}",
-                        attempt + 1,
-                        max_attempts,
-                        self._key_label(key_index),
-                        kwargs["model"],
+                    body["stream"] = True
+                    responses_stream = await self._create_response_with_compaction_fallback(
+                        client,
+                        body,
+                        provider_context,
                     )
-                client = self._build_client(key_index)
-                if use_responses:
-                    stream = await self._await_with_timeout(
-                        client.responses.create(**kwargs),
-                        phase="stream request",
+
+                    async def _timed_stream() -> AsyncIterator[Any]:
+                        stream_iter: AsyncIterator[Any] = responses_stream.__aiter__()
+                        while True:
+                            try:
+                                yield await asyncio.wait_for(
+                                    stream_iter.__anext__(),
+                                    timeout=idle_timeout_s,
+                                )
+                            except StopAsyncIteration:
+                                break
+
+                    capture = ResponsesStreamCapture()
+                    (
+                        content,
+                        tool_calls,
+                        finish_reason,
+                        usage,
+                        reasoning_content,
+                    ) = await consume_sdk_stream(
+                        _timed_stream(),
+                        on_content_delta,
+                        on_tool_call_delta=on_tool_call_delta,
+                        on_reasoning_delta=on_thinking_delta,
+                        capture=capture,
                     )
-                    final = await self._collect_responses_stream(stream, effective_delta)
-                    if final is None:
-                        raise RuntimeError(
-                            "Responses API stream ended without a response.completed event"
+                    self._record_responses_success(model, reasoning_effort)
+                    result = LLMResponse(
+                        content=content or None,
+                        tool_calls=tool_calls,
+                        finish_reason=finish_reason,
+                        usage=usage,
+                        reasoning_content=reasoning_content,
+                    )
+                    if capture.completed and is_replayable_finish_reason(finish_reason):
+                        transport_receipt = self.conversation_state_transport_receipt(
+                            str(body["model"])
                         )
-                    response = self._parse_responses(final)
-                else:
-                    stream = await self._await_with_timeout(
-                        client.chat.completions.create(**kwargs),
-                        phase="stream request",
-                    )
-                    chunks = await self._collect_stream_chunks(stream, effective_delta)
-                    response = self._parse_chunks(chunks)
-                self._record_key_success(key_index)
-                if attempt > 0 and self._api_keys:
-                    logger.info(
-                        "Provider stream recovered on {} after {} attempt(s)",
-                        self._key_label(key_index),
-                        attempt + 1,
-                    )
-                return response
-            except Exception as e:
-                last_error = e
-                if delivered_any:
-                    # Already streamed content to the user — rotating to another
-                    # key would concatenate a second response on top of the first.
-                    if self._is_rate_limit_error(e) and self._api_keys:
-                        self._record_key_failure(key_index, e)
-                    return self._handle_error(e)
-                has_remaining_keys = attempt + 1 < max_attempts
-                # Timeouts are transient — rotate to next key if available, otherwise
-                # let chat_stream_with_retry handle the retry (not a rate-limit failure).
-                if isinstance(e, TimeoutError):
-                    if has_remaining_keys and self._api_keys:
-                        cooldown_s = self._record_key_failure(key_index, e)
-                        self._log_rotation(key_index or 0, key_order[attempt + 1], e, cooldown_s)
-                        continue
-                    return self._handle_error(e)
-                if has_remaining_keys and self._is_rate_limit_error(e) and self._api_keys:
-                    cooldown_s = self._record_key_failure(key_index, e)
-                    self._log_rotation(key_index or 0, key_order[attempt + 1], e, cooldown_s)
-                    continue
-                if self._is_rate_limit_error(e) and self._api_keys:
-                    self._record_key_failure(key_index, e)
-                    break
-                return self._handle_error(e)
-        if last_error and self._is_rate_limit_error(last_error) and self._api_keys:
-            logger.error(
-                "All configured API keys were rate-limited or out of quota after trying {} keys ({}); last error: {}",
-                len(self._api_keys),
-                ", ".join(attempted_labels),
-                self._error_summary(last_error),
+                        result.provider_state = build_responses_state(
+                            provider=self._responses_state_provider(),
+                            model=str(body["model"]),
+                            input_items=cast(list[dict[str, Any]], body["input"]),
+                            output_items=capture.output_items,
+                            usage=usage,
+                            transport_receipt=transport_receipt,
+                        )
+                        result.provider_compaction_state = (
+                            build_responses_compaction_state(
+                                provider=self._responses_state_provider(),
+                                model=str(body["model"]),
+                                output_items=capture.output_items,
+                                transport_receipt=transport_receipt,
+                            )
+                        )
+                        result.provider_compaction_applied = (
+                            result.provider_compaction_state is not None
+                        )
+                        if result.provider_compaction_applied:
+                            result.provider_compaction_scope = "current_request"
+                    return result
+                except FinalizedRequestBudgetExceeded:
+                    raise
+                except Exception as responses_error:
+                    if delivered[0]:
+                        raise
+                    if self._spec and self._spec.name == "github_copilot":
+                        # Copilot gateway exposes GPT-5/o-series only via /responses;
+                        # falling back to /chat/completions cannot succeed and would
+                        # hide the real error.
+                        raise
+                    if self._responses_is_required():
+                        raise
+                    if not self._should_fallback_from_responses_error(responses_error):
+                        raise
+                    self._record_responses_failure(model, reasoning_effort)
+
+            kwargs = self._build_kwargs(
+                messages, tools, model, max_tokens, temperature,
+                reasoning_effort, tool_choice,
             )
+            if self._spec and self._spec.name == "zhipu" and tools and on_tool_call_delta:
+                # Z.AI/GLM keeps streaming tool-call arguments behind an
+                # explicit provider flag.  Pass it through the OpenAI SDK's
+                # extra_body escape hatch so the usual delta.tool_calls path
+                # can surface live file-edit progress.
+                kwargs.setdefault("extra_body", {})["tool_stream"] = True
+            kwargs["stream"] = True
+            kwargs["stream_options"] = {"include_usage": True}
+            self.validate_finalized_request(
+                kwargs, transport="openai_chat_completions_stream",
+                model=str(kwargs.get("model") or ""), provider_context=provider_context,
+            )
+            chat_stream = cast(
+                Any,
+                await client.chat.completions.create(**kwargs),
+            )
+            chunks: list[Any] = []
+            stream_iter: AsyncIterator[Any] = chat_stream.__aiter__()
+            while True:
+                try:
+                    chunk: Any = await asyncio.wait_for(
+                        stream_iter.__anext__(),
+                        timeout=idle_timeout_s,
+                    )
+                except StopAsyncIteration:
+                    break
+                chunks.append(chunk)
+                if chunk.choices:
+                    delta_obj = chunk.choices[0].delta
+                    raw_delta_content = getattr(delta_obj, "content", None)
+                    if on_content_delta:
+                        # Mistral streams content as a list of {"type":"thinking",
+                        # ...} + {"type":"text",...} blocks. Extract just the
+                        # text portion before invoking the callback so callers
+                        # never see non-string content.
+                        text = self._extract_text_content(raw_delta_content)
+                        if text:
+                            await on_content_delta(text)
+                    if on_thinking_delta:
+                        reasoning = getattr(delta_obj, "reasoning_content", None) or getattr(
+                            delta_obj, "reasoning", None,
+                        )
+                        r_text = self._extract_text_content(reasoning)
+                        if not r_text:
+                            # Mistral keeps the thinking trace inside the
+                            # content array rather than a separate field.
+                            r_text = self._extract_thinking_content(raw_delta_content)
+                        if r_text:
+                            await on_thinking_delta(r_text)
+                    if on_tool_call_delta:
+                        for idx, tool_delta in enumerate(
+                            getattr(delta_obj, "tool_calls", None) or []
+                        ):
+                            fn = _get(tool_delta, "function")
+                            tool_index = _get(tool_delta, "index")
+                            await on_tool_call_delta({
+                                "index": tool_index if tool_index is not None else idx,
+                                "call_id": str(_get(tool_delta, "id") or ""),
+                                "name": str(_get(fn, "name") or "") if fn is not None else "",
+                                "arguments_delta": (
+                                    str(_get(fn, "arguments") or "") if fn is not None else ""
+                                ),
+                            })
+                        function_call = getattr(delta_obj, "function_call", None)
+                        if function_call:
+                            await on_tool_call_delta({
+                                "index": 0,
+                                "call_id": "",
+                                "name": str(_get(function_call, "name") or ""),
+                                "arguments_delta": str(_get(function_call, "arguments") or ""),
+                            })
+            return self._parse_chunks(chunks)
+        except asyncio.TimeoutError:
             return LLMResponse(
                 content=(
-                    "Error: All configured API keys were rate-limited or out of quota "
-                    f"after trying {len(self._api_keys)} keys. Last error: {self._error_summary(last_error)}"
+                    f"Error calling LLM: stream stalled for more than "
+                    f"{idle_timeout_s:g} seconds"
                 ),
                 finish_reason="error",
+                error_kind="timeout",
             )
-        return self._handle_error(last_error or RuntimeError("All API keys exhausted"))
+        except FinalizedRequestBudgetExceeded:
+            raise
+        except Exception as e:
+            return self._handle_error(e, spec=self._spec, api_base=self.api_base)
 
     def get_default_model(self) -> str:
         return self.default_model

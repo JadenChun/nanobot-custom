@@ -1,0 +1,39 @@
+{
+  "command": [
+    "/usr/bin/sandbox-exec",
+    "-p",
+    "(version 1) (allow default) (deny network*)",
+    "/Users/jaden/Documents/github/nanobot-migration-integration/.venv/bin/python",
+    "-m",
+    "pytest",
+    "tests/providers/test_legacy_fallback_policy.py",
+    "tests/providers/test_pooled_provider.py",
+    "tests/providers/test_key_pool_coordinator.py",
+    "tests/providers/test_migration_provider_configuration.py",
+    "tests/providers/test_provider_retry.py",
+    "tests/providers/test_conversation_state.py",
+    "tests/providers/test_openai_compat_timeout.py",
+    "tests/providers/test_stream_idle_timeout_config.py",
+    "tests/providers/test_provider_sdk_retry_defaults.py",
+    "tests/providers/test_provider_default_headers.py",
+    "tests/providers/test_extra_query_config.py",
+    "tests/providers/test_llm_usage_observer.py",
+    "-q",
+    "--junitxml=/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-legacy-validation-za3of5uk/results.xml"
+  ],
+  "environment": {
+    "HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-legacy-validation-za3of5uk/home",
+    "XDG_CONFIG_HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-legacy-validation-za3of5uk/home/config",
+    "XDG_CACHE_HOME": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-legacy-validation-za3of5uk/home/cache",
+    "PATH": "/Users/jaden/Documents/github/nanobot-migration-integration/.venv/bin:/usr/bin:/bin",
+    "PYTHONPATH": "/Users/jaden/Documents/github/nanobot-migration-integration",
+    "TMPDIR": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-legacy-validation-za3of5uk"
+  },
+  "exit_code": 0,
+  "raw_directory": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-p3-legacy-validation-za3of5uk",
+  "artifacts": {
+    "results.xml": "a1945c076b542d5e5d41a4c63b964d9262cdb1e9534bdcf3609c880711fcca6b",
+    "output.log": "16ed3aee9d1bbf09e02151b2a449b6d754bc7f4f6815b1bc6b4f6e60301db408",
+    "invocation.json": "e4493823bbd363731293598f52a1975a18a5ef83cb7032dccca4cd73a1f6ad00"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "passed": 162,
+  "raw_evidence": "/var/folders/9f/pzdn55jj0gj7yrqrqx405lk80000gn/T/nanobot-image-migration-cgjbt1bb",
+  "junit_sha256": "830825503a9b62b1a908593d0e3c05123750453953d1009360d97a794502dc83",
+  "environment": "explicit environment, clean HOME, network denied",
+  "followup": "After excluding read-access timestamps from capture identity and adding replacement-during-capture coverage, 31 canonical adapter tests passed under network denial."
+}

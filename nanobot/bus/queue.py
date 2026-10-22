@@ -1,97 +1,72 @@
-"""Async message queue for decoupled channel-agent communication."""
+"""Queued delivery of messages and typed events between core and channels."""
 
 import asyncio
+import contextlib
+import inspect
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any, TypeVar, overload
 
 from loguru import logger
 
-from nanobot.bus.events import DeliveryResult, InboundMessage, OutboundMessage
+from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.outbound_events import outbound_message_for_event
+from nanobot.events import AgentEvent
 
-# Bounded wait for a delivery acknowledgement, derived from the REAL retry
-# envelope in this repo:
-#   * One HTTP request uses httpx *phase* timeouts (not additive for the caller,
-#     but the per-request pathological ceiling is connect(30)+read(30)+write(5,
-#     default)+pool(5) = 70s; a single stalled phase is typically ~30s).
-#   * TelegramChannel._call_with_retry: 3 attempts (TimedOut only), 0.5s+1.0s
-#     backoff.  _send_text also falls back from HTML to plain text, i.e. up to
-#     6 HTTP attempts per channel.send().
-#   * ChannelManager._send_with_retry: send_max_retries (default 3) attempts,
-#     1s+2s backoff.
-#   => up to 18 HTTP attempts.  Realistic network-failure worst case is
-#      3 * (3*30 + 1.5) + 3 ~= 277.5s; the pathological ceiling is ~1272s.
-# 300s covers the realistic retry envelope so normal transient failures resolve
-# within the wait, while remaining bounded so a cron run cannot stall forever.
-# It is intentionally shorter than the pathological ceiling: if it elapses the
-# result is UNKNOWN (see DeliveryResult.status), never assumed failed.
-# Overridable per call and via channels.delivery_ack_timeout.
-DELIVERY_ACK_TIMEOUT_S = 300.0
+_EventT = TypeVar("_EventT", bound=AgentEvent)
+EventHandler = Callable[[AgentEvent], Awaitable[None] | None]
 
 
 class MessageBus:
     """
     Async message bus that decouples chat channels from the agent core.
 
-    Channels push messages to the inbound queue, and the agent processes
-    them and pushes responses to the outbound queue.
+    Channels push messages to the inbound queue. Core operations publish text,
+    media, or typed events to the same routed outbound queue, independently of
+    whether an LLM produced them. Channel adapters own their wire projection.
+
+    Local subscribers are awaited by ``publish``; channel delivery is queued by
+    ``publish_event``. Local state transitions never wait for network sends.
     """
 
-    def __init__(self, *, outbound_ack_timeout: float | None = None):
+    def __init__(self):
         self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
         self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
-        # Configured default wait for delivery acknowledgements (channels
-        # .delivery_ack_timeout).  ``None`` falls back to the module default.
-        self._outbound_ack_timeout = outbound_ack_timeout
+        self._handlers: list[EventHandler] = []
+        self._pending: set[asyncio.Task[None]] = set()
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
         """Publish a message from a channel to the agent."""
-        await self.inbound.put(msg)
+        self.publish_inbound_nowait(msg)
+
+    def publish_inbound_nowait(self, msg: InboundMessage) -> None:
+        """Enqueue locally without a cancellation gap; the inbound queue is unbounded."""
+        self.inbound.put_nowait(msg)
 
     async def consume_inbound(self) -> InboundMessage:
         """Consume the next inbound message (blocks until available)."""
         return await self.inbound.get()
 
     async def publish_outbound(self, msg: OutboundMessage) -> None:
-        """Publish a response from the agent to channels (enqueue only)."""
+        """Queue a routed message or event for its channel."""
         await self.outbound.put(msg)
 
-    async def publish_outbound_and_wait(
+    async def publish_event(
         self,
-        msg: OutboundMessage,
+        event: AgentEvent,
         *,
-        timeout: float | None = None,
-    ) -> DeliveryResult:
-        """Enqueue an outbound message and await its terminal delivery result.
+        channel: str,
+        chat_id: str,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Queue a typed event using the existing outbound delivery contract.
 
-        ``publish_outbound`` only enqueues.  This helper attaches an internal
-        acknowledgement future, enqueues, and waits for the channel-manager
-        dispatcher to resolve it after the FINAL send attempt (post-retry).  A
-        bounded ``timeout`` yields a failure result instead of hanging if the
-        acknowledgement is never resolved (dispatcher stopped, unexpected bug).
+        The bus transports event values without inspecting their fields. Known
+        events retain their text fallback; channel adapters decide how to render
+        or ignore events they receive.
         """
-        effective_timeout = (
-            timeout if timeout is not None
-            else (self._outbound_ack_timeout or DELIVERY_ACK_TIMEOUT_S)
-        )
-        loop = asyncio.get_running_loop()
-        ack: asyncio.Future[DeliveryResult] = loop.create_future()
-        msg.delivery_ack = ack
-        await self.publish_outbound(msg)
-        # ``asyncio.wait_for`` CANCELS ``ack`` on timeout.  That is safe: the
-        # dispatcher's ``_resolve_ack`` checks ``ack.done()`` and becomes a
-        # no-op for a cancelled future, so a late successful send neither
-        # crashes the dispatcher nor revives the result.  The queued message is
-        # unaffected and may still be delivered.
-        try:
-            return await asyncio.wait_for(ack, timeout=effective_timeout)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "Delivery acknowledgement timed out after {}s for {}:{}; "
-                "downstream send result is UNKNOWN",
-                effective_timeout, msg.channel, msg.chat_id,
-            )
-            # UNKNOWN, not FAILED: the queued send may still complete late.
-            return DeliveryResult(
-                status="unknown", error="delivery acknowledgement timed out"
-            )
+        await self.publish_outbound(outbound_message_for_event(
+            channel=channel, chat_id=chat_id, event=event, metadata=metadata,
+        ))
 
     async def consume_outbound(self) -> OutboundMessage:
         """Consume the next outbound message (blocks until available)."""
@@ -106,3 +81,72 @@ class MessageBus:
     def outbound_size(self) -> int:
         """Number of pending outbound messages."""
         return self.outbound.qsize()
+
+    @overload
+    def subscribe(
+        self, handler: Callable[[_EventT], Awaitable[None] | None],
+        event_type: type[_EventT],
+    ) -> Callable[[], None]: ...
+
+    @overload
+    def subscribe(
+        self, handler: EventHandler, event_type: None = None,
+    ) -> Callable[[], None]: ...
+
+    def subscribe(
+        self,
+        handler: Callable[..., Awaitable[None] | None],
+        event_type: type[AgentEvent] | None = None,
+    ) -> Callable[[], None]:
+        """Connect an ordered, awaited handler; return its idempotent disconnect.
+
+        The overloads bind handler and event type. The erased callable exists
+        only at this heterogeneous dispatch boundary, behind the type filter.
+        """
+        active = True
+
+        def entry(event: AgentEvent) -> Awaitable[None] | None:
+            if active and (event_type is None or isinstance(event, event_type)):
+                return handler(event)
+            return None
+        self._handlers.append(entry)
+
+        def _unsubscribe() -> None:
+            nonlocal active
+            active = False
+            with contextlib.suppress(ValueError):
+                self._handlers.remove(entry)
+
+        return _unsubscribe
+
+    async def publish(self, event: AgentEvent) -> None:
+        """Await local subscribers in registration order, without channel delivery."""
+        for handler in list(self._handlers):
+            try:
+                result = handler(event)
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                logger.exception("event handler failed for {}", type(event).__name__)
+
+    def publish_nowait(self, event: AgentEvent) -> asyncio.Task[None] | None:
+        """Schedule local dispatch, retaining it until completion.
+
+        Unlike ``publish``, the caller does not wait for handlers. This does not
+        turn individual handlers into independent workers or change their order.
+        Separate publications may interleave; this is not a global event FIFO.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("dropping event without a running loop: {}", type(event).__name__)
+            return None
+        task = loop.create_task(self.publish(event))
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+        return task
+
+    async def drain(self) -> None:
+        """Finish scheduled dispatches after producers stop, before disconnecting."""
+        while self._pending:
+            await asyncio.gather(*self._pending, return_exceptions=True)
