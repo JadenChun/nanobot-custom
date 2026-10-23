@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+import sys
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import suppress
 from pathlib import Path
@@ -187,7 +188,12 @@ def _gateway_readiness_payload(channels: Any) -> tuple[bool, dict[str, object]]:
     }
 
 
-async def _health_server(host: str, port: int, channels: Any) -> None:
+async def _health_server(
+    host: str,
+    port: int,
+    channels: Any,
+    on_bound: Callable[[int], None] | None = None,
+) -> None:
     slots = asyncio.Semaphore(_GATEWAY_HEALTH_MAX_CONNECTIONS)
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -220,6 +226,19 @@ async def _health_server(host: str, port: int, channels: Any) -> None:
                 writer.close()
 
     server = await asyncio.start_server(handle, host, port)
+    if on_bound is not None:
+        actual_ports: set[int] = set()
+        for listener in server.sockets or ():
+            address = cast(object, listener.getsockname())
+            if isinstance(address, tuple):
+                tuple_address = cast(tuple[object, ...], address)
+                if len(tuple_address) < 2:
+                    continue
+                actual_port = tuple_address[1]
+                if type(actual_port) is int and 1 <= actual_port <= 65535:
+                    actual_ports.add(actual_port)
+        if len(actual_ports) == 1:
+            on_bound(next(iter(actual_ports)))
     _print_gateway_health_endpoint(host, port)
     async with server:
         await server.serve_forever()
@@ -261,6 +280,7 @@ def _run_gateway(
     gateway_instance: GatewayInstance | None = None,
     log_file: str | None = None,
     session_authority: SessionAuthority | None = None,
+    desktop_managed: bool = False,
 ) -> None:
     """Run one acquired gateway graph with explicitly enabled edge runtimes."""
     sessions_root = (
@@ -452,12 +472,15 @@ def _run_gateway(
                 raise typer.Exit(1)
             instance = gateway_instance or GatewayInstance.resolve(config_path=config_path)
             gateway_runtime = GatewayRuntime(paths=instance.paths)
-            with admitted_startup_mutation(config.workspace_path, sessions_root=sessions_root):
-                sync_workspace_templates(config.workspace_path)
-                if is_default_workspace(config.workspace_path):
-                    _migrate_cron_store(config)
+            if not desktop_managed:
+                with admitted_startup_mutation(config.workspace_path, sessions_root=sessions_root):
+                    sync_workspace_templates(config.workspace_path)
+                    if is_default_workspace(config.workspace_path):
+                        _migrate_cron_store(config)
             _prepare_webui_bundle_for_gateway(
-                config, mode=webui_bundle_mode, webui_static_dist=webui_static_dist,
+                config,
+                mode="skip" if desktop_managed else webui_bundle_mode,
+                webui_static_dist=webui_static_dist,
             )
             await handle.mcp.connect()
             assert recovery is not None
@@ -508,7 +531,11 @@ def _run_gateway(
             console.print("[yellow]○[/yellow] Heartbeat: inactive (P5 Stage 1)")
             console.print("[yellow]○[/yellow] Cron: waiting for channels" if cron_gateway is not None
                           else "[yellow]○[/yellow] Cron: definitions only; runtime inactive")
-            options = instance.start_options(port=port, log_file=log_file)
+            options = instance.start_options(
+                port=port,
+                log_file=log_file,
+                desktop_managed=desktop_managed,
+            )
 
             async def monitor_clients() -> None:
                 orphaned = await monitor_gateway_clients(
@@ -519,6 +546,33 @@ def _run_gateway(
                     logger.info("Last local client disappeared; stopping on-demand gateway")
 
             with gateway_runtime.foreground_instance(options):
+                if desktop_managed:
+                    gateway_runtime.publish_health_host(config.gateway.host)
+                from nanobot.channels.websocket.runtime import WebSocketChannel
+
+                websocket = channels.get_channel("websocket")
+                gateway_services = getattr(websocket, "gateway", None)
+                token_store = getattr(gateway_services, "tokens", None)
+                gateway_id = getattr(token_store, "instance_id", None)
+                websocket_ports: tuple[int, ...] = ()
+                if isinstance(websocket, WebSocketChannel):
+                    websocket_port = websocket.config.port
+                    if (
+                        not websocket.config.unix_socket_path
+                        and type(websocket_port) is int
+                        and 1 <= websocket_port <= 65535
+                    ):
+                        websocket_ports = (websocket_port,)
+                def publish_gateway_identity(actual_port: int) -> None:
+                    if isinstance(gateway_id, str) and gateway_id and websocket_ports:
+                        gateway_runtime.publish_desktop_gateway_identity(
+                            gateway_id,
+                            __version__,
+                            "managed-gateway-v1",
+                            sys.executable,
+                            actual_port,
+                            websocket_ports,
+                        )
                 tasks.extend([
                     asyncio.create_task(
                         watch_config_file(
@@ -537,7 +591,14 @@ def _run_gateway(
                 if telegram_busy is not None:
                     tasks.append(asyncio.create_task(telegram_busy.run()))
                 if health_server_enabled:
-                    tasks.append(asyncio.create_task(_health_server(config.gateway.host, port, channels)))
+                    tasks.append(asyncio.create_task(
+                        _health_server(
+                            config.gateway.host,
+                            port,
+                            channels,
+                            publish_gateway_identity,
+                        )
+                    ))
                 if webui_dev_server is not None:
                     tasks.append(asyncio.create_task(_watch_webui_dev_server(webui_dev_server, shutdown)))
                 if open_browser_url:

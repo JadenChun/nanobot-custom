@@ -233,6 +233,28 @@ def test_gateway_readiness_is_degraded_when_required_websocket_is_unavailable() 
     }
 
 
+async def test_health_server_reports_its_actual_bound_management_port() -> None:
+    from nanobot.cli.gateway_runtime import _health_server
+
+    ports: list[int] = []
+    bound = asyncio.Event()
+
+    def capture(port: int) -> None:
+        ports.append(port)
+        bound.set()
+
+    server = asyncio.create_task(
+        _health_server("127.0.0.1", 0, object(), capture),
+    )
+    try:
+        await asyncio.wait_for(bound.wait(), timeout=2)
+        assert len(ports) == 1
+        assert 1 <= ports[0] <= 65535
+    finally:
+        server.cancel()
+        await asyncio.gather(server, return_exceptions=True)
+
+
 async def test_mcp_readiness_hook_delegates_to_application_provider() -> None:
     provider = _TrackingMCPProvider()
     hook = _MCPReadinessHook(provider)

@@ -6,6 +6,7 @@ import ctypes
 import json
 import os
 import re
+import select
 import signal
 import struct
 import subprocess
@@ -319,6 +320,35 @@ class ManagedProcessRuntime(Generic[_StartOptionsT]):
         if self.platform_name == "Windows":
             return self._terminate_windows(pid, timeout_s=timeout_s)
         return self._terminate_posix(pid, timeout_s=timeout_s)
+
+    @staticmethod
+    def _pidfd_send_signal(pidfd: int, signum: int) -> None:
+        """Signal the process pinned by an open Linux pidfd."""
+        sender = getattr(signal, "pidfd_send_signal", None)
+        if not callable(sender):
+            raise OSError("pidfd signal support is unavailable")
+        sender(pidfd, signum)
+
+    @staticmethod
+    def _open_pidfd(pid: int) -> int:
+        """Open a kernel handle pinned to the process currently using ``pid``."""
+        opener = getattr(os, "pidfd_open", None)
+        if not callable(opener):
+            raise OSError("pidfd support is unavailable")
+        return cast(Callable[[int, int], int], opener)(pid, 0)
+
+    def _wait_for_pidfd_exit(self, pidfd: int, timeout_s: int | float) -> bool:
+        """Wait for the exact process represented by ``pidfd`` to exit."""
+        poller = select.poll()
+        poller.register(pidfd, select.POLLIN | select.POLLHUP | select.POLLERR)
+        deadline = time.monotonic() + max(float(timeout_s), 0.0)
+        while True:
+            if poller.poll(0):
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            poller.poll(max(1, min(250, int(remaining * 1000))))
 
     def _terminate_posix(self, pid: int, *, timeout_s: int) -> bool:
         try:
