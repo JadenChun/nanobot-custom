@@ -798,6 +798,29 @@ describe("ThreadComposer", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
+  it("finishes hidden voice capture into the draft without sending", async () => {
+    const { stopTrack } = mockVoiceRecorder();
+    const onSend = vi.fn();
+    const onTranscribeAudio = vi.fn(async () => "hidden voice");
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        onTranscribeAudio={onTranscribeAudio}
+        placeholder="Type your message..."
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Voice input" }));
+    expect(await screen.findByLabelText("Recording 0:00")).toBeInTheDocument();
+    await waitForVoiceCapture();
+    act(() => window.dispatchEvent(new Event("nanobot:desktop-hide")));
+
+    expect(stopTrack).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onTranscribeAudio).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByLabelText("Message input")).toHaveValue("hidden voice"));
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
   it("explains the HTTPS requirement for voice input on an insecure origin", async () => {
     const { getUserMedia } = mockVoiceRecorder();
     vi.stubGlobal("isSecureContext", false);

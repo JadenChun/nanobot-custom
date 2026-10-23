@@ -54,15 +54,15 @@ export function useVoiceRecorder({
   onTranscribeAudio,
   wantsWav = false,
 }: VoiceRecorderOptions) {
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<BlobPart[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
+  const captureRef = useRef<VoiceCapture | null>(null);
   const audioRef = useRef<VoiceAudioState | null>(null);
-  const startedAtRef = useRef(0);
   const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const holdActiveRef = useRef(false);
   const startPendingRef = useRef(false);
+  const requestEpochRef = useRef(0);
+  const recordingIdRef = useRef(0);
+  const mountedRef = useRef(false);
   const stopAfterStartRef = useRef(false);
   const suppressClickRef = useRef(false);
   const suppressClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -86,9 +86,23 @@ export function useVoiceRecorder({
     const audio = audioRef.current;
     audioRef.current = null;
     if (!audio) return;
-    if (audio.frame !== null) cancelAnimationFrame(audio.frame);
-    audio.source.disconnect();
-    audio.analyser.disconnect();
+    if (audio.frame !== null) {
+      try {
+        cancelAnimationFrame(audio.frame);
+      } catch {
+        // Animation frames may already be cancelled by the host.
+      }
+    }
+    try {
+      audio.source.disconnect();
+    } catch {
+      // The browser may have disconnected the source while hiding the webview.
+    }
+    try {
+      audio.analyser.disconnect();
+    } catch {
+      // The browser may have disconnected the analyser while hiding the webview.
+    }
     void audio.context.close().catch(() => undefined);
   }, []);
 
@@ -135,26 +149,27 @@ export function useVoiceRecorder({
     }
   }, [stopWaveform]);
 
-  const cleanupRecording = useCallback(() => {
+  const cleanupRecording = useCallback((capture?: VoiceCapture) => {
+    if (capture && captureRef.current !== capture) return;
     clearTimer(holdTimerRef);
     clearTimer(maxTimerRef);
+    const activeCapture = captureRef.current;
+    captureRef.current = null;
     stopWaveform();
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-    mediaRecorderRef.current = null;
+    if (activeCapture) stopMediaStream(activeCapture.stream);
     startPendingRef.current = false;
     shortcutActiveRef.current = false;
   }, [stopWaveform]);
 
   const stopRecording = useCallback(() => {
-    const recorder = mediaRecorderRef.current;
-    if (!recorder || recorder.state === "inactive") return;
-    recorder.stop();
+    const capture = captureRef.current;
+    if (!capture) return;
+    stopMediaRecorder(capture.recorder);
   }, []);
 
   const stopRecordingWhenReady = useCallback(() => {
-    const recorder = mediaRecorderRef.current;
-    if (recorder && recorder.state !== "inactive") {
+    const capture = captureRef.current;
+    if (capture && capture.recorder.state !== "inactive") {
       stopRecording();
     } else if (startPendingRef.current) {
       stopAfterStartRef.current = true;
@@ -174,48 +189,83 @@ export function useVoiceRecorder({
       onError("unsupported");
       return;
     }
+    const requestEpoch = ++requestEpochRef.current;
+    const recordingId = ++recordingIdRef.current;
     startPendingRef.current = true;
+    let stream: MediaStream | null = null;
+    let capture: VoiceCapture | null = null;
     try {
-      const stream = await mediaDevices.getUserMedia({ audio: true });
+      stream = await mediaDevices.getUserMedia({ audio: true });
+      if (
+        requestEpoch !== requestEpochRef.current
+        || recordingId !== recordingIdRef.current
+        || !mountedRef.current
+      ) {
+        stopMediaStream(stream);
+        return;
+      }
       const recorder = new MediaRecorderCtor(stream, mediaRecorderOptions(MediaRecorderCtor));
-      chunksRef.current = [];
-      streamRef.current = stream;
-      mediaRecorderRef.current = recorder;
-      startedAtRef.current = Date.now();
+      capture = {
+        chunks: [],
+        recorder,
+        startedAt: Date.now(),
+        stream,
+      };
+      captureRef.current = capture;
+      startPendingRef.current = false;
       setElapsedMs(0);
       startWaveform(stream);
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
+        if (event.data.size > 0) capture?.chunks.push(event.data);
       };
       recorder.onstop = () => {
-        const chunks = chunksRef.current.splice(0);
-        const durationMs = Math.max(0, Date.now() - startedAtRef.current);
+        const chunks = capture?.chunks.splice(0) ?? [];
+        const durationMs = Math.max(0, Date.now() - (capture?.startedAt ?? Date.now()));
         const mimeType = recorder.mimeType || "audio/webm";
-        cleanupRecording();
+        const isCurrentRecording = recordingIdRef.current === recordingId;
+        if (capture) cleanupRecording(capture);
+        if (!mountedRef.current) return;
         if (chunks.length === 0) {
-          setState("idle");
+          if (isCurrentRecording) setState("idle");
           return;
         }
         if (durationMs < VOICE_RECORDING_MIN_MS) {
-          setState("idle");
-          onError("tooShort");
+          if (isCurrentRecording) {
+            setState("idle");
+            onError("tooShort");
+          }
           return;
         }
-        setState("transcribing");
+        if (isCurrentRecording) setState("transcribing");
         const blob = new Blob(chunks, { type: mimeType });
         const audioPromise = wantsWav ? convertBlobToWav(blob) : blobToDataUrl(blob);
         void audioPromise
           .then((dataUrl) => onTranscribeAudio(dataUrl, { durationMs }))
-          .then(onTranscript)
-          .catch((error) => onError(transcriptionErrorKey(error)))
-          .finally(() => setState("idle"));
+          .then((text) => {
+            if (mountedRef.current) onTranscript(text);
+          })
+          .catch((error) => {
+            if (mountedRef.current && recordingIdRef.current === recordingId) {
+              onError(transcriptionErrorKey(error));
+            }
+          })
+          .finally(() => {
+            if (mountedRef.current && recordingIdRef.current === recordingId) setState("idle");
+          });
       };
       recorder.start();
       setState("recording");
       onClearError();
       maxTimerRef.current = setTimeout(stopRecording, VOICE_RECORDING_MAX_MS);
     } catch (error) {
-      cleanupRecording();
+      if (stream) stopMediaStream(stream);
+      if (
+        requestEpoch !== requestEpochRef.current
+        || recordingId !== recordingIdRef.current
+        || !mountedRef.current
+      ) return;
+      if (capture) stopMediaRecorder(capture.recorder);
+      cleanupRecording(capture ?? undefined);
       setState("idle");
       onError(recordingErrorKey(error));
     }
@@ -288,20 +338,72 @@ export function useVoiceRecorder({
     stopRecordingWhenReady();
   }, [stopRecordingWhenReady]);
 
+  const clearCaptureOnHide = useCallback(() => {
+    const capture = captureRef.current;
+    const permissionPending = startPendingRef.current;
+    requestEpochRef.current += 1;
+    clearTimer(holdTimerRef);
+    clearTimer(maxTimerRef);
+    clearSuppressClickTimer();
+    holdActiveRef.current = false;
+    suppressClickRef.current = false;
+    stopAfterStartRef.current = false;
+    shortcutActiveRef.current = false;
+    startPendingRef.current = false;
+
+    if (capture) {
+      captureRef.current = null;
+      stopWaveform();
+      setElapsedMs(0);
+      setState("idle");
+      stopMediaRecorder(capture.recorder);
+      stopMediaStream(capture.stream);
+    } else if (permissionPending) {
+      recordingIdRef.current += 1;
+      setState("idle");
+    }
+  }, [clearSuppressClickTimer, stopWaveform]);
+
   useEffect(() => {
     if (state !== "recording") {
       setElapsedMs(0);
       return;
     }
     const updateElapsed = () => {
-      setElapsedMs(Math.max(0, Date.now() - startedAtRef.current));
+      setElapsedMs(Math.max(0, Date.now() - (captureRef.current?.startedAt ?? Date.now())));
     };
     updateElapsed();
     const interval = window.setInterval(updateElapsed, 250);
     return () => window.clearInterval(interval);
   }, [state]);
 
-  useEffect(() => cleanupRecording, [cleanupRecording]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestEpochRef.current += 1;
+      recordingIdRef.current += 1;
+      clearTimer(holdTimerRef);
+      clearTimer(maxTimerRef);
+      clearSuppressClickTimer();
+      const capture = captureRef.current;
+      cleanupRecording(capture ?? undefined);
+      if (capture) stopMediaRecorder(capture.recorder);
+    };
+  }, [cleanupRecording, clearSuppressClickTimer]);
+
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") clearCaptureOnHide();
+    };
+    window.addEventListener("nanobot:desktop-hide", clearCaptureOnHide);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("nanobot:desktop-hide", clearCaptureOnHide);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [clearCaptureOnHide]);
+
   useEffect(() => () => clearSuppressClickTimer(), [clearSuppressClickTimer]);
 
   return {
@@ -324,6 +426,26 @@ interface VoiceAudioState {
   data: Uint8Array<ArrayBuffer>;
   frame: number | null;
   source: MediaStreamAudioSourceNode;
+}
+
+interface VoiceCapture {
+  chunks: BlobPart[];
+  recorder: MediaRecorder;
+  startedAt: number;
+  stream: MediaStream;
+}
+
+function stopMediaStream(stream: MediaStream) {
+  stream.getTracks().forEach((track) => track.stop());
+}
+
+function stopMediaRecorder(recorder: MediaRecorder) {
+  if (recorder.state === "inactive") return;
+  try {
+    recorder.stop();
+  } catch {
+    // The browser may have stopped the recorder when its tracks ended.
+  }
 }
 
 function clearTimer(ref: { current: ReturnType<typeof setTimeout> | null }) {
