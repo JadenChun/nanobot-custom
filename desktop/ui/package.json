@@ -1,0 +1,12 @@
+{
+  "name": "nanobot-desktop-setup-ui",
+  "private": true,
+  "version": "0.3.0",
+  "type": "module",
+  "scripts": {
+    "build": "bun build.ts"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.8.0"
+  }
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-change-selection"
+description = "Enables the change_selection command without any pre-configured scope."
+commands.allow = ["change_selection"]
+
+[[permission]]
+identifier = "deny-change-selection"
+description = "Denies the change_selection command without any pre-configured scope."
+commands.deny = ["change_selection"]

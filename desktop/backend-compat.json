@@ -1,0 +1,5 @@
+{
+  "protocol_version": 1,
+  "backend_versions": ["0.3.0"],
+  "required_capabilities": ["managed-gateway-v1"]
+}

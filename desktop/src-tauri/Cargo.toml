@@ -1,0 +1,23 @@
+[package]
+name = "nanobot-desktop"
+version = "0.3.0"
+description = "Thin Fedora desktop shell for an installed Nanobot backend"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+gio = "=0.18.4"
+libc = "=0.2.191"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.149"
+sha2 = "=0.10.9"
+tauri = { version = "=2.12.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-dialog = "=2.6.0"
+tauri-plugin-opener = "=2.7.2"
+tauri-plugin-single-instance = "=2.5.4"
+url = "=2.5.7"
+webkit2gtk = { version = "=2.0.2", features = ["v2_40"] }

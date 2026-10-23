@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "setup-only",
+  "description": "Local setup and status window only",
+  "windows": ["setup"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "allow-desktop-state",
+    "allow-choose-path",
+    "allow-select-backend",
+    "allow-retry-backend",
+    "allow-open-chat",
+    "allow-change-selection",
+    "allow-quit-desktop"
+  ]
+}

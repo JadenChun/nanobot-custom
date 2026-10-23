@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Nanobot Desktop</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./main.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="mark" aria-hidden="true">N</div>
+        <div>
+          <h1>Nanobot Desktop</h1>
+          <p id="summary">Select an existing Nanobot installation.</p>
+        </div>
+      </header>
+
+      <section id="selection" aria-labelledby="selection-title">
+        <h2 id="selection-title">Connect an existing backend</h2>
+        <p class="hint">Choose the config file and the Python interpreter where Nanobot is installed.</p>
+        <label for="config">Config file</label>
+        <div class="field-row">
+          <input id="config" type="text" autocomplete="off" spellcheck="false" placeholder="/home/you/.config/nanobot/config.json" />
+          <button class="secondary" data-pick="config" type="button">Browse</button>
+        </div>
+        <label for="python">Python interpreter</label>
+        <div class="field-row">
+          <input id="python" type="text" autocomplete="off" spellcheck="false" placeholder="/home/you/.venv/bin/python" />
+          <button class="secondary" data-pick="python" type="button">Browse</button>
+        </div>
+        <label for="workspace">Workspace override <span>(optional)</span></label>
+        <div class="field-row">
+          <input id="workspace" type="text" autocomplete="off" spellcheck="false" placeholder="Use the config's workspace" />
+          <button class="secondary" data-pick="workspace" type="button">Browse</button>
+        </div>
+        <button id="connect" type="button">Connect and open chat</button>
+      </section>
+
+      <section id="status" aria-live="polite">
+        <div class="status-line"><span id="indicator" class="indicator"></span><strong id="state">Setup required</strong></div>
+        <p id="detail">No backend has been selected.</p>
+        <p id="selected" class="selected"></p>
+        <div class="actions">
+          <button id="retry" class="secondary" type="button" hidden>Retry</button>
+          <button id="open-chat" class="secondary" type="button" hidden>Open chat</button>
+          <button id="change" class="secondary" type="button" hidden>Change selection</button>
+          <button id="quit" class="secondary" type="button">Quit Nanobot</button>
+        </div>
+      </section>
+      <p class="footnote">The desktop shell does not install or update Python packages.</p>
+    </main>
+  </body>
+</html>

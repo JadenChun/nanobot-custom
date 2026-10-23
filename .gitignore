@@ -16,6 +16,9 @@ webui/node_modules/
 webui/dist/
 webui/coverage/
 webui/.vite/
+desktop/ui/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
 tui/node_modules/
 tui/dist/
 *.tsbuildinfo
