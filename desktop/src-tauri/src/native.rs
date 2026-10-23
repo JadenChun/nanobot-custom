@@ -248,7 +248,7 @@ fn install_tray(app: &AppHandle<Wry>, shared: Arc<Shared>) -> Result<(), tauri::
     shared.set_tray_status_item(status);
     let shared_for_menu = shared.clone();
     TrayIconBuilder::with_id("nanobot-desktop-tray")
-        .icon(code_icon())
+        .icon(app_icon())
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, event| match event.id().as_ref() {
@@ -584,18 +584,14 @@ fn open_external_url(app: &AppHandle<Wry>, url: Url) {
     });
 }
 
-fn code_icon() -> tauri::image::Image<'static> {
-    let mut pixels = vec![0u8; 16 * 16 * 4];
-    for y in 2..14 {
-        for x in 2..14 {
-            let index = (y * 16 + x) * 4;
-            pixels[index..index + 4].copy_from_slice(&[37, 105, 168, 255]);
-            if (x + y) % 4 == 0 {
-                pixels[index..index + 4].copy_from_slice(&[255, 255, 255, 255]);
-            }
-        }
-    }
-    tauri::image::Image::new_owned(pixels, 16, 16)
+pub fn app_icon() -> tauri::image::Image<'static> {
+    tauri::include_image!("icons/icon.png")
+}
+
+pub fn set_window_icon(window: &WebviewWindow<Wry>) -> tauri::Result<()> {
+    // Use the packaged theme icon so GTK publishes the icon to the window manager.
+    window.gtk_window()?.set_property("icon-name", "nanobot-desktop");
+    Ok(())
 }
 
 pub fn new_window_response() -> NewWindowResponse<Wry> {

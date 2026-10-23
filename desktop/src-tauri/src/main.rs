@@ -146,6 +146,7 @@ fn run() {
             let shared = controller::initialize(app_handle.clone(), guard, initial);
             app.manage(shared.clone());
             if let Some(window) = app.get_webview_window("setup") {
+                native::set_window_icon(&window)?;
                 let shared_for_close = shared.clone();
                 let window_for_close = window.clone();
                 window.on_window_event(move |event| {

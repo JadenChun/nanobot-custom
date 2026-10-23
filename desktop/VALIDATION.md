@@ -83,9 +83,29 @@ logs are in `native-p1-probe/run/no-host-hide-confirmed/`. These primitive
 probe results are separate from the final packaged-product cross-bus proof and
 the installed Python backend qualification.
 
-## Installed GUI evidence
+## Icon and launcher update (RPM 0.3.0-3)
 
-The final Fedora 44 RPM was exercised outside the source checkout with the
+RPM release 3 uses the packaged Nanobot icon for the GTK setup/chat windows and
+the tray. Its desktop entry matches GTK's `Nanobot-desktop` window class so KDE
+can associate the running window with the launcher. The release RPM SHA-256 is
+`08d05e7a3c044c50f7c1ab145c4af5a92671ddc54daf77ad176f4a1b8ac5a27f`.
+
+The update passed all 12 native tests, Clippy with warnings denied, and the
+optimized release build. After upgrading the installed RPM on Fedora 44, the
+running window's X11 `WM_HINTS` icon pixmap and the tray image were both checked
+against the packaged 512-pixel Nanobot icon. The staging gateway remained
+healthy and configuration/preferences hashes were unchanged.
+
+On this device the obsolete `Nanobot Personal Assistant` browser launcher was
+moved out of the applications directory and retained under
+`~/.local/share/nanobot-desktop/legacy-launchers/`. After refreshing KDE's
+application cache, only **Nanobot Desktop** remained visible. The package does
+not alter other users' launchers. Update evidence is retained under
+`.assets/validation/fedora-icons-2026-10-24/`.
+
+## Initial installed GUI evidence (RPM 0.3.0-1)
+
+The initial Fedora 44 RPM was exercised outside the source checkout with the
 installed backend. The installed RPM payload SHA-256 was
 `81ddc49a2bfa4c5a83fa3ceb8677c3b59fd8a5453a136e37b998ebe45315012b`; its
 installed desktop executable SHA-256 was

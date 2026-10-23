@@ -789,6 +789,7 @@ impl Controller {
                     return;
                 }
             };
+            let _ = native::set_window_icon(&chat);
             if native::install_navigation_policy(&chat, origin_for_policy, app.clone()).is_err() {
                 let _ = chat.destroy();
                 let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
