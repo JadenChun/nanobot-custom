@@ -100,6 +100,7 @@
       "mcp": "MCP",
       "runtime": "系统",
       "advanced": "安全",
+      "folders": "文件夹与项目",
       "apps": "应用",
       "automations": "自动任务",
       "skills": "技能"
@@ -215,6 +216,7 @@
       "workspacePath": "默认工作区",
       "localServiceAccess": "本机服务",
       "webuiDefaultAccess": "默认权限",
+      "managedFolderAccess": "受管文件夹访问",
       "cliAppsCatalog": "目录",
       "cliAppsFilter": "筛选",
       "engine": "引擎",
@@ -260,6 +262,7 @@
       "cliAppsFilter": "按应用、类别或能力搜索。",
       "localServiceAccess": "允许完全访问权限下的 shell 命令访问 localhost 服务。",
       "webuiDefaultAccess": "用于没有单独项目权限的 Web 聊天。",
+      "managedFolderAccess": "文件夹授权控制文件和命令访问。“完全访问”默认偏好不能添加或绕过授权。",
       "securityManagedControls": "网页抓取始终保护本机、内网和元数据服务。核心渠道安全仍由 config.json 管理。",
       "logs": "打开原生引擎日志文件夹。",
       "diagnostics": "导出一份用于支持排查的小型运行报告。",
@@ -452,7 +455,7 @@
       "collapsedDiff": "折叠差异",
       "on": "开启",
       "off": "关闭",
-      "defaultPermission": "默认权限",
+      "defaultPermission": "受限",
       "fullAccess": "完全访问权限",
       "configured": "已配置",
       "notConfigured": "未配置",
@@ -1377,7 +1380,7 @@
         "accessAria": "工作区访问权限",
         "projectAria": "选择项目",
         "projectPlaceholder": "选择项目",
-        "default": "默认权限",
+        "default": "受限",
         "defaultShort": "默认",
         "full": "完全访问权限",
         "fullShort": "完全"
@@ -1568,11 +1571,58 @@
   },
   "workspace": {
     "dialog": {
-      "defaultProject": "默认工作区",
+      "defaultProject": "使用代理主目录",
       "manual": "粘贴路径",
       "manualPlaceholder": "/Users/name/project",
-      "usePath": "使用路径",
+      "usePath": "使用文件夹",
       "absolutePathRequired": "请输入这台机器上的绝对文件夹路径。"
+    },
+    "recovery": {
+      "durationTitle": "此访问应持续多久？",
+      "allowOnce": "仅允许一次",
+      "allowOnceDescription": "仅用于此任务，包括继续执行的步骤。不会保存供未来任务使用。",
+      "alwaysAllow": "始终允许",
+      "alwaysAllowDescription": "已保存供以后使用。在“文件夹和项目”中管理。",
+      "allowOnceAndUse": "允许一次并使用文件夹",
+      "onceUnavailable": "Nanobot 确认当前受限访问前，无法使用一次性访问。",
+      "onceUnavailableFull": "完整访问处于启用状态时，无法使用一次性文件夹访问。",
+      "permissionRefreshFailed": "无法检查当前访问权限。请刷新后再允许此任务。",
+      "permissionRefreshing": "正在检查当前访问权限…",
+      "onceNotActive": "一次性访问已不再有效。继续前请检查文件夹。",
+      "onceRetiringActive": "仍有命令在使用之前的权限运行。请等待其完成或停止后重试。",
+      "onceRetiringUnknown": "Nanobot 尚无法确认之前的命令是否已完成。访问权限更改仍在等待中。",
+      "onceRetiringFinished": "之前的工作已完成。一次性访问仍在结束过程中。",
+      "onceExpired": "一次性访问已结束。继续前请重新检查文件夹。",
+      "readyOnce": "此任务已获准访问。可以继续使用 {{path}}。",
+      "readyAlways": "访问权限已保存。可以继续使用 {{path}}。"
+    },
+    "permissionV2": {
+      "actionFailed": "无法更新访问权限。请刷新此聊天后重试。",
+      "confirmTitle": "启用完整访问？",
+      "confirmDescription": "Nanobot 可以根据你的操作系统帐户权限，在所选文件夹之外读取和更改文件并运行命令。Working in 当前目录和上下文保持不变。新聊天会以受限模式开始。",
+      "enableFull": "启用完整访问",
+      "fullEnding": "完整访问正在结束",
+      "fullIndicator": "完整访问",
+      "fullReach": "根据你的操作系统帐户权限访问此设备上的文件和命令。",
+      "retiringActive": "仍有命令在使用之前的权限运行。请等待其完成或停止后重试。",
+      "retiringUnknown": "Nanobot 尚无法确认之前的命令是否已完成。访问权限更改仍在等待中。",
+      "retiringFinished": "之前的工作已完成。请重试以确认受限访问。",
+      "retryRestricted": "重试并返回受限模式",
+      "returnRestricted": "返回受限模式",
+      "sessionRequired": "发送一条消息以创建此聊天，然后再启用完整访问。",
+      "unavailable": "访问权限不可用",
+      "legacyUnavailable": "此网关未报告当前访问权限。",
+      "unavailableReasons": {
+        "controls_unavailable": "当前本地控制不支持完整访问。",
+        "session_required": "发送一条消息以创建此聊天，然后再启用完整访问。",
+        "configured_sandbox": "已配置命令限制，因此无法使用完整访问。",
+        "supervisor_unavailable": "Nanobot 无法安全监督命令，因此无法使用完整访问。",
+        "permission_state_unavailable": "当前访问权限不可用。请刷新此聊天后重试。",
+        "permission_retiring": "之前的工作结束前无法启用完整访问。"
+      }
+    },
+    "management": {
+      "commandsAvailable": "命令可用"
     }
   }
 }

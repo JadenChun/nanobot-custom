@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from nanobot.session.manager import JsonlSessionStore
     from nanobot.session.source_root import SourceRootAuthority
     from nanobot.session.source_store import SourceSnapshot
+    from nanobot.workspace_access_recovery import WorkspaceAccessSourceBinding
 
 _CAPABILITY = object()
 
@@ -222,9 +223,22 @@ class ExecutionOwner:
 
 
 @asynccontextmanager
-async def acquire_execution(backend: JsonlSessionStore, key: str, *, run_id: str) -> AsyncGenerator[ExecutionOwner, None]:
+async def acquire_execution(
+    backend: JsonlSessionStore,
+    key: str,
+    *,
+    run_id: str,
+    expected_source: WorkspaceAccessSourceBinding | None = None,
+) -> AsyncGenerator[ExecutionOwner, None]:
     if not isinstance(cast(object, run_id), str) or not run_id.strip():
         raise ExecutionOwnershipError()
+    if expected_source is not None:
+        from nanobot.workspace_access_recovery import parse_workspace_access_source_binding
+
+        try:
+            expected_source = parse_workspace_access_source_binding(expected_source)
+        except (TypeError, ValueError):
+            raise ExecutionOwnershipError() from None
     lock = _execution_lock(backend, key)
     owner = None
     try:
@@ -236,6 +250,15 @@ async def acquire_execution(backend: JsonlSessionStore, key: str, *, run_id: str
                 await asyncio.sleep(0.05)
         with backend.locked_session_files():
             snapshot = backend.source.load_source_snapshot(key)
+            if expected_source is not None and (
+                snapshot.state.session_key != key
+                or expected_source != {
+                    "store_identity": snapshot.state.store_identity,
+                    "incarnation": snapshot.state.incarnation,
+                    "generation": snapshot.state.generation,
+                }
+            ):
+                raise SessionWriteConflict()
             metadata = snapshot.header["metadata"]
             recovery_required = (
                 "execution_lease" in metadata

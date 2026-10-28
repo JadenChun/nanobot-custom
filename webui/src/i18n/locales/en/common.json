@@ -100,6 +100,7 @@
       "mcp": "MCP",
       "runtime": "System",
       "advanced": "Security",
+      "folders": "Folders & projects",
       "apps": "Apps",
       "automations": "Automations",
       "skills": "Skills"
@@ -215,6 +216,7 @@
       "workspacePath": "Default workspace",
       "localServiceAccess": "Local services",
       "webuiDefaultAccess": "Default access",
+      "managedFolderAccess": "Managed folder access",
       "cliAppsCatalog": "Catalog",
       "cliAppsFilter": "Filter",
       "engine": "Engine",
@@ -260,6 +262,7 @@
       "cliAppsFilter": "Search by app, category, or capability.",
       "localServiceAccess": "Allow Full Access shell commands to reach localhost services.",
       "webuiDefaultAccess": "Used by web chats without a project-specific permission.",
+      "managedFolderAccess": "Folder grants control file and command access. The default Full access preference cannot add or bypass a grant.",
       "securityManagedControls": "Web fetches always protect local, private, and metadata services. Core channel safety stays in config.json.",
       "logs": "Open the native engine log folder.",
       "diagnostics": "Export a small runtime report for support.",
@@ -452,8 +455,8 @@
       "collapsedDiff": "Collapsed diff",
       "on": "On",
       "off": "Off",
-      "defaultPermission": "Default Permission",
-      "fullAccess": "Full Access",
+      "defaultPermission": "Restricted",
+      "fullAccess": "Full access",
       "configured": "Configured",
       "notConfigured": "Not configured",
       "pending": "Pending",
@@ -1377,9 +1380,9 @@
         "accessAria": "Workspace access mode",
         "projectAria": "Choose project",
         "projectPlaceholder": "Select project",
-        "default": "Default Permission",
+        "default": "Restricted",
         "defaultShort": "Default",
-        "full": "Full Access",
+        "full": "Full access",
         "fullShort": "Full"
       }
     },
@@ -1568,11 +1571,58 @@
   },
   "workspace": {
     "dialog": {
-      "defaultProject": "Default workspace",
+      "defaultProject": "Use agent home",
       "manual": "Paste path",
       "manualPlaceholder": "/Users/name/project",
-      "usePath": "Use Path",
+      "usePath": "Use folder",
       "absolutePathRequired": "Enter an absolute folder path on this machine."
+    },
+    "recovery": {
+      "durationTitle": "How long should this access last?",
+      "allowOnce": "Allow once",
+      "allowOnceDescription": "For this task, including Continue steps. Not saved for future tasks.",
+      "alwaysAllow": "Always allow",
+      "alwaysAllowDescription": "Saved for future use. Manage in Folders & projects.",
+      "allowOnceAndUse": "Allow once and use folder",
+      "onceUnavailable": "One-time access is unavailable until Nanobot confirms current restricted access.",
+      "onceUnavailableFull": "One-time folder access is unavailable while Full access is active.",
+      "permissionRefreshFailed": "Current access could not be checked. Refresh before allowing this task.",
+      "permissionRefreshing": "Checking current access…",
+      "onceNotActive": "One-time access is no longer active. Review the folder before continuing.",
+      "onceRetiringActive": "A command is still running with the previous access. Wait for it to finish or stop it, then retry.",
+      "onceRetiringUnknown": "Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending.",
+      "onceRetiringFinished": "Earlier work has finished. One-time access is still ending.",
+      "onceExpired": "One-time access has ended. Review the folder again before continuing.",
+      "readyOnce": "Access allowed for this task. Ready to continue using {{path}}.",
+      "readyAlways": "Saved access. Ready to continue using {{path}}."
+    },
+    "permissionV2": {
+      "actionFailed": "Access could not be updated. Refresh this chat before retrying.",
+      "confirmTitle": "Enable Full access?",
+      "confirmDescription": "Nanobot can read and change files and run commands beyond the selected folder under your OS account permissions. Working in is the current directory and context. New chats start in Restricted mode.",
+      "enableFull": "Enable Full access",
+      "fullEnding": "Full access is ending",
+      "fullIndicator": "Full access",
+      "fullReach": "Files and commands across this device under your OS account permissions.",
+      "retiringActive": "A command is still running with the previous access. Wait for it to finish or stop it, then retry.",
+      "retiringUnknown": "Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending.",
+      "retiringFinished": "Earlier work has finished. Retry to confirm Restricted access.",
+      "retryRestricted": "Retry returning to Restricted",
+      "returnRestricted": "Return to Restricted",
+      "sessionRequired": "Send a message to create this chat before enabling Full access.",
+      "unavailable": "Access unavailable",
+      "legacyUnavailable": "This gateway does not report current access permissions.",
+      "unavailableReasons": {
+        "controls_unavailable": "Full access is unavailable with the current local controls.",
+        "session_required": "Send a message to create this chat before enabling Full access.",
+        "configured_sandbox": "Full access is unavailable while command confinement is configured.",
+        "supervisor_unavailable": "Full access is unavailable because Nanobot cannot supervise commands safely.",
+        "permission_state_unavailable": "Current access permissions are unavailable. Refresh this chat before retrying.",
+        "permission_retiring": "Full access cannot be enabled while earlier work is ending."
+      }
+    },
+    "management": {
+      "commandsAvailable": "Commands available"
     }
   }
 }

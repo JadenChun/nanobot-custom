@@ -191,7 +191,9 @@ async def test_authorized_external_output_and_symlink_escape(tmp_path, monkeypat
     from nanobot.agent.tools.filesystem import WriteFileTool
     from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 
-    monkeypatch.setattr('nanobot.config.loader._current_config_path', tmp_path / 'config.json')
+    instance = tmp_path / 'instance'
+    instance.mkdir()
+    monkeypatch.setattr('nanobot.config.loader._current_config_path', instance / 'config.json')
     workspace, repo, outside = (tmp_path / name for name in ('workspace', 'repo', 'outside'))
     for root in (workspace, repo, outside):
         root.mkdir()
@@ -207,6 +209,8 @@ async def test_authorized_external_output_and_symlink_escape(tmp_path, monkeypat
     assert json.loads(await tool.execute('test', output_path=str(target)))['path'] == str(target)
     assert target.read_bytes() == RAW
     client.generate.reset_mock()
+    assert (await tool.execute('test', output_path=str(instance / 'private.png'))).is_error
+    client.generate.assert_not_awaited()
     (repo / 'outputs' / 'escape').symlink_to(outside, target_is_directory=True)
     assert (await tool.execute('test', output_path=str(repo / 'outputs' / 'escape' / 'out.png'))).is_error
     client.generate.assert_not_awaited()

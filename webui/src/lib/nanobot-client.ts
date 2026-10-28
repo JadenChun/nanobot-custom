@@ -9,7 +9,9 @@ import type {
   SessionMention,
   SidebarStatePayload,
   GoalStateWsPayload,
+  FolderAccessRequest,
   WorkspaceScopePayload,
+  WorkspacePermissionProjection,
 } from "./types";
 import { createHostWebSocket } from "./runtime";
 
@@ -73,6 +75,8 @@ type SessionUpdateHandler = (
   chatId: string,
   scope?: SessionUpdateScope,
   workspaceScope?: WorkspaceScopePayload,
+  workspaceAccessRequest?: FolderAccessRequest,
+  workspacePermissions?: WorkspacePermissionProjection,
 ) => void;
 type SidebarStateUpdateHandler = (state: SidebarStatePayload) => void;
 type RunStatusHandler = (chatId: string, startedAt: number | null) => void;
@@ -123,10 +127,12 @@ interface PendingWebUIRequest extends PendingRequest<unknown> {
 
 class WebUIMutationError extends Error {
   status: number;
+  workspaceModeConflict?: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, workspaceModeConflict?: unknown) {
     super(message);
     this.status = status;
+    this.workspaceModeConflict = workspaceModeConflict;
     this.name = "WebUIMutationError";
   }
 }
@@ -1108,7 +1114,16 @@ export class NanobotClient {
           ? parsed.error.status
           : 500;
         const message = parsed.error?.message || "WebUI mutation failed";
-        pending.reject(new WebUIMutationError(status, message));
+        const workspaceModeConflict = (
+          status === 409
+          && parsed.error?.workspace_scope
+          && parsed.error?.workspace_permissions
+        ) ? {
+          error: { status, message },
+          workspace_scope: parsed.error.workspace_scope,
+          workspace_permissions: parsed.error.workspace_permissions,
+        } : undefined;
+        pending.reject(new WebUIMutationError(status, message, workspaceModeConflict));
       }
       return;
     }
@@ -1214,7 +1229,13 @@ export class NanobotClient {
     }
 
     if (parsed.event === "session_updated") {
-      this.emitSessionUpdate(parsed.chat_id, parsed.scope, parsed.workspace_scope);
+      this.emitSessionUpdate(
+        parsed.chat_id,
+        parsed.scope,
+        parsed.workspace_scope,
+        parsed.workspace_access_request,
+        parsed.workspace_permissions,
+      );
       return;
     }
 
@@ -1266,9 +1287,19 @@ export class NanobotClient {
     chatId: string,
     scope?: SessionUpdateScope,
     workspaceScope?: WorkspaceScopePayload,
+    workspaceAccessRequest?: FolderAccessRequest,
+    workspacePermissions?: WorkspacePermissionProjection,
   ): void {
     for (const handler of this.sessionUpdateHandlers) {
-      handler(chatId, scope, workspaceScope);
+      if (workspaceAccessRequest === undefined && workspacePermissions === undefined) {
+        handler(chatId, scope, workspaceScope);
+      } else if (workspacePermissions === undefined) {
+        handler(chatId, scope, workspaceScope, workspaceAccessRequest);
+      } else if (workspaceAccessRequest === undefined) {
+        handler(chatId, scope, workspaceScope, undefined, workspacePermissions);
+      } else {
+        handler(chatId, scope, workspaceScope, workspaceAccessRequest, workspacePermissions);
+      }
     }
   }
 

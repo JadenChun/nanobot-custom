@@ -1,15 +1,20 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  allowWorkspaceAccessOnce,
   cancelMcpOAuth,
+  cancelWorkspaceAccessRequest,
   configureChannel,
   completeMcpOAuth,
   completeProviderOAuth,
+  continueWorkspaceAccessRequest,
   createModelConfiguration,
   createProviderSettings,
   deleteSkill,
   deleteModelConfiguration,
   deleteSession,
+  discoverRepositories,
   fetchFilePreview,
   fetchFilePreviewAvailability,
   fetchAutomations,
@@ -29,6 +34,7 @@ import {
   fetchTrendingMarketplaceSkills,
   fetchWebuiThread,
   fetchWorkspaces,
+  forgetRepository,
   importMcpConfig,
   installMarketplaceSkill,
   listSessions,
@@ -40,6 +46,9 @@ import {
   enableNanobotFeature,
   runAutomationAction,
   runCliAppAction,
+  rememberRepository,
+  revokeWorkspaceGrant,
+  resolveWorkspaceAccessRequest,
   runMcpPresetAction,
   saveCustomMcpServer,
   searchMarketplaceSkills,
@@ -49,6 +58,7 @@ import {
   cancelChannelConnect,
   pollChannelConnect,
   startChannelConnect,
+  setWorkspaceAccessMode,
   updateAutomation,
   updateSidebarState,
   updateImageGenerationSettings,
@@ -59,8 +69,11 @@ import {
   updateProviderSettings,
   updateSkillEnabled,
   updateWebSearchSettings,
+  upsertWorkspaceGrant,
   validateChannel,
 } from "@/lib/api";
+import { folderAccessThreadFixture } from "./fixtures/folder-access-request";
+import type { WorkspaceOnceActionResult } from "@/lib/types";
 
 const requestMutation = vi.fn();
 const mutationTransport = {
@@ -89,6 +102,302 @@ describe("webui API helpers", () => {
     vi.unstubAllGlobals();
   });
 
+  it("sends exact workspace grant and repository mutation wire payloads", async () => {
+    const grant = {
+      path: "/projects/a",
+      file_access: "read_only" as const,
+      commands: false,
+    };
+    const entry = {
+      name: "project-a",
+      path: "/projects/a",
+      purpose: "Work on project A",
+      kind: "project" as const,
+      knowledge_repos: ["notes"],
+      auto_sync: false,
+      sync_paths: [],
+    };
+
+    await upsertWorkspaceGrant(mutationTransport, grant, 7);
+    await revokeWorkspaceGrant(mutationTransport, "/projects/a", 8);
+    await rememberRepository(mutationTransport, entry);
+    await forgetRepository(mutationTransport, "project-a");
+    await discoverRepositories(mutationTransport, "/projects");
+
+    expect(requestMutation).toHaveBeenNthCalledWith(1, "workspace.grant.upsert", {
+      expected_revision: 7,
+      path: "/projects/a",
+      file_access: "read_only",
+      commands: false,
+    }, 20_000);
+    expect(requestMutation).toHaveBeenNthCalledWith(2, "workspace.grant.revoke", {
+      expected_revision: 8,
+      path: "/projects/a",
+    }, 20_000);
+    expect(requestMutation).toHaveBeenNthCalledWith(3, "repository.remember", { entry }, 20_000);
+    expect(requestMutation).toHaveBeenNthCalledWith(4, "repository.forget", {
+      name: "project-a",
+    }, 20_000);
+    expect(requestMutation).toHaveBeenNthCalledWith(5, "repository.discover", {
+      path: "/projects",
+    }, 20_000);
+  });
+
+  it("preserves the upsert operation receipt instead of replacing it with a newer global revision", async () => {
+    const grant = {
+      path: "/projects/freelance-alias",
+      file_access: "read_only" as const,
+      commands: false,
+    };
+    const receipt = {
+      submitted_path: "/projects/freelance-alias",
+      canonical_path: "/projects/freelance",
+      file_access: "read_only",
+      commands: false,
+      grants_revision: 7,
+    };
+    requestMutation.mockResolvedValueOnce({
+      management: { grants_revision: 8, grants: [], repositories: [] },
+      grant_receipt: receipt,
+    });
+
+    const response = await upsertWorkspaceGrant(mutationTransport, grant, 6);
+
+    expect(response.grant_receipt).toEqual(receipt);
+    expect(response.management?.grants_revision).toBe(8);
+  });
+
+  it("sends exact folder-access recovery mutation payloads", async () => {
+    const requestId = "0123456789abcdef0123456789abcdef";
+
+    await resolveWorkspaceAccessRequest(
+      mutationTransport,
+      "chat-1",
+      requestId,
+      4,
+      "/projects/freelance",
+      7,
+    );
+    await continueWorkspaceAccessRequest(mutationTransport, "chat-1", requestId, 5);
+    await cancelWorkspaceAccessRequest(mutationTransport, "chat-1", requestId, 6);
+
+    expect(requestMutation).toHaveBeenNthCalledWith(1, "workspace.access.resolve", {
+      chat_id: "chat-1",
+      access_request_id: requestId,
+      expected_revision: 4,
+      path: "/projects/freelance",
+      expected_grants_revision: 7,
+    }, 20_000);
+    expect(requestMutation).toHaveBeenNthCalledWith(2, "workspace.access.continue", {
+      chat_id: "chat-1",
+      access_request_id: requestId,
+      expected_revision: 5,
+    }, 20_000);
+    expect(requestMutation).toHaveBeenNthCalledWith(3, "workspace.access.cancel", {
+      chat_id: "chat-1",
+      access_request_id: requestId,
+      expected_revision: 6,
+    }, 20_000);
+  });
+
+  it("sends the exact Once payload and accepts only a receipt correlated to the owning task", async () => {
+    const request = {
+      version: 1,
+      access_request_id: "0123456789abcdef0123456789abcdef",
+      revision: 4,
+      chat_id: "chat-1",
+      task: { turn_id: "turn-original", excerpt: "Inspect this project." },
+      blocked_turn_id: "turn-blocked",
+      tool_call_id: "tool-1",
+      created_at_ms: 1,
+      status: "pending",
+      reason: "folder_not_granted",
+      operation: "read",
+      target: { kind: "directory", path: "/projects/alias" },
+      purpose: "Inspect this project.",
+      selected_path: null,
+      selected_access: null,
+      can_continue: false,
+      unavailable_reason: null,
+      continuation_turn_id: null,
+    };
+    const effectiveAccess = {
+      policy: "managed",
+      source: "task",
+      grant_root: "/projects/canonical",
+      exists: true,
+      read: true,
+      write: false,
+      boundary: "folder",
+      commands: { requested: false, available: false, backend: "none", reason: null },
+    };
+    const result = {
+      workspace_access_request: {
+        ...request,
+        revision: 5,
+        status: "ready",
+        selected_path: "/projects/canonical",
+        selected_access: effectiveAccess,
+        can_continue: true,
+        selected_duration: "once",
+        task_access_state: "active",
+      },
+      workspace_scope: {
+        project_path: "/projects/canonical",
+        access_mode: "restricted",
+        effective_access: effectiveAccess,
+      },
+      workspace_permissions: {
+        version: 1,
+        runtime_id: "a".repeat(32),
+        revision: 12,
+        mode: "restricted",
+        state: "active",
+        can_enable_full: true,
+        full_access_unavailable_reason: null,
+        task_access: {
+          task_turn_id: "turn-original",
+          state: "active",
+          folders: [{ path: "/projects/canonical", file_access: "read_only", commands: false }],
+        },
+        retirement: null,
+      },
+      once_receipt: {
+        version: 1,
+        duration: "once",
+        runtime_id: "a".repeat(32),
+        permission_revision: 12,
+        access_request_id: request.access_request_id,
+        request_revision: 5,
+        task_turn_id: "turn-original",
+        submitted_path: "/projects/alias",
+        canonical_path: "/projects/canonical",
+        file_access: "read_only",
+        commands: false,
+      },
+    };
+    requestMutation.mockResolvedValueOnce(result);
+
+    const response = await allowWorkspaceAccessOnce(mutationTransport, {
+      chat_id: "chat-1",
+      access_request_id: request.access_request_id,
+      expected_revision: 4,
+      path: "/projects/alias",
+      file_access: "read_only",
+      commands: false,
+      expected_grants_revision: 8,
+      expected_runtime_id: "a".repeat(32),
+      expected_permission_revision: 11,
+    }, "turn-original");
+
+    expect(requestMutation).toHaveBeenCalledWith("workspace.access.allow_once", {
+      chat_id: "chat-1",
+      access_request_id: request.access_request_id,
+      expected_revision: 4,
+      path: "/projects/alias",
+      file_access: "read_only",
+      commands: false,
+      expected_grants_revision: 8,
+      expected_runtime_id: "a".repeat(32),
+      expected_permission_revision: 11,
+    }, 20_000);
+    expect(response.once_receipt).toEqual(result.once_receipt);
+
+    requestMutation.mockResolvedValueOnce({
+      ...result,
+      once_receipt: { ...result.once_receipt, task_turn_id: "another-task" },
+    });
+    await expect(allowWorkspaceAccessOnce(mutationTransport, {
+      chat_id: "chat-1",
+      access_request_id: request.access_request_id,
+      expected_revision: 4,
+      path: "/projects/alias",
+      file_access: "read_only",
+      commands: false,
+      expected_grants_revision: 8,
+      expected_runtime_id: "a".repeat(32),
+      expected_permission_revision: 11,
+    }, "turn-original")).rejects.toThrow(/receipt|response/i);
+  });
+
+  it("uses permission-mode revisions and preserves a validated retiring conflict", async () => {
+    const input = {
+      chat_id: "chat-1",
+      mode: "restricted" as const,
+      expected_runtime_id: "b".repeat(32),
+      expected_permission_revision: 19,
+    };
+    const projection = {
+      version: 1,
+      runtime_id: input.expected_runtime_id,
+      revision: 20,
+      mode: "full",
+      state: "retiring",
+      can_enable_full: false,
+      full_access_unavailable_reason: "permission_retiring",
+      task_access: null,
+      retirement: {
+        reason: "mode_changed",
+        active_turn: false,
+        active_processes: 1,
+        unknown_processes: 0,
+      },
+    };
+    const scope = {
+      project_path: "/projects/current",
+      access_mode: "full",
+    };
+    requestMutation.mockRejectedValueOnce(Object.assign(new Error("native_processes_active"), {
+      status: 409,
+      workspaceModeConflict: {
+        error: { status: 409, message: "native_processes_active" },
+        workspace_scope: scope,
+        workspace_permissions: projection,
+      },
+    }));
+
+    await expect(setWorkspaceAccessMode(mutationTransport, input)).rejects.toMatchObject({
+      status: 409,
+      conflict: {
+        workspace_scope: scope,
+        workspace_permissions: projection,
+      },
+    });
+    expect(requestMutation).toHaveBeenCalledWith("workspace.access.mode.set", input, 20_000);
+  });
+
+  it("parses the exact Once response emitted by the backend serializer", async () => {
+    const log = readFileSync(
+      "../.assets/validation/desktop-project-access/access-v2-2026-10-27/backend/serializer-once.log",
+      "utf8",
+    );
+    const serializedLine = log.split("\n").find((line) => line.startsWith("V2_ONCE_JSON="));
+    expect(serializedLine).toBeDefined();
+    const emitted = JSON.parse(serializedLine!.slice("V2_ONCE_JSON=".length)) as WorkspaceOnceActionResult;
+    const request = emitted.workspace_access_request;
+    const receipt = emitted.once_receipt;
+    requestMutation.mockResolvedValueOnce(emitted);
+
+    const parsed = await allowWorkspaceAccessOnce(mutationTransport, {
+      chat_id: request.chat_id,
+      access_request_id: request.access_request_id,
+      expected_revision: request.revision - 1,
+      path: receipt.submitted_path,
+      file_access: receipt.file_access,
+      commands: receipt.commands,
+      expected_grants_revision: 0,
+      expected_runtime_id: receipt.runtime_id,
+      expected_permission_revision: receipt.permission_revision - 1,
+    }, request.task.turn_id);
+
+    expect(parsed.once_receipt).toEqual(receipt);
+    expect(parsed.workspace_permissions.task_access?.folders).toContainEqual({
+      path: receipt.canonical_path,
+      file_access: receipt.file_access,
+      commands: receipt.commands,
+    });
+  });
+
   it("percent-encodes websocket keys when fetching webui-thread snapshot", async () => {
     await fetchWebuiThread("tok", "websocket:chat-1");
 
@@ -100,6 +409,22 @@ describe("webui API helpers", () => {
         cache: "no-store",
       }),
     );
+  });
+
+  it("hydrates the permission request from the owning webui-thread projection", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => folderAccessThreadFixture,
+      }),
+    );
+
+    const thread = await fetchWebuiThread("tok", "websocket:chat-title");
+
+    expect(thread?.workspace_access_request).toEqual(folderAccessThreadFixture.workspace_access_request);
   });
 
   it("passes pagination params when fetching a WebUI thread page", async () => {

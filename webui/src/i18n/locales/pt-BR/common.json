@@ -100,6 +100,7 @@
       "mcp": "MCP",
       "runtime": "Sistema",
       "advanced": "Segurança",
+      "folders": "Pastas e projetos",
       "apps": "Aplicativos",
       "automations": "Automações",
       "skills": "Habilidades"
@@ -215,6 +216,7 @@
       "workspacePath": "Espaço de trabalho padrão",
       "localServiceAccess": "Serviços locais",
       "webuiDefaultAccess": "Acesso padrão",
+      "managedFolderAccess": "Acesso às pastas gerenciado",
       "cliAppsCatalog": "Catálogo",
       "cliAppsFilter": "Filtro",
       "engine": "Motor",
@@ -260,6 +262,7 @@
       "cliAppsFilter": "Busque por aplicativo, categoria ou capacidade.",
       "localServiceAccess": "Permite que comandos shell com acesso completo alcancem serviços locais.",
       "webuiDefaultAccess": "Usado por chats web sem permissão específica de projeto.",
+      "managedFolderAccess": "As permissões de pasta controlam o acesso a arquivos e comandos. A preferência de acesso total não adiciona nem contorna uma permissão.",
       "securityManagedControls": "As buscas na web sempre protegem serviços locais, privados e de metadados. A segurança essencial dos canais fica em config.json.",
       "logs": "Abre a pasta de logs do motor nativo.",
       "diagnostics": "Exporta um pequeno relatório de tempo de execução para o suporte.",
@@ -452,7 +455,7 @@
       "collapsedDiff": "Diferenças recolhidas",
       "on": "Ligado",
       "off": "Desligado",
-      "defaultPermission": "Permissão padrão",
+      "defaultPermission": "Restrito",
       "fullAccess": "Acesso total",
       "configured": "Configurado",
       "notConfigured": "Não configurado",
@@ -1377,7 +1380,7 @@
         "accessAria": "Modo de acesso ao espaço de trabalho",
         "projectAria": "Escolher projeto",
         "projectPlaceholder": "Selecionar projeto",
-        "default": "Permissão padrão",
+        "default": "Restrito",
         "defaultShort": "Padrão",
         "full": "Acesso total",
         "fullShort": "Total"
@@ -1568,11 +1571,58 @@
   },
   "workspace": {
     "dialog": {
-      "defaultProject": "Espaço de trabalho padrão",
+      "defaultProject": "Usar a pasta inicial do agente",
       "manual": "Colar caminho",
       "manualPlaceholder": "/Users/nome/projeto",
-      "usePath": "Usar caminho",
+      "usePath": "Usar pasta",
       "absolutePathRequired": "Informe um caminho absoluto de pasta nesta máquina."
+    },
+    "recovery": {
+      "durationTitle": "Por quanto tempo este acesso deve durar?",
+      "allowOnce": "Permitir uma vez",
+      "allowOnceDescription": "Para esta tarefa, incluindo as etapas de continuidade. Não fica salvo para tarefas futuras.",
+      "alwaysAllow": "Sempre permitir",
+      "alwaysAllowDescription": "Salvo para uso futuro. Gerencie em Pastas e projetos.",
+      "allowOnceAndUse": "Permitir uma vez e usar a pasta",
+      "onceUnavailable": "O acesso pontual fica indisponível até que o Nanobot confirme o acesso restrito atual.",
+      "onceUnavailableFull": "O acesso pontual à pasta fica indisponível enquanto o acesso completo estiver ativo.",
+      "permissionRefreshFailed": "Não foi possível verificar o acesso atual. Atualize antes de permitir esta tarefa.",
+      "permissionRefreshing": "Verificando o acesso atual…",
+      "onceNotActive": "O acesso pontual não está mais ativo. Revise a pasta antes de continuar.",
+      "onceRetiringActive": "Um comando ainda está em execução com o acesso anterior. Aguarde ou pare o comando e tente novamente.",
+      "onceRetiringUnknown": "O Nanobot ainda não consegue confirmar se os comandos anteriores terminaram. As alterações de acesso estão pendentes.",
+      "onceRetiringFinished": "O trabalho anterior terminou. O acesso pontual ainda está sendo encerrado.",
+      "onceExpired": "O acesso pontual terminou. Revise a pasta novamente antes de continuar.",
+      "readyOnce": "Acesso permitido para esta tarefa. Pronto para continuar em {{path}}.",
+      "readyAlways": "Acesso salvo. Pronto para continuar em {{path}}."
+    },
+    "permissionV2": {
+      "actionFailed": "Não foi possível atualizar o acesso. Atualize este chat antes de tentar novamente.",
+      "confirmTitle": "Ativar acesso completo?",
+      "confirmDescription": "O Nanobot poderá ler e alterar arquivos e executar comandos além da pasta selecionada, conforme as permissões da sua conta do sistema operacional. O diretório e o contexto atuais de Working in serão mantidos. Novos chats começam no modo restrito.",
+      "enableFull": "Ativar acesso completo",
+      "fullEnding": "O acesso completo está terminando",
+      "fullIndicator": "Acesso completo",
+      "fullReach": "Arquivos e comandos neste dispositivo, conforme as permissões da sua conta do sistema operacional.",
+      "retiringActive": "Um comando ainda está em execução com o acesso anterior. Aguarde ou pare o comando e tente novamente.",
+      "retiringUnknown": "O Nanobot ainda não consegue confirmar se os comandos anteriores terminaram. As alterações de acesso estão pendentes.",
+      "retiringFinished": "O trabalho anterior terminou. Tente novamente para confirmar o acesso restrito.",
+      "retryRestricted": "Tentar novamente retornar ao modo restrito",
+      "returnRestricted": "Retornar ao modo restrito",
+      "sessionRequired": "Envie uma mensagem para criar este chat antes de ativar o acesso completo.",
+      "unavailable": "Acesso indisponível",
+      "legacyUnavailable": "Este gateway não informa as permissões de acesso atuais.",
+      "unavailableReasons": {
+        "controls_unavailable": "O acesso completo não está disponível com os controles locais atuais.",
+        "session_required": "Envie uma mensagem para criar este chat antes de ativar o acesso completo.",
+        "configured_sandbox": "O acesso completo não está disponível enquanto houver confinamento de comandos configurado.",
+        "supervisor_unavailable": "O acesso completo não está disponível porque o Nanobot não consegue supervisionar comandos com segurança.",
+        "permission_state_unavailable": "As permissões atuais não estão disponíveis. Atualize este chat antes de tentar novamente.",
+        "permission_retiring": "Não é possível ativar o acesso completo enquanto o trabalho anterior está terminando."
+      }
+    },
+    "management": {
+      "commandsAvailable": "Comandos disponíveis"
     }
   }
 }

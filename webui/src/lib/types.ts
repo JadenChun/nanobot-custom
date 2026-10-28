@@ -402,11 +402,143 @@ export interface ChatSummary {
 
 export type WorkspaceAccessMode = "restricted" | "full";
 export type WebuiDefaultAccessMode = "default" | "full";
+export type FolderAccessDuration = "once" | "always";
+export type TaskAccessState = "active" | "retiring" | "expired";
+export type PermissionFullUnavailableReason =
+  | "controls_unavailable"
+  | "session_required"
+  | "configured_sandbox"
+  | "supervisor_unavailable"
+  | "permission_state_unavailable"
+  | "permission_retiring";
+export type WorkspaceAccessBoundary = "folder" | "unrestricted";
+export type FullAccessUnavailableReason =
+  | "configured_restriction"
+  | "managed_access"
+  | "controls_unavailable"
+  | PermissionFullUnavailableReason;
+
+export type FolderFileAccess = "read_only" | "read_write";
+export type CommandUnavailableReason =
+  | "not_granted"
+  | "unsupported_platform"
+  | "sandbox_unavailable"
+  | "managed_repository_policy"
+  | "path_missing"
+  | "access_revoked"
+  | "permission_retiring"
+  | "supervisor_unavailable";
+
+export interface WorkspacePermissionProjection {
+  version: 1;
+  runtime_id: string;
+  revision: number;
+  mode: WorkspaceAccessMode;
+  state: "active" | "retiring";
+  can_enable_full: boolean;
+  full_access_unavailable_reason: PermissionFullUnavailableReason | null;
+  task_access: {
+    task_turn_id: string;
+    state: TaskAccessState;
+    folders: Array<{
+      path: string;
+      file_access: FolderFileAccess;
+      commands: boolean;
+    }>;
+  } | null;
+  retirement: {
+    reason:
+      | "task_ended"
+      | "task_cancelled"
+      | "task_replaced"
+      | "mode_changed"
+      | "source_changed"
+      | "session_reset"
+      | "session_deleted"
+      | "restart";
+    active_turn: boolean;
+    active_processes: number;
+    unknown_processes: number;
+  } | null;
+}
+
+export interface EffectiveWorkspaceAccess {
+  policy: "legacy" | "managed";
+  source: "agent_home" | "grant" | "configured" | "none" | "task" | "full";
+  grant_root: string | null;
+  exists: boolean;
+  read: boolean;
+  write: boolean;
+  boundary: WorkspaceAccessBoundary;
+  commands: {
+    requested: boolean;
+    available: boolean;
+    backend: "native" | "bwrap" | "none";
+    reason: CommandUnavailableReason | null;
+  };
+}
+
+export interface FolderGrantInput {
+  path: string;
+  file_access: FolderFileAccess;
+  commands: boolean;
+}
+
+export interface FolderGrantRow extends FolderGrantInput {
+  exists: boolean;
+  effective_access: EffectiveWorkspaceAccess;
+}
+
+/** Operation-specific canonical grant acknowledgement returned only by upsert. */
+export interface WorkspaceGrantReceipt {
+  submitted_path: string;
+  canonical_path: string;
+  file_access: FolderFileAccess;
+  commands: boolean;
+  grants_revision: number;
+}
+
+export interface RepositoryRecord {
+  name: string;
+  path: string;
+  purpose: string;
+  kind: "project" | "knowledge";
+  knowledge_repos: string[];
+  auto_sync: boolean;
+  sync_paths: string[];
+}
+
+export interface RepositoryRow extends RepositoryRecord {
+  exists: boolean;
+  effective_access: EffectiveWorkspaceAccess;
+}
+
+export interface WorkspaceManagementPayload {
+  grants_revision: number;
+  grants: FolderGrantRow[];
+  repositories: RepositoryRow[];
+}
+
+export interface RepositoryCandidate {
+  path: string;
+  suggested_name: string;
+  known_name: string | null;
+  effective_access: EffectiveWorkspaceAccess;
+}
+
+export interface RepositoryDiscoveryPayload {
+  root: string;
+  candidates: RepositoryCandidate[];
+  visited_directories: number;
+  truncated: boolean;
+}
 
 export interface WorkspaceScopePayload {
   project_path: string;
   project_name?: string;
   access_mode: WorkspaceAccessMode;
+  /** Optional on legacy-v1 gateways; always present in v2 workspace responses. */
+  effective_access?: EffectiveWorkspaceAccess;
   restrict_to_workspace?: boolean;
   sandbox_status?: {
     restrict_to_workspace: boolean;
@@ -423,11 +555,140 @@ export interface WorkspacesPayload {
   schema_version: number;
   default_access_mode: WebuiDefaultAccessMode;
   default_scope: WorkspaceScopePayload;
+  /** Optional fields keep clients compatible with legacy-v1 gateways. */
+  agent_home?: string;
+  managed_access?: boolean;
+  management?: WorkspaceManagementPayload | null;
   controls: {
     can_change_project: boolean;
     can_use_full_access: boolean;
+    /** Optional on gateways that predate permission-v2 mode controls. */
+    permission_v2?: boolean;
+    /** Optional on legacy-v1 gateways; null or a reason in v2 responses. */
+    full_access_unavailable_reason?: FullAccessUnavailableReason | null;
     can_pick_folder?: boolean;
+    can_manage_folders?: boolean;
+    can_manage_catalog?: boolean;
+    can_discover_repositories?: boolean;
   };
+}
+
+/** Successful grant-upsert response, retaining the normal workspace projection. */
+export interface WorkspaceGrantUpsertPayload extends WorkspacesPayload {
+  /** Null when an older or malformed gateway omits a usable operation receipt. */
+  grant_receipt: WorkspaceGrantReceipt | null;
+}
+
+export type FolderAccessReason =
+  | "folder_not_granted"
+  | "write_not_granted"
+  | "commands_not_granted"
+  | "folder_selection_required";
+export type FolderAccessOperation = "read" | "write" | "execute" | "discover" | "select" | "locate";
+export type FolderAccessTarget =
+  | { kind: "unknown"; path: null }
+  | { kind: "directory" | "file"; path: string };
+export type FolderAccessRequestStatus =
+  | "pending"
+  | "ready"
+  | "continuing"
+  | "continued"
+  | "cancelled"
+  | "invalidated";
+export type FolderAccessUnavailableReason =
+  | "task_changed"
+  | "focus_changed"
+  | "source_changed"
+  | "session_reset"
+  | "session_deleted"
+  | "access_changed"
+  | "path_missing"
+  | "path_changed"
+  | "context_unavailable"
+  | "continuation_unknown"
+  | "task_access_expired"
+  | "permission_retiring";
+
+export interface FolderAccessRequest {
+  version: 1;
+  access_request_id: string;
+  revision: number;
+  chat_id: string;
+  task: { turn_id: string; excerpt: string };
+  blocked_turn_id: string;
+  tool_call_id: string | null;
+  created_at_ms: number;
+  status: FolderAccessRequestStatus;
+  reason: FolderAccessReason;
+  operation: FolderAccessOperation;
+  target: FolderAccessTarget;
+  purpose: string;
+  selected_path: string | null;
+  selected_access: EffectiveWorkspaceAccess | null;
+  can_continue: boolean;
+  unavailable_reason: FolderAccessUnavailableReason | null;
+  continuation_turn_id: string | null;
+  /** Required on the current local v2 request view; absent on legacy gateways. */
+  selected_duration?: FolderAccessDuration | null;
+  /** Non-null only when the selected access is backed by task-local Once proof. */
+  task_access_state?: TaskAccessState | null;
+}
+
+export interface FolderAccessActionResult {
+  workspace_access_request: FolderAccessRequest;
+  workspace_scope: WorkspaceScopePayload;
+}
+
+export interface WorkspaceOnceReceipt {
+  version: 1;
+  duration: "once";
+  runtime_id: string;
+  permission_revision: number;
+  access_request_id: string;
+  request_revision: number;
+  task_turn_id: string;
+  submitted_path: string;
+  canonical_path: string;
+  file_access: FolderFileAccess;
+  commands: boolean;
+}
+
+export interface WorkspaceOnceActionInput {
+  chat_id: string;
+  access_request_id: string;
+  expected_revision: number;
+  path: string;
+  file_access: FolderFileAccess;
+  commands: boolean;
+  expected_grants_revision: number;
+  expected_runtime_id: string;
+  expected_permission_revision: number;
+}
+
+export interface WorkspaceOnceActionResult extends FolderAccessActionResult {
+  workspace_permissions: WorkspacePermissionProjection;
+  once_receipt: WorkspaceOnceReceipt;
+}
+
+export interface WorkspaceModeActionInput {
+  chat_id: string;
+  mode: WorkspaceAccessMode;
+  expected_runtime_id: string;
+  expected_permission_revision: number;
+}
+
+export interface WorkspaceModeActionResult {
+  workspace_scope: WorkspaceScopePayload;
+  workspace_permissions: WorkspacePermissionProjection;
+}
+
+export interface WorkspaceModeConflict {
+  error: {
+    status: 409;
+    message: "chat_running" | "native_processes_active" | "native_processes_unknown";
+  };
+  workspace_scope: WorkspaceScopePayload;
+  workspace_permissions: WorkspacePermissionProjection;
 }
 
 export type SidebarDensity = "comfortable" | "compact";
@@ -1450,6 +1711,10 @@ export type InboundEvent =
       chat_id: string;
       scope?: "metadata" | "thread" | string;
       workspace_scope?: WorkspaceScopePayload;
+      /** Local authenticated UI projection; absent on generic/remote notifications. */
+      workspace_access_request?: FolderAccessRequest;
+      /** Local authenticated UI projection; absent on generic/remote notifications. */
+      workspace_permissions?: WorkspacePermissionProjection;
     }
   | {
       event: "sidebar_state_updated";
@@ -1472,7 +1737,12 @@ export type InboundEvent =
       event: "webui_response";
       request_id: string;
       ok: false;
-      error: { status: number; message: string };
+      error: {
+        status: number;
+        message: string;
+        workspace_scope?: WorkspaceScopePayload;
+        workspace_permissions?: WorkspacePermissionProjection;
+      };
     }
   | {
       event: "error";
@@ -1537,6 +1807,10 @@ export interface WebuiThreadPersistedPayload {
   active_turn_id?: string | null;
   page?: WebuiThreadPagePayload;
   workspace_scope?: WorkspaceScopePayload;
+  /** Local authenticated UI projection; absent on remote/temporary reads. */
+  workspace_access_request?: FolderAccessRequest | null;
+  /** Local authenticated UI projection; absent on remote/temporary reads and old gateways. */
+  workspace_permissions?: WorkspacePermissionProjection | null;
 }
 
 export interface FilePreviewPayload {

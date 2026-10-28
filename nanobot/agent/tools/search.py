@@ -28,6 +28,7 @@ from nanobot.agent.tools.read_provenance import (
     qualified_text_bytes,
 )
 from nanobot.agent.turn import ToolOutcome
+from nanobot.context_repo.policy import FolderAccessNeededError
 from nanobot.security.workspace_access import current_tool_workspace
 from nanobot.utils.document import (
     LocatedDocumentLine,
@@ -374,7 +375,7 @@ class FindFilesTool(_SearchTool):
         head_limit: int | None = None,
         offset: int = 0,
         **kwargs: Any,
-    ) -> str:
+    ) -> str | ToolOutcome:
         cancelled = threading.Event()
         try:
             return await asyncio.to_thread(
@@ -392,6 +393,12 @@ class FindFilesTool(_SearchTool):
         except asyncio.CancelledError:
             cancelled.set()
             raise
+        except FolderAccessNeededError as e:
+            if self._resource_policy is not None:
+                from nanobot.agent.tools.workspace import folder_access_outcome
+
+                return folder_access_outcome(e, self._resource_policy)
+            return ToolResult.error("Error: file access is unavailable")
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -1013,6 +1020,12 @@ class GrepTool(_SearchTool):
                     return result
                 return ToolOutcome(content=result, producer_receipt=receipt)
             return result
+        except FolderAccessNeededError as e:
+            if self._resource_policy is not None:
+                from nanobot.agent.tools.workspace import folder_access_outcome
+
+                return folder_access_outcome(e, self._resource_policy)
+            return ToolResult.error("Error: file access is unavailable")
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:

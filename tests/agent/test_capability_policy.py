@@ -342,5 +342,15 @@ async def test_structured_search_honors_workspace_ignore_protected_binary_and_li
     assert ".env" not in result
     assert "binary.dat" not in result
     assert "showing first 1" in result.lower() or "truncated" in result.lower()
-    assert "outside allowed" in traversal.lower() or "outside" in traversal.lower()
+    assert isinstance(traversal, ToolOutcome)
+    assert traversal.stop_reason == "folder_access_required"
+    need = traversal.policy_metadata["folder_access"]
+    assert need["reason"] == "folder_not_granted"
+    assert need["operation"] == "read"
+    assert need["target"]["kind"] == "directory"
+    assert need["target"]["path"] == str(tmp_path.parent)
+    assert traversal.content == (
+        "Folder access is needed to continue this task. "
+        "Choose a folder or use an allowed project."
+    )
     assert (tmp_path / "visible.txt").read_text(encoding="utf-8") == "needle visible\nother"

@@ -137,7 +137,9 @@ async def test_offline_receipt_digest_conflict_preserves_new_memory_and_evidence
     workspace, sessions, source, pending = receipt_layout(tmp_path, base=b"newer", end=1, output="obsolete")
     memory = workspace / "memory" / "MEMORY.md"
     memory.write_bytes(b"newest")
-    raw, receipt_stat, source_raw = pending.read_bytes(), pending.stat(), source.read_bytes()
+    from tests.state_stat import content_stat
+
+    raw, receipt_stat, source_raw = pending.read_bytes(), content_stat(pending.stat()), source.read_bytes()
     for _ in range(2):
         with pytest.raises(OfflineMemoryRecoveryError):
             reconcile_pending_memory_receipt_offline(workspace, sessions_root=sessions)
@@ -149,7 +151,7 @@ async def test_offline_receipt_digest_conflict_preserves_new_memory_and_evidence
         assert header["last_consolidated"] == 0
         assert header["last_archived"] == 0
         assert source.read_bytes() == source_raw
-        assert pending.read_bytes() == raw and pending.stat() == receipt_stat
+        assert pending.read_bytes() == raw and content_stat(pending.stat()) == receipt_stat
         with pytest.raises(MemoryReceiptRecoveryRequired):
             MemoryStore(workspace, sessions_root=sessions)
     # Base-digest validation can follow conversion; its durable residue is not rolled back.

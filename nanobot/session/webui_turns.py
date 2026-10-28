@@ -7,7 +7,7 @@ import time
 from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from loguru import logger
@@ -59,6 +59,11 @@ from nanobot.webui.metadata import (
 from nanobot.webui.session_identity import is_webui_session_key
 from nanobot.webui.transcript import append_session_message_input
 
+if TYPE_CHECKING:
+    from nanobot.session.workspace_access_continuation import (
+        WorkspaceAccessContinuationReference,
+    )
+
 WEBUI_SESSION_METADATA_KEY = "webui"
 WEBUI_TITLE_METADATA_KEY = "title"
 WEBUI_TITLE_USER_EDITED_METADATA_KEY = "title_user_edited"
@@ -78,6 +83,8 @@ class _WebsocketTurn:
     started_at: float
     turn_id: str | None
     transcript_persistence_failed: bool = False
+    continuation_reference: WorkspaceAccessContinuationReference | None = None
+    continuation_admitted: bool = False
 
 
 # All in-flight lifecycle owners per chat, in admission order. The three maps
@@ -373,6 +380,92 @@ def register_queued_websocket_turn_if_idle(
     return owner
 
 
+def bind_queued_websocket_turn_continuation(
+    chat_id: str,
+    owner: str,
+    reference: WorkspaceAccessContinuationReference,
+) -> bool:
+    """Bind one private continuation capability to its queued lifecycle owner."""
+    from nanobot.session.workspace_access_continuation import (
+        is_workspace_access_continuation_reference,
+    )
+
+    if not is_workspace_access_continuation_reference(reference):
+        return False
+    turns = _WEBSOCKET_ACTIVE_TURNS.get(chat_id)
+    if turns is None:
+        return False
+    turn = turns.get(owner)
+    if (
+        turn is None
+        or turn.turn_id != reference.turn_id
+        or turn.continuation_reference is not None
+        or turn.continuation_admitted
+    ):
+        return False
+    turns[owner] = replace(turn, continuation_reference=reference)
+    return True
+
+
+def queued_websocket_turn_matches_continuation(
+    chat_id: str,
+    owner: str,
+    reference: WorkspaceAccessContinuationReference,
+) -> bool:
+    """Check exact private capability identity while the owner remains queued."""
+    turn = _WEBSOCKET_ACTIVE_TURNS.get(chat_id, {}).get(owner)
+    return (
+        turn is not None
+        and turn.turn_id == reference.turn_id
+        and turn.continuation_reference is reference
+        and not turn.continuation_admitted
+    )
+
+
+def mark_websocket_turn_continuation_admitted(
+    chat_id: str,
+    owner: str,
+    reference: WorkspaceAccessContinuationReference,
+) -> bool:
+    """Keep admitted continuations protected from duplicate-rejection cleanup."""
+    turn = _WEBSOCKET_ACTIVE_TURNS.get(chat_id, {}).get(owner)
+    if turn is None or turn.continuation_reference is not reference:
+        return False
+    if turn.continuation_admitted:
+        return True
+    turns = _WEBSOCKET_ACTIVE_TURNS[chat_id]
+    turns[owner] = replace(turn, continuation_admitted=True)
+    return True
+
+
+def clear_queued_websocket_turn_continuation(
+    chat_id: str,
+    owner: str,
+    reference: WorkspaceAccessContinuationReference,
+) -> bool:
+    """Release only the exact still-queued private continuation reservation."""
+    from nanobot.session.workspace_access_continuation import (
+        is_workspace_access_continuation_reference,
+    )
+
+    if not is_workspace_access_continuation_reference(reference):
+        return False
+    turns = _WEBSOCKET_ACTIVE_TURNS.get(chat_id)
+    if turns is None:
+        return False
+    turn = turns.get(owner)
+    if (
+        turn is None
+        or turn.continuation_reference is not reference
+        or turn.continuation_admitted
+        or turn.transcript_persistence_failed
+    ):
+        return False
+    turns.pop(owner)
+    _sync_websocket_turn_projection(chat_id)
+    return True
+
+
 def websocket_turn_owner_is_registered(
     chat_id: str,
     owner: str,
@@ -474,8 +567,12 @@ async def publish_turn_run_status(
         current_turn_id = turn_id if isinstance(turn_id, str) and turn_id else None
         turns = _WEBSOCKET_ACTIVE_TURNS.setdefault(cid, {})
         # Re-registration makes this owner the latest projection.
-        turns.pop(owner, None)
-        turns[owner] = _WebsocketTurn(started_at=t0, turn_id=current_turn_id)
+        existing = turns.pop(owner, None)
+        turns[owner] = (
+            replace(existing, started_at=t0, turn_id=current_turn_id)
+            if existing is not None
+            else _WebsocketTurn(started_at=t0, turn_id=current_turn_id)
+        )
         _sync_websocket_turn_projection(cid)
     await bus.publish_outbound(
         outbound_message_for_event(

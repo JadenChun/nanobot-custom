@@ -6,8 +6,12 @@ import type {
   ChannelConnectPayload,
   ChannelValidationPayload,
   ChatSummary,
+  EffectiveWorkspaceAccess,
   CliAppsPayload,
   FilePreviewPayload,
+  FolderAccessActionResult,
+  FolderAccessRequest,
+  FolderGrantInput,
   ImageGenerationSettingsUpdate,
   McpPresetsPayload,
   McpOAuthFlowPayload,
@@ -22,6 +26,8 @@ import type {
   ProviderOAuthCompletionResult,
   ProviderOAuthLoginResult,
   ProviderSettingsUpdate,
+  RepositoryDiscoveryPayload,
+  RepositoryRecord,
   RecoveryState,
   SessionDeleteResult,
   SessionHandle,
@@ -40,6 +46,15 @@ import type {
   TranscriptionSettingsUpdate,
   WebSearchSettingsUpdate,
   WorkspacesPayload,
+  WorkspaceGrantReceipt,
+  WorkspaceGrantUpsertPayload,
+  WorkspaceModeActionInput,
+  WorkspaceModeActionResult,
+  WorkspaceModeConflict,
+  WorkspaceOnceActionInput,
+  WorkspaceOnceActionResult,
+  WorkspaceOnceReceipt,
+  WorkspacePermissionProjection,
   WebuiThreadPersistedPayload,
   WorkspaceScopePayload,
 } from "./types";
@@ -64,10 +79,22 @@ function isSlashCommandLifecycle(value: unknown): value is SlashCommandLifecycle
 }
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  details: unknown;
+  constructor(status: number, message: string, details?: unknown) {
     super(message);
     this.status = status;
+    this.details = details;
     this.name = "ApiError";
+  }
+}
+
+export class WorkspaceModeConflictError extends ApiError {
+  conflict: WorkspaceModeConflict;
+
+  constructor(message: string, conflict: WorkspaceModeConflict) {
+    super(409, message);
+    this.conflict = conflict;
+    this.name = "WorkspaceModeConflictError";
   }
 }
 
@@ -136,6 +163,7 @@ async function mutation<T>(
   try {
     return await transport.requestMutation<T>(action, payload, timeoutMs);
   } catch (reason) {
+    if (reason instanceof ApiError) throw reason;
     const status = (
       typeof reason === "object"
       && reason !== null
@@ -143,8 +171,480 @@ async function mutation<T>(
       && typeof reason.status === "number"
     ) ? reason.status : 500;
     const message = reason instanceof Error ? reason.message : "WebUI mutation failed";
-    throw new ApiError(status, message);
+    const workspaceModeConflict = (
+      typeof reason === "object"
+      && reason !== null
+      && "workspaceModeConflict" in reason
+    ) ? (reason as { workspaceModeConflict?: unknown }).workspaceModeConflict : undefined;
+    throw new ApiError(status, message, workspaceModeConflict === undefined
+      ? undefined
+      : { workspaceModeConflict });
   }
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCanonicalAbsolutePath(path: string): boolean {
+  return path.startsWith("/")
+    || /^[A-Za-z]:[\\/]/.test(path)
+    || /^\\\\[^\\]+\\[^\\]+/.test(path);
+}
+
+function parseWorkspaceGrantReceipt(
+  value: unknown,
+  grant: FolderGrantInput,
+): WorkspaceGrantReceipt | null {
+  if (!isObjectRecord(value)) return null;
+  const receiptFields = [
+    "canonical_path",
+    "commands",
+    "file_access",
+    "grants_revision",
+    "submitted_path",
+  ];
+  const keys = Object.keys(value).sort();
+  if (keys.length !== receiptFields.length || keys.some((key, index) => key !== receiptFields[index])) {
+    return null;
+  }
+
+  const canonicalPath = value.canonical_path;
+  const revision = value.grants_revision;
+  if (
+    value.submitted_path !== grant.path
+    || value.file_access !== grant.file_access
+    || value.commands !== grant.commands
+    || typeof canonicalPath !== "string"
+    || !isCanonicalAbsolutePath(canonicalPath)
+    || typeof revision !== "number"
+    || !Number.isInteger(revision)
+    || revision < 0
+  ) return null;
+
+  return {
+    submitted_path: grant.path,
+    canonical_path: canonicalPath,
+    file_access: grant.file_access,
+    commands: grant.commands,
+    grants_revision: revision,
+  };
+}
+
+const PERMISSION_FULL_REASONS = new Set([
+  "controls_unavailable",
+  "session_required",
+  "configured_sandbox",
+  "supervisor_unavailable",
+  "permission_state_unavailable",
+  "permission_retiring",
+]);
+const TASK_ACCESS_STATES = new Set(["active", "retiring", "expired"]);
+const RETIREMENT_REASONS = new Set([
+  "task_ended",
+  "task_cancelled",
+  "task_replaced",
+  "mode_changed",
+  "source_changed",
+  "session_reset",
+  "session_deleted",
+  "restart",
+]);
+const FOLDER_ACCESS_STATUSES = new Set([
+  "pending",
+  "ready",
+  "continuing",
+  "continued",
+  "cancelled",
+  "invalidated",
+]);
+const FOLDER_ACCESS_REASONS = new Set([
+  "folder_not_granted",
+  "write_not_granted",
+  "commands_not_granted",
+  "folder_selection_required",
+]);
+const FOLDER_ACCESS_OPERATIONS = new Set([
+  "read",
+  "write",
+  "execute",
+  "discover",
+  "select",
+  "locate",
+]);
+const FOLDER_ACCESS_UNAVAILABLE_REASONS = new Set([
+  "task_changed",
+  "focus_changed",
+  "source_changed",
+  "session_reset",
+  "session_deleted",
+  "access_changed",
+  "path_missing",
+  "path_changed",
+  "context_unavailable",
+  "continuation_unknown",
+  "task_access_expired",
+  "permission_retiring",
+]);
+
+function hasExactKeys(value: Record<string, unknown>, fields: readonly string[]): boolean {
+  const keys = Object.keys(value).sort();
+  const expected = [...fields].sort();
+  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
+}
+
+function isNonnegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function parseEffectiveWorkspaceAccess(value: unknown): EffectiveWorkspaceAccess | null {
+  if (!isObjectRecord(value)) return null;
+  const { commands } = value;
+  if (!isObjectRecord(commands)) return null;
+  const commandReasons = new Set([
+    "not_granted",
+    "unsupported_platform",
+    "sandbox_unavailable",
+    "managed_repository_policy",
+    "path_missing",
+    "access_revoked",
+    "permission_retiring",
+    "supervisor_unavailable",
+  ]);
+  if (
+    (value.policy !== "legacy" && value.policy !== "managed")
+    || !["agent_home", "grant", "configured", "none", "task", "full"].includes(String(value.source))
+    || (value.grant_root !== null && typeof value.grant_root !== "string")
+    || typeof value.exists !== "boolean"
+    || typeof value.read !== "boolean"
+    || typeof value.write !== "boolean"
+    || (value.boundary !== "folder" && value.boundary !== "unrestricted")
+    || typeof commands.requested !== "boolean"
+    || typeof commands.available !== "boolean"
+    || (commands.backend !== "native" && commands.backend !== "bwrap" && commands.backend !== "none")
+    || (commands.reason !== null && (typeof commands.reason !== "string" || !commandReasons.has(commands.reason)))
+  ) return null;
+  return value as unknown as EffectiveWorkspaceAccess;
+}
+
+export function normalizeWorkspacePermissionProjection(value: unknown): WorkspacePermissionProjection | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, [
+    "version",
+    "runtime_id",
+    "revision",
+    "mode",
+    "state",
+    "can_enable_full",
+    "full_access_unavailable_reason",
+    "task_access",
+    "retirement",
+  ])) return null;
+  if (
+    value.version !== 1
+    || typeof value.runtime_id !== "string"
+    || !/^[0-9a-f]{32}$/.test(value.runtime_id)
+    || !isNonnegativeInteger(value.revision)
+    || (value.mode !== "restricted" && value.mode !== "full")
+    || (value.state !== "active" && value.state !== "retiring")
+    || typeof value.can_enable_full !== "boolean"
+    || (
+      value.full_access_unavailable_reason !== null
+      && (
+        typeof value.full_access_unavailable_reason !== "string"
+        || !PERMISSION_FULL_REASONS.has(value.full_access_unavailable_reason)
+      )
+    )
+  ) return null;
+
+  let taskAccess: WorkspacePermissionProjection["task_access"] = null;
+  if (value.task_access !== null) {
+    if (!isObjectRecord(value.task_access) || !hasExactKeys(value.task_access, ["task_turn_id", "state", "folders"])) return null;
+    if (
+      typeof value.task_access.task_turn_id !== "string"
+      || !value.task_access.task_turn_id
+      || typeof value.task_access.state !== "string"
+      || !TASK_ACCESS_STATES.has(value.task_access.state)
+      || !Array.isArray(value.task_access.folders)
+    ) return null;
+    const folders: NonNullable<WorkspacePermissionProjection["task_access"]>["folders"] = [];
+    for (const candidate of value.task_access.folders) {
+      if (
+        !isObjectRecord(candidate)
+        || !hasExactKeys(candidate, ["path", "file_access", "commands"])
+        || typeof candidate.path !== "string"
+        || !isCanonicalAbsolutePath(candidate.path)
+        || (candidate.file_access !== "read_only" && candidate.file_access !== "read_write")
+        || typeof candidate.commands !== "boolean"
+      ) return null;
+      folders.push({
+        path: candidate.path,
+        file_access: candidate.file_access,
+        commands: candidate.commands,
+      });
+    }
+    taskAccess = {
+      task_turn_id: value.task_access.task_turn_id,
+      state: value.task_access.state as NonNullable<WorkspacePermissionProjection["task_access"]>["state"],
+      folders,
+    };
+  }
+
+  let retirement: WorkspacePermissionProjection["retirement"] = null;
+  if (value.retirement !== null) {
+    if (!isObjectRecord(value.retirement) || !hasExactKeys(value.retirement, [
+      "reason",
+      "active_turn",
+      "active_processes",
+      "unknown_processes",
+    ])) return null;
+    if (
+      typeof value.retirement.reason !== "string"
+      || !RETIREMENT_REASONS.has(value.retirement.reason)
+      || typeof value.retirement.active_turn !== "boolean"
+      || !isNonnegativeInteger(value.retirement.active_processes)
+      || !isNonnegativeInteger(value.retirement.unknown_processes)
+    ) return null;
+    retirement = {
+      reason: value.retirement.reason as NonNullable<WorkspacePermissionProjection["retirement"]>["reason"],
+      active_turn: value.retirement.active_turn,
+      active_processes: value.retirement.active_processes,
+      unknown_processes: value.retirement.unknown_processes,
+    };
+  }
+
+  return {
+    version: 1,
+    runtime_id: value.runtime_id,
+    revision: value.revision,
+    mode: value.mode,
+    state: value.state,
+    can_enable_full: value.can_enable_full,
+    full_access_unavailable_reason: value.full_access_unavailable_reason as WorkspacePermissionProjection["full_access_unavailable_reason"],
+    task_access: taskAccess,
+    retirement,
+  };
+}
+
+function parseWorkspaceScope(value: unknown): WorkspaceScopePayload | null {
+  if (!isObjectRecord(value) || !isCanonicalAbsolutePath(String(value.project_path ?? ""))) return null;
+  if (value.access_mode !== "restricted" && value.access_mode !== "full") return null;
+  let effectiveAccess: EffectiveWorkspaceAccess | undefined;
+  if (value.effective_access !== undefined) {
+    const parsedAccess = parseEffectiveWorkspaceAccess(value.effective_access);
+    if (!parsedAccess) return null;
+    effectiveAccess = parsedAccess;
+  }
+  if (value.project_name !== undefined && typeof value.project_name !== "string") return null;
+  if (value.restrict_to_workspace !== undefined && typeof value.restrict_to_workspace !== "boolean") return null;
+  return {
+    ...(value as unknown as WorkspaceScopePayload),
+    ...(effectiveAccess ? { effective_access: effectiveAccess } : {}),
+  };
+}
+
+function parseFolderAccessRequest(value: unknown): FolderAccessRequest | null {
+  if (!isObjectRecord(value) || value.version !== 1) return null;
+  if (
+    typeof value.access_request_id !== "string"
+    || !value.access_request_id
+    || !isNonnegativeInteger(value.revision)
+    || typeof value.chat_id !== "string"
+    || !value.chat_id
+    || !isObjectRecord(value.task)
+    || typeof value.task.turn_id !== "string"
+    || !value.task.turn_id
+    || typeof value.task.excerpt !== "string"
+    || typeof value.blocked_turn_id !== "string"
+    || (value.tool_call_id !== null && typeof value.tool_call_id !== "string")
+    || typeof value.created_at_ms !== "number"
+    || !Number.isFinite(value.created_at_ms)
+    || typeof value.status !== "string"
+    || !FOLDER_ACCESS_STATUSES.has(value.status)
+    || typeof value.reason !== "string"
+    || !FOLDER_ACCESS_REASONS.has(value.reason)
+    || typeof value.operation !== "string"
+    || !FOLDER_ACCESS_OPERATIONS.has(value.operation)
+    || !isObjectRecord(value.target)
+    || (value.target.kind === "unknown" && value.target.path !== null)
+    || ((value.target.kind === "directory" || value.target.kind === "file")
+      && (typeof value.target.path !== "string" || !isCanonicalAbsolutePath(value.target.path)))
+    || (value.target.kind !== "unknown" && value.target.kind !== "directory" && value.target.kind !== "file")
+    || typeof value.purpose !== "string"
+    || (value.selected_path !== null && (typeof value.selected_path !== "string" || !isCanonicalAbsolutePath(value.selected_path)))
+    || (value.selected_access !== null && !parseEffectiveWorkspaceAccess(value.selected_access))
+    || typeof value.can_continue !== "boolean"
+    || (value.unavailable_reason !== null && (typeof value.unavailable_reason !== "string" || !FOLDER_ACCESS_UNAVAILABLE_REASONS.has(value.unavailable_reason)))
+    || (value.continuation_turn_id !== null && typeof value.continuation_turn_id !== "string")
+    || (value.selected_duration !== undefined && value.selected_duration !== null && value.selected_duration !== "once" && value.selected_duration !== "always")
+    || (value.task_access_state !== undefined && value.task_access_state !== null && (typeof value.task_access_state !== "string" || !TASK_ACCESS_STATES.has(value.task_access_state)))
+  ) return null;
+  return {
+    ...(value as unknown as FolderAccessRequest),
+    ...(value.selected_access === null
+      ? { selected_access: null }
+      : { selected_access: parseEffectiveWorkspaceAccess(value.selected_access)! }),
+  };
+}
+
+function parseWorkspaceOnceReceipt(value: unknown): WorkspaceOnceReceipt | null {
+  if (!isObjectRecord(value) || !hasExactKeys(value, [
+    "version",
+    "duration",
+    "runtime_id",
+    "permission_revision",
+    "access_request_id",
+    "request_revision",
+    "task_turn_id",
+    "submitted_path",
+    "canonical_path",
+    "file_access",
+    "commands",
+  ])) return null;
+  if (
+    value.version !== 1
+    || value.duration !== "once"
+    || typeof value.runtime_id !== "string"
+    || !/^[0-9a-f]{32}$/.test(value.runtime_id)
+    || !isNonnegativeInteger(value.permission_revision)
+    || typeof value.access_request_id !== "string"
+    || typeof value.task_turn_id !== "string"
+    || !value.task_turn_id
+    || typeof value.submitted_path !== "string"
+    || !isCanonicalAbsolutePath(value.submitted_path)
+    || typeof value.canonical_path !== "string"
+    || !isCanonicalAbsolutePath(value.canonical_path)
+    || (value.file_access !== "read_only" && value.file_access !== "read_write")
+    || typeof value.commands !== "boolean"
+    || !isNonnegativeInteger(value.request_revision)
+  ) return null;
+  return value as unknown as WorkspaceOnceReceipt;
+}
+
+function sameEffectiveWorkspaceAccess(
+  left: EffectiveWorkspaceAccess,
+  right: EffectiveWorkspaceAccess,
+): boolean {
+  return left.policy === right.policy
+    && left.source === right.source
+    && left.grant_root === right.grant_root
+    && left.exists === right.exists
+    && left.read === right.read
+    && left.write === right.write
+    && left.boundary === right.boundary
+    && left.commands.requested === right.commands.requested
+    && left.commands.available === right.commands.available
+    && left.commands.backend === right.commands.backend
+    && left.commands.reason === right.commands.reason;
+}
+
+function parseWorkspaceOnceResult(
+  value: unknown,
+  input: WorkspaceOnceActionInput,
+  expectedTaskTurnId: string,
+): WorkspaceOnceActionResult | null {
+  if (!isObjectRecord(value)) return null;
+  const request = parseFolderAccessRequest(value.workspace_access_request);
+  const scope = parseWorkspaceScope(value.workspace_scope);
+  const permissions = normalizeWorkspacePermissionProjection(value.workspace_permissions);
+  const receipt = parseWorkspaceOnceReceipt(value.once_receipt);
+  if (!request || !scope || !permissions || !receipt) return null;
+  const selected = request.selected_access;
+  const scopeAccess = scope.effective_access;
+  const task = permissions.task_access;
+  if (
+    receipt.runtime_id !== input.expected_runtime_id
+    || receipt.permission_revision <= input.expected_permission_revision
+    || receipt.permission_revision !== permissions.revision
+    || receipt.access_request_id !== input.access_request_id
+    || receipt.request_revision !== request.revision
+    || receipt.request_revision <= input.expected_revision
+    || receipt.task_turn_id !== expectedTaskTurnId
+    || receipt.submitted_path !== input.path
+    || receipt.file_access !== input.file_access
+    || receipt.commands !== input.commands
+    || request.chat_id !== input.chat_id
+    || request.access_request_id !== input.access_request_id
+    || request.revision !== receipt.request_revision
+    || request.task.turn_id !== expectedTaskTurnId
+    || request.status !== "ready"
+    || request.selected_duration !== "once"
+    || request.task_access_state !== "active"
+    || request.selected_path !== receipt.canonical_path
+    || !selected
+    || scope.project_path !== receipt.canonical_path
+    || scope.access_mode !== "restricted"
+    || !scopeAccess
+    || selected.policy !== "managed"
+    || selected.source !== "task"
+    || selected.grant_root !== receipt.canonical_path
+    || !selected.exists
+    || !selected.read
+    || selected.write !== (input.file_access === "read_write")
+    || selected.boundary !== "folder"
+    || selected.commands.requested !== input.commands
+    || !sameEffectiveWorkspaceAccess(selected, scopeAccess)
+    || permissions.mode !== "restricted"
+    || permissions.state !== "active"
+    || !task
+    || task.task_turn_id !== expectedTaskTurnId
+    || task.state !== "active"
+    || !task.folders.some((folder) => (
+      folder.path === receipt.canonical_path
+      && folder.file_access === input.file_access
+      && folder.commands === input.commands
+    ))
+  ) return null;
+  return {
+    workspace_access_request: request,
+    workspace_scope: scope,
+    workspace_permissions: permissions,
+    once_receipt: receipt,
+  };
+}
+
+function parseWorkspaceModeActionResult(
+  value: unknown,
+  input: WorkspaceModeActionInput,
+): WorkspaceModeActionResult | null {
+  if (!isObjectRecord(value)) return null;
+  const scope = parseWorkspaceScope(value.workspace_scope);
+  const permissions = normalizeWorkspacePermissionProjection(value.workspace_permissions);
+  if (
+    !scope
+    || !permissions
+    || scope.access_mode !== input.mode
+    || permissions.mode !== input.mode
+    || permissions.state !== "active"
+    || permissions.runtime_id !== input.expected_runtime_id
+    || permissions.revision < input.expected_permission_revision
+  ) return null;
+  return { workspace_scope: scope, workspace_permissions: permissions };
+}
+
+function parseWorkspaceModeConflict(value: unknown): WorkspaceModeConflict | null {
+  if (!isObjectRecord(value) || !isObjectRecord(value.error)) return null;
+  const { error } = value;
+  if (
+    error.status !== 409
+    || (error.message !== "chat_running"
+      && error.message !== "native_processes_active"
+      && error.message !== "native_processes_unknown")
+  ) return null;
+  const scope = parseWorkspaceScope(value.workspace_scope);
+  const permissions = normalizeWorkspacePermissionProjection(value.workspace_permissions);
+  if (
+    !scope
+    || !permissions
+    || scope.access_mode !== "full"
+    || permissions.mode !== "full"
+    || permissions.state !== "retiring"
+    || permissions.retirement === null
+  ) return null;
+  return {
+    error: { status: 409, message: error.message },
+    workspace_scope: scope,
+    workspace_permissions: permissions,
+  };
 }
 
 function compactMcpValues(values: Record<string, unknown>): Record<string, unknown> {
@@ -251,7 +751,17 @@ export async function fetchWebuiThread(
   });
   if (res.status === 404) return null;
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
-  return (await res.json()) as WebuiThreadPersistedPayload;
+  const payload: unknown = await res.json();
+  if (!isObjectRecord(payload)) return null;
+  if (payload.workspace_permissions === undefined) {
+    return payload as unknown as WebuiThreadPersistedPayload;
+  }
+  return {
+    ...payload,
+    workspace_permissions: payload.workspace_permissions === null
+      ? null
+      : normalizeWorkspacePermissionProjection(payload.workspace_permissions),
+  } as unknown as WebuiThreadPersistedPayload;
 }
 
 export async function fetchFilePreview(
@@ -498,6 +1008,149 @@ export async function fetchWorkspaces(
     undefined,
     API_READ_TIMEOUT_MS,
   );
+}
+
+export async function upsertWorkspaceGrant(
+  transport: WebUIMutationTransport,
+  grant: FolderGrantInput,
+  expectedRevision: number,
+): Promise<WorkspaceGrantUpsertPayload> {
+  const payload = await mutation<WorkspacesPayload & { grant_receipt?: unknown }>(
+    transport,
+    "workspace.grant.upsert",
+    {
+    expected_revision: expectedRevision,
+    path: grant.path,
+    file_access: grant.file_access,
+    commands: grant.commands,
+    },
+  );
+  return {
+    ...payload,
+    grant_receipt: parseWorkspaceGrantReceipt(payload.grant_receipt, grant),
+  };
+}
+
+export async function allowWorkspaceAccessOnce(
+  transport: WebUIMutationTransport,
+  input: WorkspaceOnceActionInput,
+  expectedTaskTurnId: string,
+): Promise<WorkspaceOnceActionResult> {
+  const response = await mutation<unknown>(transport, "workspace.access.allow_once", {
+    chat_id: input.chat_id,
+    access_request_id: input.access_request_id,
+    expected_revision: input.expected_revision,
+    path: input.path,
+    file_access: input.file_access,
+    commands: input.commands,
+    expected_grants_revision: input.expected_grants_revision,
+    expected_runtime_id: input.expected_runtime_id,
+    expected_permission_revision: input.expected_permission_revision,
+  });
+  const parsed = parseWorkspaceOnceResult(response, input, expectedTaskTurnId);
+  if (!parsed) throw new ApiError(502, "Invalid workspace Once receipt or response");
+  return parsed;
+}
+
+export async function setWorkspaceAccessMode(
+  transport: WebUIMutationTransport,
+  input: WorkspaceModeActionInput,
+): Promise<WorkspaceModeActionResult> {
+  try {
+    const response = await mutation<unknown>(transport, "workspace.access.mode.set", {
+      chat_id: input.chat_id,
+      mode: input.mode,
+      expected_runtime_id: input.expected_runtime_id,
+      expected_permission_revision: input.expected_permission_revision,
+    });
+    const parsed = parseWorkspaceModeActionResult(response, input);
+    if (!parsed) throw new ApiError(502, "Invalid workspace permission mode response");
+    return parsed;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409 && isObjectRecord(error.details)) {
+      const rawConflict = error.details.workspaceModeConflict;
+      const conflict = parseWorkspaceModeConflict(rawConflict);
+      if (conflict && conflict.error.message === error.message) {
+        throw new WorkspaceModeConflictError(error.message, conflict);
+      }
+    }
+    throw error;
+  }
+}
+
+export async function revokeWorkspaceGrant(
+  transport: WebUIMutationTransport,
+  path: string,
+  expectedRevision: number,
+): Promise<WorkspacesPayload> {
+  return mutation<WorkspacesPayload>(transport, "workspace.grant.revoke", {
+    expected_revision: expectedRevision,
+    path,
+  });
+}
+
+export async function rememberRepository(
+  transport: WebUIMutationTransport,
+  entry: RepositoryRecord,
+): Promise<WorkspacesPayload> {
+  return mutation<WorkspacesPayload>(transport, "repository.remember", { entry });
+}
+
+export async function forgetRepository(
+  transport: WebUIMutationTransport,
+  name: string,
+): Promise<WorkspacesPayload> {
+  return mutation<WorkspacesPayload>(transport, "repository.forget", { name });
+}
+
+export async function discoverRepositories(
+  transport: WebUIMutationTransport,
+  path: string,
+): Promise<RepositoryDiscoveryPayload> {
+  return mutation<RepositoryDiscoveryPayload>(transport, "repository.discover", { path });
+}
+
+export async function resolveWorkspaceAccessRequest(
+  transport: WebUIMutationTransport,
+  chatId: string,
+  accessRequestId: string,
+  expectedRevision: number,
+  path: string,
+  expectedGrantsRevision: number,
+): Promise<FolderAccessActionResult> {
+  return mutation<FolderAccessActionResult>(transport, "workspace.access.resolve", {
+    chat_id: chatId,
+    access_request_id: accessRequestId,
+    expected_revision: expectedRevision,
+    path,
+    expected_grants_revision: expectedGrantsRevision,
+  });
+}
+
+export async function continueWorkspaceAccessRequest(
+  transport: WebUIMutationTransport,
+  chatId: string,
+  accessRequestId: string,
+  expectedRevision: number,
+): Promise<FolderAccessActionResult> {
+  return mutation<FolderAccessActionResult>(transport, "workspace.access.continue", {
+    chat_id: chatId,
+    access_request_id: accessRequestId,
+    expected_revision: expectedRevision,
+  });
+}
+
+export async function cancelWorkspaceAccessRequest(
+  transport: WebUIMutationTransport,
+  chatId: string,
+  accessRequestId: string,
+  expectedRevision: number,
+): Promise<FolderAccessActionResult> {
+  return mutation<FolderAccessActionResult>(transport, "workspace.access.cancel", {
+    chat_id: chatId,
+    access_request_id: accessRequestId,
+    expected_revision: expectedRevision,
+  });
 }
 
 export async function fetchCliApps(

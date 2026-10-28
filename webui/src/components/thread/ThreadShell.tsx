@@ -5,6 +5,11 @@ import { useTranslation } from "react-i18next";
 
 import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailabilityContext";
 import { FilePreviewPanel } from "@/components/FilePreviewPanel";
+import {
+  FolderAccessRequestCard,
+  type CorrelatedFolderAccessResult,
+  type FolderAccessResolveIntent,
+} from "@/components/thread/FolderAccessRequestCard";
 import { SessionHandleLabel } from "@/components/SessionHandleLabel";
 import { PromptNavigator } from "@/components/thread/PromptNavigator";
 import { RecoveryNotice } from "@/components/thread/RecoveryNotice";
@@ -27,6 +32,8 @@ import {
   fetchMcpPresets,
   fetchSettings,
   listSlashCommands,
+  setWorkspaceAccessMode,
+  WorkspaceModeConflictError,
 } from "@/lib/api";
 import {
   CLI_APPS_CHANGED_EVENT,
@@ -42,12 +49,15 @@ import type { CanonicalRunSnapshot, StreamError } from "@/lib/nanobot-client";
 import { inferProviderFromModelName, providerDisplayLabel } from "@/lib/provider-brand";
 import type {
   ChatSummary,
+  FolderAccessRequest,
   RoundUsage,
   SettingsPayload,
   SlashCommand,
   SkillSummary,
   UIMessage,
   WorkspaceScopePayload,
+  WorkspaceAccessMode,
+  WorkspaceOnceReceipt,
   WorkspacesPayload,
 } from "@/lib/types";
 import { projectWebuiThreadMessages } from "@/lib/thread-display-compat";
@@ -78,6 +88,214 @@ interface PendingCanonicalCommit {
   hydrate: PendingCanonicalHydrate;
   messages: UIMessage[];
   previousMessages: UIMessage[];
+}
+
+type PendingRecoveryInvalidation =
+  | {
+      kind: "input";
+      chatId: string;
+      turnId: string;
+      requestId: string;
+      revision: number;
+    }
+  | {
+      kind: "focus";
+      chatId: string;
+      requestId: string;
+      revision: number;
+    }
+  | {
+      kind: "replacement";
+      chatId: string;
+      requestId: string;
+      revision: number;
+    };
+
+type WorkspaceFocusIdentity = Pick<WorkspaceScopePayload, "project_path" | "access_mode">;
+
+interface PendingRecoveryResolve {
+  intent: FolderAccessResolveIntent;
+  result: CorrelatedFolderAccessResult | null;
+  baselineFocus: WorkspaceFocusIdentity | null;
+}
+
+function workspaceFocusIdentity(scope: WorkspaceScopePayload | null | undefined): WorkspaceFocusIdentity | null {
+  if (!scope || !scope.project_path) return null;
+  return { project_path: scope.project_path, access_mode: scope.access_mode };
+}
+
+function sameWorkspaceFocus(
+  left: WorkspaceFocusIdentity | null,
+  right: WorkspaceFocusIdentity | null,
+): boolean {
+  return left !== null
+    && right !== null
+    && left.project_path === right.project_path
+    && left.access_mode === right.access_mode;
+}
+
+function sameManagedAccess(
+  left: NonNullable<FolderAccessRequest["selected_access"]>,
+  right: NonNullable<WorkspaceScopePayload["effective_access"]>,
+): boolean {
+  return left.policy === "managed"
+    && right.policy === "managed"
+    && left.source === right.source
+    && left.grant_root === right.grant_root
+    && left.exists === right.exists
+    && left.read === right.read
+    && left.write === right.write
+    && left.boundary === right.boundary
+    && left.commands.requested === right.commands.requested
+    && left.commands.available === right.commands.available
+    && left.commands.backend === right.commands.backend
+    && left.commands.reason === right.commands.reason;
+}
+
+function folderResolveProjectionMatches(
+  intent: FolderAccessResolveIntent,
+  result: CorrelatedFolderAccessResult,
+  expectedAccessMode: WorkspaceFocusIdentity["access_mode"],
+): boolean {
+  const request = result.workspace_access_request;
+  const scope = result.workspace_scope;
+  const commonMatches = request.chat_id === intent.chatId
+    && request.access_request_id === intent.accessRequestId
+    && request.revision > intent.expectedRevision
+    && request.task.turn_id === intent.taskTurnId
+    && request.status === "ready"
+    && request.can_continue
+    && request.selected_path === intent.canonicalPath
+    && request.selected_access !== null
+    && scope.project_path === intent.canonicalPath
+    && scope.access_mode === expectedAccessMode
+    && scope.effective_access !== undefined
+    && sameManagedAccess(request.selected_access, scope.effective_access)
+    && (intent.expectedFileAccess === undefined
+      || request.selected_access.write === (intent.expectedFileAccess === "read_write"))
+    && (intent.expectedCommands === undefined
+      || request.selected_access.commands.requested === intent.expectedCommands)
+    && (request.selected_duration == null || request.selected_duration === intent.duration);
+  if (!commonMatches) return false;
+  if (intent.duration !== "once") return true;
+  const permissions = result.workspace_permissions;
+  const taskAccess = permissions?.task_access;
+  const selectedAccess = request.selected_access;
+  const folder = taskAccess?.folders.find((candidate) => candidate.path === intent.canonicalPath);
+  return !!permissions
+    && !!taskAccess
+    && !!selectedAccess
+    && typeof intent.expectedPermissionRevision === "number"
+    && intent.expectedFileAccess !== undefined
+    && typeof intent.expectedCommands === "boolean"
+    && permissions.runtime_id === intent.expectedRuntimeId
+    && permissions.revision > intent.expectedPermissionRevision
+    && permissions.mode === "restricted"
+    && permissions.state === "active"
+    && taskAccess.task_turn_id === intent.taskTurnId
+    && taskAccess.state === "active"
+    && folder?.file_access === intent.expectedFileAccess
+    && folder?.commands === intent.expectedCommands
+    && request.selected_duration === "once"
+    && request.task_access_state === "active"
+    && scope.access_mode === "restricted"
+    && selectedAccess.source === "task"
+    && selectedAccess.grant_root === intent.canonicalPath
+    && selectedAccess.read
+    && selectedAccess.write === (intent.expectedFileAccess === "read_write")
+    && selectedAccess.commands.requested === intent.expectedCommands;
+}
+
+function folderResolveResultMatches(
+  intent: FolderAccessResolveIntent,
+  result: CorrelatedFolderAccessResult,
+  expectedAccessMode: WorkspaceFocusIdentity["access_mode"],
+): boolean {
+  if (!folderResolveProjectionMatches(intent, result, expectedAccessMode)) return false;
+  if (intent.duration !== "once") return true;
+  const receipt: WorkspaceOnceReceipt | undefined = result.once_receipt;
+  const request = result.workspace_access_request;
+  const permissions = result.workspace_permissions;
+  return !!receipt
+    && !!permissions
+    && receipt.duration === "once"
+    && receipt.access_request_id === intent.accessRequestId
+    && receipt.request_revision === request.revision
+    && receipt.task_turn_id === intent.taskTurnId
+    && receipt.submitted_path === intent.submittedPath
+    && receipt.canonical_path === intent.canonicalPath
+    && receipt.runtime_id === intent.expectedRuntimeId
+    && receipt.permission_revision === permissions.revision
+    && receipt.file_access === intent.expectedFileAccess
+    && receipt.commands === intent.expectedCommands;
+}
+
+function sameFolderResolveAcknowledgement(
+  left: CorrelatedFolderAccessResult,
+  right: CorrelatedFolderAccessResult,
+): boolean {
+  const leftPermissions = left.workspace_permissions;
+  const rightPermissions = right.workspace_permissions;
+  return left.workspace_access_request.chat_id === right.workspace_access_request.chat_id
+    && left.workspace_access_request.access_request_id === right.workspace_access_request.access_request_id
+    && left.workspace_access_request.revision === right.workspace_access_request.revision
+    && left.workspace_access_request.task.turn_id === right.workspace_access_request.task.turn_id
+    && left.workspace_access_request.selected_path === right.workspace_access_request.selected_path
+    && left.workspace_scope.project_path === right.workspace_scope.project_path
+    && left.workspace_scope.access_mode === right.workspace_scope.access_mode
+    && !!left.workspace_access_request.selected_access
+    && !!right.workspace_access_request.selected_access
+    && !!left.workspace_scope.effective_access
+    && !!right.workspace_scope.effective_access
+    && sameManagedAccess(left.workspace_access_request.selected_access, right.workspace_scope.effective_access)
+    && sameManagedAccess(right.workspace_access_request.selected_access, left.workspace_scope.effective_access)
+    && (leftPermissions === undefined
+      ? rightPermissions === undefined
+      : !!rightPermissions
+        && leftPermissions.runtime_id === rightPermissions.runtime_id
+        && leftPermissions.revision === rightPermissions.revision
+        && leftPermissions.mode === rightPermissions.mode
+        && leftPermissions.state === rightPermissions.state
+        && leftPermissions.task_access?.task_turn_id === rightPermissions.task_access?.task_turn_id
+        && leftPermissions.task_access?.state === rightPermissions.task_access?.state);
+}
+
+function requestMatchesResolveAcknowledgement(
+  request: FolderAccessRequest,
+  result: CorrelatedFolderAccessResult,
+): boolean {
+  const acknowledged = result.workspace_access_request;
+  const effectiveAccess = result.workspace_scope.effective_access;
+  return request.chat_id === acknowledged.chat_id
+    && request.access_request_id === acknowledged.access_request_id
+    && request.revision === acknowledged.revision
+    && request.task.turn_id === acknowledged.task.turn_id
+    && request.status === "ready"
+    && request.can_continue
+    && request.selected_path === acknowledged.selected_path
+    && request.selected_access !== null
+    && (acknowledged.selected_duration == null || request.selected_duration === acknowledged.selected_duration)
+    && (acknowledged.selected_duration !== "once"
+      || request.task_access_state === "active")
+    && effectiveAccess !== undefined
+    && sameManagedAccess(request.selected_access, effectiveAccess);
+}
+
+function sameFolderResolveIntent(
+  left: FolderAccessResolveIntent,
+  right: FolderAccessResolveIntent,
+): boolean {
+  return left.chatId === right.chatId
+    && left.accessRequestId === right.accessRequestId
+    && left.expectedRevision === right.expectedRevision
+    && left.taskTurnId === right.taskTurnId
+    && left.duration === right.duration
+    && left.expectedRuntimeId === right.expectedRuntimeId
+    && left.expectedPermissionRevision === right.expectedPermissionRevision
+    && left.expectedFileAccess === right.expectedFileAccess
+    && left.expectedCommands === right.expectedCommands
+    && left.submittedPath === right.submittedPath
+    && left.canonicalPath === right.canonicalPath;
 }
 
 function sameMessageShape(a: MessageShape, b: MessageShape): boolean {
@@ -417,9 +635,12 @@ interface ThreadShellProps {
   workspaceScope?: WorkspaceScopePayload | null;
   workspaceDefaultScope?: WorkspaceScopePayload | null;
   workspaceControls?: WorkspacesPayload["controls"] | null;
+  workspaces?: WorkspacesPayload | null;
+  onRefreshWorkspaces?: () => Promise<void>;
   workspaceScopeDisabled?: boolean;
   workspaceError?: string | null;
   onWorkspaceScopeChange?: (scope: WorkspaceScopePayload) => void;
+  onWorkspaceScopeAcknowledged?: (scope: WorkspaceScopePayload) => void;
   settingsSnapshot?: SettingsPayload | null;
   onOpenModelSettings?: () => void;
   skills?: SkillSummary[];
@@ -716,9 +937,12 @@ export function ThreadShell({
   workspaceScope = null,
   workspaceDefaultScope = null,
   workspaceControls = null,
+  workspaces = null,
+  onRefreshWorkspaces,
   workspaceScopeDisabled = false,
   workspaceError = null,
   onWorkspaceScopeChange,
+  onWorkspaceScopeAcknowledged,
   settingsSnapshot = null,
   onOpenModelSettings,
   skills = [],
@@ -726,6 +950,19 @@ export function ThreadShell({
   const { t } = useTranslation();
   const chatId = session?.chatId ?? null;
   const historyKey = temporary ? null : session?.key ?? null;
+  const permissionOwnerChatIdRef = useRef(chatId);
+  permissionOwnerChatIdRef.current = chatId;
+  const currentScopeFocus = workspaceFocusIdentity(workspaceScope);
+  const acknowledgedWorkspaceFocusRef = useRef<{
+    chatId: string | null;
+    focus: WorkspaceFocusIdentity | null;
+  }>({ chatId, focus: currentScopeFocus });
+  if (acknowledgedWorkspaceFocusRef.current.chatId !== chatId) {
+    acknowledgedWorkspaceFocusRef.current = { chatId, focus: currentScopeFocus };
+  } else if (!acknowledgedWorkspaceFocusRef.current.focus && currentScopeFocus) {
+    // The selected canonical scope may load after the session shell mounts.
+    acknowledgedWorkspaceFocusRef.current.focus = currentScopeFocus;
+  }
   const mentionSessions = useMemo(
     () => sessions.filter((candidate) => candidate.key !== historyKey),
     [historyKey, sessions],
@@ -743,10 +980,140 @@ export function ThreadShell({
     continuity: historyContinuity,
     lineage: historyLineage,
     activeTurnId: historyActiveTurnId,
+    workspaceAccessRequest,
+    workspaceAccessRequestLoading,
+    workspaceAccessRequestError,
+    workspacePermissions,
+    workspacePermissionsLoading,
+    workspacePermissionsError,
+    markWorkspaceAccessRequestStale,
+    updateWorkspaceAccessRequest,
+    refreshWorkspaceAccessRequest,
+    markWorkspacePermissionsStale,
+    updateWorkspacePermissions,
+    refreshWorkspacePermissions,
     refresh: refreshHistory,
     version: historyVersion,
     forkBoundaryMessageCount,
   } = useSessionHistory(historyKey);
+  const pendingRecoveryInvalidationRef = useRef<PendingRecoveryInvalidation | null>(null);
+  const pendingRecoveryResolveRef = useRef<PendingRecoveryResolve | null>(null);
+  const recoveryRefreshGenerationRef = useRef(0);
+  useEffect(() => {
+    pendingRecoveryInvalidationRef.current = null;
+    pendingRecoveryResolveRef.current = null;
+  }, [chatId]);
+  const pendingRecoveryInvalidationSettled = useCallback((request: typeof workspaceAccessRequest) => {
+    const pending = pendingRecoveryInvalidationRef.current;
+    if (!pending) return true;
+    if (pending.chatId !== chatId) {
+      pendingRecoveryInvalidationRef.current = null;
+      return true;
+    }
+    if (!request) {
+      pendingRecoveryInvalidationRef.current = null;
+      return true;
+    }
+    if (
+      pending.kind === "replacement"
+      && request.chat_id === chatId
+      && request.access_request_id !== pending.requestId
+    ) {
+      pendingRecoveryInvalidationRef.current = null;
+      return true;
+    }
+    if (
+      pending.kind === "input"
+      && request.task.turn_id === pending.turnId
+    ) {
+      pendingRecoveryInvalidationRef.current = null;
+      return true;
+    }
+    if (
+      request.access_request_id === pending.requestId
+      && request.revision > pending.revision
+      && request.status !== "pending"
+      && request.status !== "ready"
+    ) {
+      pendingRecoveryInvalidationRef.current = null;
+      return true;
+    }
+    return false;
+  }, [chatId]);
+  const startRecoveryResolve = useCallback((intent: FolderAccessResolveIntent) => {
+    if (
+      intent.chatId !== chatId
+      || !workspaceAccessRequest
+      || workspaceAccessRequest.chat_id !== chatId
+      || workspaceAccessRequest.access_request_id !== intent.accessRequestId
+      || workspaceAccessRequest.revision !== intent.expectedRevision
+      || workspaceAccessRequest.task.turn_id !== intent.taskTurnId
+      || (workspaceAccessRequest.status !== "pending" && workspaceAccessRequest.status !== "ready")
+      || (intent.duration === "once" && (
+        !workspacePermissions
+        || workspacePermissions.runtime_id !== intent.expectedRuntimeId
+        || workspacePermissions.revision !== intent.expectedPermissionRevision
+        || workspacePermissions.mode !== "restricted"
+        || workspacePermissions.state !== "active"
+      ))
+      || pendingRecoveryInvalidationRef.current !== null
+    ) {
+      pendingRecoveryResolveRef.current = null;
+      return;
+    }
+    const focusRecord = acknowledgedWorkspaceFocusRef.current;
+    const baselineFocus = focusRecord.chatId === chatId ? focusRecord.focus : null;
+    pendingRecoveryResolveRef.current = { intent, result: null, baselineFocus };
+  }, [chatId, workspaceAccessRequest, workspacePermissions]);
+  const settleRecoveryResolve = useCallback((
+    intent: FolderAccessResolveIntent,
+    result: CorrelatedFolderAccessResult | null,
+  ): boolean => {
+    const pending = pendingRecoveryResolveRef.current;
+    if (!pending || !sameFolderResolveIntent(pending.intent, intent)) return false;
+    if (!result) {
+      pendingRecoveryResolveRef.current = null;
+      return false;
+    }
+    if (
+      intent.chatId !== chatId
+      || pendingRecoveryInvalidationRef.current !== null
+      || !pending.baselineFocus
+      || !folderResolveResultMatches(intent, result, pending.baselineFocus.access_mode)
+    ) return false;
+    const alreadyAcknowledged = pending.result;
+    if (
+      alreadyAcknowledged
+      && !sameFolderResolveAcknowledgement(alreadyAcknowledged, result)
+    ) return false;
+    if (
+      !alreadyAcknowledged
+      && !sameWorkspaceFocus(
+        acknowledgedWorkspaceFocusRef.current.chatId === chatId
+          ? acknowledgedWorkspaceFocusRef.current.focus
+          : null,
+        pending.baselineFocus,
+      )
+    ) return false;
+    pending.result = result;
+    acknowledgedWorkspaceFocusRef.current = {
+      chatId,
+      focus: workspaceFocusIdentity(result.workspace_scope),
+    };
+    return true;
+  }, [chatId]);
+  const refreshRecoveryProjection = useCallback(async () => {
+    const generation = ++recoveryRefreshGenerationRef.current;
+    try {
+      const refreshed = await refreshWorkspaceAccessRequest();
+      if (generation !== recoveryRefreshGenerationRef.current) return;
+      if (!pendingRecoveryInvalidationSettled(refreshed)) {
+        markWorkspaceAccessRequestStale();
+      }
+    } catch {
+      // A failed repair read keeps the old card visible with actions disabled.
+    }
+  }, [markWorkspaceAccessRequestStale, pendingRecoveryInvalidationSettled, refreshWorkspaceAccessRequest]);
   const { client, getToken, ingressLimits, modelName, token } = useClient();
   const pickWorkspaceFolder = useCallback(async (): Promise<string | null> => {
     const response = await client.requestMutation<{ path: unknown }>(
@@ -814,10 +1181,19 @@ export function ThreadShell({
   }, [chatId, historical]);
   const handleTurnEnd = useCallback(() => {
     if (chatId) activeViewportTurnByChatIdRef.current.delete(chatId);
+    if (workspaceAccessRequest || pendingRecoveryInvalidationRef.current) {
+      void refreshRecoveryProjection();
+    }
     setSubmittedViewportTurnId(null);
     setFallbackModelName(null);
     onTurnEnd?.();
-  }, [chatId, onTurnEnd]);
+  }, [
+    chatId,
+    onTurnEnd,
+    pendingRecoveryInvalidationRef,
+    refreshRecoveryProjection,
+    workspaceAccessRequest,
+  ]);
   const {
     messages,
     messagesReady,
@@ -1275,15 +1651,220 @@ export function ThreadShell({
 
   useEffect(() => {
     if (!historyKey || !chatId) return;
-    return client.onSessionUpdate((updatedChatId, scope) => {
+    return client.onSessionUpdate((updatedChatId, scope, workspaceScopeUpdate, accessRequestUpdate, permissionsUpdate) => {
       if (updatedChatId !== chatId) return;
+      if (permissionsUpdate) updateWorkspacePermissions(permissionsUpdate);
+      const pendingResolve = pendingRecoveryResolveRef.current;
+      const eventResult = workspaceScopeUpdate && accessRequestUpdate
+        ? {
+            workspace_access_request: accessRequestUpdate,
+            workspace_scope: workspaceScopeUpdate,
+            ...(permissionsUpdate ? { workspace_permissions: permissionsUpdate } : {}),
+          }
+        : null;
+      const incomingRequest = eventResult?.workspace_access_request;
+      const focusRecord = acknowledgedWorkspaceFocusRef.current;
+      const previousFocus = focusRecord.chatId === chatId ? focusRecord.focus : null;
+      const incomingFocus = workspaceFocusIdentity(workspaceScopeUpdate);
+      const sameCanonicalFocus = sameWorkspaceFocus(previousFocus, incomingFocus);
+      const matchingResolveEvent = !!(
+        eventResult
+        && incomingRequest
+        && pendingResolve
+        && pendingResolve.intent.chatId === chatId
+        && pendingResolve.baselineFocus
+        && pendingRecoveryInvalidationRef.current === null
+        && workspaceAccessRequest?.chat_id === chatId
+        && workspaceAccessRequest.access_request_id === pendingResolve.intent.accessRequestId
+        && workspaceAccessRequest.task.turn_id === pendingResolve.intent.taskTurnId
+        && folderResolveProjectionMatches(
+          pendingResolve.intent,
+          eventResult,
+          pendingResolve.baselineFocus.access_mode,
+        )
+        && sameWorkspaceFocus(
+          previousFocus,
+          pendingResolve.result
+            ? workspaceFocusIdentity(pendingResolve.result.workspace_scope)
+            : pendingResolve.baselineFocus,
+        )
+        && (
+          pendingResolve.result
+            ? sameFolderResolveAcknowledgement(pendingResolve.result, eventResult)
+            : workspaceAccessRequest.revision === pendingResolve.intent.expectedRevision
+              && incomingRequest.revision > workspaceAccessRequest.revision
+        )
+      );
+      const requestStillMatchesResolve = !!(
+        pendingResolve
+        && accessRequestUpdate
+        && accessRequestUpdate.chat_id === pendingResolve.intent.chatId
+        && accessRequestUpdate.access_request_id === pendingResolve.intent.accessRequestId
+        && accessRequestUpdate.task.turn_id === pendingResolve.intent.taskTurnId
+        && (
+          (
+            accessRequestUpdate.revision === pendingResolve.intent.expectedRevision
+            && (accessRequestUpdate.status === "pending" || accessRequestUpdate.status === "ready")
+          )
+          || (
+            pendingResolve.result
+            && requestMatchesResolveAcknowledgement(accessRequestUpdate, pendingResolve.result)
+          )
+        )
+      );
+      if (pendingResolve && accessRequestUpdate && !matchingResolveEvent && !requestStillMatchesResolve) {
+        // A replaced or advanced request cannot reuse an old resolve receipt.
+        pendingRecoveryResolveRef.current = null;
+      }
+      if (matchingResolveEvent && eventResult) {
+        // This precise newer request + selected scope pair is the user's
+        // in-flight resolve acknowledgement, not an unrelated focus change.
+        // An event has no Once receipt. Keep the validated HTTP acknowledgement
+        // intact so an equal-revision projection cannot turn it back into a
+        // stale request while the owning reads are still in flight.
+        if (pendingResolve && !pendingResolve.result?.once_receipt) {
+          pendingResolve.result = eventResult;
+        }
+      } else if (workspaceScopeUpdate && !sameCanonicalFocus) {
+        // Compare the canonical folder and access mode before advancing the
+        // baseline. Effective policy/backend changes are capability refreshes.
+        pendingRecoveryResolveRef.current = null;
+        if (workspaceAccessRequest && !pendingRecoveryInvalidationRef.current) {
+          pendingRecoveryInvalidationRef.current = {
+            kind: "focus",
+            chatId,
+            requestId: workspaceAccessRequest.access_request_id,
+            revision: workspaceAccessRequest.revision,
+          };
+        }
+      }
+      if (workspaceScopeUpdate) {
+        acknowledgedWorkspaceFocusRef.current = { chatId, focus: incomingFocus };
+      }
+      const replacedRequest = !!(
+        accessRequestUpdate
+        && workspaceAccessRequest?.chat_id === chatId
+        && accessRequestUpdate.chat_id === chatId
+        && accessRequestUpdate.access_request_id !== workspaceAccessRequest.access_request_id
+      );
+      const existingInvalidation = pendingRecoveryInvalidationRef.current;
+      if (
+        replacedRequest
+        && workspaceAccessRequest
+        && (!existingInvalidation || existingInvalidation.kind === "focus")
+      ) {
+        pendingRecoveryInvalidationRef.current = {
+          kind: "replacement",
+          chatId: workspaceAccessRequest.chat_id,
+          requestId: workspaceAccessRequest.access_request_id,
+          revision: workspaceAccessRequest.revision,
+        };
+      }
+      if (accessRequestUpdate) {
+        if (matchingResolveEvent) {
+          // Once receipts bind this projection already; equal revisions are
+          // idempotent and must not invalidate the acknowledgement's reads.
+          if (
+            workspaceAccessRequest?.access_request_id === accessRequestUpdate.access_request_id
+            && accessRequestUpdate.revision > workspaceAccessRequest.revision
+            && (
+              pendingResolve?.intent.duration !== "once"
+              || !!pendingResolve.result?.once_receipt
+            )
+          ) {
+            updateWorkspaceAccessRequest(accessRequestUpdate);
+          } else if (
+            pendingResolve?.intent.duration === "once"
+            && !pendingResolve.result?.once_receipt
+          ) {
+            // The session event carries the exact projection, but only the
+            // HTTP acknowledgement carries the Once receipt. Keep the old
+            // card stale and locked until both channels agree.
+            markWorkspaceAccessRequestStale();
+          }
+        } else if (pendingRecoveryInvalidationRef.current?.kind === "replacement") {
+          // A different request id must be confirmed by the current history read.
+          markWorkspaceAccessRequestStale();
+          void refreshRecoveryProjection();
+        } else if (workspaceScopeUpdate && sameCanonicalFocus) {
+          // Refresh capabilities and the request projection, but never infer
+          // that a same-folder policy/backend change is a reviewed selection.
+          markWorkspaceAccessRequestStale();
+          void refreshRecoveryProjection();
+        } else if (
+          pendingRecoveryInvalidationRef.current
+          && workspaceAccessRequest?.access_request_id === accessRequestUpdate.access_request_id
+          && accessRequestUpdate.revision <= workspaceAccessRequest.revision
+        ) {
+          // An equal/older event cannot settle an invalidation created from a
+          // later user or focus action, even if its status is terminal.
+          markWorkspaceAccessRequestStale();
+          void refreshRecoveryProjection();
+        } else if (!pendingRecoveryInvalidationSettled(accessRequestUpdate)) {
+          markWorkspaceAccessRequestStale();
+          void refreshRecoveryProjection();
+        } else {
+          if (workspaceAccessRequest?.access_request_id === accessRequestUpdate.access_request_id) {
+            if (accessRequestUpdate.revision > workspaceAccessRequest.revision) {
+              updateWorkspaceAccessRequest(accessRequestUpdate);
+            }
+          } else {
+            markWorkspaceAccessRequestStale();
+            void refreshRecoveryProjection();
+          }
+        }
+      } else if (
+        workspaceAccessRequest
+        && (scope === "metadata" || workspaceScopeUpdate || scope === "thread")
+      ) {
+        markWorkspaceAccessRequestStale();
+        void refreshRecoveryProjection();
+      }
       if (scope === "metadata") return;
       // A turn-end thread refresh can arrive while the viewport is easing the
       // final layout change. User-driven scrolling already disables following,
       // so keep an active programmatic follow alive across canonical hydration.
       refreshCanonicalHistory();
     });
-  }, [chatId, client, historyKey, refreshCanonicalHistory]);
+  }, [
+    chatId,
+    client,
+    historyKey,
+    markWorkspaceAccessRequestStale,
+    pendingRecoveryInvalidationRef,
+    pendingRecoveryResolveRef,
+    pendingRecoveryInvalidationSettled,
+    refreshCanonicalHistory,
+    refreshRecoveryProjection,
+    updateWorkspaceAccessRequest,
+    updateWorkspacePermissions,
+    workspaceAccessRequest,
+  ]);
+
+  useEffect(() => {
+    if (!historyKey || !chatId) return;
+    return client.onError((error) => {
+      if (error.kind === "workspace_scope_rejected" && error.chatId === chatId) {
+        if (
+          pendingRecoveryInvalidationRef.current?.kind === "focus"
+          && pendingRecoveryInvalidationRef.current.chatId === chatId
+        ) {
+          pendingRecoveryInvalidationRef.current = null;
+        }
+        void refreshRecoveryProjection();
+      }
+      if (
+        error.kind === "turn_rejected"
+        && error.chatId === chatId
+        && pendingRecoveryInvalidationRef.current?.kind === "input"
+        && pendingRecoveryInvalidationRef.current.chatId === chatId
+        && pendingRecoveryInvalidationRef.current.turnId === error.turnId
+      ) {
+        pendingRecoveryInvalidationRef.current = null;
+        void refreshRecoveryProjection();
+      }
+    });
+  }, [chatId, client, historyKey, pendingRecoveryInvalidationRef, refreshRecoveryProjection]);
 
   const wasPageHiddenRef = useRef(document.visibilityState === "hidden");
   useEffect(() => {
@@ -1439,12 +2020,97 @@ export function ThreadShell({
         && !submitted.sideChannel
         && options?.continueActiveTurn !== true
       ) {
+        if (workspaceAccessRequest) {
+          pendingRecoveryResolveRef.current = null;
+          pendingRecoveryInvalidationRef.current = {
+            kind: "input",
+            chatId,
+            turnId: submitted.turnId,
+            requestId: workspaceAccessRequest.access_request_id,
+            revision: workspaceAccessRequest.revision,
+          };
+          markWorkspaceAccessRequestStale();
+        }
         activeViewportTurnByChatIdRef.current.set(chatId, submitted.turnId);
         setSubmittedViewportTurnId(submitted.turnId);
       }
     },
-    [chatId, send, withWorkspaceScope],
+    [chatId, markWorkspaceAccessRequestStale, pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, send, withWorkspaceScope, workspaceAccessRequest],
   );
+
+  const handleWorkspaceScopeChange = useCallback((scope: WorkspaceScopePayload) => {
+    if (workspaceAccessRequest && chatId) {
+      pendingRecoveryResolveRef.current = null;
+      pendingRecoveryInvalidationRef.current = {
+        kind: "focus",
+        chatId,
+        requestId: workspaceAccessRequest.access_request_id,
+        revision: workspaceAccessRequest.revision,
+      };
+      markWorkspaceAccessRequestStale();
+    }
+    onWorkspaceScopeChange?.(scope);
+  }, [chatId, markWorkspaceAccessRequestStale, onWorkspaceScopeChange, pendingRecoveryInvalidationRef, pendingRecoveryResolveRef, workspaceAccessRequest]);
+
+  const mutateWorkspaceAccessMode = useCallback(async (mode: WorkspaceAccessMode, retryRetirement = false) => {
+    const ownerChatId = chatId;
+    if (!ownerChatId || temporary) throw new Error("session_required");
+    markWorkspacePermissionsStale();
+    const current = await refreshWorkspacePermissions();
+    if (permissionOwnerChatIdRef.current !== ownerChatId || temporary) return;
+    if (!current) throw new Error("permission_state_unavailable");
+    if (retryRetirement && (current.mode !== "full" || current.state !== "retiring")) {
+      updateWorkspacePermissions(current);
+      return;
+    }
+    if (mode === "full" && (
+      current.mode !== "restricted"
+      || current.state !== "active"
+      || !current.can_enable_full
+    )) {
+      updateWorkspacePermissions(current);
+      throw new Error(current.full_access_unavailable_reason ?? "permission_state_changed");
+    }
+    try {
+      const result = await setWorkspaceAccessMode(client, {
+        chat_id: ownerChatId,
+        mode,
+        expected_runtime_id: current.runtime_id,
+        expected_permission_revision: current.revision,
+      });
+      if (permissionOwnerChatIdRef.current !== ownerChatId || temporary) return;
+      updateWorkspacePermissions(result.workspace_permissions);
+      onWorkspaceScopeAcknowledged?.(result.workspace_scope);
+      await refreshWorkspaceAccessRequest().catch(() => null);
+    } catch (reason) {
+      if (reason instanceof WorkspaceModeConflictError) {
+        if (permissionOwnerChatIdRef.current === ownerChatId && !temporary) {
+          updateWorkspacePermissions(reason.conflict.workspace_permissions);
+          onWorkspaceScopeAcknowledged?.(reason.conflict.workspace_scope);
+          await refreshWorkspaceAccessRequest().catch(() => null);
+          return;
+        }
+      }
+      throw reason;
+    }
+  }, [
+    chatId,
+    client,
+    markWorkspacePermissionsStale,
+    onWorkspaceScopeAcknowledged,
+    refreshWorkspaceAccessRequest,
+    refreshWorkspacePermissions,
+    temporary,
+    updateWorkspacePermissions,
+  ]);
+
+  const handleWorkspaceAccessModeChange = useCallback((mode: WorkspaceAccessMode) => {
+    return mutateWorkspaceAccessMode(mode);
+  }, [mutateWorkspaceAccessMode]);
+
+  const retryWorkspaceRestricted = useCallback(() => {
+    return mutateWorkspaceAccessMode("restricted", true);
+  }, [mutateWorkspaceAccessMode]);
 
   const handleOpenFilePreview = useCallback((path: string) => {
     if (filePreviewCloseTimerRef.current !== null) {
@@ -1562,6 +2228,35 @@ export function ThreadShell({
         />
       ) : null}
       {session ? (
+        <>
+        {!temporary && workspaceAccessRequest ? (
+          <FolderAccessRequestCard
+            chatId={chatId}
+            request={workspaceAccessRequest}
+            requestLoading={workspaceAccessRequestLoading}
+            requestRefreshFailed={workspaceAccessRequestError}
+            busy={turnActive || workspaceScopeDisabled}
+            workspaces={workspaces}
+            onUpdateRequest={updateWorkspaceAccessRequest}
+            workspacePermissions={workspacePermissions}
+            workspacePermissionsLoading={workspacePermissionsLoading}
+            workspacePermissionsError={workspacePermissionsError}
+            onUpdateWorkspacePermissions={updateWorkspacePermissions}
+            onRefreshWorkspacePermissions={refreshWorkspacePermissions}
+            onRefreshRequest={refreshWorkspaceAccessRequest}
+            onRetryRequestRefresh={async () => {
+              await Promise.all([
+                refreshWorkspaceAccessRequest(),
+                onRefreshWorkspaces?.(),
+              ]);
+            }}
+            onApplyWorkspaceScope={(scope) => onWorkspaceScopeAcknowledged?.(scope)}
+            onResolveStarted={startRecoveryResolve}
+            onResolveResult={settleRecoveryResolve}
+            onRefreshWorkspaces={onRefreshWorkspaces ?? (async () => {})}
+            onPickFolder={workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined}
+          />
+        ) : null}
         <ThreadComposer
           onSend={handleThreadSend}
           disabled={!chatId}
@@ -1598,12 +2293,20 @@ export function ThreadShell({
           workspaceControlsHidden={temporary}
           workspaceDefaultScope={workspaceDefaultScope}
           workspaceControls={workspaceControls}
+          workspaces={workspaces}
+          onRefreshWorkspaces={onRefreshWorkspaces}
           workspaceScopeDisabled={workspaceScopeDisabled}
           workspaceError={workspaceError}
           onPickWorkspaceFolder={
             workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
           }
-          onWorkspaceScopeChange={onWorkspaceScopeChange}
+          onWorkspaceScopeChange={handleWorkspaceScopeChange}
+          workspacePermissions={workspacePermissions}
+          workspacePermissionsLoading={workspacePermissionsLoading}
+          workspacePermissionsError={workspacePermissionsError}
+          persistentWorkspaceChat={!temporary && !!chatId}
+          onWorkspaceAccessModeChange={handleWorkspaceAccessModeChange}
+          onRetryWorkspaceRestricted={retryWorkspaceRestricted}
           pendingQueueKey={temporary ? null : chatId}
           transcriptionProvider={settingsSnapshot?.transcription?.provider}
           ingressLimits={ingressLimits}
@@ -1611,6 +2314,7 @@ export function ThreadShell({
           focusRequest={composerFocusSignal}
           onQuotedContextChange={setQuotedContext}
         />
+        </>
       ) : (
         <ThreadComposer
           onSend={handleWelcomeSend}
@@ -1648,12 +2352,14 @@ export function ThreadShell({
           workspaceControlsHidden={temporary}
           workspaceDefaultScope={workspaceDefaultScope}
           workspaceControls={workspaceControls}
+          workspaces={workspaces}
+          onRefreshWorkspaces={onRefreshWorkspaces}
           workspaceScopeDisabled={workspaceScopeDisabled}
           workspaceError={workspaceError}
           onPickWorkspaceFolder={
             workspaceControls?.can_pick_folder ? pickWorkspaceFolder : undefined
           }
-          onWorkspaceScopeChange={onWorkspaceScopeChange}
+          onWorkspaceScopeChange={handleWorkspaceScopeChange}
           transcriptionProvider={settingsSnapshot?.transcription?.provider}
           ingressLimits={ingressLimits}
         />

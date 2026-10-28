@@ -98,6 +98,7 @@
       "channels": "チャンネル",
       "runtime": "システム",
       "advanced": "セキュリティ",
+      "folders": "フォルダーとプロジェクト",
       "cliApps": "CLI アプリ",
       "mcp": "MCP",
       "apps": "アプリ",
@@ -159,6 +160,7 @@
       "workspacePath": "既定のワークスペース",
       "localServiceAccess": "ローカルサービス",
       "webuiDefaultAccess": "既定の権限",
+      "managedFolderAccess": "管理対象のフォルダーアクセス",
       "currentModel": "現在の設定",
       "brandLogos": "ブランドロゴ",
       "browserNotifications": "タスク通知",
@@ -200,6 +202,7 @@
       "timezone": "スケジュールと時刻を考慮する返信に使用します。",
       "localServiceAccess": "フルアクセスの shell コマンドが localhost サービスにアクセスできるようにします。",
       "webuiDefaultAccess": "プロジェクト固有の権限がない Web チャットで使用します。",
+      "managedFolderAccess": "フォルダーの許可設定がファイルとコマンドへのアクセスを制御します。「フルアクセス」の設定で許可を追加したり回避したりすることはできません。",
       "securityManagedControls": "Web 取得は常にローカル、プライベート、メタデータサービスを保護します。コアチャネルの安全性は config.json で管理されます。",
       "currentModel": "新しい返信に使用します。",
       "selectedModelProvider": "選択したモデルによって設定されます。",
@@ -240,7 +243,7 @@
       "collapsedDiff": "折りたたみ差分",
       "on": "オン",
       "off": "オフ",
-      "defaultPermission": "既定の権限",
+      "defaultPermission": "制限付き",
       "fullAccess": "完全アクセス",
       "configured": "設定済み",
       "notConfigured": "未設定",
@@ -1363,7 +1366,7 @@
         "accessAria": "ワークスペースのアクセスモード",
         "projectAria": "プロジェクトを選択",
         "projectPlaceholder": "プロジェクトを選択",
-        "default": "既定の権限",
+        "default": "制限付き",
         "defaultShort": "既定",
         "full": "フルアクセス",
         "fullShort": "フル"
@@ -1554,11 +1557,58 @@
   },
   "workspace": {
     "dialog": {
-      "defaultProject": "既定のワークスペース",
+      "defaultProject": "エージェントのホームを使用",
       "manual": "パスを貼り付け",
       "manualPlaceholder": "/Users/name/project",
-      "usePath": "パスを使用",
+      "usePath": "フォルダーを使用",
       "absolutePathRequired": "このマシン上の絶対フォルダーパスを入力してください。"
+    },
+    "recovery": {
+      "durationTitle": "このアクセスをどのくらい続けますか？",
+      "allowOnce": "今回のみ許可",
+      "allowOnceDescription": "続行手順を含むこのタスクに適用されます。今後のタスクには保存されません。",
+      "alwaysAllow": "常に許可",
+      "alwaysAllowDescription": "今後のために保存されます。「フォルダーとプロジェクト」で管理できます。",
+      "allowOnceAndUse": "今回のみ許可してフォルダーを使用",
+      "onceUnavailable": "Nanobot が現在の制限付きアクセスを確認するまで、今回のみのアクセスは利用できません。",
+      "onceUnavailableFull": "フルアクセス中は、今回のみのフォルダーアクセスを利用できません。",
+      "permissionRefreshFailed": "現在のアクセスを確認できませんでした。このタスクを許可する前に更新してください。",
+      "permissionRefreshing": "現在のアクセスを確認中…",
+      "onceNotActive": "今回のみのアクセスは有効ではありません。続行する前にフォルダーを確認してください。",
+      "onceRetiringActive": "以前のアクセスでコマンドが実行中です。終了を待つか停止してから、もう一度お試しください。",
+      "onceRetiringUnknown": "以前のコマンドが終了したか Nanobot がまだ確認できません。アクセス変更は保留中です。",
+      "onceRetiringFinished": "以前の処理は終了しました。今回のみのアクセスはまだ終了処理中です。",
+      "onceExpired": "今回のみのアクセスは終了しました。続行する前にフォルダーをもう一度確認してください。",
+      "readyOnce": "このタスクへのアクセスが許可されました。{{path}} を使って続行できます。",
+      "readyAlways": "アクセスを保存しました。{{path}} を使って続行できます。"
+    },
+    "permissionV2": {
+      "actionFailed": "アクセスを更新できませんでした。再試行する前にこのチャットを更新してください。",
+      "confirmTitle": "フルアクセスを有効にしますか？",
+      "confirmDescription": "選択したフォルダーの外でも、OS アカウントの権限に従って Nanobot がファイルの読み書きやコマンド実行を行います。Working in の現在のディレクトリとコンテキストは維持されます。新しいチャットは制限付きで開始します。",
+      "enableFull": "フルアクセスを有効にする",
+      "fullEnding": "フルアクセスを終了しています",
+      "fullIndicator": "フルアクセス",
+      "fullReach": "OS アカウントの権限に従い、このデバイス上のファイルとコマンドにアクセスします。",
+      "retiringActive": "以前のアクセスでコマンドが実行中です。終了を待つか停止してから、もう一度お試しください。",
+      "retiringUnknown": "以前のコマンドが終了したか Nanobot がまだ確認できません。アクセス変更は保留中です。",
+      "retiringFinished": "以前の処理は終了しました。もう一度試して制限付きアクセスを確定してください。",
+      "retryRestricted": "制限付きに戻す処理を再試行",
+      "returnRestricted": "制限付きに戻す",
+      "sessionRequired": "フルアクセスを有効にする前に、メッセージを送ってこのチャットを作成してください。",
+      "unavailable": "アクセスを確認できません",
+      "legacyUnavailable": "このゲートウェイは現在のアクセス権限を報告しません。",
+      "unavailableReasons": {
+        "controls_unavailable": "現在のローカル制御ではフルアクセスを利用できません。",
+        "session_required": "フルアクセスを有効にする前に、メッセージを送ってこのチャットを作成してください。",
+        "configured_sandbox": "コマンドの制限設定があるため、フルアクセスを利用できません。",
+        "supervisor_unavailable": "Nanobot がコマンドを安全に監視できないため、フルアクセスを利用できません。",
+        "permission_state_unavailable": "現在のアクセス権限を確認できません。再試行する前にこのチャットを更新してください。",
+        "permission_retiring": "以前の処理が終了するまでフルアクセスを有効にできません。"
+      }
+    },
+    "management": {
+      "commandsAvailable": "コマンドを利用できます"
     }
   }
 }

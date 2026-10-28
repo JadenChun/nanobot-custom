@@ -20,7 +20,7 @@ from nanobot.config.schema import AgentDefaults, ToolsConfig
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.openai_responses.parsing import parse_response_output
-from tests.agent.runner_helpers import make_run_spec
+from tests.agent.runner_helpers import install_test_tool_dispatch, make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 
@@ -220,6 +220,7 @@ async def test_tool_execution_propagates_cancellation_without_error_hook():
     tools = MagicMock()
     tools.prepare_call.return_value = (None, {}, None)
     tools.execute = AsyncMock(side_effect=asyncio.CancelledError)
+    install_test_tool_dispatch(tools)
 
     events: list[str] = []
 

@@ -165,6 +165,7 @@ const SETTINGS_SECTION_KEYS: SettingsSectionKey[] = [
   "voice",
   "browser",
   "channels",
+  "folders",
   "apps",
   "automations",
   "skills",
@@ -1079,6 +1080,7 @@ function Shell({
   const [runningChatIds, setRunningChatIds] = useState<Set<string>>(() => new Set());
   const [updatedChatIds, setUpdatedChatIds] = useState<Set<string>>(readSessionUpdateChatIds);
   const [workspaces, setWorkspaces] = useState<WorkspacesPayload | null>(null);
+  const workspacesRequestRef = useRef<Promise<void> | null>(null);
   const skills = useSkills(getToken);
   const pageVisible = usePageVisibility();
   const [settingsSnapshot, setSettingsSnapshot] = useState<SettingsPayload | null>(null);
@@ -1295,14 +1297,31 @@ function Shell({
   ]);
   const activeChatRunning = activeChatId ? runningChatIds.has(activeChatId) : false;
 
-  const refreshWorkspaces = useCallback(async () => {
-    try {
-      const payload = await fetchWorkspaces(getToken());
-      setWorkspaces(payload);
-    } catch {
-      setWorkspaces(null);
-    }
+  const refreshWorkspaces = useCallback((): Promise<void> => {
+    if (workspacesRequestRef.current) return workspacesRequestRef.current;
+    const request = (async () => {
+      try {
+        const payload = await fetchWorkspaces(getToken());
+        setWorkspaces(payload);
+      } catch {
+        setWorkspaces(null);
+      } finally {
+        workspacesRequestRef.current = null;
+      }
+    })();
+    workspacesRequestRef.current = request;
+    return request;
   }, [getToken]);
+
+  const pickWorkspaceFolder = useCallback(async (): Promise<string | null> => {
+    if (!workspaces?.controls.can_pick_folder) return null;
+    const response = await client.requestMutation<{ path?: unknown }>(
+      "workspace.pick_folder",
+      {},
+      300_000,
+    );
+    return typeof response.path === "string" ? response.path : null;
+  }, [client, workspaces?.controls.can_pick_folder]);
 
   useEffect(() => {
     void refreshWorkspaces();
@@ -1366,6 +1385,7 @@ function Shell({
 
   useEffect(() => {
     return client.onSessionUpdate((chatId, scope, workspaceScope) => {
+      if (scope === "metadata") void refreshWorkspaces();
       if (scope === "thread") {
         setUpdatedChatIds((current) => {
           const next = new Set(current);
@@ -1385,8 +1405,10 @@ function Shell({
         ...current,
         [chatId]: next,
       }));
-      setDraftWorkspaceScope(next);
-      setWorkspaceError(null);
+      if (activeChatIdRef.current === chatId) {
+        setDraftWorkspaceScope(next);
+        setWorkspaceError(null);
+      }
       void refreshWorkspaces();
     });
   }, [client, refreshWorkspaces]);
@@ -1477,6 +1499,15 @@ function Shell({
     [activeChatId, activeChatRunning, activeKey, client, temporaryChatActive],
   );
 
+  const acknowledgeWorkspaceScope = useCallback((chatId: string, scope: WorkspaceScopePayload) => {
+    const next = normalizeWorkspaceScope(scope);
+    setWorkspaceOverrides((current) => ({ ...current, [chatId]: next }));
+    if (activeChatIdRef.current === chatId) {
+      setDraftWorkspaceScope(next);
+      setWorkspaceError(null);
+    }
+  }, []);
+
   const onCreateChat = useCallback(async (
     workspaceScope?: WorkspaceScopePayload | null,
     _initialMessage?: string,
@@ -1503,11 +1534,14 @@ function Shell({
     } catch (e) {
       console.error("Failed to create chat", e);
       if (e instanceof Error && e.message.startsWith("workspace_scope_rejected:")) {
+        setDraftWorkspaceScope(workspaces?.default_scope
+          ? normalizeWorkspaceScope(workspaces.default_scope)
+          : null);
         setWorkspaceError(t("errors.workspaceScopeRejected.body"));
       }
       return null;
     }
-  }, [activeWorkspaceScope, createChat, navigate, t]);
+  }, [activeWorkspaceScope, createChat, navigate, t, workspaces?.default_scope]);
 
   const onCreateTemporaryChat = useCallback(
     async (
@@ -2677,9 +2711,14 @@ function Shell({
                         workspaceScope={activeWorkspaceScope}
                         workspaceDefaultScope={workspaces?.default_scope ?? null}
                         workspaceControls={workspaces?.controls ?? null}
+                      workspaces={workspaces}
+                      onRefreshWorkspaces={refreshWorkspaces}
                         workspaceScopeDisabled={activeChatRunning}
                         workspaceError={workspaceError}
                         onWorkspaceScopeChange={applyWorkspaceScope}
+                        onWorkspaceScopeAcknowledged={(scope) => {
+                          if (activeChatId) acknowledgeWorkspaceScope(activeChatId, scope);
+                        }}
                         settingsSnapshot={settingsSnapshot}
                         onOpenModelSettings={onOpenModelSettings}
                         skills={skills}
@@ -2725,18 +2764,17 @@ function Shell({
                       workspaceScope={paneScope}
                       workspaceDefaultScope={workspaces?.default_scope ?? null}
                       workspaceControls={workspaces?.controls ?? null}
+                      workspaces={workspaces}
+                      onRefreshWorkspaces={refreshWorkspaces}
                       workspaceScopeDisabled={paneRunning}
                       workspaceError={context.active ? workspaceError : null}
                       onWorkspaceScopeChange={(scope) => {
                         if (paneRunning) return;
                         const next = normalizeWorkspaceScope(scope);
                         setWorkspaceError(null);
-                        setWorkspaceOverrides((current) => ({
-                          ...current,
-                          [paneSession.chatId]: next,
-                        }));
                         client.setWorkspaceScope(paneSession.chatId, next);
                       }}
+                      onWorkspaceScopeAcknowledged={(scope) => acknowledgeWorkspaceScope(paneSession.chatId, scope)}
                       settingsSnapshot={settingsSnapshot}
                       onOpenModelSettings={onOpenModelSettings}
                       skills={skills}
@@ -2752,6 +2790,9 @@ function Shell({
                     theme={theme}
                     initialSection={settingsInitialSection}
                     initialSettings={settingsSnapshot}
+                    workspaces={workspaces}
+                    onRefreshWorkspaces={refreshWorkspaces}
+                    onPickWorkspaceFolder={workspaces?.controls.can_pick_folder ? pickWorkspaceFolder : undefined}
                     showSidebar={view === "settings"}
                     onToggleTheme={toggle}
                     onBackToChat={onBackToChat}

@@ -7,7 +7,7 @@ import hashlib
 import json
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from filelock import AsyncFileLock
 
@@ -15,8 +15,14 @@ from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.context import ToolContext
 from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool
 from nanobot.context_repo.catalog import RepositoryCatalog, RepositoryEntry
+from nanobot.context_repo.policy import FolderAccessNeededError
+from nanobot.security.workspace_access import current_workspace_scope
+from nanobot.session.workspace_focus import WorkspaceFocusOwner
 from nanobot.utils.git_sync import async_sync_context_repo, git_repo_root, matches_sync_path
 from nanobot.utils.secret_scan import find_secrets_in_blob
+
+if TYPE_CHECKING:
+    from nanobot.agent.turn import ToolOutcome
 
 
 class RepositoryCatalogTool(Tool):
@@ -27,16 +33,17 @@ class RepositoryCatalogTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "List, remember/update, or forget existing local Git repositories and their purposes. "
+            "List, discover, remember/update, or forget existing local Git repositories and their purposes. "
             "Use knowledge_repos to associate project repositories with designated knowledge repos. "
-            "This stores references; use ordinary file tools with absolute paths to read context. "
+            "Use roots then discover to find projects under authorized folders. Use select_workspace "
+            "to change the current project; catalog metadata never grants access. "
             "Only knowledge repos may opt into auto_sync with explicit sync_paths."
         )
 
     _PARAMETERS: dict[str, Any] = {
         "type": "object", "required": ["action"], "additionalProperties": False,
         "properties": {
-            "action": {"type": "string", "enum": ["list", "remember", "forget"]},
+            "action": {"type": "string", "enum": ["list", "remember", "forget", "discover", "roots"]},
             "name": {"type": "string"}, "path": {"type": "string"},
             "purpose": {"type": "string"}, "kind": {"type": "string", "enum": ["project", "knowledge"]},
             "knowledge_repos": {"type": "array", "items": {"type": "string"}},
@@ -48,8 +55,13 @@ class RepositoryCatalogTool(Tool):
     def parameters(self) -> dict[str, Any]:
         return deepcopy(self._PARAMETERS)
 
-    def __init__(self, catalog: RepositoryCatalog, reader: ReadFileTool):
-        self.catalog, self.reader = catalog, reader
+    def __init__(
+        self,
+        catalog: RepositoryCatalog,
+        reader: ReadFileTool,
+        owner: WorkspaceFocusOwner | None = None,
+    ):
+        self.catalog, self.reader, self.owner = catalog, reader, owner
 
     @classmethod
     def enabled(cls, ctx: ToolContext) -> bool:
@@ -58,11 +70,16 @@ class RepositoryCatalogTool(Tool):
     @classmethod
     def create(cls, ctx: ToolContext) -> RepositoryCatalogTool:
         root = ctx.sessions.sessions_root if ctx.sessions is not None else None
-        return cls(RepositoryCatalog.for_workspace(Path(ctx.workspace), sessions_root=root), ReadFileTool.create(ctx))
+        return cls(
+            RepositoryCatalog.for_workspace(Path(ctx.workspace), sessions_root=root),
+            ReadFileTool.create(ctx),
+            ctx.workspace_focus_owner,
+        )
 
     async def execute(self, action: str, name: str = "", path: str = "", purpose: str = "",
                       kind: str = "project", knowledge_repos: list[str] | None = None,
-                      auto_sync: bool = False, sync_paths: list[str] | None = None, **kwargs: Any) -> str:
+                      auto_sync: bool = False, sync_paths: list[str] | None = None,
+                      **kwargs: Any) -> str | ToolOutcome:
         try:
             if action == "list":
                 visible: list[dict[str, Any]] = []
@@ -73,8 +90,23 @@ class RepositoryCatalogTool(Tool):
                         continue
                     visible.append(entry.model_dump())
                 return json.dumps(visible, ensure_ascii=False)
+            if action == "roots":
+                if not self._managed_webui_turn():
+                    raise PermissionError("repository roots are available only to managed WebUI chats")
+                if self.owner is None:
+                    raise PermissionError("workspace access service is unavailable")
+                return json.dumps(self.owner.repository_roots(), ensure_ascii=False)
+            if action == "discover":
+                if self.owner is None:
+                    raise PermissionError("workspace access service is unavailable")
+                scope = current_workspace_scope()
+                start = path.strip() or (str(scope.project_path) if scope is not None else "")
+                discovered = await asyncio.to_thread(self.owner.discover, start)
+                return json.dumps(discovered, ensure_ascii=False)
             if action == "forget":
                 self.reader.resolve_read_path(self.catalog.get(name).path)
+                if any(name in entry.knowledge_repos for entry in self.catalog.entries()):
+                    raise ValueError("repository_in_use")
                 await asyncio.to_thread(self.catalog.update, None, remove=name)
                 return f"Forgot repository reference: {name}"
             if action != "remember":
@@ -94,8 +126,26 @@ class RepositoryCatalogTool(Tool):
             })
             await asyncio.to_thread(self.catalog.update, entry)
             return entry.model_dump_json()
+        except FolderAccessNeededError as exc:
+            policy = self.owner.policy if self.owner is not None else self.reader.resource_policy
+            if policy is None:
+                return ToolResult.error("Folder access is unavailable")
+            from nanobot.agent.tools.workspace import folder_access_outcome
+
+            return folder_access_outcome(exc, policy)
         except (OSError, ValueError) as exc:
             return ToolResult.error(f"Repository catalog: {exc}")
+
+    @staticmethod
+    def _managed_webui_turn() -> bool:
+        from nanobot.agent.tools.context import current_request_context
+
+        request = current_request_context()
+        return bool(
+            request
+            and request.channel == "websocket"
+            and request.persistent_session
+        )
 
 
 class SaveKnowledgeTool(Tool):

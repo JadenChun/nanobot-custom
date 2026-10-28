@@ -24,6 +24,7 @@ from nanobot.bus.events import (
 )
 from nanobot.context_repo import ContextRepoManager
 from nanobot.context_repo.catalog import RepositoryCatalog
+from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_MESSAGE_META,
     RUNTIME_CONTEXT_TAG,
@@ -31,7 +32,12 @@ from nanobot.runtime_context import (
     append_runtime_context,
     wrap_runtime_context_lines,
 )
-from nanobot.security.workspace_access import WorkspaceScopeResolver, current_tool_workspace
+from nanobot.security.folder_grants import FolderGrantsUnavailableError, FolderGrantView
+from nanobot.security.workspace_access import (
+    WorkspaceScopeResolver,
+    current_tool_workspace,
+    current_workspace_scope,
+)
 from nanobot.session.keys import last_channel_from_metadata
 from nanobot.session.manager import Session
 from nanobot.session.source_projection import RuntimeNode, SourceNode
@@ -112,15 +118,32 @@ class ContextBuilder:
     _SKIPPABLE_DEFAULTS = {"AGENTS.md", "USER.md"}
     _RUNTIME_CONTEXT_TAG = RUNTIME_CONTEXT_TAG
 
-    def __init__(self, workspace: Path, timezone: str | None = None, disabled_skills: list[str] | None = None, *, context_paths: list[Path] | None = None, context_manager: ContextRepoManager | None = None, sessions_root: Path | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        timezone: str | None = None,
+        disabled_skills: list[str] | None = None,
+        *,
+        context_paths: list[Path] | None = None,
+        context_manager: ContextRepoManager | None = None,
+        sessions_root: Path | None = None,
+        resource_policy: ResourceAccessPolicy | None = None,
+        folder_grants: FolderGrantView | None = None,
+    ):
         self.workspace = workspace
         self.timezone = timezone
         self.memory = MemoryStore(workspace, sessions_root=sessions_root)
         self.context_manager = context_manager or ContextRepoManager.from_config(context_paths=context_paths)
         self.context_paths = self.context_manager.paths
         self.repositories = RepositoryCatalog.for_workspace(workspace, sessions_root=sessions_root)
-        self.skills = SkillsLoader(workspace, disabled_skills=set(disabled_skills) if disabled_skills else None,
-                                   extra_paths=self.context_manager.skill_roots())
+        self.resource_policy = resource_policy
+        self.folder_grants = folder_grants
+        self.skills = SkillsLoader(
+            workspace,
+            disabled_skills=set(disabled_skills) if disabled_skills else None,
+            extra_paths=self.context_manager.skill_roots(),
+            resource_policy=resource_policy,
+        )
 
     def build_system_prompt(
         self,
@@ -132,9 +155,14 @@ class ContextBuilder:
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         root = workspace or self.workspace
+        managed = bool(self.resource_policy and self.resource_policy.managed_mode)
+        if managed:
+            root = self.workspace
+        current_scope = current_workspace_scope() if managed else None
+        focus = current_scope.project_path if current_scope is not None else root
         parts = [self._get_identity(channel=channel, workspace=root)]
 
-        bootstrap = self._load_bootstrap_files(root)
+        bootstrap = self._load_bootstrap_files(root, managed=managed)
         if bootstrap:
             parts.append(bootstrap)
 
@@ -142,15 +170,21 @@ class ContextBuilder:
             parts.append("# Context Repositories\n\n" + self.context_manager.prompt_summary()
                          + "\nFollow each repository's writable, protected, store and proposal policies.")
         access = current_tool_workspace(root)
-        allowed_roots = ([access.allowed_root, *self.context_manager.read_roots()]
-                         if access.allowed_root is not None else None)
+        allowed_roots = self._managed_prompt_roots() if managed else (
+            [access.allowed_root, *self.context_manager.read_roots()]
+            if access.allowed_root is not None else None
+        )
         catalog = self.repositories.prompt_summary(allowed_roots=allowed_roots)
-        if catalog:
+        if managed:
+            metadata = self._managed_prompt_metadata(catalog)
+            if metadata:
+                parts.append(metadata)
+        elif catalog:
             parts.append("# Repository Catalog\n\nMetadata for discovery; read the selected repository's "
                          "instructions and relevant files on demand. Use absolute paths when switching work.\n" + catalog)
         parts.append(render_template("agent/tool_contract.md"))
 
-        project_path = root.expanduser().resolve()
+        project_path = focus.expanduser().resolve()
         if project_path != self.workspace.expanduser().resolve():
             parts.append(
                 "# Current Project\n\n"
@@ -159,17 +193,21 @@ class ContextBuilder:
             )
 
         if include_memory:
+            if managed and self.memory.memory_file.exists():
+                self._validate_home_prompt_file(self.memory.memory_file)
             memory = self.memory.read_memory()
             if memory and not self._is_template_content(memory, "memory/MEMORY.md"):
                 parts.append(f"# Memory\n\n## Long-term Memory\n{memory}")
 
         # Managed repositories retain their supplemental durable context.
         for memory_file in self.context_manager.memory_files():
+            self._validate_managed_prompt_file(memory_file, managed=managed)
             content = memory_file.read_text(encoding="utf-8")
             if content.strip():
                 parts.append(f"# Context Memory ({memory_file.parent.parent.name})\n\n{content}")
         run_summaries: list[str] = []
         for run_file in self.context_manager.run_summary_files():
+            self._validate_managed_prompt_file(run_file, managed=managed)
             content = run_file.read_text(encoding="utf-8").strip()
             if content:
                 run_summaries.append(
@@ -199,6 +237,72 @@ class ContextBuilder:
             )
 
         return "\n\n---\n\n".join(parts)
+
+    def _managed_prompt_roots(self) -> list[Path]:
+        roots = [self.workspace.expanduser().resolve(strict=False)]
+        policy = self.resource_policy
+        if policy is not None:
+            roots.extend(policy.context_manager.read_roots())
+        grants = self.folder_grants
+        if grants is not None and policy is not None and policy.folder_grants_allowed:
+            try:
+                snapshot = grants.snapshot()
+            except FolderGrantsUnavailableError:
+                return list(dict.fromkeys(root.resolve(strict=False) for root in roots))
+            if snapshot.enabled:
+                for grant in snapshot.grants:
+                    candidate = Path(grant.path)
+                    if not candidate.is_dir() or candidate.resolve(strict=True) != candidate:
+                        continue
+                    try:
+                        policy.validate_path(
+                            candidate,
+                            "read",
+                            managed=True,
+                            allow_folder_grants=True,
+                        )
+                    except (OSError, PermissionError, RuntimeError, ValueError):
+                        continue
+                    roots.append(candidate)
+        return list(dict.fromkeys(root.expanduser().resolve(strict=False) for root in roots))
+
+    def _managed_prompt_metadata(self, catalog: str) -> str:
+        roots = self._managed_prompt_roots()
+        root_lines = [json.dumps(str(root), ensure_ascii=True) for root in roots[:8]]
+        sections = [
+            "# Authorized Project Folders\n\n"
+            "These paths are already readable. For the complete bounded list, call "
+            '`repository_catalog(action="roots")`; use `discover` on a path when needed.\n'
+            + "\n".join(f"- {line}" for line in root_lines)
+        ]
+        if catalog:
+            sections.append(
+                "# Repository Catalog\n\nMetadata only; read the selected repository's "
+                "instructions and relevant files on demand. Use `select_workspace` to change focus.\n"
+                + catalog
+            )
+        bounded: list[str] = []
+        total_bytes = 0
+        for index, section in enumerate(sections):
+            encoded = section.encode("utf-8")
+            remaining = 8192 - total_bytes
+            if remaining <= 0:
+                break
+            if len(encoded) <= remaining:
+                bounded.append(section)
+                total_bytes += len(encoded) + 2
+                continue
+            if index == 1:
+                lines: list[str] = []
+                for line in section.splitlines():
+                    candidate = "\n".join([*lines, line])
+                    if len(candidate.encode("utf-8")) > remaining:
+                        break
+                    lines.append(line)
+                if lines:
+                    bounded.append("\n".join(lines))
+            break
+        return "\n\n".join(bounded)
 
     def _get_identity(self, channel: str | None = None, workspace: Path | None = None) -> str:
         """Get the core identity section."""
@@ -240,7 +344,12 @@ class ContextBuilder:
 
         return _to_blocks(left) + _to_blocks(right)
 
-    def _load_bootstrap_files(self, workspace: Path | None = None) -> str:
+    def _load_bootstrap_files(
+        self,
+        workspace: Path | None = None,
+        *,
+        managed: bool = False,
+    ) -> str:
         """Load project instructions plus the agent's global profile files."""
         parts: list[str] = []
         project_root = workspace or self.workspace
@@ -255,6 +364,8 @@ class ContextBuilder:
         for filename, root in sources:
             file_path = root / filename
             if file_path.exists():
+                if managed:
+                    self._validate_home_prompt_file(file_path)
                 content = file_path.read_text(encoding="utf-8")
                 if filename == "SOUL.md" and self._is_template_content(
                     content,
@@ -270,10 +381,35 @@ class ContextBuilder:
                 parts.append(f"## {filename}\n\n{content}")
 
         for context_file in self.context_manager.context_files():
+            self._validate_managed_prompt_file(context_file, managed=managed)
             repo = self.context_manager.find_repo_for_path(context_file)
             suffix = f" ({repo.name})" if repo else ""
             parts.append(f"## {context_file.name}{suffix}\n\n{context_file.read_text(encoding='utf-8')}")
         return "\n\n".join(parts) if parts else ""
+
+    def _validate_managed_prompt_file(self, path: Path, *, managed: bool) -> None:
+        if not managed or self.resource_policy is None:
+            return
+        self.resource_policy.validate_path(
+            path.resolve(strict=True),
+            "read",
+            managed=True,
+            allow_folder_grants=self.resource_policy.folder_grants_allowed,
+        )
+
+    def _validate_home_prompt_file(self, path: Path) -> None:
+        resolved = path.resolve(strict=True)
+        try:
+            resolved.relative_to(self.workspace.resolve(strict=False))
+        except ValueError as exc:
+            raise PermissionError("agent-home prompt file resolves outside agent home") from exc
+        if self.resource_policy is not None:
+            self.resource_policy.validate_path(
+                resolved,
+                "read",
+                managed=True,
+                allow_folder_grants=False,
+            )
 
     @staticmethod
     def _is_template_content(content: str, template_path: str) -> bool:

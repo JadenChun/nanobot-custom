@@ -9,6 +9,7 @@ from nanobot.agent.write_guard import FileLockRegistry
 from nanobot.config.schema import Config, ToolsConfig
 from nanobot.context_repo import ContextRepoManager
 from nanobot.extensions.crawler import crawler_settings
+from nanobot.security.folder_grants import FolderGrantStore
 from nanobot.utils.llm_runtime import LLMRuntime
 
 
@@ -31,6 +32,7 @@ def validate_foreground_dependencies(
 def build_foreground_dependencies(
     *, workspace: Path, runtime: LLMRuntime, tools_config: ToolsConfig,
     restrict_to_workspace: bool, config: Config | None = None,
+    sessions_root: Path | None = None,
 ) -> ForkToolDependencies:
     """Build one shared context/policy/lock graph; never connect or run tools."""
     defaults = config.agents.defaults if config is not None else None
@@ -39,6 +41,7 @@ def build_foreground_dependencies(
         context_repos=defaults.context_repos if defaults else None,
     )
     optional = crawler_settings(config)
+    grants = FolderGrantStore.for_workspace(workspace, sessions_root=sessions_root).view
     locks = FileLockRegistry()
     manager = ForegroundAgentManager(
         provider=runtime.provider, model=runtime.model, runtime=runtime,
@@ -53,5 +56,6 @@ def build_foreground_dependencies(
         crawler_max_input_tokens=optional.max_input_tokens,
         crawler_max_output_tokens=optional.max_output_tokens,
         crawler_reasoning_effort=optional.reasoning_effort,
+        folder_grants=grants,
     )
     return ForkToolDependencies(manager, manager.resource_policy, locks, crawler_enabled=optional.enabled)

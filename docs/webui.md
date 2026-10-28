@@ -72,7 +72,7 @@ Use the WebUI as the primary setup surface:
 
 1. Open **Settings → Models** and configure a provider, credential, and active model preset.
 2. Send `Hello!` in a new topic to prove the selected model works.
-3. Start a separate topic before project work, then choose the intended workspace and access mode.
+3. Use **Working in** to focus the current topic on a folder, then grant that folder access in **Settings → Folders & projects** if needed.
 4. Add only one capability next: a chat channel in **Settings → Channels**, a web/voice/image provider in **Settings**, or an App/MCP integration in **Apps**.
 5. Restart when the WebUI shows a restart requirement, then test that capability with the smallest possible request.
 
@@ -86,8 +86,8 @@ This path avoids hand-editing `config.json` for normal setup. Use the reference 
 | Conversation groups | Arrange up to four independent topics in one workbench with resizable panes |
 | Agent activity | See thinking, tool calls, file edits with diffs, command output, and generated artifacts in context |
 | Context usage | Inspect current context size, per-round token and cache usage, and compaction progress |
-| Workspace | Pick the project workspace before asking for file or shell work |
-| Access | Choose the access mode for local capabilities allowed by your gateway configuration |
+| Working in | Focus the current topic on a folder without creating a new topic |
+| Folders & projects | Review folder grants and remembered repository details |
 | Composer | Send text, images, voice input, slash commands, and `@` mentions for topics, Apps, or MCP presets |
 | Channels | Connect and validate chat platforms, install their optional support, and manage saved channel setup |
 | Apps | Install, test, update, and use local CLI App adapters and MCP presets |
@@ -136,9 +136,10 @@ them with **View diff**. Large diffs may hide unchanged lines or truncate the
 inline preview. Select the filename in the activity row to open the read-only
 file preview panel.
 
-File previews follow the active topic's access mode. Restricted workspace access
-previews only files under the selected workspace. Full Access can preview files
-outside the workspace when that access mode is allowed by the gateway.
+File previews follow the active topic's effective access. In managed mode, a
+preview is available only when the server grants read access to that folder;
+choosing **Full access** in older clients cannot expand those grants. Legacy
+gateways continue to use their existing access mode.
 
 Open the context indicator beside the composer model badge to see how much of
 the model's context window is in use. The **Recent rounds** chart shows input
@@ -168,48 +169,88 @@ WebSocket connection ends all of them. They cannot be recovered afterward.
 Temporary does not mean consequence-free. Requests still go to the configured
 model provider, and tools can still change files, run commands, or affect
 external services. Temporary chats always use the default workspace in
-Restricted mode; the project picker and Full Access are unavailable. Commands
+Restricted mode; the **Working in** control and **Full access** option are
+unavailable. Commands
 and tools that create durable goals, automations, or subagent work are also
 unavailable. Use a regular topic when you need reusable context, scheduled work,
 or a result you must retain.
 
-## Workspace and Access
+## Folders, projects, and access
 
-Use the workspace picker before starting project-specific work. This gives the
-agent the right project context for file paths, shell commands, and topic
-metadata. A locally hosted WebUI opens the operating system's folder chooser
-when one is available; remote deployments keep the manual absolute path entry.
+Every regular topic shows **Working in** with its current folder and access
+status. Choose **Agent home** to return to the configured agent workspace, or
+enter an absolute path or use **Browse…** to focus the same conversation on a
+different folder. A folder change keeps the conversation, history, memory, and
+runtime in place. The operating-system folder chooser may be unavailable; manual
+path entry remains available. Temporary chats do not offer folder management.
 
-Selecting a project does not replace the configured agent workspace. The two
-paths have different responsibilities:
+The selected folder supplies project context and the working location for the
+current topic. The configured agent home continues to supply instance identity,
+skills, and memory. Switching focus does not move runtime state or copy a
+conversation into a new topic.
 
-| Selected project provides | Agent workspace continues to provide |
-|---|---|
-| Project `AGENTS.md` | `SOUL.md` and `USER.md` |
-| Relative file paths and shell working directory | Long-term memory and history |
-| The normal read/write boundary in Restricted mode | Custom skills and instance state |
+Open **Folders & projects** from **Working in** or **Settings** to review
+folder access and remembered repositories. Folder access is a separate choice
+from project metadata:
 
-Project-local `SOUL.md` and `USER.md` files are ignored, and the agent workspace's
-`AGENTS.md` is not inherited by a separately selected project. When the selected
-project is the configured agent workspace, both roles naturally use the same
-directory.
+- Each folder grant independently controls **Read only** or **Read and write**
+  access and whether commands are allowed. More specific folder grants determine
+  the effective access for paths beneath them. Saved folder grants apply in
+  every regular topic in this Nanobot instance.
+- Commands for a saved grant are available only when the server can confine
+  them with Bubblewrap. Folder names and labels alone do not isolate a running
+  process.
+- Remembering a repository records its name, path, purpose, kind, and knowledge
+  links. It does not grant access, create a checkout, or change the current
+  topic. **Forget** removes only that catalog entry; repository files stay in
+  place.
+- Discover scans only a readable folder you choose. Review candidates before
+  remembering them. Existing knowledge synchronization remains opt-in and
+  separate from catalog metadata.
 
-The access control in the composer controls the local capability level for the
-chat. It does not bypass your gateway, provider, shell sandbox, or operating
-system configuration; it only selects among the capabilities that are already
-available to the current topic.
+If a normal local topic pauses because a requested folder is not accessible,
+the **Folder access needed** card keeps the original task in that conversation.
+You can select an already allowed project or review a folder path. A known
+directory may be prefilled; an unknown target starts empty, and a blocked file
+requires you to choose its containing folder explicitly. New access starts at
+**Read only** with commands off. Choose **Always** and **Save access and use
+folder** to save a grant for regular topics in this Nanobot instance. Choose
+**Once** and **Allow once and use folder** to give only the original paused task
+the selected folder capabilities. Once access is not saved, does not add a
+folder to management, and does not change the instance's saved grants. The task
+may request another folder later; each request needs its own review.
 
-In Restricted mode, ordinary file and shell work stays inside the selected
-project. To preserve agent continuity, filesystem/search tools receive narrow,
-read-only access to built-in skills, custom skills in the agent workspace, and
-the exact agent `memory/history.jsonl` file. This does not grant access to
-neighboring memory or profile files, and it does not allow writes outside the
-selected project. These tool exceptions do not broaden the browser's file
-preview boundary.
+The card never retries the paused task automatically. After the folder has been
+checked and the card says it is ready, choose **Continue task** to resume that
+work in the same conversation. You can cancel the task or review another folder
+instead. A new message or a changed working folder can make an old request
+outdated, so refresh the task status before acting when asked. Remote and
+temporary chats do not offer this local recovery flow. Once access ends when the
+original task finishes or is cancelled; it does not carry over to a later task.
+Nanobot also waits for commands started with that access to finish before it
+confirms that access has ended. If it cannot verify that a command tree has
+stopped, the access change remains pending rather than being treated as
+complete.
 
-Remote WebUI connections may reduce access for the current workspace. Selecting a
-different workspace or enabling Full Access remains limited to local and native
-clients.
+Regular local topics start in **Restricted** mode and use their selected folder
+plus any saved grants. **Full access** is a separate, chat-specific choice; it
+lets that topic read and change files and run commands beyond the selected
+folder, subject to your operating-system account permissions. Nanobot asks for
+confirmation before enabling it, and enables it only for an existing idle
+regular topic when whole-process supervision is available and no explicit
+command sandbox is configured. Other topics and new topics remain Restricted.
+Returning to Restricted fences new work immediately;
+Nanobot confirms the change only after previously started command trees are
+verified stopped. If work is still running or cannot be verified, the topic
+shows that Full access is ending and keeps the change pending. Restarting
+Nanobot does not renew Full access.
+
+Folder grants and Full-mode controls are available only from a trusted local
+WebUI connection. Remote connections may still show the active folder's
+effective status while hiding grant and catalog controls. Managed mode does not
+expose browser, device, or desktop actions as confined tools. Older clients'
+**Full access** preference cannot bypass server-managed folder grants; legacy
+gateways keep their existing access controls.
 
 ## Composer
 

@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, Callable
 from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, Self, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, cast
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import ToolContext
@@ -24,13 +24,16 @@ from nanobot.agent.tools.schema import (
     tool_parameters_schema,
 )
 from nanobot.config_base import Base
+from nanobot.context_repo.policy import FolderAccessNeededError
 from nanobot.security.workspace_access import current_tool_workspace
+from nanobot.security.workspace_policy import WorkspaceBoundaryError
 from nanobot.utils.helpers import build_image_content_blocks, detect_image_mime
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
+    from nanobot.agent.turn import ToolOutcome
     from nanobot.agent.write_guard import FileLockRegistry, WriteScope
     from nanobot.context_repo.policy import ResourceAccessPolicy
     from nanobot.security.workspace_access import ToolWorkspace
@@ -229,7 +232,17 @@ class _FsTool(Tool):
             return self._explicit_file_states
         return current_file_states(self._fallback_file_states)
 
+    @property
+    def resource_policy(self) -> ResourceAccessPolicy | None:
+        """Expose the shared resource decision owner to first-party adapters."""
+        return self._resource_policy
+
     def _effective_allowed_root(self, access_allowed_root: Path | None) -> Path | None:
+        if self._resource_policy is not None and self._resource_policy.managed_mode:
+            # In managed mode the shared resource policy checks the final,
+            # symlink-resolved path against every current grant.  A focus-only
+            # resolver would incorrectly hide other authorized roots.
+            return None
         if self._allowed_dir is None or self._workspace is None:
             return access_allowed_root
         try:
@@ -258,6 +271,9 @@ class _FsTool(Tool):
         allowed_root = self._effective_allowed_root(access.allowed_root)
         if extra_files_require_allowed_root and allowed_root is None:
             extra_allowed_files = None
+        if self._resource_policy is not None and self._resource_policy.managed_mode:
+            extra_allowed_dirs = None
+            extra_allowed_files = None
         return _resolve_path(
             path,
             access.project_path,
@@ -268,6 +284,8 @@ class _FsTool(Tool):
         )
 
     def _resolve_read(self, path: str) -> Path:
+        if self._resource_policy is not None:
+            self._resource_policy.validate_current_workspace_identity()
         plugin_skill_dirs: list[Path] = []
         if self._workspace is not None:
             from nanobot.agent.plugins import enabled_agent_plugin_skill_dirs
@@ -290,36 +308,119 @@ class _FsTool(Tool):
                     )
             except (OSError, RuntimeError):
                 pass
-        resolved = self._resolve_with_extra(
-            path,
-            [*self._extra_read_allowed_dirs, *plugin_skill_dirs],
-            self._extra_read_allowed_files,
-            include_media_dir=True,
-            extra_files_require_allowed_root=True,
-        )
+        extra_read_roots = [*self._extra_read_allowed_dirs, *plugin_skill_dirs]
+        try:
+            resolved = self._resolve_with_extra(
+                path,
+                extra_read_roots,
+                self._extra_read_allowed_files,
+                include_media_dir=True,
+                extra_files_require_allowed_root=True,
+            )
+        except WorkspaceBoundaryError as boundary:
+            self._reclassify_workspace_boundary(
+                boundary,
+                path,
+                "read",
+                target_kind=(
+                    "directory" if self.name in {
+                        "list_dir", "find_files", "grep_files", "search_files",
+                    }
+                    else "file"
+                ),
+                extra_read_roots=extra_read_roots,
+                extra_read_files=self._extra_read_allowed_files,
+            )
+            raise
         if _is_blocked(resolved):
             raise PermissionError("Access to protected credential filename is blocked")
         if self._resource_policy:
-            self._resource_policy.validate_path(resolved, "read")
+            from nanobot.config.paths import get_media_dir
+
+            self._resource_policy.validate_path(
+                resolved,
+                "read",
+                extra_read_roots=[*self._extra_read_allowed_dirs, *plugin_skill_dirs, get_media_dir()],
+                extra_read_files=self._extra_read_allowed_files,
+                target_kind=(
+                    "directory" if self.name in {
+                        "list_dir", "find_files", "grep_files", "search_files",
+                    }
+                    else "file"
+                ),
+            )
         return resolved
 
 
     def _resolve_write(self, path: str) -> Path:
-        resolved = self._resolve_with_extra(
-            path,
-            self._extra_write_allowed_dirs,
-            self._extra_write_allowed_files,
-            include_media_dir=False,
-        )
+        if self._resource_policy is not None:
+            self._resource_policy.validate_current_workspace_identity()
+        try:
+            resolved = self._resolve_with_extra(
+                path,
+                self._extra_write_allowed_dirs,
+                self._extra_write_allowed_files,
+                include_media_dir=False,
+            )
+        except WorkspaceBoundaryError as boundary:
+            self._reclassify_workspace_boundary(
+                boundary,
+                path,
+                "edit" if self.name == "edit_file" else "write",
+                target_kind="file",
+            )
+            raise
 
         if _is_blocked(resolved):
             raise PermissionError("Access to protected credential filename is blocked")
         if self._resource_policy:
-            self._resource_policy.validate_path(resolved, "edit" if self.name == "edit_file" else "write")
+            self._resource_policy.validate_path(
+                resolved,
+                "edit" if self.name == "edit_file" else "write",
+                target_kind="file",
+            )
         scope_error = self._write_scope_error(resolved)
         if scope_error:
             raise PermissionError(scope_error)
         return resolved
+
+    def _reclassify_workspace_boundary(
+        self,
+        boundary: WorkspaceBoundaryError,
+        path: str,
+        action: str,
+        *,
+        target_kind: Literal["directory", "file"],
+        extra_read_roots: list[Path] | None = None,
+        extra_read_files: list[Path] | None = None,
+    ) -> None:
+        """Let the actual policy emit a typed need without bypassing path guards."""
+        policy = self._resource_policy
+        if policy is None:
+            raise boundary
+        access = current_tool_workspace(
+            self._workspace,
+            restrict_to_workspace=self._restrict_to_workspace,
+            sandbox_restricts_workspace=self._sandbox_restricts_workspace,
+        )
+        try:
+            candidate = _resolve_path(path, access.project_path or self._workspace)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            raise boundary
+        if _is_blocked(candidate):
+            raise boundary
+        if action in {"write", "edit"}:
+            scope_error = self._write_scope_error(candidate)
+            if scope_error:
+                raise PermissionError(scope_error)
+        policy.validate_path(
+            candidate,
+            action,
+            extra_read_roots=extra_read_roots or (),
+            extra_read_files=extra_read_files or (),
+            target_kind=target_kind,
+        )
+        raise boundary
 
     def resolve_read_path(self, path: str) -> Path:
         """Resolve a read request through the filesystem owner's existing policy."""
@@ -735,6 +836,12 @@ class ReadFileTool(_FsTool):
                     return result
                 return ToolOutcome(content=result, producer_receipt=receipt)
             return result
+        except FolderAccessNeededError as e:
+            if self._resource_policy is not None:
+                from nanobot.agent.tools.workspace import folder_access_outcome
+
+                return folder_access_outcome(e, self._resource_policy)
+            return ToolResult.error("Error: file access is unavailable")
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -914,7 +1021,9 @@ class WriteFileTool(_FsTool):
                 if temporary is not None:
                     temporary.unlink(missing_ok=True)
 
-    async def execute(self, path: str | None = None, content: str | None = None, **kwargs: Any) -> str:
+    async def execute(
+        self, path: str | None = None, content: str | None = None, **kwargs: Any,
+    ) -> str | ToolOutcome:
         try:
             if not path:
                 raise ValueError("Unknown path")
@@ -927,6 +1036,12 @@ class WriteFileTool(_FsTool):
                 self._file_states.record_write(fp)
                 self._record_touch(fp)
                 return f"Successfully wrote {len(content)} characters to {fp}"
+        except FolderAccessNeededError as e:
+            if self._resource_policy is not None:
+                from nanobot.agent.tools.workspace import folder_access_outcome
+
+                return folder_access_outcome(e, self._resource_policy)
+            return ToolResult.error("Error: file access is unavailable")
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -1254,7 +1369,7 @@ class EditFileTool(_FsTool):
         new_text: str | None = None,
         replace_all: bool = False, occurrence: int | None = None,
         line_hint: int | None = None, expected_replacements: int | None = None, **kwargs: Any,
-    ) -> str:
+    ) -> str | ToolOutcome:
         try:
             if not path:
                 raise ValueError("Unknown path")
@@ -1395,6 +1510,12 @@ class EditFileTool(_FsTool):
                 if warning:
                     msg = f"{warning}\n{msg}"
                 return msg
+        except FolderAccessNeededError as e:
+            if self._resource_policy is not None:
+                from nanobot.agent.tools.workspace import folder_access_outcome
+
+                return folder_access_outcome(e, self._resource_policy)
+            return ToolResult.error("Error: file access is unavailable")
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -1492,7 +1613,7 @@ class ListDirTool(_FsTool):
     async def execute(
         self, path: str | None = None, recursive: bool = False,
         max_entries: int | None = None, **kwargs: Any,
-    ) -> str:
+    ) -> str | ToolOutcome:
         try:
             if path is None:
                 raise ValueError("Unknown path")
@@ -1544,6 +1665,12 @@ class ListDirTool(_FsTool):
             if total > cap:
                 result += f"\n\n(truncated, showing first {cap} of {total} entries)"
             return result
+        except FolderAccessNeededError as e:
+            if self._resource_policy is not None:
+                from nanobot.agent.tools.workspace import folder_access_outcome
+
+                return folder_access_outcome(e, self._resource_policy)
+            return ToolResult.error("Error: file access is unavailable")
         except PermissionError as e:
             return ToolResult.error(f"Error: {e}")
         except Exception as e:
@@ -1669,7 +1796,7 @@ class SearchFilesTool(_FsTool):
         max_results: int | None = None,
         max_output_chars: int | None = None,
         **kwargs: Any,
-    ) -> str:
+    ) -> str | ToolOutcome:
         """Return bounded ``path:line: text`` matches, never modifying files."""
         try:
             if not isinstance(query, str) or not query:
@@ -1744,6 +1871,12 @@ class SearchFilesTool(_FsTool):
                 result = result[:output_limit].rstrip()
                 result += f"\n\n(output truncated at {output_limit} characters)"
             return result
+        except FolderAccessNeededError as exc:
+            if self._resource_policy is not None:
+                from nanobot.agent.tools.workspace import folder_access_outcome
+
+                return folder_access_outcome(exc, self._resource_policy)
+            return ToolResult.error("Error: file access is unavailable")
         except PermissionError as exc:
             return f"Error: {exc}"
         except Exception as exc:

@@ -158,6 +158,32 @@ async def execute_tool_calls(
         else:
             for tool_call in batch:
                 if terminal is not None:
+                    if (
+                        terminal.stop_reason == "folder_access_required"
+                        and fail_on_tool_error
+                        and _is_safe_catalog_tail(tools, tool_call)
+                    ):
+                        result = await _execute_tool_call(
+                            tools,
+                            tool_call,
+                            external_lookup_counts,
+                            workspace_violation_counts,
+                            hook,
+                            context,
+                            turn_context,
+                            tool_result_callback,
+                            ordinal,
+                        )
+                        ordinal += 1
+                        outcome, event = result
+                        if isinstance(outcome, ToolOutcome):
+                            if outcome.stop_reason:
+                                terminal = outcome
+                        elif event.get("status") == "error":
+                            terminal = ToolOutcome(outcome, "tool_error")
+                            result = (terminal, event)
+                        tool_results.append(result)
+                        continue
                     payload = terminal if not tool_results else "Skipped: tool batch stopped."
                     event = {"name": tool_call.name, "status": "skipped", "detail": "tool batch stopped"}
                     await _record_result(tool_result_callback, ordinal, tool_call, payload,
@@ -191,6 +217,23 @@ async def execute_tool_calls(
     results = [result for result, _event in tool_results]
     events = [event for _result, event in tool_results]
     return results, events
+
+
+def _is_safe_catalog_tail(tools: ToolRegistry, call: ToolCallRequest) -> bool:
+    """Allow only a concrete first-party, already-queued filtered catalog read."""
+    from nanobot.agent.tools.repositories import RepositoryCatalogTool
+
+    registered = tools.get(call.name)
+    if call.name != "repository_catalog" or type(registered) is not RepositoryCatalogTool:
+        return False
+    prepared = tools.prepare_call(call.name, call.arguments)
+    tool, params, error = prepared
+    return (
+        error is None
+        and type(tool) is RepositoryCatalogTool
+        and type(params) is dict
+        and params in ({"action": "list"}, {"action": "roots"})
+    )
 
 
 async def _execute_tool_call(
@@ -252,38 +295,49 @@ async def _execute_tool_call(
         return payload, event
 
     await hook.before_execute_tool(context, tool_call, tool, params)
-    if turn_context is not None and turn_context.busy_turn is not None:
-        turn_context.busy_turn.check_stop()
-    if turn_context is not None and turn_context.execution_owner is not None:
-        turn_context.execution_owner.validate_dispatch()
-    try:
-        if tool is not None:
-            result = await tools.execute_prepared(tool, params, turn_context)
-        else:
-            result = await tools.execute(tool_call.name, params)
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        event = {
-            "name": tool_call.name,
-            "status": "error",
-            "detail": str(exc),
-        }
-        payload = _with_retry_hint(f"Error: {type(exc).__name__}: {exc}")
-        handled = _classify_violation(
-            raw_text=str(exc),
-            soft_payload=payload,
-            event=event,
-            tool_call=tool_call,
-            workspace_violation_counts=workspace_violation_counts,
-        )
-        if handled is not None:
-            payload, event = handled
-        await _record_result(tool_result_callback, ordinal, tool_call,
-                             {"exception_type": type(exc).__name__, "message": str(exc)},
-                             payload, event, dispatched=True)
-        await hook.on_execute_tool_error(context, tool_call, tool, params, exc)
-        return payload, event
+    with tools.dispatch_admission(tool_call.name) as dispatch_error:
+        if dispatch_error is not None:
+            payload = _with_retry_hint(dispatch_error)
+            event = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": dispatch_error[:120],
+            }
+            await _record_result(tool_result_callback, ordinal, tool_call, dispatch_error,
+                                 payload, event, dispatched=False)
+            return payload, event
+        if turn_context is not None and turn_context.busy_turn is not None:
+            turn_context.busy_turn.check_stop()
+        if turn_context is not None and turn_context.execution_owner is not None:
+            turn_context.execution_owner.validate_dispatch()
+        try:
+            if tool is not None:
+                result = await tools.execute_prepared(tool, params, turn_context)
+            else:
+                result = await tools.execute(tool_call.name, params)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            event = {
+                "name": tool_call.name,
+                "status": "error",
+                "detail": str(exc),
+            }
+            payload = _with_retry_hint(f"Error: {type(exc).__name__}: {exc}")
+            handled = _classify_violation(
+                raw_text=str(exc),
+                soft_payload=payload,
+                event=event,
+                tool_call=tool_call,
+                workspace_violation_counts=workspace_violation_counts,
+            )
+            if handled is not None:
+                payload, event = handled
+            await _record_result(tool_result_callback, ordinal, tool_call,
+                                 {"exception_type": type(exc).__name__, "message": str(exc)},
+                                 payload, event, dispatched=True)
+            await hook.on_execute_tool_error(context, tool_call, tool, params, exc)
+            return payload, event
 
     raw_result = result
     outcome = result if isinstance(result, ToolOutcome) else None

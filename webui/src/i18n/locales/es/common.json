@@ -98,6 +98,7 @@
       "channels": "Canales",
       "runtime": "Sistema",
       "advanced": "Seguridad",
+      "folders": "Carpetas y proyectos",
       "cliApps": "Aplicaciones CLI",
       "mcp": "MCP",
       "apps": "Aplicaciones",
@@ -159,6 +160,7 @@
       "workspacePath": "Espacio de trabajo predeterminado",
       "localServiceAccess": "Servicios locales",
       "webuiDefaultAccess": "Acceso predeterminado",
+      "managedFolderAccess": "Acceso a carpetas",
       "currentModel": "Configuración actual",
       "brandLogos": "Logos de marca",
       "browserNotifications": "Notificaciones de tareas",
@@ -200,6 +202,7 @@
       "timezone": "Se usa para horarios y respuestas con conciencia temporal.",
       "localServiceAccess": "Permite que los comandos shell con acceso completo alcancen servicios locales.",
       "webuiDefaultAccess": "Usado por chats web sin permiso específico de proyecto.",
+      "managedFolderAccess": "Los permisos de carpeta controlan el acceso a archivos y comandos. La preferencia de acceso completo no añade ni omite permisos.",
       "securityManagedControls": "Las capturas web siempre protegen servicios locales, privados y metadata. La seguridad de canales core se gestiona en config.json.",
       "currentModel": "Se usa para nuevas respuestas.",
       "selectedModelProvider": "Definido por el modelo seleccionado.",
@@ -240,7 +243,7 @@
       "collapsedDiff": "Diff contraído",
       "on": "Activado",
       "off": "Desactivado",
-      "defaultPermission": "Permiso predeterminado",
+      "defaultPermission": "Restringido",
       "fullAccess": "Acceso completo",
       "configured": "Configurado",
       "notConfigured": "Sin configurar",
@@ -1364,7 +1367,7 @@
         "accessAria": "Modo de acceso al espacio de trabajo",
         "projectAria": "Elegir proyecto",
         "projectPlaceholder": "Seleccionar proyecto",
-        "default": "Permiso predeterminado",
+        "default": "Restringido",
         "defaultShort": "Predeterm.",
         "full": "Acceso completo",
         "fullShort": "Completo"
@@ -1555,11 +1558,58 @@
   },
   "workspace": {
     "dialog": {
-      "defaultProject": "Espacio de trabajo predeterminado",
+      "defaultProject": "Usar el inicio del agente",
       "manual": "Pegar ruta",
       "manualPlaceholder": "/Users/name/project",
-      "usePath": "Usar ruta",
+      "usePath": "Usar carpeta",
       "absolutePathRequired": "Introduce una ruta absoluta de carpeta en esta máquina."
+    },
+    "recovery": {
+      "durationTitle": "¿Cuánto debe durar este acceso?",
+      "allowOnce": "Permitir una vez",
+      "allowOnceDescription": "Para esta tarea, incluidos los pasos de continuación. No se guarda para futuras tareas.",
+      "alwaysAllow": "Permitir siempre",
+      "alwaysAllowDescription": "Se guarda para usos futuros. Adminístralo en Carpetas y proyectos.",
+      "allowOnceAndUse": "Permitir una vez y usar la carpeta",
+      "onceUnavailable": "El acceso puntual no está disponible hasta que Nanobot confirme el acceso restringido actual.",
+      "onceUnavailableFull": "El acceso puntual a carpetas no está disponible mientras el acceso completo esté activo.",
+      "permissionRefreshFailed": "No se pudo comprobar el acceso actual. Actualiza antes de permitir esta tarea.",
+      "permissionRefreshing": "Comprobando el acceso actual…",
+      "onceNotActive": "El acceso puntual ya no está activo. Revisa la carpeta antes de continuar.",
+      "onceRetiringActive": "Hay un comando ejecutándose con el acceso anterior. Espera a que termine o detenlo y vuelve a intentarlo.",
+      "onceRetiringUnknown": "Nanobot aún no puede confirmar si los comandos anteriores terminaron. Los cambios de acceso están pendientes.",
+      "onceRetiringFinished": "El trabajo anterior terminó. El acceso puntual sigue finalizándose.",
+      "onceExpired": "El acceso puntual terminó. Revisa la carpeta de nuevo antes de continuar.",
+      "readyOnce": "Acceso permitido para esta tarea. Puedes continuar con {{path}}.",
+      "readyAlways": "Acceso guardado. Puedes continuar con {{path}}."
+    },
+    "permissionV2": {
+      "actionFailed": "No se pudo actualizar el acceso. Actualiza este chat antes de volver a intentarlo.",
+      "confirmTitle": "¿Activar el acceso completo?",
+      "confirmDescription": "Nanobot podrá leer y cambiar archivos y ejecutar comandos fuera de la carpeta seleccionada según los permisos de tu cuenta del sistema operativo. El directorio y contexto actuales seguirán siendo los de Working in. Los chats nuevos empiezan en modo restringido.",
+      "enableFull": "Activar acceso completo",
+      "fullEnding": "El acceso completo está terminando",
+      "fullIndicator": "Acceso completo",
+      "fullReach": "Archivos y comandos de este dispositivo según los permisos de tu cuenta del sistema operativo.",
+      "retiringActive": "Hay un comando ejecutándose con el acceso anterior. Espera a que termine o detenlo y vuelve a intentarlo.",
+      "retiringUnknown": "Nanobot aún no puede confirmar si los comandos anteriores terminaron. Los cambios de acceso están pendientes.",
+      "retiringFinished": "El trabajo anterior terminó. Vuelve a intentarlo para confirmar el acceso restringido.",
+      "retryRestricted": "Volver a intentar el acceso restringido",
+      "returnRestricted": "Volver al acceso restringido",
+      "sessionRequired": "Envía un mensaje para crear este chat antes de activar el acceso completo.",
+      "unavailable": "Acceso no disponible",
+      "legacyUnavailable": "Esta pasarela no informa de los permisos de acceso actuales.",
+      "unavailableReasons": {
+        "controls_unavailable": "El acceso completo no está disponible con los controles locales actuales.",
+        "session_required": "Envía un mensaje para crear este chat antes de activar el acceso completo.",
+        "configured_sandbox": "El acceso completo no está disponible mientras haya confinamiento de comandos configurado.",
+        "supervisor_unavailable": "El acceso completo no está disponible porque Nanobot no puede supervisar comandos de forma segura.",
+        "permission_state_unavailable": "Los permisos actuales no están disponibles. Actualiza este chat antes de volver a intentarlo.",
+        "permission_retiring": "No se puede activar el acceso completo mientras termina el trabajo anterior."
+      }
+    },
+    "management": {
+      "commandsAvailable": "Comandos disponibles"
     }
   }
 }

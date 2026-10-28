@@ -39,6 +39,7 @@ from nanobot.session.pending_followups import (
 )
 from nanobot.session.persistence_metadata import (
     BUSY_INBOX_METADATA_KEY,
+    DURABLE_METADATA_KEYS,
     LEGACY_RECOVERY_KEYS,
     SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
     accepted_metadata_updates,
@@ -49,6 +50,14 @@ from nanobot.session.source import (
     merge_source_events,
     validate_event_ids,
     validate_execution_links,
+)
+from nanobot.workspace_access_recovery import (
+    WorkspaceAccessRecord,
+    WorkspaceAccessSourceBinding,
+    WorkspaceScopeMetadata,
+    parse_workspace_access_record,
+    parse_workspace_access_source_binding,
+    parse_workspace_scope_metadata,
 )
 
 if TYPE_CHECKING:
@@ -169,6 +178,25 @@ def _source_bytes(header: dict[str, Any], events: list[dict[str, Any]]) -> bytes
         json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n"
         for row in (header, *events)
     ).encode("utf-8")
+
+
+def _invalidate_workspace_access_request(metadata: dict[str, Any]) -> bool:
+    """Consume a pending decision when its task focus or input changes."""
+    raw = metadata.get("workspace_access_request")
+    if raw is None:
+        return False
+    try:
+        record = parse_workspace_access_record(raw)
+    except (TypeError, ValueError):
+        return False
+    if record["status"] not in {"pending", "ready", "continuing"}:
+        return False
+    metadata["workspace_access_request"] = parse_workspace_access_record({
+        **record,
+        "revision": record["revision"] + 1,
+        "status": "invalidated",
+    })
+    return True
 
 
 def _counter(value: object) -> int:
@@ -1277,9 +1305,23 @@ class SourceSessionStore:
             merged = merge_source_events(committed, events)
             if merged == committed:
                 return self._snapshot(header, committed)
+            if any(event.get("role") == "user" for event in events):
+                _invalidate_workspace_access_request(header["metadata"])
             header["revision"] += 1
             header["updated_at"] = datetime.now().isoformat()
             return self._write(header, merged)
+
+    def invalidate_workspace_access_request(self, key: str) -> bool:
+        """Consume any pending decision when canonical user input is accepted."""
+        with self._backend.locked_session_files():
+            header, events = self._read_unlocked(key)
+            self._check(header, self._state(header))
+            if not _invalidate_workspace_access_request(header["metadata"]):
+                return False
+            header["revision"] += 1
+            header["updated_at"] = datetime.now().isoformat()
+            self._write(header, events)
+            return True
 
     def commit_context_checkpoint(self, key: str, expected: SourceState, candidate: dict[str, Any], *, owner: ExecutionOwner | None = None) -> SourceSnapshot:
         from nanobot.session.execution_owner import execution_transaction
@@ -1429,7 +1471,7 @@ class SourceSessionStore:
             "context_checkpoint", "artifact_manifest", "_last_summary", "execution_lease",
             "execution_recovery_required", USER_ACTIVITY_REVISION_KEY,
             LAST_USER_ACTIVITY_AT_KEY, SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
-            *LEGACY_RECOVERY_KEYS,
+            "workspace_access_request", *LEGACY_RECOVERY_KEYS,
         }:
             header["metadata"].pop(name, None)
         records: list[object] = [header, *events]
@@ -1542,6 +1584,85 @@ class SourceSessionStore:
             header["revision"] += 1
             return self._write(header, events)
 
+    def commit_workspace_access_request(
+        self,
+        key: str,
+        *,
+        expected_binding: WorkspaceAccessSourceBinding,
+        expected_record: WorkspaceAccessRecord | None,
+        replacement_record: WorkspaceAccessRecord | None,
+        expected_latest_input_event_id: str | None = None,
+        expected_workspace_scope: WorkspaceScopeMetadata | None = None,
+        replacement_workspace_scope: WorkspaceScopeMetadata | None = None,
+    ) -> SourceSnapshot:
+        """CAS one reserved recovery field without touching transcript events."""
+        from nanobot.session.manager import SessionWriteConflict
+
+        try:
+            expected_binding = parse_workspace_access_source_binding(expected_binding)
+        except (TypeError, ValueError):
+            raise SourceValidationError("Invalid workspace access source binding") from None
+        if expected_record is not None:
+            expected_record = parse_workspace_access_record(expected_record)
+        if replacement_record is not None:
+            replacement_record = parse_workspace_access_record(replacement_record)
+        try:
+            if expected_workspace_scope is not None:
+                expected_workspace_scope = parse_workspace_scope_metadata(expected_workspace_scope)
+            if replacement_workspace_scope is not None:
+                replacement_workspace_scope = parse_workspace_scope_metadata(
+                    replacement_workspace_scope
+                )
+        except (TypeError, ValueError):
+            raise SourceValidationError("Invalid workspace access focus") from None
+        if (expected_workspace_scope is None) != (replacement_workspace_scope is None):
+            # None/record pairs are meaningful only when an explicit replacement
+            # exists; deleting focus is never part of request resolution.
+            if replacement_workspace_scope is None:
+                raise SourceValidationError("Workspace access focus cannot be removed")
+
+        with self._backend.locked_session_files():
+            header, events = self._read_unlocked(key)
+            self._check(header, self._state(header))
+            actual = self._state(header)
+            binding = {
+                "store_identity": actual.store_identity,
+                "incarnation": actual.incarnation,
+                "generation": actual.generation,
+            }
+            if binding != expected_binding:
+                raise SessionWriteConflict()
+            if expected_latest_input_event_id is not None:
+                latest_user = next(
+                    (event for event in reversed(events) if event.get("role") == "user"),
+                    None,
+                )
+                if (
+                    latest_user is None
+                    or latest_user.get("_event_id") != expected_latest_input_event_id
+                ):
+                    raise SessionWriteConflict()
+            raw_current = header["metadata"].get("workspace_access_request")
+            if raw_current is None:
+                current: WorkspaceAccessRecord | None = None
+            else:
+                try:
+                    current = parse_workspace_access_record(raw_current)
+                except (TypeError, ValueError):
+                    raise SourceValidationError("Invalid workspace access record") from None
+            if current != expected_record:
+                raise SessionWriteConflict()
+            if replacement_workspace_scope is not None:
+                if header["metadata"].get("workspace_scope") != expected_workspace_scope:
+                    raise SessionWriteConflict()
+                header["metadata"]["workspace_scope"] = replacement_workspace_scope
+            if replacement_record is None:
+                header["metadata"].pop("workspace_access_request", None)
+            else:
+                header["metadata"]["workspace_access_request"] = replacement_record
+            header["revision"] += 1
+            return self._write(header, events)
+
     def admit_pending_followup(
         self,
         key: str,
@@ -1577,6 +1698,7 @@ class SourceSessionStore:
             header["metadata"][SOURCE_PENDING_FOLLOWUPS_METADATA_KEY] = [
                 item.to_dict() for item in records
             ]
+            _invalidate_workspace_access_request(header["metadata"])
             header["revision"] += 1
             header["updated_at"] = datetime.now().isoformat()
             self._write(header, events)
@@ -1679,16 +1801,21 @@ class SourceSessionStore:
         with self._backend.locked_session_files():
             header, events = self._read_unlocked(key)
             self._check(header, self._state(header))
-            header["metadata"].update(accepted_metadata_updates(updates, source=True))
-            reserved = set(LEGACY_RECOVERY_KEYS) | {
-                BUSY_INBOX_METADATA_KEY, SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
-                "context_checkpoint", "source_schema_version", "execution_lease",
-                "execution_recovery_required", "revision", "generation", "incarnation",
-                "artifact_manifest", USER_ACTIVITY_REVISION_KEY, LAST_USER_ACTIVITY_AT_KEY,
-            }
+            accepted = accepted_metadata_updates(updates, source=True)
+            metadata = header["metadata"]
+            previous_scope = metadata.get("workspace_scope")
+            scope_removed = "workspace_scope" in removals and "workspace_scope" in metadata
+            scope_changed = (
+                "workspace_scope" in accepted
+                and accepted["workspace_scope"] != previous_scope
+            ) or scope_removed
+            metadata.update(accepted)
+            reserved = set(DURABLE_METADATA_KEYS) | set(LEGACY_RECOVERY_KEYS)
             for name in removals:
                 if name not in reserved:
-                    header["metadata"].pop(name, None)
+                    metadata.pop(name, None)
+            if scope_changed:
+                _invalidate_workspace_access_request(metadata)
             header["revision"] += 1
             return self._write(header, events)
 

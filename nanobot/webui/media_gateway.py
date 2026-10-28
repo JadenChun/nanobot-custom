@@ -11,6 +11,7 @@ from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
 from nanobot.config.paths import get_media_dir
+from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.webui.attachment_ingress import (
     AttachmentIngressResult,
     store_inbound_attachments,
@@ -39,12 +40,18 @@ class WebUIMediaGateway:
         media_dir: Callable[[str | None], Path] | None = None,
         secret: bytes | None = None,
         attachment_limits: AttachmentIngressLimits | None = None,
+        resource_policy: ResourceAccessPolicy | None = None,
     ) -> None:
         self.workspace_path = workspace_path
         self.logger = logger
         self._media_dir: Callable[[str | None], Path] = media_dir or _default_media_dir
         self.secret = secret or secrets.token_bytes(32)
         self.attachment_limits = attachment_limits or AttachmentIngressLimits()
+        self._resource_policy = resource_policy
+
+    def set_resource_policy(self, policy: ResourceAccessPolicy | None) -> None:
+        """Attach the gateway's shared live folder and managed-repository policy."""
+        self._resource_policy = policy
 
     def store_inbound_attachments(self, media: list[Any]) -> AttachmentIngressResult:
         """Validate and persist attachments from an inbound WebUI message."""
@@ -70,12 +77,21 @@ class WebUIMediaGateway:
             media_dir=self._media_dir,
         )
 
-    def sign_or_stage_media_path(self, path: Path) -> dict[str, str] | None:
+    def sign_or_stage_media_path(
+        self,
+        path: Path,
+        *,
+        allow_folder_grants: bool = False,
+    ) -> dict[str, str] | None:
         return sign_or_stage_media_path(
             path,
             secret=self.secret,
             media_dir=self._media_dir,
             logger=self.logger,
+            authorize_source=lambda source: self._authorize_managed_source(
+                source,
+                allow_folder_grants=allow_folder_grants,
+            ),
         )
 
     def rewrite_local_markdown_images(
@@ -83,18 +99,51 @@ class WebUIMediaGateway:
         text: str,
         *,
         workspace_path: Path | None = None,
+        allow_folder_grants: bool = False,
     ) -> str:
         return rewrite_local_markdown_images(
             text,
             workspace_path=workspace_path or self.workspace_path,
-            sign_path=self.sign_or_stage_media_path,
+            sign_path=lambda path: self.sign_or_stage_media_path(
+                path,
+                allow_folder_grants=allow_folder_grants,
+            ),
         )
 
-    def augment_transcript_media(self, paths: list[str]) -> list[dict[str, Any]]:
+    def augment_transcript_media(
+        self,
+        paths: list[str],
+        *,
+        allow_folder_grants: bool = False,
+    ) -> list[dict[str, Any]]:
         return signed_media_attachments(
             paths,
-            sign_path=self.sign_or_stage_media_path,
+            sign_path=lambda path: self.sign_or_stage_media_path(
+                path,
+                allow_folder_grants=allow_folder_grants,
+            ),
         )
 
     def augment_transcript_user_media(self, paths: list[str]) -> list[dict[str, Any]]:
         return self.augment_transcript_media(paths)
+
+    def _authorize_managed_source(
+        self,
+        path: Path,
+        *,
+        allow_folder_grants: bool,
+    ) -> bool:
+        policy = self._resource_policy
+        grants = policy.folder_grants if policy is not None else None
+        if policy is None or grants is None or not grants.is_managed:
+            return True
+        try:
+            policy.validate_path(
+                path,
+                "read",
+                managed=True,
+                allow_folder_grants=allow_folder_grants,
+            )
+        except PermissionError:
+            return False
+        return True

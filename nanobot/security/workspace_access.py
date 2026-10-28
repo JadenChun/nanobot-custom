@@ -6,7 +6,14 @@ import os
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast
+
+if TYPE_CHECKING:
+    from nanobot.security.desktop_permissions import (
+        DesktopPermissionOwner,
+        WorkspaceFullAccessReference,
+        WorkspaceTaskAccessReference,
+    )
 
 WorkspaceAccessMode = Literal["restricted", "full"]
 WORKSPACE_SCOPE_METADATA_KEY = "workspace_scope"
@@ -21,7 +28,20 @@ _PROVIDER_LABELS = {
     "bwrap": "Bubblewrap",
 }
 
-_CURRENT_WORKSPACE_SCOPE: ContextVar["WorkspaceScope | None"] = ContextVar(
+@dataclass
+class WorkspaceFocusCell:
+    """Mutable focus owned by one active run and shared with child tool tasks."""
+
+    scope: WorkspaceScope
+    permission_owner: "DesktopPermissionOwner | None" = None
+    task_reference: "WorkspaceTaskAccessReference | None" = None
+    full_reference: "WorkspaceFullAccessReference | None" = None
+
+    def replace(self, scope: WorkspaceScope) -> None:
+        self.scope = scope
+
+
+_CURRENT_WORKSPACE_FOCUS: ContextVar["WorkspaceFocusCell | None"] = ContextVar(
     "nanobot_workspace_scope",
     default=None,
 )
@@ -113,6 +133,8 @@ class WorkspaceScopeResolver:
     default_workspace: str | Path
     default_restrict_to_workspace: bool
     scoped_channel: str = "websocket"
+    allow_missing_persisted: bool = False
+    managed_state: Callable[[], bool] | None = None
 
     @property
     def sandbox_status(self) -> WorkspaceSandboxStatus:
@@ -150,6 +172,10 @@ class WorkspaceScopeResolver:
             default_workspace=self.default_workspace,
             default_restrict_to_workspace=self.default_restrict_to_workspace,
             source_channel=channel,
+            allow_missing_persisted=(
+                self.allow_missing_persisted
+                or bool(self.managed_state and self.managed_state())
+            ),
         )
 
     def persist_message_scope(self, session: Any, msg: Any) -> None:
@@ -169,10 +195,16 @@ def workspace_sandbox_status(
     restrict_to_workspace: bool,
     workspace: str | Path,
     environ: dict[str, str] | None = None,
+    preserve_workspace_identity: bool = False,
 ) -> WorkspaceSandboxStatus:
     """Return how workspace restriction is enforced in the current host."""
 
-    workspace_root = str(Path(workspace).expanduser().resolve(strict=False))
+    workspace_path = Path(workspace).expanduser()
+    workspace_root = str(
+        Path(os.path.abspath(workspace_path))
+        if preserve_workspace_identity
+        else workspace_path.resolve(strict=False)
+    )
     provider = _env_system_provider(environ)
     if not restrict_to_workspace:
         return WorkspaceSandboxStatus(
@@ -217,9 +249,15 @@ def build_workspace_scope(
     access_mode: str,
     *,
     source_channel: str | None = None,
+    preserve_path_identity: bool = False,
 ) -> WorkspaceScope:
     mode = _normalize_access_mode(access_mode)
-    root = Path(project_path).expanduser().resolve(strict=False)
+    project = Path(project_path).expanduser()
+    root = (
+        Path(os.path.abspath(project))
+        if preserve_path_identity
+        else project.resolve(strict=False)
+    )
     restrict = mode == "restricted"
     return WorkspaceScope(
         project_path=root,
@@ -228,6 +266,7 @@ def build_workspace_scope(
         sandbox_status=workspace_sandbox_status(
             restrict_to_workspace=restrict,
             workspace=root,
+            preserve_workspace_identity=preserve_path_identity,
         ),
         source_channel=source_channel,
     )
@@ -252,6 +291,8 @@ def validate_workspace_scope_payload(
     default_workspace: str | Path,
     default_restrict_to_workspace: bool,
     source_channel: str | None = None,
+    allow_missing: bool = False,
+    preserve_path_identity: bool = False,
 ) -> WorkspaceScope:
     """Validate a client-requested workspace scope."""
     if raw is None:
@@ -275,8 +316,12 @@ def validate_workspace_scope_payload(
     project = Path(raw_path).expanduser()
     if not project.is_absolute():
         raise WorkspaceScopeError("project_path must be absolute")
-    project = project.resolve(strict=False)
-    if not project.is_dir():
+    project = (
+        Path(os.path.abspath(project))
+        if preserve_path_identity
+        else project.resolve(strict=False)
+    )
+    if not allow_missing and not project.is_dir():
         raise WorkspaceScopeError("project_path must be an existing directory")
 
     raw_mode = scope_data.get("access_mode")
@@ -284,7 +329,12 @@ def validate_workspace_scope_payload(
         raw_mode = default_access_mode(default_restrict_to_workspace)
     if not isinstance(raw_mode, str):
         raise WorkspaceScopeError("access_mode must be a string")
-    return build_workspace_scope(project, raw_mode, source_channel=source_channel)
+    return build_workspace_scope(
+        project,
+        raw_mode,
+        source_channel=source_channel,
+        preserve_path_identity=preserve_path_identity,
+    )
 
 
 def workspace_scope_from_metadata(
@@ -293,6 +343,7 @@ def workspace_scope_from_metadata(
     default_workspace: str | Path,
     default_restrict_to_workspace: bool,
     source_channel: str | None = None,
+    allow_missing_persisted: bool = False,
 ) -> WorkspaceScope:
     """Resolve persisted metadata, falling back safely for old or stale sessions."""
     if not isinstance(metadata, dict):
@@ -308,6 +359,8 @@ def workspace_scope_from_metadata(
             default_workspace=default_workspace,
             default_restrict_to_workspace=default_restrict_to_workspace,
             source_channel=source_channel,
+            allow_missing=allow_missing_persisted,
+            preserve_path_identity=allow_missing_persisted,
         )
     except WorkspaceScopeError:
         return default_workspace_scope(
@@ -324,6 +377,7 @@ def resolve_effective_workspace_scope(
     default_workspace: str | Path,
     default_restrict_to_workspace: bool,
     source_channel: str | None = None,
+    allow_missing_persisted: bool = False,
 ) -> WorkspaceScope:
     if isinstance(message_metadata, dict) and WORKSPACE_SCOPE_METADATA_KEY in message_metadata:
         message_metadata_data = cast(dict[str, Any], message_metadata)
@@ -332,25 +386,50 @@ def resolve_effective_workspace_scope(
             default_workspace=default_workspace,
             default_restrict_to_workspace=default_restrict_to_workspace,
             source_channel=source_channel,
+            allow_missing_persisted=allow_missing_persisted,
         )
     return workspace_scope_from_metadata(
         session_metadata,
         default_workspace=default_workspace,
         default_restrict_to_workspace=default_restrict_to_workspace,
         source_channel=source_channel,
+        allow_missing_persisted=allow_missing_persisted,
     )
 
 
-def bind_workspace_scope(scope: WorkspaceScope) -> Token[WorkspaceScope | None]:
-    return _CURRENT_WORKSPACE_SCOPE.set(scope)
+def bind_workspace_scope(
+    scope: WorkspaceScope,
+    *,
+    permission_owner: "DesktopPermissionOwner | None" = None,
+    task_reference: "WorkspaceTaskAccessReference | None" = None,
+    full_reference: "WorkspaceFullAccessReference | None" = None,
+) -> Token[WorkspaceFocusCell | None]:
+    """Bind a fresh run-local cell while preserving the legacy value API."""
+    return bind_workspace_focus(WorkspaceFocusCell(
+        scope,
+        permission_owner=permission_owner,
+        task_reference=task_reference,
+        full_reference=full_reference,
+    ))
 
 
-def reset_workspace_scope(token: Token[WorkspaceScope | None]) -> None:
-    _CURRENT_WORKSPACE_SCOPE.reset(token)
+def bind_workspace_focus(cell: WorkspaceFocusCell) -> Token[WorkspaceFocusCell | None]:
+    """Bind an existing run-local focus cell for execution and child tool tasks."""
+    return _CURRENT_WORKSPACE_FOCUS.set(cell)
+
+
+def reset_workspace_scope(token: Token[WorkspaceFocusCell | None]) -> None:
+    _CURRENT_WORKSPACE_FOCUS.reset(token)
+
+
+def current_workspace_focus() -> WorkspaceFocusCell | None:
+    """Return the mutable cell owned by the current run, if one is bound."""
+    return _CURRENT_WORKSPACE_FOCUS.get()
 
 
 def current_workspace_scope() -> WorkspaceScope | None:
-    return _CURRENT_WORKSPACE_SCOPE.get()
+    focus = current_workspace_focus()
+    return focus.scope if focus is not None else None
 
 
 def current_tool_workspace(

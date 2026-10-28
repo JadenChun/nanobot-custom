@@ -12,6 +12,7 @@ from nanobot.session.manager import (
     SessionStorageError,
     SessionWriteConflict,
 )
+from nanobot.session.persistence_metadata import DURABLE_METADATA_KEYS
 from nanobot.session.source import SourceValidationError, new_source_event, prefix_digest
 
 
@@ -260,6 +261,119 @@ def test_compatibility_metadata_update_uses_strict_source_transaction(backend):
     assert loaded.state.revision == committed.state.revision + 1
     assert loaded.header["metadata"]["title"] == "updated"
     assert "runtime_checkpoint" not in loaded.header["metadata"]
+
+
+def test_workspace_access_request_has_a_dedicated_source_field_cas(backend):
+    session = seed(backend)
+    snapshot = upgrade(backend, session)
+    binding = {
+        "store_identity": snapshot.state.store_identity,
+        "incarnation": snapshot.state.incarnation,
+        "generation": snapshot.state.generation,
+    }
+    input_event_id = snapshot.events[-1]["_event_id"]
+    first = {
+        "version": 1,
+        "access_request_id": "a" * 32,
+        "revision": 1,
+        "task": {"turn_id": "turn:original"},
+        "blocked_turn_id": "turn:original",
+        "tool_call_id": None,
+        "created_at_ms": 10,
+        "status": "pending",
+        "reason": "folder_not_granted",
+        "operation": "read",
+        "target": {"kind": "directory", "path": "/projects/alpha"},
+        "purpose": "Read the project",
+        "selected_path": None,
+        "continuation_turn_id": None,
+        "source_binding": binding,
+        "task_input_event_id": input_event_id,
+        "latest_input_event_id": input_event_id,
+        "blocked_run_id": "c" * 32,
+        "expected_scope": {"project_path": "/agent", "access_mode": "restricted"},
+        "resolved_grants_revision": None,
+    }
+    second = {
+        **first,
+        "revision": 2,
+        "status": "ready",
+        "selected_path": "/projects/alpha",
+        "resolved_grants_revision": 0,
+    }
+
+    assert "workspace_access_request" in DURABLE_METADATA_KEYS
+    created = backend.source.commit_workspace_access_request(
+        snapshot.state.session_key,
+        expected_binding=binding,
+        expected_record=None,
+        replacement_record=first,
+        expected_latest_input_event_id=input_event_id,
+    )
+    assert created.header["metadata"]["workspace_access_request"] == first
+    assert created.header["metadata"]["custom"] == {"keep": True}
+    assert created.events == snapshot.events
+    assert created.state.revision == snapshot.state.revision + 1
+
+    with pytest.raises(SessionWriteConflict):
+        backend.source.commit_workspace_access_request(
+            snapshot.state.session_key,
+            expected_binding=binding,
+            expected_record=None,
+            replacement_record=second,
+            expected_latest_input_event_id=input_event_id,
+        )
+
+    advanced = backend.source.commit_workspace_access_request(
+        snapshot.state.session_key,
+        expected_binding=binding,
+        expected_record=first,
+        replacement_record=second,
+        expected_latest_input_event_id=input_event_id,
+        expected_workspace_scope=None,
+        replacement_workspace_scope={
+            "project_path": "/projects/alpha",
+            "access_mode": "restricted",
+        },
+    )
+    assert advanced.header["metadata"]["workspace_access_request"] == second
+    assert advanced.header["metadata"]["workspace_scope"] == {
+        "project_path": "/projects/alpha",
+        "access_mode": "restricted",
+    }
+    assert advanced.events == snapshot.events
+
+    with pytest.raises(SessionWriteConflict):
+        backend.source.commit_workspace_access_request(
+            snapshot.state.session_key,
+            expected_binding=binding,
+            expected_record=second,
+            replacement_record=second,
+            expected_latest_input_event_id=input_event_id,
+            expected_workspace_scope=None,
+            replacement_workspace_scope={
+                "project_path": "/other",
+                "access_mode": "restricted",
+            },
+        )
+
+    with pytest.raises(SessionWriteConflict):
+        backend.source.commit_workspace_access_request(
+            snapshot.state.session_key,
+            expected_binding={**binding, "generation": binding["generation"] + 1},
+            expected_record=second,
+            replacement_record=None,
+            expected_latest_input_event_id=input_event_id,
+        )
+
+    # Neither generic source metadata updates nor ordinary cached saves can own it.
+    backend.source.update_metadata(snapshot.state.session_key, {"workspace_access_request": None})
+    persisted = backend.source.load_source_snapshot(snapshot.state.session_key)
+    assert persisted.header["metadata"]["workspace_access_request"] == second
+    cached = persisted.to_session()
+    cached.metadata["workspace_access_request"] = {"status": "forged"}
+    with pytest.raises(SessionWriteConflict):
+        backend.save(cached)
 
 
 def test_known_source_corruption_does_not_enter_compatibility_repair(backend):

@@ -98,6 +98,7 @@
       "channels": "Kanal",
       "runtime": "Sistem",
       "advanced": "Keamanan",
+      "folders": "Folder & proyek",
       "cliApps": "Aplikasi CLI",
       "mcp": "MCP",
       "apps": "Aplikasi",
@@ -159,6 +160,7 @@
       "workspacePath": "Ruang kerja bawaan",
       "localServiceAccess": "Layanan lokal",
       "webuiDefaultAccess": "Akses bawaan",
+      "managedFolderAccess": "Akses folder terkelola",
       "currentModel": "Konfigurasi saat ini",
       "brandLogos": "Logo merek",
       "browserNotifications": "Notifikasi tugas",
@@ -200,6 +202,7 @@
       "timezone": "Dipakai untuk jadwal dan balasan yang peka waktu.",
       "localServiceAccess": "Izinkan perintah shell dengan akses penuh menjangkau layanan lokal.",
       "webuiDefaultAccess": "Digunakan oleh chat web tanpa izin khusus proyek.",
+      "managedFolderAccess": "Izin folder mengatur akses file dan perintah. Preferensi akses penuh tidak dapat menambahkan atau melewati izin.",
       "securityManagedControls": "Pengambilan web selalu melindungi layanan lokal, privat, dan metadata. Keamanan kanal inti tetap dikelola di config.json.",
       "currentModel": "Digunakan untuk balasan baru.",
       "selectedModelProvider": "Ditentukan oleh model yang dipilih.",
@@ -240,7 +243,7 @@
       "collapsedDiff": "Perbedaan diciutkan",
       "on": "Aktif",
       "off": "Nonaktif",
-      "defaultPermission": "Izin bawaan",
+      "defaultPermission": "Terbatas",
       "fullAccess": "Akses penuh",
       "configured": "Terkonfigurasi",
       "notConfigured": "Belum dikonfigurasi",
@@ -1363,7 +1366,7 @@
         "accessAria": "Mode akses ruang kerja",
         "projectAria": "Pilih proyek",
         "projectPlaceholder": "Pilih proyek",
-        "default": "Izin bawaan",
+        "default": "Terbatas",
         "defaultShort": "Bawaan",
         "full": "Akses penuh",
         "fullShort": "Penuh"
@@ -1554,11 +1557,58 @@
   },
   "workspace": {
     "dialog": {
-      "defaultProject": "Ruang kerja bawaan",
+      "defaultProject": "Gunakan beranda agen",
       "manual": "Tempel path",
       "manualPlaceholder": "/Users/name/project",
-      "usePath": "Gunakan path",
+      "usePath": "Gunakan folder",
       "absolutePathRequired": "Masukkan path folder absolut di mesin ini."
+    },
+    "recovery": {
+      "durationTitle": "Berapa lama akses ini berlaku?",
+      "allowOnce": "Izinkan sekali",
+      "allowOnceDescription": "Untuk tugas ini, termasuk langkah Lanjutkan. Tidak disimpan untuk tugas mendatang.",
+      "alwaysAllow": "Selalu izinkan",
+      "alwaysAllowDescription": "Disimpan untuk penggunaan mendatang. Kelola di Folder & proyek.",
+      "allowOnceAndUse": "Izinkan sekali dan gunakan folder",
+      "onceUnavailable": "Akses sekali tidak tersedia sampai Nanobot mengonfirmasi akses terbatas saat ini.",
+      "onceUnavailableFull": "Akses folder sekali tidak tersedia saat Akses penuh aktif.",
+      "permissionRefreshFailed": "Akses saat ini tidak dapat diperiksa. Segarkan sebelum mengizinkan tugas ini.",
+      "permissionRefreshing": "Memeriksa akses saat ini…",
+      "onceNotActive": "Akses sekali tidak lagi aktif. Tinjau folder sebelum melanjutkan.",
+      "onceRetiringActive": "Perintah masih berjalan dengan akses sebelumnya. Tunggu hingga selesai atau hentikan, lalu coba lagi.",
+      "onceRetiringUnknown": "Nanobot belum dapat memastikan apakah perintah sebelumnya sudah selesai. Perubahan akses masih tertunda.",
+      "onceRetiringFinished": "Pekerjaan sebelumnya selesai. Akses sekali masih dalam proses berakhir.",
+      "onceExpired": "Akses sekali telah berakhir. Tinjau folder lagi sebelum melanjutkan.",
+      "readyOnce": "Akses diizinkan untuk tugas ini. Siap melanjutkan di {{path}}.",
+      "readyAlways": "Akses disimpan. Siap melanjutkan di {{path}}."
+    },
+    "permissionV2": {
+      "actionFailed": "Akses tidak dapat diperbarui. Segarkan chat ini sebelum mencoba lagi.",
+      "confirmTitle": "Aktifkan Akses penuh?",
+      "confirmDescription": "Nanobot dapat membaca dan mengubah file serta menjalankan perintah di luar folder yang dipilih sesuai izin akun sistem operasi Anda. Direktori kerja dan konteks tetap saat ini. Chat baru dimulai dalam mode Terbatas.",
+      "enableFull": "Aktifkan Akses penuh",
+      "fullEnding": "Akses penuh sedang diakhiri",
+      "fullIndicator": "Akses penuh",
+      "fullReach": "File dan perintah di seluruh perangkat sesuai izin akun sistem operasi Anda.",
+      "retiringActive": "Perintah masih berjalan dengan akses sebelumnya. Tunggu hingga selesai atau hentikan, lalu coba lagi.",
+      "retiringUnknown": "Nanobot belum dapat memastikan apakah perintah sebelumnya sudah selesai. Perubahan akses masih tertunda.",
+      "retiringFinished": "Pekerjaan sebelumnya selesai. Coba lagi untuk mengonfirmasi akses Terbatas.",
+      "retryRestricted": "Coba lagi untuk kembali ke Terbatas",
+      "returnRestricted": "Kembali ke Terbatas",
+      "sessionRequired": "Kirim pesan untuk membuat chat ini sebelum mengaktifkan Akses penuh.",
+      "unavailable": "Akses tidak tersedia",
+      "legacyUnavailable": "Gateway ini tidak melaporkan izin akses saat ini.",
+      "unavailableReasons": {
+        "controls_unavailable": "Akses penuh tidak tersedia dengan kontrol lokal saat ini.",
+        "session_required": "Kirim pesan untuk membuat chat ini sebelum mengaktifkan Akses penuh.",
+        "configured_sandbox": "Akses penuh tidak tersedia saat pembatasan perintah dikonfigurasi.",
+        "supervisor_unavailable": "Akses penuh tidak tersedia karena Nanobot tidak dapat mengawasi perintah dengan aman.",
+        "permission_state_unavailable": "Izin akses saat ini tidak tersedia. Segarkan chat ini sebelum mencoba lagi.",
+        "permission_retiring": "Akses penuh tidak dapat diaktifkan saat pekerjaan sebelumnya sedang diakhiri."
+      }
+    },
+    "management": {
+      "commandsAvailable": "Perintah tersedia"
     }
   }
 }

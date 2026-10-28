@@ -98,6 +98,7 @@
       "channels": "Canaux",
       "runtime": "Système",
       "advanced": "Sécurité",
+      "folders": "Dossiers et projets",
       "cliApps": "Applications CLI",
       "mcp": "MCP",
       "apps": "Applications",
@@ -159,6 +160,7 @@
       "workspacePath": "Espace de travail par défaut",
       "localServiceAccess": "Services locaux",
       "webuiDefaultAccess": "Accès par défaut",
+      "managedFolderAccess": "Accès des dossiers",
       "currentModel": "Configuration actuelle",
       "brandLogos": "Logos de marque",
       "browserNotifications": "Notifications de tâches",
@@ -200,6 +202,7 @@
       "timezone": "Utilisé pour les horaires et les réponses tenant compte du temps.",
       "localServiceAccess": "Autorise les commandes shell avec accès complet à atteindre les services localhost.",
       "webuiDefaultAccess": "Utilisé par les chats web sans permission propre au projet.",
+      "managedFolderAccess": "Les autorisations des dossiers contrôlent l’accès aux fichiers et aux commandes. La préférence d’accès complet ne peut pas ajouter ni contourner une autorisation.",
       "securityManagedControls": "Les récupérations web protègent toujours les services locaux, privés et de métadonnées. La sécurité des canaux principaux reste gérée dans config.json.",
       "currentModel": "Utilisée pour les nouvelles réponses.",
       "selectedModelProvider": "Défini par le modèle sélectionné.",
@@ -240,7 +243,7 @@
       "collapsedDiff": "Diff replié",
       "on": "Activé",
       "off": "Désactivé",
-      "defaultPermission": "Autorisation par défaut",
+      "defaultPermission": "Restreint",
       "fullAccess": "Accès complet",
       "configured": "Configuré",
       "notConfigured": "Non configuré",
@@ -1363,7 +1366,7 @@
         "accessAria": "Mode d’accès à l’espace de travail",
         "projectAria": "Choisir un projet",
         "projectPlaceholder": "Sélectionner un projet",
-        "default": "Autorisation par défaut",
+        "default": "Restreint",
         "defaultShort": "Par défaut",
         "full": "Accès complet",
         "fullShort": "Complet"
@@ -1554,11 +1557,58 @@
   },
   "workspace": {
     "dialog": {
-      "defaultProject": "Espace de travail par défaut",
+      "defaultProject": "Utiliser le dossier de l’agent",
       "manual": "Coller un chemin",
       "manualPlaceholder": "/Users/name/project",
-      "usePath": "Utiliser le chemin",
+      "usePath": "Utiliser le dossier",
       "absolutePathRequired": "Saisissez un chemin absolu de dossier sur cette machine."
+    },
+    "recovery": {
+      "durationTitle": "Combien de temps cet accès doit-il durer ?",
+      "allowOnce": "Autoriser une fois",
+      "allowOnceDescription": "Pour cette tâche, y compris les étapes de continuation. Non enregistré pour les tâches futures.",
+      "alwaysAllow": "Toujours autoriser",
+      "alwaysAllowDescription": "Enregistré pour une utilisation future. Gérez-le dans Dossiers et projets.",
+      "allowOnceAndUse": "Autoriser une fois et utiliser le dossier",
+      "onceUnavailable": "L’accès ponctuel est indisponible tant que Nanobot n’a pas confirmé l’accès restreint actuel.",
+      "onceUnavailableFull": "L’accès ponctuel au dossier est indisponible lorsque l’accès complet est actif.",
+      "permissionRefreshFailed": "Impossible de vérifier l’accès actuel. Actualisez avant d’autoriser cette tâche.",
+      "permissionRefreshing": "Vérification de l’accès actuel…",
+      "onceNotActive": "L’accès ponctuel n’est plus actif. Vérifiez le dossier avant de continuer.",
+      "onceRetiringActive": "Une commande est toujours en cours avec l’accès précédent. Attendez qu’elle se termine ou arrêtez-la, puis réessayez.",
+      "onceRetiringUnknown": "Nanobot ne peut pas encore confirmer que les commandes précédentes sont terminées. Les changements d’accès sont en attente.",
+      "onceRetiringFinished": "Le travail précédent est terminé. La fin de l’accès ponctuel est toujours en attente.",
+      "onceExpired": "L’accès ponctuel est terminé. Vérifiez de nouveau le dossier avant de continuer.",
+      "readyOnce": "Accès autorisé pour cette tâche. Vous pouvez continuer dans {{path}}.",
+      "readyAlways": "Accès enregistré. Vous pouvez continuer dans {{path}}."
+    },
+    "permissionV2": {
+      "actionFailed": "Impossible de mettre à jour l’accès. Actualisez cette conversation avant de réessayer.",
+      "confirmTitle": "Activer l’accès complet ?",
+      "confirmDescription": "Nanobot pourra lire et modifier des fichiers et exécuter des commandes au-delà du dossier sélectionné selon les autorisations de votre compte de système d’exploitation. Le répertoire et le contexte actuels de Working in restent inchangés. Les nouvelles conversations démarrent en mode restreint.",
+      "enableFull": "Activer l’accès complet",
+      "fullEnding": "L’accès complet prend fin",
+      "fullIndicator": "Accès complet",
+      "fullReach": "Fichiers et commandes sur cet appareil selon les autorisations de votre compte de système d’exploitation.",
+      "retiringActive": "Une commande est toujours en cours avec l’accès précédent. Attendez qu’elle se termine ou arrêtez-la, puis réessayez.",
+      "retiringUnknown": "Nanobot ne peut pas encore confirmer que les commandes précédentes sont terminées. Les changements d’accès sont en attente.",
+      "retiringFinished": "Le travail précédent est terminé. Réessayez pour confirmer le mode restreint.",
+      "retryRestricted": "Réessayer le retour au mode restreint",
+      "returnRestricted": "Revenir au mode restreint",
+      "sessionRequired": "Envoyez un message pour créer cette conversation avant d’activer l’accès complet.",
+      "unavailable": "Accès indisponible",
+      "legacyUnavailable": "Cette passerelle ne fournit pas les autorisations d’accès actuelles.",
+      "unavailableReasons": {
+        "controls_unavailable": "L’accès complet est indisponible avec les contrôles locaux actuels.",
+        "session_required": "Envoyez un message pour créer cette conversation avant d’activer l’accès complet.",
+        "configured_sandbox": "L’accès complet est indisponible lorsqu’un confinement des commandes est configuré.",
+        "supervisor_unavailable": "L’accès complet est indisponible, car Nanobot ne peut pas superviser les commandes de manière sûre.",
+        "permission_state_unavailable": "Les autorisations actuelles sont indisponibles. Actualisez cette conversation avant de réessayer.",
+        "permission_retiring": "L’accès complet ne peut pas être activé tant que le travail précédent se termine."
+      }
+    },
+    "management": {
+      "commandsAvailable": "Commandes disponibles"
     }
   }
 }

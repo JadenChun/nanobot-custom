@@ -4,7 +4,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import { SESSION_DRAG_TYPE } from "@/lib/session-drag";
-import type { ChatSummary, CliAppInfo, McpPresetInfo, SlashCommand } from "@/lib/types";
+import type {
+  ChatSummary,
+  CliAppInfo,
+  McpPresetInfo,
+  SlashCommand,
+  WorkspacePermissionProjection,
+  WorkspaceScopePayload,
+  WorkspacesPayload,
+} from "@/lib/types";
 
 vi.mock("@/lib/imageEncode", () => ({
   encodeImage: vi.fn(async (file: File) => ({
@@ -147,6 +155,49 @@ function session(chatId: string, title: string, preview = ""): ChatSummary {
       name: title,
     },
   };
+}
+
+function permissionV2Workspaces(scope: WorkspaceScopePayload): WorkspacesPayload {
+  return {
+    schema_version: 2,
+    default_access_mode: "restricted",
+    default_scope: scope,
+    controls: {
+      can_change_project: true,
+      can_use_full_access: true,
+      permission_v2: true,
+    },
+  };
+}
+
+function permissionProjection(
+  overrides: Partial<WorkspacePermissionProjection> = {},
+): WorkspacePermissionProjection {
+  return {
+    version: 1,
+    runtime_id: "b".repeat(32),
+    revision: 5,
+    mode: "restricted",
+    state: "active",
+    can_enable_full: true,
+    full_access_unavailable_reason: null,
+    task_access: null,
+    retirement: null,
+    ...overrides,
+  };
+}
+
+function restrictedRetiringProjection(
+  retirement: NonNullable<WorkspacePermissionProjection["retirement"]>,
+): WorkspacePermissionProjection {
+  return permissionProjection({
+    mode: "restricted",
+    state: "retiring",
+    can_enable_full: false,
+    full_access_unavailable_reason: "permission_retiring",
+    task_access: null,
+    retirement,
+  });
 }
 
 const ORIGINAL_INNER_HEIGHT = window.innerHeight;
@@ -1164,8 +1215,10 @@ describe("ThreadComposer", () => {
     expect(screen.getByDisplayValue("voice text")).toBeInTheDocument();
   });
 
-  it("renders and changes workspace access mode", async () => {
+  it("requires a separate confirmation before enabling Full access", async () => {
     const onWorkspaceScopeChange = vi.fn();
+    const onWorkspaceAccessModeChange = vi.fn();
+    const user = userEvent.setup();
     render(
       <ThreadComposer
         onSend={vi.fn()}
@@ -1176,49 +1229,348 @@ describe("ThreadComposer", () => {
           access_mode: "restricted",
           restrict_to_workspace: true,
         }}
-        workspaceControls={{ can_change_project: true, can_use_full_access: true }}
+        workspaceControls={{
+          can_change_project: true,
+          can_use_full_access: true,
+          permission_v2: true,
+        }}
+        workspaces={permissionV2Workspaces({
+          project_path: "/tmp/project",
+          project_name: "project",
+          access_mode: "restricted",
+          restrict_to_workspace: true,
+        })}
+        workspacePermissions={permissionProjection({ revision: 4 })}
+        persistentWorkspaceChat
         onWorkspaceScopeChange={onWorkspaceScopeChange}
+        onWorkspaceAccessModeChange={onWorkspaceAccessModeChange}
       />,
     );
 
     fireEvent.pointerDown(screen.getByRole("button", { name: /Workspace access mode/ }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Full Access/ }));
+    await user.click(await screen.findByRole("menuitem", { name: /Full access/ }));
 
-    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        project_path: "/tmp/project",
-        access_mode: "full",
-        restrict_to_workspace: false,
-      }),
-    );
+    expect(await screen.findByRole("dialog", { name: "Enable Full access?" })).toBeInTheDocument();
+    expect(screen.getByText(/under your OS account permissions/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Enable Full access" })).toBeInTheDocument();
+    expect(onWorkspaceScopeChange).not.toHaveBeenCalled();
+    expect(onWorkspaceAccessModeChange).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onWorkspaceAccessModeChange).not.toHaveBeenCalled();
   });
 
-  it("exposes full and compact workspace labels for container-driven compression", () => {
+  it("exposes acknowledged v2 full and compact workspace labels", () => {
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "full" as const,
+      restrict_to_workspace: false,
+    };
     render(
       <ThreadComposer
         onSend={vi.fn()}
         placeholder="Type your message..."
         variant="hero"
-        workspaceScope={{
-          project_path: "/tmp/project",
-          project_name: "project",
-          access_mode: "full",
-          restrict_to_workspace: false,
-        }}
-        workspaceControls={{ can_change_project: true, can_use_full_access: true }}
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection({ mode: "full", can_enable_full: false })}
+        persistentWorkspaceChat
         onWorkspaceScopeChange={vi.fn()}
       />,
     );
 
     const accessButton = screen.getByRole("button", {
-      name: "Workspace access mode: Full Access",
+      name: "Workspace access mode: Full access",
     });
-    const fullLabel = within(accessButton).getByText("Full Access");
+    const fullLabel = within(accessButton).getByText("Full access");
     const shortLabel = within(accessButton).getByText("Full");
-    expect(accessButton).toHaveAttribute("title", "Full Access");
+    expect(accessButton).toHaveAttribute("title", "Full access");
     expect(fullLabel).toHaveClass("thread-composer-access-label-full");
     expect(shortLabel).toHaveClass("thread-composer-access-label-short");
     expect(shortLabel).toHaveClass("hidden");
+  });
+
+  it("shows the session-required reason outside the disabled draft access control", () => {
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+      />,
+    );
+
+    const accessButton = screen.getByRole("button", { name: "Workspace access mode: Restricted" });
+    expect(accessButton).toBeEnabled();
+    expect(within(accessButton).getByText("Default")).toHaveClass("thread-composer-access-label-short");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Send a message to create this chat before enabling Full access.",
+    );
+  });
+
+  it("blocks sends while Full access is retiring but leaves the explicit retry available", async () => {
+    const user = userEvent.setup();
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "full" as const,
+      restrict_to_workspace: false,
+    };
+    const onSend = vi.fn();
+    const onRetryWorkspaceRestricted = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection({
+          mode: "full",
+          state: "retiring",
+          can_enable_full: false,
+          full_access_unavailable_reason: "permission_retiring",
+          retirement: {
+            reason: "mode_changed",
+            active_turn: false,
+            active_processes: 0,
+            unknown_processes: 0,
+          },
+        })}
+        persistentWorkspaceChat
+        onRetryWorkspaceRestricted={onRetryWorkspaceRestricted}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Message input"), { target: { value: "new work" } });
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    expect(onSend).not.toHaveBeenCalled();
+    const accessButton = screen.getByRole("button", { name: "Workspace access mode: Full access is ending" });
+    expect(accessButton).toBeEnabled();
+    expect(within(accessButton).getByText("Ending")).toHaveClass("thread-composer-access-label-short");
+    await user.click(accessButton);
+    expect(screen.getByText("Earlier work has finished. Retry to confirm Restricted access.")).toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "Retry returning to Restricted" });
+    expect(retry).toBeEnabled();
+    await user.click(retry);
+    expect(onRetryWorkspaceRestricted).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows unknown Full retirement ahead of active work and legacy Full text", async () => {
+    const user = userEvent.setup();
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "full" as const,
+      restrict_to_workspace: false,
+    };
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection({
+          mode: "full",
+          state: "retiring",
+          can_enable_full: false,
+          full_access_unavailable_reason: "permission_retiring",
+          retirement: {
+            reason: "mode_changed",
+            active_turn: true,
+            active_processes: 2,
+            unknown_processes: 1,
+          },
+        })}
+        persistentWorkspaceChat
+        onRetryWorkspaceRestricted={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Full access is ending" }));
+    expect(screen.getByText("Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending.")).toBeInTheDocument();
+    expect(screen.queryByText("A command is still running with the previous access. Wait for it to finish or stop it, then retry.")).not.toBeInTheDocument();
+  });
+
+  it("shows active prior access while Restricted remains authoritative without a retry action", async () => {
+    const user = userEvent.setup();
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const onSend = vi.fn();
+    const onWorkspaceAccessModeChange = vi.fn();
+    const onRetryWorkspaceRestricted = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={onSend}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={restrictedRetiringProjection({
+          reason: "restart",
+          active_turn: false,
+          active_processes: 1,
+          unknown_processes: 0,
+        })}
+        persistentWorkspaceChat
+        onWorkspaceAccessModeChange={onWorkspaceAccessModeChange}
+        onRetryWorkspaceRestricted={onRetryWorkspaceRestricted}
+      />,
+    );
+
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "keep this draft" } });
+    const accessButton = screen.getByRole("button", {
+      name: /Workspace access mode: Restricted.*previous access ending/i,
+    });
+    expect(accessButton).toBeEnabled();
+    fireEvent.pointerDown(accessButton);
+
+    expect(await screen.findByText("Previous access is ending.")).toBeInTheDocument();
+    expect(screen.getByText(/Earlier work is still active with the previous access/)).toBeInTheDocument();
+    expect(screen.getByText(/New work remains Restricted/)).toBeInTheDocument();
+    const restrictedItem = screen.getByRole("menuitem", { name: "Restricted" });
+    const fullItem = screen.getByRole("menuitem", { name: "Full access" });
+    expect(fullItem).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("button", { name: /retry|return to restricted|force clear/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/current local controls/)).not.toBeInTheDocument();
+    await user.click(restrictedItem);
+    expect(input).toHaveValue("keep this draft");
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onWorkspaceAccessModeChange).not.toHaveBeenCalled();
+    expect(onRetryWorkspaceRestricted).not.toHaveBeenCalled();
+  });
+
+  it("shows an ending label in the compact Restricted-retiring control without adding actions", async () => {
+    const user = userEvent.setup();
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const onWorkspaceAccessModeChange = vi.fn();
+    const onRetryWorkspaceRestricted = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={restrictedRetiringProjection({
+          reason: "restart",
+          active_turn: false,
+          active_processes: 1,
+          unknown_processes: 0,
+        })}
+        persistentWorkspaceChat
+        onWorkspaceAccessModeChange={onWorkspaceAccessModeChange}
+        onRetryWorkspaceRestricted={onRetryWorkspaceRestricted}
+      />,
+    );
+
+    const accessButton = screen.getByRole("button", {
+      name: /Workspace access mode: Restricted.*previous access ending/i,
+    });
+    expect(accessButton).toHaveAttribute("title", "Restricted · previous access ending");
+    expect(within(accessButton).getByText("Ending")).toHaveClass("thread-composer-access-label-short");
+
+    await user.click(accessButton);
+    expect(screen.getByRole("menuitem", { name: "Full access" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("button", { name: /retry|return to restricted|force clear/i })).not.toBeInTheDocument();
+    expect(onWorkspaceAccessModeChange).not.toHaveBeenCalled();
+    expect(onRetryWorkspaceRestricted).not.toHaveBeenCalled();
+  });
+
+  it("reports unknown completion without saying prior commands are alive or finished", async () => {
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={restrictedRetiringProjection({
+          reason: "restart",
+          active_turn: false,
+          active_processes: 0,
+          unknown_processes: 1,
+        })}
+        persistentWorkspaceChat
+        onRetryWorkspaceRestricted={vi.fn()}
+      />,
+    );
+
+    const accessButton = screen.getByRole("button", {
+      name: /Workspace access mode: Restricted.*previous access ending/i,
+    });
+    fireEvent.pointerDown(accessButton);
+
+    expect(await screen.findByText("Previous access is ending.")).toBeInTheDocument();
+    expect(screen.getByText(/cannot confirm whether earlier commands have finished/)).toBeInTheDocument();
+    expect(screen.queryByText(/A command is still running/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Earlier work has finished.")).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Full access" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("button", { name: /retry|return to restricted|force clear/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps a zero-count Restricted residual ending until its retiring state clears", async () => {
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={restrictedRetiringProjection({
+          reason: "restart",
+          active_turn: false,
+          active_processes: 0,
+          unknown_processes: 0,
+        })}
+        persistentWorkspaceChat
+        onRetryWorkspaceRestricted={vi.fn()}
+      />,
+    );
+
+    const accessButton = screen.getByRole("button", {
+      name: /Workspace access mode: Restricted.*previous access ending/i,
+    });
+    fireEvent.pointerDown(accessButton);
+
+    expect(await screen.findByText("Previous access is ending.")).toBeInTheDocument();
+    expect(screen.getByText(/No earlier commands are reported active or unknown.*still ending/)).toBeInTheDocument();
+    expect(screen.queryByText(/Earlier work has finished/)).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Restricted" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Full access" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("button", { name: /retry|return to restricted|force clear/i })).not.toBeInTheDocument();
   });
 
   it("keeps project selection as a compact composer dropdown", async () => {
@@ -1246,14 +1598,14 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Choose project" }));
+    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
 
-    expect(await screen.findByRole("button", { name: /Default workspace/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Use agent home/ })).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
     const input = screen.getByLabelText("Paste path");
     fireEvent.change(input, { target: { value: "relative/project" } });
-    fireEvent.click(screen.getByRole("button", { name: "Use Path" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Enter an absolute folder path on this machine.",
@@ -1261,7 +1613,7 @@ describe("ThreadComposer", () => {
     expect(onWorkspaceScopeChange).not.toHaveBeenCalled();
 
     fireEvent.change(input, { target: { value: "/Users/test/project-alpha" } });
-    fireEvent.click(screen.getByRole("button", { name: "Use Path" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
 
     expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
       project_path: "/Users/test/project-alpha",
@@ -1270,16 +1622,217 @@ describe("ThreadComposer", () => {
       restrict_to_workspace: false,
     }));
 
-    await user.click(screen.getByRole("button", { name: "Choose project" }));
+    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
     const reopenedInput = await screen.findByLabelText("Paste path");
     fireEvent.change(reopenedInput, { target: { value: "~/Pictures/Photos" } });
-    fireEvent.click(screen.getByRole("button", { name: "Use Path" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
 
     expect(onWorkspaceScopeChange).toHaveBeenLastCalledWith(expect.objectContaining({
       project_path: "~/Pictures/Photos",
       project_name: "Photos",
       access_mode: "full",
       restrict_to_workspace: false,
+    }));
+  });
+
+  it("keeps long folder catalogs scrollable without hiding picker actions", async () => {
+    const user = userEvent.setup();
+    const defaultScope = {
+      project_path: "/agent/home",
+      project_name: "workspace",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const effectiveAccess = {
+      policy: "managed" as const,
+      source: "grant" as const,
+      grant_root: "/projects",
+      exists: true,
+      read: true,
+      write: true,
+      commands: {
+        requested: false,
+        available: false,
+        backend: "none" as const,
+        reason: null,
+      },
+    };
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Ask anything..."
+        variant="hero"
+        workspaceScope={defaultScope}
+        workspaceDefaultScope={defaultScope}
+        workspaceControls={{
+          can_change_project: true,
+          can_use_full_access: false,
+          can_pick_folder: false,
+          can_manage_folders: true,
+          can_manage_catalog: true,
+          can_discover_repositories: true,
+        }}
+        workspaces={{
+          schema_version: 2,
+          default_access_mode: "default",
+          default_scope: defaultScope,
+          managed_access: true,
+          controls: {
+            can_change_project: true,
+            can_use_full_access: false,
+            can_pick_folder: false,
+            can_manage_folders: true,
+            can_manage_catalog: true,
+            can_discover_repositories: true,
+          },
+          management: {
+            grants_revision: 1,
+            grants: [],
+            repositories: Array.from({ length: 12 }, (_, index) => ({
+              name: `project-${index}`,
+              path: `/projects/project-${index}`,
+              purpose: "",
+              kind: "project" as const,
+              knowledge_repos: [],
+              auto_sync: false,
+              sync_paths: [],
+              exists: true,
+              effective_access: effectiveAccess,
+            })),
+          },
+        }}
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+
+    const picker = await screen.findByRole("dialog");
+    expect(picker).toHaveClass("overflow-y-auto");
+    expect(screen.getByRole("button", { name: /Use agent home/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("Paste path")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Browse…" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Manage folders and repositories" })).toBeInTheDocument();
+    const repositoryList = screen.getByRole("button", { name: /project-11/ }).parentElement;
+    expect(repositoryList).toHaveClass("max-h-40", "overflow-y-auto", "overscroll-contain");
+  });
+
+  it("keeps the current folder visible in an established chat", () => {
+    const scope = {
+      project_path: "/projects/current",
+      project_name: "current",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceDefaultScope={{
+          project_path: "/agent/home",
+          project_name: "workspace",
+          access_mode: "restricted",
+          restrict_to_workspace: true,
+        }}
+        workspaceControls={{ can_change_project: true, can_use_full_access: false }}
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Working in: current" })).toBeInTheDocument();
+  });
+
+  it("shows native command availability from legacy access in a v2 workspace response", () => {
+    const legacyScope = {
+      project_path: "/agent/home",
+      project_name: "Agent home",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+      effective_access: {
+        policy: "legacy" as const,
+        source: "configured" as const,
+        grant_root: null,
+        exists: true,
+        read: true,
+        write: true,
+        commands: {
+          requested: true,
+          available: true,
+          backend: "native" as const,
+          reason: null,
+        },
+      },
+    };
+
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={legacyScope}
+        workspaceDefaultScope={legacyScope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: false }}
+        workspaces={{
+          schema_version: 2,
+          default_access_mode: "restricted",
+          default_scope: legacyScope,
+          managed_access: false,
+          management: null,
+          controls: { can_change_project: true, can_use_full_access: false },
+        }}
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Read and write · Commands available")).toBeInTheDocument();
+    expect(screen.queryByText(/Bubblewrap|Unavailable/)).not.toBeInTheDocument();
+  });
+
+  it("keeps manual path entry available when the native folder picker fails", async () => {
+    const user = userEvent.setup();
+    const onWorkspaceScopeChange = vi.fn();
+    const pickFolder = vi.fn().mockRejectedValue(new Error("Folder picker unavailable"));
+    const defaultScope = {
+      project_path: "/Users/test/.nanobot/workspace",
+      project_name: "workspace",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    Object.defineProperty(window, "nanobotHost", {
+      configurable: true,
+      value: {
+        getRuntimeInfo: vi.fn(),
+        restartEngine: vi.fn(),
+        pickFolder,
+        openLogs: vi.fn(),
+        exportDiagnostics: vi.fn(),
+      },
+    });
+
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Ask anything..."
+        variant="hero"
+        workspaceScope={defaultScope}
+        workspaceDefaultScope={defaultScope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: false }}
+        onWorkspaceScopeChange={onWorkspaceScopeChange}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    await user.click(await screen.findByRole("button", { name: "Browse…" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Folder picker unavailable");
+    const input = screen.getByLabelText("Paste path");
+    await user.clear(input);
+    await user.type(input, "/Users/test/fallback-project");
+    await user.click(screen.getByRole("button", { name: "Use folder" }));
+
+    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
+      project_path: "/Users/test/fallback-project",
+      project_name: "fallback-project",
     }));
   });
 
@@ -1308,7 +1861,7 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Choose project" }));
+    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
 
     expect(await screen.findByLabelText("Paste path")).toHaveAttribute("placeholder", placeholder);
   });
@@ -1346,11 +1899,11 @@ describe("ThreadComposer", () => {
     expect(drawer).toHaveAttribute("aria-hidden", "true");
     expect(within(drawer as HTMLElement).getByRole("button", {
       hidden: true,
-      name: "Choose project",
+      name: "Working in: Agent home",
     })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Choose project" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Working in: Agent home" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", {
-      name: "Workspace access mode: Full Access",
+      name: "Workspace access mode: Full access",
     })).not.toBeInTheDocument();
 
     rerender(composer(false));
@@ -1358,7 +1911,7 @@ describe("ThreadComposer", () => {
     expect(container.querySelector("[data-composer-workspace-drawer]")).toBe(drawer);
     expect(drawer).toHaveAttribute("data-state", "open");
     expect(within(drawer as HTMLElement).getByRole("button", {
-      name: "Choose project",
+      name: "Working in: Agent home",
     })).toBeEnabled();
   });
 
@@ -1394,10 +1947,11 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Choose project" }));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    await user.click(await screen.findByRole("button", { name: "Browse…" }));
 
     await waitFor(() => expect(pickFolder).toHaveBeenCalled());
-    expect(screen.queryByRole("button", { name: /Default workspace/ })).not.toBeInTheDocument();
     expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
       project_path: "/Users/test/native-project",
       project_name: "native-project",
@@ -1433,10 +1987,11 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Choose project" }));
+    fireEvent.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    expect(screen.getByLabelText("Paste path")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Browse…" }));
 
     await waitFor(() => expect(pickFolder).toHaveBeenCalled());
-    expect(screen.queryByLabelText("Paste path")).not.toBeInTheDocument();
     expect(onWorkspaceScopeChange).toHaveBeenCalledWith(expect.objectContaining({
       project_path: "/Users/test/gateway-project",
       project_name: "gateway-project",
@@ -1466,9 +2021,9 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Choose project" }));
+    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
 
-    expect(await screen.findByRole("button", { name: /Default workspace/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Use agent home/ })).toBeInTheDocument();
     expect(screen.getByLabelText("Paste path")).toBeInTheDocument();
   });
 

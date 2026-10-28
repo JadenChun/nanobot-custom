@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Any
 
 from nanobot.agent.runner import AgentRunSpec
+from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import GenerationSettings, LLMProvider
 from nanobot.utils.llm_runtime import LLMRuntime
+
+
+def install_test_tool_dispatch(tools: Any) -> Any:
+    """Give legacy tool doubles the registry's neutral admission interface.
+
+    Runner behavior tests use stand-ins to observe execution.  Their default
+    MagicMock context-manager result is truthy, which correctly means
+    "dispatch denied" to the production executor.  Model the newly required
+    registry contract explicitly for these tests while leaving real registries
+    and policy tests untouched.
+    """
+    if not isinstance(tools, ToolRegistry) and not callable(
+        getattr(type(tools), "dispatch_admission", None)
+    ):
+        setattr(tools, "dispatch_admission", lambda _name: nullcontext(None))
+    return tools
 
 
 def make_run_spec(provider: LLMProvider, **kwargs: Any) -> AgentRunSpec:
@@ -51,4 +69,7 @@ def make_run_spec(provider: LLMProvider, **kwargs: Any) -> AgentRunSpec:
         ),
         context_window_tokens=context_window_tokens,
     )
+    tools = kwargs.get("tools")
+    if tools is not None:
+        install_test_tool_dispatch(tools)
     return AgentRunSpec(runtime=runtime, **kwargs)

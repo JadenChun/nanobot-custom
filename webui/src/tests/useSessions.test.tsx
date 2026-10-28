@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionTitle, useSessionHistory, useSessions } from "@/hooks/useSessions";
 import * as api from "@/lib/api";
 import { ClientProvider } from "@/providers/ClientProvider";
+import { folderAccessThreadFixture } from "@/tests/fixtures/folder-access-request";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -1194,6 +1195,92 @@ describe("useSessions", () => {
     });
 
     expect(result.current.hasPendingToolCalls).toBe(false);
+  });
+
+  it("retains a recovery request and exposes a failed authoritative refresh", async () => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const { result } = renderHook(() => useSessionHistory("websocket:chat-title"), {
+      wrapper: wrap(fakeClient()),
+    });
+
+    await waitFor(() => expect(result.current.workspaceAccessRequest?.access_request_id)
+      .toBe(folderAccessThreadFixture.workspace_access_request?.access_request_id));
+    vi.mocked(api.fetchWebuiThread).mockRejectedValueOnce(new Error("offline"));
+
+    await act(async () => {
+      result.current.markWorkspaceAccessRequestStale();
+      await expect(result.current.refreshWorkspaceAccessRequest()).rejects.toThrow("offline");
+    });
+
+    expect(result.current.workspaceAccessRequest?.access_request_id)
+      .toBe(folderAccessThreadFixture.workspace_access_request?.access_request_id);
+    expect(result.current.workspaceAccessRequestLoading).toBe(false);
+    expect(result.current.workspaceAccessRequestError).toBe(true);
+  });
+
+  it("does not revive an older request revision or clear its stale loading guard", async () => {
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce(folderAccessThreadFixture);
+    const { result } = renderHook(() => useSessionHistory("websocket:chat-title"), {
+      wrapper: wrap(fakeClient()),
+    });
+
+    await waitFor(() => expect(result.current.workspaceAccessRequest).not.toBeNull());
+    const cancelled = {
+      ...folderAccessThreadFixture.workspace_access_request!,
+      revision: 4,
+      status: "cancelled" as const,
+      can_continue: false,
+    };
+    act(() => result.current.updateWorkspaceAccessRequest(cancelled));
+    act(() => result.current.markWorkspaceAccessRequestStale());
+    act(() => result.current.updateWorkspaceAccessRequest({
+      ...folderAccessThreadFixture.workspace_access_request!,
+      revision: 3,
+      status: "ready",
+      can_continue: true,
+    }));
+
+    expect(result.current.workspaceAccessRequest).toEqual(cancelled);
+    expect(result.current.workspaceAccessRequestLoading).toBe(true);
+  });
+
+  it("keeps permission revisions monotonic within a runtime and rereads a changed runtime", async () => {
+    const current = {
+      version: 1 as const,
+      runtime_id: "a".repeat(32),
+      revision: 4,
+      mode: "restricted" as const,
+      state: "active" as const,
+      can_enable_full: true,
+      full_access_unavailable_reason: null,
+      task_access: null,
+      retirement: null,
+    };
+    const restarted = { ...current, runtime_id: "b".repeat(32), revision: 1 };
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+      ...folderAccessThreadFixture,
+      workspace_permissions: current,
+    });
+    const { result } = renderHook(() => useSessionHistory("websocket:chat-permissions"), {
+      wrapper: wrap(fakeClient()),
+    });
+
+    await waitFor(() => expect(result.current.workspacePermissions).toEqual(current));
+    act(() => result.current.updateWorkspacePermissions({ ...current, revision: 3 }));
+    expect(result.current.workspacePermissions).toEqual(current);
+
+    vi.mocked(api.fetchWebuiThread).mockResolvedValueOnce({
+      ...folderAccessThreadFixture,
+      workspace_permissions: restarted,
+    });
+    act(() => result.current.updateWorkspacePermissions(restarted));
+    await waitFor(() => expect(result.current.workspacePermissions).toEqual(restarted));
+    expect(api.fetchWebuiThread).toHaveBeenCalledTimes(2);
+    expect(api.fetchWebuiThread).toHaveBeenLastCalledWith(
+      "tok",
+      "websocket:chat-permissions",
+      { limit: 1, direction: "latest" },
+    );
   });
 
   it("keeps the session in the list when delete fails", async () => {

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.events import AgentEvent
@@ -18,6 +18,10 @@ from nanobot.events import RecoveryStateEvent as RecoveryStateEvent
 from nanobot.events import RetryStatusEvent as RetryStatusEvent
 from nanobot.events import RetryWaitEvent as RetryWaitEvent
 from nanobot.providers.base import LLMUsage
+
+if TYPE_CHECKING:
+    from nanobot.security.desktop_permissions import WorkspacePermissionProjection
+    from nanobot.workspace_access_recovery import FolderAccessRequest, WorkspaceScopePayload
 
 
 @dataclass(frozen=True)
@@ -84,6 +88,9 @@ class GoalStateSyncEvent(AgentEvent):
 @dataclass(frozen=True)
 class SessionUpdatedEvent(AgentEvent):
     scope: str | None = None
+    workspace_scope: WorkspaceScopePayload | None = None
+    workspace_access_request: FolderAccessRequest | None = None
+    workspace_permissions: WorkspacePermissionProjection | None = None
 
 
 @dataclass(frozen=True)

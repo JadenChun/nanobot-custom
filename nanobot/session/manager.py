@@ -16,7 +16,17 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Callable, Collection, Generator, Protocol, TypedDict, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Collection,
+    Generator,
+    Literal,
+    Protocol,
+    TypedDict,
+    cast,
+)
 from weakref import WeakValueDictionary
 
 from filelock import FileLock
@@ -28,6 +38,10 @@ from nanobot.providers.base import ProviderConversationState
 from nanobot.runtime_context import (
     RUNTIME_CONTEXT_HISTORY_META,
     public_history_message,
+)
+from nanobot.security.desktop_permissions import (
+    DesktopPermissionOwner,
+    WorkspacePermissionConflictError,
 )
 from nanobot.session.history_visibility import HIDDEN_HISTORY_META, is_hidden_history_message
 from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
@@ -48,6 +62,12 @@ from nanobot.utils.helpers import (
     strip_think,
 )
 from nanobot.utils.subagent_channel_display import scrub_subagent_announce_body
+from nanobot.workspace_access_recovery import (
+    WorkspaceAccessRecord,
+    WorkspaceAccessSourceBinding,
+    WorkspaceScopeMetadata,
+    parse_workspace_access_record,
+)
 
 if TYPE_CHECKING:
     from nanobot.session.artifact_operator import CopiedArtifactReadOperations
@@ -78,6 +98,7 @@ _RESERVED_DURABLE_METADATA = DURABLE_METADATA_KEYS
 _RUNTIME_CHECKPOINT_SUFFIX = ".checkpoint.json"
 _FORK_VOLATILE_METADATA_KEYS = {
     BUSY_INBOX_METADATA_KEY,
+    "workspace_access_request",
     "goal_state",
     "pending_user_turn",
     "pending_user_followups",
@@ -2534,11 +2555,16 @@ class SessionManager:
             _managed_access=_managed_access,
         )
         self._cache: OrderedDict[str, Session] = OrderedDict()
+        # Gateway controllers and loop wrappers share this one volatile owner.
+        self.desktop_permissions = DesktopPermissionOwner()
         self._mode_bindings: dict[str, tuple[str, int, str, str, int] | None] = {}
         # Preserve identity for sessions held by active callers without retaining idle ones.
         self._overflow_cache: WeakValueDictionary[str, Session] = WeakValueDictionary()
         self._max_cached_sessions = SESSION_CACHE_MAX_SIZE
         self._delete_observer: Callable[[str], None] | None = None
+        self._permission_lifecycle_observer: Callable[[
+            str, Literal["session_reset", "session_deleted"],
+        ], None] | None = None
         self._mode_resolver: SessionModeResolver | None = None
         self._mode_operator = False
         self._cancellation_privacy_lock = Lock()
@@ -2693,6 +2719,7 @@ class SessionManager:
         """Sole persistence seam for clearing one managed or unmanaged session."""
 
         events = replacement_events or []
+        self._retire_permissions_for_lifecycle(key, "session_reset")
         if self._mode_resolver is not None:
             resolved = self._mode_resolver.resolve(key)
             if resolved.state in {"absent", "deleted"}:
@@ -2788,6 +2815,26 @@ class SessionManager:
         """Observe explicit session deletion for process-local state cleanup."""
         self._delete_observer = observer
 
+    def set_permission_lifecycle_observer(
+        self,
+        observer: Callable[[str, Literal["session_reset", "session_deleted"]], None],
+    ) -> None:
+        """Compose permission fencing ahead of destructive source lifecycle work."""
+        self._permission_lifecycle_observer = observer
+
+    def _retire_permissions_for_lifecycle(
+        self,
+        key: str,
+        reason: Literal["session_reset", "session_deleted"],
+    ) -> None:
+        observer = self._permission_lifecycle_observer
+        if observer is None:
+            return
+        try:
+            observer(key, reason)
+        except WorkspacePermissionConflictError:
+            raise SessionWriteConflict() from None
+
     @staticmethod
     def safe_key(key: str) -> str:
         """Public helper used by HTTP handlers to map an arbitrary key to a stable filename stem."""
@@ -2846,6 +2893,61 @@ class SessionManager:
         if payload is not None and "source_schema_version" in payload.get("metadata", {}):
             return self._jsonl_store
         return None
+
+    def read_existing_canonical_source(
+        self,
+        key: str,
+        *,
+        expected_binding: WorkspaceAccessSourceBinding | None = None,
+    ) -> tuple[JsonlSessionStore, SourceSnapshot] | None:
+        """Read one active canonical source without creating or caching a Session."""
+        cached = self.get_cached(key)
+        if cached is not None and not cached.policy.persist:
+            return None
+        backend = self.source_backend(key)
+        if backend is None:
+            return None
+        try:
+            snapshot = backend.source.load_source_snapshot(key)
+        except FileNotFoundError:
+            return None
+        if snapshot.state.session_key != key:
+            return None
+        if expected_binding is not None:
+            from nanobot.workspace_access_recovery import parse_workspace_access_source_binding
+
+            try:
+                checked = parse_workspace_access_source_binding(expected_binding)
+            except (TypeError, ValueError):
+                raise SessionWriteConflict() from None
+            actual = {
+                "store_identity": snapshot.state.store_identity,
+                "incarnation": snapshot.state.incarnation,
+                "generation": snapshot.state.generation,
+            }
+            if checked != actual:
+                raise SessionWriteConflict()
+        return backend, snapshot
+
+    def invalidate_workspace_access_request(self, key: str) -> bool:
+        """Persist supersession for accepted ordinary input on an active source."""
+        if self._store is not self._jsonl_store:
+            return False
+        cached = self.get_cached(key)
+        if cached is not None and not cached.policy.persist:
+            return False
+        backend = self.source_backend(key)
+        if backend is None:
+            return False
+        with self.locked_session_files():
+            if self._mode_resolver is not None:
+                resolved = self._mode_resolver.resolve(key)
+                if resolved.state != "active" or resolved.mode != "canonical":
+                    return False
+            changed = backend.source.invalidate_workspace_access_request(key)
+            if changed:
+                self.invalidate(key)
+            return changed
 
     def get_or_create(self, key: str) -> Session:
         """
@@ -3045,6 +3147,7 @@ class SessionManager:
 
     def delete_session(self, key: str) -> bool:
         """Delete a persisted session and invalidate its cache entry."""
+        self._retire_permissions_for_lifecycle(key, "session_deleted")
         if self._mode_resolver is not None:
             deleted = self._mode_resolver.delete(key)
             if deleted:
@@ -3218,6 +3321,48 @@ class SessionManager:
                 raise SessionWriteConflict()
             self._jsonl_store.commit_busy_inbox_metadata(key, expected, replacement)
             self.invalidate(key)
+
+    def commit_workspace_access_request(
+        self,
+        key: str,
+        *,
+        expected_binding: WorkspaceAccessSourceBinding,
+        expected_record: WorkspaceAccessRecord | None,
+        replacement_record: WorkspaceAccessRecord | None,
+        expected_latest_input_event_id: str | None = None,
+        expected_workspace_scope: WorkspaceScopeMetadata | None = None,
+        replacement_workspace_scope: WorkspaceScopeMetadata | None = None,
+    ) -> WorkspaceAccessSourceBinding:
+        """Commit one recovery field against the current persistent source owner."""
+        if self._store is not self._jsonl_store:
+            raise SessionWriteConflict()
+        if expected_record is not None:
+            expected_record = parse_workspace_access_record(expected_record)
+        if replacement_record is not None:
+            replacement_record = parse_workspace_access_record(replacement_record)
+        cached = self.get_cached(key)
+        if cached is not None and not cached.policy.persist:
+            raise SessionWriteConflict()
+        with self.locked_session_files():
+            if self._mode_resolver is not None:
+                resolved = self._mode_resolver.resolve(key)
+                if resolved.state != "active" or resolved.mode != "canonical":
+                    raise SessionWriteConflict()
+            snapshot = self._jsonl_store.source.commit_workspace_access_request(
+                key,
+                expected_binding=expected_binding,
+                expected_record=expected_record,
+                replacement_record=replacement_record,
+                expected_latest_input_event_id=expected_latest_input_event_id,
+                expected_workspace_scope=expected_workspace_scope,
+                replacement_workspace_scope=replacement_workspace_scope,
+            )
+            self.invalidate(key)
+        return {
+            "store_identity": snapshot.state.store_identity,
+            "incarnation": snapshot.state.incarnation,
+            "generation": snapshot.state.generation,
+        }
 
     def upsert_session_metadata(
         self,

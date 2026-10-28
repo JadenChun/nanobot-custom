@@ -3,7 +3,7 @@
 Exercises ``WebSocketChannel._dispatch_envelope`` for the ``message`` branch:
 decoding base64 data URLs, rejecting malformed / oversized / non-whitelisted
 payloads, preserving backward compatibility with media-less frames, and
-forwarding saved paths to ``_handle_message``.
+forwarding saved paths through the actual inbound message-bus boundary.
 """
 
 from __future__ import annotations
@@ -11,10 +11,12 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nanobot.bus.events import InboundMessage
 from nanobot.channels.websocket.runtime import (
     WebSocketChannel,
     WebSocketConfig,
@@ -58,9 +60,25 @@ def _make_channel(session_manager: SessionManager | None = None) -> WebSocketCha
         runtime_surface="browser",
         runtime_capabilities_overrides=None,
     )
-    channel = WebSocketChannel(cfg, bus, gateway=gateway)
-    channel._handle_message = AsyncMock()  # type: ignore[method-assign]
-    return channel
+    return WebSocketChannel(cfg, bus, gateway=gateway)
+
+
+def _published_message(channel: WebSocketChannel) -> InboundMessage:
+    channel.bus.publish_inbound.assert_awaited_once()
+    (message,) = channel.bus.publish_inbound.await_args.args
+    assert isinstance(message, InboundMessage)
+    return message
+
+
+def _assert_no_inbound(channel: WebSocketChannel) -> None:
+    channel.bus.publish_inbound.assert_not_awaited()
+
+
+def _make_connection() -> MagicMock:
+    connection = MagicMock()
+    connection.send = AsyncMock()
+    connection.request = SimpleNamespace(headers=[])
+    return connection
 
 
 @pytest.fixture(autouse=True)
@@ -103,12 +121,10 @@ async def test_message_without_media_backward_compatible() -> None:
 
     await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_awaited_once()
-    call = channel._handle_message.call_args
-    assert call.kwargs["chat_id"] == "abc123"
-    assert call.kwargs["content"] == "hello"
-    # When no media, we pass ``media=None`` so downstream treats it as absent.
-    assert call.kwargs["media"] is None
+    message = _published_message(channel)
+    assert message.chat_id == "abc123"
+    assert message.content == "hello"
+    assert message.media == []
 
 
 @pytest.mark.asyncio
@@ -125,7 +141,9 @@ async def test_webui_message_acceptance_echoes_turn_id() -> None:
 
     await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_awaited_once()
+    message = _published_message(channel)
+    assert message.chat_id == "abc123"
+    assert message.content == "hello"
     assert json.loads(mock_conn.send.await_args.args[0]) == {
         "event": "message_accepted",
         "chat_id": "abc123",
@@ -139,8 +157,8 @@ async def test_webui_message_acceptance_echoes_turn_id() -> None:
 @pytest.mark.asyncio
 async def test_webui_message_projects_attachments_to_other_clients(tmp_path: Path) -> None:
     channel = _make_channel()
-    origin = AsyncMock()
-    peer = AsyncMock()
+    origin = _make_connection()
+    peer = _make_connection()
     channel._attach(origin, "abc123")
     channel._attach(peer, "abc123")
     channel._webui_connections.add(origin)
@@ -156,6 +174,15 @@ async def test_webui_message_projects_attachments_to_other_clients(tmp_path: Pat
 
     with patch("nanobot.webui.media_gateway.get_media_dir", return_value=tmp_path):
         await channel._dispatch_envelope(origin, "client-1", envelope)
+
+    message = _published_message(channel)
+    assert message.chat_id == "abc123"
+    assert message.content == "please inspect @drawio"
+    assert message.metadata["cli_apps"] == [{
+        "name": "drawio",
+        "entry_point": "cli-anything-drawio",
+    }]
+    assert len(message.media) == 1 and Path(message.media[0]).is_file()
 
     event = json.loads(peer.send.await_args.args[0])
     assert event["event"] == "user_message"
@@ -184,7 +211,7 @@ async def test_message_text_policy_is_independent_from_transport_limit() -> None
 
     await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err == {
         "event": "error",
@@ -219,8 +246,10 @@ async def test_message_forwards_normalized_cli_app_attachments() -> None:
 
     await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_awaited_once()
-    metadata = channel._handle_message.call_args.kwargs["metadata"]
+    message = _published_message(channel)
+    metadata = message.metadata
+    assert message.chat_id == "abc123"
+    assert message.content == "please use @drawio"
     assert metadata["webui"] is True
     assert metadata["cli_apps"] == [{
         "name": "drawio",
@@ -240,7 +269,7 @@ async def test_webui_message_forwards_verified_session_mentions(tmp_path) -> Non
     target.add_message("user", "Discuss cloud storage")
     manager.save(target)
     channel = _make_channel(manager)
-    mock_conn = AsyncMock()
+    mock_conn = _make_connection()
     channel._webui_connections.add(mock_conn)
     envelope = {
         "type": "message",
@@ -256,8 +285,10 @@ async def test_webui_message_forwards_verified_session_mentions(tmp_path) -> Non
 
     await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_awaited_once()
-    metadata = channel._handle_message.call_args.kwargs["metadata"]
+    message = _published_message(channel)
+    metadata = message.metadata
+    assert message.chat_id == "current"
+    assert message.content == "Use @pricing"
     handle = SessionHandleResolver(manager).handle_for_session("websocket:pricing")
     assert handle is not None
     assert metadata["session_mentions"] == [{
@@ -286,8 +317,10 @@ async def test_message_with_single_image_forwards_saved_path(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_awaited_once()
-    paths = channel._handle_message.call_args.kwargs["media"]
+    message = _published_message(channel)
+    assert message.chat_id == "abc123"
+    assert message.content == "look at this"
+    paths = message.media
     assert isinstance(paths, list) and len(paths) == 1
     saved = Path(paths[0])
     assert saved.exists()
@@ -315,7 +348,10 @@ async def test_message_with_multiple_images(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    paths = channel._handle_message.call_args.kwargs["media"]
+    message = _published_message(channel)
+    assert message.chat_id == "abc123"
+    assert message.content == "a couple"
+    paths = message.media
     assert len(paths) == 3
     # Saved filenames must be unique.
     assert len({Path(p).name for p in paths}) == 3
@@ -338,7 +374,10 @@ async def test_image_only_message_allows_empty_text(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_awaited_once()
+    message = _published_message(channel)
+    assert message.chat_id == "abc123"
+    assert message.content == ""
+    assert message.media
     # Error event NOT sent.
     mock_conn.send.assert_not_awaited()
 
@@ -360,7 +399,7 @@ async def test_message_rejected_when_more_than_four_images(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     mock_conn.send.assert_awaited_once()
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["event"] == "error"
@@ -392,7 +431,7 @@ async def test_message_rejected_when_too_many_total_attachments(tmp_path) -> Non
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["detail"] == "attachment_rejected"
     assert err["reason"] == "too_many_attachments"
@@ -415,7 +454,7 @@ async def test_message_rejected_on_oversize_payload(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["detail"] == "attachment_rejected"
     assert err["reason"] == "size"
@@ -437,8 +476,10 @@ async def test_message_with_pdf_forwards_saved_path(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_awaited_once()
-    paths = channel._handle_message.call_args.kwargs["media"]
+    message = _published_message(channel)
+    assert message.chat_id == "abc123"
+    assert message.content == "pdf?"
+    paths = message.media
     assert isinstance(paths, list) and len(paths) == 1
     saved = Path(paths[0])
     assert saved.exists()
@@ -465,8 +506,10 @@ async def test_message_with_csv_forwards_saved_path(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_awaited_once()
-    paths = channel._handle_message.call_args.kwargs["media"]
+    message = _published_message(channel)
+    assert message.chat_id == "abc123"
+    assert message.content == "summarize"
+    paths = message.media
     saved = Path(paths[0])
     assert saved.suffix == ".csv"
     assert saved.name.endswith("_report.csv")
@@ -489,7 +532,7 @@ async def test_message_rejected_on_unsupported_file_mime(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["detail"] == "attachment_rejected"
     assert err["reason"] == "mime"
@@ -512,7 +555,7 @@ async def test_message_rejected_on_svg_mime(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["reason"] == "mime"
 
@@ -533,7 +576,7 @@ async def test_message_rejected_on_malformed_data_url(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["reason"] == "decode"
 
@@ -554,7 +597,7 @@ async def test_message_rejected_on_broken_base64(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["reason"] == "decode"
 
@@ -576,7 +619,7 @@ async def test_message_rejected_when_media_item_shape_wrong(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["reason"] == "malformed"
 
@@ -594,7 +637,7 @@ async def test_message_rejected_when_media_field_is_not_list() -> None:
 
     await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["detail"] == "attachment_rejected"
     assert err["reason"] == "malformed"
@@ -624,7 +667,7 @@ async def test_failed_media_does_not_partially_persist(tmp_path) -> None:
     ):
         await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["reason"] == "mime"
     # Partial-batch failures must not leak files to disk.
@@ -646,7 +689,7 @@ async def test_rejects_empty_text_without_media() -> None:
 
     await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["detail"] == "missing content"
 
@@ -663,6 +706,6 @@ async def test_non_string_content_still_rejected() -> None:
 
     await channel._dispatch_envelope(mock_conn, "client-1", envelope)
 
-    channel._handle_message.assert_not_awaited()
+    _assert_no_inbound(channel)
     err = json.loads(mock_conn.send.call_args[0][0])
     assert err["detail"] == "missing content"

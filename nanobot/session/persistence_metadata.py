@@ -21,6 +21,7 @@ DURABLE_METADATA_KEYS = frozenset({
     "last_user_activity_at",
     BUSY_INBOX_METADATA_KEY,
     SOURCE_PENDING_FOLLOWUPS_METADATA_KEY,
+    "workspace_access_request",
 })
 LEGACY_RECOVERY_KEYS = frozenset({
     "runtime_checkpoint", "pending_user_turn", "pending_user_followups", "webui_recovery",

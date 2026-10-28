@@ -34,10 +34,12 @@ from nanobot.webui.outbound_wire import (
 )
 from nanobot.webui.session_identity import webui_session_key
 from nanobot.webui.session_projection import WebUISessionProjection
+from nanobot.workspace_access_recovery import FolderAccessRequest, WorkspaceScopePayload
 
 if TYPE_CHECKING:
     from websockets.asyncio.server import ServerConnection
 
+    from nanobot.security.desktop_permissions import WorkspacePermissionProjection
 
 class WebUIOutboundTransport(Protocol):
     """Wire operations required by the outbound application projector."""
@@ -91,7 +93,15 @@ class WebUIOutboundTransport(Protocol):
         turn_id: str | None = None,
     ) -> None: ...
 
-    async def send_session_updated(self, chat_id: str, *, scope: str | None = None) -> None: ...
+    async def send_session_updated(
+        self,
+        chat_id: str,
+        *,
+        scope: str | None = None,
+        workspace_scope: WorkspaceScopePayload | None = None,
+        workspace_access_request: FolderAccessRequest | None = None,
+        workspace_permissions: WorkspacePermissionProjection | None = None,
+    ) -> None: ...
 
     async def send_file_edit_events(
         self,
@@ -244,7 +254,13 @@ class WebUIOutboundProjector:
             return
         if isinstance(event, SessionUpdatedEvent):
             if conns:
-                await self._transport.send_session_updated(msg.chat_id, scope=event.scope)
+                await self._transport.send_session_updated(
+                    msg.chat_id,
+                    scope=event.scope,
+                    workspace_scope=event.workspace_scope,
+                    workspace_access_request=event.workspace_access_request,
+                    workspace_permissions=event.workspace_permissions,
+                )
             return
         if progress_event and progress_event.file_edit_events:
             await self._transport.send_file_edit_events(

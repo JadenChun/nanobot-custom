@@ -14,6 +14,7 @@ import pytest
 
 from nanobot.agent.tools.exec_session import ExecSessionManager, ExecSessionTool
 from nanobot.agent.tools.shell import ExecTool
+from nanobot.security.native_admission import NativeProcessReservation
 
 _WINDOWS_ENV_KEYS = {
     "APPDATA", "LOCALAPPDATA", "ProgramData",
@@ -343,7 +344,9 @@ class TestPathAppendPlatform:
 
         async def capture_spawn(
             cmd, cwd, env, shell_program=None, login=True, *, process_tree=False,
+            native_admission: NativeProcessReservation | None = None,
         ):
+            _ = native_admission
             nonlocal captured_cmd
             captured_cmd = cmd
             captured_env.update(env)
@@ -374,7 +377,9 @@ class TestPathAppendPlatform:
 
         async def capture_spawn(
             cmd, cwd, env, shell_program=None, login=True, *, stdin=None, process_tree=False,
+            native_admission: NativeProcessReservation | None = None,
         ):
+            _ = native_admission
             nonlocal captured_cmd
             captured_cmd = cmd
             captured_env.update(env)
@@ -404,7 +409,9 @@ class TestPathAppendPlatform:
 
         async def capture_spawn(
             cmd, cwd, env, shell_program=None, login=True, *, stdin=None, process_tree=False,
+            native_admission: NativeProcessReservation | None = None,
         ):
+            _ = native_admission
             nonlocal captured_cmd
             captured_cmd = cmd
             captured_env.update(env)
@@ -436,7 +443,9 @@ class TestPathAppendPlatform:
 
         async def capture_spawn(
             cmd, cwd, env, shell_program=None, login=True, *, process_tree=False,
+            native_admission: NativeProcessReservation | None = None,
         ):
+            _ = native_admission
             captured_env.update(env)
             return mock_proc
 
@@ -461,7 +470,9 @@ class TestPathAppendPlatform:
 
         async def capture_spawn(
             cmd, cwd, env, shell_program=None, login=True, *, stdin=None, process_tree=False,
+            native_admission: NativeProcessReservation | None = None,
         ):
+            _ = native_admission
             captured_env.update(env)
             return mock_proc
 
@@ -609,7 +620,9 @@ class TestExecuteEndToEnd:
 
         async def capture_spawn(
             cmd, cwd, env, shell_program=None, login=None, *, stdin=None, process_tree=False,
+            native_admission: NativeProcessReservation | None = None,
         ):
+            _ = native_admission
             captured_login.append(login)
             return mock_proc
 

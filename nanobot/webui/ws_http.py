@@ -15,6 +15,7 @@ import mimetypes
 import re
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
@@ -24,6 +25,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
+from nanobot.bus.outbound_events import SessionUpdatedEvent
 from nanobot.command.builtin import builtin_command_palette
 from nanobot.cron.definition_store import DefinitionStoreConflictError
 from nanobot.cron.service import (
@@ -32,8 +34,14 @@ from nanobot.cron.service import (
 )
 from nanobot.cron.session_turns import is_bound_cron_job
 from nanobot.cron.types import CronJob, CronSchedule
+from nanobot.security.folder_grants import (
+    FolderGrantsUnavailableError,
+    GrantRevisionConflictError,
+    NativeProcessesActiveError,
+    NativeProcessesUnknownError,
+)
 from nanobot.security.workspace_access import WorkspaceScope
-from nanobot.session.manager import SessionManager
+from nanobot.session.manager import JsonlSessionStore, SessionManager
 from nanobot.session.recovery import RecoveryActionError
 from nanobot.session.session_handles import (
     SessionHandleResolver,
@@ -68,9 +76,6 @@ from nanobot.webui.http_utils import (
 )
 from nanobot.webui.http_utils import (
     is_local_browser_request as _is_local_browser_request,
-)
-from nanobot.webui.http_utils import (
-    is_localhost as _is_localhost,
 )
 from nanobot.webui.http_utils import is_loopback_host as _is_loopback_host
 from nanobot.webui.http_utils import (
@@ -134,14 +139,19 @@ from nanobot.webui.skills_marketplace import (
 )
 from nanobot.webui.thread_disk import delete_webui_thread
 from nanobot.webui.transcript import build_webui_thread_response
-from nanobot.webui.workspaces import WebUIWorkspaceController
+from nanobot.webui.workspaces import (
+    RepositoryInUseError,
+    WebUIWorkspaceController,
+    WorkspaceGrantReceipt,
+)
 
 _SLOW_WEBUI_HTTP_LOG_MS = 1_000
 _WEBUI_MUTATION_PAYLOAD_ATTR = "_nanobot_webui_mutation_payload"
 _WEBUI_MUTATION_REQUEST_ATTR = "_nanobot_webui_mutation_request"
+_WEBUI_EXPECTED_SOURCE_BINDING_ATTR = "_nanobot_webui_expected_source_binding"
 _NO_STORE_HEADERS = [("Cache-Control", "no-store")]
 
-_WEBUI_MUTATION_PATHS = {
+WEBSOCKET_MUTATION_ROUTES = {
     "automation.enable": "/api/webui/automations/enable",
     "automation.disable": "/api/webui/automations/disable",
     "automation.delete": "/api/webui/automations/delete",
@@ -152,6 +162,16 @@ _WEBUI_MUTATION_PATHS = {
     "skill.delete": "/api/webui/skills/delete",
     "sidebar.update": "/api/webui/sidebar-state/update",
     "workspace.pick_folder": "/api/workspaces/pick-folder",
+    "workspace.grant.upsert": "/api/workspaces/grants/upsert",
+    "workspace.grant.revoke": "/api/workspaces/grants/revoke",
+    "workspace.access.resolve": "/api/workspaces/access/resolve",
+    "workspace.access.continue": "/api/workspaces/access/continue",
+    "workspace.access.cancel": "/api/workspaces/access/cancel",
+    "workspace.access.allow_once": "/api/workspaces/access/allow-once",
+    "workspace.access.mode.set": "/api/workspaces/access/mode",
+    "repository.remember": "/api/repositories/remember",
+    "repository.forget": "/api/repositories/forget",
+    "repository.discover": "/api/repositories/discover",
     "recovery.continue": "/api/webui/recovery/continue",
     "recovery.dismiss": "/api/webui/recovery/dismiss",
     "settings.agent.update": "/api/settings/update",
@@ -195,6 +215,31 @@ _WEBUI_MUTATION_PATHS = {
     "settings.mcp.oauth_cancel": "/api/settings/mcp-oauth/cancel",
 }
 
+_LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
+    "/api/workspaces/pick-folder",
+    "/api/workspaces/grants/upsert",
+    "/api/workspaces/grants/revoke",
+    "/api/workspaces/access/resolve",
+    "/api/workspaces/access/continue",
+    "/api/workspaces/access/cancel",
+    "/api/workspaces/access/allow-once",
+    "/api/workspaces/access/mode",
+    "/api/repositories/remember",
+    "/api/repositories/forget",
+    "/api/repositories/discover",
+})
+
+
+@dataclass(frozen=True)
+class WebUIMutationAuthorizationFailure:
+    status: int
+    message: str
+
+
+def _require_payload_keys(payload: dict[str, Any], expected: set[str]) -> None:
+    if set(payload) != expected:
+        raise ValueError("management payload has missing or unexpected fields")
+
 _WEBUI_CHANNEL_CONNECT_ACTIONS = {
     "settings.channel.connect.start": "start",
     "settings.channel.connect.poll": "poll",
@@ -229,6 +274,7 @@ if TYPE_CHECKING:
     from nanobot.bus.queue import MessageBus
     from nanobot.channels.websocket.runtime import WebSocketConfig
     from nanobot.cron.service import CronService
+    from nanobot.session.workspace_access_recovery import WorkspaceAccessRecoveryOwner
     from nanobot.triggers.local_store import LocalTriggerStore
     from nanobot.webui.settings_services import WebUISettingsServices
 
@@ -346,6 +392,15 @@ class GatewayHTTPHandler:
         self.media = media
         self.ingress = ingress
         self.workspaces = workspaces
+        self.workspace_access_recovery: WorkspaceAccessRecoveryOwner | None = None
+        if session_manager is not None:
+            from nanobot.session.workspace_access_recovery import WorkspaceAccessRecoveryOwner
+
+            self.workspace_access_recovery = WorkspaceAccessRecoveryOwner(
+                session_manager,
+                workspaces,
+                bus,
+            )
         self.settings = settings
         self.skills_workspace_path = skills_workspace_path
         self.disabled_skills: set[str] = (
@@ -384,7 +439,10 @@ class GatewayHTTPHandler:
         )
 
     def workspace_controls_available(self, connection: Any) -> bool:
-        return self._runtime_surface == "native" or _is_localhost(connection)
+        return (
+            _is_loopback_host(self.config.host)
+            and _is_local_browser_request(connection, self._connection_headers(connection))
+        )
 
     def workspace_folder_picker_available(
         self,
@@ -428,33 +486,74 @@ class GatewayHTTPHandler:
         finally:
             self._log_slow_http(got, response, started)
 
+    def authorize_webui_mutation(
+        self,
+        connection: Any,
+        action: str,
+        payload: dict[str, Any],
+    ) -> WebUIMutationAuthorizationFailure | None:
+        """Authorize the current socket for this action before cache admission or replay."""
+        path = self._webui_mutation_path(action, payload)
+        if not isinstance(path, str):
+            return None
+        return self._authorize_local_webui_path(
+            connection,
+            self._connection_headers(connection),
+            path,
+        )
+
+    def _authorize_local_webui_path(
+        self,
+        connection: Any,
+        headers: Any,
+        path: str,
+    ) -> WebUIMutationAuthorizationFailure | None:
+        if path not in _LOCAL_ONLY_WEBUI_MUTATION_PATHS:
+            return None
+        if (
+            not _is_loopback_host(self.config.host)
+            or not _is_local_browser_request(connection, headers)
+        ):
+            return WebUIMutationAuthorizationFailure(403, "local_ui_required")
+        return None
+
+    @staticmethod
+    def _connection_headers(connection: Any) -> Headers:
+        source_request = getattr(connection, "request", None)
+        source_headers = getattr(source_request, "headers", None)
+        if source_headers is None:
+            return Headers()
+        try:
+            return Headers(source_headers.raw_items())
+        except (AttributeError, TypeError):
+            try:
+                return Headers(source_headers)
+            except TypeError:
+                return Headers()
+
     async def dispatch_webui_mutation(
         self,
         connection: Any,
         action: str,
         payload: dict[str, Any],
+        *,
+        expected_source_binding: dict[str, object] | None = None,
     ) -> Response:
         """Run one explicitly allowlisted mutation for an authenticated WebUI socket."""
+        authorization = self.authorize_webui_mutation(connection, action, payload)
+        if authorization is not None:
+            return _http_error(authorization.status, authorization.message)
         path = self._webui_mutation_path(action, payload)
         if isinstance(path, Response):
             return path
 
-        source_request = getattr(connection, "request", None)
-        source_headers = getattr(source_request, "headers", None)
-        if source_headers is None:
-            headers = Headers()
-        else:
-            try:
-                headers = Headers(source_headers.raw_items())
-            except (AttributeError, TypeError):
-                try:
-                    headers = Headers(source_headers)
-                except TypeError:
-                    headers = Headers()
+        headers = self._connection_headers(connection)
         request = WsRequest(path, headers)
         setattr(request, "_nanobot_trusted_proxy_authenticated", True)
         setattr(request, _WEBUI_MUTATION_REQUEST_ATTR, True)
         setattr(request, _WEBUI_MUTATION_PAYLOAD_ATTR, dict(payload))
+        if expected_source_binding is not None:
+            setattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR, dict(expected_source_binding))
         response = await self._dispatch_resolved(connection, request, path)
         if isinstance(response, Response):
             return response
@@ -475,6 +574,16 @@ class GatewayHTTPHandler:
             "/api/webui/skills/delete",
             "/api/webui/sidebar-state/update",
             "/api/workspaces/pick-folder",
+            "/api/workspaces/grants/upsert",
+            "/api/workspaces/grants/revoke",
+            "/api/workspaces/access/resolve",
+            "/api/workspaces/access/continue",
+            "/api/workspaces/access/cancel",
+            "/api/workspaces/access/allow-once",
+            "/api/workspaces/access/mode",
+            "/api/repositories/remember",
+            "/api/repositories/forget",
+            "/api/repositories/discover",
         }
 
     @staticmethod
@@ -482,7 +591,7 @@ class GatewayHTTPHandler:
         action: str,
         payload: dict[str, Any],
     ) -> str | Response:
-        path = _WEBUI_MUTATION_PATHS.get(action)
+        path = WEBSOCKET_MUTATION_ROUTES.get(action)
         if path is not None:
             return path
         if action == "session.delete":
@@ -530,7 +639,7 @@ class GatewayHTTPHandler:
             return response
 
         # Session routes
-        response = await self._dispatch_session_routes(request, got)
+        response = await self._dispatch_session_routes(connection, request, got)
         if response is not None:
             return response
 
@@ -707,10 +816,15 @@ class GatewayHTTPHandler:
 
     # -- Session routes -----------------------------------------------------
 
-    async def _dispatch_session_routes(self, request: WsRequest, got: str) -> Response | None:
+    async def _dispatch_session_routes(
+        self,
+        connection: Any,
+        request: WsRequest,
+        got: str,
+    ) -> Response | None:
         m = re.match(r"^/api/sessions/([^/]+)/webui-thread$", got)
         if m:
-            return self._handle_webui_thread_get(request, m.group(1))
+            return self._handle_webui_thread_get(request, m.group(1), connection=connection)
 
         m = re.match(r"^/api/sessions/([^/]+)/context$", got)
         if m:
@@ -718,7 +832,7 @@ class GatewayHTTPHandler:
 
         m = re.match(r"^/api/sessions/([^/]+)/file-preview$", got)
         if m:
-            return self._handle_file_preview(request, m.group(1))
+            return self._handle_file_preview(connection, request, m.group(1))
 
         m = re.match(r"^/api/sessions/([^/]+)/automations$", got)
         if m:
@@ -813,14 +927,20 @@ class GatewayHTTPHandler:
                 scope_present=scope_present,
                 default_scope=default_scope,
             )
-            row["workspace_scope"] = scope.payload()
+            row["workspace_scope"] = self.workspaces.scope_payload(scope)
             handle = handles.get(key)
             if handle is not None:
                 row["handle"] = handle.public_payload()
             cleaned.append(row)
         return {"sessions": cleaned}
 
-    def _handle_webui_thread_get(self, request: WsRequest, key: str) -> Response:
+    def _handle_webui_thread_get(
+        self,
+        request: WsRequest,
+        key: str,
+        *,
+        connection: Any | None = None,
+    ) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
         decoded_key = _decode_api_key(key)
@@ -828,7 +948,12 @@ class GatewayHTTPHandler:
             return _http_error(400, "invalid session key")
         if not _is_websocket_channel_session_key(decoded_key):
             return _http_error(404, "session not found")
-        scope = self.workspaces.scope_for_session_key(decoded_key)
+        try:
+            scope = self.workspaces.scope_for_session_key(decoded_key)
+        except Exception:
+            self._log.exception("workspace thread scope projection failed")
+            return _http_error(503, "permission_state_unavailable")
+        allow_folder_grants = self.workspaces.folder_grants_allowed_for_session(decoded_key)
 
         def load_session_messages() -> list[dict[str, Any]] | None:
             if self.session_manager is None:
@@ -870,11 +995,18 @@ class GatewayHTTPHandler:
         )
         data = build_webui_thread_response(
             decoded_key,
-            augment_user_media=self.media.augment_transcript_media,
-            augment_assistant_media=self.media.augment_transcript_media,
+            augment_user_media=lambda paths: self.media.augment_transcript_media(
+                paths,
+                allow_folder_grants=allow_folder_grants,
+            ),
+            augment_assistant_media=lambda paths: self.media.augment_transcript_media(
+                paths,
+                allow_folder_grants=allow_folder_grants,
+            ),
             augment_assistant_text=lambda text: self.media.rewrite_local_markdown_images(
                 text,
                 workspace_path=scope.project_path,
+                allow_folder_grants=allow_folder_grants,
             ),
             session_messages_loader=load_session_messages,
             active_turn_started_at=active_turn_started_at,
@@ -888,15 +1020,87 @@ class GatewayHTTPHandler:
         )
         if data is None:
             return _http_error(404, "webui thread not found")
-        data["workspace_scope"] = scope.payload()
+        data["workspace_scope"] = self.workspaces.scope_payload(scope)
+        if (
+            connection is not None
+            and _is_loopback_host(self.config.host)
+            and _is_local_browser_request(connection, request.headers)
+            and self.workspace_access_recovery is not None
+            and self.session_manager is not None
+        ):
+            chat_id = decoded_key.split(":", 1)[1]
+            try:
+                backend = self.session_manager.source_backend(decoded_key)
+            except Exception:
+                self._log.exception("workspace permission source classification failed")
+                return _http_error(503, "permission_state_unavailable")
+            if backend is None:
+                if not self._legacy_thread_history_without_permission_source(decoded_key):
+                    return _http_error(503, "permission_state_unavailable")
+                data["workspace_access_request"] = None
+            else:
+                try:
+                    request_state = self.workspace_access_recovery.get(chat_id)
+                    permissions = (
+                        self.workspace_access_recovery.workspace_permissions(
+                            chat_id,
+                            controls_available=self.workspace_controls_available(connection),
+                        )
+                    )
+                    # Projection may discover a durable residual after restart;
+                    # resolve the scope again so the Full/retiring label and
+                    # its Restricted future-access clamp describe one state.
+                    scope = self.workspaces.scope_for_session_key(decoded_key)
+                    _permission_owner, permission_reference = (
+                        self.workspace_access_recovery.preview_permission_context(chat_id)
+                    )
+                    data["workspace_permissions"] = permissions
+                    data["workspace_scope"] = self.workspaces.scope_payload(
+                        scope,
+                        permission_reference=permission_reference,
+                        permission_retiring=permissions["state"] == "retiring",
+                    )
+                except Exception:
+                    self._log.exception("workspace permission projection failed")
+                    return _http_error(503, "permission_state_unavailable")
+                data["workspace_access_request"] = request_state
         return _http_json_response(
             data,
             accept_encoding=_combined_list_header(request.headers, "Accept-Encoding"),
         )
 
-    def _handle_file_preview(self, request: WsRequest, key: str) -> Response:
+    def _legacy_thread_history_without_permission_source(self, session_key: str) -> bool:
+        """Allow only absent or strictly parsed legacy history to omit V2 permissions."""
+        sessions = self.session_manager
+        if sessions is None:
+            return False
+        try:
+            path = sessions.sessions_dir / f"{JsonlSessionStore.storage_key(session_key)}.jsonl"
+            has_managed_authority = sessions.has_managed_authority
+            if has_managed_authority:
+                resolved = sessions.resolve_session_mode(session_key)
+                if resolved.state == "absent":
+                    return not path.exists()
+                if resolved.state != "active" or resolved.mode != "legacy":
+                    return False
+            if not path.exists():
+                return not has_managed_authority
+            with sessions.locked_session_files():
+                if not path.exists():
+                    return False
+                legacy = JsonlSessionStore.parse_legacy_bytes(
+                    path.read_bytes(),
+                    expected_key=session_key,
+                )
+            return "source_schema_version" not in legacy.metadata
+        except Exception:
+            return False
+
+    def _handle_file_preview(self, connection: Any, request: WsRequest, key: str) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
+        from nanobot.session.workspace_access_recovery import WorkspaceAccessActionError
+
         decoded_key = _decode_api_key(key)
         if decoded_key is None:
             return _http_error(400, "invalid session key")
@@ -907,14 +1111,47 @@ class GatewayHTTPHandler:
         is_probe = _query_first(query, "probe") == "1"
         try:
             scope = self.workspaces.scope_for_session_key(decoded_key)
+            focus_owner = self.workspaces.focus_owner
+            policy = focus_owner.policy if focus_owner is not None else None
+            managed_access = bool(focus_owner is not None and focus_owner.managed)
+            local_access = (
+                _is_loopback_host(self.config.host)
+                and _is_local_browser_request(connection, request.headers)
+            )
+            permission_owner = None
+            permission_reference = None
+            if local_access and self.workspace_access_recovery is not None:
+                permission_owner, permission_reference = (
+                    self.workspace_access_recovery.preview_permission_context(
+                        decoded_key.split(":", 1)[1],
+                    )
+                )
             if is_probe:
-                payload = file_preview_availability_payload(path, scope=scope)
+                payload = file_preview_availability_payload(
+                    path,
+                    scope=scope,
+                    resource_policy=policy,
+                    managed_access=managed_access or permission_reference is not None,
+                    allow_folder_grants=local_access,
+                    permission_owner=permission_owner,
+                    permission_reference=permission_reference,
+                )
             else:
-                payload = file_preview_payload(path, scope=scope)
+                payload = file_preview_payload(
+                    path,
+                    scope=scope,
+                    resource_policy=policy,
+                    managed_access=managed_access or permission_reference is not None,
+                    allow_folder_grants=local_access,
+                    permission_owner=permission_owner,
+                    permission_reference=permission_reference,
+                )
         except WebUIFilePreviewError as e:
             if is_probe and e.status in {400, 403, 404, 415}:
                 return _http_json_response({"available": False})
             return _http_error(e.status, e.message)
+        except WorkspaceAccessActionError as exc:
+            return _http_error(exc.status, exc.message)
         return _http_json_response(payload)
 
     def _handle_session_automations(self, request: WsRequest, key: str) -> Response:
@@ -1264,6 +1501,23 @@ class GatewayHTTPHandler:
             return await self._handle_workspace_folder_picker(connection, request)
         if got == "/api/workspaces":
             return self._handle_workspaces(connection, request)
+        if got in {
+            "/api/workspaces/grants/upsert",
+            "/api/workspaces/grants/revoke",
+            "/api/repositories/remember",
+            "/api/repositories/forget",
+            "/api/repositories/discover",
+        }:
+            return await self._handle_workspace_management(connection, request, got)
+        if got in {
+            "/api/workspaces/access/resolve",
+            "/api/workspaces/access/continue",
+            "/api/workspaces/access/cancel",
+            "/api/workspaces/access/allow-once",
+        }:
+            return await self._handle_workspace_access_action(connection, request, got)
+        if got == "/api/workspaces/access/mode":
+            return await self._handle_workspace_permission_action(connection, request, got)
         if got == "/api/webui/skills/search":
             return await self._handle_webui_skills_search(request)
         if got == "/api/webui/skills/trending":
@@ -1287,6 +1541,140 @@ class GatewayHTTPHandler:
             return self._handle_webui_sidebar_state_update(request)
         return None
 
+    async def _handle_workspace_access_action(
+        self,
+        connection: Any,
+        request: WsRequest,
+        path: str,
+    ) -> Response:
+        from nanobot.session.workspace_access_recovery import WorkspaceAccessActionError
+
+        if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
+            return _http_error(405, "WebUI mutations require an authenticated WebSocket")
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        authorization = self._authorize_local_webui_path(
+            connection, request.headers, path,
+        )
+        if authorization is not None:
+            return _http_error(authorization.status, authorization.message)
+        owner = self.workspace_access_recovery
+        if owner is None:
+            return _http_error(503, "access_recovery_unavailable")
+        payload = _mutation_payload(request)
+        if payload is None:
+            return _http_error(400, "invalid_access_request")
+        if not self._matches_expected_webui_source(request, payload):
+            return _http_error(409, "source_changed")
+        try:
+            if path == "/api/workspaces/access/resolve":
+                result = owner.resolve(payload)
+            elif path == "/api/workspaces/access/cancel":
+                result = owner.cancel(payload)
+            elif path == "/api/workspaces/access/allow-once":
+                result = owner.allow_once(payload)
+            else:
+                result = await owner.continue_request(payload)
+            try:
+                await owner.publish(payload["chat_id"], result)
+            except Exception:
+                self._log.exception("workspace access action committed but event publication failed")
+        except WorkspaceAccessActionError as exc:
+            return _http_error(exc.status, exc.message)
+        except (TypeError, ValueError):
+            return _http_error(400, "invalid_access_request")
+        except Exception:
+            self._log.exception("workspace access action failed")
+            return _http_error(503, "access_recovery_unavailable")
+        return _http_json_response(dict(result))
+
+    async def _handle_workspace_permission_action(
+        self,
+        connection: Any,
+        request: WsRequest,
+        path: str,
+    ) -> Response:
+        from nanobot.webui.workspaces import WorkspacePermissionActionError
+
+        if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
+            return _http_error(405, "WebUI mutations require an authenticated WebSocket")
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        authorization = self._authorize_local_webui_path(
+            connection,
+            request.headers,
+            path,
+        )
+        if authorization is not None:
+            return _http_error(authorization.status, authorization.message)
+        payload = _mutation_payload(request)
+        if payload is None:
+            return _http_error(400, "invalid_permission_request")
+        if not self._matches_expected_webui_source(request, payload):
+            return _http_error(409, "source_changed")
+        try:
+            result = self.workspaces.set_permission_mode(payload, local_ui=True)
+        except WorkspacePermissionActionError as exc:
+            return _http_error(exc.status, exc.message)
+        except Exception:
+            self._log.exception("workspace permission mutation failed")
+            return _http_error(503, "permission_state_unavailable")
+
+        if "error" in result:
+            await self.bus.publish_event(
+                SessionUpdatedEvent(
+                    scope="metadata",
+                    workspace_scope=result["workspace_scope"],
+                    workspace_permissions=result["workspace_permissions"],
+                ),
+                channel="websocket",
+                chat_id=cast(str, payload.get("chat_id")),
+            )
+            return _http_json_response(dict(result), status=409)
+        try:
+            await self.bus.publish_event(
+                SessionUpdatedEvent(
+                    scope="metadata",
+                    workspace_scope=result["workspace_scope"],
+                    workspace_permissions=result["workspace_permissions"],
+                ),
+                channel="websocket",
+                chat_id=cast(str, payload.get("chat_id")),
+            )
+        except Exception:
+            self._log.exception("workspace mode committed but event publication failed")
+        return _http_json_response(dict(result))
+
+    def _matches_expected_webui_source(
+        self,
+        request: WsRequest,
+        payload: dict[str, object],
+    ) -> bool:
+        if not hasattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR):
+            return True
+        expected = getattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR)
+        chat_id = payload.get("chat_id")
+        if not isinstance(expected, dict) or not isinstance(chat_id, str):
+            return False
+        try:
+            from nanobot.webui.session_identity import webui_session_key
+
+            key = webui_session_key(chat_id)
+            session_manager = self.session_manager
+            if session_manager is None:
+                return False
+            backend = session_manager.source_backend(key)
+            if backend is None:
+                return False
+            state = backend.source.load_source_snapshot(key).state
+        except Exception:
+            return False
+        return expected == {
+            "store_identity": state.store_identity,
+            "incarnation": state.incarnation,
+            "generation": state.generation,
+        }
+
     def _handle_commands(self, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -1295,6 +1683,10 @@ class GatewayHTTPHandler:
     def _handle_workspaces(self, connection: Any, request: WsRequest) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
+        management_available = (
+            _is_loopback_host(self.config.host)
+            and _is_local_browser_request(connection, request.headers)
+        )
         return _http_json_response(
             self.workspaces.payload(
                 controls_available=self.workspace_controls_available(connection),
@@ -1302,8 +1694,111 @@ class GatewayHTTPHandler:
                     connection,
                     request,
                 ),
+                management_available=management_available,
             )
         )
+
+    async def _handle_workspace_management(
+        self,
+        connection: Any,
+        request: WsRequest,
+        path: str,
+    ) -> Response:
+        if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
+            return _http_error(405, "WebUI mutations require an authenticated WebSocket")
+        if not self.check_api_token(request):
+            return _http_error(401, "Unauthorized")
+        authorization = self._authorize_local_webui_path(
+            connection, request.headers, path,
+        )
+        if authorization is not None:
+            return _http_error(authorization.status, authorization.message)
+        raw_payload = getattr(request, _WEBUI_MUTATION_PAYLOAD_ATTR, None)
+        if not isinstance(raw_payload, dict):
+            return _http_error(400, "invalid management payload")
+        payload = cast(dict[str, Any], raw_payload)
+        grant_receipt: WorkspaceGrantReceipt | None = None
+        try:
+            if path == "/api/workspaces/grants/upsert":
+                _require_payload_keys(payload, {"expected_revision", "path", "file_access", "commands"})
+                grant_receipt = self.workspaces.upsert_grant_with_receipt(payload)
+            elif path == "/api/workspaces/grants/revoke":
+                _require_payload_keys(payload, {"expected_revision", "path"})
+                self.workspaces.revoke_grant(payload)
+            elif path == "/api/repositories/remember":
+                _require_payload_keys(payload, {"entry"})
+                self.workspaces.remember_repository(payload)
+            elif path == "/api/repositories/forget":
+                _require_payload_keys(payload, {"name"})
+                name = payload.get("name")
+                if not isinstance(name, str):
+                    raise ValueError("name must be a string")
+                self.workspaces.forget_repository(name)
+            elif path == "/api/repositories/discover":
+                _require_payload_keys(payload, {"path"})
+                discovery_path = payload.get("path")
+                if not isinstance(discovery_path, str):
+                    raise ValueError("path must be a string")
+                result = self.workspaces.discover_repositories(
+                    discovery_path,
+                    trusted_ui=True,
+                )
+                return _http_json_response({**result})
+            else:
+                return _http_error(404, "unknown workspace management action")
+        except GrantRevisionConflictError:
+            return _http_error(409, "grants_changed")
+        except NativeProcessesUnknownError:
+            return _http_error(409, "native_processes_unknown")
+        except NativeProcessesActiveError:
+            return _http_error(409, "native_processes_active")
+        except RepositoryInUseError:
+            return _http_error(409, "repository_in_use")
+        except FolderGrantsUnavailableError:
+            return _http_error(503, "folder_grants_unavailable")
+        except PermissionError as exc:
+            if str(exc) == "folder_access_required":
+                return _http_error(403, "folder_access_required")
+            return _http_error(403, "local_ui_required")
+        except (ValueError, TypeError) as exc:
+            return _http_error(400, str(exc) or "invalid management payload")
+        except Exception:
+            self._log.exception("workspace management mutation failed")
+            return _http_error(500, "workspace management mutation failed")
+
+        try:
+            await self._broadcast_workspace_metadata()
+            response_payload = self.workspaces.payload(
+                controls_available=self.workspace_controls_available(connection),
+                folder_picker_available=self.workspace_folder_picker_available(connection, request),
+                management_available=True,
+            )
+            if grant_receipt is not None:
+                response_payload["grant_receipt"] = grant_receipt
+        except FolderGrantsUnavailableError:
+            return _http_error(503, "folder_grants_unavailable")
+        except Exception:
+            self._log.exception("workspace management response construction failed")
+            return _http_error(500, "workspace management mutation failed")
+        return _http_json_response(response_payload)
+
+    async def _broadcast_workspace_metadata(self) -> None:
+        if self.session_manager is None:
+            return
+        for session in self.session_manager.list_sessions():
+            key = session["key"]
+            if not is_webui_session_key(key):
+                continue
+            chat_id = key.split(":", 1)[1]
+            scope = self.workspaces.scope_for_session_key(key)
+            await self.bus.publish_event(
+                SessionUpdatedEvent(
+                    scope="metadata",
+                    workspace_scope=self.workspaces.scope_payload(scope),
+                ),
+                channel="websocket",
+                chat_id=chat_id,
+            )
 
     async def _handle_workspace_folder_picker(
         self,

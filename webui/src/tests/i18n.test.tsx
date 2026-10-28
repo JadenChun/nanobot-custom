@@ -47,6 +47,7 @@ const SETTINGS_NAV_KEYS = [
   "automations",
   "runtime",
   "advanced",
+  "folders",
 ];
 const LOCALIZED_SETTINGS_COPY_KEYS = [
   "settings.backToChat",
@@ -60,6 +61,9 @@ const LOCALIZED_SETTINGS_COPY_KEYS = [
   "settings.nav.automations",
   "settings.nav.runtime",
   "settings.nav.advanced",
+  "settings.nav.folders",
+  "settings.rows.managedFolderAccess",
+  "settings.help.managedFolderAccess",
   "sidebar.automations",
   "settings.automations.filters.active",
   "settings.automations.queue",

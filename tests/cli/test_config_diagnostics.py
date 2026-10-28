@@ -65,6 +65,14 @@ def _without_rendered_line_breaks(output: str) -> str:
     return " ".join(output.split())
 
 
+def _use_wide_cli_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    from nanobot.cli import commands, runtime_config, webui_support
+
+    consoles = {commands.console, runtime_config.console, webui_support.console}
+    for console in consoles:
+        monkeypatch.setattr(console, "_width", 1000)
+
+
 def _write_ready_config(config_path, *, channels: dict | None = None) -> None:
     config_path.write_text(
         json.dumps(
@@ -360,6 +368,7 @@ def test_gateway_provider_setup_failure_points_to_shortest_routes_when_webui_dis
     monkeypatch,
     args: list[str],
 ) -> None:
+    _use_wide_cli_console(monkeypatch)
     config_path = tmp_path / "explicit-gateway-config.json"
     workspace = tmp_path / "workspace"
     config_path.write_text(
@@ -378,7 +387,7 @@ def test_gateway_provider_setup_failure_points_to_shortest_routes_when_webui_dis
     monkeypatch.setattr(GatewayRuntime, "start_background", unexpected_managed_start)
     monkeypatch.setattr(GatewayRuntime, "restart", unexpected_managed_start)
 
-    result = runner.invoke(app, [*args, "--config", str(config_path)])
+    result = runner.invoke(app, [*args, "--config", str(config_path)], terminal_width=1000)
     output = _without_rendered_line_breaks(result.stdout)
 
     assert result.exit_code == 1
@@ -540,10 +549,12 @@ def test_gateway_invalid_webui_config_blocks_unconfigured_setup_mode(tmp_path) -
 @pytest.mark.usefixtures("admitted_diagnostics")
 def test_runtime_config_validation_is_redacted_and_actionable(
     tmp_path,
+    monkeypatch,
     args: list[str],
     summary: str,
     retry_command: str,
 ) -> None:
+    _use_wide_cli_console(monkeypatch)
     config_path = tmp_path / "explicit-runtime-config.json"
     workspace = tmp_path / "workspace"
     invalid_value = "sensitive-not-a-port"
@@ -560,7 +571,7 @@ def test_runtime_config_validation_is_redacted_and_actionable(
     data["agents"]["defaults"]["workspace"] = str(workspace)
     config_path.write_text(json.dumps(data), encoding="utf-8")
 
-    result = runner.invoke(app, [*args, "--config", str(config_path)])
+    result = runner.invoke(app, [*args, "--config", str(config_path)], terminal_width=1000)
     output = _without_rendered_line_breaks(result.stdout)
 
     assert result.exit_code == 1

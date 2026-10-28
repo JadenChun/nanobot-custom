@@ -8,6 +8,7 @@ from nanobot.agent.loop import TurnContext as StageContext
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import HistoryMode, TurnContext, TurnRequest, TurnSource
 from nanobot.bus.events import InboundMessage
+from nanobot.config.schema import ToolsConfig
 from nanobot.session.manager import Session
 
 
@@ -73,9 +74,13 @@ async def test_scheduled_text_does_not_execute_interactive_command():
 async def test_fresh_restore_does_not_consume_old_recovery(monkeypatch):
     import nanobot.agent.loop as module
     loop = object.__new__(AgentLoop)
+    loop._fork_dependencies = SimpleNamespace(
+        resource_policy=SimpleNamespace(folder_grants=None),
+    )
     ctx = stage()
     ctx.delivery.started = AsyncMock()
     loop.tools = ToolRegistry()
+    loop.tools_config = ToolsConfig()
     loop._remember_session_route = lambda *args, **kwargs: None
     loop.workspace_scopes = SimpleNamespace(persist_message_scope=lambda *args: None)
     monkeypatch.setattr(module, 'restore_runtime_checkpoint', lambda *args: pytest.fail('checkpoint restored'))

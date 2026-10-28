@@ -80,6 +80,69 @@ async def test_admission_and_atomic_consumption_are_idempotent_and_bound(session
             writer.validate_injection_binding(binding)
 
 
+async def test_busy_followup_journal_invalidates_workspace_request_atomically(sessions):
+    backend = sessions.source_backend(KEY)
+    assert backend is not None
+    task_run_id = "c" * 32
+    async with acquire_execution(backend, KEY, run_id=task_run_id) as owner:
+        writer = SourceTurnWriter(backend.source, owner, run_id=task_run_id)
+        task_input = writer.append_message({
+            "role": "user",
+            "content": "Read the project README",
+        })
+    snapshot = backend.source.load_source_snapshot(KEY)
+    binding = {
+        "store_identity": snapshot.state.store_identity,
+        "incarnation": snapshot.state.incarnation,
+        "generation": snapshot.state.generation,
+    }
+    task_event_id = task_input["_event_id"]
+    request = {
+        "version": 1,
+        "access_request_id": "a" * 32,
+        "revision": 1,
+        "task": {"turn_id": "turn:original"},
+        "blocked_turn_id": "turn:original",
+        "tool_call_id": None,
+        "created_at_ms": 10,
+        "status": "ready",
+        "reason": "folder_not_granted",
+        "operation": "read",
+        "target": {"kind": "directory", "path": "/projects/alpha"},
+        "purpose": "Read the project README",
+        "selected_path": "/projects/alpha",
+        "continuation_turn_id": None,
+        "source_binding": binding,
+        "task_input_event_id": task_event_id,
+        "latest_input_event_id": task_event_id,
+        "blocked_run_id": task_run_id,
+        "expected_scope": {"project_path": "/agent", "access_mode": "restricted"},
+        "resolved_grants_revision": 0,
+    }
+    sessions.commit_workspace_access_request(
+        KEY,
+        expected_binding=binding,
+        expected_record=None,
+        replacement_record=request,
+        expected_latest_input_event_id=task_event_id,
+    )
+
+    accepted = message()
+    accepted.content = "Also read the changelog"
+    followup = record_pending_followup(accepted)
+    async with acquire_execution(backend, KEY, run_id="d" * 32) as active_owner:
+        assert backend.source.admit_pending_followup(KEY, active_owner, followup)
+        snapshot = active_owner.read_snapshot()
+        durable_request = snapshot.header["metadata"]["workspace_access_request"]
+        journal = parse_pending_followup_records(snapshot.header["metadata"][JOURNAL])
+        assert durable_request["status"] == "invalidated"
+        assert [row.identifier for row in journal] == [followup.identifier]
+        assert all(
+            event.get("_pending_followup_id") != followup.identifier
+            for event in snapshot.events
+        )
+
+
 async def test_failed_consumption_retains_journal_and_does_not_append(sessions, monkeypatch):
     backend = sessions.source_backend(KEY)
     async with acquire_execution(backend, KEY, run_id="failure") as owner:
