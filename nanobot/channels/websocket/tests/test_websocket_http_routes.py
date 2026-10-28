@@ -454,6 +454,45 @@ async def test_local_webui_thread_projects_permissions_for_current_canonical_sou
 
 
 @pytest.mark.asyncio
+async def test_local_webui_thread_reads_explicit_empty_canonical_chat(
+    bus: MagicMock,
+    tmp_path: Path,
+) -> None:
+    key = "websocket:canonical-empty-thread"
+    sm = SessionManager(tmp_path / "workspace")
+    session = Session(key, metadata={"webui": True})
+    sm._jsonl_store.save(session)
+    sm._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    channel = _ch(bus, session_manager=sm, port=_next_in_process_port())
+    server_task = asyncio.create_task(channel.start())
+    try:
+        token = channel.gateway.tokens.issue_api_token(300)
+        response = await _http_get(
+            f"http://127.0.0.1:{channel.config.port}/api/sessions/"
+            "websocket%3Acanonical-empty-thread/webui-thread"
+            "?limit=80&direction=latest",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["messages"] == []
+        assert body["sessionKey"] == key
+        assert body["page"]["has_more_before"] is False
+        assert body["workspace_permissions"]["mode"] == "restricted"
+        assert body["workspace_permissions"]["state"] == "active"
+        assert "can_enable_full" in body["workspace_permissions"]
+    finally:
+        await channel.stop()
+        await server_task
+
+
+@pytest.mark.asyncio
 async def test_local_webui_thread_keeps_unavailable_canonical_authority_fail_closed(
     bus: MagicMock,
     tmp_path: Path,

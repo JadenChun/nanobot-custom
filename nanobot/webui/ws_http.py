@@ -138,7 +138,10 @@ from nanobot.webui.skills_marketplace import (
     trending_marketplace_skills,
 )
 from nanobot.webui.thread_disk import delete_webui_thread
-from nanobot.webui.transcript import build_webui_thread_response
+from nanobot.webui.transcript import (
+    WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+    build_webui_thread_response,
+)
 from nanobot.webui.workspaces import (
     RepositoryInUseError,
     WebUIWorkspaceController,
@@ -996,7 +999,7 @@ class GatewayHTTPHandler:
         active_turn_transcript_persistence_failed = (
             websocket_turn_transcript_persistence_failed(chat_id)
         )
-        data = build_webui_thread_response(
+        data: dict[str, Any] | None = build_webui_thread_response(
             decoded_key,
             augment_user_media=lambda paths: self.media.augment_transcript_media(
                 paths,
@@ -1022,7 +1025,31 @@ class GatewayHTTPHandler:
             before=before,
         )
         if data is None:
-            return _http_error(404, "webui thread not found")
+            metadata_payload = (
+                self.session_manager.read_session_metadata(decoded_key)
+                if self.session_manager is not None else None
+            )
+            metadata = (
+                metadata_payload.get("metadata")
+                if type(metadata_payload) is dict else None
+            )
+            if type(metadata) is not dict or cast(dict[str, object], metadata).get("webui") is not True:
+                return _http_error(404, "webui thread not found")
+            data = {
+                "schemaVersion": WEBUI_TRANSCRIPT_SCHEMA_VERSION,
+                "sessionKey": decoded_key,
+                "messages": [],
+                "completed_turn_ids": [],
+                "has_pending_tool_calls": False,
+                "active_turn_id": active_turn_id,
+            }
+            if limit is not None or direction is not None or before is not None:
+                data["page"] = {
+                    "has_more_before": False,
+                    "loaded_message_count": 0,
+                    "total_known_message_count": 0,
+                    "user_message_offset": 0,
+                }
         data["workspace_scope"] = self.workspaces.scope_payload(scope)
         if (
             connection is not None
