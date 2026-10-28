@@ -52,6 +52,7 @@ SEARCH_PROVIDER_OPTIONS: tuple[dict[str, str], ...] = (
     {"name": "jina", "label": "Jina", "credential": "api_key"},
     {"name": "kagi", "label": "Kagi", "credential": "api_key"},
     {"name": "exa", "label": "Exa", "credential": "api_key"},
+    {"name": "tinyfish", "label": "TinyFish", "credential": "api_key"},
     {"name": "olostep", "label": "Olostep", "credential": "api_key"},
     {"name": "bocha", "label": "Bocha", "credential": "api_key"},
     {"name": "volcengine", "label": "Volcengine Search", "credential": "api_key"},
@@ -72,6 +73,9 @@ class WebSearchConfig(Base):
 class WebFetchConfig(Base):
     """Web fetch tool configuration."""
     use_jina_reader: bool = True
+    # auto | tinyfish | jina | local
+    provider: str = "auto"
+    api_key: str = ""
     blocked_hosts: list[str] = Field(default_factory=list)
 
 
@@ -494,6 +498,9 @@ class WebSearchTool(Tool):
         if provider == "exa":
             api_key = self.config.api_key or os.environ.get("EXA_API_KEY", "")
             return "exa" if api_key else "duckduckgo"
+        if provider == "tinyfish":
+            api_key = self.config.api_key or os.environ.get("TINYFISH_API_KEY", "")
+            return "tinyfish" if api_key else "duckduckgo"
         if provider == "olostep":
             api_key = self.config.api_key or os.environ.get("OLOSTEP_API_KEY", "")
             return "olostep" if api_key else "duckduckgo"
@@ -552,6 +559,8 @@ class WebSearchTool(Tool):
             return await self._search_duckduckgo(query, n)
         elif provider == "tavily":
             return await self._search_tavily(query, n)
+        elif provider == "tinyfish":
+            return await self._search_tinyfish(query, n)
         elif provider == "searxng":
             return await self._search_searxng(query, n)
         elif provider == "jina":
@@ -698,6 +707,42 @@ class WebSearchTool(Tool):
             return _format_results(query, r.json().get("results", []), n)
         except Exception as e:
             return ToolResult.error(f"Error: {e}")
+
+    async def _search_tinyfish(self, query: str, n: int) -> str:
+        api_key = self.config.api_key or os.environ.get("TINYFISH_API_KEY", "")
+        if not api_key:
+            logger.warning("TINYFISH_API_KEY not set, falling back to DuckDuckGo")
+            return await self._search_duckduckgo(query, n)
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy) as client:
+                r = await client.get(
+                    "https://api.search.tinyfish.ai",
+                    params={"query": query},
+                    headers={"X-API-Key": api_key, "User-Agent": self.user_agent},
+                    timeout=15.0,
+                )
+                if r.status_code in {401, 403}:
+                    return ToolResult.error(
+                        f"Error: TinyFish rejected the API key (HTTP {r.status_code})"
+                    )
+                if r.status_code == 402:
+                    logger.warning("TinyFish daily allowance exhausted, falling back to DuckDuckGo")
+                    return await self._search_duckduckgo(query, n)
+                r.raise_for_status()
+            raw = r.json().get("results") or []
+        except Exception as e:
+            logger.warning("TinyFish search failed, falling back to DuckDuckGo: %s", e)
+            return await self._search_duckduckgo(query, n)
+        results = [
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "content": item.get("snippet") or item.get("content") or "",
+            }
+            for item in raw
+            if isinstance(item, dict)
+        ]
+        return _format_results(query, results, n)
 
     async def _search_keenable(self, query: str, n: int) -> str:
         api_key = self.config.api_key or os.environ.get("KEENABLE_API_KEY", "")
@@ -1193,13 +1238,22 @@ class WebFetchTool(Tool):
             config=ctx.config.web.fetch,
             proxy=ctx.config.web.proxy,
             user_agent=ctx.config.web.user_agent,
+            tinyfish_api_key=ctx.config.web.search.api_key,
         )
 
-    def __init__(self, config: WebFetchConfig | None = None, proxy: str | None = None, user_agent: str | None = None, max_chars: int = 50000):
+    def __init__(
+        self,
+        config: WebFetchConfig | None = None,
+        proxy: str | None = None,
+        user_agent: str | None = None,
+        max_chars: int = 50000,
+        tinyfish_api_key: str = "",
+    ):
         self.config = config if config is not None else WebFetchConfig()
         self.proxy = proxy
         self.user_agent = user_agent or _DEFAULT_USER_AGENT
         self.max_chars = max_chars
+        self.tinyfish_api_key = tinyfish_api_key
 
     @property
     def read_only(self) -> bool:
@@ -1269,11 +1323,91 @@ class WebFetchTool(Tool):
         result = None
         # Remote extraction can follow a different, opaque redirect chain.
         # A configured routing policy must be enforced locally on every hop.
-        if self.config.use_jina_reader and jina_remote_safe and not blocked_hosts:
-            result = await self._fetch_jina(url, max_chars)
+        if jina_remote_safe and not blocked_hosts:
+            provider = (self.config.provider or "auto").strip().lower()
+            if provider in {"auto", "tinyfish"} and self._tinyfish_fetch_key():
+                result = await self._fetch_tinyfish(url, max_chars)
+            if (
+                result is None
+                and provider in {"auto", "jina"}
+                and self.config.use_jina_reader
+            ):
+                result = await self._fetch_jina(url, max_chars)
         if result is None:
             result = await self._fetch_readability(url, extract_mode, max_chars)
         return result
+
+    def _tinyfish_fetch_key(self) -> str:
+        return (
+            self.config.api_key
+            or self.tinyfish_api_key
+            or os.environ.get("TINYFISH_API_KEY", "")
+        )
+
+    async def _fetch_tinyfish(self, url: str, max_chars: int) -> str | None:
+        """Fetch page content through the TinyFish Fetch API. Returns None on failure."""
+        api_key = self._tinyfish_fetch_key()
+        if not api_key:
+            return None
+        if _configured_fetch_hosts(self.config):
+            return None
+        if _url_carries_credentials(url):
+            logger.debug(
+                "Skipping TinyFish fetch for {}: URL carries credential material",
+                _redact_url_for_log(url),
+            )
+            return None
+        forwarded_url = url.split("#", 1)[0]
+        try:
+            async with httpx.AsyncClient(proxy=self.proxy, timeout=30.0) as client:
+                r = await client.post(
+                    "https://api.fetch.tinyfish.ai",
+                    headers={
+                        "X-API-Key": api_key,
+                        "Content-Type": "application/json",
+                        "User-Agent": self.user_agent,
+                    },
+                    json={"urls": [forwarded_url], "format": "markdown"},
+                )
+                if r.status_code in {401, 403}:
+                    logger.warning("TinyFish fetch rejected the API key (HTTP %s)", r.status_code)
+                    return None
+                if r.status_code in {402, 429}:
+                    logger.debug("TinyFish fetch unavailable (HTTP %s)", r.status_code)
+                    return None
+                r.raise_for_status()
+            payload = r.json()
+            results = payload.get("results") or []
+            if not results:
+                return None
+            item = results[0]
+            text = item.get("text") or item.get("content") or ""
+            if not text:
+                return None
+            title = item.get("title", "")
+            if title:
+                text = f"# {title}\n\n{text}"
+            truncated = len(text) > max_chars
+            if truncated:
+                text = text[:max_chars]
+            text = f"{_UNTRUSTED_BANNER}\n\n{text}"
+            return json.dumps({
+                "url": url,
+                "finalUrl": item.get("final_url") or item.get("url") or url,
+                "status": 200,
+                "extractor": "tinyfish",
+                "truncated": truncated,
+                "length": len(text),
+                "untrusted": True,
+                "text": text,
+            }, ensure_ascii=False)
+        except Exception as e:
+            logger.debug(
+                "TinyFish fetch failed for {}, falling back ({})",
+                _redact_url_for_log(url),
+                type(e).__name__,
+            )
+            return None
 
     async def _fetch_jina(self, url: str, max_chars: int) -> str | None:
         """Try fetching via Jina Reader API. Returns None on failure."""

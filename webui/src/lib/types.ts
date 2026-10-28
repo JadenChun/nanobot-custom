@@ -931,6 +931,15 @@ export interface SettingsPayload {
     };
     fetch: {
       use_jina_reader: boolean;
+      provider: string;
+    };
+    browser: {
+      cdp_url: string;
+      attached: boolean;
+      pin_tab: boolean;
+      session: string;
+      launch_command: string;
+      launch_wait_seconds: number;
     };
   };
   api?: {
@@ -1523,6 +1532,12 @@ export interface WebSearchSettingsUpdate {
   maxResults?: number;
   timeout?: number;
   useJinaReader?: boolean;
+  fetchProvider?: string;
+  browserCdpUrl?: string;
+  browserPinTab?: boolean;
+  browserSession?: string;
+  browserLaunchCommand?: string;
+  browserLaunchWaitSeconds?: number;
 }
 
 export interface NetworkSafetySettingsUpdate {

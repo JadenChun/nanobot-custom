@@ -28,6 +28,12 @@ export const DEFAULT_WEB_SEARCH_FORM: WebSearchSettingsUpdate = {
   maxResults: 5,
   timeout: 30,
   useJinaReader: true,
+  fetchProvider: "auto",
+  browserCdpUrl: "",
+  browserPinTab: true,
+  browserSession: "default",
+  browserLaunchCommand: "",
+  browserLaunchWaitSeconds: 20,
 };
 
 export function webSearchFormFromPayload(
@@ -41,6 +47,12 @@ export function webSearchFormFromPayload(
     maxResults: payload.web_search.max_results,
     timeout: payload.web_search.timeout,
     useJinaReader: payload.web.fetch.use_jina_reader,
+    fetchProvider: payload.web.fetch.provider,
+    browserCdpUrl: payload.web.browser.cdp_url,
+    browserPinTab: payload.web.browser.pin_tab,
+    browserSession: payload.web.browser.session,
+    browserLaunchCommand: payload.web.browser.launch_command,
+    browserLaunchWaitSeconds: payload.web.browser.launch_wait_seconds,
   };
 }
 
@@ -106,14 +118,38 @@ export function WebSettings({
   const apiKey = form.apiKey?.trim() ?? "";
   const baseUrl = form.baseUrl?.trim() ?? "";
   const effectiveJinaReader = form.useJinaReader ?? settings.web.fetch.use_jina_reader;
+  const effectiveFetchProvider = form.fetchProvider ?? settings.web.fetch.provider;
+  const browser = settings.web.browser;
+  const effectiveCdpUrl = form.browserCdpUrl ?? browser.cdp_url;
+  const effectivePinTab = form.browserPinTab ?? browser.pin_tab;
+  const effectiveSession = form.browserSession ?? browser.session;
+  const effectiveLaunchCommand = form.browserLaunchCommand ?? browser.launch_command;
+  const effectiveLaunchWait = form.browserLaunchWaitSeconds ?? browser.launch_wait_seconds;
+  const fetchOptions = [
+    { name: "auto", label: tx("settings.values.auto", "Auto") },
+    { name: "tinyfish", label: "TinyFish" },
+    { name: "jina", label: "Jina" },
+    { name: "local", label: tx("settings.values.local", "Local") },
+  ];
+  const browserDirty =
+    effectiveCdpUrl !== browser.cdp_url ||
+    effectivePinTab !== browser.pin_tab ||
+    effectiveSession !== browser.session ||
+    effectiveLaunchCommand !== browser.launch_command ||
+    effectiveLaunchWait !== browser.launch_wait_seconds;
   const dirty =
     form.provider !== settings.web_search.provider ||
     apiKey.length > 0 ||
     baseUrl !== (settings.web_search.base_url ?? "") ||
     form.maxResults !== settings.web_search.max_results ||
     form.timeout !== settings.web_search.timeout ||
-    effectiveJinaReader !== settings.web.fetch.use_jina_reader;
-  const jinaReaderDirty = effectiveJinaReader !== settings.web.fetch.use_jina_reader;
+    effectiveJinaReader !== settings.web.fetch.use_jina_reader ||
+    effectiveFetchProvider !== settings.web.fetch.provider ||
+    browserDirty;
+  const restartDirty =
+    effectiveJinaReader !== settings.web.fetch.use_jina_reader ||
+    effectiveFetchProvider !== settings.web.fetch.provider ||
+    browserDirty;
   const missingCredential =
     webSearchProviderRequiresApiKey(selectedProvider)
       ? !apiKey && !hasExistingSecret
@@ -255,16 +291,123 @@ export function WebSettings({
             />
           </SettingsRow>
           <SettingsRow
-            title={tx("settings.rows.jinaReader", "Jina reader")}
-            description={tx("settings.help.jinaReader", "Use Jina Reader for web_fetch when available.")}
+            title={tx("settings.rows.fetchExtractor", "Fetch extractor")}
+            description={tx(
+              "settings.help.fetchExtractor",
+              "Auto uses TinyFish when a key is set, then Jina, then the local extractor.",
+            )}
           >
-            <ToggleButton
-              checked={effectiveJinaReader}
-              onChange={(useJinaReader) => onChangeForm((prev) => ({ ...prev, useJinaReader }))}
-              ariaLabel={tx("settings.rows.jinaReader", "Jina reader")}
-              label={effectiveJinaReader ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
+            <ProviderPicker
+              providers={fetchOptions}
+              value={effectiveFetchProvider}
+              emptyLabel={tx("settings.values.auto", "Auto")}
+              showProviderLogos={false}
+              onChange={(fetchProvider) => onChangeForm((prev) => ({ ...prev, fetchProvider }))}
             />
           </SettingsRow>
+          {effectiveFetchProvider === "auto" || effectiveFetchProvider === "jina" ? (
+            <SettingsRow
+              title={tx("settings.rows.jinaReader", "Jina reader")}
+              description={tx("settings.help.jinaReader", "Allow Jina Reader as the remote extraction fallback.")}
+            >
+              <ToggleButton
+                checked={effectiveJinaReader}
+                onChange={(useJinaReader) => onChangeForm((prev) => ({ ...prev, useJinaReader }))}
+                ariaLabel={tx("settings.rows.jinaReader", "Jina reader")}
+                label={effectiveJinaReader ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
+              />
+            </SettingsRow>
+          ) : null}
+        </SettingsGroup>
+      </section>
+
+      <section>
+        <SettingsSectionTitle>{tx("settings.sections.browserSession", "Browser session")}</SettingsSectionTitle>
+        <SettingsGroup>
+          <SettingsRow
+            title={tx("settings.rows.browserAttach", "Attach URL")}
+            description={tx(
+              "settings.help.browserAttach",
+              "Chrome DevTools endpoint. When it answers, the agent drives this running browser and shares its sign-ins instead of launching its own profile.",
+            )}
+          >
+            <div className="flex items-center gap-2">
+              <StatusPill tone={browser.attached ? "success" : "neutral"}>
+                {browser.attached
+                  ? tx("settings.values.connected", "Connected")
+                  : tx("settings.values.notConnected", "Not connected")}
+              </StatusPill>
+              <Input
+                value={effectiveCdpUrl}
+                onChange={(event) =>
+                  onChangeForm((prev) => ({ ...prev, browserCdpUrl: event.target.value }))
+                }
+                placeholder="http://127.0.0.1:9222"
+                className="h-9 w-[260px] rounded-full text-[13px]"
+              />
+            </div>
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.rows.browserPinTab", "Pin tab")}
+            description={tx(
+              "settings.help.browserPinTab",
+              "Keep agent actions on one tab so the user's active tab is not taken over.",
+            )}
+          >
+            <ToggleButton
+              checked={effectivePinTab}
+              onChange={(browserPinTab) => onChangeForm((prev) => ({ ...prev, browserPinTab }))}
+              ariaLabel={tx("settings.rows.browserPinTab", "Pin tab")}
+              label={effectivePinTab ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.rows.browserSessionName", "Session name")}
+            description={tx("settings.help.browserSessionName", "agent-browser session used for the shared browser.")}
+          >
+            <Input
+              value={effectiveSession}
+              onChange={(event) =>
+                onChangeForm((prev) => ({ ...prev, browserSession: event.target.value }))
+              }
+              className="h-9 w-[200px] rounded-full text-[13px]"
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.rows.browserLaunchCommand", "Launch command")}
+            description={tx(
+              "settings.help.browserLaunchCommand",
+              "Started when the attach URL is not listening yet. Leave empty to never launch a browser.",
+            )}
+          >
+            <Input
+              value={effectiveLaunchCommand}
+              onChange={(event) =>
+                onChangeForm((prev) => ({ ...prev, browserLaunchCommand: event.target.value }))
+              }
+              placeholder="/home/jaden/.local/bin/chrome-agent"
+              className="h-9 w-[280px] rounded-full text-[13px]"
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={tx("settings.rows.browserLaunchWait", "Launch wait")}
+            description={tx("settings.help.browserLaunchWait", "How long to wait for the shared browser to expose its endpoint.")}
+          >
+            <NumberInput
+              value={effectiveLaunchWait}
+              min={1}
+              max={120}
+              onChange={(browserLaunchWaitSeconds) =>
+                onChangeForm((prev) => ({ ...prev, browserLaunchWaitSeconds }))
+              }
+              suffix="s"
+            />
+          </SettingsRow>
+        </SettingsGroup>
+      </section>
+
+      <section>
+        <SettingsGroup>
           <RestartSettingsFooter
             dirty={dirty}
             saving={saving}
@@ -275,7 +418,7 @@ export function WebSettings({
                 ? t("settings.byok.webSearch.missingCredential")
                 : requiresRestartPending && !dirty
                   ? tx("settings.status.savedRestartApply", "Saved. Restart when ready.")
-                  : jinaReaderDirty
+                  : restartDirty
                     ? tx("settings.status.restartAfterSaving", "Save changes, then restart when ready.")
                     : dirty
                       ? t("settings.byok.webSearch.saveHint")

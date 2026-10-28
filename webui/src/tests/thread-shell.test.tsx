@@ -537,7 +537,15 @@ function modelSettings(model: string, provider: string): SettingsPayload {
       proxy: null,
       user_agent: null,
       search: { max_results: 5, timeout: 30 },
-      fetch: { use_jina_reader: true },
+      fetch: { use_jina_reader: true, provider: "auto" },
+      browser: {
+        cdp_url: "",
+        attached: false,
+        pin_tab: true,
+        session: "default",
+        launch_command: "",
+        launch_wait_seconds: 20,
+      },
     },
     image_generation: {
       enabled: false,
