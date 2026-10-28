@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from nanobot.config.schema import Config
+import httpx
+
+from nanobot.config.schema import Config, MCPServerConfig
 from nanobot.webui.settings_capabilities import (
     capability_settings_payload,
     update_api_settings,
@@ -60,3 +62,39 @@ def test_capability_domain_updates_representative_settings() -> None:
     assert payload["api"]["port"] == 8900
     assert payload["image_generation"]["enabled"] is True
     assert payload["transcription"]["provider"] == "openrouter"
+
+
+def test_capability_payload_reports_unconfigured_comfy_mcp() -> None:
+    payload = capability_settings_payload(Config(), oauth_status=_oauth_status)
+    comfy = payload["image_generation"]["comfy"]
+
+    assert comfy["configured"] is False
+    assert comfy["reachable"] is False
+    assert comfy["base_url"] is None
+    assert comfy["enabled_tools"] == []
+
+
+def test_capability_payload_reports_configured_comfy_mcp(
+    monkeypatch,
+) -> None:
+    config = Config()
+    config.tools.mcp_servers["comfy"] = MCPServerConfig(
+        command="/usr/bin/node",
+        args=["/opt/comfy/server.js"],
+        env={"COMFY_AGENT_COMFY_URL": "http://127.0.0.1:8188"},
+        enabled_tools=["generate_image", "edit_image"],
+    )
+
+    def fake_get(url: str, **kwargs):
+        assert url == "http://127.0.0.1:8188/system_stats"
+        return httpx.Response(200, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+
+    payload = capability_settings_payload(config, oauth_status=_oauth_status)
+    comfy = payload["image_generation"]["comfy"]
+
+    assert comfy["configured"] is True
+    assert comfy["reachable"] is True
+    assert comfy["base_url"] == "http://127.0.0.1:8188"
+    assert comfy["enabled_tools"] == ["generate_image", "edit_image"]

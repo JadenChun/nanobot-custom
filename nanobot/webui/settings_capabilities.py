@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
 
+import httpx
+
 from nanobot.agent.tools.web import SEARCH_PROVIDER_OPTIONS
 from nanobot.api.runtime import ApiRuntime, ApiStartOptions
 from nanobot.audio.transcription import resolve_transcription_config
@@ -145,6 +147,38 @@ def _transcription_provider_rows(config: Config) -> list[dict[str, Any]]:
     return rows
 
 
+def _comfy_mcp_status(config: Config) -> dict[str, Any]:
+    server = config.tools.mcp_servers.get("comfy")
+    if server is None:
+        return {
+            "configured": False,
+            "reachable": False,
+            "base_url": None,
+            "server_name": None,
+            "command": None,
+            "tool_timeout": None,
+            "enabled_tools": [],
+        }
+
+    base_url = (server.env.get("COMFY_AGENT_COMFY_URL") or "http://127.0.0.1:8188").rstrip("/")
+    reachable = False
+    try:
+        response = httpx.get(f"{base_url}/system_stats", timeout=1.0, follow_redirects=False)
+        reachable = response.status_code == 200
+    except (httpx.HTTPError, OSError, ValueError):
+        reachable = False
+
+    return {
+        "configured": True,
+        "reachable": reachable,
+        "base_url": base_url,
+        "server_name": "comfy",
+        "command": server.command or None,
+        "tool_timeout": server.tool_timeout,
+        "enabled_tools": list(server.enabled_tools),
+    }
+
+
 def capability_settings_payload(
     config: Config,
     *,
@@ -215,6 +249,7 @@ def capability_settings_payload(
             "max_images_per_turn": image_config.max_images_per_turn,
             "save_dir": image_config.save_dir,
             "providers": image_providers,
+            "comfy": _comfy_mcp_status(config),
         },
         "transcription": {
             "enabled": transcription.enabled,

@@ -72,6 +72,13 @@ export function ImageGenerationSettings({
     settings.image_generation.providers[0];
   const providerConfigured = !!selectedProvider?.configured;
   const missingCredential = form.enabled && !providerConfigured;
+  const comfy = settings.image_generation.comfy;
+  const comfyActive = Boolean(comfy?.configured);
+  const comfyStatus = !comfyActive
+    ? tx("settings.values.notConfigured", "Not configured")
+    : comfy?.reachable
+      ? tx("settings.values.connected", "Connected")
+      : tx("settings.values.unreachable", "Unreachable");
   const aspectOptions = optionRowsWithCurrent(
     IMAGE_ASPECT_RATIO_OPTIONS.map((value) => ({ name: value, label: value })),
     form.defaultAspectRatio,
@@ -92,7 +99,36 @@ export function ImageGenerationSettings({
   return (
     <div className="space-y-7">
       <section>
-        <SettingsSectionTitle>{tx("settings.sections.imageGeneration", "Image generation")}</SettingsSectionTitle>
+        <SettingsSectionTitle>{tx("settings.sections.localImageGeneration", "Local ComfyUI")}</SettingsSectionTitle>
+        <SettingsGroup>
+          <SettingsRow
+            title={tx("settings.rows.comfyMcp", "ComfyUI MCP")}
+            description={tx(
+              "settings.help.comfyMcp",
+              "Local image, edit, and video generation is handled through the Comfy MCP tools.",
+            )}
+          >
+            <StatusPill tone={comfyActive && comfy?.reachable ? "success" : "neutral"}>
+              {comfyStatus}
+            </StatusPill>
+          </SettingsRow>
+          <ReadOnlyRow
+            title={tx("settings.rows.comfyEndpoint", "ComfyUI endpoint")}
+            value={comfy?.base_url || tx("settings.values.notAvailable", "Not available")}
+          />
+          <ReadOnlyRow
+            title={tx("settings.rows.comfyTools", "Enabled tools")}
+            value={
+              comfy?.enabled_tools.length
+                ? comfy.enabled_tools.join(", ")
+                : tx("settings.values.notAvailable", "Not available")
+            }
+          />
+        </SettingsGroup>
+      </section>
+
+      <section>
+        <SettingsSectionTitle>{tx("settings.sections.cloudImageGeneration", "Cloud image API")}</SettingsSectionTitle>
         <SettingsGroup>
           <SettingsRow title={tx("settings.rows.imageGeneration", "Image generation")}>
             <ToggleButton

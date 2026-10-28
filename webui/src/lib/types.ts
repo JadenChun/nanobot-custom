@@ -953,6 +953,15 @@ export interface SettingsPayload {
     default_image_size: string;
     max_images_per_turn: number;
     save_dir: string;
+    comfy?: {
+      configured: boolean;
+      reachable: boolean;
+      base_url: string | null;
+      server_name: string | null;
+      command: string | null;
+      tool_timeout: number | null;
+      enabled_tools: string[];
+    };
     providers: Array<{
       name: string;
       label: string;

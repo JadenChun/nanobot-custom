@@ -7,6 +7,34 @@ import { requestMutationMock, jsonResponse, settingsPayload, renderSettingsView,
 describe("Settings capabilities", () => {
   installSettingsViewTestHooks();
 
+  it("shows the configured local Comfy MCP route", async () => {
+    const base = settingsPayload();
+    const payload: SettingsPayload = {
+      ...base,
+      image_generation: {
+        ...base.image_generation,
+        comfy: {
+          configured: true,
+          reachable: true,
+          base_url: "http://127.0.0.1:8188",
+          server_name: "comfy",
+          command: "/usr/bin/node",
+          tool_timeout: 900,
+          enabled_tools: ["generate_image", "edit_image", "generate_video"],
+        },
+      },
+    };
+
+    renderSettingsView({ initialSection: "image", initialSettings: payload });
+
+    expect(await screen.findByText("Local ComfyUI")).toBeInTheDocument();
+    expect(screen.getByText("ComfyUI MCP")).toBeInTheDocument();
+    expect(screen.getByText("Connected")).toBeInTheDocument();
+    expect(screen.getByText("http://127.0.0.1:8188")).toBeInTheDocument();
+    expect(screen.getByText("generate_image, edit_image, generate_video")).toBeInTheDocument();
+    expect(screen.getByText("Cloud image API")).toBeInTheDocument();
+  });
+
 
   it("selects image models from provider-specific options", async () => {
     const base = settingsPayload();
