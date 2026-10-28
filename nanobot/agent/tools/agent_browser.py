@@ -142,6 +142,7 @@ class AgentBrowserTool(Tool):
         self.launch_command = launch_command.strip()
         self.launch_wait_seconds = max(1, int(launch_wait_seconds))
         self.executable_path = executable_path.strip()
+        self._last_launch_attempt = 0.0
 
     @property
     def read_only(self) -> bool:
@@ -198,7 +199,51 @@ class AgentBrowserTool(Tool):
             return False
         if await self._cdp_ready():
             return True
+        # Do not pay the launch wait on every call when the browser cannot start
+        # (for example, it is already running on the profile without the port).
+        if not self.launch_command or time.monotonic() - self._last_launch_attempt < 60:
+            return False
+        self._last_launch_attempt = time.monotonic()
         return await self._launch_shared_browser()
+
+    _META_COMMANDS = frozenset({
+        "dashboard",
+        "doctor",
+        "install",
+        "mcp",
+        "plugin",
+        "session",
+        "skills",
+        "upgrade",
+    })
+
+    def _needs_browser_session(self, args: Sequence[str]) -> bool:
+        if any(arg in {"--help", "-h", "--version", "-V"} for arg in args):
+            return False
+        first_positional = next((arg for arg in args if not arg.startswith("-")), "")
+        return first_positional not in self._META_COMMANDS
+
+    async def _reset_pinned_tab(self, npx_command: str, cwd: str) -> bool:
+        command = [
+            npx_command,
+            "--yes",
+            self.package,
+            *self._browser_flags(True),
+            "tab",
+            "new",
+            "about:blank",
+        ]
+        try:
+            await run_owned_process(
+                command,
+                timeout=min(self.timeout, 60),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+            )
+        except Exception:
+            return False
+        return True
 
     def _browser_flags(self, attached: bool) -> list[str]:
         if attached:
@@ -301,24 +346,48 @@ class AgentBrowserTool(Tool):
                 "Install Node.js/npm first, then retry."
             )
 
-        attached = await self._ensure_browser_session()
+        needs_session = self._needs_browser_session(args)
+        attached = await self._ensure_browser_session() if needs_session else False
         command = [
             npx_command,
             "--yes",
             self.package,
-            *self._browser_flags(attached),
+            *(self._browser_flags(attached) if needs_session else []),
             *args,
         ]
-        try:
-            result = await run_owned_process(
+
+        async def run() -> Any:
+            return await run_owned_process(
                 command,
                 timeout=run_timeout,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
             )
+
+        try:
+            result = await run()
         except Exception as e:
             return f"Error: failed to start agent-browser: {e}"
+
+        stdout_text = result.stdout.decode("utf-8", errors="replace")
+        stderr_text = result.stderr.decode("utf-8", errors="replace")
+
+        # A pinned tab can disappear (the user closed it). Recreate a bound tab
+        # once and retry so the session does not stay wedged.
+        if (
+            attached
+            and self.pin_tab
+            and result.returncode != 0
+            and "tab_gone" in stderr_text
+            and await self._reset_pinned_tab(npx_command, cwd)
+        ):
+            try:
+                result = await run()
+            except Exception as e:
+                return f"Error: failed to start agent-browser: {e}"
+            stdout_text = result.stdout.decode("utf-8", errors="replace")
+            stderr_text = result.stderr.decode("utf-8", errors="replace")
 
         if result.timed_out:
             return json.dumps(
@@ -334,9 +403,6 @@ class AgentBrowserTool(Tool):
                 },
                 ensure_ascii=False,
             )
-
-        stdout_text = result.stdout.decode("utf-8", errors="replace")
-        stderr_text = result.stderr.decode("utf-8", errors="replace")
 
         stdout_truncated = len(stdout_text) > self.max_output_chars
         stderr_truncated = len(stderr_text) > self.max_output_chars

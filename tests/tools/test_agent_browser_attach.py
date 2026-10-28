@@ -111,3 +111,65 @@ async def test_no_session_config_keeps_plain_command(monkeypatch):
 
     assert payload["command"] == ["npx", "--yes", "agent-browser", "snapshot"]
     assert payload["browser_session"]["attached"] is False
+
+
+@pytest.mark.asyncio
+async def test_meta_commands_do_not_touch_the_browser_session(monkeypatch):
+    process = _process()
+    _prepare(monkeypatch, process)
+    tool = AgentBrowserTool(cdp_url="http://127.0.0.1:9222")
+    probe = AsyncMock(return_value=False)
+    launch = AsyncMock(return_value=False)
+    monkeypatch.setattr(tool, "_cdp_ready", probe)
+    monkeypatch.setattr(tool, "_launch_shared_browser", launch)
+
+    payload = json.loads(await tool.execute(["--help"]))
+
+    probe.assert_not_awaited()
+    launch.assert_not_awaited()
+    assert payload["command"] == ["npx", "--yes", "agent-browser", "--help"]
+    assert payload["browser_session"]["attached"] is False
+
+
+@pytest.mark.asyncio
+async def test_launch_attempt_is_not_repeated_on_every_call(monkeypatch):
+    process = _process()
+    _prepare(monkeypatch, process)
+    tool = AgentBrowserTool(
+        cdp_url="http://127.0.0.1:9222",
+        launch_command="/home/jaden/.local/bin/chrome-agent",
+    )
+    monkeypatch.setattr(tool, "_cdp_ready", AsyncMock(return_value=False))
+    launch = AsyncMock(return_value=False)
+    monkeypatch.setattr(tool, "_launch_shared_browser", launch)
+
+    await tool.execute(["snapshot"])
+    await tool.execute(["snapshot"])
+
+    launch.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stale_pinned_tab_is_reset_and_retried(monkeypatch):
+    calls: list[list[str]] = []
+
+    async def process(command, **kwargs):
+        calls.append(list(command))
+        failed = len(calls) == 1
+        return SimpleNamespace(
+            timed_out=False,
+            stdout=b"" if failed else b"ok\n",
+            stderr=b"tab_gone: bound tab is gone" if failed else b"",
+            returncode=1 if failed else 0,
+        )
+
+    _prepare(monkeypatch, process)
+    tool = AgentBrowserTool(cdp_url="http://127.0.0.1:9222", session="nanobot")
+    monkeypatch.setattr(tool, "_cdp_ready", AsyncMock(return_value=True))
+
+    payload = json.loads(await tool.execute(["get", "url"]))
+
+    assert payload["exitCode"] == 0
+    assert calls[0][-2:] == ["get", "url"]
+    assert calls[1][-3:] == ["tab", "new", "about:blank"]
+    assert calls[2][-2:] == ["get", "url"]

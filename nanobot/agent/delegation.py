@@ -341,7 +341,10 @@ class ForegroundAgentManager:
         tools.register(ListDirTool(**fs_kwargs))
         tools.register(SearchFilesTool(**fs_kwargs))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
-        tools.register(WebFetchTool(proxy=self.web_proxy))
+        tools.register(WebFetchTool(
+            proxy=self.web_proxy,
+            tinyfish_api_key=self.web_search_config.api_key,
+        ))
 
         if "agent_browser" in profile.tools and self.agent_browser_config.enabled:
             tools.register(AgentBrowserTool(
