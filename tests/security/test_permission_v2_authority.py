@@ -61,6 +61,41 @@ def test_once_payload_requires_exact_capabilities_and_revision_preconditions() -
             parse_workspace_access_once_payload(changed)
 
 
+def test_projection_revision_tracks_source_lifetime_without_chat_switch_churn() -> None:
+    owner = DesktopPermissionOwner()
+    first_key = "websocket:chat-a"
+    second_key = "websocket:chat-b"
+    first_source = _source()
+    first = owner.projection(session_key=first_key, source_binding=first_source)
+    assert owner.projection(session_key=first_key, source_binding=first_source)["revision"] == (
+        first["revision"]
+    )
+
+    # First observation of an unchanged second chat and switching back do not
+    # invalidate an existing confirmation.
+    second_source = _source()
+    assert owner.projection(session_key=second_key, source_binding=second_source)["revision"] == (
+        first["revision"]
+    )
+    assert owner.projection(session_key=first_key, source_binding=first_source)["revision"] == (
+        first["revision"]
+    )
+
+    for changed_source in (
+        {**first_source, "generation": 1},
+        {**first_source, "incarnation": "incarnation-b"},
+        {**first_source, "store_identity": "store-b"},
+    ):
+        prior_revision = owner.revision
+        changed = owner.projection(session_key=first_key, source_binding=changed_source)
+        assert changed["revision"] == prior_revision + 1
+        assert owner.projection(
+            session_key=first_key,
+            source_binding=changed_source,
+        )["revision"] == changed["revision"]
+        first_source = changed_source
+
+
 def test_once_reference_is_private_to_original_task_and_source(tmp_path) -> None:
     root = tmp_path / "project"
     root.mkdir()
@@ -275,11 +310,12 @@ def test_full_retirement_activity_observation_changes_only_exact_existing_retire
         source_binding=new_source,
         active_turn=False,
     ) is False
+    prior_revision = owner.revision
     assert owner.projection(
         session_key=kwargs["session_key"],
         source_binding=new_source,
     )["state"] == "active"
-    assert owner.revision == revision
+    assert owner.revision == prior_revision + 1
 
 
 def test_full_requires_explicit_available_local_mode_action_and_is_volatile(tmp_path) -> None:
@@ -454,4 +490,3 @@ def test_once_reauthorization_waits_for_prior_retirement_receipt(
     assert persisted == [replacement.epoch]
     assert owner.is_current_task_reference(replacement)
     assert owner.projection(**kwargs)["task_access"]["state"] == "active"
-

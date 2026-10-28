@@ -212,4 +212,3 @@ def test_owned_launch_upgrades_legacy_ledger_without_adopting_old_rows(tmp_path,
     assert ledger.owner_counts(owner_tag) == (0, 1)
     previous.cancel_before_launch()
     assert ledger.session_owner_counts(session_key="websocket:chat-a") == (0, 1)
-

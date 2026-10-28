@@ -866,22 +866,7 @@ impl Controller {
                     let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
                     return;
                 }
-                let app_for_close = app_for_create.clone();
-                let shared_for_close = shared_for_event.clone();
-                let close_hide_in_progress = Arc::new(AtomicBool::new(false));
-                chat.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        if let Some(window) = app_for_close.get_webview_window("chat") {
-                            native::hide_chat(
-                                &app_for_close,
-                                &shared_for_close,
-                                &window,
-                                close_hide_in_progress.clone(),
-                            );
-                        }
-                    }
-                });
+                native::install_hide_on_close(&app_for_create, shared_for_event, &chat);
                 let _ = sender.send(Ok(()));
             });
         }

@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -73,6 +72,7 @@ import {
   validateChannel,
 } from "@/lib/api";
 import { folderAccessThreadFixture } from "./fixtures/folder-access-request";
+import onceResponseFixture from "./fixtures/permission-v2-once-response.json";
 import type { WorkspaceOnceActionResult } from "@/lib/types";
 
 const requestMutation = vi.fn();
@@ -367,13 +367,9 @@ describe("webui API helpers", () => {
   });
 
   it("parses the exact Once response emitted by the backend serializer", async () => {
-    const log = readFileSync(
-      "../.assets/validation/desktop-project-access/access-v2-2026-10-27/backend/serializer-once.log",
-      "utf8",
-    );
-    const serializedLine = log.split("\n").find((line) => line.startsWith("V2_ONCE_JSON="));
-    expect(serializedLine).toBeDefined();
-    const emitted = JSON.parse(serializedLine!.slice("V2_ONCE_JSON=".length)) as WorkspaceOnceActionResult;
+    // Sanitized from the backend's V2_ONCE_JSON serializer output; synthetic IDs, path, and
+    // timestamp preserve the original response fields and their cross-field relationships.
+    const emitted = onceResponseFixture as WorkspaceOnceActionResult;
     const request = emitted.workspace_access_request;
     const receipt = emitted.once_receipt;
     requestMutation.mockResolvedValueOnce(emitted);

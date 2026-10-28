@@ -1155,7 +1155,10 @@ export function ThreadShell({
   const filePreviewCloseTimerRef = useRef<number | null>(null);
   const pendingFirstRef = useRef<PendingFirstMessage | null>(null);
   const [pendingFirstTargetChatId, setPendingFirstTargetChatId] = useState<string | null>(null);
-  const [pendingDraftText, setPendingDraftText] = useState<string | null>(null);
+  const [pendingFullDraft, setPendingFullDraft] = useState<{
+    chatId: string;
+    text: string;
+  } | null>(null);
   const [preparingFull, setPreparingFull] = useState(false);
   const [fullSetupError, setFullSetupError] = useState<string | null>(null);
   const viewportRef = useRef<ThreadViewportHandle | null>(null);
@@ -2018,19 +2021,19 @@ export function ThreadShell({
     if (preparingFull || booting) return;
     setPreparingFull(true);
     setFullSetupError(null);
-    setPendingDraftText(draft.trim() ? draft : null);
+    const draftToTransfer = draft.trim() ? draft : null;
     try {
       const newId = await onCreateChat?.(workspaceScope, draft, localModelPreset, {
         fullAccess: true,
       });
       if (!newId) {
-        setPendingDraftText(null);
         setFullSetupError(t("workspace.permissionV2.actionFailed", {
           defaultValue: "Access could not be updated. Refresh this chat before retrying.",
         }));
+      } else {
+        setPendingFullDraft(draftToTransfer ? { chatId: newId, text: draftToTransfer } : null);
       }
     } catch {
-      setPendingDraftText(null);
       setFullSetupError(t("workspace.permissionV2.actionFailed", {
         defaultValue: "Access could not be updated. Refresh this chat before retrying.",
       }));
@@ -2336,8 +2339,10 @@ export function ThreadShell({
           persistentWorkspaceChat={!temporary && !!chatId}
           onWorkspaceAccessModeChange={handleWorkspaceAccessModeChange}
           onRetryWorkspaceRestricted={retryWorkspaceRestricted}
-          initialDraft={pendingDraftText}
-          onInitialDraftConsumed={() => setPendingDraftText(null)}
+          initialDraft={pendingFullDraft?.chatId === chatId ? pendingFullDraft.text : null}
+          onInitialDraftConsumed={() => setPendingFullDraft((current) => (
+            current?.chatId === chatId ? null : current
+          ))}
           pendingQueueKey={temporary ? null : chatId}
           transcriptionProvider={settingsSnapshot?.transcription?.provider}
           ingressLimits={ingressLimits}

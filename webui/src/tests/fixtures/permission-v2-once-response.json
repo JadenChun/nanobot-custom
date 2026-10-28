@@ -1,0 +1,108 @@
+{
+  "once_receipt": {
+    "access_request_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "canonical_path": "/projects/selected-once",
+    "commands": false,
+    "duration": "once",
+    "file_access": "read_only",
+    "permission_revision": 1,
+    "request_revision": 2,
+    "runtime_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "submitted_path": "/projects/selected-once",
+    "task_turn_id": "turn-fixture",
+    "version": 1
+  },
+  "workspace_access_request": {
+    "access_request_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "blocked_turn_id": "cccccccccccccccccccccccccccccccc",
+    "can_continue": true,
+    "chat_id": "chat-fixture",
+    "continuation_turn_id": null,
+    "created_at_ms": 1700000000000,
+    "operation": "locate",
+    "purpose": "Locate the named project",
+    "reason": "folder_selection_required",
+    "revision": 2,
+    "selected_access": {
+      "boundary": "folder",
+      "commands": {
+        "available": false,
+        "backend": "none",
+        "reason": "not_granted",
+        "requested": false
+      },
+      "exists": true,
+      "grant_root": "/projects/selected-once",
+      "policy": "managed",
+      "read": true,
+      "source": "task",
+      "write": false
+    },
+    "selected_duration": "once",
+    "selected_path": "/projects/selected-once",
+    "status": "ready",
+    "target": {
+      "kind": "unknown",
+      "path": null
+    },
+    "task": {
+      "excerpt": "Read the README in the project I named.",
+      "turn_id": "turn-fixture"
+    },
+    "task_access_state": "active",
+    "tool_call_id": null,
+    "unavailable_reason": null,
+    "version": 1
+  },
+  "workspace_permissions": {
+    "can_enable_full": true,
+    "full_access_unavailable_reason": null,
+    "mode": "restricted",
+    "retirement": null,
+    "revision": 1,
+    "runtime_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "state": "active",
+    "task_access": {
+      "folders": [
+        {
+          "commands": false,
+          "file_access": "read_only",
+          "path": "/projects/selected-once"
+        }
+      ],
+      "state": "active",
+      "task_turn_id": "turn-fixture"
+    },
+    "version": 1
+  },
+  "workspace_scope": {
+    "access_mode": "restricted",
+    "effective_access": {
+      "boundary": "folder",
+      "commands": {
+        "available": false,
+        "backend": "none",
+        "reason": "not_granted",
+        "requested": false
+      },
+      "exists": true,
+      "grant_root": "/projects/selected-once",
+      "policy": "managed",
+      "read": true,
+      "source": "task",
+      "write": false
+    },
+    "project_name": "selected-once",
+    "project_path": "/projects/selected-once",
+    "restrict_to_workspace": true,
+    "sandbox_status": {
+      "enforced": false,
+      "level": "application",
+      "provider": "none",
+      "provider_label": "None",
+      "restrict_to_workspace": true,
+      "summary": "Workspace restriction uses nanobot application-level guards.",
+      "workspace_root": "/projects/selected-once"
+    }
+  }
+}

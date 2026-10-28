@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from pathlib import Path
 from types import MethodType, SimpleNamespace
 
 import pytest
 from websockets.datastructures import Headers
 
+from nanobot.security.folder_grants import FolderGrantStore
+from nanobot.security.workspace_access import default_workspace_scope
 from nanobot.session.manager import Session, SessionManager
+from nanobot.session.runtime_authority import DurableSessionAuthority, SessionAuthorityLease
 from nanobot.webui.inbound_commands import WebUICommandRouter
+from nanobot.webui.workspaces import (
+    WebUIWorkspaceController,
+    WorkspacePermissionActionError,
+)
 from nanobot.webui.ws_http import GatewayHTTPHandler
 
 
@@ -21,6 +30,98 @@ class _Connection:
         if forwarded:
             values.append(("X-Forwarded-For", "203.0.113.12"))
         self.request = SimpleNamespace(headers=Headers(values))
+
+
+async def _managed_prepare_router(
+    tmp_path: Path,
+    chat_id: str,
+    *,
+    publish_event: Callable[..., Awaitable[None]] | None = None,
+) -> tuple[
+    SessionAuthorityLease,
+    SessionManager,
+    WebUIWorkspaceController,
+    WebUICommandRouter,
+    _Connection,
+    _Connection,
+    list[dict[str, object]],
+]:
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    lease = await DurableSessionAuthority(
+        home,
+        sessions_root=tmp_path / "sessions",
+    ).acquire()
+    sessions = lease.manager
+    controller = WebUIWorkspaceController(
+        session_manager=sessions,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=FolderGrantStore(
+            agent_home=home,
+            instance_root=instance,
+            path=instance / "webui" / "folder-grants.json",
+        ),
+        native_supervisor_available=True,
+    )
+    controller.stage_scope(chat_id, default_workspace_scope(project, True))
+
+    async def idle_publish(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    handler = object.__new__(GatewayHTTPHandler)
+    handler.config = SimpleNamespace(host="127.0.0.1")
+    handler.session_manager = sessions
+    handler.workspaces = controller
+    handler.check_api_token = lambda _request: True
+    handler._log = SimpleNamespace(exception=lambda *_args: None)
+    handler.bus = SimpleNamespace(publish_event=publish_event or idle_publish)
+
+    async def dispatch(self, connection, request, path):
+        return await self._handle_workspace_permission_action(connection, request, path)
+
+    handler._dispatch_resolved = MethodType(dispatch, handler)
+    connection = _Connection("local")
+    joined = _Connection("joined")
+    connections = {connection, joined}
+    frames: list[dict[str, object]] = []
+
+    async def send(target, event, **payload: object) -> None:
+        frames.append({"connection": target.name, "event": event, **payload})
+
+    router = WebUICommandRouter(
+        SimpleNamespace(webui_send_event=send),
+        SimpleNamespace(
+            http=handler,
+            endpoint=SimpleNamespace(webui_connections=connections),
+            media=None,
+            ingress=None,
+            transcripts=None,
+            workspaces=controller,
+            temporary_chats=None,
+            session_projection=None,
+            session_manager=sessions,
+        ),
+    )
+    return lease, sessions, controller, router, connection, joined, frames
+
+
+async def _send_mutation(
+    router: WebUICommandRouter,
+    connection: _Connection,
+    frames: list[dict[str, object]],
+    envelope: dict[str, object],
+) -> dict[str, object]:
+    before = len(frames)
+    await router.start_webui_request(connection, envelope)
+    pending = tuple(router.request_tasks.values())
+    if pending:
+        await asyncio.gather(*pending)
+    assert len(frames) > before
+    return frames[before]
 
 
 @pytest.mark.asyncio
@@ -316,3 +417,271 @@ async def test_permission_result_is_not_delivered_after_source_changes_in_flight
     assert frames[0]["error"]["status"] == 409
     assert frames[0]["error"]["message"] == "source_changed"
     assert "private-original" not in repr(frames[0])
+
+
+@pytest.mark.asyncio
+async def test_staged_prepare_replay_stays_cached_and_full_can_be_enabled_before_first_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lease, sessions, controller, router, connection, reconnect, frames = await _managed_prepare_router(
+        tmp_path,
+        "staged-prepare-chat",
+    )
+    chat_id = "staged-prepare-chat"
+    key = f"websocket:{chat_id}"
+    prepare_calls = 0
+    prepare = controller.prepare_full
+
+    def counted_prepare(payload: object, *, local_ui: bool):
+        nonlocal prepare_calls
+        prepare_calls += 1
+        return prepare(payload, local_ui=local_ui)
+
+    controller.prepare_full = counted_prepare
+    prepare_envelope = {
+        "request_id": "staged-prepare",
+        "action": "workspace.access.prepare_full",
+        "payload": {"chat_id": chat_id},
+    }
+
+    try:
+        prepared = await _send_mutation(router, connection, frames, prepare_envelope)
+        replayed = await _send_mutation(router, connection, frames, prepare_envelope)
+        reconnect_replay = await _send_mutation(router, reconnect, frames, prepare_envelope)
+        assert prepared["ok"] is True
+        assert replayed["ok"] is True
+        assert reconnect_replay["ok"] is True
+        assert replayed["result"] == prepared["result"]
+        assert reconnect_replay["result"] == prepared["result"]
+        assert prepare_calls == 1
+
+        result = prepared.get("result")
+        assert isinstance(result, dict)
+        permissions = result.get("workspace_permissions")
+        assert isinstance(permissions, dict)
+        runtime_id = permissions.get("runtime_id")
+        revision = permissions.get("revision")
+        assert isinstance(runtime_id, str)
+        assert type(revision) is int
+        assert permissions.get("mode") == "restricted"
+        backend = sessions.source_backend(key)
+        assert backend is not None
+        assert backend.source.load_source_snapshot(key).events == []
+        assert controller.ingress_full_reference(chat_id, local_ui=True) is None
+
+        enabled = await _send_mutation(router, connection, frames, {
+            "request_id": "staged-prepare-enable",
+            "action": "workspace.access.mode.set",
+            "payload": {
+                "chat_id": chat_id,
+                "mode": "full",
+                "expected_runtime_id": runtime_id,
+                "expected_permission_revision": revision,
+            },
+        })
+        assert enabled["ok"] is True
+        assert controller.ingress_full_reference(chat_id, local_ui=True) is not None
+        assert backend.source.load_source_snapshot(key).events == []
+        assert prepare_calls == 1
+
+        monkeypatch.setattr(controller, "_source_binding", lambda _key: None)
+        failed_read_replay = await _send_mutation(router, connection, frames, prepare_envelope)
+        assert failed_read_replay.get("ok") is False
+        failed_read_error = failed_read_replay.get("error")
+        assert isinstance(failed_read_error, dict)
+        assert failed_read_error.get("message") == "source_changed"
+        assert prepare_calls == 1
+    finally:
+        if lease.close is not None:
+            await lease.close()
+
+
+@pytest.mark.asyncio
+async def test_prepare_original_join_and_cached_replay_fail_after_reset(
+    tmp_path: Path,
+) -> None:
+    published = asyncio.Event()
+    release = asyncio.Event()
+
+    async def gated_publish(*_args: object, **_kwargs: object) -> None:
+        published.set()
+        await release.wait()
+
+    lease, sessions, controller, router, connection, joined, frames = await _managed_prepare_router(
+        tmp_path,
+        "prepare-reset-chat",
+        publish_event=gated_publish,
+    )
+    chat_id = "prepare-reset-chat"
+    key = f"websocket:{chat_id}"
+    prepare_calls = 0
+    prepare = controller.prepare_full
+
+    def counted_prepare(payload: object, *, local_ui: bool):
+        nonlocal prepare_calls
+        prepare_calls += 1
+        return prepare(payload, local_ui=local_ui)
+
+    controller.prepare_full = counted_prepare
+    envelope = {
+        "request_id": "prepare-before-reset",
+        "action": "workspace.access.prepare_full",
+        "payload": {"chat_id": chat_id},
+    }
+
+    try:
+        await router.start_webui_request(connection, envelope)
+        await asyncio.wait_for(published.wait(), timeout=3)
+        # A second local caller joins the already running request before its
+        # event publication await is released.
+        await router.start_webui_request(joined, envelope)
+        old_source = controller._source_binding(key)
+        assert old_source is not None
+        assert sessions.reset_session(key) is not None
+        new_source = controller._source_binding(key)
+        assert new_source is not None and new_source != old_source
+        release.set()
+        await asyncio.gather(*tuple(router.request_tasks.values()))
+
+        joined_results = [
+            frame for frame in frames
+            if frame.get("event") == "webui_response"
+            and frame.get("request_id") == "prepare-before-reset"
+        ]
+        assert len(joined_results) == 2
+        for frame in joined_results:
+            assert frame.get("ok") is False
+            error = frame.get("error")
+            assert isinstance(error, dict)
+            assert error.get("message") in {"permission_changed", "source_changed"}
+            assert "workspace_permissions" not in repr(frame)
+        assert prepare_calls == 1
+
+        # The exact request ID replay uses its completed cached operation and
+        # cannot refresh or repeat the original prepare projection.
+        replayed = await _send_mutation(router, connection, frames, envelope)
+        assert replayed.get("ok") is False
+        replay_error = replayed.get("error")
+        assert isinstance(replay_error, dict)
+        assert replay_error.get("message") in {"permission_changed", "source_changed"}
+        assert prepare_calls == 1
+
+        # The cached operation still holds the original projection privately;
+        # it cannot confirm Full after the source lifetime has changed.
+        original_result = router.request_operations["prepare-before-reset"].task.result().result
+        assert isinstance(original_result, dict)
+        original_permissions = original_result.get("workspace_permissions")
+        assert isinstance(original_permissions, dict)
+        with pytest.raises(WorkspacePermissionActionError, match="permission_changed"):
+            controller.set_permission_mode({
+                "chat_id": chat_id,
+                "mode": "full",
+                "expected_runtime_id": original_permissions.get("runtime_id"),
+                "expected_permission_revision": original_permissions.get("revision"),
+            }, local_ui=True)
+        assert controller.ingress_full_reference(chat_id, local_ui=True) is None
+        new_prepare = await _send_mutation(router, connection, frames, {
+            "request_id": "prepare-after-reset",
+            "action": "workspace.access.prepare_full",
+            "payload": {"chat_id": chat_id},
+        })
+        assert new_prepare.get("ok") is True
+        new_result = new_prepare.get("result")
+        assert isinstance(new_result, dict)
+        new_permissions = new_result.get("workspace_permissions")
+        assert isinstance(new_permissions, dict)
+        enabled = await _send_mutation(router, connection, frames, {
+            "request_id": "enable-after-reset",
+            "action": "workspace.access.mode.set",
+            "payload": {
+                "chat_id": chat_id,
+                "mode": "full",
+                "expected_runtime_id": new_permissions.get("runtime_id"),
+                "expected_permission_revision": new_permissions.get("revision"),
+            },
+        })
+        assert enabled.get("ok") is True
+        assert controller.ingress_full_reference(chat_id, local_ui=True) is not None
+        assert prepare_calls == 2
+
+        assert sessions.delete_session(key)
+        deleted_replay = await _send_mutation(router, connection, frames, envelope)
+        assert deleted_replay.get("ok") is False
+        deleted_error = deleted_replay.get("error")
+        assert isinstance(deleted_error, dict)
+        assert deleted_error.get("message") == "source_changed"
+        assert prepare_calls == 2
+    finally:
+        release.set()
+        if lease.close is not None:
+            await lease.close()
+
+
+@pytest.mark.asyncio
+async def test_prepare_admission_binding_is_checked_before_controller_execution(
+    tmp_path: Path,
+) -> None:
+    lease, sessions, controller, router, connection, _, frames = await _managed_prepare_router(
+        tmp_path,
+        "prepare-existing-chat",
+    )
+    existing_chat = "prepare-existing-chat"
+    existing_key = f"websocket:{existing_chat}"
+    scope = controller.scope_for_new_chat({}, controls_available=True)
+    sessions.admit_persistent_write(existing_key)
+    controller.persist_scope(existing_chat, scope, create_if_absent=True)
+    prepare_calls = 0
+    prepare = controller.prepare_full
+
+    def counted_prepare(payload: object, *, local_ui: bool):
+        nonlocal prepare_calls
+        prepare_calls += 1
+        return prepare(payload, local_ui=local_ui)
+
+    controller.prepare_full = counted_prepare
+    lock = router.request_locks.setdefault(connection, asyncio.Lock())
+
+    try:
+        await lock.acquire()
+        try:
+            await router.start_webui_request(connection, {
+                "request_id": "prepare-existing-queued",
+                "action": "workspace.access.prepare_full",
+                "payload": {"chat_id": existing_chat},
+            })
+            assert sessions.reset_session(existing_key) is not None
+        finally:
+            lock.release()
+        await asyncio.gather(*tuple(router.request_tasks.values()))
+        existing_result = next(
+            frame for frame in frames
+            if frame.get("request_id") == "prepare-existing-queued"
+        )
+        assert existing_result.get("ok") is False
+        assert prepare_calls == 0
+
+        absent_chat = "prepare-absent-queued"
+        controller.stage_scope(absent_chat, scope)
+        await lock.acquire()
+        try:
+            await router.start_webui_request(connection, {
+                "request_id": "prepare-absent-queued",
+                "action": "workspace.access.prepare_full",
+                "payload": {"chat_id": absent_chat},
+            })
+            # Simulate a competing creator winning while this operation waits
+            # behind the connection's queued request lock.
+            counted_prepare({"chat_id": absent_chat}, local_ui=True)
+        finally:
+            lock.release()
+        await asyncio.gather(*tuple(router.request_tasks.values()))
+        absent_result = next(
+            frame for frame in frames
+            if frame.get("request_id") == "prepare-absent-queued"
+        )
+        assert absent_result.get("ok") is False
+        assert prepare_calls == 1
+    finally:
+        if lease.close is not None:
+            await lease.close()

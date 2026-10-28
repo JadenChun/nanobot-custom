@@ -543,6 +543,7 @@ class GatewayHTTPHandler:
         payload: dict[str, Any],
         *,
         expected_source_binding: dict[str, object] | None = None,
+        check_expected_source_binding: bool = False,
     ) -> Response:
         """Run one explicitly allowlisted mutation for an authenticated WebUI socket."""
         authorization = self.authorize_webui_mutation(connection, action, payload)
@@ -557,8 +558,13 @@ class GatewayHTTPHandler:
         setattr(request, "_nanobot_trusted_proxy_authenticated", True)
         setattr(request, _WEBUI_MUTATION_REQUEST_ATTR, True)
         setattr(request, _WEBUI_MUTATION_PAYLOAD_ATTR, dict(payload))
-        if expected_source_binding is not None:
-            setattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR, dict(expected_source_binding))
+        if check_expected_source_binding or expected_source_binding is not None:
+            expected_binding = (
+                dict(expected_source_binding)
+                if expected_source_binding is not None
+                else None
+            )
+            setattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR, expected_binding)
         response = await self._dispatch_resolved(connection, request, path)
         if isinstance(response, Response):
             return response
@@ -1689,7 +1695,7 @@ class GatewayHTTPHandler:
             return True
         expected = getattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR)
         chat_id = payload.get("chat_id")
-        if not isinstance(expected, dict) or not isinstance(chat_id, str):
+        if not isinstance(chat_id, str):
             return False
         try:
             from nanobot.webui.session_identity import webui_session_key
@@ -1697,6 +1703,10 @@ class GatewayHTTPHandler:
             key = webui_session_key(chat_id)
             session_manager = self.session_manager
             if session_manager is None:
+                return False
+            if expected is None:
+                return session_manager.resolve_session_mode(key).state == "absent"
+            if not isinstance(expected, dict):
                 return False
             backend = session_manager.source_backend(key)
             if backend is None:

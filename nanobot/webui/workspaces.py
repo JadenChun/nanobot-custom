@@ -722,6 +722,66 @@ class WebUIWorkspaceController:
             "workspace_permissions": projection,
         }
 
+    def validate_prepare_full_delivery(
+        self,
+        chat_id: object,
+        prepared_result: object,
+    ) -> str | None:
+        """Refuse a successful prepare projection after its canonical source changes."""
+        from nanobot.webui.session_identity import (
+            is_valid_webui_chat_id,
+            webui_session_key,
+        )
+
+        if not isinstance(chat_id, str) or not is_valid_webui_chat_id(chat_id):
+            return "permission_changed"
+        sessions = self._sessions
+        owner = self.permission_owner
+        if sessions is None or owner is None:
+            return "permission_state_unavailable"
+        key = webui_session_key(chat_id)
+        source = self._source_binding(key)
+        if source is None:
+            return "source_changed"
+        if type(prepared_result) is not dict:
+            return "permission_changed"
+        result = cast(dict[str, object], prepared_result)
+        raw_permissions = result.get("workspace_permissions")
+        if type(raw_permissions) is not dict:
+            return "permission_changed"
+        permissions = cast(dict[str, object], raw_permissions)
+        prepared_runtime = permissions.get("runtime_id")
+        prepared_revision = permissions.get("revision")
+        if (
+            not isinstance(prepared_runtime, str)
+            or type(prepared_revision) is not int
+            or prepared_revision < 0
+        ):
+            return "permission_changed"
+        unavailable_reason = (
+            "configured_sandbox" if self._configured_exec_sandbox
+            else "supervisor_unavailable" if not self._native_supervisor_available
+            else None
+        )
+        try:
+            current = self._permission_projection(
+                key,
+                source,
+                can_enable_full=unavailable_reason is None,
+                unavailable_reason=unavailable_reason,
+            )
+        except Exception:
+            return "permission_state_unavailable"
+        if self._source_binding(key) != source:
+            return "source_changed"
+        if (
+            prepared_runtime != owner.runtime_id
+            or prepared_runtime != current["runtime_id"]
+            or prepared_revision != current["revision"]
+        ):
+            return "permission_changed"
+        return None
+
     def set_permission_mode(
         self,
         raw_payload: object,

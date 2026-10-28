@@ -1030,4 +1030,3 @@ async def test_process_input_is_blocked_after_grant_revocation_but_poll_remains_
     finally:
         reset_workspace_scope(token)
         await manager.close_all()
-

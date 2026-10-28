@@ -389,4 +389,3 @@ async def test_tool_factory_configured_containment_keeps_typed_boundary_recovery
         "kind": "directory",
         "path": str(denied),
     }
-

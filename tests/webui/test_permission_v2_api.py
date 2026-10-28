@@ -120,6 +120,160 @@ def test_real_ordinary_chat_permission_projection_has_no_recovery_record(
     assert projection["retirement"] is None
 
 
+def test_reset_rejects_old_restricted_confirmation_before_granting_full(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    sessions = SessionManager(home, sessions_root=tmp_path / "sessions")
+    chat_id = "reset-old-confirmation"
+    key = f"websocket:{chat_id}"
+    session = Session(
+        key,
+        metadata={
+            "webui": True,
+            "workspace_scope": default_workspace_scope(project, True).metadata(),
+        },
+    )
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    controller = WebUIWorkspaceController(
+        session_manager=sessions,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=FolderGrantStore(
+            agent_home=home,
+            instance_root=instance,
+            path=instance / "webui" / "folder-grants.json",
+        ),
+        native_supervisor_available=True,
+    )
+    old_source = controller._source_binding(key)
+    assert old_source is not None
+    old_projection = controller._permission_projection(
+        key,
+        old_source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+
+    assert sessions.reset_session(key) is not None
+    replacement_source = controller._source_binding(key)
+    assert replacement_source is not None and replacement_source != old_source
+    assert controller.ingress_full_reference(chat_id, local_ui=True) is None
+
+    with pytest.raises(WorkspacePermissionActionError, match="permission_changed"):
+        controller.set_permission_mode({
+            "chat_id": chat_id,
+            "mode": "full",
+            "expected_runtime_id": old_projection["runtime_id"],
+            "expected_permission_revision": old_projection["revision"],
+        }, local_ui=True)
+    assert controller.ingress_full_reference(chat_id, local_ui=True) is None
+
+    current = controller._permission_projection(
+        key,
+        replacement_source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    enabled = controller.set_permission_mode({
+        "chat_id": chat_id,
+        "mode": "full",
+        "expected_runtime_id": current["runtime_id"],
+        "expected_permission_revision": current["revision"],
+    }, local_ui=True)
+    assert enabled["workspace_permissions"]["mode"] == "full"
+
+
+def test_delete_recreate_rejects_confirmation_from_previous_incarnation(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    sessions = SessionManager(home, sessions_root=tmp_path / "sessions")
+    chat_id = "recreate-old-confirmation"
+    key = f"websocket:{chat_id}"
+
+    def create_canonical_session() -> None:
+        session = Session(
+            key,
+            metadata={
+                "webui": True,
+                "workspace_scope": default_workspace_scope(project, True).metadata(),
+            },
+        )
+        sessions._jsonl_store.save(session)
+        sessions._jsonl_store.source.upgrade_source_session(
+            key,
+            expected_revision=session.revision,
+            expected_generation=session.generation,
+            expected_incarnation=session.incarnation,
+        )
+
+    create_canonical_session()
+    controller = WebUIWorkspaceController(
+        session_manager=sessions,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=FolderGrantStore(
+            agent_home=home,
+            instance_root=instance,
+            path=instance / "webui" / "folder-grants.json",
+        ),
+        native_supervisor_available=True,
+    )
+    owner = sessions.desktop_permissions
+    old_source = controller._source_binding(key)
+    assert old_source is not None
+    old_projection = controller._permission_projection(
+        key,
+        old_source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+
+    assert sessions.delete_session(key)
+    create_canonical_session()
+    replacement_source = controller._source_binding(key)
+    assert replacement_source is not None and replacement_source != old_source
+    with pytest.raises(WorkspacePermissionActionError, match="permission_changed"):
+        controller.set_permission_mode({
+            "chat_id": chat_id,
+            "mode": "full",
+            "expected_runtime_id": old_projection["runtime_id"],
+            "expected_permission_revision": old_projection["revision"],
+        }, local_ui=True)
+    assert owner.full_reference(
+        session_key=key,
+        source_binding=replacement_source,
+    ) is None
+    current = controller._permission_projection(
+        key,
+        replacement_source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    enabled = controller.set_permission_mode({
+        "chat_id": chat_id,
+        "mode": "full",
+        "expected_runtime_id": current["runtime_id"],
+        "expected_permission_revision": current["revision"],
+    }, local_ui=True)
+    assert enabled["workspace_permissions"]["mode"] == "full"
+
+
 def test_real_ordinary_owning_thread_read_projects_permissions_without_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1409,4 +1563,3 @@ def test_reset_and_delete_wait_for_full_native_tree_and_preserve_delete_observer
 
     assert manager.delete_session(key)
     assert deleted == [key]
-

@@ -57,6 +57,7 @@ if TYPE_CHECKING:
 
 _WEBUI_REQUEST_CACHE_TTL_S = 5 * 60.0
 _WEBUI_REQUEST_CACHE_MAX = 256
+_PREPARE_FULL_ACTION = "workspace.access.prepare_full"
 _SOURCE_BOUND_PERMISSION_ACTIONS = frozenset({
     "workspace.access.allow_once",
     "workspace.access.cancel",
@@ -829,7 +830,26 @@ class WebUICommandRouter:
             )
             return
 
-        source_binding = self._permission_source_binding(cast(dict[str, Any], payload))
+        typed_payload = cast(dict[str, Any], payload)
+        source_binding_captured = False
+        if (
+            action == _PREPARE_FULL_ACTION
+            and self.gateway.session_manager is not None
+            and is_valid_webui_chat_id(typed_payload.get("chat_id"))
+        ):
+            source_binding_captured, source_binding = self._prepare_admission_source_binding(
+                typed_payload,
+            )
+            if not source_binding_captured:
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=409,
+                    message="source_changed",
+                )
+                return
+        else:
+            source_binding = self._permission_source_binding(typed_payload)
         if (
             action in _SOURCE_BOUND_PERMISSION_ACTIONS
             and self.gateway.session_manager is not None
@@ -871,8 +891,9 @@ class WebUICommandRouter:
                 self.execute_webui_request(
                     connection,
                     action,
-                    cast(dict[str, Any], payload),
+                    typed_payload,
                     source_binding=source_binding,
+                    source_binding_captured=source_binding_captured,
                 )
             )
             new_operation = WebUIRequestOperation(
@@ -902,7 +923,7 @@ class WebUICommandRouter:
                 request_id,
                 operation.task,
                 action=action,
-                payload=cast(dict[str, Any], payload),
+                payload=typed_payload,
                 sequence=is_replay,
                 source_binding=operation.source_binding,
             )
@@ -950,6 +971,36 @@ class WebUICommandRouter:
             }
         except Exception:
             return None
+
+    def _prepare_admission_source_binding(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[bool, dict[str, object] | None]:
+        """Capture an existing source, or explicit absence, for one prepare dispatch."""
+        sessions = self.gateway.session_manager
+        chat_id = payload.get("chat_id")
+        if sessions is None or not isinstance(chat_id, str):
+            return False, None
+        try:
+            if not sessions.has_managed_authority:
+                return False, None
+            key = webui_session_key(chat_id)
+            resolved = sessions.resolve_session_mode(key)
+            if resolved.state == "absent":
+                return True, None
+            if resolved.state != "active" or resolved.mode != "canonical":
+                return False, None
+            backend = sessions.source_backend(key)
+            if backend is None:
+                return False, None
+            state = backend.source.load_source_snapshot(key).state
+            return True, {
+                "store_identity": state.store_identity,
+                "incarnation": state.incarnation,
+                "generation": state.generation,
+            }
+        except Exception:
+            return False, None
 
     def discard_request_lock_if_idle(self, connection: ServerConnection) -> None:
         if connection in self._webui_connections:
@@ -1028,6 +1079,19 @@ class WebUICommandRouter:
                 message=authorization.message,
             )
             return
+        if action == _PREPARE_FULL_ACTION and result.status is None:
+            failure = self._workspaces.validate_prepare_full_delivery(
+                payload.get("chat_id"),
+                result.result,
+            )
+            if failure is not None:
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=503 if failure == "permission_state_unavailable" else 409,
+                    message=failure,
+                )
+                return
         await self.send_webui_response(
             connection,
             request_id,
@@ -1045,6 +1109,7 @@ class WebUICommandRouter:
         payload: dict[str, Any],
         *,
         source_binding: dict[str, object] | None = None,
+        source_binding_captured: bool = False,
     ) -> WebUIRequestResult:
         try:
             lock = self.request_locks.setdefault(connection, asyncio.Lock())
@@ -1055,6 +1120,14 @@ class WebUICommandRouter:
                         action,
                         payload,
                         expected_source_binding=source_binding,
+                    )
+                elif action == _PREPARE_FULL_ACTION and source_binding_captured:
+                    response = await self._http_router.dispatch_webui_mutation(
+                        connection,
+                        action,
+                        payload,
+                        expected_source_binding=source_binding,
+                        check_expected_source_binding=True,
                     )
                 else:
                     response = await self._http_router.dispatch_webui_mutation(

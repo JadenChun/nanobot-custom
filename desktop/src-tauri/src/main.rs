@@ -150,14 +150,7 @@ fn run() {
                     shared.set_setup_url(url);
                 }
                 native::set_window_icon(&window)?;
-                let shared_for_close = shared.clone();
-                let window_for_close = window.clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        native::close_setup(&shared_for_close, &window_for_close);
-                    }
-                });
+                native::install_hide_on_close(&app_handle, shared.clone(), &window);
             }
             Ok(())
         })

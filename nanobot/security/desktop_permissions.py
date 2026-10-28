@@ -227,6 +227,7 @@ class DesktopPermissionOwner:
         self._full_residual_counts: dict[_SourceIdentity, tuple[int, int]] = {}
         self._task_residual_counts: dict[_TaskIdentity, tuple[int, int]] = {}
         self._task_source_residual_counts: dict[_SourceIdentity, tuple[int, int]] = {}
+        self._last_observed_source: dict[str, _SourceIdentity] = {}
 
     @property
     def runtime_id(self) -> str:
@@ -1001,6 +1002,12 @@ class DesktopPermissionOwner:
         task_projection: TaskAccessProjection | None = None
         retirement_projection: PermissionRetirementProjection | None = None
         with self._lock:
+            previous_source = self._last_observed_source.get(session_key)
+            if previous_source is None:
+                self._last_observed_source[session_key] = source
+            elif previous_source != source:
+                self._last_observed_source[session_key] = source
+                self._changed()
             full = self._full.get(source)
             full_retirement = self._full_retirements.get(source)
             if full_retirement is not None:

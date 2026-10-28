@@ -1519,6 +1519,85 @@ describe("ThreadShell", () => {
     });
   });
 
+  it("keeps a pending Full draft bound to the chat created for it", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup();
+    const client = makeClient();
+    let resolveCreate!: (id: string) => void;
+    const onCreateChat = vi.fn(() => new Promise<string>((resolve) => {
+      resolveCreate = resolve;
+    }));
+    const workspaces = legacyRecoveryWorkspaces();
+    workspaces.controls.permission_v2 = true;
+    const view = (current: ReturnType<typeof session> | null) => wrap(client, (
+      <ThreadShell
+        session={current}
+        title={current ? "Existing chat" : "nanobot"}
+        onToggleSidebar={() => {}}
+        onCreateChat={onCreateChat}
+        workspaceScope={workspaces.default_scope}
+        workspaceControls={workspaces.controls}
+        workspaces={workspaces}
+      />
+    ));
+    const { rerender } = render(view(null));
+    const draft = "private draft for the new Full chat";
+    await user.type(screen.getByLabelText("Message input"), draft);
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Restricted" }));
+    await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
+    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
+
+    await waitFor(() => expect(onCreateChat).toHaveBeenCalledWith(
+      workspaces.default_scope, draft, null, { fullAccess: true },
+    ));
+
+    await act(async () => { rerender(view(session("existing-chat"))); });
+    const existingChatDraft = (screen.getByLabelText("Message input") as HTMLTextAreaElement).value;
+    expect(existingChatDraft).toBe("");
+
+    await act(async () => { resolveCreate("new-full-chat"); });
+    await act(async () => { rerender(view(session("new-full-chat"))); });
+    const createdChatInput = screen.getByLabelText("Message input") as HTMLTextAreaElement;
+    expect(createdChatInput.value).toBe(draft);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+
+    fireEvent.change(createdChatInput, { target: { value: "edited after handoff" } });
+    await act(async () => { rerender(view(session("new-full-chat"))); });
+    expect((screen.getByLabelText("Message input") as HTMLTextAreaElement).value)
+      .toBe("edited after handoff");
+  });
+
+  it("keeps the landing draft when Full chat creation fails", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup();
+    const client = makeClient();
+    const onCreateChat = vi.fn().mockRejectedValue(new Error("creation failed"));
+    const workspaces = legacyRecoveryWorkspaces();
+    workspaces.controls.permission_v2 = true;
+    const view = (current: ReturnType<typeof session> | null) => wrap(client, (
+      <ThreadShell
+        session={current}
+        title={current ? "Existing chat" : "nanobot"}
+        onToggleSidebar={() => {}}
+        onCreateChat={onCreateChat}
+        workspaceScope={workspaces.default_scope}
+        workspaceControls={workspaces.controls}
+        workspaces={workspaces}
+      />
+    ));
+    const { rerender } = render(view(null));
+    const draft = "keep this landing draft";
+    await user.type(screen.getByLabelText("Message input"), draft);
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Restricted" }));
+    await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
+    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Access could not be updated");
+    expect((screen.getByLabelText("Message input") as HTMLTextAreaElement).value).toBe(draft);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+
+    await act(async () => { rerender(view(session("existing-chat"))); });
+    expect((screen.getByLabelText("Message input") as HTMLTextAreaElement).value).toBe("");
+  });
+
   it("binds a pending landing message to the chat created for it", async () => {
     const client = makeClient();
     let resolveCreate: ((chatId: string) => void) | null = null;
