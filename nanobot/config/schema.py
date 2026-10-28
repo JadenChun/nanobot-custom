@@ -615,6 +615,7 @@ class ProvidersConfig(Base):
     xiaomi_mimo: ProviderConfig = Field(default_factory=ProviderConfig)  # Xiaomi MIMO (小米)
     longcat: ProviderConfig = Field(default_factory=ProviderConfig)  # LongCat
     ant_ling: ProviderConfig = Field(default_factory=ProviderConfig)  # Ant Ling
+    local_manager: ProviderConfig = Field(default_factory=ProviderConfig)  # Local Inference Manager gateway
     aihubmix: ProviderConfig = Field(default_factory=ProviderConfig)  # AiHubMix API gateway
     siliconflow: ProviderConfig = Field(default_factory=ProviderConfig)  # SiliconFlow (硅基流动)
     edenai: ProviderConfig = Field(default_factory=ProviderConfig)  # Eden AI API gateway

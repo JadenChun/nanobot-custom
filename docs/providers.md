@@ -477,6 +477,40 @@ memory settings. The
 [Ollama prompt-cache guide](./guides/configure-ollama-prompt-cache.md) explains the
 log pattern and a tested `llama3.1:8b` workaround.
 
+### Local Inference Manager
+
+Local Inference Manager exposes its shared model gateway at `/v1`. Nanobot reads
+the manager's live `GET /v1/models` catalog, so model names, display labels, and
+context lengths come from the profiles currently available in the manager.
+
+```json
+{
+  "providers": {
+    "localManager": {
+      "apiBase": "http://127.0.0.1:8082/v1",
+      "apiKey": "local-no-key"
+    }
+  },
+  "modelPresets": {
+    "local": {
+      "provider": "local_manager",
+      "model": "Qwen3.8-Flash-Next Uncensored IQ2_XS (Strata)",
+      "maxTokens": 8192,
+      "contextWindowTokens": 262144
+    }
+  },
+  "agents": {
+    "defaults": {
+      "modelPreset": "local"
+    }
+  }
+}
+```
+
+Use a model ID returned by the manager's live catalog. Change the manager's
+gateway port or key in `providers.localManager` when they differ from the
+defaults shown here.
+
 ### vLLM or Other Local OpenAI-Compatible Server
 
 ```json

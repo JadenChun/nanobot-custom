@@ -2115,6 +2115,99 @@ def test_provider_models_payload_fetches_openai_compatible_models(
     assert payload["models"][1]["context_window"] == 65536
 
 
+def test_settings_payload_lists_local_manager_and_commandcode_separately(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.local_manager.api_base = "http://127.0.0.1:8082/v1"
+    setattr(
+        config.providers,
+        "commandcode",
+        config.providers.custom.model_copy(
+            update={
+                "display_name": "CommandCode",
+                "api_base": "https://api.commandcode.ai/provider/v1",
+                "api_key": "commandcode-test-key",
+            }
+        ),
+    )
+    save_config(config, config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    payload = settings_payload()
+    providers = {row["name"]: row for row in payload["providers"]}
+
+    assert providers["local_manager"]["label"] == "Local Inference Manager"
+    assert providers["local_manager"]["model_catalog"] == "local"
+    assert providers["local_manager"]["configured"] is True
+    assert providers["commandcode"]["label"] == "CommandCode"
+    assert providers["commandcode"]["model_catalog"] == "custom"
+    assert providers["commandcode"]["configured"] is True
+
+
+def test_local_manager_provider_uses_live_gateway_catalog(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.local_manager.api_base = "http://127.0.0.1:8082/v1"
+    save_config(config, config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    def fake_get(url: str, **kwargs):
+        assert url == "http://127.0.0.1:8082/v1/models"
+        assert "Authorization" not in kwargs["headers"]
+        return httpx.Response(
+            200,
+            json={
+                "object": "list",
+                "data": [
+                    {
+                        "id": "Qwen3.8-27B-UD-Q6_K_XL",
+                        "name": "Qwen3.8 27B UD Q6 K XL",
+                        "owned_by": "local-llm-console",
+                        "context_length": 165888,
+                    },
+                    {
+                        "id": "Qwen3.8-Flash-Next Gyro-M Abliterated (Strata)",
+                        "name": "Qwen3.8-Flash-Next Gyro-M Abliterated (Strata)",
+                        "owned_by": "local-llm-console",
+                        "context_length": 262144,
+                    },
+                ],
+            },
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr("nanobot.webui.settings_api.httpx.get", fake_get)
+
+    payload = provider_models_payload({"provider": ["local_manager"]})
+
+    assert payload["catalog_kind"] == "local"
+    assert payload["status"] == "available"
+    assert payload["model_count"] == 2
+    restored = load_config(config_path)
+    assert restored.providers.local_manager.api_base == "http://127.0.0.1:8082/v1"
+    assert "localManager" in restored.providers.model_dump(by_alias=True)
+    assert payload["models"] == [
+        {
+            "id": "Qwen3.8-27B-UD-Q6_K_XL",
+            "label": "Qwen3.8 27B UD Q6 K XL",
+            "owned_by": "local-llm-console",
+            "context_window": 165888,
+        },
+        {
+            "id": "Qwen3.8-Flash-Next Gyro-M Abliterated (Strata)",
+            "label": None,
+            "owned_by": "local-llm-console",
+            "context_window": 262144,
+        },
+    ]
+
+
 def test_provider_models_payload_returns_online_openai_codex_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

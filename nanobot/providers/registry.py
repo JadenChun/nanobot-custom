@@ -687,6 +687,18 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         default_api_base="https://api.ant-ling.com/v1",
     ),
     # === Local deployment (matched by config key, NOT by api_base) =========
+    # Local Inference Manager's shared OpenAI-compatible gateway. Its live
+    # /v1/models catalog is the source of truth for available profile routes.
+    ProviderSpec(
+        name="local_manager",
+        keywords=("local_manager", "local-inference-manager", "local inference manager"),
+        env_key="",
+        display_name="Local Inference Manager",
+        backend="openai_compat",
+        is_local=True,
+        detect_by_base_keyword="127.0.0.1:8082",
+        default_api_base="http://127.0.0.1:8082/v1",
+    ),
     # vLLM / any OpenAI-compatible local server
     ProviderSpec(
         name="vllm",
