@@ -233,7 +233,7 @@ class _FsTool(Tool):
         return current_file_states(self._fallback_file_states)
 
     @property
-    def resource_policy(self) -> ResourceAccessPolicy | None:
+    def resource_policy(self) -> "ResourceAccessPolicy | None":
         """Expose the shared resource decision owner to first-party adapters."""
         return self._resource_policy
 
