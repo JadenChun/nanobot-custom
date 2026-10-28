@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -35,9 +36,46 @@ from nanobot.webui.ws_http import WEBSOCKET_MUTATION_ROUTES, GatewayHTTPHandler
 @pytest.mark.parametrize(("action", "path"), [
     ("workspace.access.allow_once", "/api/workspaces/access/allow-once"),
     ("workspace.access.mode.set", "/api/workspaces/access/mode"),
+    ("workspace.access.prepare_full", "/api/workspaces/access/prepare-full"),
 ])
 def test_permission_v2_actions_have_frozen_local_mutation_routes(action: str, path: str) -> None:
     assert WEBSOCKET_MUTATION_ROUTES[action] == path
+
+
+def test_prepare_full_fails_closed_for_unknown_or_unmanaged_draft(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    sessions = SessionManager(home, sessions_root=tmp_path / "sessions")
+    controller = WebUIWorkspaceController(
+        session_manager=sessions,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=FolderGrantStore(
+            agent_home=home,
+            instance_root=instance,
+            path=instance / "webui" / "folder-grants.json",
+        ),
+        native_supervisor_available=True,
+    )
+    chat = str(uuid.uuid4())
+
+    with pytest.raises(WorkspacePermissionActionError) as local_only:
+        controller.prepare_full({"chat_id": chat}, local_ui=False)
+    assert local_only.value.status == 403
+
+    with pytest.raises(WorkspacePermissionActionError) as unknown:
+        controller.prepare_full({"chat_id": chat}, local_ui=True)
+    assert unknown.value.status == 404
+
+    controller.stage_scope(chat, default_workspace_scope(project, True))
+    with pytest.raises(WorkspacePermissionActionError) as unmanaged:
+        controller.prepare_full({"chat_id": chat}, local_ui=True)
+    assert unmanaged.value.status == 503
 
 
 def test_real_ordinary_chat_permission_projection_has_no_recovery_record(
@@ -844,6 +882,7 @@ def test_full_retirement_activity_retains_busy_when_source_cannot_be_rechecked(
 @pytest.mark.parametrize("path", [
     "/api/workspaces/access/allow-once",
     "/api/workspaces/access/mode",
+    "/api/workspaces/access/prepare-full",
 ])
 @pytest.mark.asyncio
 async def test_permission_v2_routes_reject_direct_http_writes(path: str) -> None:

@@ -1078,6 +1078,31 @@ export async function setWorkspaceAccessMode(
   }
 }
 
+export async function prepareWorkspaceFullAccess(
+  transport: WebUIMutationTransport,
+  chatId: string,
+): Promise<WorkspaceModeActionResult> {
+  const response = await mutation<unknown>(transport, "workspace.access.prepare_full", {
+    chat_id: chatId,
+  });
+  if (!isObjectRecord(response)) {
+    throw new ApiError(502, "Invalid workspace Full preparation response");
+  }
+  const scope = parseWorkspaceScope(response.workspace_scope);
+  const permissions = normalizeWorkspacePermissionProjection(
+    response.workspace_permissions,
+  );
+  if (
+    !scope
+    || !permissions
+    || permissions.mode !== "restricted"
+    || permissions.state !== "active"
+  ) {
+    throw new ApiError(502, "Invalid workspace Full preparation response");
+  }
+  return { workspace_scope: scope, workspace_permissions: permissions };
+}
+
 export async function revokeWorkspaceGrant(
   transport: WebUIMutationTransport,
   path: string,

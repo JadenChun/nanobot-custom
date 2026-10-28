@@ -236,6 +236,9 @@ interface ThreadComposerProps {
   persistentWorkspaceChat?: boolean;
   onWorkspaceAccessModeChange?: (mode: WorkspaceAccessMode) => void | Promise<void>;
   onRetryWorkspaceRestricted?: () => void | Promise<void>;
+  onDraftFullAccess?: (draft: string) => void | Promise<void>;
+  initialDraft?: string | null;
+  onInitialDraftConsumed?: () => void;
   pendingQueueKey?: string | null;
   transcriptionProvider?: string | null;
   ingressLimits?: WebUIIngressLimits | null;
@@ -944,6 +947,9 @@ export function ThreadComposer({
   persistentWorkspaceChat = false,
   onWorkspaceAccessModeChange,
   onRetryWorkspaceRestricted,
+  onDraftFullAccess,
+  initialDraft = null,
+  onInitialDraftConsumed,
   pendingQueueKey = null,
   transcriptionProvider = null,
   ingressLimits = null,
@@ -1527,6 +1533,19 @@ export function ThreadComposer({
       el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
     });
   }, [clear, pendingQueueKey]);
+
+  useLayoutEffect(() => {
+    if (!initialDraft) return;
+    setValue(initialDraft);
+    onInitialDraftConsumed?.();
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
+      el.focus();
+    });
+  }, [initialDraft, onInitialDraftConsumed]);
 
   const appendTranscription = useCallback((text: string) => {
     const transcript = text.trim();
@@ -2459,6 +2478,12 @@ export function ThreadComposer({
                 error={workspacePermissionsError}
                 disabled={persistentWorkspaceChat && interactionDisabled}
                 persistentChat={persistentWorkspaceChat}
+                draftFullAccess={!persistentWorkspaceChat && !!onDraftFullAccess}
+                onRequestFullAccess={
+                  !persistentWorkspaceChat && onDraftFullAccess
+                    ? () => onDraftFullAccess(value)
+                    : undefined
+                }
                 isHero={isHero}
                 onModeChange={onWorkspaceAccessModeChange}
                 onRetryRestricted={onRetryWorkspaceRestricted}

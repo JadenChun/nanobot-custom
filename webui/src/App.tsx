@@ -75,7 +75,9 @@ import {
   fetchPairingRequests,
   fetchSettings,
   fetchWorkspaces,
+  prepareWorkspaceFullAccess,
   runPairingAction,
+  setWorkspaceAccessMode,
 } from "@/lib/api";
 import {
   createRuntimeHost,
@@ -1512,11 +1514,28 @@ function Shell({
     workspaceScope?: WorkspaceScopePayload | null,
     _initialMessage?: string,
     modelPreset?: string | null,
+    options?: { fullAccess?: boolean },
   ) => {
     try {
       const scope = workspaceScope ?? activeWorkspaceScope;
       const chatId = await createChat(scope, modelPreset);
       const key = `websocket:${chatId}`;
+      if (options?.fullAccess) {
+        const prepared = await prepareWorkspaceFullAccess(client, chatId);
+        if (!prepared.workspace_permissions.can_enable_full) {
+          setWorkspaceError(t("workspace.permissionV2.actionFailed", {
+            defaultValue: "Access could not be updated. Refresh this chat before retrying.",
+          }));
+          return null;
+        }
+        const activated = await setWorkspaceAccessMode(client, {
+          chat_id: chatId,
+          mode: "full",
+          expected_runtime_id: prepared.workspace_permissions.runtime_id,
+          expected_permission_revision: prepared.workspace_permissions.revision,
+        });
+        acknowledgeWorkspaceScope(chatId, activated.workspace_scope);
+      }
       pendingCreatedSessionKeyRef.current = key;
       navigate({
         view: "chat",
@@ -1538,10 +1557,14 @@ function Shell({
           ? normalizeWorkspaceScope(workspaces.default_scope)
           : null);
         setWorkspaceError(t("errors.workspaceScopeRejected.body"));
+      } else if (options?.fullAccess) {
+        setWorkspaceError(t("workspace.permissionV2.actionFailed", {
+          defaultValue: "Access could not be updated. Refresh this chat before retrying.",
+        }));
       }
       return null;
     }
-  }, [activeWorkspaceScope, createChat, navigate, t, workspaces?.default_scope]);
+  }, [activeWorkspaceScope, acknowledgeWorkspaceScope, client, createChat, navigate, t, workspaces?.default_scope]);
 
   const onCreateTemporaryChat = useCallback(
     async (

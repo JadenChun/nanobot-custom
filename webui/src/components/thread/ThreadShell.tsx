@@ -614,6 +614,7 @@ interface ThreadShellProps {
     workspaceScope?: WorkspaceScopePayload | null,
     initialMessage?: string,
     modelPreset?: string | null,
+    options?: { fullAccess?: boolean },
   ) => Promise<string | null>;
   onForkChat?: (sourceChatId: string, beforeUserIndex: number) => Promise<string | null>;
   onTurnEnd?: () => void;
@@ -1154,6 +1155,9 @@ export function ThreadShell({
   const filePreviewCloseTimerRef = useRef<number | null>(null);
   const pendingFirstRef = useRef<PendingFirstMessage | null>(null);
   const [pendingFirstTargetChatId, setPendingFirstTargetChatId] = useState<string | null>(null);
+  const [pendingDraftText, setPendingDraftText] = useState<string | null>(null);
+  const [preparingFull, setPreparingFull] = useState(false);
+  const [fullSetupError, setFullSetupError] = useState<string | null>(null);
   const viewportRef = useRef<ThreadViewportHandle | null>(null);
   const activeViewportTurnByChatIdRef = useRef<Map<string, string>>(new Map());
   const messageCacheRef = useRef<Map<string, UIMessage[]>>(new Map());
@@ -2010,6 +2014,31 @@ export function ThreadShell({
     [booting, client, localModelPreset, onCreateChat, withWorkspaceScope, workspaceScope],
   );
 
+  const handleDraftFullAccess = useCallback(async (draft: string) => {
+    if (preparingFull || booting) return;
+    setPreparingFull(true);
+    setFullSetupError(null);
+    setPendingDraftText(draft.trim() ? draft : null);
+    try {
+      const newId = await onCreateChat?.(workspaceScope, draft, localModelPreset, {
+        fullAccess: true,
+      });
+      if (!newId) {
+        setPendingDraftText(null);
+        setFullSetupError(t("workspace.permissionV2.actionFailed", {
+          defaultValue: "Access could not be updated. Refresh this chat before retrying.",
+        }));
+      }
+    } catch {
+      setPendingDraftText(null);
+      setFullSetupError(t("workspace.permissionV2.actionFailed", {
+        defaultValue: "Access could not be updated. Refresh this chat before retrying.",
+      }));
+    } finally {
+      setPreparingFull(false);
+    }
+  }, [booting, localModelPreset, onCreateChat, preparingFull, t, workspaceScope]);
+
   const handleThreadSend = useCallback(
     (content: string, images?: SendAttachment[], options?: SendOptions) => {
       setFallbackModelName(null);
@@ -2307,6 +2336,8 @@ export function ThreadShell({
           persistentWorkspaceChat={!temporary && !!chatId}
           onWorkspaceAccessModeChange={handleWorkspaceAccessModeChange}
           onRetryWorkspaceRestricted={retryWorkspaceRestricted}
+          initialDraft={pendingDraftText}
+          onInitialDraftConsumed={() => setPendingDraftText(null)}
           pendingQueueKey={temporary ? null : chatId}
           transcriptionProvider={settingsSnapshot?.transcription?.provider}
           ingressLimits={ingressLimits}
@@ -2316,13 +2347,20 @@ export function ThreadShell({
         />
         </>
       ) : (
+        <>
+        {fullSetupError ? (
+          <p role="alert" className="px-2 pb-2 text-[11.5px] text-destructive">
+            {fullSetupError}
+          </p>
+        ) : null}
         <ThreadComposer
           onSend={handleWelcomeSend}
-          disabled={booting}
+          disabled={booting || preparingFull}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
+          onDraftFullAccess={temporary ? undefined : handleDraftFullAccess}
           placeholder={
-            booting
+            booting || preparingFull
               ? t("thread.composer.placeholderOpening")
               : t("thread.composer.placeholderHero")
           }
@@ -2363,6 +2401,7 @@ export function ThreadShell({
           transcriptionProvider={settingsSnapshot?.transcription?.provider}
           ingressLimits={ingressLimits}
         />
+        </>
       )}
     </>
   );

@@ -576,8 +576,10 @@ export function WorkspacePermissionV2Control({
   disabled = false,
   persistentChat,
   isHero,
+  draftFullAccess = false,
   onModeChange,
   onRetryRestricted,
+  onRequestFullAccess,
 }: {
   enabled?: boolean;
   permissions: WorkspacePermissionProjection | null;
@@ -586,8 +588,10 @@ export function WorkspacePermissionV2Control({
   disabled?: boolean;
   persistentChat: boolean;
   isHero: boolean;
+  draftFullAccess?: boolean;
   onModeChange?: (mode: WorkspaceAccessMode) => void | Promise<void>;
   onRetryRestricted?: () => void | Promise<void>;
+  onRequestFullAccess?: () => void | Promise<void>;
 }) {
   const { t } = useTranslation();
   const [confirmFull, setConfirmFull] = useState(false);
@@ -599,6 +603,13 @@ export function WorkspacePermissionV2Control({
     && permissions.state === "active"
     && permissions.can_enable_full
     && persistentChat;
+  const canRequestDraftFull = enabled
+    && draftFullAccess
+    && !permissions
+    && !loading
+    && !error
+    && !disabled;
+  const fullAvailable = persistentChat ? canEnableFull : canRequestDraftFull;
   const isFull = permissions?.mode === "full";
   const isRetiring = isFull && permissions?.state === "retiring";
   const isRestrictedRetiring = enabled
@@ -637,7 +648,7 @@ export function WorkspacePermissionV2Control({
               ? "Send a message to create this chat before enabling Full access."
               : "Full access is unavailable with the current local controls.",
       })
-    : !persistentChat
+    : !persistentChat && !draftFullAccess
       ? t("workspace.permissionV2.sessionRequired", { defaultValue: "Send a message to create this chat before enabling Full access." })
       : null;
   const restrictedRetirementMessage = permissions?.retirement?.unknown_processes
@@ -745,7 +756,7 @@ export function WorkspacePermissionV2Control({
                 icon={<AlertTriangle className="h-4 w-4" />}
                 label={t("thread.composer.workspace.full", { defaultValue: "Full access" })}
                 selected={false}
-                disabled={!canEnableFull || busy}
+                disabled={!fullAvailable || busy}
                 warning
                 onSelect={() => setConfirmFull(true)}
               />
@@ -765,7 +776,7 @@ export function WorkspacePermissionV2Control({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-      {!persistentChat ? (
+      {!persistentChat && !draftFullAccess ? (
         <span role="status" className="max-w-[min(19rem,65vw)] px-2 text-[10px] leading-tight text-muted-foreground">
           {t("workspace.permissionV2.sessionRequired", { defaultValue: "Send a message to create this chat before enabling Full access." })}
         </span>
@@ -778,7 +789,7 @@ export function WorkspacePermissionV2Control({
               {t("workspace.permissionV2.confirmDescription", { defaultValue: "Nanobot can read and change files and run commands beyond the selected folder under your OS account permissions. Working in is the current directory and context. New chats start in Restricted mode." })}
             </DialogDescription>
           </DialogHeader>
-          {!persistentChat ? (
+          {!persistentChat && !draftFullAccess ? (
             <p className="rounded-control bg-muted/35 px-3 py-2 text-[11.5px] text-muted-foreground">
               {t("workspace.permissionV2.sessionRequired", { defaultValue: "Send a message to create this chat before enabling Full access." })}
             </p>
@@ -792,9 +803,19 @@ export function WorkspacePermissionV2Control({
             </Button>
             <Button
               type="button"
-              disabled={!canEnableFull || busy}
+              disabled={!fullAvailable || busy}
               onClick={() => {
                 setConfirmFull(false);
+                if (!persistentChat) {
+                  if (onRequestFullAccess) {
+                    setPending(true);
+                    setActionFailed(false);
+                    void Promise.resolve(onRequestFullAccess())
+                      .catch(() => setActionFailed(true))
+                      .finally(() => setPending(false));
+                  }
+                  return;
+                }
                 void changeMode("full");
               }}
               className="rounded-control"

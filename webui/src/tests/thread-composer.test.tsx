@@ -1317,6 +1317,39 @@ describe("ThreadComposer", () => {
     );
   });
 
+  it("enables Full for a draft through the explicit prepare callback", async () => {
+    const user = userEvent.setup();
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const onDraftFullAccess = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        variant="hero"
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        onDraftFullAccess={onDraftFullAccess}
+      />,
+    );
+
+    await user.type(screen.getByPlaceholderText("Type your message..."), "Start in Full");
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Restricted" }));
+    await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Enable Full access?");
+    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
+
+    await waitFor(() => expect(onDraftFullAccess).toHaveBeenCalledWith("Start in Full"));
+    expect(screen.queryByText(
+      "Send a message to create this chat before enabling Full access.",
+    )).not.toBeInTheDocument();
+  });
+
   it("blocks sends while Full access is retiring but leaves the explicit retry available", async () => {
     const user = userEvent.setup();
     const scope = {

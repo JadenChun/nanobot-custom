@@ -236,9 +236,12 @@ Regular local topics start in **Restricted** mode and use their selected folder
 plus any saved grants. **Full access** is a separate, chat-specific choice; it
 lets that topic read and change files and run commands beyond the selected
 folder, subject to your operating-system account permissions. Nanobot asks for
-confirmation before enabling it, and enables it only for an existing idle
-regular topic when whole-process supervision is available and no explicit
-command sandbox is configured. Other topics and new topics remain Restricted.
+confirmation before enabling it. You can choose Full while composing a new
+topic: Nanobot creates that topic and enables Full before the first message
+runs. Otherwise new topics start Restricted. Full is available only when
+whole-process supervision is available and no explicit command sandbox is
+configured; if it cannot be enabled, the topic remains Restricted and the draft
+is not sent. Other topics remain Restricted.
 Returning to Restricted fences new work immediately;
 Nanobot confirms the change only after previously started command trees are
 verified stopped. If work is still running or cannot be verified, the topic

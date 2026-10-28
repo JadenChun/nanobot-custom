@@ -659,6 +659,69 @@ class WebUIWorkspaceController:
             return None
         return reference
 
+    def prepare_full(
+        self,
+        raw_payload: object,
+        *,
+        local_ui: bool,
+    ) -> WorkspaceModeActionResult:
+        """Persist an explicitly requested empty chat so Full can be enabled before its first turn."""
+        if not local_ui:
+            raise WorkspacePermissionActionError(403, "local_ui_required")
+        if type(raw_payload) is not dict:
+            raise WorkspacePermissionActionError(400, "invalid_permission_request")
+        payload = cast(dict[str, object], raw_payload)
+        if set(payload) != {"chat_id"}:
+            raise WorkspacePermissionActionError(400, "invalid_permission_request")
+        chat_id = payload.get("chat_id")
+        from nanobot.webui.session_identity import (
+            is_valid_webui_chat_id,
+            webui_session_key,
+        )
+
+        if not isinstance(chat_id, str) or not is_valid_webui_chat_id(chat_id):
+            raise WorkspacePermissionActionError(400, "invalid_permission_request")
+        if self._sessions is None or self.permission_owner is None:
+            raise WorkspacePermissionActionError(503, "permission_state_unavailable")
+
+        key = webui_session_key(chat_id)
+        metadata_payload = self._sessions.read_session_metadata(key)
+        if metadata_payload is None:
+            scope = self._draft_scopes.get(key)
+            if scope is None:
+                raise WorkspacePermissionActionError(404, "session_not_found")
+            if self._configured_exec_sandbox:
+                raise WorkspacePermissionActionError(409, "full_access_unavailable")
+            if not self._native_supervisor_available:
+                raise WorkspacePermissionActionError(409, "full_access_unavailable")
+            if not self._sessions.has_managed_authority:
+                raise WorkspacePermissionActionError(503, "permission_state_unavailable")
+            self._sessions.admit_persistent_write(key)
+            self.persist_scope(chat_id, scope, create_if_absent=True)
+        else:
+            metadata = metadata_payload.get("metadata")
+            if type(metadata) is not dict or cast(dict[str, object], metadata).get("webui") is not True:
+                raise WorkspacePermissionActionError(404, "session_not_found")
+
+        source = self._source_binding(key)
+        if source is None:
+            raise WorkspacePermissionActionError(503, "permission_state_unavailable")
+        unavailable_reason = (
+            "configured_sandbox" if self._configured_exec_sandbox
+            else "supervisor_unavailable" if not self._native_supervisor_available
+            else None
+        )
+        projection = self._permission_projection(
+            key,
+            source,
+            can_enable_full=unavailable_reason is None,
+            unavailable_reason=unavailable_reason,
+        )
+        return {
+            "workspace_scope": self.scope_payload(self.scope_for_session_key(key)),
+            "workspace_permissions": projection,
+        }
+
     def set_permission_mode(
         self,
         raw_payload: object,

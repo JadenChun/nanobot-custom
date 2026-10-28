@@ -169,6 +169,7 @@ WEBSOCKET_MUTATION_ROUTES = {
     "workspace.access.cancel": "/api/workspaces/access/cancel",
     "workspace.access.allow_once": "/api/workspaces/access/allow-once",
     "workspace.access.mode.set": "/api/workspaces/access/mode",
+    "workspace.access.prepare_full": "/api/workspaces/access/prepare-full",
     "repository.remember": "/api/repositories/remember",
     "repository.forget": "/api/repositories/forget",
     "repository.discover": "/api/repositories/discover",
@@ -224,6 +225,7 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
     "/api/workspaces/access/cancel",
     "/api/workspaces/access/allow-once",
     "/api/workspaces/access/mode",
+    "/api/workspaces/access/prepare-full",
     "/api/repositories/remember",
     "/api/repositories/forget",
     "/api/repositories/discover",
@@ -581,6 +583,7 @@ class GatewayHTTPHandler:
             "/api/workspaces/access/cancel",
             "/api/workspaces/access/allow-once",
             "/api/workspaces/access/mode",
+            "/api/workspaces/access/prepare-full",
             "/api/repositories/remember",
             "/api/repositories/forget",
             "/api/repositories/discover",
@@ -1518,6 +1521,8 @@ class GatewayHTTPHandler:
             return await self._handle_workspace_access_action(connection, request, got)
         if got == "/api/workspaces/access/mode":
             return await self._handle_workspace_permission_action(connection, request, got)
+        if got == "/api/workspaces/access/prepare-full":
+            return await self._handle_workspace_permission_action(connection, request, got)
         if got == "/api/webui/skills/search":
             return await self._handle_webui_skills_search(request)
         if got == "/api/webui/skills/trending":
@@ -1613,7 +1618,10 @@ class GatewayHTTPHandler:
         if not self._matches_expected_webui_source(request, payload):
             return _http_error(409, "source_changed")
         try:
-            result = self.workspaces.set_permission_mode(payload, local_ui=True)
+            if path == "/api/workspaces/access/prepare-full":
+                result = self.workspaces.prepare_full(payload, local_ui=True)
+            else:
+                result = self.workspaces.set_permission_mode(payload, local_ui=True)
         except WorkspacePermissionActionError as exc:
             return _http_error(exc.status, exc.message)
         except Exception:
