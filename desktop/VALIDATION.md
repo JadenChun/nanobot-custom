@@ -119,8 +119,12 @@ alias associates the Wayland window without adding a duplicate menu entry.
 The same alias can be installed immediately for 0.3.0-3 at
 `~/.local/share/applications/nanobot-desktop.desktop`; refresh with
 `update-desktop-database ~/.local/share/applications` and
-`kbuildsycoca6 --noincremental`, then restart Nanobot Desktop. A rebuilt 0.3.0-4
-RPM has not been produced or installed as part of this source change.
+`kbuildsycoca6 --noincremental`, then restart Nanobot Desktop.
+
+The rebuilt 0.3.0-4 RPM was produced and installed on 2026-10-28. With no
+per-user desktop overrides present, the running KDE Wayland window shows the
+Nanobot titlebar icon from the packaged launchers alone. RPM SHA-256:
+`746aaf72f0190f8f777a826092c86bb8dc58403e716a653c036677133d82d05c`.
 
 ## Initial installed GUI evidence (RPM 0.3.0-1)
 
