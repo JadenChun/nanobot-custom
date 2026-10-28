@@ -21,6 +21,10 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.providers.base import LLMUsage
+    from nanobot.security.desktop_permissions import (
+        WorkspaceFullAccessReference,
+        WorkspaceTaskAccessReference,
+    )
     from nanobot.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
     from nanobot.session.artifact_reader import ArtifactReader
     from nanobot.session.execution_owner import ExecutionOwner
@@ -379,6 +383,12 @@ class TurnContext:
     artifact_handoff_notices: list[str] = field(default_factory=list, repr=False)
     source_history: SourceTranscript | None = field(default=None, repr=False)
     source_input_event_id: str | None = field(default=None, repr=False)
+    workspace_task_reference: WorkspaceTaskAccessReference | None = field(
+        default=None, repr=False,
+    )
+    workspace_full_reference: WorkspaceFullAccessReference | None = field(
+        default=None, repr=False,
+    )
     busy_turn: BusyTurn | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:

@@ -121,6 +121,7 @@ def sign_or_stage_media_path(
     secret: bytes,
     media_dir: MediaDirProvider = _default_media_dir,
     logger: Any | None = None,
+    authorize_source: Callable[[Path], bool] | None = None,
 ) -> dict[str, str] | None:
     """Sign an existing media-root path, or stage an arbitrary file before signing."""
     signed = sign_media_path(path, secret=secret, media_dir=media_dir)
@@ -130,6 +131,8 @@ def sign_or_stage_media_path(
     try:
         resolved = path.resolve(strict=True)
         if not resolved.is_file():
+            return None
+        if authorize_source is not None and not authorize_source(resolved):
             return None
         source_stat = resolved.stat()
         target_dir = media_dir("websocket")

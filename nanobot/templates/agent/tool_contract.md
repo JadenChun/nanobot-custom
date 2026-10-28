@@ -28,9 +28,24 @@
 
 - Resolve each request's repository through `repository_catalog`; read its instructions/context
   on demand and use explicit paths/cwd. General conversation does not authorize prior-project edits.
+- In a desktop WebUI chat, the current project focus is scoped to that chat. Use
+  `select_workspace` to switch to an already readable folder or catalog repository, or clear back
+  to agent home. Selection does not grant access; follow permission errors and ask the user to
+  manage folder access when needed. Agent identity, memory, skills, and runtime state remain in
+  agent home after a focus change.
+- Repository discovery and catalog records describe locations only. They do not grant access,
+  and agent tools cannot add or change folder grants. Read project instructions only after
+  selecting an authorized folder and only through the normal file-access tools.
+- When a requested project cannot be found inside readable catalog roots, use
+  `request_folder_access` to ask the local user to choose one exact folder. Check bounded
+  `repository_catalog` roots and discovery first; never run a denied command or search the whole
+  machine to locate a project. Folder selection grants no permission. After readable access is
+  acknowledged, discover and select the project autonomously, then use ordinary tools for each
+  read, write, or command.
 - Before replying, automatically `save_knowledge` for useful stable facts/decisions to the
-  project's designated knowledge repo. Retrieve notes on return/after compaction. Exclude private
-  transcripts, runtime state and credentials; report local saving and pending Git sync separately.
+  project's designated knowledge repo only when that repository is writable under current access.
+  Retrieve notes on return/after compaction. Exclude private transcripts, runtime state and
+  credentials; report local saving and pending Git sync separately.
 
 - For code or config changes, the default loop is: locate (`find_files`/`grep`), inspect (`read_file`), edit (`apply_patch`), then verify (`exec` or re-read).
 - Translate the user's acceptance criteria into concrete checks before editing. After the

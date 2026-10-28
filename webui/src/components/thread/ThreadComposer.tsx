@@ -64,7 +64,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  WorkspaceAccessMenu,
+  WorkspacePermissionV2Control,
   WorkspaceProjectPicker,
 } from "@/components/thread/WorkspaceControls";
 import {
@@ -102,6 +102,8 @@ import type {
   SkillSummary,
   WebUIIngressLimits,
   WorkspaceScopePayload,
+  WorkspaceAccessMode,
+  WorkspacePermissionProjection,
   WorkspacesPayload,
 } from "@/lib/types";
 import {
@@ -222,10 +224,21 @@ interface ThreadComposerProps {
   workspaceControlsHidden?: boolean;
   workspaceDefaultScope?: WorkspaceScopePayload | null;
   workspaceControls?: WorkspacesPayload["controls"] | null;
+  workspaces?: WorkspacesPayload | null;
+  onRefreshWorkspaces?: () => Promise<void>;
   workspaceScopeDisabled?: boolean;
   workspaceError?: string | null;
   onPickWorkspaceFolder?: () => Promise<string | null>;
   onWorkspaceScopeChange?: (scope: WorkspaceScopePayload) => void;
+  workspacePermissions?: WorkspacePermissionProjection | null;
+  workspacePermissionsLoading?: boolean;
+  workspacePermissionsError?: boolean;
+  persistentWorkspaceChat?: boolean;
+  onWorkspaceAccessModeChange?: (mode: WorkspaceAccessMode) => void | Promise<void>;
+  onRetryWorkspaceRestricted?: () => void | Promise<void>;
+  onDraftFullAccess?: (draft: string) => void | Promise<void>;
+  initialDraft?: string | null;
+  onInitialDraftConsumed?: () => void;
   pendingQueueKey?: string | null;
   transcriptionProvider?: string | null;
   ingressLimits?: WebUIIngressLimits | null;
@@ -922,10 +935,21 @@ export function ThreadComposer({
   workspaceControlsHidden = false,
   workspaceDefaultScope = null,
   workspaceControls = null,
+  workspaces = null,
+  onRefreshWorkspaces,
   workspaceScopeDisabled = false,
   workspaceError = null,
   onPickWorkspaceFolder,
   onWorkspaceScopeChange,
+  workspacePermissions = null,
+  workspacePermissionsLoading = false,
+  workspacePermissionsError = false,
+  persistentWorkspaceChat = false,
+  onWorkspaceAccessModeChange,
+  onRetryWorkspaceRestricted,
+  onDraftFullAccess,
+  initialDraft = null,
+  onInitialDraftConsumed,
   pendingQueueKey = null,
   transcriptionProvider = null,
   ingressLimits = null,
@@ -975,10 +999,8 @@ export function ThreadComposer({
     [pendingQueueKey],
   );
   const projectPickerAvailable =
-    isHero
-    && !!workspaceDefaultScope
-    && !!onWorkspaceScopeChange
-    && workspaceControls?.can_change_project !== false;
+    !!workspaceDefaultScope
+    && !!onWorkspaceScopeChange;
   const showProjectPicker = projectPickerAvailable && !workspaceControlsHidden;
 
   useEffect(() => {
@@ -1081,10 +1103,14 @@ export function ThreadComposer({
     [images],
   );
   const hasErrors = images.some((img) => img.status === "error");
+  const workspaceFullRetiring = persistentWorkspaceChat
+    && workspacePermissions?.mode === "full"
+    && workspacePermissions.state === "retiring";
 
   const hasComposerContent = value.trim().length > 0 || readyImages.length > 0;
   const canSend =
     !interactionDisabled
+    && !workspaceFullRetiring
     && !modelNeedsSetup
     && !encoding
     && !hasErrors
@@ -1095,6 +1121,7 @@ export function ThreadComposer({
   const canQueueGuidance =
     isStreaming
     && !interactionDisabled
+    && !workspaceFullRetiring
     && !modelNeedsSetup
     && !encoding
     && !hasErrors
@@ -1507,6 +1534,19 @@ export function ThreadComposer({
     });
   }, [clear, pendingQueueKey]);
 
+  useLayoutEffect(() => {
+    if (!initialDraft) return;
+    setValue(initialDraft);
+    onInitialDraftConsumed?.();
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 260)}px`;
+      el.focus();
+    });
+  }, [initialDraft, onInitialDraftConsumed]);
+
   const appendTranscription = useCallback((text: string) => {
     const transcript = text.trim();
     if (!transcript) return;
@@ -1843,6 +1883,7 @@ export function ThreadComposer({
 
   const sendQueuedPrompt = useCallback(
     (prompt: QueuedPrompt) => {
+      if (workspaceFullRetiring) return;
       secondEnterPromptIdRef.current = null;
       const text = prompt.text.trim();
       const queuedImages = queuedImagesToSendImages(prompt.images);
@@ -1865,10 +1906,11 @@ export function ThreadComposer({
       }
       requestAnimationFrame(() => textareaRef.current?.focus());
     },
-    [isStreaming, onSend],
+    [isStreaming, onSend, workspaceFullRetiring],
   );
 
   const sendNextQueuedPrompt = useCallback(() => {
+    if (workspaceFullRetiring) return;
     if (queuedPrompts.length === 0) return;
     const nextPrompt = queuedPrompts.find((prompt) => prompt.text.trim());
     if (!nextPrompt) {
@@ -1892,19 +1934,19 @@ export function ThreadComposer({
     else if (options) onSend(nextPrompt.text.trim(), undefined, options);
     else onSend(nextPrompt.text.trim());
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [onSend, queuedPrompts]);
+  }, [onSend, queuedPrompts, workspaceFullRetiring]);
 
   useEffect(() => {
     const wasStreaming = wasStreamingRef.current;
     wasStreamingRef.current = isStreaming;
     if (!isStreaming) secondEnterPromptIdRef.current = null;
-    if (!wasStreaming || isStreaming || queuedPrompts.length === 0) return;
+    if (!wasStreaming || isStreaming || queuedPrompts.length === 0 || workspaceFullRetiring) return;
     if (skipNextQueuedFlushRef.current) {
       skipNextQueuedFlushRef.current = false;
       return;
     }
     sendNextQueuedPrompt();
-  }, [sendNextQueuedPrompt, isStreaming, queuedPrompts.length]);
+  }, [sendNextQueuedPrompt, isStreaming, queuedPrompts.length, workspaceFullRetiring]);
 
   const handleStop = useCallback(() => {
     secondEnterPromptIdRef.current = null;
@@ -2429,12 +2471,22 @@ export function ThreadComposer({
                 levels={voiceRecorder.levels}
               />
             ) : workspaceScope && !workspaceControlsHidden ? (
-              <WorkspaceAccessMenu
-                scope={workspaceScope}
-                disabled={interactionDisabled || workspaceScopeDisabled}
-                canUseFullAccess={workspaceControls?.can_use_full_access !== false}
+              <WorkspacePermissionV2Control
+                enabled={workspaces?.controls.permission_v2 === true}
+                permissions={workspacePermissions}
+                loading={workspacePermissionsLoading}
+                error={workspacePermissionsError}
+                disabled={persistentWorkspaceChat && interactionDisabled}
+                persistentChat={persistentWorkspaceChat}
+                draftFullAccess={!persistentWorkspaceChat && !!onDraftFullAccess}
+                onRequestFullAccess={
+                  !persistentWorkspaceChat && onDraftFullAccess
+                    ? () => onDraftFullAccess(value)
+                    : undefined
+                }
                 isHero={isHero}
-                onChange={onWorkspaceScopeChange}
+                onModeChange={onWorkspaceAccessModeChange}
+                onRetryRestricted={onRetryWorkspaceRestricted}
               />
             ) : null}
           </div>
@@ -2558,13 +2610,14 @@ export function ThreadComposer({
             <div className="composer-workspace-drawer-clip">
               <div className="composer-workspace-drawer-content">
                 <WorkspaceProjectPicker
-                  isHero={isHero}
                   disabled={interactionDisabled || workspaceScopeDisabled || !showProjectPicker}
                   scope={workspaceScope}
                   defaultScope={workspaceDefaultScope}
                   controls={workspaceControls}
+                  workspaces={workspaces}
                   error={workspaceError}
                   onPickFolder={onPickWorkspaceFolder}
+                  onRefreshWorkspaces={onRefreshWorkspaces}
                   onChange={onWorkspaceScopeChange}
                 />
               </div>

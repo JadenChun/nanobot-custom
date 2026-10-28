@@ -765,8 +765,14 @@ class AgentRunner:
                     tool_result_callback=(record_result if source_writer is not None
                                           else spec.tool_result_callback),
                 )
-                terminal = next((r for r in results if isinstance(r, ToolOutcome)
-                                 and r.stop_reason), None)
+                terminal = next((
+                    r for r in results
+                    if isinstance(r, ToolOutcome) and r.stop_reason
+                    and r.stop_reason != "folder_access_required"
+                ), None)
+                if terminal is None:
+                    terminal = next((r for r in results if isinstance(r, ToolOutcome)
+                                     and r.stop_reason == "folder_access_required"), None)
                 results = [r.content if isinstance(r, ToolOutcome) else r for r in results]
                 tool_events.extend(new_events)
                 tools_used.extend(

@@ -3,15 +3,67 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Generator, cast
 
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.context import ContextAware, current_request_context
 from nanobot.agent.tools.producer_adapters import accepted_producer_receipt
+from nanobot.security.folder_grants import FolderGrantView
 
 if TYPE_CHECKING:
     from nanobot.runtime_context import RuntimeContextProvider
+
+
+MANAGED_WEBUI_TOOL_NAMES = frozenset({
+    "read_file", "write_file", "edit_file", "list_dir", "exec",
+    "exec_session", "list_exec_sessions", "web_search", "web_fetch",
+    "message", "cron", "generate_image", "repository_catalog",
+    "save_knowledge", "select_workspace", "plan_task", "delegate_task",
+    "request_folder_access", "review_work", "explore",
+})
+
+
+class ManagedToolDispatchGuard:
+    """Deny stale unconfined WebUI tools and serialize their legacy admission."""
+
+    def __init__(self, grants: FolderGrantView | None) -> None:
+        self._grants = grants
+
+    def error(self, name: str) -> str | None:
+        request = current_request_context()
+        grants = self._grants
+        if (
+            request is None
+            or request.channel != "websocket"
+            or grants is None
+            or not grants.is_managed
+            or name in MANAGED_WEBUI_TOOL_NAMES
+        ):
+            return None
+        return f"Tool '{name}' is unavailable with managed folder access"
+
+    @contextmanager
+    def admit(self, name: str) -> Generator[str | None, None, None]:
+        request = current_request_context()
+        grants = self._grants
+        if (
+            request is None
+            or request.channel != "websocket"
+            or grants is None
+            or name in MANAGED_WEBUI_TOOL_NAMES
+        ):
+            yield None
+            return
+        reservation = grants.try_begin_native_process()
+        if reservation is None:
+            yield self.error(name) or f"Tool '{name}' is unavailable with managed folder access"
+            return
+        try:
+            yield None
+        finally:
+            grants.end_native_process(reservation)
 
 
 def is_tool_error_result(result: Any) -> bool:
@@ -28,6 +80,26 @@ class ToolRegistry:
     def __init__(self):
         self._tools: dict[str, Tool] = {}
         self._cached_definitions: list[dict[str, Any]] | None = None
+        self._dispatch_guard: ManagedToolDispatchGuard | None = None
+
+    def set_dispatch_guard(self, guard: ManagedToolDispatchGuard | None) -> None:
+        """Install a live admission check shared by this turn's tool dispatches."""
+        self._dispatch_guard = guard
+
+    def dispatch_error(self, name: str) -> str | None:
+        """Return a current managed-capability denial, if one applies."""
+        if self._dispatch_guard is None:
+            return None
+        return self._dispatch_guard.error(name)
+
+    @contextmanager
+    def dispatch_admission(self, name: str) -> Generator[str | None, None, None]:
+        """Hold first-activation admission for a native WebUI tool while it runs."""
+        if self._dispatch_guard is None:
+            yield None
+            return
+        with self._dispatch_guard.admit(name) as error:
+            yield error
 
     def register(self, tool: Tool) -> None:
         """Register a tool."""
@@ -124,6 +196,9 @@ class ToolRegistry:
         params: Any,
     ) -> tuple[Tool | None, Any, str | None]:
         """Resolve, cast, and validate one tool call."""
+        dispatch_error = self.dispatch_error(name)
+        if dispatch_error is not None:
+            return None, params, ToolResult.error(dispatch_error)
         tool = self.get(name)
         if not tool:
             suggestion = self._suggest_name(str(name))
@@ -274,10 +349,20 @@ class ToolRegistry:
                 outcome = ToolOutcome(content=ToolResult.error(str(error) + hint), stop_reason="tool_error")
             else:
                 assert tool is not None
-                outcome = await self.execute_prepared(tool, params, context)
-                if outcome.stop_reason == "tool_error" and isinstance(outcome.content, str):
-                    outcome = ToolOutcome(content=ToolResult.error(outcome.content + hint),
-                                          stop_reason=outcome.stop_reason, policy_metadata=outcome.policy_metadata)
+                with self.dispatch_admission(name) as dispatch_error:
+                    if dispatch_error is not None:
+                        outcome = ToolOutcome(
+                            content=ToolResult.error(dispatch_error + hint),
+                            stop_reason="tool_error",
+                        )
+                    else:
+                        outcome = await self.execute_prepared(tool, params, context)
+                        if outcome.stop_reason == "tool_error" and isinstance(outcome.content, str):
+                            outcome = ToolOutcome(
+                                content=ToolResult.error(outcome.content + hint),
+                                stop_reason=outcome.stop_reason,
+                                policy_metadata=outcome.policy_metadata,
+                            )
         except Exception as exc:
             outcome = ToolOutcome(content=ToolResult.error(f"Error executing {name}: {exc}" + hint),
                                   stop_reason="tool_error")
@@ -291,6 +376,7 @@ class ToolRegistry:
 
     def filtered(self, names: list[str]) -> ToolRegistry:
         registry = ToolRegistry()
+        registry.set_dispatch_guard(self._dispatch_guard)
         for name in names:
             if name in self._tools:
                 registry.register(self._tools[name])

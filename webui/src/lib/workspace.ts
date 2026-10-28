@@ -4,8 +4,18 @@ export function scopeWithAccessMode(
   scope: WorkspaceScopePayload,
   accessMode: WorkspaceAccessMode,
 ): WorkspaceScopePayload {
+  const derivedAccess = scope.access_mode === accessMode
+    ? {
+        effective_access: scope.effective_access,
+        sandbox_status: scope.sandbox_status,
+      }
+    : {};
+  const acknowledged = { ...scope };
+  delete acknowledged.effective_access;
+  delete acknowledged.sandbox_status;
   return {
-    ...scope,
+    ...acknowledged,
+    ...derivedAccess,
     access_mode: accessMode,
     restrict_to_workspace: accessMode === "restricted",
   };

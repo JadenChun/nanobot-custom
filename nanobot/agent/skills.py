@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import yaml
 
+from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.runtime_context import RuntimeContextBlock
 
 # Default builtin skills directory (relative to this file)
@@ -56,12 +57,21 @@ class SkillsLoader:
     specific tools or perform certain tasks.
     """
 
-    def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None, disabled_skills: set[str] | None = None, *, extra_paths: list[Path] | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        builtin_skills_dir: Path | None = None,
+        disabled_skills: set[str] | None = None,
+        *,
+        extra_paths: list[Path] | None = None,
+        resource_policy: ResourceAccessPolicy | None = None,
+    ):
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self.disabled_skills = disabled_skills or set()
         self.extra_paths = extra_paths or []
+        self.resource_policy = resource_policy
 
     def _skill_aliases(self) -> dict[str, str]:
         """Return compatibility aliases owned by installed CLI Apps."""
@@ -130,6 +140,7 @@ class SkillsLoader:
                     disabled.update((legacy, canonical))
             skills = [s for s in skills if s["name"] not in disabled]
 
+        skills = [entry for entry in skills if self._skill_read_allowed(entry)]
         if filter_unavailable:
             return [skill for skill in skills if self._check_requirements(self._get_skill_meta(skill["name"]))]
         return skills
@@ -148,7 +159,24 @@ class SkillsLoader:
         available = {skill["name"] for skill in skills}
         resolved = name if name in available else self._skill_aliases().get(name, name)
         entry = next((skill for skill in skills if skill["name"] == resolved), None)
-        return Path(entry["path"]).read_text(encoding="utf-8") if entry else None
+        if entry is None or not self._skill_read_allowed(entry):
+            return None
+        return Path(entry["path"]).read_text(encoding="utf-8")
+
+    def _skill_read_allowed(self, entry: dict[str, str]) -> bool:
+        policy = self.resource_policy
+        if policy is None or not policy.managed_mode or entry.get("source") == "builtin":
+            return True
+        try:
+            policy.validate_path(
+                Path(entry["path"]).resolve(strict=True),
+                "read",
+                managed=True,
+                allow_folder_grants=policy.folder_grants_allowed,
+            )
+        except (OSError, PermissionError, RuntimeError, ValueError):
+            return False
+        return True
 
     def load_skills_for_context(self, skill_names: list[str]) -> str:
         """

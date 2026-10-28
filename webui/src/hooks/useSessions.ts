@@ -8,14 +8,17 @@ import {
   fetchSessionAutomations,
   fetchWebuiThread,
   listSessions,
+  normalizeWorkspacePermissionProjection,
 } from "@/lib/api";
 import { hasPendingAgentActivity } from "@/lib/activity-timeline";
 import { deriveTitle } from "@/lib/format";
 import type {
   ChatSummary,
+  FolderAccessRequest,
   SessionAutomationJob,
   SessionDeleteResult,
   UIMessage,
+  WorkspacePermissionProjection,
   WorkspaceScopePayload,
 } from "@/lib/types";
 
@@ -34,6 +37,19 @@ function isAbortError(error: unknown): boolean {
 }
 
 export type SessionHistoryContinuity = "initial" | "overlap" | "reset";
+
+function mergePermissionProjection(
+  current: WorkspacePermissionProjection | null,
+  incoming: WorkspacePermissionProjection | null,
+): WorkspacePermissionProjection | null {
+  if (
+    current
+    && incoming
+    && current.runtime_id === incoming.runtime_id
+    && incoming.revision < current.revision
+  ) return current;
+  return incoming;
+}
 
 function persistedMessagesToUi(messages: UIMessage[]): UIMessage[] {
   return messages.map((m, idx) => ({
@@ -315,11 +331,25 @@ export function useSessionHistory(key: string | null): {
   lineage: number;
   /** Exact active turn when supplied by a current gateway. */
   activeTurnId: string | null;
+  workspaceAccessRequest: FolderAccessRequest | null;
+  workspaceAccessRequestLoading: boolean;
+  workspaceAccessRequestError: boolean;
+  markWorkspaceAccessRequestStale: () => void;
+  updateWorkspaceAccessRequest: (request: FolderAccessRequest | null) => void;
+  refreshWorkspaceAccessRequest: () => Promise<FolderAccessRequest | null>;
+  workspacePermissions: WorkspacePermissionProjection | null;
+  workspacePermissionsLoading: boolean;
+  workspacePermissionsError: boolean;
+  markWorkspacePermissionsStale: () => void;
+  updateWorkspacePermissions: (permissions: WorkspacePermissionProjection | null) => void;
+  refreshWorkspacePermissions: () => Promise<WorkspacePermissionProjection | null>;
 } {
   const { getToken } = useClient();
   const loadingOlderRef = useRef(false);
   const olderRequestAbortRef = useRef<AbortController | null>(null);
   const historyVersionRef = useRef(0);
+  const accessRequestReadVersionRef = useRef(0);
+  const permissionReadVersionRef = useRef(0);
   const [refreshSeq, setRefreshSeq] = useState(0);
   const refresh = useCallback(() => {
     setRefreshSeq((value) => value + 1);
@@ -340,6 +370,12 @@ export function useSessionHistory(key: string | null): {
     continuity: SessionHistoryContinuity;
     lineage: number;
     activeTurnId: string | null;
+    workspaceAccessRequest: FolderAccessRequest | null;
+    workspaceAccessRequestLoading: boolean;
+    workspaceAccessRequestError: boolean;
+    workspacePermissions: WorkspacePermissionProjection | null;
+    workspacePermissionsLoading: boolean;
+    workspacePermissionsError: boolean;
   }>({
     key: null,
     messages: [],
@@ -356,6 +392,12 @@ export function useSessionHistory(key: string | null): {
     continuity: "initial",
     lineage: 0,
     activeTurnId: null,
+    workspaceAccessRequest: null,
+    workspaceAccessRequestLoading: false,
+    workspaceAccessRequestError: false,
+    workspacePermissions: null,
+    workspacePermissionsLoading: false,
+    workspacePermissionsError: false,
   });
 
   useEffect(() => () => {
@@ -385,18 +427,35 @@ export function useSessionHistory(key: string | null): {
         continuity: "initial",
         lineage: 0,
         activeTurnId: null,
+        workspaceAccessRequest: null,
+        workspaceAccessRequestLoading: false,
+        workspaceAccessRequestError: false,
+        workspacePermissions: null,
+        workspacePermissionsLoading: false,
+        workspacePermissionsError: false,
       });
       return;
     }
     let cancelled = false;
     const controller = new AbortController();
+    const accessRequestReadVersion = ++accessRequestReadVersionRef.current;
+    const permissionReadVersion = ++permissionReadVersionRef.current;
     olderRequestAbortRef.current?.abort();
     olderRequestAbortRef.current = null;
     loadingOlderRef.current = false;
     // Mark the new key as loading immediately so callers never see stale
     // messages from the previous session during the render right after a switch.
     setState((prev) => prev.key === key
-      ? { ...prev, loading: true, loadingOlder: false, error: null }
+      ? {
+          ...prev,
+          loading: true,
+          loadingOlder: false,
+          error: null,
+          workspaceAccessRequestLoading: true,
+          workspaceAccessRequestError: false,
+          workspacePermissionsLoading: true,
+          workspacePermissionsError: false,
+        }
       : {
           key,
           messages: [],
@@ -413,6 +472,12 @@ export function useSessionHistory(key: string | null): {
           continuity: "initial",
           lineage: 0,
           activeTurnId: null,
+          workspaceAccessRequest: null,
+          workspaceAccessRequestLoading: true,
+          workspaceAccessRequestError: false,
+          workspacePermissions: null,
+          workspacePermissionsLoading: true,
+          workspacePermissionsError: false,
         });
     (async () => {
       try {
@@ -425,6 +490,7 @@ export function useSessionHistory(key: string | null): {
         historyVersionRef.current += 1;
         const responseVersion = historyVersionRef.current;
         const completedTurnIds = completedTurnIdsFromThread(body);
+        const permissionProjection = normalizeWorkspacePermissionProjection(body?.workspace_permissions);
         const ui = persistedMessagesToUi(body?.messages ?? []);
         const hasPending = hasPendingToolCallsFromThread(body, ui);
         const forkBoundary = typeof body?.fork_boundary_message_count === "number"
@@ -470,6 +536,24 @@ export function useSessionHistory(key: string | null): {
             activeTurnId: typeof body?.active_turn_id === "string"
               ? body.active_turn_id
               : null,
+            workspaceAccessRequest: accessRequestReadVersion === accessRequestReadVersionRef.current
+              ? body?.workspace_access_request ?? null
+              : prev.workspaceAccessRequest,
+            workspaceAccessRequestLoading: accessRequestReadVersion === accessRequestReadVersionRef.current
+              ? false
+              : prev.workspaceAccessRequestLoading,
+            workspaceAccessRequestError: accessRequestReadVersion === accessRequestReadVersionRef.current
+              ? false
+              : prev.workspaceAccessRequestError,
+            workspacePermissions: permissionReadVersion === permissionReadVersionRef.current
+              ? mergePermissionProjection(prev.key === key ? prev.workspacePermissions : null, permissionProjection)
+              : prev.workspacePermissions,
+            workspacePermissionsLoading: permissionReadVersion === permissionReadVersionRef.current
+              ? false
+              : prev.workspacePermissionsLoading,
+            workspacePermissionsError: permissionReadVersion === permissionReadVersionRef.current
+              ? false
+              : prev.workspacePermissionsError,
           };
         });
       } catch (e) {
@@ -497,6 +581,12 @@ export function useSessionHistory(key: string | null): {
               continuity,
               lineage: responseVersion,
               activeTurnId: null,
+              workspaceAccessRequest: null,
+              workspaceAccessRequestLoading: false,
+              workspaceAccessRequestError: false,
+              workspacePermissions: null,
+              workspacePermissionsLoading: false,
+              workspacePermissionsError: false,
             };
           });
         } else {
@@ -516,6 +606,12 @@ export function useSessionHistory(key: string | null): {
             continuity: prev.key === key ? prev.continuity : "initial",
             lineage: prev.key === key ? prev.lineage : 0,
             activeTurnId: prev.key === key ? prev.activeTurnId : null,
+            workspaceAccessRequest: prev.key === key ? prev.workspaceAccessRequest : null,
+            workspaceAccessRequestLoading: false,
+            workspaceAccessRequestError: prev.key === key ? true : false,
+            workspacePermissions: prev.key === key ? prev.workspacePermissions : null,
+            workspacePermissionsLoading: false,
+            workspacePermissionsError: prev.key === key ? true : false,
           }));
         }
       }
@@ -525,6 +621,114 @@ export function useSessionHistory(key: string | null): {
       controller.abort();
     };
   }, [getToken, key, refreshSeq]);
+
+  const markWorkspaceAccessRequestStale = useCallback(() => {
+    accessRequestReadVersionRef.current += 1;
+    if (!key) return;
+    setState((prev) => prev.key === key
+      ? { ...prev, workspaceAccessRequestLoading: true, workspaceAccessRequestError: false }
+      : prev);
+  }, [key]);
+
+  const updateWorkspaceAccessRequest = useCallback((request: FolderAccessRequest | null) => {
+    accessRequestReadVersionRef.current += 1;
+    if (!key) return;
+    setState((prev) => {
+      if (prev.key !== key) return prev;
+      if (
+        request
+        && prev.workspaceAccessRequest?.access_request_id === request.access_request_id
+        && request.revision < prev.workspaceAccessRequest.revision
+      ) return prev;
+      return { ...prev, workspaceAccessRequest: request, workspaceAccessRequestLoading: false, workspaceAccessRequestError: false };
+    });
+  }, [key]);
+
+  const refreshWorkspaceAccessRequest = useCallback(async (): Promise<FolderAccessRequest | null> => {
+    if (!key) return null;
+    const readVersion = ++accessRequestReadVersionRef.current;
+    setState((prev) => prev.key === key
+      ? { ...prev, workspaceAccessRequestLoading: true, workspaceAccessRequestError: false }
+      : prev);
+    try {
+      const body = await fetchWebuiThread(getToken(), key, { limit: 1, direction: "latest" });
+      const request = body?.workspace_access_request ?? null;
+      if (readVersion === accessRequestReadVersionRef.current) {
+        setState((prev) => prev.key === key
+          ? { ...prev, workspaceAccessRequest: request, workspaceAccessRequestLoading: false, workspaceAccessRequestError: false }
+          : prev);
+      }
+      return request;
+    } catch (error) {
+      if (readVersion === accessRequestReadVersionRef.current) {
+        setState((prev) => prev.key === key
+          ? { ...prev, workspaceAccessRequestLoading: false, workspaceAccessRequestError: true }
+          : prev);
+      }
+      throw error;
+    }
+  }, [getToken, key]);
+
+  const refreshWorkspacePermissions = useCallback(async (): Promise<WorkspacePermissionProjection | null> => {
+    if (!key) return null;
+    const readVersion = ++permissionReadVersionRef.current;
+    const requestedKey = key;
+    setState((prev) => prev.key === requestedKey
+      ? { ...prev, workspacePermissionsLoading: true, workspacePermissionsError: false }
+      : prev);
+    try {
+      const body = await fetchWebuiThread(getToken(), requestedKey, { limit: 1, direction: "latest" });
+      const permissions = normalizeWorkspacePermissionProjection(body?.workspace_permissions);
+      if (readVersion === permissionReadVersionRef.current) {
+        setState((prev) => prev.key === requestedKey
+          ? {
+              ...prev,
+              workspacePermissions: mergePermissionProjection(prev.workspacePermissions, permissions),
+              workspacePermissionsLoading: false,
+              workspacePermissionsError: false,
+            }
+          : prev);
+      }
+      return permissions;
+    } catch (error) {
+      if (readVersion === permissionReadVersionRef.current) {
+        setState((prev) => prev.key === requestedKey
+          ? { ...prev, workspacePermissionsLoading: false, workspacePermissionsError: true }
+          : prev);
+      }
+      throw error;
+    }
+  }, [getToken, key]);
+
+  const markWorkspacePermissionsStale = useCallback(() => {
+    permissionReadVersionRef.current += 1;
+    if (!key) return;
+    setState((prev) => prev.key === key
+      ? { ...prev, workspacePermissionsLoading: true, workspacePermissionsError: false }
+      : prev);
+  }, [key]);
+
+  const updateWorkspacePermissions = useCallback((permissions: WorkspacePermissionProjection | null) => {
+    if (!key) return;
+    const normalized = normalizeWorkspacePermissionProjection(permissions);
+    if (!normalized) {
+      void refreshWorkspacePermissions();
+      return;
+    }
+    const current = state.key === key ? state.workspacePermissions : null;
+    if (current && current.runtime_id !== normalized.runtime_id) {
+      void refreshWorkspacePermissions();
+      return;
+    }
+    setState((prev) => prev.key === key
+      ? {
+          ...prev,
+          workspacePermissions: mergePermissionProjection(prev.workspacePermissions, normalized),
+          workspacePermissionsLoading: false,
+          workspacePermissionsError: false,
+        }
+      : prev);
+  }, [key, refreshWorkspacePermissions, state.key, state.workspacePermissions]);
 
   const loadOlder = useCallback(async () => {
     if (!key || loadingOlderRef.current) return;
@@ -621,6 +825,18 @@ export function useSessionHistory(key: string | null): {
       continuity: "initial",
       lineage: 0,
       activeTurnId: null,
+      workspaceAccessRequest: null,
+      workspaceAccessRequestLoading: false,
+      workspaceAccessRequestError: false,
+      markWorkspaceAccessRequestStale,
+      updateWorkspaceAccessRequest,
+      refreshWorkspaceAccessRequest,
+      workspacePermissions: null,
+      workspacePermissionsLoading: false,
+      workspacePermissionsError: false,
+      markWorkspacePermissionsStale,
+      updateWorkspacePermissions,
+      refreshWorkspacePermissions,
     };
   }
 
@@ -643,6 +859,18 @@ export function useSessionHistory(key: string | null): {
       continuity: "initial",
       lineage: 0,
       activeTurnId: null,
+      workspaceAccessRequest: null,
+      workspaceAccessRequestLoading: true,
+      workspaceAccessRequestError: false,
+      markWorkspaceAccessRequestStale,
+      updateWorkspaceAccessRequest,
+      refreshWorkspaceAccessRequest,
+      workspacePermissions: null,
+      workspacePermissionsLoading: true,
+      workspacePermissionsError: false,
+      markWorkspacePermissionsStale,
+      updateWorkspacePermissions,
+      refreshWorkspacePermissions,
     };
   }
 
@@ -662,6 +890,18 @@ export function useSessionHistory(key: string | null): {
     continuity: state.continuity,
     lineage: state.lineage,
     activeTurnId: state.activeTurnId,
+    workspaceAccessRequest: state.workspaceAccessRequest,
+    workspaceAccessRequestLoading: state.workspaceAccessRequestLoading,
+    workspaceAccessRequestError: state.workspaceAccessRequestError,
+    markWorkspaceAccessRequestStale,
+    updateWorkspaceAccessRequest,
+    refreshWorkspaceAccessRequest,
+    workspacePermissions: state.workspacePermissions,
+    workspacePermissionsLoading: state.workspacePermissionsLoading,
+    workspacePermissionsError: state.workspacePermissionsError,
+    markWorkspacePermissionsStale,
+    updateWorkspacePermissions,
+    refreshWorkspacePermissions,
   };
 }
 

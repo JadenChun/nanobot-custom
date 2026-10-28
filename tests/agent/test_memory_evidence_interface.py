@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -52,7 +54,14 @@ _INTERFACES = (
 
 
 def _live(paths):
-    return {path: (path.read_bytes(), path.lstat()) for path in paths}
+    snapshots = {}
+    for path in paths:
+        before = storage.memory_target_stat_identity(path.lstat())
+        content = path.read_bytes()
+        after = storage.memory_target_stat_identity(path.lstat())
+        assert after == before, f"{path} changed while evidence snapshot was read"
+        snapshots[path] = (content, after)
+    return snapshots
 
 
 @pytest.fixture
@@ -184,6 +193,97 @@ def test_dynamic_evidence_forwarding_uses_real_helpers(
     assert all(all(actual is supplied for actual, supplied in zip(call[1], args, strict=True))
                for call in calls)
     assert _live(_evidence["paths"]) == before
+
+
+def test_live_snapshot_ignores_access_time_only_change(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    path = tmp_path / "evidence.jsonl"
+    path.write_bytes(b"evidence\n")
+    access_time_ns = [0]
+    read_bytes = Path.read_bytes
+    lstat = Path.lstat
+
+    def read_with_access_time_change(candidate: Path) -> bytes:
+        content = read_bytes(candidate)
+        if candidate == path:
+            access_time_ns[0] += 1_000_000_000
+        return content
+
+    def lstat_with_access_time(candidate: Path):
+        observed = lstat(candidate)
+        if candidate != path:
+            return observed
+        return SimpleNamespace(
+            st_dev=observed.st_dev,
+            st_ino=observed.st_ino,
+            st_mode=observed.st_mode,
+            st_nlink=observed.st_nlink,
+            st_uid=observed.st_uid,
+            st_gid=observed.st_gid,
+            st_size=observed.st_size,
+            st_atime=access_time_ns[0] / 1_000_000_000,
+            st_atime_ns=access_time_ns[0],
+            st_mtime=observed.st_mtime,
+            st_mtime_ns=observed.st_mtime_ns,
+            st_ctime=observed.st_ctime,
+            st_ctime_ns=observed.st_ctime_ns,
+        )
+
+    monkeypatch.setattr(Path, "read_bytes", read_with_access_time_change)
+    monkeypatch.setattr(Path, "lstat", lstat_with_access_time)
+    assert _live((path,)) == _live((path,))
+
+
+def test_live_snapshot_detects_content_and_replacement_drift(tmp_path: Path) -> None:
+    path = tmp_path / "evidence.jsonl"
+    path.write_bytes(b"original\n")
+    before = _live((path,))
+
+    path.write_bytes(b"modified\n")
+    after_write = _live((path,))
+    assert after_write[path][0] != before[path][0]
+
+    retained = tmp_path / "retained.jsonl"
+    path.rename(retained)
+    path.write_bytes(before[path][0])
+    after_replacement = _live((path,))
+    assert after_replacement[path][0] == before[path][0]
+    assert after_replacement[path][1] != before[path][1]
+
+
+def test_live_snapshot_detects_nanosecond_timestamp_drift(tmp_path: Path) -> None:
+    path = tmp_path / "evidence.jsonl"
+    path.write_bytes(b"unchanged\n")
+    before = _live((path,))
+    original_stat = path.lstat()
+    requested_mtime_ns = original_stat.st_mtime_ns + 1_000_000_001
+
+    os.utime(path, ns=(original_stat.st_atime_ns, requested_mtime_ns))
+    changed_stat = path.lstat()
+    assert changed_stat.st_mtime_ns != original_stat.st_mtime_ns
+
+    after = _live((path,))
+    assert after[path][0] == before[path][0]
+    assert after[path][1] != before[path][1]
+
+
+def test_live_snapshot_refuses_replacement_during_read(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / "evidence.jsonl"
+    path.write_bytes(b"before\n")
+    retained = tmp_path / "retained.jsonl"
+    read_bytes = Path.read_bytes
+
+    def replace_during_read(candidate: Path) -> bytes:
+        content = read_bytes(candidate)
+        if candidate == path:
+            candidate.rename(retained)
+            candidate.write_bytes(b"after\n")
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", replace_during_read)
+    with pytest.raises(AssertionError, match="changed while evidence snapshot was read"):
+        _live((path,))
 
 
 @pytest.mark.parametrize("module,public,private,error_type", _INTERFACES)

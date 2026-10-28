@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,6 +11,7 @@ import pytest
 from nanobot.agent.context import TranscriptInput
 from nanobot.agent.goal_permission import goal_mutation_allowed, goal_mutation_permission
 from nanobot.agent.loop import AgentLoop, _TurnExecutionOptions
+from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.context import RequestContext
 from nanobot.agent.turn import (
     DeliveryTarget,
@@ -35,6 +37,8 @@ from nanobot.runtime_context import (
     public_history_message,
     webui_quote_runtime_context,
 )
+from nanobot.security.folder_grants import FolderGrantStore
+from nanobot.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
 from nanobot.session.goal_state import GOAL_STATE_KEY
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.progress_events import output_events
@@ -374,6 +378,106 @@ async def test_runtime_context_provider_runs_once_across_tool_iterations(tmp_pat
     assert provider_calls == 1
     for call in provider.chat_with_retry.await_args_list:
         assert "frozen context" in str(call.kwargs["messages"])
+
+
+@pytest.mark.asyncio
+async def test_real_loader_selects_granted_project_before_relative_read_in_same_runner_turn(
+    tmp_path, admitted_async,
+):
+    from nanobot.security.folder_grants import FolderGrantStore
+
+    home_provider = MagicMock()
+    home_provider.get_default_model.return_value = "test-model"
+    home_provider.generation = GenerationSettings()
+    home_provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content="switching and reading",
+            tool_calls=[
+                ToolCallRequest(
+                    id="select-beta",
+                    name="select_workspace",
+                    arguments={"action": "select", "path": str(tmp_path / "project-beta")},
+                ),
+                ToolCallRequest(
+                    id="read-beta",
+                    name="read_file",
+                    arguments={"path": "marker.txt"},
+                ),
+            ],
+            usage=None,
+        ),
+        LLMResponse(content="finished", tool_calls=[], usage=None),
+    ])
+    loop = await _make_loop(
+        tmp_path,
+        admitted_async,
+        home_provider,
+    )
+    project = tmp_path / "project-beta"
+    project.mkdir()
+    marker = project / "marker.txt"
+    marker.write_text("BETA_SAME_RUN_MARKER", encoding="utf-8")
+    store = FolderGrantStore.for_workspace(
+        loop.workspace,
+        sessions_root=loop.sessions.sessions_root,
+    )
+    store.upsert(
+        {"path": str(project), "file_access": "read_only", "commands": False},
+        expected_revision=0,
+    )
+
+    result = await _execute_inbound(
+        loop,
+        InboundMessage(
+            channel="websocket",
+            sender_id="user",
+            chat_id="chat-beta",
+            content="Read marker.txt in the authorized project.",
+        ),
+    )
+
+    assert result is not None and result.content == "finished"
+    assert home_provider.chat_with_retry.await_count == 2
+    second_messages = home_provider.chat_with_retry.await_args_list[1].kwargs["messages"]
+    assert "BETA_SAME_RUN_MARKER" in str(second_messages)
+    metadata = loop.sessions.read_session_metadata("websocket:chat-beta")
+    assert metadata is not None
+    assert metadata["metadata"]["workspace_scope"]["project_path"] == str(project.resolve())
+    assert loop.context.memory.workspace == loop.workspace
+
+
+@pytest.mark.asyncio
+async def test_live_managed_activation_retains_missing_persisted_project(tmp_path, admitted_async):
+    loop = await _make_loop(tmp_path, admitted_async)
+    project = tmp_path / "persisted-project"
+    project.mkdir()
+    grants = FolderGrantStore.for_workspace(
+        loop.workspace,
+        sessions_root=loop.sessions.sessions_root,
+    )
+    session = loop.sessions.get_or_create("websocket:missing-persisted-project")
+
+    # AgentLoop is constructed in legacy mode. The first grant activates the
+    # durable managed policy after construction, as it does in a live session.
+    grants.upsert(
+        {"path": str(project), "file_access": "read_only", "commands": False},
+        expected_revision=0,
+    )
+    session.metadata[WORKSPACE_SCOPE_METADATA_KEY] = {
+        "project_path": str(project),
+        "access_mode": "restricted",
+    }
+    project.rmdir()
+
+    resolved = loop.workspace_scopes.for_turn(
+        channel="websocket",
+        message_metadata=None,
+        session_metadata=session.metadata,
+    )
+
+    assert resolved.project_path == project.resolve()
+    assert resolved.access_mode == "restricted"
+    assert not resolved.project_path.is_dir()
 
 
 @pytest.mark.asyncio
@@ -836,3 +940,85 @@ async def test_legacy_subagent_adapter_announces_max_iteration_fallback(tmp_path
     assert not spec.finalize_on_max_iterations
     provider.chat_with_retry.assert_not_awaited()
     await mgr.close()
+
+
+@pytest.mark.asyncio
+async def test_stale_websocket_registry_rechecks_managed_host_capability(
+    tmp_path, admitted_async,
+):
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
+
+    async def chat_with_retry(**kwargs):
+        _ = kwargs
+        entered.set()
+        await release.wait()
+        return LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id="unconfined-browser",
+            name="raw_host_wrapper",
+            arguments={"value": "fixture"},
+        )])
+
+    provider.chat_with_retry = AsyncMock(side_effect=chat_with_retry)
+    loop = await _make_loop(tmp_path, admitted_async, provider)
+
+    class FakeBrowserTool(Tool):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        @property
+        def name(self) -> str:
+            return "raw_host_wrapper"
+
+        @property
+        def description(self) -> str:
+            return "Harmless fake host tool for managed dispatch testing."
+
+        @property
+        def parameters(self) -> dict[str, object]:
+            return {"type": "object", "properties": {}, "required": []}
+
+        async def execute(self, **kwargs: object) -> str:
+            _ = kwargs
+            self.calls += 1
+            return "FAKE_HOST_TOOL_EXECUTED"
+
+    browser = FakeBrowserTool()
+    loop.tools.register(browser)
+    grant_root = loop.workspace / "granted-project"
+    grant_root.mkdir()
+    grants = FolderGrantStore.for_workspace(
+        loop.workspace,
+        sessions_root=loop.sessions.sessions_root,
+    )
+    assert grants.view is loop._fork_dependencies.resource_policy.folder_grants
+
+    pending = asyncio.create_task(_execute_inbound(
+        loop,
+        InboundMessage(
+            channel="websocket",
+            sender_id="user",
+            chat_id="stale-registry",
+            content="open the project in the browser",
+        ),
+    ))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=2)
+        grants.upsert(
+            {"path": str(grant_root), "file_access": "read_only", "commands": False},
+            expected_revision=0,
+        )
+        release.set()
+        result = await asyncio.wait_for(pending, timeout=4)
+    finally:
+        release.set()
+        if not pending.done():
+            pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+
+    assert result is not None
+    assert "managed folder access" in result.content
+    assert browser.calls == 0

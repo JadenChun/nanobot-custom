@@ -10,7 +10,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger
 from websockets.asyncio.server import ServerConnection
@@ -25,6 +25,7 @@ from nanobot.runtime_context import (
 )
 from nanobot.security.workspace_access import (
     WORKSPACE_SCOPE_METADATA_KEY,
+    WorkspaceScope,
     WorkspaceScopeError,
 )
 from nanobot.session.webui_turns import (
@@ -49,9 +50,21 @@ from nanobot.webui.session_identity import is_valid_webui_chat_id, webui_session
 from nanobot.webui.sidebar_state import write_webui_sidebar_state
 from nanobot.webui.temporary_chats import TemporaryChatError
 from nanobot.webui.transcription_ws import webui_transcription_event
+from nanobot.workspace_access_recovery import FolderAccessRequest, WorkspaceScopePayload
+
+if TYPE_CHECKING:
+    from nanobot.security.desktop_permissions import WorkspacePermissionProjection
 
 _WEBUI_REQUEST_CACHE_TTL_S = 5 * 60.0
 _WEBUI_REQUEST_CACHE_MAX = 256
+_PREPARE_FULL_ACTION = "workspace.access.prepare_full"
+_SOURCE_BOUND_PERMISSION_ACTIONS = frozenset({
+    "workspace.access.allow_once",
+    "workspace.access.cancel",
+    "workspace.access.continue",
+    "workspace.access.mode.set",
+    "workspace.access.resolve",
+})
 
 
 @dataclass(frozen=True)
@@ -59,6 +72,8 @@ class WebUIRequestResult:
     result: Any = None
     status: int | None = None
     message: str | None = None
+    workspace_scope: Any = None
+    workspace_permissions: Any = None
 
 
 @dataclass
@@ -66,6 +81,7 @@ class WebUIRequestOperation:
     action: str
     payload_digest: bytes
     task: asyncio.Task[WebUIRequestResult]
+    source_binding: dict[str, object] | None = None
     completed_at: float | None = None
 
 
@@ -114,6 +130,8 @@ class WebUICommandTransport(Protocol):
         is_dm: bool,
         session_key: str | None,
         require_existing_session: bool,
+        workspace_scope: WorkspaceScope,
+        permission_reference: object | None = None,
     ) -> None: ...
 
     async def send_session_updated(
@@ -121,6 +139,9 @@ class WebUICommandTransport(Protocol):
         chat_id: str,
         *,
         scope: str | None = None,
+        workspace_scope: WorkspaceScopePayload | None = None,
+        workspace_access_request: FolderAccessRequest | None = None,
+        workspace_permissions: WorkspacePermissionProjection | None = None,
     ) -> None: ...
 
 
@@ -151,7 +172,10 @@ class WebUICommandRouter:
         self.request_locks: dict[ServerConnection, asyncio.Lock] = {}
 
     def workspace_controls_available(self, connection: ServerConnection) -> bool:
-        return self._http_router.workspace_controls_available(connection)
+        return (
+            connection in self._webui_connections
+            and self._http_router.workspace_controls_available(connection)
+        )
 
     async def send_webui_protocol_error(
         self,
@@ -180,7 +204,7 @@ class WebUICommandRouter:
             "session_updated",
             chat_id=fork_id,
             scope="metadata",
-            workspace_scope=scope.payload(),
+            workspace_scope=self._workspaces.scope_payload(scope),
         )
         await self._transport.webui_hydrate(fork_id)
 
@@ -313,7 +337,7 @@ class WebUICommandRouter:
                 "session_updated",
                 chat_id=new_id,
                 scope="metadata",
-                workspace_scope=scope.payload(),
+                workspace_scope=self._workspaces.scope_payload(scope),
             )
             await self._transport.webui_hydrate(new_id)
             return
@@ -442,13 +466,17 @@ class WebUICommandRouter:
             if scope is None:
                 return
             self._workspaces.stage_scope(chat_id, scope)
-            await self._transport.send_session_updated(chat_id, scope="metadata")
+            await self._transport.send_session_updated(
+                chat_id,
+                scope="metadata",
+                workspace_scope=self._workspaces.scope_payload(scope),
+            )
             await self._transport.webui_send_event(
                 connection,
                 "session_updated",
                 chat_id=chat_id,
                 scope="metadata",
-                workspace_scope=scope.payload(),
+                workspace_scope=self._workspaces.scope_payload(scope),
             )
             return
         if command_type == "transcribe_audio":
@@ -588,6 +616,22 @@ class WebUICommandRouter:
         if scope is None:
             return
 
+        permission_reference = None
+        if scope.access_mode == "full":
+            permission_reference = self._workspaces.ingress_full_reference(
+                chat_id,
+                local_ui=self.workspace_controls_available(connection),
+            )
+            if permission_reference is None:
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="workspace_scope_rejected",
+                    reason="full_access_unavailable",
+                    **rejection_fields,
+                )
+                return
+
         if not self._transport.is_allowed(client_id):
             await self._transport.webui_send_event(
                 connection,
@@ -681,6 +725,8 @@ class WebUICommandRouter:
                     if temporary_policy is not None
                     else False
                 ),
+                workspace_scope=scope,
+                permission_reference=permission_reference,
             )
             if temporary_policy is None:
                 self._workspaces.persist_scope(chat_id, scope)
@@ -770,6 +816,48 @@ class WebUICommandRouter:
             )
             return
 
+        authorization = self._http_router.authorize_webui_mutation(
+            connection,
+            action,
+            cast(dict[str, Any], payload),
+        )
+        if authorization is not None:
+            await self.send_webui_response(
+                connection,
+                request_id,
+                status=authorization.status,
+                message=authorization.message,
+            )
+            return
+
+        typed_payload = cast(dict[str, Any], payload)
+        source_binding_captured = False
+        if (
+            action == _PREPARE_FULL_ACTION
+            and self.gateway.session_manager is not None
+            and is_valid_webui_chat_id(typed_payload.get("chat_id"))
+        ):
+            source_binding_captured, source_binding = self._prepare_admission_source_binding(
+                typed_payload,
+            )
+            if not source_binding_captured:
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=409,
+                    message="source_changed",
+                )
+                return
+        else:
+            source_binding = self._permission_source_binding(typed_payload)
+        if (
+            action in _SOURCE_BOUND_PERMISSION_ACTIONS
+            and self.gateway.session_manager is not None
+            and source_binding is None
+        ):
+            await self.send_webui_response(connection, request_id, status=409, message="source_changed")
+            return
+
         payload_digest = hashlib.sha256(
             json.dumps(
                 payload,
@@ -791,18 +879,28 @@ class WebUICommandRouter:
                 message="request_id was already used for a different WebUI mutation",
             )
             return
+        if (
+            operation is not None
+            and action in _SOURCE_BOUND_PERMISSION_ACTIONS
+            and operation.source_binding != source_binding
+        ):
+            await self.send_webui_response(connection, request_id, status=409, message="source_changed")
+            return
         if operation is None:
             operation_task = asyncio.create_task(
                 self.execute_webui_request(
                     connection,
                     action,
-                    cast(dict[str, Any], payload),
+                    typed_payload,
+                    source_binding=source_binding,
+                    source_binding_captured=source_binding_captured,
                 )
             )
             new_operation = WebUIRequestOperation(
                 action=action,
                 payload_digest=payload_digest,
                 task=operation_task,
+                source_binding=source_binding,
             )
             operation = new_operation
             self.request_operations[request_id] = new_operation
@@ -824,7 +922,10 @@ class WebUICommandRouter:
                 connection,
                 request_id,
                 operation.task,
+                action=action,
+                payload=typed_payload,
                 sequence=is_replay,
+                source_binding=operation.source_binding,
             )
         )
         self.request_tasks[key] = delivery_task
@@ -849,6 +950,58 @@ class WebUICommandRouter:
         for _, request_id in completed[:-_WEBUI_REQUEST_CACHE_MAX]:
             self.request_operations.pop(request_id, None)
 
+    def _permission_source_binding(
+        self,
+        payload: dict[str, Any],
+    ) -> dict[str, object] | None:
+        sessions = self.gateway.session_manager
+        chat_id = payload.get("chat_id")
+        if sessions is None or not isinstance(chat_id, str):
+            return None
+        try:
+            key = webui_session_key(chat_id)
+            backend = sessions.source_backend(key)
+            if backend is None:
+                return None
+            state = backend.source.load_source_snapshot(key).state
+            return {
+                "store_identity": state.store_identity,
+                "incarnation": state.incarnation,
+                "generation": state.generation,
+            }
+        except Exception:
+            return None
+
+    def _prepare_admission_source_binding(
+        self,
+        payload: dict[str, Any],
+    ) -> tuple[bool, dict[str, object] | None]:
+        """Capture an existing source, or explicit absence, for one prepare dispatch."""
+        sessions = self.gateway.session_manager
+        chat_id = payload.get("chat_id")
+        if sessions is None or not isinstance(chat_id, str):
+            return False, None
+        try:
+            if not sessions.has_managed_authority:
+                return False, None
+            key = webui_session_key(chat_id)
+            resolved = sessions.resolve_session_mode(key)
+            if resolved.state == "absent":
+                return True, None
+            if resolved.state != "active" or resolved.mode != "canonical":
+                return False, None
+            backend = sessions.source_backend(key)
+            if backend is None:
+                return False, None
+            state = backend.source.load_source_snapshot(key).state
+            return True, {
+                "store_identity": state.store_identity,
+                "incarnation": state.incarnation,
+                "generation": state.generation,
+            }
+        except Exception:
+            return False, None
+
     def discard_request_lock_if_idle(self, connection: ServerConnection) -> None:
         if connection in self._webui_connections:
             return
@@ -862,47 +1015,126 @@ class WebUICommandRouter:
         request_id: str,
         operation_task: asyncio.Task[WebUIRequestResult],
         *,
+        action: str,
+        payload: dict[str, Any],
         sequence: bool = False,
+        source_binding: dict[str, object] | None = None,
     ) -> None:
         try:
             if sequence:
                 lock = self.request_locks.setdefault(connection, asyncio.Lock())
                 async with lock:
                     result = await asyncio.shield(operation_task)
-                    await self.send_webui_response(
-                        connection,
-                        request_id,
-                        result=result.result,
-                        status=result.status,
-                        message=result.message,
+                    await self._deliver_authorized_webui_result(
+                        connection, request_id, action, payload, result, source_binding,
                     )
                 return
             result = await asyncio.shield(operation_task)
-            await self.send_webui_response(
-                connection,
-                request_id,
-                result=result.result,
-                status=result.status,
-                message=result.message,
+            await self._deliver_authorized_webui_result(
+                connection, request_id, action, payload, result, source_binding,
             )
         finally:
             self.request_tasks.pop((connection, request_id), None)
             self.discard_request_lock_if_idle(connection)
+
+    async def _deliver_authorized_webui_result(
+        self,
+        connection: ServerConnection,
+        request_id: str,
+        action: str,
+        payload: dict[str, Any],
+        result: WebUIRequestResult,
+        source_binding: dict[str, object] | None,
+    ) -> None:
+        if connection not in self._webui_connections:
+            await self.send_webui_response(
+                connection,
+                request_id,
+                status=403,
+                message="access_denied",
+            )
+            return
+        if (
+            action in _SOURCE_BOUND_PERMISSION_ACTIONS
+            and self.gateway.session_manager is not None
+            and self._permission_source_binding(payload) != source_binding
+        ):
+            await self.send_webui_response(
+                connection,
+                request_id,
+                status=409,
+                message="source_changed",
+            )
+            return
+        authorization = self._http_router.authorize_webui_mutation(
+            connection,
+            action,
+            payload,
+        )
+        if authorization is not None:
+            await self.send_webui_response(
+                connection,
+                request_id,
+                status=authorization.status,
+                message=authorization.message,
+            )
+            return
+        if action == _PREPARE_FULL_ACTION and result.status is None:
+            failure = self._workspaces.validate_prepare_full_delivery(
+                payload.get("chat_id"),
+                result.result,
+            )
+            if failure is not None:
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=503 if failure == "permission_state_unavailable" else 409,
+                    message=failure,
+                )
+                return
+        await self.send_webui_response(
+            connection,
+            request_id,
+            result=result.result,
+            status=result.status,
+            message=result.message,
+            workspace_scope=result.workspace_scope,
+            workspace_permissions=result.workspace_permissions,
+        )
 
     async def execute_webui_request(
         self,
         connection: ServerConnection,
         action: str,
         payload: dict[str, Any],
+        *,
+        source_binding: dict[str, object] | None = None,
+        source_binding_captured: bool = False,
     ) -> WebUIRequestResult:
         try:
             lock = self.request_locks.setdefault(connection, asyncio.Lock())
             async with lock:
-                response = await self._http_router.dispatch_webui_mutation(
-                    connection,
-                    action,
-                    payload,
-                )
+                if action in _SOURCE_BOUND_PERMISSION_ACTIONS:
+                    response = await self._http_router.dispatch_webui_mutation(
+                        connection,
+                        action,
+                        payload,
+                        expected_source_binding=source_binding,
+                    )
+                elif action == _PREPARE_FULL_ACTION and source_binding_captured:
+                    response = await self._http_router.dispatch_webui_mutation(
+                        connection,
+                        action,
+                        payload,
+                        expected_source_binding=source_binding,
+                        check_expected_source_binding=True,
+                    )
+                else:
+                    response = await self._http_router.dispatch_webui_mutation(
+                        connection,
+                        action,
+                        payload,
+                    )
                 status = response.status_code
                 body = bytes(response.body).decode("utf-8", errors="replace").strip()
                 if 200 <= status < 300:
@@ -919,10 +1151,28 @@ class WebUICommandRouter:
                             state=result,
                         )
                     return WebUIRequestResult(result=result)
-                return WebUIRequestResult(
-                    status=status,
-                    message=body or response.reason_phrase,
-                )
+                if action == "workspace.access.mode.set":
+                    try:
+                        decoded_value: object = json.loads(body)
+                    except json.JSONDecodeError:
+                        decoded_value = None
+                    if isinstance(decoded_value, dict):
+                        decoded = cast(dict[str, object], decoded_value)
+                        error_value = decoded.get("error")
+                        if isinstance(error_value, dict):
+                            error = cast(dict[str, object], error_value)
+                            error_message = error.get("message")
+                            return WebUIRequestResult(
+                                status=status,
+                                message=(
+                                    error_message
+                                    if isinstance(error_message, str)
+                                    else body or response.reason_phrase
+                                ),
+                                workspace_scope=decoded.get("workspace_scope"),
+                                workspace_permissions=decoded.get("workspace_permissions"),
+                            )
+                return WebUIRequestResult(status=status, message=body or response.reason_phrase)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -940,6 +1190,8 @@ class WebUICommandRouter:
         result: Any = None,
         status: int | None = None,
         message: str | None = None,
+        workspace_scope: Any = None,
+        workspace_permissions: Any = None,
     ) -> None:
         if status is None:
             await self._transport.webui_send_event(
@@ -950,15 +1202,20 @@ class WebUICommandRouter:
                 result=result,
             )
             return
+        error: dict[str, Any] = {
+            "status": status,
+            "message": message or "WebUI mutation failed",
+        }
+        if workspace_scope is not None:
+            error["workspace_scope"] = workspace_scope
+        if workspace_permissions is not None:
+            error["workspace_permissions"] = workspace_permissions
         await self._transport.webui_send_event(
             connection,
             "webui_response",
             request_id=request_id,
             ok=False,
-            error={
-                "status": status,
-                "message": message or "WebUI mutation failed",
-            },
+            error=error,
         )
 
     async def close(self) -> None:

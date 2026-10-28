@@ -9,7 +9,21 @@ import i18n from "@/i18n";
 import { CLI_APPS_CHANGED_EVENT } from "@/lib/cli-app-events";
 import type { CanonicalRunSnapshot, StreamError } from "@/lib/nanobot-client";
 import { ClientProvider } from "@/providers/ClientProvider";
-import type { CliAppsPayload, ConnectionStatus, SettingsPayload, UIMessage } from "@/lib/types";
+import type {
+  CliAppsPayload,
+  ConnectionStatus,
+  FolderAccessRequest,
+  SettingsPayload,
+  UIMessage,
+  WorkspacePermissionProjection,
+  WorkspaceScopePayload,
+  WorkspacesPayload,
+} from "@/lib/types";
+import {
+  folderAccessActionResultFixture,
+  folderAccessRequestFixture,
+  folderAccessThreadFixture,
+} from "@/tests/fixtures/folder-access-request";
 
 const HERO_GREETING_PATTERN =
   /What should we work on\?|Where should we start\?|What are we building today\?|What should we tackle together\?/;
@@ -21,7 +35,13 @@ function makeClient() {
   const runtimeModelHandlers = new Set<
     (modelName: string | null, modelPreset?: string | null) => void
   >();
-  const sessionUpdateHandlers = new Set<(chatId: string, scope?: string) => void>();
+  const sessionUpdateHandlers = new Set<(
+    chatId: string,
+    scope?: string,
+    workspaceScope?: WorkspaceScopePayload,
+    accessRequest?: FolderAccessRequest,
+    permissions?: WorkspacePermissionProjection,
+  ) => void>();
   const runStatusHandlers = new Set<(chatId: string, startedAt: number | null) => void>();
   const runStartedAtByChatId = new Map<string, number>();
   const runGenerationByChatId = new Map<string, number>();
@@ -143,7 +163,12 @@ function makeClient() {
         errorHandlers.delete(handler);
       };
     },
-    onSessionUpdate: (handler: (chatId: string, scope?: string) => void) => {
+    onSessionUpdate: (handler: (
+      chatId: string,
+      scope?: string,
+      workspaceScope?: WorkspaceScopePayload,
+      accessRequest?: FolderAccessRequest,
+    ) => void) => {
       sessionUpdateHandlers.add(handler);
       return () => {
         sessionUpdateHandlers.delete(handler);
@@ -182,9 +207,20 @@ function makeClient() {
     _emitRuntimeModelUpdate(modelName: string | null, modelPreset?: string | null) {
       for (const h of runtimeModelHandlers) h(modelName, modelPreset);
     },
-    _emitSessionUpdate(chatId: string, scope?: string) {
-      for (const h of sessionUpdateHandlers) h(chatId, scope);
+    _emitSessionUpdate(
+      chatId: string,
+      scope?: string,
+      workspaceScope?: WorkspaceScopePayload,
+      accessRequest?: FolderAccessRequest,
+      permissions?: WorkspacePermissionProjection,
+    ) {
+      for (const h of sessionUpdateHandlers) h(chatId, scope, workspaceScope, accessRequest, permissions);
     },
+    requestMutation: vi.fn(async <T,>(action: string, payload?: unknown): Promise<T> => {
+      void action;
+      void payload;
+      return {} as T;
+    }),
     sendMessage,
     sendSystemCommand: vi.fn().mockResolvedValue(undefined),
     newChat: vi.fn(),
@@ -259,6 +295,149 @@ function httpJson(body: unknown) {
     ok: true,
     status: 200,
     json: async () => body,
+  };
+}
+
+function managedRecoveryWorkspaces(): WorkspacesPayload {
+  return {
+    schema_version: 2,
+    default_access_mode: "restricted",
+    default_scope: folderAccessActionResultFixture.workspace_scope,
+    managed_access: true,
+    management: { grants_revision: 12, grants: [], repositories: [] },
+    controls: {
+      can_change_project: true,
+      can_use_full_access: false,
+      can_manage_folders: true,
+      can_manage_catalog: true,
+      can_discover_repositories: true,
+    },
+  };
+}
+
+function onceRecoveryFixtures(path = "/projects/freelance", runtimeId = "a".repeat(32)) {
+  const initialScope = folderAccessThreadFixture.workspace_scope!;
+  const initialPermissions: WorkspacePermissionProjection = {
+    version: 1,
+    runtime_id: runtimeId,
+    revision: 1,
+    mode: "restricted",
+    state: "active",
+    can_enable_full: true,
+    full_access_unavailable_reason: null,
+    task_access: null,
+    retirement: null,
+  };
+  const selectedAccess = {
+    policy: "managed" as const,
+    source: "task" as const,
+    grant_root: path,
+    exists: true,
+    read: true,
+    write: false,
+    boundary: "folder" as const,
+    commands: { requested: false, available: false, backend: "none" as const, reason: "not_granted" as const },
+  };
+  const readyRequest: FolderAccessRequest = {
+    ...folderAccessRequestFixture,
+    revision: 2,
+    status: "ready",
+    selected_path: path,
+    selected_access: selectedAccess,
+    can_continue: true,
+    selected_duration: "once",
+    task_access_state: "active",
+  };
+  const readyScope: WorkspaceScopePayload = {
+    ...initialScope,
+    project_path: path,
+    project_name: "freelance",
+    access_mode: "restricted",
+    effective_access: selectedAccess,
+  };
+  const readyPermissions: WorkspacePermissionProjection = {
+    ...initialPermissions,
+    revision: 2,
+    task_access: {
+      task_turn_id: folderAccessRequestFixture.task.turn_id,
+      state: "active",
+      folders: [{ path, file_access: "read_only", commands: false }],
+    },
+  };
+  const onceResult = {
+    workspace_access_request: readyRequest,
+    workspace_scope: readyScope,
+    workspace_permissions: readyPermissions,
+    once_receipt: {
+      version: 1 as const,
+      duration: "once" as const,
+      runtime_id: runtimeId,
+      permission_revision: 2,
+      access_request_id: folderAccessRequestFixture.access_request_id,
+      request_revision: 2,
+      task_turn_id: folderAccessRequestFixture.task.turn_id,
+      submitted_path: path,
+      canonical_path: path,
+      file_access: "read_only" as const,
+      commands: false,
+    },
+  };
+  return { initialScope, initialPermissions, readyRequest, readyScope, readyPermissions, onceResult };
+}
+
+function legacyRecoveryWorkspaces(): WorkspacesPayload {
+  const defaultScope: WorkspaceScopePayload = {
+    project_path: "/agent/home",
+    project_name: "Agent home",
+    access_mode: "restricted",
+    restrict_to_workspace: true,
+    effective_access: {
+      policy: "legacy",
+      source: "agent_home",
+      grant_root: "/agent/home",
+      exists: true,
+      read: true,
+      write: true,
+      boundary: "folder",
+      commands: { requested: false, available: true, backend: "native", reason: null },
+    },
+  };
+  return {
+    schema_version: 2,
+    default_access_mode: "default",
+    default_scope: defaultScope,
+    managed_access: false,
+    management: { grants_revision: 0, grants: [], repositories: [] },
+    controls: {
+      can_change_project: true,
+      can_use_full_access: true,
+      can_manage_folders: true,
+      can_manage_catalog: true,
+      can_discover_repositories: true,
+    },
+  };
+}
+
+function freelanceGrantAcknowledgement(grantsRevision = 13) {
+  return {
+    management: {
+      grants_revision: grantsRevision,
+      grants: [{
+        path: "/projects/freelance",
+        file_access: "read_only" as const,
+        commands: false,
+        exists: true,
+        effective_access: folderAccessActionResultFixture.workspace_access_request.selected_access!,
+      }],
+      repositories: [],
+    },
+    grant_receipt: {
+      submitted_path: "/projects/freelance",
+      canonical_path: "/projects/freelance",
+      file_access: "read_only" as const,
+      commands: false,
+      grants_revision: grantsRevision,
+    },
   };
 }
 
@@ -1338,6 +1517,85 @@ describe("ThreadShell", () => {
     await waitFor(() => {
       expectSendMessageWithTurn(client, "chat-new", "use the selected model");
     });
+  });
+
+  it("keeps a pending Full draft bound to the chat created for it", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup();
+    const client = makeClient();
+    let resolveCreate!: (id: string) => void;
+    const onCreateChat = vi.fn(() => new Promise<string>((resolve) => {
+      resolveCreate = resolve;
+    }));
+    const workspaces = legacyRecoveryWorkspaces();
+    workspaces.controls.permission_v2 = true;
+    const view = (current: ReturnType<typeof session> | null) => wrap(client, (
+      <ThreadShell
+        session={current}
+        title={current ? "Existing chat" : "nanobot"}
+        onToggleSidebar={() => {}}
+        onCreateChat={onCreateChat}
+        workspaceScope={workspaces.default_scope}
+        workspaceControls={workspaces.controls}
+        workspaces={workspaces}
+      />
+    ));
+    const { rerender } = render(view(null));
+    const draft = "private draft for the new Full chat";
+    await user.type(screen.getByLabelText("Message input"), draft);
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Restricted" }));
+    await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
+    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
+
+    await waitFor(() => expect(onCreateChat).toHaveBeenCalledWith(
+      workspaces.default_scope, draft, null, { fullAccess: true },
+    ));
+
+    await act(async () => { rerender(view(session("existing-chat"))); });
+    const existingChatDraft = (screen.getByLabelText("Message input") as HTMLTextAreaElement).value;
+    expect(existingChatDraft).toBe("");
+
+    await act(async () => { resolveCreate("new-full-chat"); });
+    await act(async () => { rerender(view(session("new-full-chat"))); });
+    const createdChatInput = screen.getByLabelText("Message input") as HTMLTextAreaElement;
+    expect(createdChatInput.value).toBe(draft);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+
+    fireEvent.change(createdChatInput, { target: { value: "edited after handoff" } });
+    await act(async () => { rerender(view(session("new-full-chat"))); });
+    expect((screen.getByLabelText("Message input") as HTMLTextAreaElement).value)
+      .toBe("edited after handoff");
+  });
+
+  it("keeps the landing draft when Full chat creation fails", async () => {
+    const user = (await import("@testing-library/user-event")).default.setup();
+    const client = makeClient();
+    const onCreateChat = vi.fn().mockRejectedValue(new Error("creation failed"));
+    const workspaces = legacyRecoveryWorkspaces();
+    workspaces.controls.permission_v2 = true;
+    const view = (current: ReturnType<typeof session> | null) => wrap(client, (
+      <ThreadShell
+        session={current}
+        title={current ? "Existing chat" : "nanobot"}
+        onToggleSidebar={() => {}}
+        onCreateChat={onCreateChat}
+        workspaceScope={workspaces.default_scope}
+        workspaceControls={workspaces.controls}
+        workspaces={workspaces}
+      />
+    ));
+    const { rerender } = render(view(null));
+    const draft = "keep this landing draft";
+    await user.type(screen.getByLabelText("Message input"), draft);
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Restricted" }));
+    await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
+    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Access could not be updated");
+    expect((screen.getByLabelText("Message input") as HTMLTextAreaElement).value).toBe(draft);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+
+    await act(async () => { rerender(view(session("existing-chat"))); });
+    expect((screen.getByLabelText("Message input") as HTMLTextAreaElement).value).toBe("");
   });
 
   it("binds a pending landing message to the chat created for it", async () => {
@@ -3439,6 +3697,1330 @@ describe("ThreadShell", () => {
 
     expect(historyCalls).toBe(1);
     expect(screen.getByRole("img", { name: "answer.png" })).toBe(image);
+  });
+
+  it("waits for the Once HTTP receipt when its projection event arrives first", async () => {
+    const client = makeClient();
+    const initialScope = folderAccessThreadFixture.workspace_scope!;
+    const runtimeId = "a".repeat(32);
+    const path = "/projects/freelance";
+    const initialPermissions: WorkspacePermissionProjection = {
+      version: 1,
+      runtime_id: runtimeId,
+      revision: 1,
+      mode: "restricted",
+      state: "active",
+      can_enable_full: true,
+      full_access_unavailable_reason: null,
+      task_access: null,
+      retirement: null,
+    };
+    const selectedAccess = {
+      policy: "managed" as const,
+      source: "task" as const,
+      grant_root: path,
+      exists: true,
+      read: true,
+      write: false,
+      boundary: "folder" as const,
+      commands: { requested: false, available: false, backend: "none" as const, reason: "not_granted" as const },
+    };
+    const readyRequest: FolderAccessRequest = {
+      ...folderAccessRequestFixture,
+      revision: 2,
+      status: "ready",
+      selected_path: path,
+      selected_access: selectedAccess,
+      can_continue: true,
+      selected_duration: "once",
+      task_access_state: "active",
+    };
+    const readyScope: WorkspaceScopePayload = {
+      ...initialScope,
+      project_path: path,
+      project_name: "freelance",
+      access_mode: "restricted",
+      effective_access: selectedAccess,
+    };
+    const readyPermissions: WorkspacePermissionProjection = {
+      ...initialPermissions,
+      revision: 2,
+      task_access: {
+        task_turn_id: folderAccessRequestFixture.task.turn_id,
+        state: "active",
+        folders: [{ path, file_access: "read_only", commands: false }],
+      },
+    };
+    const onceResult = {
+      workspace_access_request: readyRequest,
+      workspace_scope: readyScope,
+      workspace_permissions: readyPermissions,
+      once_receipt: {
+        version: 1 as const,
+        duration: "once" as const,
+        runtime_id: runtimeId,
+        permission_revision: 2,
+        access_request_id: folderAccessRequestFixture.access_request_id,
+        request_revision: 2,
+        task_turn_id: folderAccessRequestFixture.task.turn_id,
+        submitted_path: path,
+        canonical_path: path,
+        file_access: "read_only" as const,
+        commands: false,
+      },
+    };
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    let releaseOnce: (() => void) | null = null;
+    let onceStarted: (() => void) | null = null;
+    const onceStartedPromise = new Promise<void>((resolve) => { onceStarted = resolve; });
+    const onceResponse = new Promise<void>((resolve) => { releaseOnce = resolve; });
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action !== "workspace.access.allow_once") throw new Error(`Unexpected mutation ${action}`);
+      onceStarted?.();
+      await onceResponse;
+      return onceResult as T;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson({
+          ...folderAccessThreadFixture,
+          workspace_scope: initialScope,
+          workspace_access_request: latestRequest,
+          workspace_permissions: initialPermissions,
+        });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+    const workspaces = managedRecoveryWorkspaces();
+    workspaces.default_scope = initialScope;
+    workspaces.controls.permission_v2 = true;
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        workspaceScope={initialScope}
+        workspaces={workspaces}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), { target: { value: path } });
+    fireEvent.click(screen.getByRole("button", { name: "Allow once and use folder" }));
+    await act(async () => { await onceStartedPromise; });
+
+    latestRequest = readyRequest;
+    act(() => client._emitSessionUpdate("chat-title", "metadata", readyScope, readyRequest, readyPermissions));
+    expect(await screen.findByText("Checking the task status…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Allow once and use folder" })).toBeDisabled();
+
+    await act(async () => {
+      releaseOnce?.();
+      await onceResponse;
+    });
+    const readyHeading = await screen.findByRole("heading", { name: "Ready to continue" });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Continue task" })).toBeEnabled();
+      expect(readyHeading.closest("section")).toHaveAttribute("aria-busy", "false");
+    });
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps an acknowledged Once result ready across duplicate matching events and owning reads", async () => {
+    const client = makeClient();
+    const { initialScope, initialPermissions, readyRequest, readyScope, readyPermissions, onceResult } = onceRecoveryFixtures();
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    let latestScope = initialScope;
+    let latestPermissions = initialPermissions;
+    let deferOwningReads = false;
+    let owningReadCount = 0;
+    let consumedOwningReadCount = 0;
+    const releaseOwningReads: Array<() => void> = [];
+    let resolveOwningReadsStarted: (() => void) | null = null;
+    const owningReadsStarted = new Promise<void>((resolve) => { resolveOwningReadsStarted = resolve; });
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action !== "workspace.access.allow_once") throw new Error(`Unexpected mutation ${action}`);
+      latestRequest = readyRequest;
+      latestScope = readyScope;
+      latestPermissions = readyPermissions;
+      deferOwningReads = true;
+      return onceResult as T;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("websocket%3Achat-title/webui-thread")) {
+        const body = {
+          ...folderAccessThreadFixture,
+          workspace_scope: latestScope,
+          workspace_access_request: latestRequest,
+          workspace_permissions: latestPermissions,
+        };
+        if (deferOwningReads && url.includes("?limit=1&direction=latest")) {
+          const index = owningReadCount++;
+          if (owningReadCount >= 2) resolveOwningReadsStarted?.();
+          if (index < 2) {
+            let release!: (response: ReturnType<typeof httpJson>) => void;
+            const read = new Promise<ReturnType<typeof httpJson>>((resolve) => { release = resolve; });
+            releaseOwningReads[index] = () => release({
+              ok: true,
+              status: 200,
+              json: async () => {
+                consumedOwningReadCount += 1;
+                return body;
+              },
+            });
+            return read;
+          }
+          return httpJson(body);
+        }
+        return httpJson({
+          ...folderAccessThreadFixture,
+          workspace_scope: initialScope,
+          workspace_access_request: folderAccessRequestFixture,
+          workspace_permissions: initialPermissions,
+        });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const workspaces = managedRecoveryWorkspaces();
+    workspaces.default_scope = initialScope;
+    workspaces.controls.permission_v2 = true;
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        workspaceScope={initialScope}
+        workspaces={workspaces}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    const draft = screen.getByLabelText("Message input");
+    fireEvent.change(draft, { target: { value: "Keep this draft while access refreshes" } });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Allow once and use folder" }));
+
+    await act(async () => { await owningReadsStarted; });
+    const pendingHeading = await screen.findByRole("heading", { name: "Task can't continue" });
+    const readySection = pendingHeading.closest("section");
+    expect(readySection).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
+    expect(screen.getByLabelText("Message input")).toHaveValue("Keep this draft while access refreshes");
+    await waitFor(() => expect(document.activeElement).toBe(pendingHeading));
+
+    const emitMatchingEvent = () => client._emitSessionUpdate(
+      "chat-title",
+      "metadata",
+      readyScope,
+      readyRequest,
+      readyPermissions,
+    );
+    act(() => {
+      emitMatchingEvent();
+      emitMatchingEvent();
+    });
+    expect(owningReadCount).toBe(2);
+    expect(readySection).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
+
+    await act(async () => { releaseOwningReads[0]?.(); });
+    await waitFor(() => expect(consumedOwningReadCount).toBe(1));
+    expect(readySection).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
+
+    await act(async () => { releaseOwningReads[1]?.(); });
+    await waitFor(() => expect(consumedOwningReadCount).toBe(2));
+    const readyHeading = await screen.findByRole("heading", { name: "Ready to continue" });
+    const settledSection = readyHeading.closest("section");
+    await waitFor(() => {
+      expect(settledSection).toHaveAttribute("aria-busy", "false");
+      expect(screen.getByRole("button", { name: "Continue task" })).toBeEnabled();
+    });
+    expect(document.activeElement).toBe(readyHeading);
+    expect(screen.getByLabelText("Message input")).toHaveValue("Keep this draft while access refreshes");
+
+    act(() => {
+      emitMatchingEvent();
+      emitMatchingEvent();
+    });
+    expect(owningReadCount).toBe(2);
+    expect(readyHeading.closest("section")).toHaveAttribute("aria-busy", "false");
+    expect(screen.getByRole("button", { name: "Continue task" })).toBeEnabled();
+    expect(client.requestMutation).toHaveBeenCalledTimes(1);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not let a Once receipt unlock a different runtime during owning reads", async () => {
+    const client = makeClient();
+    const { initialScope, initialPermissions, readyRequest, readyScope, readyPermissions, onceResult } = onceRecoveryFixtures();
+    const changedPermissions: WorkspacePermissionProjection = {
+      ...readyPermissions,
+      runtime_id: "b".repeat(32),
+      revision: 3,
+      task_access: null,
+    };
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    let latestScope = initialScope;
+    let latestPermissions = initialPermissions;
+    let deferOwningReads = false;
+    let owningReadCount = 0;
+    let consumedDeferredReads = 0;
+    const releaseDeferredReads: Array<() => void> = [];
+    let resolveOwningReadsStarted: (() => void) | null = null;
+    const owningReadsStarted = new Promise<void>((resolve) => { resolveOwningReadsStarted = resolve; });
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action !== "workspace.access.allow_once") throw new Error(`Unexpected mutation ${action}`);
+      latestRequest = readyRequest;
+      latestScope = readyScope;
+      latestPermissions = readyPermissions;
+      deferOwningReads = true;
+      return onceResult as T;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("websocket%3Achat-title/webui-thread")) {
+        const body = {
+          ...folderAccessThreadFixture,
+          workspace_scope: latestScope,
+          workspace_access_request: latestRequest,
+          workspace_permissions: latestPermissions,
+        };
+        if (deferOwningReads && url.includes("?limit=1&direction=latest")) {
+          const index = owningReadCount++;
+          if (owningReadCount >= 2) resolveOwningReadsStarted?.();
+          if (index < 2) {
+            let release!: (response: ReturnType<typeof httpJson>) => void;
+            const read = new Promise<ReturnType<typeof httpJson>>((resolve) => { release = resolve; });
+            releaseDeferredReads[index] = () => release({
+              ok: true,
+              status: 200,
+              json: async () => {
+                consumedDeferredReads += 1;
+                return body;
+              },
+            });
+            return read;
+          }
+        }
+        return httpJson(body);
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const workspaces = managedRecoveryWorkspaces();
+    workspaces.default_scope = initialScope;
+    workspaces.controls.permission_v2 = true;
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        workspaceScope={initialScope}
+        workspaces={workspaces}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Allow once and use folder" }));
+    await act(async () => { await owningReadsStarted; });
+
+    latestPermissions = changedPermissions;
+    act(() => client._emitSessionUpdate(
+      "chat-title",
+      "metadata",
+      readyScope,
+      readyRequest,
+      changedPermissions,
+    ));
+    expect(await screen.findByRole("heading", { name: "Task can't continue" })).toBeInTheDocument();
+    expect(await screen.findByText(
+      "One-time access is unavailable until Nanobot confirms current restricted access.",
+    )).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
+
+    await act(async () => { releaseDeferredReads[0]?.(); });
+    await waitFor(() => expect(consumedDeferredReads).toBe(1));
+    await act(async () => { releaseDeferredReads[1]?.(); });
+    await waitFor(() => expect(consumedDeferredReads).toBe(2));
+
+    expect(screen.getByText(
+      "One-time access is unavailable until Nanobot confirms current restricted access.",
+    )).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
+    expect(client.requestMutation).toHaveBeenCalledTimes(1);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("accepts the matching atomic folder-resolve scope and request event before its HTTP acknowledgement", async () => {
+    const client = makeClient();
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    const readyResult = folderAccessActionResultFixture;
+    const initialScope = managedRecoveryWorkspaces().default_scope;
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action === "workspace.grant.upsert") {
+        return freelanceGrantAcknowledgement() as T;
+      }
+      if (action === "workspace.access.resolve") {
+        latestRequest = readyResult.workspace_access_request;
+        client._emitSessionUpdate(
+          "chat-title",
+          "metadata",
+          readyResult.workspace_scope,
+          readyResult.workspace_access_request,
+        );
+        return readyResult as T;
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson({
+          ...folderAccessThreadFixture,
+          workspace_access_request: latestRequest,
+        });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={initialScope}
+        workspaces={managedRecoveryWorkspaces()}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
+
+    const readyHeading = await screen.findByRole("heading", { name: "Ready to continue" });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Continue task" })).toBeEnabled();
+      expect(readyHeading.closest("section")).toHaveAttribute("aria-busy", "false");
+    });
+    expect(screen.getAllByText("Read only · Commands off").length).toBeGreaterThan(0);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { kind: "symlink alias", inputPath: "/projects/freelance-alias", eventBeforeResponse: true },
+    { kind: "home shortcut", inputPath: "~/projects/freelance", eventBeforeResponse: false },
+    { kind: "normalized spelling", inputPath: "/projects//freelance/", eventBeforeResponse: true },
+    { kind: "canonical control", inputPath: "/projects/freelance", eventBeforeResponse: false },
+  ])("uses the exact grant acknowledgement for a $kind input", async ({ inputPath, eventBeforeResponse }) => {
+    const client = makeClient();
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    const readyResult = folderAccessActionResultFixture;
+    const initialScope = folderAccessThreadFixture.workspace_scope!;
+    const resolvePayloads: unknown[] = [];
+    client.requestMutation.mockImplementation(async <T,>(action: string, payload?: unknown): Promise<T> => {
+      if (action === "workspace.grant.upsert") {
+        return {
+          management: {
+            grants_revision: 13,
+            grants: [{
+              path: "/projects/freelance",
+              file_access: "read_only",
+              commands: false,
+              exists: true,
+              effective_access: readyResult.workspace_access_request.selected_access,
+            }],
+            repositories: [],
+          },
+          grant_receipt: {
+            submitted_path: inputPath,
+            canonical_path: "/projects/freelance",
+            file_access: "read_only",
+            commands: false,
+            grants_revision: 13,
+          },
+        } as T;
+      }
+      if (action === "workspace.access.resolve") {
+        resolvePayloads.push(payload);
+        if (eventBeforeResponse) {
+          latestRequest = readyResult.workspace_access_request;
+          client._emitSessionUpdate(
+            "chat-title",
+            "metadata",
+            readyResult.workspace_scope,
+            readyResult.workspace_access_request,
+          );
+        }
+        return readyResult as T;
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson({ ...folderAccessThreadFixture, workspace_access_request: latestRequest });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={initialScope}
+        workspaces={managedRecoveryWorkspaces()}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: inputPath },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
+
+    const readyHeading = await screen.findByRole("heading", { name: "Ready to continue" });
+    if (!eventBeforeResponse) {
+      latestRequest = readyResult.workspace_access_request;
+      act(() => client._emitSessionUpdate(
+        "chat-title",
+        "metadata",
+        readyResult.workspace_scope,
+        readyResult.workspace_access_request,
+      ));
+    }
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Continue task" })).toBeEnabled();
+      expect(readyHeading.closest("section")).toHaveAttribute("aria-busy", "false");
+    });
+    expect(resolvePayloads).toEqual([expect.objectContaining({ path: "/projects/freelance" })]);
+    expect(screen.getAllByText("Read only · Commands off").length).toBeGreaterThan(0);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("uses a stable no-op alias receipt with multiple existing grants", async () => {
+    const client = makeClient();
+    const readyResult = folderAccessActionResultFixture;
+    const access = readyResult.workspace_access_request.selected_access!;
+    const workspaces = managedRecoveryWorkspaces();
+    const existingGrants = ["/projects/freelance", "/projects/beta"].map((path) => ({
+      path,
+      file_access: "read_only" as const,
+      commands: false,
+      exists: true,
+      effective_access: access,
+    }));
+    workspaces.management = {
+      grants_revision: 1,
+      grants: existingGrants,
+      repositories: [],
+    };
+    const resolvePayloads: unknown[] = [];
+    client.requestMutation.mockImplementation(async <T,>(action: string, payload?: unknown): Promise<T> => {
+      if (action === "workspace.grant.upsert") {
+        return {
+          management: { grants_revision: 1, grants: existingGrants, repositories: [] },
+          grant_receipt: {
+            submitted_path: "/projects/freelance-alias",
+            canonical_path: "/projects/freelance",
+            file_access: "read_only",
+            commands: false,
+            grants_revision: 1,
+          },
+        } as T;
+      }
+      if (action === "workspace.access.resolve") {
+        resolvePayloads.push(payload);
+        return readyResult as T;
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson(folderAccessThreadFixture);
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: workspaces.default_scope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={workspaces.default_scope}
+        workspaces={workspaces}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance-alias" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
+
+    await screen.findByRole("heading", { name: "Ready to continue" });
+    expect(resolvePayloads).toEqual([expect.objectContaining({
+      path: "/projects/freelance",
+      expected_grants_revision: 1,
+    })]);
+  });
+
+  it("keeps an alias grant tied to its no-op receipt when a same-capability grant races", async () => {
+    const client = makeClient();
+    const access = folderAccessActionResultFixture.workspace_access_request.selected_access!;
+    const workspaces = managedRecoveryWorkspaces();
+    const initialGrant = {
+      path: "/projects/freelance",
+      file_access: "read_only" as const,
+      commands: false,
+      exists: true,
+      effective_access: access,
+    };
+    workspaces.management = { grants_revision: 1, grants: [initialGrant], repositories: [] };
+    let resolvePayload: unknown;
+    client.requestMutation.mockImplementation(async <T,>(action: string, payload?: unknown): Promise<T> => {
+      if (action === "workspace.grant.upsert") {
+        return {
+          management: {
+            grants_revision: 2,
+            grants: [initialGrant, { ...initialGrant, path: "/projects/beta" }],
+            repositories: [],
+          },
+          grant_receipt: {
+            submitted_path: "/projects/freelance-alias",
+            canonical_path: "/projects/freelance",
+            file_access: "read_only",
+            commands: false,
+            grants_revision: 1,
+          },
+        } as T;
+      }
+      if (action === "workspace.access.resolve") {
+        resolvePayload = payload;
+        throw new ApiError(409, "folder access changed");
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson(folderAccessThreadFixture);
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: workspaces.default_scope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={workspaces.default_scope}
+        workspaces={workspaces}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance-alias" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
+
+    expect(await screen.findByText(
+      "Folder access was saved, but this task is still waiting for you to use the folder.",
+    )).toBeInTheDocument();
+    expect(resolvePayload).toMatchObject({ path: "/projects/freelance", expected_grants_revision: 1 });
+    expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
+  });
+
+  it("does not resolve when the grant acknowledgement cannot identify the canonical folder", async () => {
+    const client = makeClient();
+    const initialScope = folderAccessThreadFixture.workspace_scope!;
+    const resolveCalls: string[] = [];
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action === "workspace.grant.upsert") {
+        return {
+          management: {
+            grants_revision: 13,
+            grants: [
+              {
+                path: "/projects/unrelated-a",
+                file_access: "read_only",
+                commands: false,
+                exists: true,
+                effective_access: folderAccessActionResultFixture.workspace_access_request.selected_access,
+              },
+              {
+                path: "/projects/unrelated-b",
+                file_access: "read_only",
+                commands: false,
+                exists: true,
+                effective_access: folderAccessActionResultFixture.workspace_access_request.selected_access,
+              },
+            ],
+            repositories: [],
+          },
+        } as T;
+      }
+      if (action === "workspace.access.resolve") {
+        resolveCalls.push(action);
+        return folderAccessActionResultFixture as T;
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson(folderAccessThreadFixture);
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={initialScope}
+        workspaces={managedRecoveryWorkspaces()}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance-alias" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
+
+    expect(await screen.findByText(
+      "Nanobot could not confirm which folder this task should use. Refresh the task before trying again.",
+    )).toBeInTheDocument();
+    expect(screen.getByText(
+      "Folder access was saved, but this task is still waiting for you to use the folder.",
+    )).toBeInTheDocument();
+    expect(resolveCalls).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
+  });
+
+  it("does not accept an unrelated path in a Ready event after a canonical grant acknowledgement", async () => {
+    const client = makeClient();
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    const initialScope = folderAccessThreadFixture.workspace_scope!;
+    const readyResult = folderAccessActionResultFixture;
+    const unrelatedAccess = {
+      ...readyResult.workspace_access_request.selected_access!,
+      grant_root: "/projects/unrelated",
+    };
+    const unrelatedReadyResult = {
+      workspace_access_request: {
+        ...readyResult.workspace_access_request,
+        selected_path: "/projects/unrelated",
+        selected_access: unrelatedAccess,
+      },
+      workspace_scope: {
+        ...readyResult.workspace_scope,
+        project_path: "/projects/unrelated",
+        project_name: "unrelated",
+        effective_access: unrelatedAccess,
+      },
+    };
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action === "workspace.grant.upsert") {
+        return {
+          management: {
+            grants_revision: 13,
+            grants: [{
+              path: "/projects/freelance",
+              file_access: "read_only",
+              commands: false,
+              exists: true,
+              effective_access: readyResult.workspace_access_request.selected_access,
+            }],
+            repositories: [],
+          },
+          grant_receipt: {
+            submitted_path: "/projects/freelance-alias",
+            canonical_path: "/projects/freelance",
+            file_access: "read_only",
+            commands: false,
+            grants_revision: 13,
+          },
+        } as T;
+      }
+      if (action === "workspace.access.resolve") {
+        latestRequest = unrelatedReadyResult.workspace_access_request;
+        client._emitSessionUpdate(
+          "chat-title",
+          "metadata",
+          unrelatedReadyResult.workspace_scope,
+          unrelatedReadyResult.workspace_access_request,
+        );
+        return unrelatedReadyResult as T;
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson({ ...folderAccessThreadFixture, workspace_access_request: latestRequest });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={initialScope}
+        workspaces={managedRecoveryWorkspaces()}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance-alias" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
+
+    await waitFor(() => expect(screen.getByText("Checking the task status…")).toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps a newer user message ahead of an in-flight folder resolve", async () => {
+    const client = makeClient();
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    const initialScope = managedRecoveryWorkspaces().default_scope;
+    const readyResult = folderAccessActionResultFixture;
+    let releaseResolve: ((result: typeof folderAccessActionResultFixture) => void) | null = null;
+    let resolveStarted: (() => void) | null = null;
+    const resolveWaiting = new Promise<void>((resolve) => { resolveStarted = resolve; });
+    const resolveResult = new Promise<typeof folderAccessActionResultFixture>((resolve) => {
+      releaseResolve = resolve;
+    });
+    const workspaces = managedRecoveryWorkspaces();
+    workspaces.management = {
+      ...workspaces.management!,
+      repositories: [{
+        name: "freelance",
+        path: "/projects/freelance",
+        purpose: "Current work",
+        kind: "project",
+        knowledge_repos: [],
+        auto_sync: false,
+        sync_paths: [],
+        exists: true,
+        effective_access: readyResult.workspace_access_request.selected_access!,
+      }],
+    };
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action === "workspace.access.resolve") {
+        resolveStarted?.();
+        return await resolveResult as T;
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson({ ...folderAccessThreadFixture, workspace_access_request: latestRequest });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={initialScope}
+        workspaces={workspaces}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Use an allowed project" }), {
+      target: { value: "/projects/freelance" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Use allowed folder" }));
+    await act(async () => { await resolveWaiting; });
+
+    const input = await screen.findByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "Start a different task" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    expect(client.sendMessage).toHaveBeenCalledOnce();
+
+    latestRequest = readyResult.workspace_access_request;
+    act(() => client._emitSessionUpdate(
+      "chat-title",
+      "metadata",
+      readyResult.workspace_scope,
+      readyResult.workspace_access_request,
+    ));
+    await act(async () => {
+      releaseResolve?.(readyResult);
+      await resolveResult;
+    });
+
+    const continueButton = screen.queryByRole("button", { name: "Continue task" });
+    if (continueButton) expect(continueButton).toBeDisabled();
+    expect(client.sendMessage).toHaveBeenCalledOnce();
+  });
+
+  it("preserves a reviewed resolve across first-grant capability activation at the same home", async () => {
+    const client = makeClient();
+    const legacyWorkspaces = legacyRecoveryWorkspaces();
+    const legacyHome = legacyWorkspaces.default_scope;
+    const activatedHome: WorkspaceScopePayload = {
+      ...legacyHome,
+      effective_access: {
+        ...legacyHome.effective_access!,
+        policy: "managed",
+        commands: { requested: false, available: true, backend: "bwrap", reason: null },
+      },
+    };
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    let releaseResolve: ((result: typeof folderAccessActionResultFixture) => void) | null = null;
+    let resolveStarted: (() => void) | null = null;
+    const resolveWaiting = new Promise<void>((resolve) => { resolveStarted = resolve; });
+    const resolveResult = new Promise<typeof folderAccessActionResultFixture>((resolve) => {
+      releaseResolve = resolve;
+    });
+    let releaseFirstRefresh: ((response: ReturnType<typeof httpJson>) => void) | null = null;
+    let firstRefreshStarted: (() => void) | null = null;
+    let firstRefreshFinished: (() => void) | null = null;
+    const refreshStarted = new Promise<void>((resolve) => { firstRefreshStarted = resolve; });
+    const refreshFinished = new Promise<void>((resolve) => { firstRefreshFinished = resolve; });
+    const delayedFirstRefresh = new Promise<ReturnType<typeof httpJson>>((resolve) => {
+      releaseFirstRefresh = resolve;
+    });
+    const readyResult = folderAccessActionResultFixture;
+    let historyReads = 0;
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action === "workspace.grant.upsert") {
+        // The grant has been committed and its follow-up scope event can race
+        // ahead of the grant response reaching the card.
+        client._emitSessionUpdate("chat-title", "metadata", activatedHome);
+        return freelanceGrantAcknowledgement() as T;
+      }
+      if (action === "workspace.access.resolve") {
+        resolveStarted?.();
+        return await resolveResult as T;
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        historyReads += 1;
+        if (historyReads === 2) {
+          firstRefreshStarted?.();
+          const response = await delayedFirstRefresh;
+          firstRefreshFinished?.();
+          return response;
+        }
+        return httpJson({
+          ...folderAccessThreadFixture,
+          workspace_scope: legacyHome,
+          workspace_access_request: latestRequest,
+        });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: legacyHome }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={legacyHome}
+        workspaces={legacyWorkspaces}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
+    await act(async () => { await Promise.all([resolveWaiting, refreshStarted]); });
+
+    // A second capability-only event lands while resolve and the first repair read are pending.
+    act(() => client._emitSessionUpdate("chat-title", "metadata", activatedHome));
+    expect(screen.getByRole("dialog", { name: "Review folder access" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
+    await waitFor(() => expect(historyReads).toBe(3));
+
+    latestRequest = readyResult.workspace_access_request;
+    act(() => client._emitSessionUpdate(
+      "chat-title",
+      "metadata",
+      readyResult.workspace_scope,
+      readyResult.workspace_access_request,
+    ));
+    await act(async () => {
+      releaseResolve?.(readyResult);
+      await resolveResult;
+    });
+    await act(async () => {
+      releaseFirstRefresh?.(httpJson({
+        ...folderAccessThreadFixture,
+        workspace_scope: activatedHome,
+        workspace_access_request: folderAccessRequestFixture,
+      }));
+      await refreshFinished;
+    });
+
+    const readyHeading = await screen.findByRole("heading", { name: "Ready to continue" });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Continue task" })).toBeEnabled();
+      expect(readyHeading.closest("section")).toHaveAttribute("aria-busy", "false");
+    });
+    expect(screen.getAllByText("Read only · Commands off").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("dialog", { name: "Review folder access" })).not.toBeInTheDocument();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps an explicit focus invalidation when a delayed ready event arrives during a resolve", async () => {
+    const client = makeClient();
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    let releaseResolve: ((result: typeof folderAccessActionResultFixture) => void) | null = null;
+    let resolveStarted: (() => void) | null = null;
+    const resolveWaiting = new Promise<void>((resolve) => { resolveStarted = resolve; });
+    const resolveResult = new Promise<typeof folderAccessActionResultFixture>((resolve) => {
+      releaseResolve = resolve;
+    });
+    const readyResult = folderAccessActionResultFixture;
+    const initialScope = managedRecoveryWorkspaces().default_scope;
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action === "workspace.grant.upsert") {
+        return freelanceGrantAcknowledgement() as T;
+      }
+      if (action === "workspace.access.resolve") {
+        resolveStarted?.();
+        return await resolveResult as T;
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson({ ...folderAccessThreadFixture, workspace_access_request: latestRequest });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={initialScope}
+        workspaces={managedRecoveryWorkspaces()}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
+    await act(async () => { await resolveWaiting; });
+
+    const unrelatedScope = {
+      ...initialScope,
+      project_path: "/projects/other",
+      project_name: "other",
+    };
+    const sameHomeCapabilityRefresh: WorkspaceScopePayload = {
+      ...initialScope,
+      effective_access: {
+        ...initialScope.effective_access!,
+        commands: { requested: false, available: true, backend: "bwrap", reason: null },
+      },
+    };
+    // Another pane's event cannot change this shell's acknowledged focus.
+    act(() => client._emitSessionUpdate(
+      "other-chat",
+      "metadata",
+      unrelatedScope,
+      readyResult.workspace_access_request,
+    ));
+    act(() => client._emitSessionUpdate("chat-title", "metadata", unrelatedScope));
+    // A stale return to the earlier canonical focus must not clear the marker.
+    act(() => client._emitSessionUpdate("chat-title", "metadata", initialScope));
+    act(() => client._emitSessionUpdate("chat-title", "metadata", sameHomeCapabilityRefresh));
+    const staleTerminalRequest: FolderAccessRequest = {
+      ...folderAccessRequestFixture,
+      status: "invalidated",
+      unavailable_reason: "focus_changed",
+    };
+    act(() => client._emitSessionUpdate(
+      "chat-title",
+      "metadata",
+      sameHomeCapabilityRefresh,
+      staleTerminalRequest,
+    ));
+    latestRequest = readyResult.workspace_access_request;
+    act(() => client._emitSessionUpdate(
+      "chat-title",
+      "metadata",
+      readyResult.workspace_scope,
+      readyResult.workspace_access_request,
+    ));
+    await waitFor(() => expect(screen.getByText("Checking the task status…")).toBeInTheDocument());
+
+    await act(async () => {
+      releaseResolve?.(readyResult);
+      await resolveResult;
+    });
+
+    const readyHeading = await screen.findByRole("heading", { name: "Ready to continue" });
+    expect(readyHeading.closest("section")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps a same-path access-mode change from accepting a delayed Ready acknowledgement", async () => {
+    const client = makeClient();
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    const initialScope = managedRecoveryWorkspaces().default_scope;
+    const readyResult = folderAccessActionResultFixture;
+    let releaseResolve: ((result: typeof folderAccessActionResultFixture) => void) | null = null;
+    let resolveStarted: (() => void) | null = null;
+    const resolveWaiting = new Promise<void>((resolve) => { resolveStarted = resolve; });
+    const resolveResult = new Promise<typeof folderAccessActionResultFixture>((resolve) => {
+      releaseResolve = resolve;
+    });
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action === "workspace.grant.upsert") {
+        return freelanceGrantAcknowledgement() as T;
+      }
+      if (action === "workspace.access.resolve") {
+        resolveStarted?.();
+        return await resolveResult as T;
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson({ ...folderAccessThreadFixture, workspace_access_request: latestRequest });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={initialScope}
+        workspaces={managedRecoveryWorkspaces()}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
+    await act(async () => { await resolveWaiting; });
+
+    const changedMode = { ...initialScope, access_mode: "full" as const };
+    act(() => client._emitSessionUpdate("chat-title", "metadata", changedMode));
+    latestRequest = readyResult.workspace_access_request;
+    act(() => client._emitSessionUpdate(
+      "chat-title",
+      "metadata",
+      readyResult.workspace_scope,
+      readyResult.workspace_access_request,
+    ));
+    await waitFor(() => expect(screen.getByText("Checking the task status…")).toBeInTheDocument());
+
+    await act(async () => {
+      releaseResolve?.(readyResult);
+      await resolveResult;
+    });
+
+    expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
+    const readyHeading = screen.getByRole("heading", { name: "Ready to continue" });
+    expect(readyHeading.closest("section")).toHaveAttribute("aria-busy", "true");
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps recovery actions disabled when a same-focus capability refresh cannot be verified", async () => {
+    const client = makeClient();
+    const initialScope = managedRecoveryWorkspaces().default_scope;
+    let historyReads = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        historyReads += 1;
+        if (historyReads > 1) {
+          return { ok: false, status: 503, json: async () => ({}) };
+        }
+        return httpJson(folderAccessThreadFixture);
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={initialScope}
+        workspaces={managedRecoveryWorkspaces()}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    const chooseFolder = screen.getByRole("button", { name: "Choose folder" });
+    expect(chooseFolder).toBeEnabled();
+    const reducedAccess: WorkspaceScopePayload = {
+      ...initialScope,
+      effective_access: {
+        ...initialScope.effective_access!,
+        read: false,
+      },
+    };
+    act(() => client._emitSessionUpdate("chat-title", "metadata", reducedAccess));
+
+    expect(await screen.findByText(
+      "Task status could not be refreshed. Actions are disabled until it is checked again.",
+    )).toBeInTheDocument();
+    expect(chooseFolder).toBeDisabled();
+    expect(client.requestMutation).not.toHaveBeenCalled();
+  });
+
+  it("does not reuse an in-flight resolve after the server replaces its task request", async () => {
+    const client = makeClient();
+    let latestRequest: FolderAccessRequest = folderAccessRequestFixture;
+    const initialScope = managedRecoveryWorkspaces().default_scope;
+    const readyResult = folderAccessActionResultFixture;
+    let releaseResolve: ((result: typeof folderAccessActionResultFixture) => void) | null = null;
+    let resolveStarted: (() => void) | null = null;
+    const resolveWaiting = new Promise<void>((resolve) => { resolveStarted = resolve; });
+    const resolveResult = new Promise<typeof folderAccessActionResultFixture>((resolve) => {
+      releaseResolve = resolve;
+    });
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action === "workspace.grant.upsert") {
+        return freelanceGrantAcknowledgement() as T;
+      }
+      if (action === "workspace.access.resolve") {
+        resolveStarted?.();
+        return await resolveResult as T;
+      }
+      throw new Error(`Unexpected mutation ${action}`);
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("websocket%3Achat-title/webui-thread")) {
+        return httpJson({ ...folderAccessThreadFixture, workspace_access_request: latestRequest });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    }));
+
+    render(wrap(
+      client,
+      <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: initialScope }}
+        title="Chat chat-title"
+        onToggleSidebar={() => {}}
+        onNewChat={() => {}}
+        workspaceScope={initialScope}
+        workspaces={managedRecoveryWorkspaces()}
+        onRefreshWorkspaces={async () => {}}
+      />,
+    ));
+
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), {
+      target: { value: "/projects/freelance" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save access and use folder" }));
+    await act(async () => { await resolveWaiting; });
+
+    const replacement: FolderAccessRequest = {
+      ...folderAccessRequestFixture,
+      access_request_id: "fedcba9876543210fedcba9876543210",
+      task: { turn_id: "turn-replacement", excerpt: "Review a replacement task." },
+    };
+    latestRequest = replacement;
+    act(() => client._emitSessionUpdate("chat-title", "metadata", undefined, replacement));
+    await waitFor(() => expect(
+      screen.getByText("Review a replacement task."),
+    ).toBeInTheDocument());
+
+    act(() => client._emitSessionUpdate(
+      "chat-title",
+      "metadata",
+      readyResult.workspace_scope,
+      readyResult.workspace_access_request,
+    ));
+    await act(async () => {
+      releaseResolve?.(readyResult);
+      await resolveResult;
+    });
+
+    expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
+    expect(screen.getByText("Review a replacement task.")).toBeInTheDocument();
+    expect(client.sendMessage).not.toHaveBeenCalled();
   });
 
   it("keeps rendered media mounted when the auth token rotates", async () => {

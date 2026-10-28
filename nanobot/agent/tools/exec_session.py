@@ -8,18 +8,29 @@ import uuid
 from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import RequestContext, ToolContext, current_request_session_key
+from nanobot.agent.tools.native_process import NativeProcessHandle
 from nanobot.agent.tools.schema import (
     BooleanSchema,
     IntegerSchema,
     StringSchema,
     tool_parameters_schema,
 )
+from nanobot.security.folder_grants import FolderGrantSnapshot
+from nanobot.security.native_admission import NativeProcessReservation
+
+if TYPE_CHECKING:
+    from nanobot.context_repo.policy import ResourceAccessPolicy
+    from nanobot.security.desktop_permissions import (
+        DesktopPermissionOwner,
+        WorkspacePermissionReference,
+    )
 
 DEFAULT_YIELD_MS = 1000
 MAX_YIELD_MS = 30_000
@@ -138,12 +149,17 @@ class _ExecSession:
         self,
         *,
         session_id: str,
-        process: asyncio.subprocess.Process,
+        process: asyncio.subprocess.Process | NativeProcessHandle,
         command: str,
         cwd: str,
         timeout: int | None,
         owner_session_key: str | None = None,
         process_tree: bool = False,
+        resource_policy: ResourceAccessPolicy | None = None,
+        allow_folder_grants: bool = False,
+        grant_snapshot: FolderGrantSnapshot | None = None,
+        permission_owner: DesktopPermissionOwner | None = None,
+        permission_reference: WorkspacePermissionReference | None = None,
     ) -> None:
         self.session_id = session_id
         self.process = process
@@ -151,6 +167,11 @@ class _ExecSession:
         self.cwd = cwd
         self.owner_session_key = owner_session_key
         self._process_tree = process_tree
+        self._resource_policy = resource_policy
+        self._allow_folder_grants = allow_folder_grants
+        self._grant_snapshot = grant_snapshot
+        self._permission_owner = permission_owner
+        self._permission_reference = permission_reference
         self.started_at = time.monotonic()
         # timeout None/0 means no limit; an infinite deadline is never reached.
         self.deadline = time.monotonic() + timeout if timeout else float("inf")
@@ -161,6 +182,24 @@ class _ExecSession:
         self._timed_out = False
         self._stdout_task = asyncio.create_task(self._read_stream(process.stdout, self._stdout))
         self._stderr_task = asyncio.create_task(self._read_stream(process.stderr, self._stderr))
+    def validate_input_access(self) -> None:
+        permission_owner = self._permission_owner
+        permission_reference = self._permission_reference
+        if permission_owner is not None and permission_reference is not None:
+            if not permission_owner.with_current_reference(permission_reference, lambda: None):
+                raise PermissionError("workspace permission changed after this process started")
+        policy = self._resource_policy
+        if policy is None:
+            return
+        current = policy.folder_grants.snapshot() if policy.folder_grants is not None else None
+        if current != self._grant_snapshot:
+            raise PermissionError("folder access changed after this process started")
+        policy.validate_path(
+            Path(self.cwd),
+            "exec",
+            managed=True,
+            allow_folder_grants=self._allow_folder_grants,
+        )
 
     async def _read_stream(
         self,
@@ -180,11 +219,22 @@ class _ExecSession:
     async def write(self, chars: str) -> str | None:
         if self.process.returncode is not None:
             return "session has already exited"
-        if self.process.stdin is None:
+        stdin = self.process.stdin
+        if stdin is None:
             return "session stdin is not available"
         try:
-            self.process.stdin.write(chars.encode("utf-8"))
-            await self.process.stdin.drain()
+            payload = chars.encode("utf-8")
+            permission_owner = self._permission_owner
+            permission_reference = self._permission_reference
+            if permission_owner is not None and permission_reference is not None:
+                if not permission_owner.with_current_reference(
+                    permission_reference,
+                    lambda: stdin.write(payload),
+                ):
+                    return "workspace permission changed after this process started"
+            else:
+                stdin.write(payload)
+            await stdin.drain()
         except (BrokenPipeError, ConnectionResetError):
             return "session stdin is closed"
         return None
@@ -263,7 +313,9 @@ class _ExecSession:
         from nanobot.agent.tools.shell import ExecTool
 
         try:
-            if self._process_tree:
+            if isinstance(self.process, NativeProcessHandle):
+                await self.process.kill_process_tree()
+            elif self._process_tree:
                 await ExecTool.kill_process_tree(self.process)
             else:
                 await ExecTool._kill_process(self.process)  # pyright: ignore[reportPrivateUsage]
@@ -312,6 +364,7 @@ class ExecSessionManager:
         *,
         command: str,
         cwd: str,
+        logical_cwd: str | None = None,
         env: dict[str, str],
         timeout: int | None,
         shell_program: str | None,
@@ -321,39 +374,63 @@ class ExecSessionManager:
         owner_session_key: str | None = None,
         notify_on_exit: bool = False,
         origin: RequestContext | None = None,
+        native_admission: NativeProcessReservation | None = None,
+        resource_policy: ResourceAccessPolicy | None = None,
+        allow_folder_grants: bool = False,
+        grant_snapshot: FolderGrantSnapshot | None = None,
     ) -> tuple[str, _SessionPoll]:
-        async with self._lock:
-            if self._closed:
-                raise RuntimeError("exec session manager is closed")
-            await self._cleanup_locked()
-            for identity, task in tuple(self._monitors.items()):
-                if task.done():
-                    task.result()
-                    self._monitors.pop(identity)
-            if len(self._sessions) >= self.max_sessions:
-                raise RuntimeError(f"maximum exec sessions reached ({self.max_sessions})")
-            session_id = uuid.uuid4().hex[:12]
-            sink = self._completion_sink if notify_on_exit else None
-            if notify_on_exit:
-                if sink is None or origin is None or not owner_session_key or origin.session_key != owner_session_key:
-                    raise ValueError("background continuation requires an enabled gateway and an owned request")
-                sink.started(session_id, command, cwd, origin)
-            try:
-                process = await self._spawn(command, cwd, env, shell_program, login)
-            except BaseException:
-                if sink is not None:
-                    sink.cancelled(session_id, "spawn_failed")
-                raise
-            session = _ExecSession(
-                session_id=session_id,
-                process=process,
-                command=command,
-                cwd=cwd,
-                timeout=timeout,
-                owner_session_key=owner_session_key,
-                process_tree=True,
-            )
-            self._sessions[session_id] = session
+        ownership_transferred = False
+        effective_logical_cwd = logical_cwd or cwd
+        try:
+            async with self._lock:
+                if self._closed:
+                    raise RuntimeError("exec session manager is closed")
+                await self._cleanup_locked()
+                for identity, task in tuple(self._monitors.items()):
+                    if task.done():
+                        task.result()
+                        self._monitors.pop(identity)
+                if len(self._sessions) >= self.max_sessions:
+                    raise RuntimeError(f"maximum exec sessions reached ({self.max_sessions})")
+                session_id = uuid.uuid4().hex[:12]
+                sink = self._completion_sink if notify_on_exit else None
+                if notify_on_exit:
+                    if sink is None or origin is None or not owner_session_key or origin.session_key != owner_session_key:
+                        raise ValueError("background continuation requires an enabled gateway and an owned request")
+                    sink.started(session_id, command, effective_logical_cwd, origin)
+                try:
+                    process = await self._spawn(
+                        command,
+                        cwd,
+                        env,
+                        shell_program,
+                        login,
+                        native_admission=native_admission,
+                    )
+                except BaseException:
+                    if sink is not None:
+                        sink.cancelled(session_id, "spawn_failed")
+                    raise
+                session = _ExecSession(
+                    session_id=session_id,
+                    process=process,
+                    command=command,
+                    cwd=effective_logical_cwd,
+                    timeout=timeout,
+                    owner_session_key=owner_session_key,
+                    process_tree=True,
+                    resource_policy=resource_policy,
+                    allow_folder_grants=allow_folder_grants,
+                    grant_snapshot=grant_snapshot,
+                    permission_owner=(native_admission.permission_owner if native_admission else None),
+                    permission_reference=(native_admission.permission_reference if native_admission else None),
+                )
+                ownership_transferred = True
+                self._sessions[session_id] = session
+        except BaseException:
+            if native_admission is not None and not ownership_transferred:
+                native_admission.cancel_if_unlaunched()
+            raise
 
         try:
             poll = await session.poll(yield_time_ms, max_output_chars)
@@ -419,11 +496,13 @@ class ExecSessionManager:
             raise KeyError(session_id)
 
         if chars:
+            self._validate_managed_session_input(session)
             error = await session.write(chars)
             if error:
                 raise RuntimeError(error)
         stdin_closed = False
         if close_stdin:
+            self._validate_managed_session_input(session)
             error = await session.close_stdin()
             if error:
                 raise RuntimeError(error)
@@ -442,6 +521,13 @@ class ExecSessionManager:
             async with self._lock:
                 self._sessions.pop(session_id, None)
         return poll
+
+    @staticmethod
+    def _validate_managed_session_input(session: _ExecSession) -> None:
+        try:
+            session.validate_input_access()
+        except (OSError, PermissionError, RuntimeError, ValueError) as exc:
+            raise RuntimeError(f"process input is blocked by current workspace access: {exc}") from exc
 
     async def list(self, *, owner_session_key: str | None = None) -> list[ExecSessionInfo]:
         async with self._lock:
@@ -545,13 +631,16 @@ class ExecSessionManager:
         env: dict[str, str],
         shell_program: str | None,
         login: bool,
-    ) -> asyncio.subprocess.Process:
+        *,
+        native_admission: NativeProcessReservation | None = None,
+    ) -> asyncio.subprocess.Process | NativeProcessHandle:
         from nanobot.agent.tools.shell import ExecTool
 
         return await ExecTool._spawn(  # pyright: ignore[reportPrivateUsage]
             command, cwd, env, shell_program, login,
             stdin=asyncio.subprocess.PIPE,
             process_tree=True,
+            native_admission=native_admission,
         )
 
 

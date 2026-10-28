@@ -35,6 +35,7 @@ from nanobot.channels.contracts import (
 )
 from nanobot.channels.registry import channel_default_enabled
 from nanobot.config.schema import Config
+from nanobot.context_repo import ContextRepoManager
 from nanobot.utils.restart import (
     RestartNotice,
     consume_restart_notice_from_env,
@@ -227,6 +228,11 @@ class ChannelManager:
                 static_dist_path=static_path,
                 workspace_path=workspace,
                 default_restrict_to_workspace=self.config.tools.restrict_to_workspace,
+                configured_exec_sandbox=bool(self.config.tools.exec.sandbox),
+                context_manager=ContextRepoManager.from_config(
+                    context_paths=self.config.agents.defaults.context_paths,
+                    context_repos=self.config.agents.defaults.context_repos,
+                ),
                 config_path=self._config_path,
                 disabled_skills=set(self.config.agents.defaults.disabled_skills),
                 runtime_model_name=self._webui_runtime_model_name,

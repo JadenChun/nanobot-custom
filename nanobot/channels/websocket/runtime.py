@@ -23,11 +23,13 @@ from websockets.http11 import Request as WsRequest
 
 from nanobot.bus.events import (
     OUTBOUND_META_AGENT_UI,
+    InboundMessage,
     OutboundMessage,
 )
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Base
+from nanobot.security.desktop_permissions import attach_full_permission_to_message
 from nanobot.session.webui_turns import (
     clear_websocket_turn_if_current,
     mark_websocket_turn_transcript_persistence_failed,
@@ -50,12 +52,15 @@ from nanobot.webui.metadata import (
 )
 from nanobot.webui.outbound_projection import WebUIOutboundProjector
 from nanobot.webui.outbound_wire import WebUIWirePayload, WebUIWirePersistence
-from nanobot.webui.session_identity import is_valid_webui_chat_id
+from nanobot.webui.session_identity import is_valid_webui_chat_id, webui_session_key
 from nanobot.webui.transcript import WEBUI_TRANSCRIPT_INCOMPLETE_KEY
 from nanobot.webui.websocket_logging import websockets_server_logger
 
 if TYPE_CHECKING:
     from nanobot.bus.outbound_events import ProgressEvent
+    from nanobot.security.desktop_permissions import WorkspacePermissionProjection
+    from nanobot.security.workspace_access import WorkspaceScope
+    from nanobot.workspace_access_recovery import FolderAccessRequest, WorkspaceScopePayload
 
 # Plain HTTP WebUI routes also run through websockets.process_request.
 _WEBUI_HTTP_OPEN_TIMEOUT_S = 360.0
@@ -454,17 +459,29 @@ class WebSocketChannel(BaseChannel):
         is_dm: bool,
         session_key: str | None,
         require_existing_session: bool,
+        workspace_scope: WorkspaceScope,
+        permission_reference: object | None = None,
     ) -> None:
-        await self._handle_message(
-            sender_id=sender_id,
-            chat_id=chat_id,
+        _ = is_dm
+        if not self.is_allowed(sender_id):
+            return
+        message_metadata = dict(metadata)
+        if self.supports_streaming:
+            message_metadata["_wants_stream"] = True
+        message = InboundMessage(
+            channel=self.name,
+            sender_id=str(sender_id),
+            chat_id=str(chat_id),
             content=content,
-            media=media,
-            metadata=metadata,
-            is_dm=is_dm,
-            session_key=session_key,
+            media=media or [],
+            metadata=message_metadata,
+            session_key_override=session_key,
             require_existing_session=require_existing_session,
+            workspace_scope=workspace_scope,
         )
+        if permission_reference is not None:
+            attach_full_permission_to_message(message, permission_reference)
+        await self.bus.publish_inbound(message)
 
     def _attach(self, connection: ServerConnection, chat_id: str) -> None:
         """Idempotently subscribe *connection* to *chat_id*."""
@@ -1165,6 +1182,17 @@ class WebSocketChannel(BaseChannel):
     async def send(self, msg: OutboundMessage) -> None:
         await self._outbound.send(msg)
 
+    def _media_workspace(self, chat_id: str) -> tuple[Path, bool]:
+        """Resolve acknowledged chat focus and its temporary-chat grant ceiling."""
+        if not self._temporary_chats.should_persist_transcript(chat_id):
+            scope = self.gateway.workspaces.restricted_default_scope()
+            return scope.project_path, False
+        session_key = webui_session_key(chat_id)
+        scope = self.gateway.workspaces.scope_for_session_key(session_key)
+        return scope.project_path, self.gateway.workspaces.folder_grants_allowed_for_session(
+            session_key,
+        )
+
     async def send_projected_message(
         self,
         msg: OutboundMessage,
@@ -1173,7 +1201,12 @@ class WebSocketChannel(BaseChannel):
         """Serialize one ordinary outbound message selected by the projector."""
         conns = list(self._subs.get(msg.chat_id, ()))
         text = msg.content
-        wire_text = self._media.rewrite_local_markdown_images(text)
+        workspace_path, allow_folder_grants = self._media_workspace(msg.chat_id)
+        wire_text = self._media.rewrite_local_markdown_images(
+            text,
+            workspace_path=workspace_path,
+            allow_folder_grants=allow_folder_grants,
+        )
         payload: dict[str, Any] = {
             "event": "message",
             "chat_id": msg.chat_id,
@@ -1186,7 +1219,10 @@ class WebSocketChannel(BaseChannel):
             payload["media"] = msg.media
             urls: list[dict[str, str]] = []
             for entry in msg.media:
-                signed = self._media.sign_or_stage_media_path(Path(entry))
+                signed = self._media.sign_or_stage_media_path(
+                    Path(entry),
+                    allow_folder_grants=allow_folder_grants,
+                )
                 if signed is not None:
                     urls.append(signed)
             if urls:
@@ -1342,7 +1378,12 @@ class WebSocketChannel(BaseChannel):
             if delta:
                 buffered.append(delta)
             full_text = "".join(buffered)
-            rewritten = self._media.rewrite_local_markdown_images(full_text)
+            workspace_path, allow_folder_grants = self._media_workspace(chat_id)
+            rewritten = self._media.rewrite_local_markdown_images(
+                full_text,
+                workspace_path=workspace_path,
+                allow_folder_grants=allow_folder_grants,
+            )
             completed_text = rewritten
             if delta or rewritten != full_text:
                 body["text"] = rewritten
@@ -1456,7 +1497,15 @@ class WebSocketChannel(BaseChannel):
         for connection in conns:
             await self._safe_send_to(connection, raw, label=" goal_status ")
 
-    async def send_session_updated(self, chat_id: str, *, scope: str | None = None) -> None:
+    async def send_session_updated(
+        self,
+        chat_id: str,
+        *,
+        scope: str | None = None,
+        workspace_scope: WorkspaceScopePayload | None = None,
+        workspace_access_request: FolderAccessRequest | None = None,
+        workspace_permissions: WorkspacePermissionProjection | None = None,
+    ) -> None:
         """Notify WebUI clients that a session row should refresh."""
         conns = list(self._conn_chats)
         if not conns:
@@ -1464,9 +1513,32 @@ class WebSocketChannel(BaseChannel):
         body: dict[str, Any] = {"event": "session_updated", "chat_id": chat_id}
         if scope:
             body["scope"] = scope
+        if workspace_scope is not None:
+            body["workspace_scope"] = workspace_scope
         raw = json.dumps(body, ensure_ascii=False)
+        from nanobot.webui.http_utils import is_local_browser_request, is_loopback_host
+
         for connection in conns:
-            await self._safe_send_to(connection, raw, label=" session_updated ")
+            outgoing = raw
+            if (
+                (workspace_access_request is not None or workspace_permissions is not None)
+                and chat_id in self._conn_chats.get(connection, set())
+                and connection in self._webui_connections
+                and is_loopback_host(self.config.host)
+            ):
+                request = getattr(connection, "request", None)
+                headers = getattr(request, "headers", None)
+                if headers is not None and is_local_browser_request(connection, headers):
+                    private_fields: dict[str, Any] = {}
+                    if workspace_access_request is not None:
+                        private_fields["workspace_access_request"] = workspace_access_request
+                    if workspace_permissions is not None:
+                        private_fields["workspace_permissions"] = workspace_permissions
+                    outgoing = json.dumps(
+                        {**body, **private_fields},
+                        ensure_ascii=False,
+                    )
+            await self._safe_send_to(connection, outgoing, label=" session_updated ")
 
     async def send_user_input(
         self,

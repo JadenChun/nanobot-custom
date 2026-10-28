@@ -13,7 +13,7 @@ from nanobot.agent.tools import ToolResult
 from nanobot.agent.tools.execution import execute_tool_calls
 from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
-from tests.agent.runner_helpers import make_run_spec
+from tests.agent.runner_helpers import install_test_tool_dispatch, make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 
@@ -63,6 +63,7 @@ async def test_tool_execution_does_not_duplicate_existing_retry_hint():
     tools = SimpleNamespace(
         execute=AsyncMock(return_value=ToolResult.error("Error: boom" + retry_hint)),
     )
+    install_test_tool_dispatch(tools)
 
     results, events = await execute_tool_calls(
         tools,
@@ -89,6 +90,7 @@ async def test_tool_execution_propagates_control_flow_exceptions(control_error: 
         get_definitions=lambda: [],
         execute=execute,
     )
+    install_test_tool_dispatch(tools)
     with pytest.raises(control_error):
         await execute_tool_calls(
             tools,

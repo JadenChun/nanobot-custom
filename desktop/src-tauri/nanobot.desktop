@@ -2,7 +2,7 @@
 Categories={{categories}}
 Comment={{comment}}
 Exec={{exec}}
-StartupWMClass=Nanobot-desktop
+StartupWMClass=nanobot-desktop
 Icon={{icon}}
 Name={{name}}
 Terminal=false

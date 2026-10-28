@@ -98,6 +98,7 @@
       "channels": "Kênh",
       "runtime": "Hệ thống",
       "advanced": "Bảo mật",
+      "folders": "Thư mục và dự án",
       "cliApps": "Ứng dụng CLI",
       "mcp": "MCP",
       "apps": "Ứng dụng",
@@ -159,6 +160,7 @@
       "workspacePath": "Không gian làm việc mặc định",
       "localServiceAccess": "Dịch vụ cục bộ",
       "webuiDefaultAccess": "Quyền mặc định",
+      "managedFolderAccess": "Quyền truy cập thư mục được quản lý",
       "currentModel": "Cấu hình hiện tại",
       "brandLogos": "Logo thương hiệu",
       "browserNotifications": "Thông báo tác vụ",
@@ -200,6 +202,7 @@
       "timezone": "Dùng cho lịch và các câu trả lời có yếu tố thời gian.",
       "localServiceAccess": "Cho phép lệnh shell có quyền truy cập đầy đủ truy cập các dịch vụ cục bộ.",
       "webuiDefaultAccess": "Dùng cho chat web không có quyền riêng theo dự án.",
+      "managedFolderAccess": "Quyền thư mục kiểm soát quyền truy cập tệp và lệnh. Tùy chọn toàn quyền không thể thêm hoặc bỏ qua quyền được cấp.",
       "securityManagedControls": "Việc tải nội dung web luôn bảo vệ các dịch vụ cục bộ, riêng tư và siêu dữ liệu. Tính an toàn của các kênh cốt lõi vẫn do config.json quản lý.",
       "currentModel": "Dùng cho các phản hồi mới.",
       "selectedModelProvider": "Được đặt bởi mô hình đã chọn.",
@@ -240,7 +243,7 @@
       "collapsedDiff": "Khác biệt đã thu gọn",
       "on": "Bật",
       "off": "Tắt",
-      "defaultPermission": "Quyền mặc định",
+      "defaultPermission": "Bị hạn chế",
       "fullAccess": "Toàn quyền",
       "configured": "Đã cấu hình",
       "notConfigured": "Chưa cấu hình",
@@ -1363,7 +1366,7 @@
         "accessAria": "Chế độ truy cập không gian làm việc",
         "projectAria": "Chọn dự án",
         "projectPlaceholder": "Chọn dự án",
-        "default": "Quyền mặc định",
+        "default": "Bị hạn chế",
         "defaultShort": "Mặc định",
         "full": "Toàn quyền truy cập",
         "fullShort": "Toàn quyền"
@@ -1554,11 +1557,58 @@
   },
   "workspace": {
     "dialog": {
-      "defaultProject": "Không gian làm việc mặc định",
+      "defaultProject": "Dùng thư mục chính của tác nhân",
       "manual": "Dán đường dẫn",
       "manualPlaceholder": "/Users/name/project",
-      "usePath": "Dùng đường dẫn",
+      "usePath": "Dùng thư mục",
       "absolutePathRequired": "Nhập đường dẫn thư mục tuyệt đối trên máy này."
+    },
+    "recovery": {
+      "durationTitle": "Quyền truy cập này nên kéo dài bao lâu?",
+      "allowOnce": "Cho phép một lần",
+      "allowOnceDescription": "Dành cho tác vụ này, bao gồm các bước Tiếp tục. Không lưu cho tác vụ trong tương lai.",
+      "alwaysAllow": "Luôn cho phép",
+      "alwaysAllowDescription": "Được lưu để dùng sau. Quản lý trong Thư mục và dự án.",
+      "allowOnceAndUse": "Cho phép một lần và dùng thư mục",
+      "onceUnavailable": "Quyền truy cập một lần chưa khả dụng cho đến khi Nanobot xác nhận quyền hạn chế hiện tại.",
+      "onceUnavailableFull": "Không thể dùng quyền truy cập thư mục một lần khi quyền đầy đủ đang hoạt động.",
+      "permissionRefreshFailed": "Không thể kiểm tra quyền truy cập hiện tại. Hãy làm mới trước khi cho phép tác vụ này.",
+      "permissionRefreshing": "Đang kiểm tra quyền truy cập hiện tại…",
+      "onceNotActive": "Quyền truy cập một lần không còn hoạt động. Hãy xem lại thư mục trước khi tiếp tục.",
+      "onceRetiringActive": "Một lệnh vẫn đang chạy với quyền trước đó. Hãy đợi lệnh kết thúc hoặc dừng lệnh rồi thử lại.",
+      "onceRetiringUnknown": "Nanobot chưa thể xác nhận các lệnh trước đó đã kết thúc hay chưa. Thay đổi quyền truy cập đang chờ xử lý.",
+      "onceRetiringFinished": "Công việc trước đó đã kết thúc. Quyền truy cập một lần vẫn đang được kết thúc.",
+      "onceExpired": "Quyền truy cập một lần đã kết thúc. Hãy xem lại thư mục trước khi tiếp tục.",
+      "readyOnce": "Đã cho phép truy cập cho tác vụ này. Sẵn sàng tiếp tục với {{path}}.",
+      "readyAlways": "Đã lưu quyền truy cập. Sẵn sàng tiếp tục với {{path}}."
+    },
+    "permissionV2": {
+      "actionFailed": "Không thể cập nhật quyền truy cập. Hãy làm mới cuộc trò chuyện này trước khi thử lại.",
+      "confirmTitle": "Bật quyền truy cập đầy đủ?",
+      "confirmDescription": "Nanobot có thể đọc, thay đổi tệp và chạy lệnh bên ngoài thư mục đã chọn theo quyền tài khoản hệ điều hành của bạn. Thư mục và ngữ cảnh Working in hiện tại vẫn được giữ nguyên. Cuộc trò chuyện mới bắt đầu ở chế độ Hạn chế.",
+      "enableFull": "Bật quyền truy cập đầy đủ",
+      "fullEnding": "Quyền truy cập đầy đủ đang kết thúc",
+      "fullIndicator": "Quyền truy cập đầy đủ",
+      "fullReach": "Tệp và lệnh trên thiết bị này theo quyền tài khoản hệ điều hành của bạn.",
+      "retiringActive": "Một lệnh vẫn đang chạy với quyền trước đó. Hãy đợi lệnh kết thúc hoặc dừng lệnh rồi thử lại.",
+      "retiringUnknown": "Nanobot chưa thể xác nhận các lệnh trước đó đã kết thúc hay chưa. Thay đổi quyền truy cập đang chờ xử lý.",
+      "retiringFinished": "Công việc trước đó đã kết thúc. Hãy thử lại để xác nhận quyền Hạn chế.",
+      "retryRestricted": "Thử lại để quay về Hạn chế",
+      "returnRestricted": "Quay về Hạn chế",
+      "sessionRequired": "Gửi tin nhắn để tạo cuộc trò chuyện này trước khi bật quyền truy cập đầy đủ.",
+      "unavailable": "Quyền truy cập không khả dụng",
+      "legacyUnavailable": "Cổng này không báo cáo quyền truy cập hiện tại.",
+      "unavailableReasons": {
+        "controls_unavailable": "Quyền truy cập đầy đủ không khả dụng với các điều khiển cục bộ hiện tại.",
+        "session_required": "Gửi tin nhắn để tạo cuộc trò chuyện này trước khi bật quyền truy cập đầy đủ.",
+        "configured_sandbox": "Quyền truy cập đầy đủ không khả dụng khi đang cấu hình giới hạn lệnh.",
+        "supervisor_unavailable": "Quyền truy cập đầy đủ không khả dụng vì Nanobot không thể giám sát lệnh một cách an toàn.",
+        "permission_state_unavailable": "Quyền truy cập hiện tại không khả dụng. Hãy làm mới cuộc trò chuyện này trước khi thử lại.",
+        "permission_retiring": "Không thể bật quyền truy cập đầy đủ khi công việc trước đó đang kết thúc."
+      }
+    },
+    "management": {
+      "commandsAvailable": "Lệnh khả dụng"
     }
   }
 }

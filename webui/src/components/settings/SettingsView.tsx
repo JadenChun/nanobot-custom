@@ -1,7 +1,7 @@
 import { SettingsPage } from "@/components/settings/SettingsPage";
 import type { SettingsSectionKey } from "@/components/settings/contracts";
 import { useSettingsController } from "@/components/settings/useSettingsController";
-import type { SettingsPayload, SkillSummary } from "@/lib/types";
+import type { SettingsPayload, SkillSummary, WorkspacesPayload } from "@/lib/types";
 
 export type { SettingsSectionKey } from "@/components/settings/contracts";
 
@@ -21,6 +21,9 @@ interface SettingsViewProps {
   onNativeEngineRestart?: () => Promise<string>;
   isRestarting?: boolean;
   hostChromeInset?: boolean;
+  workspaces?: WorkspacesPayload | null;
+  onRefreshWorkspaces?: () => Promise<void>;
+  onPickWorkspaceFolder?: () => Promise<string | null>;
 }
 
 export function SettingsView({
@@ -39,6 +42,9 @@ export function SettingsView({
   onNativeEngineRestart,
   isRestarting = false,
   hostChromeInset = false,
+  workspaces = null,
+  onRefreshWorkspaces = async () => {},
+  onPickWorkspaceFolder,
 }: SettingsViewProps) {
   const controller = useSettingsController({
     initialSection,
@@ -61,6 +67,9 @@ export function SettingsView({
       onLogout={onLogout}
       isRestarting={isRestarting}
       hostChromeInset={hostChromeInset}
+      workspaces={workspaces}
+      onRefreshWorkspaces={onRefreshWorkspaces}
+      onPickWorkspaceFolder={onPickWorkspaceFolder}
     />
   );
 }

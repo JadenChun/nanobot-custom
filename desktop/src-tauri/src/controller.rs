@@ -15,7 +15,7 @@ use serde::Serialize;
 use tauri::{
     menu::MenuItem,
     webview::WebviewWindowBuilder,
-    AppHandle, Manager, WebviewUrl, Wry,
+    AppHandle, LogicalSize, Manager, WebviewUrl, Wry,
 };
 use url::{Host, Url};
 
@@ -106,6 +106,7 @@ pub struct Shared {
     bus_verified: bool,
     _host_guard: Option<HostGuard>,
     tray_status_item: Mutex<Option<MenuItem<Wry>>>,
+    setup_url: Mutex<Option<Url>>,
     app: AppHandle<Wry>,
 }
 
@@ -123,9 +124,20 @@ impl Shared {
             bus_verified,
             _host_guard: host_guard,
             tray_status_item: Mutex::new(None),
+            setup_url: Mutex::new(None),
             app,
         });
         (shared, receiver)
+    }
+
+    pub fn set_setup_url(&self, url: Url) {
+        if let Ok(mut guard) = self.setup_url.lock() {
+            *guard = Some(url);
+        }
+    }
+
+    pub fn setup_url(&self) -> Option<Url> {
+        self.setup_url.lock().ok().and_then(|guard| guard.clone())
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -462,11 +474,7 @@ impl Controller {
         }
         let preferences = normalize_selection(preferences)?;
         if self.preferences.as_ref().is_some_and(|old| old != &preferences) {
-            if let Some(chat) = self.app.get_webview_window("chat") {
-                if !native::destroy_chat_after_hide(&self.app, &self.shared, &chat) {
-                    return Err("chat_cleanup_unconfirmed".to_owned());
-                }
-            }
+            native::return_to_setup(&self.app, &self.shared);
             self.chat_origin = None;
         }
         if let Some(mut adapter) = self.adapter.take() {
@@ -635,7 +643,7 @@ impl Controller {
                 .map_err(|error| error.0)?;
             if status.state == "running" {
                 self.apply_lifecycle(status);
-                if self.app.get_webview_window("chat").is_none() {
+                if !self.chat_window_on_origin() {
                     self.show_chat()?;
                 }
                 return Ok(());
@@ -716,6 +724,16 @@ impl Controller {
         self.open_bootstrapped_chat(bootstrap)
     }
 
+    fn chat_window_on_origin(&self) -> bool {
+        let Some(origin) = self.chat_origin.as_ref() else {
+            return false;
+        };
+        self.app
+            .get_webview_window("chat")
+            .and_then(|window| window.url().ok())
+            .is_some_and(|url| url.origin() == origin.origin())
+    }
+
     fn open_bootstrapped_chat(&mut self, bootstrap: BootstrapResult) -> Result<(), String> {
         if self.shared.quit_requested.load(Ordering::Acquire) {
             return Err("operation_busy".to_owned());
@@ -745,12 +763,29 @@ impl Controller {
         {
             return Err("gateway_origin_mismatch".to_owned());
         }
+        let setup_url = self.shared.setup_url();
+        let mut reuse_existing = None;
         if let Some(existing) = self.app.get_webview_window("chat") {
-            if self.chat_origin.as_ref().is_some_and(|old| old.origin() == origin.origin()) {
-                native::focus_existing_window(&self.app);
+            let current = existing.url().ok();
+            let on_chat_origin = self
+                .chat_origin
+                .as_ref()
+                .is_some_and(|old| old.origin() == origin.origin())
+                && current
+                    .as_ref()
+                    .is_some_and(|url| url.origin() == origin.origin());
+            if on_chat_origin {
+                let _ = existing.unminimize();
+                let _ = existing.show();
+                let _ = existing.set_focus();
                 return Ok(());
             }
-            if !native::destroy_chat_after_hide(&self.app, &self.shared, &existing) {
+            let on_setup = setup_url
+                .as_ref()
+                .is_some_and(|setup| current.as_ref().is_some_and(|url| url == setup));
+            if on_setup || self.chat_origin.is_none() {
+                reuse_existing = Some(existing);
+            } else if !native::destroy_chat_after_hide(&self.app, &self.shared, &existing) {
                 return Err("chat_cleanup_unconfirmed".to_owned());
             }
         }
@@ -762,67 +797,84 @@ impl Controller {
         let secret = url::form_urlencoded::byte_serialize(bootstrap.secret.as_bytes()).collect::<String>();
         let mut chat_url = origin.clone();
         chat_url.set_fragment(Some(&format!("/?bootstrapSecret={secret}")));
-        let app = self.app.clone();
         let origin_for_policy = origin.clone();
         let target_origin = origin.clone();
         let (sender, receiver) = mpsc::sync_channel(1);
-        let app_for_create = self.app.clone();
-        let shared_for_event = self.shared.clone();
-        let _ = self.app.run_on_main_thread(move || {
-            let builder = WebviewWindowBuilder::new(
-                &app_for_create,
-                "chat",
-                WebviewUrl::External(chat_url),
-            )
-            .title("Nanobot")
-            .inner_size(1120.0, 780.0)
-            .data_directory(data_directory)
-            .on_navigation({
-                let selected = target_origin.clone();
-                move |target| native::navigation_allowed(target, &selected)
-            })
-            .on_new_window(|_url, _features| native::new_window_response());
-            let chat = match builder.build() {
-                Ok(chat) => chat,
-                Err(_) => {
+        let setup_for_reuse = setup_url.clone();
+        if let Some(existing) = reuse_existing {
+            let app_for_reuse = self.app.clone();
+            let _ = self.app.run_on_main_thread(move || {
+                let _ = existing.set_title("Nanobot");
+                let _ = existing.set_size(LogicalSize::new(1120.0, 780.0));
+                let _ = native::set_window_icon(&existing);
+                if native::install_navigation_policy(
+                    &existing,
+                    origin_for_policy,
+                    setup_for_reuse,
+                    app_for_reuse.clone(),
+                )
+                .is_err()
+                {
+                    let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
+                    return;
+                }
+                if existing.navigate(chat_url).is_err() {
                     let _ = sender.send(Err("chat_window_unavailable".to_owned()));
                     return;
                 }
-            };
-            let _ = native::set_window_icon(&chat);
-            if native::install_navigation_policy(&chat, origin_for_policy, app.clone()).is_err() {
-                let _ = chat.destroy();
-                let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
-                return;
-            }
-            let app_for_close = app.clone();
-            let shared_for_close = shared_for_event.clone();
-            let close_hide_in_progress = Arc::new(AtomicBool::new(false));
-            chat.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    if let Some(window) = app_for_close.get_webview_window("chat") {
-                        native::hide_chat(
-                            &app_for_close,
-                            &shared_for_close,
-                            &window,
-                            close_hide_in_progress.clone(),
-                        );
-                    }
-                }
+                let _ = existing.unminimize();
+                let _ = existing.show();
+                let _ = existing.set_focus();
+                let _ = sender.send(Ok(()));
             });
-            let _ = sender.send(Ok(()));
-        });
+        } else {
+            let app_for_create = self.app.clone();
+            let shared_for_event = self.shared.clone();
+            let setup_for_policy = setup_url.clone();
+            let _ = self.app.run_on_main_thread(move || {
+                let builder = WebviewWindowBuilder::new(
+                    &app_for_create,
+                    "chat",
+                    WebviewUrl::External(chat_url),
+                )
+                .title("Nanobot")
+                .inner_size(1120.0, 780.0)
+                .data_directory(data_directory)
+                .on_navigation({
+                    let selected = target_origin.clone();
+                    let setup = setup_for_policy.clone();
+                    move |target| native::navigation_allowed(target, &selected, setup.as_ref())
+                })
+                .on_new_window(|_url, _features| native::new_window_response());
+                let chat = match builder.build() {
+                    Ok(chat) => chat,
+                    Err(_) => {
+                        let _ = sender.send(Err("chat_window_unavailable".to_owned()));
+                        return;
+                    }
+                };
+                let _ = native::set_window_icon(&chat);
+                if native::install_navigation_policy(
+                    &chat,
+                    origin_for_policy,
+                    setup_for_policy,
+                    app_for_create.clone(),
+                )
+                .is_err()
+                {
+                    let _ = chat.destroy();
+                    let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
+                    return;
+                }
+                native::install_hide_on_close(&app_for_create, shared_for_event, &chat);
+                let _ = sender.send(Ok(()));
+            });
+        }
         receiver
             .recv_timeout(Duration::from_secs(5))
             .map_err(|_| "chat_window_unavailable".to_owned())??;
         self.chat_origin = Some(origin);
         self.publish("running", "gateway_ready");
-        if self.shared.tray_available() {
-            if let Some(setup) = self.app.get_webview_window("setup") {
-                let _ = setup.hide();
-            }
-        }
         Ok(())
     }
 
@@ -935,11 +987,6 @@ impl Controller {
         if self.is_selection_locked() {
             return Err("gateway_conflict".to_owned());
         }
-        if let Some(chat) = self.app.get_webview_window("chat") {
-            if !native::destroy_chat_after_hide(&self.app, &self.shared, &chat) {
-                return Err("chat_cleanup_unconfirmed".to_owned());
-            }
-        }
         preferences::remove().map_err(str::to_owned)?;
         if let Some(mut adapter) = self.adapter.take() {
             adapter.shutdown();
@@ -951,7 +998,7 @@ impl Controller {
         let mut snapshot = Snapshot::empty();
         snapshot.tray_available = self.shared.tray_available();
         self.shared.replace_snapshot(snapshot);
-        native::open_setup(&self.app);
+        native::return_to_setup(&self.app, &self.shared);
         Ok(())
     }
 

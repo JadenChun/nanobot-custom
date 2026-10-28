@@ -36,7 +36,7 @@ from nanobot.agent.tools.mcp import (
     connect_mcp_servers,
     is_read_only_mcp_tool,
 )
-from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
 from nanobot.agent.tools.web import WebFetchTool, WebSearchConfig, WebSearchTool
 from nanobot.agent.turn import DelegationBudget, ToolOutcome, TurnContext
 from nanobot.agent.write_guard import FileLockRegistry, WriteScope
@@ -47,6 +47,7 @@ from nanobot.config.schema import (
 )
 from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
 from nanobot.providers.base import LLMProvider
+from nanobot.security.folder_grants import FolderGrantView
 from nanobot.session.source_projection import RuntimeNode, SourceNode
 from nanobot.session.source_request import SourceTranscript
 from nanobot.utils.llm_runtime import LLMRuntime
@@ -139,6 +140,7 @@ class ForegroundAgentManager:
         runtime: LLMRuntime | None = None,
         crawler_runtime: LLMRuntime | None = None,
         context_window_tokens: int = 120000,
+        folder_grants: FolderGrantView | None = None,
     ) -> None:
         self.provider = provider
         self.workspace = workspace
@@ -161,6 +163,8 @@ class ForegroundAgentManager:
             workspace=workspace,
             context_manager=self.context_manager,
             restrict_to_workspace=restrict_to_workspace,
+            folder_grants=folder_grants,
+            managed_webui_only=folder_grants is not None,
         )
         self.runner = AgentRunner()
         self.crawler_provider = crawler_runtime.provider if crawler_runtime else (crawler_provider or provider)
@@ -317,6 +321,9 @@ class ForegroundAgentManager:
 
         extension_tools = optional_role_tools(profile.role)
         if extension_tools is not None:
+            extension_tools.set_dispatch_guard(
+                ManagedToolDispatchGuard(self.resource_policy.folder_grants),
+            )
             return extension_tools
 
         allowed_dir = self.workspace if self.restrict_to_workspace else None
@@ -356,6 +363,7 @@ class ForegroundAgentManager:
             for tool in self._read_only_mcp_tools.iter_tools():
                 if is_read_only_mcp_tool(tool):
                     tools.register(tool)
+        tools.set_dispatch_guard(ManagedToolDispatchGuard(self.resource_policy.folder_grants))
         return tools
 
     def _read_only_tools(self, role: str = "planner") -> ToolRegistry:
@@ -412,6 +420,7 @@ class ForegroundAgentManager:
             lock_owner=lock_owner,
             allowed_write_scope=list(scopes),
         ))
+        tools.set_dispatch_guard(ManagedToolDispatchGuard(self.resource_policy.folder_grants))
         return tools
 
     @staticmethod

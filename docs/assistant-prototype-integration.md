@@ -56,6 +56,29 @@ A catalog entry does not expand those permissions. Repository metadata is small;
 full knowledge files are read on demand. The legacy configured context adapter
 still loads its configured entrypoints for compatibility.
 
+### Desktop project access
+
+In the WebUI, a regular conversation can focus on another folder from its
+**Working in** control without starting a new conversation or moving its memory
+and runtime away from the configured agent home. The trusted local
+**Folders & projects** manager keeps folder grants separate from the repository
+catalog: a remembered project does not receive access until the user grants
+that folder. Each grant sets file access and command permission independently;
+commands are usable only when the configured confinement is available. A tool
+may update the current conversation's folder focus during a turn. Existing
+knowledge synchronization remains a separate opt-in setting.
+
+When a local regular conversation pauses at a folder boundary, the WebUI keeps
+the task with that conversation and asks the user to choose an already allowed
+folder or explicitly review a new grant. New grants start read-only with
+commands off and persist for the Nanobot instance. Granting access does not
+resume the task or silently change the current focus: the user chooses **Save
+access and use folder**, then explicitly chooses **Continue task** after the
+server confirms the request is ready. The assistant can select an accessible
+workspace through its workspace tool, but the WebUI does not infer permissions
+from natural-language replies. Remote and temporary conversations do not use
+this recovery flow.
+
 ## Explicit gateway settings
 
 All three new gateway integrations are disabled by default. Enabling cron does

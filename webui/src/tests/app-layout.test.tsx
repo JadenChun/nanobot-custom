@@ -21,6 +21,7 @@ const updateUrlSpy = vi.fn();
 const attachSpy = vi.fn();
 const setSidebarStateSpy = vi.fn();
 const requestMutationSpy = vi.fn();
+const setWorkspaceScopeSpy = vi.fn();
 const discardTemporaryChatSpy = vi.fn();
 const newTemporaryChatSpy = vi.fn<() => Promise<string>>();
 const sendMessageSpy = vi.fn();
@@ -260,12 +261,16 @@ vi.mock("@/lib/nanobot-client", async (importOriginal) => {
     };
     getRunStartedAt = () => null;
     getRunTurnId = () => null;
+    getRunGeneration = () => 0;
+    canReconcileCanonicalCompletion = () => false;
+    hasUnsettledRun = () => false;
     getGoalState = () => undefined;
     sendMessage = sendMessageSpy;
     newChat = vi.fn();
     newTemporaryChat = newTemporaryChatSpy;
     attach = attachSpy;
     setSidebarState = setSidebarStateSpy;
+    setWorkspaceScope = setWorkspaceScopeSpy;
     requestMutation = requestMutationSpy;
     discardTemporaryChat = discardTemporaryChatSpy;
     close = vi.fn();
@@ -299,6 +304,7 @@ describe("App layout", () => {
       async (state: SidebarStatePayload) => state,
     );
     requestMutationSpy.mockReset();
+    setWorkspaceScopeSpy.mockReset();
     discardTemporaryChatSpy.mockReset();
     let temporaryChatCounter = 0;
     newTemporaryChatSpy.mockImplementation(async () => (
@@ -766,6 +772,130 @@ describe("App layout", () => {
     expect(screen.queryByText("connection-sensitive message")).not.toBeInTheDocument();
   });
 
+  it("changes folder focus on the current chat and reflects server scope updates", async () => {
+    const homeScope: WorkspaceScopePayload = {
+      project_path: "/agent/home",
+      project_name: "Agent home",
+      access_mode: "restricted",
+      restrict_to_workspace: true,
+      effective_access: {
+        policy: "managed",
+        source: "agent_home",
+        grant_root: null,
+        exists: true,
+        read: true,
+        write: true,
+        commands: { requested: false, available: false, backend: "none", reason: null },
+      },
+    };
+    const alphaScope: WorkspaceScopePayload = {
+      ...homeScope,
+      project_path: "/projects/alpha",
+      project_name: "alpha",
+      effective_access: {
+        ...homeScope.effective_access!,
+        source: "grant",
+        grant_root: "/projects/alpha",
+        write: false,
+      },
+    };
+    const betaScope: WorkspaceScopePayload = {
+      ...homeScope,
+      project_path: "/projects/beta",
+      project_name: "beta",
+      effective_access: {
+        ...alphaScope.effective_access!,
+        grant_root: "/projects/beta",
+        write: true,
+        commands: { requested: true, available: true, backend: "bwrap", reason: null },
+      },
+    };
+    mockSessions = [{
+      key: "websocket:existing-chat",
+      channel: "websocket",
+      chatId: "existing-chat",
+      createdAt: "2026-10-24T10:00:00Z",
+      updatedAt: "2026-10-24T10:00:00Z",
+      title: "Existing topic",
+      preview: "Existing topic",
+      workspaceScope: alphaScope,
+    }];
+    mockFetchRoutes({
+      "/api/workspaces": {
+        schema_version: 2,
+        default_access_mode: "restricted",
+        default_scope: homeScope,
+        agent_home: "/agent/home",
+        managed_access: true,
+        controls: {
+          can_change_project: true,
+          can_use_full_access: false,
+          can_manage_folders: false,
+          can_manage_catalog: false,
+          can_discover_repositories: false,
+        },
+        management: null,
+      },
+    });
+    window.history.replaceState(null, "", "/#/chat/websocket%3Aexisting-chat");
+    render(<App />);
+
+    await waitFor(() => expect(connectSpy).toHaveBeenCalled());
+    act(() => {
+      statusHandlers.forEach((handler) => handler("open"));
+    });
+    const folderControl = await screen.findByRole("button", { name: "Working in: alpha" });
+    const messageInput = screen.getByRole("textbox", { name: "Message Existing topic" });
+    fireEvent.change(messageInput, {
+      target: { value: "keep this draft while switching folders" },
+    });
+    fireEvent.click(folderControl);
+    fireEvent.change(await screen.findByLabelText("Paste path"), {
+      target: { value: "/projects/beta" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
+
+    await waitFor(() => expect(setWorkspaceScopeSpy).toHaveBeenCalledWith("existing-chat", {
+      project_path: "/projects/beta",
+      project_name: "beta",
+      access_mode: "restricted",
+      restrict_to_workspace: true,
+    }));
+    expect(createChatSpy).not.toHaveBeenCalled();
+    expect(messageInput).toHaveValue(
+      "keep this draft while switching folders",
+    );
+
+    act(() => {
+      sessionUpdateHandlers.forEach((handler) => handler("existing-chat", "metadata", betaScope));
+    });
+    expect(await screen.findByRole("button", { name: "Working in: beta" })).toBeInTheDocument();
+    expect(messageInput).toHaveValue(
+      "keep this draft while switching folders",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Working in: beta" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Use agent home/ }));
+    await waitFor(() => expect(setWorkspaceScopeSpy).toHaveBeenLastCalledWith("existing-chat", {
+      project_path: "/agent/home",
+      project_name: "Agent home",
+      access_mode: "restricted",
+      restrict_to_workspace: true,
+    }));
+    act(() => {
+      sessionUpdateHandlers.forEach((handler) => handler("existing-chat", "metadata", homeScope));
+    });
+    expect(await screen.findByRole("button", { name: "Working in: Agent home" })).toBeInTheDocument();
+
+    // A tool-driven session_updated scope change follows the same active-chat update path.
+    act(() => {
+      sessionUpdateHandlers.forEach((handler) => handler("existing-chat", "metadata", alphaScope));
+    });
+    expect(await screen.findByRole("button", { name: "Working in: alpha" })).toBeInTheDocument();
+    expect(createChatSpy).not.toHaveBeenCalled();
+    expect(setWorkspaceScopeSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("uses the restricted default scope without offering project selection", async () => {
     mockFetchRoutes({
       "/api/workspaces": {
@@ -783,7 +913,7 @@ describe("App layout", () => {
     render(<App />);
 
     await waitFor(() => expect(connectSpy).toHaveBeenCalled());
-    expect(await screen.findByRole("button", { name: "Choose project" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Working in: Agent home" })).toBeInTheDocument();
     act(() => {
       sessionUpdateHandlers.forEach((handler) => handler("selected-chat", "metadata", {
         project_path: "/tmp/selected-project",
@@ -794,8 +924,8 @@ describe("App layout", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Temporary chat" }));
 
-    expect(screen.queryByRole("button", { name: "Choose project" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Full Access")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Working in: Agent home" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Full access")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Message input"), {
       target: { value: "temporary project check" },
     });
@@ -831,11 +961,11 @@ describe("App layout", () => {
     render(<App />);
 
     await waitFor(() => expect(connectSpy).toHaveBeenCalled());
-    fireEvent.click(await screen.findByRole("button", { name: "Choose project" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Working in: Agent home" }));
     fireEvent.change(await screen.findByLabelText("Paste path"), {
       target: { value: "C:\\missing-project" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Use Path" }));
+    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
 
     const message = screen.getByLabelText("Message input");
     fireEvent.change(message, { target: { value: "keep this first message" } });
@@ -843,14 +973,14 @@ describe("App layout", () => {
 
     await waitFor(() => expect(createChatSpy).toHaveBeenCalledTimes(1));
     expect(message).toHaveValue("keep this first message");
-    const projectButton = screen.getByRole("button", { name: "Choose project" });
+    const projectButton = screen.getByRole("button", { name: "Working in: Agent home" });
     await waitFor(() => expect(projectButton).toHaveFocus());
     expect(screen.getByRole("alert")).toHaveTextContent(
       "The gateway rejected this project or access mode. Choose an existing project or a different access mode, then try again.",
     );
     fireEvent.click(projectButton);
     const projectPath = await screen.findByLabelText("Paste path");
-    expect(projectPath).toHaveValue("C:\\missing-project");
+    expect(projectPath).toHaveValue("");
     expect(projectPath).toHaveAttribute("aria-invalid", "true");
     expect(projectPath).toHaveFocus();
     expect(screen.getByRole("alert")).toHaveTextContent(

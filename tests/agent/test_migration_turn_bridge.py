@@ -25,6 +25,9 @@ async def test_missing_policy_context_fails_before_runtime_access():
 async def test_loop_forwards_same_context_and_mandatory_policy(tmp_path, monkeypatch, failure, fresh):
     import nanobot.agent.loop as module
     loop = object.__new__(AgentLoop)
+    loop._fork_dependencies = SimpleNamespace(
+        resource_policy=SimpleNamespace(folder_grants=None),
+    )
     loop._sync_subagent_runtime_limits = lambda: None
     loop.workspace_scopes = SimpleNamespace(for_turn=lambda **kwargs: SimpleNamespace(project_path=tmp_path))
     loop.context = SimpleNamespace(build_transcript=lambda *args, **kwargs: None)

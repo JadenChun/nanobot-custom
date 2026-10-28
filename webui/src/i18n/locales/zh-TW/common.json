@@ -98,6 +98,7 @@
       "channels": "通訊管道",
       "runtime": "系統",
       "advanced": "安全",
+      "folders": "資料夾與專案",
       "cliApps": "CLI 應用程式",
       "mcp": "MCP",
       "apps": "應用程式",
@@ -159,6 +160,7 @@
       "workspacePath": "預設工作區",
       "localServiceAccess": "本機服務",
       "webuiDefaultAccess": "預設存取權",
+      "managedFolderAccess": "受管理的資料夾存取",
       "currentModel": "目前設定",
       "brandLogos": "品牌 Logo",
       "browserNotifications": "任務通知",
@@ -200,6 +202,7 @@
       "timezone": "用於排程，以及需要時間資訊的回覆。",
       "localServiceAccess": "允許具有完整存取權的 shell 命令存取 localhost 服務。",
       "webuiDefaultAccess": "用於未指定個別專案權限的 Web 聊天。",
+      "managedFolderAccess": "資料夾授權會控制檔案和命令的存取。「完整存取」預設偏好無法新增或略過授權。",
       "securityManagedControls": "網頁擷取一律會阻擋對本機、私人網路及中繼資料服務的存取。核心通訊管道的安全性仍由 config.json 管理。",
       "currentModel": "用於新的回覆。",
       "selectedModelProvider": "由選取的模型決定。",
@@ -240,7 +243,7 @@
       "collapsedDiff": "摺疊差異",
       "on": "開啟",
       "off": "關閉",
-      "defaultPermission": "預設權限",
+      "defaultPermission": "受限制",
       "fullAccess": "完整存取權",
       "configured": "已設定",
       "notConfigured": "未設定",
@@ -1363,7 +1366,7 @@
         "accessAria": "工作區存取模式",
         "projectAria": "選擇專案",
         "projectPlaceholder": "選擇專案",
-        "default": "預設權限",
+        "default": "受限制",
         "defaultShort": "預設",
         "full": "完整存取權",
         "fullShort": "完整"
@@ -1554,11 +1557,58 @@
   },
   "workspace": {
     "dialog": {
-      "defaultProject": "預設工作區",
+      "defaultProject": "使用代理程式首頁",
       "manual": "貼上路徑",
       "manualPlaceholder": "/Users/name/project",
-      "usePath": "使用路徑",
+      "usePath": "使用資料夾",
       "absolutePathRequired": "請輸入這台機器上的絕對資料夾路徑。"
+    },
+    "recovery": {
+      "durationTitle": "此存取應持續多久？",
+      "allowOnce": "僅允許一次",
+      "allowOnceDescription": "僅適用於此工作，包括繼續執行的步驟。不會儲存供未來工作使用。",
+      "alwaysAllow": "一律允許",
+      "alwaysAllowDescription": "已儲存供日後使用。請在「資料夾與專案」中管理。",
+      "allowOnceAndUse": "允許一次並使用資料夾",
+      "onceUnavailable": "Nanobot 確認目前的受限存取前，無法使用單次存取。",
+      "onceUnavailableFull": "完整存取啟用時，無法使用單次資料夾存取。",
+      "permissionRefreshFailed": "無法檢查目前的存取權限。允許此工作前請先重新整理。",
+      "permissionRefreshing": "正在檢查目前的存取權限…",
+      "onceNotActive": "單次存取已不再啟用。繼續前請檢查資料夾。",
+      "onceRetiringActive": "仍有命令使用先前的權限執行中。請等候命令結束或停止命令後再試一次。",
+      "onceRetiringUnknown": "Nanobot 尚無法確認先前的命令是否已結束。存取變更仍在等候中。",
+      "onceRetiringFinished": "先前的工作已結束。單次存取仍在結束中。",
+      "onceExpired": "單次存取已結束。繼續前請重新檢查資料夾。",
+      "readyOnce": "此工作已允許存取。可以繼續使用 {{path}}。",
+      "readyAlways": "存取權限已儲存。可以繼續使用 {{path}}。"
+    },
+    "permissionV2": {
+      "actionFailed": "無法更新存取權限。請重新整理此聊天後再試一次。",
+      "confirmTitle": "要啟用完整存取嗎？",
+      "confirmDescription": "Nanobot 可依據你的作業系統帳戶權限，在所選資料夾之外讀取和變更檔案及執行命令。Working in 目前的目錄和內容會保持不變。新聊天會以受限模式開始。",
+      "enableFull": "啟用完整存取",
+      "fullEnding": "完整存取正在結束",
+      "fullIndicator": "完整存取",
+      "fullReach": "依據你的作業系統帳戶權限存取此裝置上的檔案和命令。",
+      "retiringActive": "仍有命令使用先前的權限執行中。請等候命令結束或停止命令後再試一次。",
+      "retiringUnknown": "Nanobot 尚無法確認先前的命令是否已結束。存取變更仍在等候中。",
+      "retiringFinished": "先前的工作已結束。請再試一次以確認受限存取。",
+      "retryRestricted": "重試並返回受限模式",
+      "returnRestricted": "返回受限模式",
+      "sessionRequired": "請傳送訊息以建立此聊天，再啟用完整存取。",
+      "unavailable": "存取權限無法使用",
+      "legacyUnavailable": "此閘道未提供目前的存取權限資訊。",
+      "unavailableReasons": {
+        "controls_unavailable": "目前的本機控制不支援完整存取。",
+        "session_required": "請傳送訊息以建立此聊天，再啟用完整存取。",
+        "configured_sandbox": "已設定命令限制，因此無法使用完整存取。",
+        "supervisor_unavailable": "Nanobot 無法安全監督命令，因此無法使用完整存取。",
+        "permission_state_unavailable": "目前的存取權限無法使用。請重新整理此聊天後再試一次。",
+        "permission_retiring": "先前工作結束前無法啟用完整存取。"
+      }
+    },
+    "management": {
+      "commandsAvailable": "命令可用"
     }
   }
 }

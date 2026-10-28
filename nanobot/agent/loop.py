@@ -64,7 +64,11 @@ from nanobot.agent.tools.context import (
 from nanobot.agent.tools.exec_session import ExecCompletionSink, ExecSessionManager
 from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from nanobot.agent.tools.message import capture_message_deliveries
-from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.registry import (
+    MANAGED_WEBUI_TOOL_NAMES,
+    ManagedToolDispatchGuard,
+    ToolRegistry,
+)
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.agent.trace import sanitize_trace
 from nanobot.agent.turn import (
@@ -92,6 +96,7 @@ from nanobot.agent.turn_delivery import TurnRoute as TurnRoute
 from nanobot.agent.turn_hooks import AgentTurnHookSpec, build_agent_turn_hook
 from nanobot.bus.events import INBOUND_META_USER_SHELL, InboundMessage, OutboundMessage
 from nanobot.bus.outbound_events import (
+    SessionUpdatedEvent,
     StreamDeltaEvent,
     StreamedResponseEvent,
     StreamEndEvent,
@@ -119,7 +124,14 @@ from nanobot.runtime_context import (
     resolve_runtime_context,
     runtime_context_blocks_from_metadata,
 )
+from nanobot.security.desktop_permissions import (
+    PermissionRetirementReason,
+    PermissionSourceBinding,
+    copy_full_permission_message_reference,
+    full_permission_from_message,
+)
 from nanobot.security.workspace_access import (
+    WorkspaceScopeError,
     WorkspaceScopeResolver,
     bind_workspace_scope,
     reset_workspace_scope,
@@ -127,7 +139,7 @@ from nanobot.security.workspace_access import (
 from nanobot.session import turn_continuation
 from nanobot.session.automation_turns import automation_history_overrides
 from nanobot.session.busy_inbox import SessionBusyInbox
-from nanobot.session.execution_owner import acquire_execution
+from nanobot.session.execution_owner import ExecutionOwner, acquire_execution
 from nanobot.session.goal_state import (
     goal_state_runtime_lines,
     runner_wall_llm_timeout_s,
@@ -166,6 +178,12 @@ from nanobot.session.summary import (
     session_summary_from_metadata,
 )
 from nanobot.session.turn_writer import SourceInjectionBinding, SourceTurnWriter
+from nanobot.session.workspace_access_continuation import (
+    WorkspaceAccessContinuationReference,
+    WorkspaceAccessContinuationRejectedError,
+    copy_workspace_access_continuation,
+    workspace_access_continuation,
+)
 from nanobot.triggers.local_session_turns import local_trigger
 from nanobot.triggers.local_turns import LocalTriggerTurnCoordinator
 from nanobot.utils.cancellation import task_is_cancelling
@@ -176,6 +194,7 @@ from nanobot.utils.progress_events import output_events
 from nanobot.utils.runtime import (
     EMPTY_FINAL_RESPONSE_MESSAGE,
 )
+from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
 
 if TYPE_CHECKING:
     from nanobot.agent.busy_control import BusyControlRouter
@@ -189,7 +208,11 @@ if TYPE_CHECKING:
         ToolsConfig,
     )
     from nanobot.cron.service import CronService
+    from nanobot.security.desktop_permissions import WorkspaceFullAccessReference
     from nanobot.session.artifact_reader import ArtifactReader
+    from nanobot.session.manager import JsonlSessionStore
+    from nanobot.session.source_store import SourceSnapshot
+    from nanobot.session.workspace_focus import WorkspaceFocusOwner
     from nanobot.triggers.local_store import LocalTriggerStore
 
 _T = TypeVar("_T")
@@ -421,6 +444,12 @@ class _TurnExecutionOptions:
     silent_output: bool = False
     persist_approval_request: bool = True
     busy_turn: BusyTurn | None = field(default=None, repr=False)
+    workspace_access_continuation: WorkspaceAccessContinuationReference | None = field(
+        default=None, repr=False,
+    )
+    workspace_full_reference: WorkspaceFullAccessReference | None = field(
+        default=None, repr=False,
+    )
 
 
 @dataclass(eq=False)
@@ -626,10 +655,6 @@ class AgentLoop:
         self.cron_service = cron_service
         self.local_trigger_store = local_trigger_store
         self.restrict_to_workspace = restrict_to_workspace
-        self.workspace_scopes = WorkspaceScopeResolver(
-            default_workspace=workspace,
-            default_restrict_to_workspace=restrict_to_workspace,
-        )
         self._start_time = time.time()
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
@@ -637,15 +662,28 @@ class AgentLoop:
         if fork_dependencies is None:
             fork_dependencies = build_foreground_dependencies(
                 workspace=workspace, runtime=self.runtime_resolver.runtime,
-                tools_config=_tc, restrict_to_workspace=restrict_to_workspace)
+                tools_config=_tc, restrict_to_workspace=restrict_to_workspace,
+                sessions_root=effective_root)
             _owns_fork_dependencies = True
         validate_foreground_dependencies(fork_dependencies, workspace=workspace,
                                          restrict_to_workspace=restrict_to_workspace)
         self._fork_dependencies = fork_dependencies
+        folder_grants = fork_dependencies.resource_policy.folder_grants
+        self.workspace_scopes = WorkspaceScopeResolver(
+            default_workspace=workspace,
+            default_restrict_to_workspace=restrict_to_workspace,
+            managed_state=(lambda: folder_grants.is_managed) if folder_grants is not None else None,
+        )
         self._owned_foreground_manager = fork_dependencies.foreground_manager if _owns_fork_dependencies else None
-        self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills,
-                                      context_manager=fork_dependencies.resource_policy.context_manager,
-                                      sessions_root=effective_root)
+        self.context = ContextBuilder(
+            workspace,
+            timezone=timezone,
+            disabled_skills=disabled_skills,
+            context_manager=fork_dependencies.resource_policy.context_manager,
+            sessions_root=effective_root,
+            resource_policy=fork_dependencies.resource_policy,
+            folder_grants=fork_dependencies.resource_policy.folder_grants,
+        )
         self.sessions = session_manager or SessionManager(workspace, sessions_root=effective_root)
         self.approval_admission = ApprovalAdmission()
         self.run_store = RunStore(workspace, self.sessions)
@@ -847,6 +885,7 @@ class AgentLoop:
                 runtime=LLMRuntime.capture(provider, model, context_window_tokens=context_window_tokens),
                 tools_config=config.tools, restrict_to_workspace=config.tools.restrict_to_workspace,
                 config=config,
+                sessions_root=effective_root,
             )
             extra["_owns_fork_dependencies"] = True
         if config.artifacts.enabled and extra.get("artifact_reader_factory") is None:
@@ -1033,11 +1072,31 @@ class AgentLoop:
             workspace_sandbox=self.workspace_scopes.sandbox_status,
             runtime_control=AgentRuntimeControl(self),
             fork_dependencies=self._fork_dependencies,
+            workspace_focus_owner=self._workspace_focus_owner(),
         )
         loader = ToolLoader()
         registered = loader.load(ctx, self.tools)
 
         logger.info("Registered {} tools: {}", len(registered), registered)
+
+    def _workspace_focus_owner(self) -> WorkspaceFocusOwner | None:
+        from nanobot.context_repo.catalog import RepositoryCatalog
+        from nanobot.session.workspace_focus import WorkspaceFocusOwner
+
+        grants = self._fork_dependencies.resource_policy.folder_grants
+        if grants is None:
+            return None
+        return WorkspaceFocusOwner(
+            sessions=self.sessions,
+            agent_home=self.workspace,
+            grants=grants,
+            policy=self._fork_dependencies.resource_policy,
+            catalog=RepositoryCatalog.for_workspace(
+                self.workspace,
+                sessions_root=self.sessions.sessions_root,
+            ),
+            bus=self.bus,
+        )
 
     def register_runtime_context_provider(
         self,
@@ -1546,7 +1605,10 @@ class AgentLoop:
             raise RuntimeError("registered inbox sessions require durable inbox admission")
         settlement = None
         if normalize_command_text(msg.content).lower() == "/compact":
+            original = msg
             msg = dataclasses.replace(msg, session_key_override=key, metadata=deepcopy(msg.metadata))
+            copy_workspace_access_continuation(original, msg)
+            copy_full_permission_message_reference(original, msg)
             settlement = _CompactDispatchSettlement(msg, key)
         task = asyncio.create_task(self._dispatch(msg, _compact_settlement=settlement))
         if settlement is not None:
@@ -1661,6 +1723,30 @@ class AgentLoop:
         if self._unified_session and not msg.session_key_override:
             return UNIFIED_SESSION_KEY
         return msg.session_key
+
+    def _retire_workspace_task_before_input(
+        self,
+        session_key: str,
+        *,
+        reason: PermissionRetirementReason,
+        active_turn: bool,
+    ) -> None:
+        """Fence live Once authority before accepting a competing user input."""
+        backend = self.sessions.source_backend(session_key)
+        if backend is None:
+            return
+        snapshot = backend.source.load_source_snapshot(session_key)
+        state = snapshot.state
+        self.sessions.desktop_permissions.retire_tasks_for_source(
+            session_key=session_key,
+            source_binding={
+                "store_identity": state.store_identity,
+                "incarnation": state.incarnation,
+                "generation": state.generation,
+            },
+            reason=reason,
+            active_turn=active_turn,
+        )
 
     def _idle_events(
         self,
@@ -2328,10 +2414,17 @@ class AgentLoop:
                 and (live_session is None or live_session.policy.persist)
                 and self.context.memory.owns_dream_tools(effective_tools, effective_scope.project_path)
             )
+        policy_grants = self._fork_dependencies.resource_policy.folder_grants
+        managed_prompt = bool(
+            policy_grants
+            and policy_grants.is_managed
+            and request_ctx.channel == "websocket"
+            and request_ctx.persistent_session
+        )
         transcript_builder = partial(
             self.context.build_transcript,
             channel=request_ctx.channel,
-            workspace=effective_scope.project_path,
+            workspace=self.workspace if managed_prompt else effective_scope.project_path,
             include_memory=include_memory,
         )
         if request_context is None:
@@ -2341,7 +2434,13 @@ class AgentLoop:
             )
         file_state_token = bind_file_states(self._file_state_store.for_session(active_session_key))
         request_token = bind_request_context(request_ctx)
-        workspace_token = bind_workspace_scope(effective_scope)
+        permission_owner = getattr(self.sessions, "desktop_permissions", None)
+        workspace_token = bind_workspace_scope(
+            effective_scope,
+            permission_owner=permission_owner,
+            task_reference=run_context.workspace_task_reference,
+            full_reference=run_context.workspace_full_reference,
+        )
         turn_scope_stack = ExitStack()
         # Compute lazily because create_goal may create goal metadata during this run.
         def _goal_continue() -> str | None:
@@ -2563,6 +2662,7 @@ class AgentLoop:
 
                 raw = msg.content.strip()
                 effective_key = self._effective_session_key(msg)
+                continuation = workspace_access_continuation(msg, session_key=effective_key)
                 if effective_key in self._busy_consumers:
                     # No wire field is authentication or durable admission proof.
                     # Future channel adapters must admit into the explicit owner.
@@ -2571,10 +2671,58 @@ class AgentLoop:
                         content="Message was not accepted: authenticated inbox admission is required.",
                         reply_to=msg.metadata.get("message_id"), metadata=dict(msg.metadata)))
                     continue
+                if msg.is_user_input and continuation is None:
+                    if msg.sender_id != "subagent":
+                        try:
+                            command_name = raw.lower().split(maxsplit=1)[0] if raw else ""
+                            self._retire_workspace_task_before_input(
+                                effective_key,
+                                reason=(
+                                    "task_cancelled"
+                                    if command_name == "/stop"
+                                    else "task_replaced"
+                                ),
+                                active_turn=effective_key in self._pending_queues,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Workspace task authority could not be fenced for {}",
+                                effective_key,
+                            )
+                            await self.bus.publish_outbound(OutboundMessage(
+                                channel=msg.channel,
+                                chat_id=msg.chat_id,
+                                content="Message could not be accepted because workspace permission state is unavailable.",
+                                reply_to=msg.metadata.get("message_id"),
+                                metadata=dict(msg.metadata),
+                            ))
+                            continue
+                    immediate = (
+                        effective_key not in self._pending_queues
+                        or (msg.channel != "system" and self.commands.is_priority(raw))
+                        or (msg.channel != "system" and self.commands.is_dispatchable_command(raw))
+                    )
+                    if immediate:
+                        try:
+                            self.sessions.invalidate_workspace_access_request(effective_key)
+                        except Exception:
+                            logger.exception(
+                                "Workspace task supersession could not be committed for {}",
+                                effective_key,
+                            )
+                            await self.bus.publish_outbound(OutboundMessage(
+                                channel=msg.channel,
+                                chat_id=msg.chat_id,
+                                content="Message could not be accepted because workspace task state is unavailable.",
+                                reply_to=msg.metadata.get("message_id"),
+                                metadata=dict(msg.metadata),
+                            ))
+                            continue
                 if await agent_context.handle_runtime_control(self, msg, self.tools):
                     continue
                 if (
                     msg.require_existing_session
+                    and continuation is None
                     and self.sessions.get_cached(effective_key) is None
                 ):
                     continue
@@ -2609,6 +2757,17 @@ class AgentLoop:
                         session_key_override=effective_key,
                     )
                     copy_pending_followup_proof(msg, routed_msg)
+                    copy_workspace_access_continuation(msg, routed_msg)
+                    copy_full_permission_message_reference(msg, routed_msg)
+                if continuation is not None:
+                    if workspace_access_continuation(
+                        routed_msg, session_key=effective_key,
+                    ) is None:
+                        continue
+                    # A continuation competes for a separate canonical owner;
+                    # it is never ordinary mid-turn queue injection.
+                    self._enqueue_bus_dispatch(routed_msg, effective_key)
+                    continue
                 # A newer WebUI message must supersede an explicit recovery
                 # before it is injected into that recovery's pending queue.
                 # Without this admission point, a recovered turn could finish
@@ -2886,12 +3045,15 @@ class AgentLoop:
         original = msg
         msg = dataclasses.replace(msg, session_key_override=registration_key)
         copy_pending_followup_proof(original, msg)
+        copy_workspace_access_continuation(original, msg)
+        copy_full_permission_message_reference(original, msg)
+        continuation = workspace_access_continuation(msg, session_key=registration_key)
         recovery = self._recovery_admission
         task = asyncio.current_task()
         registered = False
         try:
             recovery_id = msg.metadata.get(RECOVERY_INBOUND_METADATA_KEY)
-            if recovery is not None:
+            if recovery is not None and continuation is None:
                 if isinstance(recovery_id, str) and recovery_id and task is not None:
                     recovery.register_recovery_task(registration_key, task)
                     registered = True
@@ -2911,9 +3073,25 @@ class AgentLoop:
                     and not activity_marker.notification_succeeded
                 ),
                 admitted_activity_marker=activity_marker,
+                workspace_access_continuation=continuation,
+                workspace_full_reference=full_permission_from_message(msg),
             ))
         except asyncio.CancelledError:
             raise
+        except WorkspaceAccessContinuationRejectedError:
+            if continuation is not None:
+                owner = msg.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)
+                if isinstance(owner, str) and owner:
+                    from nanobot.session.webui_turns import (
+                        clear_queued_websocket_turn_continuation,
+                    )
+
+                    clear_queued_websocket_turn_continuation(
+                        msg.chat_id,
+                        owner,
+                        continuation,
+                    )
+            logger.exception('Canonical workspace continuation was rejected for {}', registration_key)
         except Exception:
             logger.exception('Bus turn failed for {}', registration_key)
         finally:
@@ -3088,6 +3266,60 @@ class AgentLoop:
         self._running = False
         logger.info("Agent loop stopping")
 
+    def _read_workspace_continuation_source(
+        self,
+        key: str,
+        reference: WorkspaceAccessContinuationReference,
+    ) -> tuple[JsonlSessionStore, SourceSnapshot]:
+        """Require the exact canonical source identity captured by the producer."""
+        from nanobot.session.manager import SessionWriteConflict
+
+        try:
+            existing = self.sessions.read_existing_canonical_source(
+                key,
+                expected_binding=reference.source_binding,
+            )
+        except SessionWriteConflict:
+            raise WorkspaceAccessContinuationRejectedError() from None
+        if existing is None:
+            raise WorkspaceAccessContinuationRejectedError()
+        return existing
+
+    @asynccontextmanager
+    async def _acquire_source_execution_owner(
+        self,
+        backend: JsonlSessionStore,
+        key: str,
+        *,
+        run_id: str,
+        workspace_access_continuation: WorkspaceAccessContinuationReference | None,
+        workspace_full_reference: WorkspaceFullAccessReference | None,
+    ) -> AsyncGenerator[ExecutionOwner]:
+        """Classify only a provable stale continuation binding as a rejection."""
+        from nanobot.session.manager import SessionWriteConflict
+
+        try:
+            async with acquire_execution(
+                backend,
+                key,
+                run_id=run_id,
+                expected_source=(
+                    workspace_access_continuation.source_binding
+                    if workspace_access_continuation is not None
+                    else workspace_full_reference.source_binding
+                    if workspace_full_reference is not None
+                    else None
+                ),
+            ) as owner:
+                yield owner
+        except SessionWriteConflict:
+            if workspace_access_continuation is not None:
+                self._read_workspace_continuation_source(
+                    key,
+                    workspace_access_continuation,
+                )
+            raise
+
     @asynccontextmanager
     async def _admit_after_bus_cleanup(
         self,
@@ -3095,6 +3327,7 @@ class AgentLoop:
         *,
         require_existing_session: bool = False,
         ephemeral: bool = False,
+        workspace_access_continuation: WorkspaceAccessContinuationReference | None = None,
     ) -> AsyncGenerator[Session | None]:
         """Wait outside admission while an earlier lifecycle operation can act.
 
@@ -3114,12 +3347,25 @@ class AgentLoop:
                         # Select the live policy only after lifecycle cleanup and
                         # under admission: queued temporary work cannot recreate
                         # a disposed session or acquire persistent source authority.
-                        session = (
-                            self.sessions.get_cached(key)
-                            if require_existing_session or not ephemeral else None
-                        )
-                        if require_existing_session and session is None:
-                            raise RuntimeError("required session is not active")
+                        if workspace_access_continuation is not None:
+                            if (
+                                not require_existing_session
+                                or ephemeral
+                                or workspace_access_continuation.session_key != key
+                            ):
+                                raise RuntimeError("invalid workspace continuation admission")
+                            self._read_workspace_continuation_source(
+                                key,
+                                workspace_access_continuation,
+                            )
+                            session = None
+                        else:
+                            session = (
+                                self.sessions.get_cached(key)
+                                if require_existing_session or not ephemeral else None
+                            )
+                            if require_existing_session and session is None:
+                                raise RuntimeError("required session is not active")
                         yield (
                             session if not ephemeral and session is not None
                             and not session.policy.persist else None
@@ -3150,7 +3396,19 @@ class AgentLoop:
         *,
         persistent: bool = True,
         admitted: Callable[[], None] | None = None,
+        workspace_access_continuation: WorkspaceAccessContinuationReference | None = None,
+        workspace_full_reference: WorkspaceFullAccessReference | None = None,
     ) -> AsyncGenerator[None]:
+        if workspace_access_continuation is not None and (
+            not persistent or workspace_access_continuation.session_key != key
+        ):
+            raise RuntimeError("workspace continuation requires its existing persistent source")
+        if workspace_full_reference is not None and (
+            not persistent
+            or workspace_full_reference.session_key != key
+            or workspace_access_continuation is not None
+        ):
+            raise RuntimeError("workspace Full permission requires its existing persistent source")
         if not persistent:
             if self.sessions.has_managed_authority:
                 resolved = self.sessions.resolve_session_mode(key)
@@ -3178,24 +3436,67 @@ class AgentLoop:
                         raise RuntimeError("Managed session source is unavailable")
             yield
             return
-        if persistent and self.sessions.has_managed_authority:
+        if (
+            persistent
+            and self.sessions.has_managed_authority
+            and workspace_access_continuation is None
+        ):
             self.sessions.admit_persistent_write(key)
-        backend = self.sessions.source_backend(key)
+        if workspace_access_continuation is not None:
+            backend, _ = self._read_workspace_continuation_source(
+                key,
+                workspace_access_continuation,
+            )
+        else:
+            backend = self.sessions.source_backend(key)
         if backend is None:
+            if workspace_access_continuation is not None or workspace_full_reference is not None:
+                raise RuntimeError("workspace permission source is unavailable")
             if admitted is not None:
                 admitted()
             yield
             return
-        async with acquire_execution(backend, key, run_id=context.run_id) as owner:
+        async with self._acquire_source_execution_owner(
+            backend,
+            key,
+            run_id=context.run_id,
+            workspace_access_continuation=workspace_access_continuation,
+            workspace_full_reference=workspace_full_reference,
+        ) as owner:
             # Recovery may only enter the explicit reset route. Never consume an
             # approval or request a model while uncertain effects remain.
             reset = (context.request is not None and context.request.source not in (TurnSource.CRON, TurnSource.HEARTBEAT)
                      and context.request.content.strip().lower() == "/new")
             if owner.recovery_required and not reset:
                 raise RuntimeError("Source session requires recovery before execution")
+            if workspace_full_reference is not None:
+                state = owner.read_snapshot().state
+                source_binding: PermissionSourceBinding = {
+                    "store_identity": state.store_identity,
+                    "incarnation": state.incarnation,
+                    "generation": state.generation,
+                }
+                if not self.sessions.desktop_permissions.authorizes_full(
+                    workspace_full_reference,
+                    session_key=key,
+                    source_binding=source_binding,
+                ):
+                    raise WorkspaceScopeError("full_access_unavailable", status=409)
+                context.workspace_full_reference = workspace_full_reference
             context.execution_owner = owner
             source_writer = SourceTurnWriter(backend.source, owner, run_id=context.run_id)
             context.source_writer = source_writer
+            if workspace_access_continuation is not None:
+                from nanobot.session.workspace_access_recovery import (
+                    admit_workspace_access_continuation,
+                )
+
+                admit_workspace_access_continuation(
+                    self.sessions,
+                    context,
+                    self._workspace_focus_owner(),
+                    workspace_access_continuation,
+                )
             activity_queue: asyncio.Queue[_ActivityAdmissionRequest | None] = asyncio.Queue()
 
             async def admit_pending_activity() -> None:
@@ -3334,6 +3635,7 @@ class AgentLoop:
                 delivery=DeliveryState(primary=target), lock_owner=f'main:{key}',
                 metadata=dict(request.metadata),
             )
+            context.workspace_full_reference = options.workspace_full_reference
             context.trusted_foreground_activity = (
                 options.trusted_foreground_activity
                 and request.source in _FOREGROUND_IDLE_SOURCES
@@ -3362,11 +3664,14 @@ class AgentLoop:
                         options.inbound is not None and options.inbound.require_existing_session
                     ),
                     ephemeral=options.ephemeral,
+                    workspace_access_continuation=options.workspace_access_continuation,
                 ) as admitted_session, self._source_execution(
                     key,
                     context,
                     persistent=not (options.ephemeral or admitted_session is not None),
                     admitted=persist_admitted_run,
+                    workspace_access_continuation=options.workspace_access_continuation,
+                    workspace_full_reference=options.workspace_full_reference,
                 ):
                     if context.source_writer is not None:
                         record.metadata["source_stream_id"] = context.source_writer.stream_id
@@ -3476,6 +3781,7 @@ class AgentLoop:
                                 runner = stage.run_result
                                 status = RunStatus.COMMAND if runner is None else {
                                     'completed': RunStatus.COMPLETED, 'approval_required': RunStatus.APPROVAL_REQUIRED,
+                                    'folder_access_required': RunStatus.POLICY_BLOCKED,
                                     'policy_blocked': RunStatus.POLICY_BLOCKED, 'tool_error': RunStatus.TOOL_ERROR,
                                     'max_iterations': RunStatus.MAX_ITERATIONS, 'cancelled': RunStatus.CANCELLED,
                                 }.get(runner.stop_reason, RunStatus.ERROR)
@@ -3527,6 +3833,27 @@ class AgentLoop:
                 if options.raise_errors:
                     raise
             finally:
+                task_reference = context.workspace_task_reference
+                if task_reference is not None and (
+                    result is None or result.stop_reason != "folder_access_required"
+                ):
+                    try:
+                        self.sessions.desktop_permissions.retire_task_reference(
+                            task_reference,
+                            reason=(
+                                "task_cancelled"
+                                if context.cancelled or (
+                                    result is not None and result.status is RunStatus.CANCELLED
+                                )
+                                else "task_ended"
+                            ),
+                            active_turn=False,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Workspace task authority could not be retired after run {}",
+                            run_id,
+                        )
                 if result is not None and run_admitted:
                     if request.trace_mode is TraceMode.SANITIZED:
                         result.messages = context.sanitized_messages or []
@@ -3818,17 +4145,113 @@ class AgentLoop:
         session = ctx.session
         ctx.ephemeral = ctx.ephemeral or not session.policy.persist
         tools = ctx.tools if ctx.tools is not None else self.tools
-        if session.policy.disabled_tools:
-            restricted = self.context.memory.filter_dream_tools(
-                tools, session.policy.disabled_tools, self.context.memory.workspace,
-            )
-            if restricted is None:
-                restricted = ToolRegistry()
-                for name in tools.tool_names:
-                    tool = tools.get(name)
-                    if name not in session.policy.disabled_tools and tool:
-                        restricted.register(tool)
-            tools = restricted
+        disabled_tools = set(session.policy.disabled_tools)
+        if (
+            ctx.kind is not TurnKind.USER
+            or ctx.msg.channel != "websocket"
+            or not session.policy.persist
+        ):
+            disabled_tools.update({"select_workspace", "request_folder_access"})
+        if not session.policy.persist:
+            disabled_tools.update({"repository_catalog", "save_knowledge"})
+        grants = self._fork_dependencies.resource_policy.folder_grants
+        run_context = ctx.run_context
+        local_private_workspace_authority = False
+        if (
+            ctx.kind is TurnKind.USER
+            and ctx.msg.channel == "websocket"
+            and session.policy.persist
+            and not ctx.ephemeral
+            and run_context is not None
+            and run_context.request is not None
+            and run_context.request.source is TurnSource.GATEWAY
+            and run_context.request.history_mode is HistoryMode.SESSION
+            and run_context.request.session_key == ctx.session_key
+            and run_context.source_writer is not None
+            and run_context.source_writer.owner.key == ctx.session_key
+        ):
+            permission_owner = self.sessions.desktop_permissions
+            task_reference = run_context.workspace_task_reference
+            full_reference = run_context.workspace_full_reference
+            try:
+                source_state = run_context.source_writer.owner.read_snapshot().state
+                current_binding = {
+                    "store_identity": source_state.store_identity,
+                    "incarnation": source_state.incarnation,
+                    "generation": source_state.generation,
+                }
+                task_is_current = bool(
+                    task_reference is not None
+                    and task_reference.session_key == ctx.session_key
+                    and task_reference.source_binding == current_binding
+                    and permission_owner.is_current_task_reference(task_reference)
+                )
+                full_is_current = bool(
+                    full_reference is not None
+                    and full_reference.session_key == ctx.session_key
+                    and full_reference.source_binding == current_binding
+                    and permission_owner.is_current_full_reference(full_reference)
+                )
+                local_private_workspace_authority = task_is_current or full_is_current
+            except Exception:
+                local_private_workspace_authority = False
+        if (
+            ctx.msg.channel == "websocket"
+            and grants is not None
+            and (grants.is_managed or local_private_workspace_authority)
+        ):
+            managed_registry = ToolRegistry()
+            for name in tools.tool_names:
+                tool = tools.get(name)
+                if (
+                    name in MANAGED_WEBUI_TOOL_NAMES
+                    and tool is not None
+                    and (name != "select_workspace" or ctx.kind is TurnKind.USER)
+                ):
+                    managed_registry.register(tool)
+            if self.tools_config.file.enable and ctx.kind is TurnKind.USER:
+                from nanobot.agent.tools.workspace import (
+                    RequestFolderAccessTool,
+                    SelectWorkspaceTool,
+                )
+
+                managed_registry.register(SelectWorkspaceTool(self._workspace_focus_owner()))
+                if ctx.msg.channel == "websocket" and session.policy.persist:
+                    managed_registry.register(RequestFolderAccessTool(self._workspace_focus_owner()))
+            tools = managed_registry
+        elif (
+            self.tools_config.file.enable
+            and ctx.kind is TurnKind.USER
+            and ctx.msg.channel == "websocket"
+            and session.policy.persist
+        ):
+            # Use a per-turn registry so this local-only tool cannot remain in a
+            # shared registry or leak into a later API/background turn.
+            local_registry = ToolRegistry()
+            for name in tools.tool_names:
+                tool = tools.get(name)
+                if tool is not None:
+                    local_registry.register(tool)
+            from nanobot.agent.tools.workspace import RequestFolderAccessTool
+
+            local_registry.register(RequestFolderAccessTool(self._workspace_focus_owner()))
+            tools = local_registry
+        if disabled_tools:
+            enabled_disabled_tools = disabled_tools.intersection(tools.tool_names)
+            if enabled_disabled_tools:
+                restricted = self.context.memory.filter_dream_tools(
+                    tools, frozenset(enabled_disabled_tools), self.context.memory.workspace,
+                )
+                if restricted is None:
+                    restricted = ToolRegistry()
+                    for name in tools.tool_names:
+                        tool = tools.get(name)
+                        if name not in enabled_disabled_tools and tool:
+                            restricted.register(tool)
+                tools = restricted
+        tools.set_dispatch_guard(
+            ManagedToolDispatchGuard(self._fork_dependencies.resource_policy.folder_grants)
+        )
         ctx.tools = tools
 
         if ctx.kind is TurnKind.SYSTEM:
@@ -4213,6 +4636,26 @@ class AgentLoop:
             if ctx.usage is not None:
                 updates['_last_usage'] = ctx.usage.to_dict()
             writer.store.update_metadata(writer.owner.key, updates)
+            if not ctx.ephemeral:
+                from nanobot.session.workspace_access_recovery import (
+                    persist_folder_access_request,
+                )
+
+                access_request = persist_folder_access_request(self.sessions, ctx)
+                if access_request is not None:
+                    try:
+                        await self.bus.publish_event(
+                            SessionUpdatedEvent(
+                                scope="metadata",
+                                workspace_access_request=access_request,
+                            ),
+                            channel="websocket",
+                            chat_id=access_request["chat_id"],
+                        )
+                    except Exception:
+                        logger.warning(
+                            "folder access request committed but its update event could not be published",
+                        )
             ctx.turn_latency_ms = max(0, int((time.time() - ctx.turn_wall_started_at) * 1000))
             ctx.delivery.record_latency(ctx.turn_latency_ms)
             if not ctx.ephemeral:

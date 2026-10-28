@@ -51,9 +51,12 @@ from nanobot.config.loader import load_config, save_config
 from nanobot.config.schema import Config, ModelPresetConfig
 from nanobot.providers.base import LLMUsage
 from nanobot.runtime_context import RUNTIME_CONTEXT_INPUT_META, WEBUI_QUOTE_SOURCE
-from nanobot.security.workspace_access import WORKSPACE_SCOPE_METADATA_KEY
+from nanobot.security.workspace_access import (
+    WORKSPACE_SCOPE_METADATA_KEY,
+    default_workspace_scope,
+)
 from nanobot.session import webui_turns as wth
-from nanobot.session.manager import SessionManager
+from nanobot.session.manager import Session, SessionManager
 from nanobot.session.model_selection import SESSION_MODEL_PRESET_METADATA_KEY
 from nanobot.session.session_handles import session_handle_for_name
 from nanobot.webui.gateway_services import GatewayServices, build_gateway_services
@@ -138,6 +141,18 @@ def _basic_handler(bus: Any, **kw: Any) -> GatewayServices:
         runtime_surface=kw.get("runtime_surface", "browser"),
         runtime_capabilities_overrides=kw.get("runtime_capabilities_overrides"),
     )
+
+
+def _authenticate_local_webui_connection(channel: WebSocketChannel, connection: Any) -> None:
+    connection.remote_address = ("127.0.0.1", 50123)
+    connection.request = SimpleNamespace(
+        headers=Headers([("Host", "127.0.0.1:29876")]),
+    )
+    channel._webui_connections.add(connection)
+
+
+def _set_empty_request_headers(connection: Any) -> None:
+    connection.request = SimpleNamespace(headers=Headers())
 
 
 async def _connect_when_ready(url: str) -> Any:
@@ -543,6 +558,7 @@ async def test_temporary_looking_id_does_not_define_session_policy(bus, tmp_path
         gateway=_basic_handler(bus, session_manager=sessions, workspace_path=tmp_path),
     )
     connection = AsyncMock()
+    _set_empty_request_headers(connection)
     channel._webui_connections.add(connection)
 
     await channel._dispatch_envelope(
@@ -622,6 +638,82 @@ async def test_send_session_updated_broadcasts_to_other_webui_connections(bus) -
         "chat_id": "chat-a",
         "scope": "thread",
     }
+
+
+@pytest.mark.asyncio
+async def test_folder_access_update_is_only_sent_to_authenticated_local_owner(bus) -> None:
+    from websockets.datastructures import Headers
+
+    class Conn:
+        def __init__(self, peer: str, host: str) -> None:
+            self.remote_address = (peer, 1234)
+            self.request = SimpleNamespace(headers=Headers([("Host", host)]))
+
+    channel = _ch(bus)
+    local_owner = Conn("127.0.0.1", "127.0.0.1:8765")
+    local_other_chat = Conn("127.0.0.1", "127.0.0.1:8765")
+    remote_owner = Conn("203.0.113.5", "127.0.0.1:8765")
+    for connection, chat_id in (
+        (local_owner, "chat-a"),
+        (local_other_chat, "chat-b"),
+        (remote_owner, "chat-a"),
+    ):
+        channel._attach(connection, chat_id)
+        channel._webui_connections.add(connection)
+
+    sent: list[tuple[object, str]] = []
+
+    async def capture(connection, raw: str, *, label: str = "") -> None:
+        _ = label
+        sent.append((connection, raw))
+
+    channel._safe_send_to = capture
+    request = {
+        "version": 1,
+        "access_request_id": "0" * 32,
+        "revision": 1,
+        "chat_id": "chat-a",
+        "task": {"turn_id": "turn-a", "excerpt": "Read the project"},
+        "blocked_turn_id": "turn-a",
+        "tool_call_id": None,
+        "created_at_ms": 1,
+        "status": "pending",
+        "reason": "folder_not_granted",
+        "operation": "read",
+        "target": {"kind": "unknown", "path": None},
+        "purpose": "Read the project",
+        "selected_path": None,
+        "selected_access": None,
+        "can_continue": False,
+        "unavailable_reason": None,
+        "continuation_turn_id": None,
+    }
+    permissions = {
+        "version": 1,
+        "runtime_id": "a" * 32,
+        "revision": 1,
+        "mode": "restricted",
+        "state": "active",
+        "can_enable_full": True,
+        "full_access_unavailable_reason": None,
+        "task_access": None,
+        "retirement": None,
+    }
+
+    await channel.send_session_updated(
+        "chat-a",
+        scope="metadata",
+        workspace_access_request=request,
+        workspace_permissions=permissions,
+    )
+
+    by_connection = {connection: json.loads(raw) for connection, raw in sent}
+    assert by_connection[local_owner]["workspace_access_request"] == request
+    assert by_connection[local_owner]["workspace_permissions"] == permissions
+    assert "workspace_access_request" not in by_connection[local_other_chat]
+    assert "workspace_permissions" not in by_connection[local_other_chat]
+    assert "workspace_access_request" not in by_connection[remote_owner]
+    assert "workspace_permissions" not in by_connection[remote_owner]
 
 
 async def _recv_ws_event(client: Any, event: str) -> dict[str, Any]:
@@ -1014,6 +1106,7 @@ def test_only_bootstrap_tokens_mark_webui_connections(bus: MagicMock) -> None:
 async def test_authenticated_webui_request_returns_correlated_success(bus: MagicMock) -> None:
     channel = _ch(bus)
     conn = AsyncMock()
+    _set_empty_request_headers(conn)
     channel._webui_connections.add(conn)
     channel.gateway.http.dispatch_webui_mutation = AsyncMock(
         return_value=_http_json_response({"saved": True})
@@ -1049,6 +1142,7 @@ async def test_authenticated_webui_request_returns_correlated_success(bus: Magic
 async def test_webui_mutations_preserve_request_and_response_order(bus: MagicMock) -> None:
     channel = _ch(bus)
     conn = AsyncMock()
+    _set_empty_request_headers(conn)
     channel._webui_connections.add(conn)
     first_started = asyncio.Event()
     release_first = asyncio.Event()
@@ -1111,6 +1205,8 @@ async def test_webui_request_survives_disconnect_and_preserves_reconnect_order(
     channel = _ch(bus)
     first_conn = AsyncMock()
     retry_conn = AsyncMock()
+    _set_empty_request_headers(first_conn)
+    _set_empty_request_headers(retry_conn)
     first_conn.send.side_effect = ConnectionClosed(Close(1006, ""), Close(1006, ""), True)
     channel._webui_connections.update({first_conn, retry_conn})
     started = asyncio.Event()
@@ -1179,6 +1275,8 @@ async def test_webui_request_replays_completed_result_after_reconnect(bus: Magic
     channel = _ch(bus)
     first_conn = AsyncMock()
     retry_conn = AsyncMock()
+    _set_empty_request_headers(first_conn)
+    _set_empty_request_headers(retry_conn)
     channel._webui_connections.update({first_conn, retry_conn})
     channel.gateway.http.dispatch_webui_mutation = AsyncMock(
         return_value=_http_json_response({"installed": True})
@@ -1211,6 +1309,8 @@ async def test_webui_request_rejects_request_id_reuse_with_different_payload(
     channel = _ch(bus)
     first_conn = AsyncMock()
     retry_conn = AsyncMock()
+    _set_empty_request_headers(first_conn)
+    _set_empty_request_headers(retry_conn)
     channel._webui_connections.update({first_conn, retry_conn})
     channel.gateway.http.dispatch_webui_mutation = AsyncMock(
         return_value=_http_json_response({"ran": True})
@@ -1302,6 +1402,7 @@ def test_webui_request_cache_prunes_oldest_completed_at_capacity(
 async def test_webui_request_returns_correlated_route_error(bus: MagicMock) -> None:
     channel = _ch(bus)
     conn = AsyncMock()
+    _set_empty_request_headers(conn)
     channel._webui_connections.add(conn)
     channel.gateway.http.dispatch_webui_mutation = AsyncMock(
         return_value=_http_error(400, "invalid settings payload")
@@ -1513,7 +1614,7 @@ async def test_webui_message_scope_inherits_persisted_session_scope(
         gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
     )
     conn = AsyncMock()
-    conn.remote_address = ("127.0.0.1", 50123)
+    _authenticate_local_webui_connection(channel, conn)
 
     await channel._dispatch_envelope(
         conn,
@@ -1523,7 +1624,7 @@ async def test_webui_message_scope_inherits_persisted_session_scope(
             "chat_id": "chat-scope",
             "workspace_scope": {
                 "project_path": str(project),
-                "access_mode": "full",
+                "access_mode": "restricted",
             },
         },
     )
@@ -1537,7 +1638,7 @@ async def test_webui_message_scope_inherits_persisted_session_scope(
     msg = bus.publish_inbound.await_args.args[0]
     assert msg.metadata["workspace_scope"] == {
         "project_path": str(project.resolve()),
-        "access_mode": "full",
+        "access_mode": "restricted",
     }
 
 
@@ -1562,7 +1663,7 @@ async def test_new_chat_without_message_does_not_create_session(
             "type": "new_chat",
             "workspace_scope": {
                 "project_path": str(tmp_path),
-                "access_mode": "full",
+                "access_mode": "restricted",
             },
         },
     )
@@ -1572,7 +1673,7 @@ async def test_new_chat_without_message_does_not_create_session(
     assert sessions.list_sessions() == []
     assert channel.gateway.workspaces.scope_for_session_key(
         f"websocket:{attached['chat_id']}"
-    ).access_mode == "full"
+    ).access_mode == "restricted"
 
     await channel._cleanup_connection(conn)
 
@@ -1600,7 +1701,7 @@ async def test_failed_first_message_does_not_persist_draft_session(
             "type": "new_chat",
             "workspace_scope": {
                 "project_path": str(tmp_path),
-                "access_mode": "full",
+                "access_mode": "restricted",
             },
         },
     )
@@ -1634,9 +1735,9 @@ async def test_workspace_scope_change_invalidates_other_attached_clients(
         gateway=_basic_handler(bus, session_manager=sessions, workspace_path=tmp_path),
     )
     origin = AsyncMock()
-    origin.remote_address = ("127.0.0.1", 50123)
+    _authenticate_local_webui_connection(channel, origin)
     peer = AsyncMock()
-    peer.remote_address = ("127.0.0.1", 50124)
+    _authenticate_local_webui_connection(channel, peer)
     channel._attach(origin, "shared")
     channel._attach(peer, "shared")
 
@@ -1648,19 +1749,19 @@ async def test_workspace_scope_change_invalidates_other_attached_clients(
             "chat_id": "shared",
             "workspace_scope": {
                 "project_path": str(tmp_path),
-                "access_mode": "full",
+                "access_mode": "restricted",
             },
         },
     )
 
     peer_event = json.loads(peer.send.await_args.args[0])
-    assert peer_event == {
-        "event": "session_updated",
-        "chat_id": "shared",
-        "scope": "metadata",
-    }
+    assert peer_event["event"] == "session_updated"
+    assert peer_event["chat_id"] == "shared"
+    assert peer_event["scope"] == "metadata"
+    assert peer_event["workspace_scope"]["project_path"] == str(tmp_path.resolve())
+    assert peer_event["workspace_scope"]["access_mode"] == "restricted"
     origin_event = json.loads(origin.send.await_args.args[0])
-    assert origin_event["workspace_scope"]["access_mode"] == "full"
+    assert origin_event["workspace_scope"]["access_mode"] == "restricted"
 
 
 @pytest.mark.asyncio
@@ -1682,7 +1783,7 @@ async def test_webui_scope_expands_home_project_path(
         gateway=_basic_handler(bus, session_manager=SessionManager(tmp_path / "sessions"), workspace_path=default_workspace),
     )
     conn = AsyncMock()
-    conn.remote_address = ("127.0.0.1", 50123)
+    _authenticate_local_webui_connection(channel, conn)
 
     await channel._dispatch_envelope(
         conn,
@@ -1756,7 +1857,7 @@ async def test_webui_scope_rejects_running_scope_change(bus: MagicMock, tmp_path
         gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
     )
     conn = AsyncMock()
-    conn.remote_address = ("127.0.0.1", 50123)
+    _authenticate_local_webui_connection(channel, conn)
 
     await channel._dispatch_envelope(
         conn,
@@ -1783,7 +1884,7 @@ async def test_webui_scope_rejects_running_scope_change(bus: MagicMock, tmp_path
                 "turn_id": "turn-scope-rejected",
                 "workspace_scope": {
                     "project_path": str(other),
-                    "access_mode": "full",
+                    "access_mode": "restricted",
                 },
             },
         )
@@ -1814,7 +1915,7 @@ async def test_webui_set_workspace_scope_rejects_running_chat(bus: MagicMock, tm
         gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
     )
     conn = AsyncMock()
-    conn.remote_address = ("127.0.0.1", 50123)
+    _authenticate_local_webui_connection(channel, conn)
 
     await channel._dispatch_envelope(
         conn,
@@ -1844,7 +1945,7 @@ async def test_webui_set_workspace_scope_rejects_running_chat(bus: MagicMock, tm
                 "chat_id": "chat-running",
                 "workspace_scope": {
                     "project_path": str(other),
-                    "access_mode": "full",
+                    "access_mode": "restricted",
                 },
             },
         )
@@ -2015,7 +2116,7 @@ async def test_webui_scope_rejects_non_loopback_custom_scope(bus: MagicMock, tmp
     payload = json.loads(conn.send.await_args.args[0])
     assert payload["event"] == "error"
     assert payload["detail"] == "workspace_scope_rejected"
-    assert payload["reason"] == "workspace controls are localhost-only"
+    assert payload["reason"] == "full_access_unavailable"
     assert payload["chat_id"] == "chat-remote"
     assert sessions.read_session_file("websocket:chat-remote") is None
 
@@ -2042,6 +2143,9 @@ async def test_native_webui_scope_allows_custom_scope_without_loopback(
     )
     conn = AsyncMock()
     conn.remote_address = None
+    owner = channel.gateway.workspaces.permission_owner
+    assert owner is not None
+    initial_revision = owner.revision
 
     await channel._dispatch_envelope(
         conn,
@@ -2057,21 +2161,13 @@ async def test_native_webui_scope_allows_custom_scope_without_loopback(
     )
 
     payload = json.loads(conn.send.await_args.args[0])
-    assert payload["event"] == "session_updated"
+    assert payload["event"] == "error"
+    assert payload["detail"] == "workspace_scope_rejected"
+    assert payload["reason"] == "full_access_unavailable"
     assert payload["chat_id"] == "chat-native"
-    assert payload["workspace_scope"]["project_path"] == str(project.resolve())
-    assert payload["workspace_scope"]["project_name"] == "project"
-    assert payload["workspace_scope"]["access_mode"] == "full"
-    assert payload["workspace_scope"]["restrict_to_workspace"] is False
-    assert payload["workspace_scope"]["sandbox_status"]["restrict_to_workspace"] is False
-    assert payload["workspace_scope"]["sandbox_status"]["workspace_root"] == str(project.resolve())
     assert sessions.read_session_file("websocket:chat-native") is None
-    assert channel.gateway.workspaces.scope_for_session_key(
-        "websocket:chat-native"
-    ).metadata() == {
-        "project_path": str(project.resolve()),
-        "access_mode": "full",
-    }
+    assert owner.revision == initial_revision
+    assert channel.gateway.workspaces._source_binding("websocket:chat-native") is None
 
 
 @pytest.mark.asyncio
@@ -5947,7 +6043,9 @@ def test_handle_file_preview_returns_workspace_file(tmp_path) -> None:
         Headers([("Authorization", "Bearer tok")]),
     )
 
-    resp = gateway.http._handle_file_preview(req, enc)
+    resp = gateway.http._handle_file_preview(
+        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
+    )
 
     assert resp.status_code == 200
     body = json.loads(resp.body.decode())
@@ -5978,7 +6076,9 @@ def test_handle_file_preview_probe_checks_availability_without_content(tmp_path)
         Headers([("Authorization", "Bearer tok")]),
     )
 
-    resp = gateway.http._handle_file_preview(req, enc)
+    resp = gateway.http._handle_file_preview(
+        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
+    )
 
     assert resp.status_code == 200
     assert json.loads(resp.body.decode()) == {"available": True}
@@ -6001,7 +6101,9 @@ def test_handle_file_preview_probe_reports_missing_file_as_unavailable(tmp_path)
         Headers([("Authorization", "Bearer tok")]),
     )
 
-    resp = gateway.http._handle_file_preview(req, enc)
+    resp = gateway.http._handle_file_preview(
+        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
+    )
 
     assert resp.status_code == 200
     assert json.loads(resp.body.decode()) == {"available": False}
@@ -6026,7 +6128,9 @@ def test_handle_file_preview_probe_reports_binary_file_as_unavailable(tmp_path) 
         Headers([("Authorization", "Bearer tok")]),
     )
 
-    resp = gateway.http._handle_file_preview(req, enc)
+    resp = gateway.http._handle_file_preview(
+        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
+    )
 
     assert resp.status_code == 200
     assert json.loads(resp.body.decode()) == {"available": False}
@@ -6065,7 +6169,9 @@ def test_handle_file_preview_rejects_paths_outside_workspace(tmp_path) -> None:
         Headers([("Authorization", "Bearer tok")]),
     )
 
-    resp = gateway.http._handle_file_preview(req, enc)
+    resp = gateway.http._handle_file_preview(
+        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
+    )
 
     assert resp.status_code == 403
 
@@ -6078,29 +6184,102 @@ def test_handle_file_preview_allows_paths_outside_workspace_in_full_access(tmp_p
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    outside = tmp_path / "notes.py"
+    outside_root = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside_root.mkdir()
+    outside = outside_root / "notes.py"
     outside.write_text("value = 42\n", encoding="utf-8")
-
+    sessions = SessionManager(workspace, sessions_root=tmp_path / "sessions")
+    chat_id = "file-preview-full"
+    key = f"websocket:{chat_id}"
+    session = Session(
+        key,
+        metadata={
+            "webui": True,
+            "workspace_scope": default_workspace_scope(workspace, True).metadata(),
+        },
+    )
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
     gateway = _basic_handler(
         MagicMock(),
+        session_manager=sessions,
         workspace_path=workspace,
-        default_restrict_to_workspace=False,
+        default_restrict_to_workspace=True,
+    )
+    owner = sessions.desktop_permissions
+    source = gateway.workspaces._source_binding(key)
+    assert source is not None
+    initial = owner.projection(session_key=key, source_binding=source)
+    mode = gateway.workspaces.set_permission_mode(
+        {
+            "chat_id": chat_id,
+            "mode": "full",
+            "expected_runtime_id": owner.runtime_id,
+            "expected_permission_revision": initial["revision"],
+        },
+        local_ui=True,
+    )
+    assert mode["workspace_permissions"]["mode"] == "full"
+    scope = gateway.workspaces.scope_for_session_key(key)
+    assert scope.access_mode == "full"
+    assert not scope.restrict_to_workspace
+    assert gateway.http.workspace_access_recovery is not None
+    preview_owner, preview_reference = gateway.http.workspace_access_recovery.preview_permission_context(
+        chat_id,
+    )
+    assert preview_owner is owner
+    assert preview_reference is not None
+    assert gateway.workspaces.focus_owner is not None
+    assert gateway.workspaces.focus_owner.policy.folder_grants is not None
+    assert not gateway.workspaces.focus_owner.policy.folder_grants.is_private_path(outside)
+    gateway.workspaces.focus_owner.policy.validate_path(
+        outside,
+        "read",
+        managed=True,
+        allow_folder_grants=True,
+        permission_owner=preview_owner,
+        permission_reference=preview_reference,
     )
     gateway.tokens.api_tokens["tok"] = time.monotonic() + 300.0
-    key = "websocket:file-preview"
     enc = quote(key, safe="")
     req = Request(
         f"/api/sessions/{enc}/file-preview?path={quote(str(outside), safe='')}",
-        Headers([("Authorization", "Bearer tok")]),
+        Headers([
+            ("Authorization", "Bearer tok"),
+            ("Host", "127.0.0.1:29876"),
+        ]),
     )
 
-    resp = gateway.http._handle_file_preview(req, enc)
+    resp = gateway.http._handle_file_preview(
+        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
+    )
 
     assert resp.status_code == 200
     body = json.loads(resp.body.decode())
     assert body["path"] == str(outside.resolve())
     assert body["display_path"] == outside.resolve().as_posix()
     assert body["content"].splitlines() == ["value = 42"]
+
+    remote = gateway.http._handle_file_preview(
+        SimpleNamespace(remote_address=("203.0.113.8", 50123)), req, enc,
+    )
+    assert remote.status_code == 403
+
+    public_full_gateway = _basic_handler(
+        MagicMock(),
+        workspace_path=workspace,
+        default_restrict_to_workspace=False,
+    )
+    public_full_gateway.tokens.api_tokens["tok"] = time.monotonic() + 300.0
+    public_full = public_full_gateway.http._handle_file_preview(
+        SimpleNamespace(remote_address=("127.0.0.1", 50123)), req, enc,
+    )
+    assert public_full.status_code in {403, 404}
 
 
 def test_handle_webui_thread_get_backfills_legacy_missing_user_rows(

@@ -29,8 +29,9 @@ import {
 } from "@/components/settings/system/AutomationsSettings";
 import { ChannelsSettings } from "@/components/settings/system/ChannelsSettings";
 import { RuntimeSettings } from "@/components/settings/system/RuntimeSettings";
+import { FoldersProjectsManager } from "@/components/settings/folders/FoldersProjectsManager";
 import type { SettingsController } from "@/components/settings/useSettingsController";
-import type { SkillSummary } from "@/lib/types";
+import type { SkillSummary, WorkspacesPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface SettingsPageProps {
@@ -43,6 +44,9 @@ interface SettingsPageProps {
   onLogout?: () => void;
   isRestarting: boolean;
   hostChromeInset: boolean;
+  workspaces: WorkspacesPayload | null;
+  onRefreshWorkspaces: () => Promise<void>;
+  onPickWorkspaceFolder?: () => Promise<string | null>;
 }
 
 export function SettingsPage({
@@ -55,6 +59,9 @@ export function SettingsPage({
   onLogout,
   isRestarting,
   hostChromeInset,
+  workspaces,
+  onRefreshWorkspaces,
+  onPickWorkspaceFolder,
 }: SettingsPageProps) {
   const {
     activeSection,
@@ -477,6 +484,15 @@ export function SettingsPage({
         );
       case "skills":
         return <SkillsCatalogSettings skills={skills} />;
+      case "folders":
+        return (
+          <FoldersProjectsManager
+            workspaces={workspaces}
+            onRefreshWorkspaces={onRefreshWorkspaces}
+            onPickFolder={onPickWorkspaceFolder}
+            className="max-w-3xl"
+          />
+        );
       case "runtime":
         return (
           <RuntimeSettings
@@ -503,6 +519,7 @@ export function SettingsPage({
             form={networkSafetyForm}
             dirty={networkSafetyDirty}
             saving={networkSafetySaving}
+            managedAccess={workspaces?.managed_access === true}
             isNativeHostSurface={(settings.surface ?? settings.runtime_surface) === "native"}
             onChangeForm={setNetworkSafetyForm}
             onSave={saveNetworkSafetySettings}

@@ -13,7 +13,7 @@ from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import LLMResponse, ToolCallRequest
 from nanobot.session.execution_owner import ExecutionOwnershipError, acquire_execution
 from nanobot.session.manager import JsonlSessionStore, Session
-from tests.agent.runner_helpers import make_run_spec
+from tests.agent.runner_helpers import install_test_tool_dispatch, make_run_spec
 
 
 def calls():
@@ -33,7 +33,7 @@ def registry(result="raw"):
     tools.get_definitions.return_value = []
     tools.prepare_call.return_value = (None, {}, None)
     tools.execute = AsyncMock(return_value=result)
-    return tools
+    return install_test_tool_dispatch(tools)
 
 
 @pytest.mark.parametrize("kind", ["success", "empty", "structured", "terminal", "error", "exception", "preparation", "policy"])

@@ -1,6 +1,7 @@
 """Tests for structured tool-event progress metadata emitted by AgentLoop."""
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -78,14 +79,14 @@ def _run_context(loop: AgentLoop) -> RunContext:
     ))
 
 
-def _attach_webui_runtime_events(loop: AgentLoop, bus: MessageBus) -> None:
+def _attach_webui_runtime_events(loop: AgentLoop, bus: MessageBus) -> Callable[[], None]:
     loop.turn_delivery_factory.route_policy = WebuiTurnRoutePolicy(loop.sessions)
     coordinator = WebuiTurnCoordinator(
         bus=bus,
         sessions=loop.sessions,
         schedule_background=lambda coro: loop.schedule_background(coro),
     )
-    coordinator.subscribe()
+    return coordinator.subscribe()
 
 
 class TestToolEventProgress:
@@ -828,6 +829,7 @@ class TestToolEventProgress:
         self,
         tmp_path: Path,
         admitted_async: AsyncAdmittedFactory,
+        request: pytest.FixtureRequest,
     ) -> None:
         provider = MagicMock()
         provider.get_default_model.return_value = "openai-codex/gpt-5.5"
@@ -857,7 +859,17 @@ class TestToolEventProgress:
             file_edits=False, keys=("websocket:chat-a",),
         )
         bus = loop.bus
-        _attach_webui_runtime_events(loop, bus)
+        disconnect_webui = _attach_webui_runtime_events(loop, bus)
+        owned_turn_owners: set[str] = set()
+
+        from nanobot.session.webui_turns import clear_websocket_turn_if_current
+
+        def cleanup_test_turns() -> None:
+            disconnect_webui()
+            for owner in owned_turn_owners:
+                clear_websocket_turn_if_current("chat-a", owner)
+
+        request.addfinalizer(cleanup_test_turns)
         loop.tools.get_definitions = MagicMock(return_value=[])
         loop.tools.prepare_call = MagicMock(return_value=(None, {}, None))
 
@@ -898,6 +910,11 @@ class TestToolEventProgress:
         outbound = []
         while bus.outbound_size > 0:
             outbound.append(await bus.consume_outbound())
+        owned_turn_owners.update(
+            owner
+            for message in outbound
+            if isinstance((owner := message.metadata.get(WEBSOCKET_TURN_OWNER_METADATA_KEY)), str)
+        )
 
         assert len(requests) == 2
         assert requests[0][-1]["role"] == "user"
@@ -960,7 +977,9 @@ class TestToolEventProgress:
             for message in visible_events
         }
         assert len(owners) == 1
-        assert isinstance(owners.pop(), str)
+        owner = owners.pop()
+        assert isinstance(owner, str)
+        assert owner in owned_turn_owners
         assert all(
             (message.channel, message.chat_id) == ("websocket", "chat-a")
             and message.metadata.get("webui") is True

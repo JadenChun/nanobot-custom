@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from nanobot.providers.factory import ProviderSnapshot
     from nanobot.security.workspace_access import WorkspaceSandboxStatus, WorkspaceScope
     from nanobot.session.manager import SessionManager
+    from nanobot.session.workspace_focus import WorkspaceFocusOwner
     from nanobot.utils.llm_runtime import LLMRuntime
 
 _CURRENT_REQUEST_CONTEXT: ContextVar["RequestContext | None"] = ContextVar(
@@ -107,6 +108,7 @@ class ToolContext:
     workspace_sandbox: WorkspaceSandboxStatus | None = None
     runtime_control: RuntimeControl | None = None
     fork_dependencies: ForkToolDependencies | None = None
+    workspace_focus_owner: WorkspaceFocusOwner | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -42,6 +42,7 @@ export function AdvancedSettings({
   saving,
   requiresRestartPending,
   isNativeHostSurface,
+  managedAccess = false,
   onChangeForm,
   onSave,
   onRestart,
@@ -52,6 +53,7 @@ export function AdvancedSettings({
   saving: boolean;
   requiresRestartPending: boolean;
   isNativeHostSurface: boolean;
+  managedAccess?: boolean;
   onChangeForm: Dispatch<SetStateAction<NetworkSafetySettingsUpdate>>;
   onSave: () => void;
   onRestart?: () => void;
@@ -86,29 +88,39 @@ export function AdvancedSettings({
               label={form.webuiAllowLocalServiceAccess ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
             />
           </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.webuiDefaultAccess", "Default access")}
-            description={tx(
-              isNativeHostSurface ? "settings.help.webuiDefaultAccessNative" : "settings.help.webuiDefaultAccess",
-              isNativeHostSurface
-                ? "Used by native chats without a project-specific permission."
-                : "Used by web chats without a project-specific permission.",
-            )}
-          >
-            <SegmentedControl
-              value={form.webuiDefaultAccessMode}
-              options={[
-                { value: "default", label: tx("settings.values.defaultPermission", "Default Permission") },
-                { value: "full", label: tx("settings.values.fullAccess", "Full Access") },
-              ]}
-              onChange={(webuiDefaultAccessMode) =>
-                onChangeForm((prev) => ({
-                  ...prev,
-                  webuiDefaultAccessMode: webuiDefaultAccessMode as WebuiDefaultAccessMode,
-                }))
-              }
+          {managedAccess ? (
+            <SettingsRow
+              title={tx("settings.rows.managedFolderAccess", "Managed folder access")}
+              description={tx(
+                "settings.help.managedFolderAccess",
+                "Folder grants control file and command access. The default Full access preference cannot add or bypass a grant.",
+              )}
             />
-          </SettingsRow>
+          ) : (
+            <SettingsRow
+              title={tx("settings.rows.webuiDefaultAccess", "Default access")}
+              description={tx(
+                isNativeHostSurface ? "settings.help.webuiDefaultAccessNative" : "settings.help.webuiDefaultAccess",
+                isNativeHostSurface
+                  ? "Used by native chats without a project-specific permission."
+                  : "Used by web chats without a project-specific permission.",
+              )}
+            >
+              <SegmentedControl
+                value={form.webuiDefaultAccessMode}
+                options={[
+                  { value: "default", label: tx("settings.values.defaultPermission", "Restricted") },
+                  { value: "full", label: tx("settings.values.fullAccess", "Full access") },
+                ]}
+                onChange={(webuiDefaultAccessMode) =>
+                  onChangeForm((prev) => ({
+                    ...prev,
+                    webuiDefaultAccessMode: webuiDefaultAccessMode as WebuiDefaultAccessMode,
+                  }))
+                }
+              />
+            </SettingsRow>
+          )}
           <RestartSettingsFooter
             dirty={dirty}
             saving={saving}

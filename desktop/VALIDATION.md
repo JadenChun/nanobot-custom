@@ -86,7 +86,7 @@ the installed Python backend qualification.
 ## Icon and launcher update (RPM 0.3.0-3)
 
 RPM release 3 uses the packaged Nanobot icon for the GTK setup/chat windows and
-the tray. Its desktop entry matches GTK's `Nanobot-desktop` window class so KDE
+the tray. Its desktop entry matches GTK's `nanobot-desktop` window class so KDE
 can associate the running window with the launcher. The release RPM SHA-256 is
 `08d05e7a3c044c50f7c1ab145c4af5a92671ddc54daf77ad176f4a1b8ac5a27f`.
 
@@ -102,6 +102,47 @@ moved out of the applications directory and retained under
 application cache, only **Nanobot Desktop** remained visible. The package does
 not alter other users' launchers. Update evidence is retained under
 `.assets/validation/fedora-icons-2026-10-24/`.
+
+## KDE Wayland icon association (RPM 0.3.0-4 source change)
+
+RPM 0.3.0-3 sets the GTK window icon and a `StartupWMClass`, but KDE Wayland
+associates a window with its launcher by the GTK app id / window class
+(`nanobot-desktop`) matched against the desktop-file basename, not
+`StartupWMClass`. The installed `Nanobot Desktop.desktop` therefore fell back to
+the default WebKit window icon.
+
+RPM 0.3.0-4 ships an additional `NoDisplay` entry named
+`nanobot-desktop.desktop` (same `Exec`/`Icon`) via `bundle.linux.rpm.files`, and
+uses the lowercase `StartupWMClass=nanobot-desktop` in the visible template. The
+alias associates the Wayland window without adding a duplicate menu entry.
+
+The same alias can be installed immediately for 0.3.0-3 at
+`~/.local/share/applications/nanobot-desktop.desktop`; refresh with
+`update-desktop-database ~/.local/share/applications` and
+`kbuildsycoca6 --noincremental`, then restart Nanobot Desktop.
+
+The rebuilt 0.3.0-4 RPM was produced and installed on 2026-10-28. With no
+per-user desktop overrides present, the running KDE Wayland window shows the
+Nanobot titlebar icon from the packaged launchers alone. RPM SHA-256:
+`746aaf72f0190f8f777a826092c86bb8dc58403e716a653c036677133d82d05c`.
+
+## Single-window lifecycle (RPM 0.3.0-5)
+
+The shell now starts with one window labeled `chat`. It first hosts the setup
+/connection UI, then navigates the same webview to the gateway WebUI when the
+backend is ready. There is no second chat window and no setup window left
+behind. The window resizes from 650x720 to 1120x780, keeps the Nanobot icon,
+and uses the same close/tray behavior in both states.
+
+Navigation policy allows the selected loopback gateway origin and the bundled
+setup origin, so returning to setup after a failed start or selection change
+does not get blocked. Change-selection and cleanup paths navigate the window
+back to setup instead of destroying the only window.
+
+Validation on 2026-10-28: 13 native tests pass, Clippy with warnings denied
+passes, and the release binary/RPM 0.3.0-5 shows a single `nanobot-desktop`
+window (setup -> chat). RPM SHA-256:
+`89770972667a9c9813b2806ce2b4dd37e2a37f504e3d80d88ee14aa44085420e`.
 
 ## Initial installed GUI evidence (RPM 0.3.0-1)
 

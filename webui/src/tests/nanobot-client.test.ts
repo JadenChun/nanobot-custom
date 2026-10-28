@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NanobotClient } from "@/lib/nanobot-client";
 import type { SidebarStatePayload } from "@/lib/types";
+import { folderAccessSessionUpdatedFixture } from "./fixtures/folder-access-request";
 
 /**
  * Minimal fake WebSocket implementing the subset NanobotClient touches.
@@ -1749,22 +1750,16 @@ describe("NanobotClient", () => {
     client.connect();
     lastSocket().fakeOpen();
 
-    lastSocket().fakeMessage({
-      event: "session_updated",
-      chat_id: "chat-title",
-      scope: "metadata",
-      workspace_scope: {
-        project_path: "/tmp/project",
-        project_name: "project",
-        access_mode: "restricted",
-        restrict_to_workspace: true,
-      },
-    });
+    lastSocket().fakeMessage(folderAccessSessionUpdatedFixture);
 
     expect(globalHandler).toHaveBeenCalledWith(
       "chat-title",
       "metadata",
-      expect.objectContaining({ project_path: "/tmp/project" }),
+      expect.objectContaining({ project_path: "/agent/home" }),
+      expect.objectContaining({
+        access_request_id: "0123456789abcdef0123456789abcdef",
+        status: "pending",
+      }),
     );
     expect(chatHandler).not.toHaveBeenCalled();
   });

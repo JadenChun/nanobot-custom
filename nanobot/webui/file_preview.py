@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse
 
 from nanobot.config.paths import get_media_dir
+from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.security.workspace_access import WorkspaceScope
 from nanobot.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
+
+if TYPE_CHECKING:
+    from nanobot.security.desktop_permissions import (
+        DesktopPermissionOwner,
+        WorkspacePermissionReference,
+    )
 
 MAX_FILE_PREVIEW_BYTES = 384 * 1024
 
@@ -28,10 +35,23 @@ def file_preview_payload(
     *,
     scope: WorkspaceScope,
     max_bytes: int = MAX_FILE_PREVIEW_BYTES,
+    resource_policy: ResourceAccessPolicy | None = None,
+    managed_access: bool = False,
+    allow_folder_grants: bool = False,
+    permission_owner: DesktopPermissionOwner | None = None,
+    permission_reference: WorkspacePermissionReference | None = None,
 ) -> dict[str, Any]:
     """Return a text preview for a file allowed by the session workspace scope."""
 
-    resolved = _resolve_preview_path(raw_path, scope=scope)
+    resolved = _resolve_preview_path(
+        raw_path,
+        scope=scope,
+        resource_policy=resource_policy,
+        managed_access=managed_access,
+        allow_folder_grants=allow_folder_grants,
+        permission_owner=permission_owner,
+        permission_reference=permission_reference,
+    )
 
     try:
         with open(resolved, "rb") as f:
@@ -65,10 +85,23 @@ def file_preview_availability_payload(
     raw_path: str | None,
     *,
     scope: WorkspaceScope,
+    resource_policy: ResourceAccessPolicy | None = None,
+    managed_access: bool = False,
+    allow_folder_grants: bool = False,
+    permission_owner: DesktopPermissionOwner | None = None,
+    permission_reference: WorkspacePermissionReference | None = None,
 ) -> dict[str, bool]:
     """Confirm that a path is a readable text preview candidate without loading it fully."""
 
-    resolved = _resolve_preview_path(raw_path, scope=scope)
+    resolved = _resolve_preview_path(
+        raw_path,
+        scope=scope,
+        resource_policy=resource_policy,
+        managed_access=managed_access,
+        allow_folder_grants=allow_folder_grants,
+        permission_owner=permission_owner,
+        permission_reference=permission_reference,
+    )
     try:
         with open(resolved, "rb") as f:
             prefix = f.read(4096)
@@ -79,7 +112,16 @@ def file_preview_availability_payload(
     return {"available": True}
 
 
-def _resolve_preview_path(raw_path: str | None, *, scope: WorkspaceScope) -> Path:
+def _resolve_preview_path(
+    raw_path: str | None,
+    *,
+    scope: WorkspaceScope,
+    resource_policy: ResourceAccessPolicy | None,
+    managed_access: bool,
+    allow_folder_grants: bool,
+    permission_owner: DesktopPermissionOwner | None,
+    permission_reference: WorkspacePermissionReference | None,
+) -> Path:
     path = _clean_preview_path(raw_path)
     if not path:
         raise WebUIFilePreviewError(400, "missing path")
@@ -104,6 +146,23 @@ def _resolve_preview_path(raw_path: str | None, *, scope: WorkspaceScope) -> Pat
 
     if not resolved.is_file():
         raise WebUIFilePreviewError(404, "file not found")
+    if resource_policy is not None:
+        extra_roots = [get_media_dir()] if scope.restrict_to_workspace else []
+        try:
+            resource_policy.validate_path(
+                resolved,
+                "read",
+                extra_read_roots=extra_roots,
+                managed=managed_access,
+                allow_folder_grants=allow_folder_grants,
+                permission_owner=permission_owner,
+                permission_reference=permission_reference,
+            )
+        except PermissionError as exc:
+            raise WebUIFilePreviewError(
+                403,
+                "file is outside the current folder access",
+            ) from exc
     return resolved
 
 

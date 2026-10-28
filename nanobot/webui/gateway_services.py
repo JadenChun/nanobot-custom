@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING, Any, Callable
 from loguru import logger as default_logger
 
 from nanobot.config.loader import get_config_path
+from nanobot.context_repo import ContextRepoManager
+from nanobot.context_repo.catalog import RepositoryCatalog
+from nanobot.security.folder_grants import FolderGrantStore
 from nanobot.webui.gateway_endpoint import WebUIGatewayEndpoint
 from nanobot.webui.gateway_tokens import GatewayTokenStore
 from nanobot.webui.ingress_policy import DEFAULT_WEBUI_INGRESS_POLICY, WebUIIngressPolicy
@@ -57,7 +60,9 @@ def build_gateway_services(
     session_manager: SessionManager | None,
     static_dist_path: Path | None,
     workspace_path: Path,
+    context_manager: ContextRepoManager | None = None,
     default_restrict_to_workspace: bool,
+    configured_exec_sandbox: bool = False,
     config_path: Path | None = None,
     runtime_model_name: Callable[[], str | None] | None,
     refresh_runtime_config: Callable[[], None] | None = None,
@@ -101,11 +106,21 @@ def build_gateway_services(
         attachment_limits=ingress.attachments,
     )
     transcripts = WebUITranscriptRecorder(log=logger)
+    sessions_root = session_manager.sessions_root if session_manager is not None else None
+    grants = FolderGrantStore.for_workspace(workspace_path, sessions_root=sessions_root)
+    catalog = RepositoryCatalog.for_workspace(workspace_path, sessions_root=sessions_root)
     workspaces = WebUIWorkspaceController(
         session_manager=session_manager,
         default_workspace=workspace_path,
         default_restrict_to_workspace=default_restrict_to_workspace,
+        grant_store=grants,
+        catalog=catalog,
+        context_manager=context_manager,
+        bus=bus,
+        configured_exec_sandbox=configured_exec_sandbox,
     )
+    focus_owner = workspaces.focus_owner
+    media.set_resource_policy(focus_owner.policy if focus_owner is not None else None)
     temporary_chats = WebUITemporaryChats(
         bus=bus,
         session_manager=session_manager,
