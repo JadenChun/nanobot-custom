@@ -149,3 +149,29 @@ def test_construction_retains_required_dependency_guards(context, missing_fields
         construct_core_tools(context)
     assert str(error.value) == f'Foreground tool construction requires {message}'
     factory.assert_not_called()
+
+
+def test_browser_session_config_reaches_only_the_browser_tool(context, monkeypatch):
+    from nanobot.config.schema import AgentBrowserConfig
+
+    context.config = ToolsConfig(
+        agent_browser=AgentBrowserConfig(
+            cdp_url="http://127.0.0.1:9222",
+            session="nanobot",
+            launch_command="/home/jaden/.local/bin/chrome-agent",
+            launch_wait_seconds=5,
+        )
+    )
+
+    names, registry = load(context, monkeypatch)
+
+    assert {"agent_browser", "agent_device"} <= set(names)
+    browser = registry.get("agent_browser")
+    assert browser is not None
+    assert browser.cdp_url == "http://127.0.0.1:9222"
+    assert browser.session == "nanobot"
+    assert browser.launch_command == "/home/jaden/.local/bin/chrome-agent"
+    assert browser.launch_wait_seconds == 5
+    device = registry.get("agent_device")
+    assert device is not None
+    assert not hasattr(device, "cdp_url")
