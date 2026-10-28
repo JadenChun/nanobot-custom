@@ -1234,11 +1234,19 @@ class WebFetchTool(Tool):
 
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
+        state_loader: Callable[[], tuple[WebFetchConfig, str]] | None = None
+        if ctx.provider_snapshot_loader is not None:
+            def _load_fetch_state() -> tuple[WebFetchConfig, str]:
+                from nanobot.config.loader import load_config, resolve_config_env_vars
+                web = resolve_config_env_vars(load_config()).tools.web
+                return web.fetch, web.search.api_key
+            state_loader = _load_fetch_state
         return cls(
             config=ctx.config.web.fetch,
             proxy=ctx.config.web.proxy,
             user_agent=ctx.config.web.user_agent,
             tinyfish_api_key=ctx.config.web.search.api_key,
+            config_loader=state_loader,
         )
 
     def __init__(
@@ -1248,12 +1256,22 @@ class WebFetchTool(Tool):
         user_agent: str | None = None,
         max_chars: int = 50000,
         tinyfish_api_key: str = "",
+        config_loader: Callable[[], tuple[WebFetchConfig, str]] | None = None,
     ):
         self.config = config if config is not None else WebFetchConfig()
         self.proxy = proxy
         self.user_agent = user_agent or _DEFAULT_USER_AGENT
         self.max_chars = max_chars
         self.tinyfish_api_key = tinyfish_api_key
+        self._config_loader = config_loader
+
+    def _refresh_config(self) -> None:
+        if self._config_loader is None:
+            return
+        try:
+            self.config, self.tinyfish_api_key = self._config_loader()
+        except Exception:
+            logger.exception("Failed to refresh web fetch config")
 
     @property
     def read_only(self) -> bool:
@@ -1267,6 +1285,7 @@ class WebFetchTool(Tool):
         **kwargs: Any,
     ) -> Any:  # pyright: ignore[reportIncompatibleMethodOverride]
         url = url.strip(" \t\r\n`\"'")
+        self._refresh_config()
         try:
             blocked_hosts = _configured_fetch_hosts(self.config)
         except ValueError as exc:

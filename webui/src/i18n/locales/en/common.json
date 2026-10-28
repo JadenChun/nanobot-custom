@@ -262,7 +262,7 @@
       "maxResults": "Results returned by each web_search call.",
       "timeout": "Seconds before a search provider request times out.",
       "jinaReader": "Use Jina Reader for web_fetch when available.",
-      "fetchExtractor": "Auto uses TinyFish when a key is set, then Jina, then the local extractor.",
+      "fetchExtractor": "Auto uses TinyFish when its key is set (shared with search), then Jina, then the local extractor.",
       "browserAttach": "Chrome DevTools endpoint. When it answers, the agent drives this running browser and shares its sign-ins instead of launching its own profile.",
       "browserPinTab": "Keep agent actions on one tab so the user's active tab is not taken over.",
       "browserSessionName": "agent-browser session used for the shared browser.",

@@ -204,7 +204,7 @@
       "maxResults": "Résultats renvoyés par chaque appel web_search.",
       "timeout": "Nombre de secondes avant l’expiration d’une requête de recherche.",
       "jinaReader": "Utilise Jina Reader pour web_fetch lorsque disponible.",
-      "fetchExtractor": "Auto utilise TinyFish si une clé est définie, puis Jina, puis l'extracteur local.",
+      "fetchExtractor": "Auto utilise TinyFish si sa clé est définie (partagée avec la recherche), puis Jina, puis l'extracteur local.",
       "browserAttach": "Point de terminaison Chrome DevTools. S'il répond, l'agent pilote ce navigateur et partage ses sessions au lieu de lancer son propre profil.",
       "browserPinTab": "Garde les actions de l'agent sur un seul onglet pour ne pas prendre l'onglet actif de l'utilisateur.",
       "browserSessionName": "Session agent-browser utilisée pour le navigateur partagé.",

@@ -204,7 +204,7 @@
       "maxResults": "Số kết quả được trả về sau mỗi lần gọi web_search.",
       "timeout": "Số giây trước khi yêu cầu của nhà cung cấp tìm kiếm hết thời gian.",
       "jinaReader": "Dùng Jina Reader cho web_fetch khi có thể.",
-      "fetchExtractor": "Auto dùng TinyFish khi có khóa, sau đó Jina, rồi bộ trích xuất cục bộ.",
+      "fetchExtractor": "Auto dùng TinyFish khi có khóa (dùng chung với tìm kiếm), sau đó Jina, rồi bộ trích xuất cục bộ.",
       "browserAttach": "Endpoint Chrome DevTools. Khi phản hồi, agent điều khiển trình duyệt này và dùng chung phiên đăng nhập thay vì mở profile riêng.",
       "browserPinTab": "Giữ thao tác của agent trên một tab để không chiếm tab đang hoạt động của người dùng.",
       "browserSessionName": "Phiên agent-browser dùng cho trình duyệt chia sẻ.",

@@ -204,7 +204,7 @@
       "maxResults": "Hasil yang dikembalikan oleh setiap panggilan web_search.",
       "timeout": "Detik sebelum permintaan penyedia pencarian mencapai batas waktu.",
       "jinaReader": "Gunakan Jina Reader untuk web_fetch jika tersedia.",
-      "fetchExtractor": "Auto memakai TinyFish bila ada kunci, lalu Jina, lalu ekstraktor lokal.",
+      "fetchExtractor": "Auto memakai TinyFish bila kuncinya diatur (dipakai bersama pencarian), lalu Jina, lalu ekstraktor lokal.",
       "browserAttach": "Endpoint Chrome DevTools. Jika merespons, agen mengendalikan browser ini dan berbagi sesi masuk alih-alih membuka profil sendiri.",
       "browserPinTab": "Menjaga tindakan agen pada satu tab agar tab aktif pengguna tidak diambil alih.",
       "browserSessionName": "Sesi agent-browser yang dipakai untuk browser bersama.",

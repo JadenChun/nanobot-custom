@@ -135,3 +135,23 @@ async def test_credential_url_is_never_sent_to_remote_extractors(fake_fetch):
     assert all(method != "POST" for method, _url in fake_fetch.calls)
     assert all("r.jina.ai" not in url for _method, url in fake_fetch.calls)
     assert isinstance(result, str)
+
+
+@pytest.mark.asyncio
+async def test_fetch_picks_up_key_saved_after_start(fake_fetch):
+    state: dict[str, object] = {"key": ""}
+
+    def loader():
+        return WebFetchConfig(provider="auto"), state["key"]  # type: ignore[dict-item]
+
+    tool = WebFetchTool(
+        config=WebFetchConfig(provider="auto"),
+        config_loader=loader,  # type: ignore[arg-type]
+    )
+
+    first = json.loads(await tool.execute("https://example.com/article"))
+    assert first["extractor"] == "jina"
+
+    state["key"] = "tf-key"
+    second = json.loads(await tool.execute("https://example.com/article"))
+    assert second["extractor"] == "tinyfish"

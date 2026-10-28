@@ -194,6 +194,7 @@ const PROVIDER_BRANDS: Record<string, ProviderBrand> = {
     "https://www.stepfun.com/step_favicon.svg",
   ]),
   tavily: brand("tavily.com", "#111827", "T"),
+  tinyfish: brand("tinyfish.ai", "#FF6700", "TF", ["/brand/tinyfish.png"]),
   volcengine: brand("volcengine.com", "#1664FF", "VE"),
   vllm: brand("vllm.ai", "#2563EB", "VL"),
   xiaomi_mimo: brand("mimo.xiaomi.com", "#FF6900", "MI", [

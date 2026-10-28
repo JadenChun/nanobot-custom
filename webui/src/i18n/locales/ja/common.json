@@ -204,7 +204,7 @@
       "maxResults": "各 web_search 呼び出しで返す結果数です。",
       "timeout": "検索プロバイダーのリクエストがタイムアウトするまでの秒数です。",
       "jinaReader": "利用可能な場合、web_fetch に Jina Reader を使います。",
-      "fetchExtractor": "Auto はキーがあれば TinyFish、次に Jina、最後にローカル抽出を使います。",
+      "fetchExtractor": "Auto はキーが設定されていれば TinyFish（検索と共通）、次に Jina、最後にローカル抽出を使います。",
       "browserAttach": "Chrome DevTools のエンドポイント。応答がある場合、エージェントは独自プロファイルを起動せず、このブラウザを操作してログイン状態を共有します。",
       "browserPinTab": "エージェントの操作を 1 つのタブに固定し、ユーザーのアクティブタブを奪わないようにします。",
       "browserSessionName": "共有ブラウザで使う agent-browser セッション。",

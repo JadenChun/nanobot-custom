@@ -204,7 +204,7 @@
       "maxResults": "각 web_search 호출에서 반환되는 결과 수입니다.",
       "timeout": "검색 제공자 요청이 타임아웃되기 전의 초입니다.",
       "jinaReader": "가능할 때 web_fetch에 Jina Reader를 사용합니다.",
-      "fetchExtractor": "Auto는 키가 있으면 TinyFish, 그다음 Jina, 마지막으로 로컬 추출기를 사용합니다.",
+      "fetchExtractor": "Auto는 키가 설정된 경우 TinyFish(검색과 공유), 그다음 Jina, 마지막으로 로컬 추출기를 사용합니다.",
       "browserAttach": "Chrome DevTools 엔드포인트입니다. 응답하면 에이전트가 자체 프로필을 실행하지 않고 이 브라우저를 제어하며 로그인 상태를 공유합니다.",
       "browserPinTab": "에이전트 동작을 한 탭에 고정해 사용자의 활성 탭을 빼앗지 않습니다.",
       "browserSessionName": "공유 브라우저에 사용할 agent-browser 세션입니다.",

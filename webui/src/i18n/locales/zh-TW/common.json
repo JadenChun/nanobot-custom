@@ -204,7 +204,7 @@
       "maxResults": "每次呼叫 web_search 所回傳的結果數。",
       "timeout": "搜尋供應商請求逾時前的秒數。",
       "jinaReader": "若可用，則讓 web_fetch 使用 Jina Reader。",
-      "fetchExtractor": "自動模式在有金鑰時使用 TinyFish，其次 Jina，最後使用本機擷取器。",
+      "fetchExtractor": "自動模式在設定金鑰時使用 TinyFish（與搜尋共用），其次 Jina，最後使用本機擷取器。",
       "browserAttach": "Chrome DevTools 端點。若有回應，代理會控制這個執行中的瀏覽器並共用登入狀態，而不是啟動獨立設定檔。",
       "browserPinTab": "將代理操作固定在一個分頁，避免佔用使用者目前分頁。",
       "browserSessionName": "用於共用瀏覽器的 agent-browser 工作階段。",
