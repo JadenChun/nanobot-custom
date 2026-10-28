@@ -5,9 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import shutil
+import subprocess
+import time
 from collections.abc import Sequence
 from typing import Any, cast
+
+import httpx
 
 from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.process import run_owned_process
@@ -119,12 +124,24 @@ class AgentBrowserTool(Tool):
         max_output_chars: int = 12000,
         working_dir: str | None = None,
         read_only: bool = False,
+        cdp_url: str = "",
+        pin_tab: bool = True,
+        session: str = "default",
+        launch_command: str = "",
+        launch_wait_seconds: int = 20,
+        executable_path: str = "",
     ):
         self.package = package
         self.timeout = timeout
         self.max_output_chars = max_output_chars
         self.working_dir = working_dir
         self._read_only_mode = read_only
+        self.cdp_url = cdp_url.strip()
+        self.pin_tab = pin_tab
+        self.session = session.strip()
+        self.launch_command = launch_command.strip()
+        self.launch_wait_seconds = max(1, int(launch_wait_seconds))
+        self.executable_path = executable_path.strip()
 
     @property
     def read_only(self) -> bool:
@@ -139,17 +156,81 @@ class AgentBrowserTool(Tool):
         """Browser sessions are shared state and must be serialized."""
         return False
 
+    async def _cdp_ready(self) -> bool:
+        if not self.cdp_url:
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=0.6) as client:
+                response = await client.get(f"{self.cdp_url.rstrip('/')}/json/version")
+            return response.status_code == 200
+        except Exception:
+            return False
+
+    async def _launch_shared_browser(self) -> bool:
+        """Start the shared browser and wait for its CDP endpoint."""
+        if not self.launch_command:
+            return False
+        try:
+            argv = shlex.split(self.launch_command)
+        except ValueError:
+            return False
+        if not argv:
+            return False
+        try:
+            subprocess.Popen(  # noqa: S603 - operator-configured launch command
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            return False
+        deadline = time.monotonic() + self.launch_wait_seconds
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.5)
+            if await self._cdp_ready():
+                return True
+        return False
+
+    async def _ensure_browser_session(self) -> bool:
+        if not self.cdp_url:
+            return False
+        if await self._cdp_ready():
+            return True
+        return await self._launch_shared_browser()
+
+    def _browser_flags(self, attached: bool) -> list[str]:
+        if attached:
+            flags = ["--cdp", self.cdp_url]
+            if self.pin_tab:
+                flags.append("--pin-tab")
+            if self.session:
+                flags.extend(["--session", self.session])
+            return flags
+        if self.executable_path:
+            return ["--executable-path", self.executable_path]
+        return []
+
     @property
     def name(self) -> str:
         return "agent_browser"
 
     @property
     def description(self) -> str:
+        session_hint = (
+            " A shared Chrome session is attached automatically: it runs on the user's real "
+            "Chrome profile, so their cookies, sign-ins, and open tabs are available. Use `tab` "
+            "to switch tabs and prefer inspecting the existing page before navigating."
+            if self.cdp_url
+            else ""
+        )
         return (
             "Run agent-browser CLI for browser/electron automation, web-app testing, visual QA, "
             "screenshots, and session recording. Pass CLI args as a string array (for example "
             "['--help'], ['--headed', 'open', 'https://example.com'], ['dashboard', 'start'], "
             "['screenshot', 'page.png', '--annotate'], or ['record', 'start', 'session.webm'])."
+            + session_hint
         )
 
     @property
@@ -220,7 +301,14 @@ class AgentBrowserTool(Tool):
                 "Install Node.js/npm first, then retry."
             )
 
-        command = [npx_command, "--yes", self.package, *args]
+        attached = await self._ensure_browser_session()
+        command = [
+            npx_command,
+            "--yes",
+            self.package,
+            *self._browser_flags(attached),
+            *args,
+        ]
         try:
             result = await run_owned_process(
                 command,
@@ -239,6 +327,10 @@ class AgentBrowserTool(Tool):
                     "command": command,
                     "cwd": cwd,
                     "action_class": classify_browser_action(args),
+                    "browser_session": {
+                        "attached": attached,
+                        "cdp_url": self.cdp_url or None,
+                    },
                 },
                 ensure_ascii=False,
             )
@@ -263,6 +355,10 @@ class AgentBrowserTool(Tool):
                 "stdoutTruncated": stdout_truncated,
                 "stderrTruncated": stderr_truncated,
                 "action_class": classify_browser_action(args),
+                "browser_session": {
+                    "attached": attached,
+                    "cdp_url": self.cdp_url or None,
+                },
             },
             ensure_ascii=False,
         )
