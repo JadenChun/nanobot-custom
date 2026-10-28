@@ -1023,7 +1023,7 @@ class WriteFileTool(_FsTool):
 
     async def execute(
         self, path: str | None = None, content: str | None = None, **kwargs: Any,
-    ) -> str | ToolOutcome:
+    ) -> "str | ToolOutcome":
         try:
             if not path:
                 raise ValueError("Unknown path")
@@ -1369,7 +1369,7 @@ class EditFileTool(_FsTool):
         new_text: str | None = None,
         replace_all: bool = False, occurrence: int | None = None,
         line_hint: int | None = None, expected_replacements: int | None = None, **kwargs: Any,
-    ) -> str | ToolOutcome:
+    ) -> "str | ToolOutcome":
         try:
             if not path:
                 raise ValueError("Unknown path")
@@ -1613,7 +1613,7 @@ class ListDirTool(_FsTool):
     async def execute(
         self, path: str | None = None, recursive: bool = False,
         max_entries: int | None = None, **kwargs: Any,
-    ) -> str | ToolOutcome:
+    ) -> "str | ToolOutcome":
         try:
             if path is None:
                 raise ValueError("Unknown path")
@@ -1796,7 +1796,7 @@ class SearchFilesTool(_FsTool):
         max_results: int | None = None,
         max_output_chars: int | None = None,
         **kwargs: Any,
-    ) -> str | ToolOutcome:
+    ) -> "str | ToolOutcome":
         """Return bounded ``path:line: text`` matches, never modifying files."""
         try:
             if not isinstance(query, str) or not query:

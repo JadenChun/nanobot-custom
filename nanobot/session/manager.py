@@ -2899,7 +2899,7 @@ class SessionManager:
         key: str,
         *,
         expected_binding: WorkspaceAccessSourceBinding | None = None,
-    ) -> tuple[JsonlSessionStore, SourceSnapshot] | None:
+    ) -> "tuple[JsonlSessionStore, SourceSnapshot] | None":
         """Read one active canonical source without creating or caching a Session."""
         cached = self.get_cached(key)
         if cached is not None and not cached.policy.persist:
