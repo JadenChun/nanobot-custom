@@ -126,6 +126,24 @@ per-user desktop overrides present, the running KDE Wayland window shows the
 Nanobot titlebar icon from the packaged launchers alone. RPM SHA-256:
 `746aaf72f0190f8f777a826092c86bb8dc58403e716a653c036677133d82d05c`.
 
+## Single-window lifecycle (RPM 0.3.0-5)
+
+The shell now starts with one window labeled `chat`. It first hosts the setup
+/connection UI, then navigates the same webview to the gateway WebUI when the
+backend is ready. There is no second chat window and no setup window left
+behind. The window resizes from 650x720 to 1120x780, keeps the Nanobot icon,
+and uses the same close/tray behavior in both states.
+
+Navigation policy allows the selected loopback gateway origin and the bundled
+setup origin, so returning to setup after a failed start or selection change
+does not get blocked. Change-selection and cleanup paths navigate the window
+back to setup instead of destroying the only window.
+
+Validation on 2026-10-28: 13 native tests pass, Clippy with warnings denied
+passes, and the release binary/RPM 0.3.0-5 shows a single `nanobot-desktop`
+window (setup -> chat). RPM SHA-256:
+`89770972667a9c9813b2806ce2b4dd37e2a37f504e3d80d88ee14aa44085420e`.
+
 ## Initial installed GUI evidence (RPM 0.3.0-1)
 
 The initial Fedora 44 RPM was exercised outside the source checkout with the

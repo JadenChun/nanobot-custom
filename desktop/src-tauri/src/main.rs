@@ -145,7 +145,10 @@ fn run() {
             let initial = select_initial(guard.as_ref());
             let shared = controller::initialize(app_handle.clone(), guard, initial);
             app.manage(shared.clone());
-            if let Some(window) = app.get_webview_window("setup") {
+            if let Some(window) = app.get_webview_window("chat") {
+                if let Ok(url) = window.url() {
+                    shared.set_setup_url(url);
+                }
                 native::set_window_icon(&window)?;
                 let shared_for_close = shared.clone();
                 let window_for_close = window.clone();

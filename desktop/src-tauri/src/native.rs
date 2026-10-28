@@ -20,7 +20,7 @@ use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     webview::{NewWindowResponse, WebviewWindow},
-    AppHandle, Manager, Wry,
+    AppHandle, LogicalSize, Manager, Wry,
 };
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
@@ -278,9 +278,6 @@ fn start_tray_host_monitor(app: AppHandle<Wry>, shared: Arc<Shared>) {
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
-                if let Some(window) = app_for_window.get_webview_window("setup") {
-                    let _ = window.show();
-                }
             });
         }
     });
@@ -303,11 +300,48 @@ fn focus_control_window(app: &AppHandle<Wry>, shared: &Shared) {
             return;
         }
     }
-    open_setup(app);
+    show_setup(app, shared);
 }
 
 pub fn open_setup(app: &AppHandle<Wry>) {
-    if let Some(window) = app.get_webview_window("setup") {
+    if let Some(window) = app.get_webview_window("chat") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// Show the connection/status page when no backend is running. The single window
+/// is navigated back from the chat origin when necessary.
+pub fn show_setup(app: &AppHandle<Wry>, shared: &Shared) {
+    if let Some(window) = app.get_webview_window("chat") {
+        if shared.snapshot().state != "running" {
+            if let Some(setup_url) = shared.setup_url() {
+                let on_setup = window
+                    .url()
+                    .ok()
+                    .is_some_and(|current| current == setup_url);
+                if !on_setup {
+                    let _ = window.navigate(setup_url);
+                    let _ = window.set_size(LogicalSize::new(650.0, 720.0));
+                    let _ = window.set_title("Nanobot Desktop");
+                }
+            }
+        }
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+/// Return the single window to the setup UI after a selection change.
+pub fn return_to_setup(app: &AppHandle<Wry>, shared: &Shared) {
+    if let Some(window) = app.get_webview_window("chat") {
+        if let Some(setup_url) = shared.setup_url() {
+            let _ = window.navigate(setup_url);
+        }
+        let _ = window.set_size(LogicalSize::new(650.0, 720.0));
+        let _ = window.set_title("Nanobot Desktop");
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
@@ -440,6 +474,7 @@ fn notify_before_window_action(
 pub fn install_navigation_policy(
     window: &WebviewWindow<Wry>,
     origin: Url,
+    setup_origin: Option<Url>,
     app: AppHandle<Wry>,
 ) -> Result<(), &'static str> {
     let installed = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -498,6 +533,7 @@ pub fn install_navigation_policy(
                 return;
             }
             let expected = origin.clone();
+            let setup_expected = setup_origin.clone();
             let opener_app = app.clone();
             view.connect_decide_policy(move |_view, decision, decision_type| {
                 if decision_type != PolicyDecisionType::NavigationAction {
@@ -526,7 +562,11 @@ pub fn install_navigation_policy(
                     decision.ignore();
                     return true;
                 }
-                if target.origin() == expected.origin() {
+                if target.origin() == expected.origin()
+                    || setup_expected
+                        .as_ref()
+                        .is_some_and(|setup| target.origin() == setup.origin())
+                {
                     decision.use_();
                     return true;
                 }
@@ -562,8 +602,10 @@ pub fn install_navigation_policy(
     Ok(())
 }
 
-pub fn navigation_allowed(target: &Url, selected: &Url) -> bool {
-    !has_credentials(target) && target.origin() == selected.origin()
+pub fn navigation_allowed(target: &Url, selected: &Url, setup: Option<&Url>) -> bool {
+    !has_credentials(target)
+        && (target.origin() == selected.origin()
+            || setup.is_some_and(|value| target.origin() == value.origin()))
 }
 
 fn has_credentials(url: &Url) -> bool {
@@ -607,16 +649,32 @@ mod tests {
     fn navigation_rejects_credentials_even_for_selected_origin() {
         let selected = Url::parse("http://127.0.0.1:8765/").unwrap();
         let credentialed = Url::parse("http://user:pass@127.0.0.1:8765/chat").unwrap();
-        assert!(!navigation_allowed(&credentialed, &selected));
-        assert!(navigation_allowed(&Url::parse("http://127.0.0.1:8765/chat").unwrap(), &selected));
+        assert!(!navigation_allowed(&credentialed, &selected, None));
+        assert!(navigation_allowed(&Url::parse("http://127.0.0.1:8765/chat").unwrap(), &selected, None));
+    }
+
+    #[test]
+    fn navigation_allows_the_setup_origin_only() {
+        let selected = Url::parse("http://127.0.0.1:8765/").unwrap();
+        let setup = Url::parse("http://tauri.localhost/").unwrap();
+        assert!(navigation_allowed(
+            &Url::parse("http://tauri.localhost/index.html").unwrap(),
+            &selected,
+            Some(&setup),
+        ));
+        assert!(!navigation_allowed(
+            &Url::parse("https://example.invalid/").unwrap(),
+            &selected,
+            Some(&setup),
+        ));
     }
 
     #[test]
     fn navigation_does_not_allow_foreign_or_non_http_origins() {
         let selected = Url::parse("http://127.0.0.1:8765/").unwrap();
-        assert!(!navigation_allowed(&Url::parse("https://example.invalid/").unwrap(), &selected));
-        assert!(!navigation_allowed(&Url::parse("file:///tmp/a").unwrap(), &selected));
-        assert!(!navigation_allowed(&Url::parse("javascript:alert(1)").unwrap(), &selected));
+        assert!(!navigation_allowed(&Url::parse("https://example.invalid/").unwrap(), &selected, None));
+        assert!(!navigation_allowed(&Url::parse("file:///tmp/a").unwrap(), &selected, None));
+        assert!(!navigation_allowed(&Url::parse("javascript:alert(1)").unwrap(), &selected, None));
     }
 
     #[test]

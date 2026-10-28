@@ -11,7 +11,7 @@
     "withGlobalTauri": false,
     "windows": [
       {
-        "label": "setup",
+        "label": "chat",
         "title": "Nanobot Desktop",
         "width": 650,
         "height": 720,
@@ -36,7 +36,7 @@
     "resources": ["resources/backend-compat.json", "resources/THIRD_PARTY_NOTICES.md", "resources/LICENSE"],
     "linux": {
       "rpm": {
-        "release": "4",
+        "release": "5",
         "epoch": 0,
         "desktopTemplate": "nanobot.desktop",
         "files": {
