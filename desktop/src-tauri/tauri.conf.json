@@ -36,9 +36,12 @@
     "resources": ["resources/backend-compat.json", "resources/THIRD_PARTY_NOTICES.md", "resources/LICENSE"],
     "linux": {
       "rpm": {
-        "release": "3",
+        "release": "4",
         "epoch": 0,
         "desktopTemplate": "nanobot.desktop",
+        "files": {
+          "/usr/share/applications/nanobot-desktop.desktop": "nanobot-desktop.desktop"
+        },
         "depends": [
           "gtk3",
           "webkit2gtk4.1",

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Categories=Utility;
+Comment=Icon association alias for the Nanobot desktop window
+Exec=nanobot-desktop
+StartupWMClass=nanobot-desktop
+Icon=nanobot-desktop
+Name=Nanobot Desktop
+NoDisplay=true
+Terminal=false
+Type=Application

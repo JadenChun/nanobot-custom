@@ -86,7 +86,7 @@ the installed Python backend qualification.
 ## Icon and launcher update (RPM 0.3.0-3)
 
 RPM release 3 uses the packaged Nanobot icon for the GTK setup/chat windows and
-the tray. Its desktop entry matches GTK's `Nanobot-desktop` window class so KDE
+the tray. Its desktop entry matches GTK's `nanobot-desktop` window class so KDE
 can associate the running window with the launcher. The release RPM SHA-256 is
 `08d05e7a3c044c50f7c1ab145c4af5a92671ddc54daf77ad176f4a1b8ac5a27f`.
 
@@ -102,6 +102,25 @@ moved out of the applications directory and retained under
 application cache, only **Nanobot Desktop** remained visible. The package does
 not alter other users' launchers. Update evidence is retained under
 `.assets/validation/fedora-icons-2026-10-24/`.
+
+## KDE Wayland icon association (RPM 0.3.0-4 source change)
+
+RPM 0.3.0-3 sets the GTK window icon and a `StartupWMClass`, but KDE Wayland
+associates a window with its launcher by the GTK app id / window class
+(`nanobot-desktop`) matched against the desktop-file basename, not
+`StartupWMClass`. The installed `Nanobot Desktop.desktop` therefore fell back to
+the default WebKit window icon.
+
+RPM 0.3.0-4 ships an additional `NoDisplay` entry named
+`nanobot-desktop.desktop` (same `Exec`/`Icon`) via `bundle.linux.rpm.files`, and
+uses the lowercase `StartupWMClass=nanobot-desktop` in the visible template. The
+alias associates the Wayland window without adding a duplicate menu entry.
+
+The same alias can be installed immediately for 0.3.0-3 at
+`~/.local/share/applications/nanobot-desktop.desktop`; refresh with
+`update-desktop-database ~/.local/share/applications` and
+`kbuildsycoca6 --noincremental`, then restart Nanobot Desktop. A rebuilt 0.3.0-4
+RPM has not been produced or installed as part of this source change.
 
 ## Initial installed GUI evidence (RPM 0.3.0-1)
 
