@@ -1026,6 +1026,13 @@
       "selectProvider": "选择提供商",
       "configureProvider": "配置提供商",
       "languageAuto": "自动"
+    },
+    "agentHome": {
+      "change": "更改代理主目录",
+      "changeHint": "在上方所示的配置文件中修改 agents.defaults.workspace，然后重启 Nanobot。现有代理文件不会自动移动。",
+      "description": "存储代理指令、记忆、技能和默认输出。",
+      "summary": "指令、记忆和技能",
+      "title": "代理主目录"
     }
   },
   "chat": {
@@ -1404,7 +1411,7 @@
         "projectAria": "选择项目",
         "projectPlaceholder": "选择项目",
         "default": "受限",
-        "defaultShort": "默认",
+        "defaultShort": "受限",
         "full": "完全访问权限",
         "fullShort": "完全"
       }
@@ -1617,7 +1624,36 @@
       "onceRetiringFinished": "之前的工作已完成。一次性访问仍在结束过程中。",
       "onceExpired": "一次性访问已结束。继续前请重新检查文件夹。",
       "readyOnce": "此任务已获准访问。可以继续使用 {{path}}。",
-      "readyAlways": "访问权限已保存。可以继续使用 {{path}}。"
+      "readyAlways": "访问权限已保存。可以继续使用 {{path}}。",
+      "absolutePathRequired": "请输入此设备上的绝对文件夹路径，然后重试。",
+      "allowFolder": "允许访问文件夹",
+      "allowForTask": "允许用于此任务",
+      "changed": "任务或文件夹权限已更改。请刷新并检查当前权限后重试。",
+      "chooseAnotherFolder": "选择其他文件夹",
+      "chooseNarrowerFolder": "此文件夹包含 Nanobot 的私有运行文件。请选择范围更小的项目文件夹。",
+      "commandsRequested": "请求执行命令",
+      "directoryTarget": "请求的文件夹：{{path}}",
+      "fileTarget": "受阻文件：{{path}}。请明确选择其所在文件夹。",
+      "fileTargetWithFolder": "受阻文件：{{path}}。将授权的文件夹：{{folder}}",
+      "folderMissing": "此文件夹不存在或不是目录。请选择现有文件夹后重试。",
+      "folderToAuthorizeLabel": "将授权的文件夹",
+      "folderUnavailable": "Nanobot 无法在当前权限下使用此文件夹。请选择其他文件夹或检查权限。",
+      "insufficientCapabilities": "所选权限无法满足此请求。{{required}} 请在批准前调整权限。",
+      "invalidFolder": "Nanobot 无法验证此文件夹。请选择现有文件夹后重试。",
+      "purpose": "用途：{{purpose}}",
+      "readyInsufficient": "{{path}} 的所选权限无法满足此请求。请选择其他文件夹或检查其权限。",
+      "requestedFileLabel": "请求的文件",
+      "requestedFolderLabel": "请求的文件夹",
+      "requirements": {
+        "execute": "所需权限：执行命令。无需文件写入权限。",
+        "other": "此请求未指定所需的文件或命令权限。请在允许访问前检查权限。",
+        "read": "所需权限：只读文件访问。",
+        "write": "所需权限：读写文件访问。"
+      },
+      "reviewAccess": "检查权限",
+      "selectedCapabilities": "所选权限：{{fileAccess}} · {{commands}}",
+      "selectedFolderScope": "所选文件夹范围：{{path}}",
+      "unknownTarget": "Nanobot 尚未确定具体文件夹。请明确选择一个文件夹。"
     },
     "permissionV2": {
       "actionFailed": "无法更新访问权限。请刷新此聊天后重试。",
@@ -1646,6 +1682,10 @@
     },
     "management": {
       "commandsAvailable": "命令可用"
+    },
+    "picker": {
+      "chooseProject": "选择项目文件夹",
+      "clearProject": "清除项目文件夹"
     }
   }
 }

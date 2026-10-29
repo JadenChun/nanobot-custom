@@ -1013,6 +1013,13 @@
       "selectProvider": "Seleccionar proveedor",
       "configureProvider": "Configurar proveedor",
       "languageAuto": "Automático"
+    },
+    "agentHome": {
+      "change": "Cambiar la carpeta del agente",
+      "changeHint": "Modifica agents.defaults.workspace en el archivo de configuración indicado arriba y reinicia Nanobot. Los archivos existentes del agente no se mueven automáticamente.",
+      "description": "Guarda las instrucciones, la memoria, las habilidades y los resultados predeterminados del agente.",
+      "summary": "Instrucciones, memoria y habilidades",
+      "title": "Carpeta del agente"
     }
   },
   "chat": {
@@ -1391,7 +1398,7 @@
         "projectAria": "Elegir proyecto",
         "projectPlaceholder": "Seleccionar proyecto",
         "default": "Restringido",
-        "defaultShort": "Predeterm.",
+        "defaultShort": "Restringido",
         "full": "Acceso completo",
         "fullShort": "Completo"
       }
@@ -1604,7 +1611,36 @@
       "onceRetiringFinished": "El trabajo anterior terminó. El acceso puntual sigue finalizándose.",
       "onceExpired": "El acceso puntual terminó. Revisa la carpeta de nuevo antes de continuar.",
       "readyOnce": "Acceso permitido para esta tarea. Puedes continuar con {{path}}.",
-      "readyAlways": "Acceso guardado. Puedes continuar con {{path}}."
+      "readyAlways": "Acceso guardado. Puedes continuar con {{path}}.",
+      "absolutePathRequired": "Introduce una ruta absoluta de carpeta en este equipo y vuelve a intentarlo.",
+      "allowFolder": "Permitir carpeta",
+      "allowForTask": "Permitir para esta tarea",
+      "changed": "Esta tarea o los permisos de la carpeta han cambiado. Actualiza y revisa los permisos antes de volver a intentarlo.",
+      "chooseAnotherFolder": "Elegir otra carpeta",
+      "chooseNarrowerFolder": "Esta carpeta contiene archivos privados de ejecución de Nanobot. Elige una carpeta de proyecto más específica.",
+      "commandsRequested": "Ejecución de comandos solicitada",
+      "directoryTarget": "Carpeta solicitada: {{path}}",
+      "fileTarget": "Archivo bloqueado: {{path}}. Elige explícitamente la carpeta que lo contiene.",
+      "fileTargetWithFolder": "Archivo bloqueado: {{path}}. Carpeta que se autorizará: {{folder}}",
+      "folderMissing": "Esta carpeta no existe o no es un directorio. Elige una carpeta existente y vuelve a intentarlo.",
+      "folderToAuthorizeLabel": "Carpeta que se autorizará",
+      "folderUnavailable": "Nanobot no puede usar esta carpeta con los permisos actuales. Elige otra carpeta o revisa sus permisos.",
+      "insufficientCapabilities": "Los permisos elegidos no satisfacen esta solicitud. {{required}} Ajústalos antes de autorizar la carpeta.",
+      "invalidFolder": "Nanobot no pudo verificar esta carpeta. Elige una carpeta existente y vuelve a intentarlo.",
+      "purpose": "Finalidad: {{purpose}}",
+      "readyInsufficient": "Los permisos elegidos para {{path}} no satisfacen esta solicitud. Elige otra carpeta o revisa sus permisos.",
+      "requestedFileLabel": "Archivo solicitado",
+      "requestedFolderLabel": "Carpeta solicitada",
+      "requirements": {
+        "execute": "Se requiere ejecutar comandos. No se necesita permiso para escribir archivos.",
+        "other": "Esta solicitud no especifica los permisos de archivos o comandos necesarios. Revísalos antes de permitir el acceso.",
+        "read": "Se requiere acceso de solo lectura a los archivos.",
+        "write": "Se requiere acceso de lectura y escritura a los archivos."
+      },
+      "reviewAccess": "Revisar permisos",
+      "selectedCapabilities": "Permisos elegidos: {{fileAccess}} · {{commands}}",
+      "selectedFolderScope": "Ámbito de la carpeta elegida: {{path}}",
+      "unknownTarget": "Nanobot todavía no ha identificado la carpeta exacta. Elige una carpeta explícitamente."
     },
     "permissionV2": {
       "actionFailed": "No se pudo actualizar el acceso. Actualiza este chat antes de volver a intentarlo.",
@@ -1633,6 +1669,10 @@
     },
     "management": {
       "commandsAvailable": "Comandos disponibles"
+    },
+    "picker": {
+      "chooseProject": "Elegir carpeta del proyecto",
+      "clearProject": "Quitar carpeta del proyecto"
     }
   }
 }

@@ -1012,6 +1012,13 @@
       "selectProvider": "プロバイダーを選択",
       "configureProvider": "プロバイダーを設定",
       "languageAuto": "自動"
+    },
+    "agentHome": {
+      "change": "エージェントのホームを変更",
+      "changeHint": "上記の設定ファイルで agents.defaults.workspace を変更してから Nanobot を再起動してください。既存のエージェントファイルは自動では移動されません。",
+      "description": "エージェントの指示、メモリ、スキル、既定の出力を保存します。",
+      "summary": "指示、メモリ、スキル",
+      "title": "エージェントのホーム"
     }
   },
   "chat": {
@@ -1390,7 +1397,7 @@
         "projectAria": "プロジェクトを選択",
         "projectPlaceholder": "プロジェクトを選択",
         "default": "制限付き",
-        "defaultShort": "既定",
+        "defaultShort": "制限付き",
         "full": "フルアクセス",
         "fullShort": "フル"
       }
@@ -1603,7 +1610,36 @@
       "onceRetiringFinished": "以前の処理は終了しました。今回のみのアクセスはまだ終了処理中です。",
       "onceExpired": "今回のみのアクセスは終了しました。続行する前にフォルダーをもう一度確認してください。",
       "readyOnce": "このタスクへのアクセスが許可されました。{{path}} を使って続行できます。",
-      "readyAlways": "アクセスを保存しました。{{path}} を使って続行できます。"
+      "readyAlways": "アクセスを保存しました。{{path}} を使って続行できます。",
+      "absolutePathRequired": "このデバイス上のフォルダーの絶対パスを入力して再試行してください。",
+      "allowFolder": "フォルダーへのアクセスを許可",
+      "allowForTask": "このタスクで許可",
+      "changed": "タスクまたはフォルダーの権限が変更されました。更新して現在の権限を確認してから再試行してください。",
+      "chooseAnotherFolder": "別のフォルダーを選択",
+      "chooseNarrowerFolder": "このフォルダーには Nanobot の非公開ランタイムファイルが含まれています。範囲を絞ったプロジェクトフォルダーを選択してください。",
+      "commandsRequested": "コマンド実行が要求されています",
+      "directoryTarget": "要求されたフォルダー：{{path}}",
+      "fileTarget": "ブロックされたファイル：{{path}}。そのファイルを含むフォルダーを明示的に選択してください。",
+      "fileTargetWithFolder": "ブロックされたファイル：{{path}}。許可するフォルダー：{{folder}}",
+      "folderMissing": "このフォルダーは存在しないか、ディレクトリではありません。既存のフォルダーを選択して再試行してください。",
+      "folderToAuthorizeLabel": "許可するフォルダー",
+      "folderUnavailable": "現在の権限では Nanobot はこのフォルダーを使用できません。別のフォルダーを選ぶか、権限を確認してください。",
+      "insufficientCapabilities": "選択した権限ではこの要求を満たせません。{{required}} 許可する前に権限を調整してください。",
+      "invalidFolder": "Nanobot はこのフォルダーを確認できませんでした。既存のフォルダーを選択して再試行してください。",
+      "purpose": "目的：{{purpose}}",
+      "readyInsufficient": "{{path}} に対して選択した権限ではこの要求を満たせません。別のフォルダーを選ぶか、権限を確認してください。",
+      "requestedFileLabel": "要求されたファイル",
+      "requestedFolderLabel": "要求されたフォルダー",
+      "requirements": {
+        "execute": "必要な権限：コマンド実行。ファイルの書き込み権限は不要です。",
+        "other": "この要求では必要なファイルまたはコマンドの権限が指定されていません。アクセスを許可する前に権限を確認してください。",
+        "read": "必要な権限：ファイルの読み取り専用アクセス。",
+        "write": "必要な権限：ファイルの読み取りと書き込み。"
+      },
+      "reviewAccess": "権限を確認",
+      "selectedCapabilities": "選択した権限：{{fileAccess}} · {{commands}}",
+      "selectedFolderScope": "選択したフォルダーの範囲：{{path}}",
+      "unknownTarget": "Nanobot はまだ対象フォルダーを特定していません。フォルダーを明示的に選択してください。"
     },
     "permissionV2": {
       "actionFailed": "アクセスを更新できませんでした。再試行する前にこのチャットを更新してください。",
@@ -1632,6 +1668,10 @@
     },
     "management": {
       "commandsAvailable": "コマンドを利用できます"
+    },
+    "picker": {
+      "chooseProject": "プロジェクトフォルダーを選択",
+      "clearProject": "プロジェクトフォルダーの選択を解除"
     }
   }
 }

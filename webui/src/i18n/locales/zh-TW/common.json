@@ -1012,6 +1012,13 @@
       "selectProvider": "選擇供應商",
       "configureProvider": "設定供應商",
       "languageAuto": "自動"
+    },
+    "agentHome": {
+      "change": "變更代理主目錄",
+      "changeHint": "在上方顯示的設定檔中修改 agents.defaults.workspace，然後重新啟動 Nanobot。現有代理檔案不會自動移動。",
+      "description": "儲存代理指示、記憶、技能與預設輸出。",
+      "summary": "指示、記憶與技能",
+      "title": "代理主目錄"
     }
   },
   "chat": {
@@ -1390,7 +1397,7 @@
         "projectAria": "選擇專案",
         "projectPlaceholder": "選擇專案",
         "default": "受限制",
-        "defaultShort": "預設",
+        "defaultShort": "受限制",
         "full": "完整存取權",
         "fullShort": "完整"
       }
@@ -1603,7 +1610,36 @@
       "onceRetiringFinished": "先前的工作已結束。單次存取仍在結束中。",
       "onceExpired": "單次存取已結束。繼續前請重新檢查資料夾。",
       "readyOnce": "此工作已允許存取。可以繼續使用 {{path}}。",
-      "readyAlways": "存取權限已儲存。可以繼續使用 {{path}}。"
+      "readyAlways": "存取權限已儲存。可以繼續使用 {{path}}。",
+      "absolutePathRequired": "請輸入此裝置上的絕對資料夾路徑，然後重試。",
+      "allowFolder": "允許存取資料夾",
+      "allowForTask": "允許用於此任務",
+      "changed": "任務或資料夾權限已變更。請重新整理並檢查目前權限後重試。",
+      "chooseAnotherFolder": "選擇其他資料夾",
+      "chooseNarrowerFolder": "此資料夾包含 Nanobot 的私有執行檔案。請選擇範圍更小的專案資料夾。",
+      "commandsRequested": "請求執行命令",
+      "directoryTarget": "請求的資料夾：{{path}}",
+      "fileTarget": "受阻檔案：{{path}}。請明確選擇其所在資料夾。",
+      "fileTargetWithFolder": "受阻檔案：{{path}}。將授權的資料夾：{{folder}}",
+      "folderMissing": "此資料夾不存在或不是目錄。請選擇現有資料夾後重試。",
+      "folderToAuthorizeLabel": "將授權的資料夾",
+      "folderUnavailable": "Nanobot 無法在目前權限下使用此資料夾。請選擇其他資料夾或檢查權限。",
+      "insufficientCapabilities": "所選權限無法滿足此請求。{{required}} 請在批准前調整權限。",
+      "invalidFolder": "Nanobot 無法驗證此資料夾。請選擇現有資料夾後重試。",
+      "purpose": "用途：{{purpose}}",
+      "readyInsufficient": "{{path}} 的所選權限無法滿足此請求。請選擇其他資料夾或檢查其權限。",
+      "requestedFileLabel": "請求的檔案",
+      "requestedFolderLabel": "請求的資料夾",
+      "requirements": {
+        "execute": "所需權限：執行命令。不需要檔案寫入權限。",
+        "other": "此請求未指定所需的檔案或命令權限。請在允許存取前檢查權限。",
+        "read": "所需權限：唯讀檔案存取。",
+        "write": "所需權限：讀寫檔案存取。"
+      },
+      "reviewAccess": "檢查權限",
+      "selectedCapabilities": "所選權限：{{fileAccess}} · {{commands}}",
+      "selectedFolderScope": "所選資料夾範圍：{{path}}",
+      "unknownTarget": "Nanobot 尚未確定具體資料夾。請明確選擇一個資料夾。"
     },
     "permissionV2": {
       "actionFailed": "無法更新存取權限。請重新整理此聊天後再試一次。",
@@ -1632,6 +1668,10 @@
     },
     "management": {
       "commandsAvailable": "命令可用"
+    },
+    "picker": {
+      "chooseProject": "選擇專案資料夾",
+      "clearProject": "清除專案資料夾"
     }
   }
 }

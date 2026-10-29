@@ -1012,6 +1012,13 @@
       "selectProvider": "Choisir un fournisseur",
       "configureProvider": "Configurer le fournisseur",
       "languageAuto": "Automatique"
+    },
+    "agentHome": {
+      "change": "Changer le dossier de l’agent",
+      "changeHint": "Modifiez agents.defaults.workspace dans le fichier de configuration indiqué ci-dessus, puis redémarrez Nanobot. Les fichiers existants de l’agent ne sont pas déplacés automatiquement.",
+      "description": "Contient les instructions, la mémoire, les compétences et les sorties par défaut de l’agent.",
+      "summary": "Instructions, mémoire et compétences",
+      "title": "Dossier de l’agent"
     }
   },
   "chat": {
@@ -1390,7 +1397,7 @@
         "projectAria": "Choisir un projet",
         "projectPlaceholder": "Sélectionner un projet",
         "default": "Restreint",
-        "defaultShort": "Par défaut",
+        "defaultShort": "Restreint",
         "full": "Accès complet",
         "fullShort": "Complet"
       }
@@ -1603,7 +1610,36 @@
       "onceRetiringFinished": "Le travail précédent est terminé. La fin de l’accès ponctuel est toujours en attente.",
       "onceExpired": "L’accès ponctuel est terminé. Vérifiez de nouveau le dossier avant de continuer.",
       "readyOnce": "Accès autorisé pour cette tâche. Vous pouvez continuer dans {{path}}.",
-      "readyAlways": "Accès enregistré. Vous pouvez continuer dans {{path}}."
+      "readyAlways": "Accès enregistré. Vous pouvez continuer dans {{path}}.",
+      "absolutePathRequired": "Saisissez un chemin absolu de dossier sur cet appareil, puis réessayez.",
+      "allowFolder": "Autoriser le dossier",
+      "allowForTask": "Autoriser pour cette tâche",
+      "changed": "Cette tâche ou les autorisations du dossier ont changé. Actualisez et vérifiez les autorisations avant de réessayer.",
+      "chooseAnotherFolder": "Choisir un autre dossier",
+      "chooseNarrowerFolder": "Ce dossier contient les fichiers privés d’exécution de Nanobot. Choisissez un dossier de projet plus précis.",
+      "commandsRequested": "Exécution de commandes demandée",
+      "directoryTarget": "Dossier demandé : {{path}}",
+      "fileTarget": "Fichier bloqué : {{path}}. Choisissez explicitement le dossier qui le contient.",
+      "fileTargetWithFolder": "Fichier bloqué : {{path}}. Dossier à autoriser : {{folder}}",
+      "folderMissing": "Ce dossier n’existe pas ou n’est pas un répertoire. Choisissez un dossier existant et réessayez.",
+      "folderToAuthorizeLabel": "Dossier à autoriser",
+      "folderUnavailable": "Nanobot ne peut pas utiliser ce dossier avec les autorisations actuelles. Choisissez un autre dossier ou vérifiez ses autorisations.",
+      "insufficientCapabilities": "Les autorisations choisies ne suffisent pas. {{required}} Ajustez-les avant d’autoriser ce dossier.",
+      "invalidFolder": "Nanobot n’a pas pu vérifier ce dossier. Choisissez un dossier existant et réessayez.",
+      "purpose": "But : {{purpose}}",
+      "readyInsufficient": "Les autorisations choisies pour {{path}} ne suffisent pas. Choisissez un autre dossier ou vérifiez ses autorisations.",
+      "requestedFileLabel": "Fichier demandé",
+      "requestedFolderLabel": "Dossier demandé",
+      "requirements": {
+        "execute": "Requis : exécution de commandes. L’écriture de fichiers n’est pas nécessaire.",
+        "other": "Cette demande ne précise pas les autorisations de fichiers ou de commandes nécessaires. Vérifiez-les avant d’autoriser l’accès.",
+        "read": "Requis : lecture seule des fichiers.",
+        "write": "Requis : lecture et écriture des fichiers."
+      },
+      "reviewAccess": "Vérifier les autorisations",
+      "selectedCapabilities": "Autorisations choisies : {{fileAccess}} · {{commands}}",
+      "selectedFolderScope": "Portée du dossier choisi : {{path}}",
+      "unknownTarget": "Nanobot n’a pas encore identifié le dossier exact. Choisissez explicitement un dossier."
     },
     "permissionV2": {
       "actionFailed": "Impossible de mettre à jour l’accès. Actualisez cette conversation avant de réessayer.",
@@ -1632,6 +1668,10 @@
     },
     "management": {
       "commandsAvailable": "Commandes disponibles"
+    },
+    "picker": {
+      "chooseProject": "Choisir un dossier de projet",
+      "clearProject": "Effacer le dossier de projet"
     }
   }
 }

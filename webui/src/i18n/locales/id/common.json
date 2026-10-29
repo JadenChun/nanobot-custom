@@ -1012,6 +1012,13 @@
       "selectProvider": "Pilih penyedia",
       "configureProvider": "Konfigurasi penyedia",
       "languageAuto": "Otomatis"
+    },
+    "agentHome": {
+      "change": "Ubah direktori utama agen",
+      "changeHint": "Ubah agents.defaults.workspace dalam berkas konfigurasi di atas, lalu mulai ulang Nanobot. Berkas agen yang ada tidak dipindahkan secara otomatis.",
+      "description": "Menyimpan instruksi, memori, keterampilan, dan keluaran bawaan agen.",
+      "summary": "Instruksi, memori, dan keterampilan",
+      "title": "Direktori utama agen"
     }
   },
   "chat": {
@@ -1390,7 +1397,7 @@
         "projectAria": "Pilih proyek",
         "projectPlaceholder": "Pilih proyek",
         "default": "Terbatas",
-        "defaultShort": "Bawaan",
+        "defaultShort": "Terbatas",
         "full": "Akses penuh",
         "fullShort": "Penuh"
       }
@@ -1603,7 +1610,36 @@
       "onceRetiringFinished": "Pekerjaan sebelumnya selesai. Akses sekali masih dalam proses berakhir.",
       "onceExpired": "Akses sekali telah berakhir. Tinjau folder lagi sebelum melanjutkan.",
       "readyOnce": "Akses diizinkan untuk tugas ini. Siap melanjutkan di {{path}}.",
-      "readyAlways": "Akses disimpan. Siap melanjutkan di {{path}}."
+      "readyAlways": "Akses disimpan. Siap melanjutkan di {{path}}.",
+      "absolutePathRequired": "Masukkan jalur folder absolut pada perangkat ini, lalu coba lagi.",
+      "allowFolder": "Izinkan folder",
+      "allowForTask": "Izinkan untuk tugas ini",
+      "changed": "Tugas atau izin folder telah berubah. Muat ulang dan tinjau izin saat ini sebelum mencoba lagi.",
+      "chooseAnotherFolder": "Pilih folder lain",
+      "chooseNarrowerFolder": "Folder ini berisi berkas runtime pribadi Nanobot. Pilih folder proyek dengan cakupan lebih kecil.",
+      "commandsRequested": "Eksekusi perintah diminta",
+      "directoryTarget": "Folder yang diminta: {{path}}",
+      "fileTarget": "Berkas yang diblokir: {{path}}. Pilih folder yang memuatnya secara eksplisit.",
+      "fileTargetWithFolder": "Berkas yang diblokir: {{path}}. Folder yang akan diizinkan: {{folder}}",
+      "folderMissing": "Folder ini tidak ada atau bukan direktori. Pilih folder yang ada dan coba lagi.",
+      "folderToAuthorizeLabel": "Folder yang akan diizinkan",
+      "folderUnavailable": "Nanobot tidak dapat menggunakan folder ini dengan izin saat ini. Pilih folder lain atau tinjau izinnya.",
+      "insufficientCapabilities": "Izin yang dipilih tidak memenuhi permintaan ini. {{required}} Sesuaikan izin sebelum mengizinkan folder.",
+      "invalidFolder": "Nanobot tidak dapat memverifikasi folder ini. Pilih folder yang ada dan coba lagi.",
+      "purpose": "Tujuan: {{purpose}}",
+      "readyInsufficient": "Izin yang dipilih untuk {{path}} tidak memenuhi permintaan ini. Pilih folder lain atau tinjau izinnya.",
+      "requestedFileLabel": "Berkas yang diminta",
+      "requestedFolderLabel": "Folder yang diminta",
+      "requirements": {
+        "execute": "Diperlukan izin menjalankan perintah. Izin menulis berkas tidak diperlukan.",
+        "other": "Permintaan ini tidak menyebutkan izin berkas atau perintah yang diperlukan. Tinjau izin sebelum mengizinkan akses.",
+        "read": "Diperlukan akses berkas hanya-baca.",
+        "write": "Diperlukan akses membaca dan menulis berkas."
+      },
+      "reviewAccess": "Tinjau izin",
+      "selectedCapabilities": "Izin yang dipilih: {{fileAccess}} · {{commands}}",
+      "selectedFolderScope": "Cakupan folder yang dipilih: {{path}}",
+      "unknownTarget": "Nanobot belum mengidentifikasi folder yang tepat. Pilih folder secara eksplisit."
     },
     "permissionV2": {
       "actionFailed": "Akses tidak dapat diperbarui. Segarkan chat ini sebelum mencoba lagi.",
@@ -1632,6 +1668,10 @@
     },
     "management": {
       "commandsAvailable": "Perintah tersedia"
+    },
+    "picker": {
+      "chooseProject": "Pilih folder proyek",
+      "clearProject": "Hapus pilihan folder proyek"
     }
   }
 }
