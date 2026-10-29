@@ -299,10 +299,19 @@ class SourceTurnWriter:
                             retrieval = parse_retrieval_receipt(candidate.to_dict()).to_dict()
                         except ValueError:
                             logger.debug('Ignoring invalid artifact retrieval receipt')
-                committed = self._append({'role': 'tool'  , 'tool_call_id': value.tool_call_id, 'name': value.name,
-                              'content': raw, '_dispatched': value.dispatched,
-                              '_outcome_status': value.event.get('status', '')}, execution_id=ids[index],
-                              source_origin=origin, artifact_read=retrieval)
+                tool_event: dict[str, Any] = {
+                    'role': 'tool',
+                    'tool_call_id': value.tool_call_id,
+                    'name': value.name,
+                    'content': raw,
+                    '_dispatched': value.dispatched,
+                    '_outcome_status': value.event.get('status', ''),
+                }
+                preparation_error_kind = value.event.get('_prepare_error_kind')
+                if not value.dispatched and preparation_error_kind in {'unknown_tool', 'withheld_tool'}:
+                    tool_event['_prepare_error_kind'] = preparation_error_kind
+                committed = self._append(tool_event, execution_id=ids[index],
+                                         source_origin=origin, artifact_read=retrieval)
                 completed.add(index)
                 return committed['_event_id']
             except BaseException:

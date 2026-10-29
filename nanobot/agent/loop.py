@@ -4202,15 +4202,11 @@ class AgentLoop:
             and grants is not None
             and (grants.is_managed or local_private_workspace_authority)
         ):
-            managed_registry = ToolRegistry()
-            for name in tools.tool_names:
-                tool = tools.get(name)
-                if (
-                    name in MANAGED_WEBUI_TOOL_NAMES
-                    and tool is not None
-                    and (name != "select_workspace" or ctx.kind is TurnKind.USER)
-                ):
-                    managed_registry.register(tool)
+            managed_registry = tools.filtered([
+                name for name in tools.tool_names
+                if name in MANAGED_WEBUI_TOOL_NAMES
+                and (name != "select_workspace" or ctx.kind is TurnKind.USER)
+            ])
             if self.tools_config.file.enable and ctx.kind is TurnKind.USER:
                 from nanobot.agent.tools.workspace import (
                     RequestFolderAccessTool,
@@ -4229,11 +4225,7 @@ class AgentLoop:
         ):
             # Use a per-turn registry so this local-only tool cannot remain in a
             # shared registry or leak into a later API/background turn.
-            local_registry = ToolRegistry()
-            for name in tools.tool_names:
-                tool = tools.get(name)
-                if tool is not None:
-                    local_registry.register(tool)
+            local_registry = tools.filtered(tools.tool_names)
             from nanobot.agent.tools.workspace import RequestFolderAccessTool
 
             local_registry.register(RequestFolderAccessTool(self._workspace_focus_owner()))
@@ -4245,11 +4237,9 @@ class AgentLoop:
                     tools, frozenset(enabled_disabled_tools), self.context.memory.workspace,
                 )
                 if restricted is None:
-                    restricted = ToolRegistry()
-                    for name in tools.tool_names:
-                        tool = tools.get(name)
-                        if name not in enabled_disabled_tools and tool:
-                            restricted.register(tool)
+                    restricted = tools.filtered(
+                        [name for name in tools.tool_names if name not in enabled_disabled_tools]
+                    )
                 tools = restricted
         tools.set_dispatch_guard(
             ManagedToolDispatchGuard(self._fork_dependencies.resource_policy.folder_grants)

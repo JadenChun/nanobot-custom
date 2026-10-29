@@ -7,7 +7,12 @@ from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Generator, cast
 
-from nanobot.agent.tools.base import Tool, ToolResult
+from nanobot.agent.tools.base import (
+    Tool,
+    ToolPreparationError,
+    ToolPreparationErrorKind,
+    ToolResult,
+)
 from nanobot.agent.tools.context import ContextAware, current_request_context
 from nanobot.agent.tools.producer_adapters import accepted_producer_receipt
 from nanobot.security.folder_grants import FolderGrantView
@@ -79,6 +84,7 @@ class ToolRegistry:
 
     def __init__(self):
         self._tools: dict[str, Tool] = {}
+        self._withheld_names: set[str] = set()
         self._cached_definitions: list[dict[str, Any]] | None = None
         self._dispatch_guard: ManagedToolDispatchGuard | None = None
 
@@ -106,6 +112,7 @@ class ToolRegistry:
         if tool.name in self._tools:
             raise ValueError(f"Duplicate tool registration: {tool.name}")
         self._tools[tool.name] = tool
+        self._withheld_names.discard(tool.name)
         self._cached_definitions = None
 
     def replace(self, tool: Tool) -> None:
@@ -113,11 +120,13 @@ class ToolRegistry:
         if tool.name not in self._tools:
             raise ValueError(f"Cannot replace unregistered tool: {tool.name}")
         self._tools[tool.name] = tool
+        self._withheld_names.discard(tool.name)
         self._cached_definitions = None
 
     def unregister(self, name: str) -> None:
         """Unregister a tool by name."""
-        self._tools.pop(name, None)
+        if self._tools.pop(name, None) is not None:
+            self._withheld_names.add(name)
         self._cached_definitions = None
 
     def get(self, name: str) -> Tool | None:
@@ -203,10 +212,14 @@ class ToolRegistry:
         if not tool:
             suggestion = self._suggest_name(str(name))
             hint = f" Did you mean '{suggestion}'? Tool names must match exactly." if suggestion else ""
-            return None, params, (
-                ToolResult.error(
-                    f"Error: Tool '{name}' not found.{hint} Available: {', '.join(self.tool_names)}"
-                )
+            kind = (
+                ToolPreparationErrorKind.WITHHELD_TOOL
+                if name in self._withheld_names
+                else ToolPreparationErrorKind.UNKNOWN_TOOL
+            )
+            return None, params, ToolPreparationError(
+                f"Error: Tool '{name}' not found.{hint} Available: {', '.join(self.tool_names)}",
+                kind=kind,
             )
         # Compatibility for external tools that still implement the legacy
         # setter protocol. Built-ins read the authoritative ContextVar
@@ -377,6 +390,8 @@ class ToolRegistry:
     def filtered(self, names: list[str]) -> ToolRegistry:
         registry = ToolRegistry()
         registry.set_dispatch_guard(self._dispatch_guard)
+        included = set(names)
+        registry._withheld_names = self._withheld_names | (self._tools.keys() - included)
         for name in names:
             if name in self._tools:
                 registry.register(self._tools[name])

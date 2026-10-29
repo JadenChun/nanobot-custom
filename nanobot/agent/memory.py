@@ -681,15 +681,9 @@ class MemoryStore:
         self, tools: ToolRegistry, disabled: frozenset[str], workspace: Path,
     ) -> ToolRegistry | None:
         """Issue only a verified registry's current permitted subset."""
-        from nanobot.agent.tools.registry import ToolRegistry
-
         if not self.owns_dream_tools(tools, workspace):
             return None
-        filtered = ToolRegistry()
-        for name in tools.tool_names:
-            tool = tools.get(name)
-            if name not in disabled and tool is not None:
-                filtered.register(tool)
+        filtered = tools.filtered([name for name in tools.tool_names if name not in disabled])
         self._record_dream_tools(filtered)
         return filtered
 
