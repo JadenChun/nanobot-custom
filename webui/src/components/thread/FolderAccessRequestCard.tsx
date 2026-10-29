@@ -11,8 +11,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ApiError, allowWorkspaceAccessOnce, cancelWorkspaceAccessRequest, continueWorkspaceAccessRequest, resolveWorkspaceAccessRequest, upsertWorkspaceGrant } from "@/lib/api";
+import { allowWorkspaceAccessOnce, cancelWorkspaceAccessRequest, continueWorkspaceAccessRequest, resolveWorkspaceAccessRequest, upsertWorkspaceGrant } from "@/lib/api";
 import type { FolderAccessActionResult, FolderAccessDuration, FolderAccessRequest, FolderFileAccess, WorkspaceOnceReceipt, WorkspacePermissionProjection, WorkspacesPayload, WorkspaceScopePayload } from "@/lib/types";
+import { folderAccessErrorMessage, folderForKnownTarget, folderOperationCanContinue, requiredFolderCapabilities } from "@/lib/folderAccess";
 import { isAbsoluteWorkspacePath, sameWorkspacePath } from "@/lib/workspace";
 import { getRuntimeHost } from "@/lib/runtime";
 import { useClient } from "@/providers/ClientProvider";
@@ -37,8 +38,8 @@ export interface FolderAccessResolveIntent {
   expectedFileAccess?: FolderFileAccess;
   expectedCommands?: boolean;
   submittedPath: string;
-  /** The path acknowledged by the exact grant projection and sent to resolve. */
-  canonicalPath: string;
+  /** Always uses its grant receipt; Once awaits its acknowledgement receipt. */
+  canonicalPath: string | null;
 }
 
 export type CorrelatedFolderAccessResult = FolderAccessActionResult & {
@@ -67,32 +68,6 @@ const unavailableReasonLabels: Record<string, string> = {
   context_unavailable: "The original task context is unavailable.",
   continuation_unknown: "Nanobot could not confirm whether the task continued. Check the conversation before trying again.",
 };
-
-function requestError(error: unknown, t: (key: string, options?: Record<string, unknown>) => string): string {
-  if (error instanceof ApiError && error.message === "native_processes_active") {
-    return t("workspace.management.nativeProcessesActive", {
-      defaultValue: "A command is still running with access it started with. Wait for it to finish before changing this folder.",
-    });
-  }
-  if (error instanceof ApiError && error.message === "native_processes_unknown") {
-    return t("workspace.management.nativeProcessesUnknown", {
-      defaultValue: "Nanobot cannot verify whether a command from this device is still running. Restarting Nanobot will not clear this state; you may need to restart this device.",
-    });
-  }
-  if (error instanceof ApiError && error.status === 409) {
-    return t("workspace.recovery.changed", {
-      defaultValue: "This task or folder access changed. Review the current task before trying again.",
-    });
-  }
-  if (error instanceof ApiError && error.status === 403) {
-    return t("workspace.recovery.folderUnavailable", {
-      defaultValue: "Nanobot cannot read that folder with the current access settings.",
-    });
-  }
-  return t("workspace.recovery.actionFailed", {
-    defaultValue: "The folder action did not finish. Refresh the task and try again.",
-  });
-}
 
 export function FolderAccessRequestCard({
   chatId,
@@ -142,6 +117,7 @@ export function FolderAccessRequestCard({
   const [fileAccess, setFileAccess] = useState<FolderFileAccess>("read_only");
   const [commands, setCommands] = useState(false);
   const [duration, setDuration] = useState<FolderAccessDuration>("once");
+  const [settingsTouched, setSettingsTouched] = useState(false);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -160,6 +136,7 @@ export function FolderAccessRequestCard({
     };
   }, []);
   const management = workspaces?.management ?? null;
+  const requestedFolderPath = request ? folderForKnownTarget(request.target) : null;
   const canManage = !!management && workspaces?.controls.can_manage_folders === true;
   const permissionV2Enabled = workspaces?.controls.permission_v2 === true;
   const currentIdentity: ActionIdentity = {
@@ -183,7 +160,9 @@ export function FolderAccessRequestCard({
   const reviewing = !!reviewIdentity && actionStillCurrent(reviewIdentity);
   const openReview = (trigger: HTMLButtonElement, clearPath = false) => {
     reviewTriggerRef.current = trigger;
-    if (clearPath) setPath("");
+    if (clearPath) {
+      setPath("");
+    }
     setError(null);
     setReviewIdentity(currentIdentity);
   };
@@ -202,12 +181,14 @@ export function FolderAccessRequestCard({
   const isPending = request?.status === "pending";
   const isReady = request?.status === "ready";
   const isReviewable = isPending || isReady;
+  const approvedCapabilitiesSufficient = !!request
+    && folderOperationCanContinue(request.operation, request.selected_access);
   const currentTaskAccess = workspacePermissions?.task_access
     && workspacePermissions.task_access.task_turn_id === request?.task.turn_id
     ? workspacePermissions.task_access
     : null;
   const onceTaskSelected = permissionV2Enabled && request?.selected_duration === "once";
-  const canContinueTask = !!request?.can_continue && (!onceTaskSelected || (
+  const canContinueTask = !!request?.can_continue && approvedCapabilitiesSufficient && (!onceTaskSelected || (
     !workspacePermissionsLoading
     && !workspacePermissionsError
     && workspacePermissions?.state === "active"
@@ -247,17 +228,72 @@ export function FolderAccessRequestCard({
   const exactGrant = useMemo(() => management?.grants.find((grant) => sameWorkspacePath(grant.path, path)) ?? null,
     [management?.grants, path]);
 
+  const selectPath = (selectedPath: string) => {
+    setPath(selectedPath);
+    setSettingsTouched(true);
+    if (!request) return;
+    const existingGrant = management?.grants.find((grant) => sameWorkspacePath(grant.path, selectedPath));
+    const required = requiredFolderCapabilities(request.operation);
+    setFileAccess(existingGrant?.file_access === "read_write" || required.fileAccess === "read_write"
+      ? "read_write"
+      : "read_only");
+    setCommands(!!existingGrant?.commands || required.commands);
+  };
+
+  const capabilitiesSatisfyOperation = (
+    selectedPath: string,
+    selectedFileAccess: FolderFileAccess,
+    selectedCommands: boolean,
+    selectedDuration: FolderAccessDuration,
+  ) => {
+    if (!request) return false;
+    const existingGrant = management?.grants.find((grant) => sameWorkspacePath(grant.path, selectedPath));
+    const commandAvailable = selectedCommands && (
+      selectedDuration === "once"
+      || !existingGrant?.commands
+      || existingGrant.effective_access.commands.available
+    );
+    return folderOperationCanContinue(request.operation, {
+      read: true,
+      write: selectedFileAccess === "read_write",
+      commands: { available: commandAvailable },
+    });
+  };
+  const configuredCapabilitiesSufficient = capabilitiesSatisfyOperation(
+    path.trim(), fileAccess, commands, duration,
+  );
+  const knownFolderCapabilitiesSufficient = !!requestedFolderPath
+    && capabilitiesSatisfyOperation(requestedFolderPath, fileAccess, commands, duration);
+  const knownFolderCanAllowOnce = !!requestedFolderPath
+    && capabilitiesSatisfyOperation(requestedFolderPath, fileAccess, commands, "once");
+  const knownFolderCanAlwaysAllow = !!requestedFolderPath
+    && capabilitiesSatisfyOperation(requestedFolderPath, fileAccess, commands, "always");
+
   useEffect(() => {
     pickerRunRef.current += 1;
     setPicking(false);
     setReviewIdentity(null);
     setError(null);
     setNotice(null);
-    setPath(request?.target.kind === "directory" ? request.target.path : "");
-    setFileAccess("read_only");
-    setCommands(false);
+    setPath(requestedFolderPath ?? "");
+    const required = request
+      ? requiredFolderCapabilities(request.operation)
+      : { fileAccess: "read_only" as const, commands: false };
+    setFileAccess(required.fileAccess);
+    setCommands(required.commands);
+    setSettingsTouched(false);
     setDuration(request?.selected_duration === "always" ? "always" : "once");
-  }, [chatId, request?.access_request_id, request?.revision, request?.status]);
+  }, [chatId, request?.access_request_id, request?.revision, request?.status, request?.operation, requestedFolderPath]);
+
+  useEffect(() => {
+    if (!request || settingsTouched || !requestedFolderPath) return;
+    const existingGrant = management?.grants.find((grant) => sameWorkspacePath(grant.path, requestedFolderPath));
+    const required = requiredFolderCapabilities(request.operation);
+    setFileAccess(existingGrant?.file_access === "read_write" || required.fileAccess === "read_write"
+      ? "read_write"
+      : "read_only");
+    setCommands(!!existingGrant?.commands || required.commands);
+  }, [chatId, management?.grants, request?.access_request_id, request?.revision, request?.status, request?.operation, requestedFolderPath, settingsTouched]);
 
   useEffect(() => {
     setRefreshFailed(false);
@@ -271,12 +307,38 @@ export function FolderAccessRequestCard({
   const targetDescription = request.target.kind === "unknown"
     ? hasAcknowledgedSelection
       ? null
-      : t("workspace.recovery.unknownTarget", { defaultValue: "The folder is not known yet." })
+      : t("workspace.recovery.unknownTarget", { defaultValue: "Nanobot has not identified the exact folder yet. Choose a folder explicitly." })
     : request.target.kind === "file"
-      ? t("workspace.recovery.fileTarget", { path: request.target.path, defaultValue: `The blocked file is ${request.target.path}. Choose its folder explicitly.` })
+      ? requestedFolderPath
+        ? t("workspace.recovery.fileTargetWithFolder", {
+            path: request.target.path,
+            folder: requestedFolderPath,
+            defaultValue: `Blocked file: ${request.target.path}. Folder to authorize: ${requestedFolderPath}`,
+          })
+        : t("workspace.recovery.fileTarget", {
+            path: request.target.path,
+            defaultValue: `Blocked file: ${request.target.path}. Choose its containing folder explicitly.`,
+          })
       : t("workspace.recovery.directoryTarget", { path: request.target.path, defaultValue: `Requested folder: ${request.target.path}` });
   const operation = t(`workspace.recovery.operations.${request.operation}`, {
     defaultValue: operationLabels[request.operation] ?? request.operation,
+  });
+  const capabilityRequirement = request.operation === "read"
+    ? t("workspace.recovery.requirements.read", { defaultValue: "Required: read-only file access; commands off." })
+    : request.operation === "write"
+      ? t("workspace.recovery.requirements.write", { defaultValue: "Required: read and write file access; commands off." })
+      : request.operation === "execute"
+        ? t("workspace.recovery.requirements.execute", { defaultValue: "Required: command access; file changes are not required." })
+        : t("workspace.recovery.requirements.other", { defaultValue: "Review the file and command access needed for this request." });
+  const selectedFileAccessLabel = fileAccess === "read_write"
+    ? t("workspace.management.readWrite", { defaultValue: "Read and write" })
+    : t("workspace.management.readOnly", { defaultValue: "Read only" });
+  const selectedCapabilities = t("workspace.recovery.selectedCapabilities", {
+    fileAccess: selectedFileAccessLabel,
+    commands: commands
+      ? t("workspace.recovery.commandsRequested", { defaultValue: "Commands requested" })
+      : t("workspace.management.commandsOff", { defaultValue: "Commands off" }),
+    defaultValue: `Selected access: ${selectedFileAccessLabel} · ${commands ? "Commands requested" : "Commands off"}`,
   });
 
   const refreshAfterFailure = async (identity: ActionIdentity) => {
@@ -368,7 +430,7 @@ export function FolderAccessRequestCard({
       await resolve(selectedPath, management.grants_revision, identity, selectedPath);
     } catch (reason) {
       if (!actionStillCurrent(identity)) return;
-      setError(requestError(reason, t));
+      setError(folderAccessErrorMessage(reason, t));
       await refreshAfterFailure(identity);
     } finally {
       submissionLock.current = false;
@@ -376,22 +438,36 @@ export function FolderAccessRequestCard({
     }
   };
 
-  const saveAndUseFolder = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const applyFolderAccess = async (
+    selectedPath: string,
+    selectedFileAccess: FolderFileAccess,
+    selectedCommands: boolean,
+    selectedDuration: FolderAccessDuration,
+  ) => {
     if (!canAct || !management) return;
-    const selectedPath = path.trim();
     if (!isAbsoluteWorkspacePath(selectedPath)) {
-      setError(t("workspace.dialog.absolutePathRequired"));
+      setError(t("workspace.recovery.absolutePathRequired", {
+        defaultValue: "Enter an absolute folder path on this machine, then try again.",
+      }));
+      return;
+    }
+    if (!capabilitiesSatisfyOperation(
+      selectedPath, selectedFileAccess, selectedCommands, selectedDuration,
+    )) {
+      setError(t("workspace.recovery.insufficientCapabilities", {
+        required: capabilityRequirement,
+        defaultValue: `${capabilityRequirement} Select the required access before allowing this folder.`,
+      }));
       return;
     }
     const identity = currentIdentity;
     submissionLock.current = true;
-    setBusyAction(permissionV2Enabled && duration === "once" ? "resolve" : "grant");
+    setBusyAction(permissionV2Enabled && selectedDuration === "once" ? "resolve" : "grant");
     setError(null);
     setNotice(null);
     let grantSaved = false;
     try {
-      if (permissionV2Enabled && duration === "once") {
+      if (permissionV2Enabled && selectedDuration === "once") {
         if (!canAllowOnce || !workspacePermissions || workspacePermissionsLoading || workspacePermissionsError) {
           setError(t("workspace.recovery.onceUnavailable", {
             defaultValue: "One-time access is unavailable until Nanobot confirms current restricted access.",
@@ -406,10 +482,10 @@ export function FolderAccessRequestCard({
           duration: "once",
           expectedRuntimeId: workspacePermissions.runtime_id,
           expectedPermissionRevision: workspacePermissions.revision,
-          expectedFileAccess: fileAccess,
-          expectedCommands: commands,
+          expectedFileAccess: selectedFileAccess,
+          expectedCommands: selectedCommands,
           submittedPath: selectedPath,
-          canonicalPath: selectedPath,
+          canonicalPath: null,
         };
         onResolveStarted?.(intent);
         let result: Awaited<ReturnType<typeof allowWorkspaceAccessOnce>>;
@@ -419,8 +495,8 @@ export function FolderAccessRequestCard({
             access_request_id: request.access_request_id,
             expected_revision: request.revision,
             path: selectedPath,
-            file_access: fileAccess,
-            commands,
+            file_access: selectedFileAccess,
+            commands: selectedCommands,
             expected_grants_revision: management.grants_revision,
             expected_runtime_id: workspacePermissions.runtime_id,
             expected_permission_revision: workspacePermissions.revision,
@@ -444,16 +520,17 @@ export function FolderAccessRequestCard({
         return;
       }
       let grantsRevision = management.grants_revision;
-      let canonicalPath = exactGrant?.path ?? selectedPath;
+      const selectedGrant = management.grants.find((grant) => sameWorkspacePath(grant.path, selectedPath)) ?? null;
+      let canonicalPath = selectedGrant?.path ?? selectedPath;
       if (
-        !exactGrant
-        || exactGrant.file_access !== fileAccess
-        || exactGrant.commands !== commands
+        !selectedGrant
+        || selectedGrant.file_access !== selectedFileAccess
+        || selectedGrant.commands !== selectedCommands
       ) {
         const saved = await upsertWorkspaceGrant(client, {
           path: selectedPath,
-          file_access: fileAccess,
-          commands,
+          file_access: selectedFileAccess,
+          commands: selectedCommands,
         }, management.grants_revision);
         if (!actionStillCurrent(identity)) return;
         grantSaved = true;
@@ -475,7 +552,7 @@ export function FolderAccessRequestCard({
         }));
         setBusyAction("resolve");
       }
-      await resolve(canonicalPath, grantsRevision, identity, selectedPath, fileAccess, commands);
+      await resolve(canonicalPath, grantsRevision, identity, selectedPath, selectedFileAccess, selectedCommands);
     } catch (reason) {
       if (!actionStillCurrent(identity)) return;
       if (grantSaved) {
@@ -483,12 +560,22 @@ export function FolderAccessRequestCard({
           defaultValue: "Folder access was saved, but this task is still waiting for you to use the folder.",
         }));
       }
-      setError(requestError(reason, t));
+      setError(folderAccessErrorMessage(reason, t));
       await refreshAfterFailure(identity);
     } finally {
       submissionLock.current = false;
       setBusyAction(null);
     }
+  };
+
+  const saveAndUseFolder = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await applyFolderAccess(path.trim(), fileAccess, commands, duration);
+  };
+
+  const allowKnownFolder = (selectedDuration: FolderAccessDuration) => {
+    if (!requestedFolderPath) return;
+    void applyFolderAccess(requestedFolderPath, fileAccess, commands, selectedDuration);
   };
 
   const cancelTask = async () => {
@@ -509,7 +596,7 @@ export function FolderAccessRequestCard({
       setReviewIdentity(null);
     } catch (reason) {
       if (!actionStillCurrent(identity)) return;
-      setError(requestError(reason, t));
+      setError(folderAccessErrorMessage(reason, t));
       await refreshAfterFailure(identity);
     } finally {
       submissionLock.current = false;
@@ -564,7 +651,7 @@ export function FolderAccessRequestCard({
       onApplyWorkspaceScope(result.workspace_scope);
     } catch (reason) {
       if (!actionStillCurrent(identity)) return;
-      setError(requestError(reason, t));
+      setError(folderAccessErrorMessage(reason, t));
       await refreshAfterFailure(identity);
     } finally {
       submissionLock.current = false;
@@ -581,7 +668,7 @@ export function FolderAccessRequestCard({
     setError(null);
     try {
       const selected = await pickFolder();
-      if (selected && pickerStillCurrent()) setPath(selected);
+      if (selected && pickerStillCurrent()) selectPath(selected);
     } catch {
       if (pickerStillCurrent()) {
         setError(t("workspace.recovery.browseFailed", {
@@ -602,11 +689,22 @@ export function FolderAccessRequestCard({
         ? retiringOnceMessage
         : null
     : null;
-  const status = terminalOnceStatus ?? (!canManage
+  const insufficientCapabilitiesMessage = t("workspace.recovery.insufficientCapabilities", {
+    required: capabilityRequirement,
+    defaultValue: `${capabilityRequirement} Select the required access before allowing this folder.`,
+  });
+  const status = terminalOnceStatus ?? (isReady && !approvedCapabilitiesSufficient
+    ? t("workspace.recovery.readyInsufficient", {
+        path: request.selected_path ?? "the selected folder",
+        defaultValue: `The selected access for ${request.selected_path ?? "the selected folder"} cannot satisfy this request. Choose another folder or review its access.`,
+      })
+    : !canManage
     ? t("workspace.recovery.localOnly", { defaultValue: "Open the trusted local Nanobot WebUI to manage folder access for this task." })
     : request.status === "pending"
-    ? t("workspace.recovery.pending", { defaultValue: "Choose a folder to continue this task." })
-    : request.status === "ready"
+    ? requestedFolderPath
+      ? t("workspace.recovery.pendingKnown", { defaultValue: "Review the identified folder and required access, then choose how to allow it." })
+      : t("workspace.recovery.pending", { defaultValue: "Choose a folder to continue this task." })
+      : request.status === "ready"
       ? onceTaskSelected && currentTaskAccess?.state === "retiring"
         ? retiringOnceMessage
         : onceTaskSelected && (currentTaskAccess?.state === "expired" || request.task_access_state === "expired")
@@ -664,13 +762,54 @@ export function FolderAccessRequestCard({
               {heading}
             </h2>
             <p className="text-[12px] leading-relaxed text-muted-foreground">{request.task.excerpt}</p>
-            {targetDescription ? (
-              <p className="text-[11px] text-muted-foreground">{targetDescription} · {operation}</p>
+            {request.target.kind === "unknown" ? targetDescription ? (
+              <p className="break-words text-[11px] text-muted-foreground">{targetDescription} · {operation}</p>
+            ) : null : (
+              <div className="space-y-2 py-1">
+                <p className="text-[11px] text-muted-foreground">
+                  {request.target.kind === "file"
+                    ? t("workspace.recovery.requestedFileLabel", { defaultValue: "Requested file" })
+                    : t("workspace.recovery.requestedFolderLabel", { defaultValue: "Requested folder" })}
+                  {" · "}{operation}
+                  <code
+                    aria-label={request.target.kind === "file"
+                      ? t("workspace.recovery.requestedFileLabel", { defaultValue: "Requested file" })
+                      : t("workspace.recovery.requestedFolderLabel", { defaultValue: "Requested folder" })}
+                    className="mt-1 block break-all font-mono text-[12px] leading-relaxed text-foreground"
+                  >{request.target.path}</code>
+                </p>
+                {request.target.kind === "file" && requestedFolderPath ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    {t("workspace.recovery.folderToAuthorizeLabel", { defaultValue: "Folder to authorize" })}
+                    <code
+                      aria-label={t("workspace.recovery.folderToAuthorizeLabel", { defaultValue: "Folder to authorize" })}
+                      className="mt-1 block break-all font-mono text-[12px] leading-relaxed text-foreground"
+                    >{requestedFolderPath}</code>
+                  </p>
+                ) : null}
+              </div>
+            )}
+            {request.status !== "pending" && request.selected_path ? (
+              <p className="break-all text-[11px] text-muted-foreground">
+                {t("workspace.recovery.selectedFolderScope", {
+                  path: request.selected_path,
+                  defaultValue: `Selected folder scope: ${request.selected_path}`,
+                })}
+              </p>
             ) : null}
+            <p className="break-words text-[11px] text-muted-foreground">
+              {t("workspace.recovery.purpose", {
+                purpose: request.purpose,
+                defaultValue: `Purpose: ${request.purpose}`,
+              })}
+            </p>
+            <p className="break-words text-[11px] text-muted-foreground">{capabilityRequirement}</p>
+            {isPending ? <p className="break-words text-[11px] text-muted-foreground">{selectedCapabilities}</p> : null}
           </div>
         </div>
 
-        <p role="status" className="text-[12px] text-muted-foreground">{requestLoading
+        <p role={!requestLoading && isReady && !approvedCapabilitiesSufficient ? "alert" : "status"}
+          className={`text-[12px] ${!requestLoading && isReady && !approvedCapabilitiesSufficient ? "text-destructive" : "text-muted-foreground"}`}>{requestLoading
           ? t("workspace.recovery.refreshing", { defaultValue: "Checking the task status…" })
           : status}</p>
 
@@ -693,7 +832,7 @@ export function FolderAccessRequestCard({
 
         {isPending ? (
           <div className="space-y-3">
-            {allowedFolders.length > 0 ? (
+            {request.target.kind === "unknown" && allowedFolders.length > 0 ? (
               <div className="flex flex-wrap items-end gap-2">
                 <label className="min-w-[12rem] flex-1 space-y-1 text-[11px] font-medium">
                   <span>{t("workspace.recovery.allowedFolder", { defaultValue: "Use an allowed project" })}</span>
@@ -701,7 +840,7 @@ export function FolderAccessRequestCard({
                     aria-label={t("workspace.recovery.allowedFolder", { defaultValue: "Use an allowed project" })}
                     defaultValue=""
                     disabled={actionDisabled}
-                    onChange={(event) => setPath(event.target.value)}
+                    onChange={(event) => selectPath(event.target.value)}
                     className="h-9 w-full rounded-control border border-border/60 bg-background px-2 text-[12px]"
                   >
                     <option value="" disabled>{t("workspace.recovery.chooseAllowed", { defaultValue: "Choose an allowed folder" })}</option>
@@ -720,9 +859,56 @@ export function FolderAccessRequestCard({
               </div>
             ) : null}
             <div className="flex flex-wrap gap-2">
-              <Button type="button" disabled={!canAct} onClick={(event) => openReview(event.currentTarget)} className="h-9 rounded-control">
-                {t("workspace.recovery.chooseFolder", { defaultValue: "Choose folder" })}
-              </Button>
+              {requestedFolderPath && isAbsoluteWorkspacePath(requestedFolderPath) ? (
+                <>
+                  {permissionV2Enabled ? (
+                    <>
+                      <Button
+                        type="button"
+                        disabled={!canAct || !canAllowOnce || !knownFolderCanAllowOnce}
+                        onClick={() => allowKnownFolder("once")}
+                        className="h-9 rounded-control"
+                      >
+                        {busyAction === "resolve" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
+                        {t("workspace.recovery.allowForTask", { defaultValue: "Allow for this task" })}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!canAct || !knownFolderCanAlwaysAllow}
+                        onClick={() => allowKnownFolder("always")}
+                        className="h-9 rounded-control"
+                      >
+                        {busyAction === "grant" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
+                        {t("workspace.recovery.alwaysAllow", { defaultValue: "Always allow" })}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      type="button"
+                      disabled={!canAct || !knownFolderCanAlwaysAllow}
+                      onClick={() => allowKnownFolder("always")}
+                      className="h-9 rounded-control"
+                    >
+                      {busyAction ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
+                      {t("workspace.recovery.allowFolder", { defaultValue: "Allow folder" })}
+                    </Button>
+                  )}
+                  <Button type="button" variant="outline" disabled={!canAct} onClick={(event) => openReview(event.currentTarget)} className="h-9 rounded-control">
+                    {t("workspace.recovery.reviewAccess", { defaultValue: "Review access" })}
+                  </Button>
+                  <Button type="button" variant="ghost" disabled={!canAct} onClick={(event) => openReview(event.currentTarget, true)} className="h-9 rounded-control">
+                    {t("workspace.recovery.chooseAnotherFolder", { defaultValue: "Choose another folder" })}
+                  </Button>
+                  {!knownFolderCapabilitiesSufficient ? (
+                    <p role="alert" className="basis-full text-[11px] text-destructive">{insufficientCapabilitiesMessage}</p>
+                  ) : null}
+                </>
+              ) : (
+                <Button type="button" disabled={!canAct} onClick={(event) => openReview(event.currentTarget, true)} className="h-9 rounded-control">
+                  {t("workspace.recovery.chooseFolder", { defaultValue: "Choose folder" })}
+                </Button>
+              )}
               <Button type="button" variant="ghost" disabled={!canAct} onClick={() => void cancelTask()} className="h-9 rounded-control">
                 {busyAction === "cancel" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
                 {t("workspace.recovery.cancelTask", { defaultValue: "Cancel task" })}
@@ -733,7 +919,7 @@ export function FolderAccessRequestCard({
 
         {isReady ? (
           <div className="flex flex-wrap gap-2">
-            {request.can_continue ? (
+            {request.can_continue && approvedCapabilitiesSufficient ? (
               <Button type="button" disabled={!canAct || !canContinueTask} onClick={() => void continueTask()} className="h-9 rounded-control">
                 {busyAction === "continue" ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
                 {t("workspace.recovery.continueTask", { defaultValue: "Continue task" })}
@@ -819,7 +1005,7 @@ export function FolderAccessRequestCard({
                       id={`folder-access-path-${request.access_request_id}`}
                       aria-label={t("workspace.management.folderPath", { defaultValue: "Folder path" })}
                       value={path}
-                      onChange={(event) => setPath(event.target.value)}
+                      onChange={(event) => selectPath(event.target.value)}
                       placeholder={t("workspace.dialog.manualPlaceholder")}
                       disabled={actionDisabled}
                       className="h-9 min-w-0 flex-1 rounded-control"
@@ -929,7 +1115,10 @@ export function FolderAccessRequestCard({
                             checked={fileAccess === option.value}
                             aria-labelledby={`${optionId}-label`}
                             aria-describedby={`${optionId}-description`}
-                            onChange={() => setFileAccess(option.value as FolderFileAccess)}
+                            onChange={() => {
+                              setFileAccess(option.value as FolderFileAccess);
+                              setSettingsTouched(true);
+                            }}
                             className="mt-0.5 h-4 w-4 shrink-0 accent-foreground"
                           />
                           <span className="min-w-0 space-y-1">
@@ -944,7 +1133,16 @@ export function FolderAccessRequestCard({
 
                 <div className="space-y-2">
                   <label className="flex min-h-9 items-center gap-2 text-[12px]">
-                    <input type="checkbox" checked={commands} disabled={actionDisabled} onChange={(event) => setCommands(event.target.checked)} className="h-4 w-4 accent-foreground" />
+                    <input
+                      type="checkbox"
+                      checked={commands}
+                      disabled={actionDisabled}
+                      onChange={(event) => {
+                        setCommands(event.target.checked);
+                        setSettingsTouched(true);
+                      }}
+                      className="h-4 w-4 accent-foreground"
+                    />
                     {t("workspace.management.allowCommands", { defaultValue: "Allow commands" })}
                   </label>
                   {exactGrant?.effective_access.commands.requested && !exactGrant.effective_access.commands.available ? (
@@ -953,6 +1151,10 @@ export function FolderAccessRequestCard({
                     </p>
                   ) : null}
                 </div>
+
+                {!configuredCapabilitiesSufficient ? (
+                  <p role="alert" className="text-[11.5px] text-destructive">{insufficientCapabilitiesMessage}</p>
+                ) : null}
 
                 <p className="rounded-control bg-muted/35 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
                   {permissionV2Enabled
@@ -967,7 +1169,7 @@ export function FolderAccessRequestCard({
                   <Button type="button" variant="ghost" disabled={actionDisabled} onClick={closeReview} className="h-9 rounded-control">
                     {t("common.cancel", { defaultValue: "Cancel" })}
                   </Button>
-                  <Button type="submit" disabled={!canAct || !path.trim() || (permissionV2Enabled && duration === "once" && !canAllowOnce)} className="h-9 rounded-control">
+                  <Button type="submit" disabled={!canAct || !path.trim() || !configuredCapabilitiesSufficient || (permissionV2Enabled && duration === "once" && !canAllowOnce)} className="h-9 rounded-control">
                     {busyAction ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
                     {permissionV2Enabled && duration === "once"
                       ? t("workspace.recovery.allowOnceAndUse", { defaultValue: "Allow once and use folder" })

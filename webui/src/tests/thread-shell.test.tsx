@@ -3707,6 +3707,148 @@ describe("ThreadShell", () => {
     expect(screen.getByRole("img", { name: "answer.png" })).toBe(image);
   });
 
+  it.each([
+    ["~/projects/alias", "reply-first"],
+    ["~/projects/alias", "event-first"],
+    ["/projects/symlink-alias", "reply-first"],
+    ["/projects/symlink-alias", "event-first"],
+  ])("acknowledges Once %s through its canonical receipt (%s)", async (submittedPath, order) => {
+    const client = makeClient();
+    const fixture = onceRecoveryFixtures("/projects/canonical");
+    fixture.onceResult.once_receipt.submitted_path = submittedPath;
+    const acknowledged = vi.fn();
+    let releaseReply!: () => void;
+    const replyGate = new Promise<void>((resolve) => { releaseReply = resolve; });
+    let started!: () => void;
+    const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+    let releaseReads!: () => void;
+    const readsGate = new Promise<void>((resolve) => { releaseReads = resolve; });
+    let readsStarted!: () => void;
+    const readsStartedPromise = new Promise<void>((resolve) => { readsStarted = resolve; });
+    let replySent = false;
+    let owningReads = 0;
+    client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+      if (action !== "workspace.access.allow_once") throw new Error(`Unexpected mutation ${action}`);
+      started();
+      await replyGate;
+      replySent = true;
+      return fixture.onceResult as T;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (!url.includes("websocket%3Achat-title/webui-thread")) return { ok: false, status: 404, json: async () => ({}) };
+      if (replySent && url.includes("?limit=1&direction=latest")) {
+        owningReads += 1;
+        if (owningReads === 2) readsStarted();
+        await readsGate;
+      }
+      return httpJson({
+        ...folderAccessThreadFixture,
+        workspace_scope: replySent ? fixture.readyScope : fixture.initialScope,
+        workspace_access_request: replySent ? fixture.readyRequest : folderAccessRequestFixture,
+        workspace_permissions: replySent ? fixture.readyPermissions : fixture.initialPermissions,
+      });
+    }));
+    const workspaces = managedRecoveryWorkspaces();
+    workspaces.default_scope = fixture.initialScope;
+    workspaces.controls.permission_v2 = true;
+    render(wrap(client, <ThreadShell
+      session={{ ...session("chat-title"), workspaceScope: fixture.initialScope }}
+      title="Chat chat-title" onToggleSidebar={() => {}}
+      workspaceScope={fixture.initialScope} workspaces={workspaces}
+      onRefreshWorkspaces={async () => {}} onWorkspaceScopeAcknowledged={acknowledged}
+    />));
+    await screen.findByRole("heading", { name: "Folder access needed" });
+    fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), { target: { value: submittedPath } });
+    fireEvent.click(screen.getByRole("button", { name: "Allow once and use folder" }));
+    await act(async () => { await startedPromise; });
+    const emit = () => client._emitSessionUpdate("chat-title", "metadata",
+      fixture.readyScope, fixture.readyRequest, fixture.readyPermissions);
+    if (order === "event-first") {
+      act(() => { emit(); emit(); });
+      expect(acknowledged).not.toHaveBeenCalled();
+      expect(screen.queryByRole("heading", { name: "Ready to continue" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Allow once and use folder" })).toBeDisabled();
+    }
+    await act(async () => { releaseReply(); });
+    await waitFor(() => {
+      expect(acknowledged).toHaveBeenCalledTimes(1);
+      expect(acknowledged).toHaveBeenCalledWith(fixture.readyScope);
+    });
+    await act(async () => { await readsStartedPromise; });
+    expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
+    act(() => { emit(); emit(); });
+    expect(owningReads).toBe(2);
+    await act(async () => { releaseReads(); });
+    await screen.findByRole("heading", { name: "Ready to continue" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue task" })).toBeEnabled());
+    expect(acknowledged).toHaveBeenCalledTimes(1);
+    expect(client.requestMutation).toHaveBeenCalledTimes(1);
+    expect(client.requestMutation).toHaveBeenCalledWith("workspace.access.allow_once",
+      expect.objectContaining({ path: submittedPath }), 20_000);
+    expect(client.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(["reply-path", "event-path", "unrelated-focus", "runtime", "replacement-task"])(
+    "does not revive a staged Once alias after a conflicting %s", async (conflict) => {
+      const client = makeClient();
+      const fixture = onceRecoveryFixtures("/projects/canonical");
+      fixture.onceResult.once_receipt.submitted_path = "~/projects/alias";
+      const other = onceRecoveryFixtures("/projects/other-canonical");
+      other.onceResult.once_receipt.submitted_path = "~/projects/alias";
+      const acknowledged = vi.fn();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let started!: () => void;
+      const startedPromise = new Promise<void>((resolve) => { started = resolve; });
+      client.requestMutation.mockImplementation(async <T,>(action: string): Promise<T> => {
+        if (action !== "workspace.access.allow_once") throw new Error(`Unexpected mutation ${action}`);
+        started();
+        await gate;
+        return (conflict === "reply-path" ? other.onceResult : fixture.onceResult) as T;
+      });
+      vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => (
+        String(input).includes("websocket%3Achat-title/webui-thread")
+          ? httpJson({ ...folderAccessThreadFixture, workspace_permissions: fixture.initialPermissions })
+          : { ok: false, status: 404, json: async () => ({}) }
+      )));
+      const workspaces = managedRecoveryWorkspaces();
+      workspaces.default_scope = fixture.initialScope;
+      workspaces.controls.permission_v2 = true;
+      render(wrap(client, <ThreadShell
+        session={{ ...session("chat-title"), workspaceScope: fixture.initialScope }}
+        title="Chat chat-title" onToggleSidebar={() => {}}
+        workspaceScope={fixture.initialScope} workspaces={workspaces}
+        onRefreshWorkspaces={async () => {}} onWorkspaceScopeAcknowledged={acknowledged}
+      />));
+      await screen.findByRole("heading", { name: "Folder access needed" });
+      fireEvent.click(screen.getByRole("button", { name: "Choose folder" }));
+      fireEvent.change(screen.getByRole("textbox", { name: "Folder path" }), { target: { value: "~/projects/alias" } });
+      fireEvent.click(screen.getByRole("button", { name: "Allow once and use folder" }));
+      await act(async () => { await startedPromise; });
+      act(() => client._emitSessionUpdate("chat-title", "metadata",
+        fixture.readyScope, fixture.readyRequest, fixture.readyPermissions));
+      expect(acknowledged).not.toHaveBeenCalled();
+      act(() => {
+        if (conflict === "event-path") client._emitSessionUpdate("chat-title", "metadata",
+          other.readyScope, other.readyRequest, other.readyPermissions);
+        if (conflict === "unrelated-focus") client._emitSessionUpdate("chat-title", "metadata",
+          other.readyScope, folderAccessRequestFixture, fixture.initialPermissions);
+        if (conflict === "runtime") client._emitSessionUpdate("chat-title", "metadata", undefined, undefined,
+          { ...fixture.initialPermissions, runtime_id: "b".repeat(32) });
+        if (conflict === "replacement-task") client._emitSessionUpdate("chat-title", "metadata",
+          fixture.readyScope, { ...fixture.readyRequest, task: { ...fixture.readyRequest.task, turn_id: "other-task" } },
+          fixture.readyPermissions);
+      });
+      await act(async () => { release(); await gate; });
+      expect(acknowledged).not.toHaveBeenCalled();
+      expect(screen.queryByRole("heading", { name: "Ready to continue" })).not.toBeInTheDocument();
+      expect(client.requestMutation).toHaveBeenCalledTimes(1);
+      expect(client.sendMessage).not.toHaveBeenCalled();
+    },
+  );
+
   it("waits for the Once HTTP receipt when its projection event arrives first", async () => {
     const client = makeClient();
     const initialScope = folderAccessThreadFixture.workspace_scope!;

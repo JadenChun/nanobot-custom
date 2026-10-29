@@ -511,6 +511,106 @@ def test_terminal_once_request_keeps_duration_and_expired_state(
     assert request["task_access_state"] == "expired"
 
 
+def test_allow_once_expands_home_input_and_preserves_receipt_spelling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent"
+    selected = home / "subdir"
+    instance = tmp_path / "instance"
+    selected.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    sessions = SessionManager(home, sessions_root=tmp_path / "sessions")
+    chat_id = "once-tilde-receipt"
+    key = f"websocket:{chat_id}"
+    session = Session(
+        key,
+        messages=[{"role": "user", "content": "Read the selected folder"}],
+        metadata={
+            "webui": True,
+            "workspace_scope": default_workspace_scope(home, True).metadata(),
+        },
+    )
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    backend = sessions.source_backend(key)
+    assert backend is not None
+    snapshot = backend.source.load_source_snapshot(key)
+    task_input = next(event for event in snapshot.events if event.get("role") == "user")
+    task_input_event_id = task_input["_event_id"]
+    binding = {
+        "store_identity": snapshot.state.store_identity,
+        "incarnation": snapshot.state.incarnation,
+        "generation": snapshot.state.generation,
+    }
+    request_record: dict[str, Any] = {
+        "version": 1,
+        "access_request_id": "e" * 32,
+        "revision": 1,
+        "task": {"turn_id": "once-tilde-turn"},
+        "blocked_turn_id": "once-tilde-turn",
+        "tool_call_id": None,
+        "created_at_ms": 1,
+        "status": "pending",
+        "reason": "folder_selection_required",
+        "operation": "read",
+        "target": {"kind": "unknown", "path": None},
+        "purpose": "Read the selected folder",
+        "selected_path": None,
+        "continuation_turn_id": None,
+        "source_binding": binding,
+        "task_input_event_id": task_input_event_id,
+        "latest_input_event_id": task_input_event_id,
+        "blocked_run_id": "f" * 32,
+        "expected_scope": {"project_path": str(home), "access_mode": "restricted"},
+        "resolved_grants_revision": None,
+    }
+    backend.source.commit_workspace_access_request(
+        key,
+        expected_binding=binding,
+        expected_record=None,
+        replacement_record=request_record,
+        expected_latest_input_event_id=task_input_event_id,
+    )
+    grants = FolderGrantStore(
+        agent_home=home,
+        instance_root=instance,
+        path=instance / "webui" / "folder-grants.json",
+    )
+    controller = WebUIWorkspaceController(
+        session_manager=sessions,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=grants,
+        native_supervisor_available=True,
+    )
+    permission_owner = sessions.desktop_permissions
+
+    result = WorkspaceAccessRecoveryOwner(sessions, controller).allow_once({
+        "chat_id": chat_id,
+        "access_request_id": request_record["access_request_id"],
+        "expected_revision": request_record["revision"],
+        "path": "~/subdir",
+        "file_access": "read_only",
+        "commands": False,
+        "expected_grants_revision": grants.snapshot().revision,
+        "expected_runtime_id": permission_owner.runtime_id,
+        "expected_permission_revision": permission_owner.revision,
+    })
+
+    assert result["once_receipt"]["submitted_path"] == "~/subdir"
+    assert result["once_receipt"]["canonical_path"] == str(selected.resolve())
+    assert result["once_receipt"]["file_access"] == "read_only"
+    assert result["once_receipt"]["commands"] is False
+    assert result["workspace_scope"]["project_path"] == str(selected.resolve())
+    assert grants.snapshot().grants == ()
+
+
 def test_allow_once_does_not_reauthorize_while_prior_once_tree_is_active(
     tmp_path: Path,
 ) -> None:

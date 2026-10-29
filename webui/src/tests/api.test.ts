@@ -394,6 +394,110 @@ describe("webui API helpers", () => {
     });
   });
 
+  it("accepts an exact home-relative submitted path with a canonical Once receipt path", async () => {
+    const emitted = onceResponseFixture as WorkspaceOnceActionResult;
+    const submittedPath = "~/Documents/Client project";
+    const canonicalPath = "/home/jaden/Documents/Client project";
+    const taskAccess = emitted.workspace_permissions.task_access;
+    if (!taskAccess) throw new Error("Once fixture is missing task access");
+    const effectiveAccess = {
+      ...emitted.workspace_access_request.selected_access!,
+      grant_root: canonicalPath,
+    };
+    const response: WorkspaceOnceActionResult = {
+      ...emitted,
+      workspace_access_request: {
+        ...emitted.workspace_access_request,
+        selected_path: canonicalPath,
+        selected_access: effectiveAccess,
+      },
+      workspace_scope: {
+        ...emitted.workspace_scope,
+        project_path: canonicalPath,
+        effective_access: effectiveAccess,
+      },
+      workspace_permissions: {
+        ...emitted.workspace_permissions,
+        task_access: {
+          ...taskAccess,
+          folders: taskAccess.folders.map((folder) => ({ ...folder, path: canonicalPath })),
+        },
+      },
+      once_receipt: {
+        ...emitted.once_receipt,
+        submitted_path: submittedPath,
+        canonical_path: canonicalPath,
+      },
+    };
+    requestMutation.mockResolvedValueOnce(response);
+
+    const parsed = await allowWorkspaceAccessOnce(mutationTransport, {
+      chat_id: response.workspace_access_request.chat_id,
+      access_request_id: response.once_receipt.access_request_id,
+      expected_revision: response.once_receipt.request_revision - 1,
+      path: submittedPath,
+      file_access: response.once_receipt.file_access,
+      commands: response.once_receipt.commands,
+      expected_grants_revision: 0,
+      expected_runtime_id: response.once_receipt.runtime_id,
+      expected_permission_revision: response.once_receipt.permission_revision - 1,
+    }, response.once_receipt.task_turn_id);
+
+    expect(parsed.once_receipt.submitted_path).toBe(submittedPath);
+    expect(parsed.once_receipt.canonical_path).toBe(canonicalPath);
+    expect(parsed.workspace_access_request.selected_path).toBe(canonicalPath);
+  });
+
+  it.each([
+    "submitted path", "relative canonical path", "selected path", "scope path", "grant root",
+    "task folder", "mode", "runtime", "request revision", "permission revision", "task",
+    "file access", "commands", "effective write",
+  ])("rejects a Once acknowledgement with mismatched %s", async (field) => {
+    const response = structuredClone(onceResponseFixture) as WorkspaceOnceActionResult;
+    const request = response.workspace_access_request;
+    const receipt = response.once_receipt;
+    receipt.submitted_path = "~/projects/alias";
+    const input = {
+      chat_id: request.chat_id,
+      access_request_id: request.access_request_id,
+      expected_revision: request.revision - 1,
+      path: receipt.submitted_path,
+      file_access: receipt.file_access,
+      commands: receipt.commands,
+      expected_grants_revision: 0,
+      expected_runtime_id: receipt.runtime_id,
+      expected_permission_revision: receipt.permission_revision - 1,
+    };
+    const taskTurnId = request.task.turn_id;
+    if (!request.selected_access || !response.workspace_permissions.task_access) {
+      throw new Error("Once fixture is missing its selected authority");
+    }
+    switch (field) {
+      case "submitted path": receipt.submitted_path = "~/different"; break;
+      case "relative canonical path": receipt.canonical_path = "relative/project"; break;
+      case "selected path": request.selected_path = "/different"; break;
+      case "scope path": response.workspace_scope.project_path = "/different"; break;
+      case "grant root": request.selected_access.grant_root = "/different"; break;
+      case "task folder": response.workspace_permissions.task_access.folders[0]!.path = "/different"; break;
+      case "mode": response.workspace_permissions.mode = "full"; break;
+      case "runtime": receipt.runtime_id = "b".repeat(32); break;
+      case "request revision": receipt.request_revision = input.expected_revision; break;
+      case "permission revision":
+        receipt.permission_revision = input.expected_permission_revision;
+        response.workspace_permissions.revision = input.expected_permission_revision;
+        break;
+      case "task": receipt.task_turn_id = "other-task"; break;
+      case "file access": receipt.file_access = input.file_access === "read_only" ? "read_write" : "read_only"; break;
+      case "commands": receipt.commands = !input.commands; break;
+      case "effective write": request.selected_access.write = !request.selected_access.write; break;
+    }
+    requestMutation.mockResolvedValueOnce(response);
+    await expect(allowWorkspaceAccessOnce(mutationTransport, input, taskTurnId)).rejects.toMatchObject({
+      status: 502,
+      message: "Invalid workspace Once receipt or response",
+    });
+  });
+
   it("percent-encodes websocket keys when fetching webui-thread snapshot", async () => {
     await fetchWebuiThread("tok", "websocket:chat-1");
 

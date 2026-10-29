@@ -35,11 +35,13 @@ export function shortWorkspacePath(path: string): string {
 
 export function isAbsoluteWorkspacePath(path: string): boolean {
   const trimmed = path.trim();
+  const isUnc = /^\\\\[^\\/]+[\\/][^\\/]+(?:[\\/]|$)/.test(trimmed);
   return (
     trimmed === "~"
     || trimmed.startsWith("~/")
     || trimmed.startsWith("~\\")
     || trimmed.startsWith("/")
+    || isUnc
     || /^[A-Za-z]:[\\/]/.test(trimmed)
   );
 }

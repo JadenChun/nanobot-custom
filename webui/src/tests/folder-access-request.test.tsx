@@ -79,6 +79,72 @@ function restrictedPermissionProjection(): WorkspacePermissionProjection {
   };
 }
 
+function onceActionResult(
+  request: FolderAccessRequest,
+  path: string,
+  fileAccess: "read_only" | "read_write",
+  commands: boolean,
+  canonicalPath = path,
+) {
+  const access = {
+    policy: "managed" as const,
+    source: "task" as const,
+    grant_root: canonicalPath,
+    exists: true,
+    read: true,
+    write: fileAccess === "read_write",
+    boundary: "folder" as const,
+    commands: {
+      requested: commands,
+      available: commands,
+      backend: commands ? "native" as const : "none" as const,
+      reason: null,
+    },
+  };
+  const revision = request.revision + 1;
+  return {
+    workspace_access_request: {
+      ...request,
+      revision,
+      status: "ready" as const,
+      selected_path: canonicalPath,
+      selected_access: access,
+      can_continue: true,
+      selected_duration: "once" as const,
+      task_access_state: "active" as const,
+    },
+    workspace_scope: {
+      ...folderAccessActionResultFixture.workspace_scope,
+      project_path: canonicalPath,
+      project_name: canonicalPath.split(/[\\/]/).filter(Boolean).at(-1) ?? canonicalPath,
+      access_mode: "restricted" as const,
+      effective_access: access,
+    },
+    workspace_permissions: {
+      ...restrictedPermissionProjection(),
+      revision: 5,
+      task_access: {
+        task_turn_id: request.task.turn_id,
+        state: "active" as const,
+        folders: [{ path: canonicalPath, file_access: fileAccess, commands }],
+      },
+    },
+    once_receipt: {
+      version: 1 as const,
+      duration: "once" as const,
+      runtime_id: "a".repeat(32),
+      permission_revision: 5,
+      access_request_id: request.access_request_id,
+      request_revision: revision,
+      task_turn_id: request.task.turn_id,
+      submitted_path: path,
+      canonical_path: canonicalPath,
+      file_access: fileAccess,
+      commands,
+    },
+  };
+}
+
 function renderCard({
   request = folderAccessRequestFixture,
   requestMutation = vi.fn(async () => folderAccessActionResultFixture),
@@ -145,6 +211,277 @@ function renderCard({
 }
 
 describe("FolderAccessRequestCard", () => {
+  it("accepts a Once receipt whose submitted home path resolves to its canonical project path", async () => {
+    const user = userEvent.setup();
+    const submittedPath = "~/Documents/Client project";
+    const canonicalPath = "/home/jaden/Documents/Client project";
+    const request = { ...folderAccessRequestFixture };
+    const mutation = vi.fn(async () => onceActionResult(
+      request,
+      submittedPath,
+      "read_only",
+      false,
+      canonicalPath,
+    ));
+    const v2Workspaces = workspaces();
+    v2Workspaces.controls.permission_v2 = true;
+    const { onUpdateRequest } = renderCard({
+      request,
+      requestMutation: mutation,
+      workspacesPayload: v2Workspaces,
+      workspacePermissions: restrictedPermissionProjection(),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Choose folder" }));
+    await user.type(screen.getByLabelText("Folder path"), submittedPath);
+    await user.click(screen.getByRole("button", { name: "Allow once and use folder" }));
+
+    await waitFor(() => expect(onUpdateRequest).toHaveBeenCalledWith(expect.objectContaining({ selected_path: canonicalPath })));
+    expect(screen.queryByText("The folder action did not finish. Refresh the task and try again.")).not.toBeInTheDocument();
+    expect(mutation).toHaveBeenCalledWith("workspace.access.allow_once", expect.objectContaining({
+      path: submittedPath,
+    }), 20_000);
+    expect(onUpdateRequest).toHaveBeenCalledWith(expect.objectContaining({ selected_path: canonicalPath }));
+  });
+
+  it("describes draft command access as requested until backend availability is known", () => {
+    renderCard({ request: { ...folderAccessRequestFixture, operation: "execute" } });
+
+    expect(screen.getByText("Selected access: Read only · Commands requested")).toBeInTheDocument();
+    expect(screen.queryByText("Selected access: Read only · Commands available")).not.toBeInTheDocument();
+  });
+
+  it("keeps an adequate saved grant when directly choosing Always for its known folder", async () => {
+    const user = userEvent.setup();
+    const request: FolderAccessRequest = {
+      ...folderAccessRequestFixture,
+      target: { kind: "directory", path: "/projects/freelance" },
+    };
+    const v2Workspaces = workspaces();
+    v2Workspaces.controls.permission_v2 = true;
+    v2Workspaces.management!.grants = [{
+      path: "/projects/freelance",
+      file_access: "read_write",
+      commands: true,
+      exists: true,
+      effective_access: {
+        policy: "managed",
+        source: "grant",
+        grant_root: "/projects/freelance",
+        exists: true,
+        read: true,
+        write: true,
+        boundary: "folder",
+        commands: { requested: true, available: true, backend: "native", reason: null },
+      },
+    }];
+    const mutation = vi.fn(async () => folderAccessActionResultFixture);
+    renderCard({
+      request,
+      requestMutation: mutation,
+      workspacesPayload: v2Workspaces,
+      workspacePermissions: restrictedPermissionProjection(),
+    });
+
+    await waitFor(() => expect(screen.getByText(/Selected access: Read and write/)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "Always allow" }));
+
+    await waitFor(() => expect(mutation).toHaveBeenCalledWith("workspace.access.resolve", expect.objectContaining({
+      path: "/projects/freelance",
+    }), 20_000));
+    expect(mutation).not.toHaveBeenCalledWith("workspace.grant.upsert", expect.anything(), expect.anything());
+    expect(mutation.mock.calls.map(([action]) => action)).toEqual(["workspace.access.resolve"]);
+  });
+
+  it("does not inherit an existing grant permission while typing past its path prefix", async () => {
+    const user = userEvent.setup();
+    const v2Workspaces = workspaces();
+    v2Workspaces.management!.grants = [{
+      path: "/projects/foo",
+      file_access: "read_write",
+      commands: true,
+      exists: true,
+      effective_access: {
+        policy: "managed",
+        source: "grant",
+        grant_root: "/projects/foo",
+        exists: true,
+        read: true,
+        write: true,
+        boundary: "folder",
+        commands: { requested: true, available: true, backend: "native", reason: null },
+      },
+    }];
+    renderCard({
+      request: { ...folderAccessRequestFixture, operation: "read" },
+      workspacesPayload: v2Workspaces,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Choose folder" }));
+    await user.type(screen.getByLabelText("Folder path"), "/projects/foobar");
+
+    expect(screen.getByRole("checkbox", { name: "Allow commands" })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: "Read only" })).toBeChecked();
+  });
+
+  it("shows the insufficient-capability guidance once for a ready task", () => {
+    const request: FolderAccessRequest = {
+      ...folderAccessActionResultFixture.workspace_access_request,
+      operation: "execute",
+      selected_access: {
+        ...folderAccessActionResultFixture.workspace_access_request.selected_access!,
+        commands: {
+          requested: true,
+          available: false,
+          backend: "none",
+          reason: "not_granted",
+        },
+      },
+    };
+    renderCard({ request });
+    const guidance = "The selected access for /projects/freelance cannot satisfy this request. Choose another folder or review its access.";
+
+    expect(screen.getAllByText(guidance)).toHaveLength(1);
+    expect(screen.getByRole("alert")).toHaveTextContent(guidance);
+  });
+
+  it("shows a known folder and purpose inline and allows it directly with the required write access", async () => {
+    const user = userEvent.setup();
+    const request: FolderAccessRequest = {
+      ...folderAccessRequestFixture,
+      operation: "write",
+      target: { kind: "directory", path: "/projects/freelance" },
+      purpose: "Save the generated inventory report.",
+    };
+    const v2Workspaces = workspaces();
+    v2Workspaces.controls.permission_v2 = true;
+    const mutation = vi.fn(async () => onceActionResult(request, "/projects/freelance", "read_write", false));
+    renderCard({
+      request,
+      requestMutation: mutation,
+      workspacesPayload: v2Workspaces,
+      workspacePermissions: restrictedPermissionProjection(),
+    });
+
+    expect(screen.getByLabelText("Requested folder")).toHaveTextContent("/projects/freelance");
+    expect(screen.getByText("Purpose: Save the generated inventory report.")).toBeInTheDocument();
+    expect(screen.getByText(/Required: read and write file access/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Allow for this task" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Always allow" })).toBeEnabled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Allow for this task" }));
+
+    await waitFor(() => expect(mutation).toHaveBeenCalledWith("workspace.access.allow_once", {
+      chat_id: "chat-title",
+      access_request_id: request.access_request_id,
+      expected_revision: request.revision,
+      path: "/projects/freelance",
+      file_access: "read_write",
+      commands: false,
+      expected_grants_revision: 12,
+      expected_runtime_id: "a".repeat(32),
+      expected_permission_revision: 4,
+    }, 20_000));
+    expect(mutation).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["folder_access_required", "Nanobot cannot use that folder with the current access settings."],
+    ["folder grants cannot overlap private runtime storage", "This folder includes Nanobot's private runtime files."],
+  ])("keeps a safe explanation for direct approval error %s", async (message, expected) => {
+    const user = userEvent.setup();
+    const request: FolderAccessRequest = {
+      ...folderAccessRequestFixture,
+      target: { kind: "directory", path: "/projects/freelance" },
+    };
+    const v2Workspaces = workspaces();
+    v2Workspaces.controls.permission_v2 = true;
+    const mutation = vi.fn(async () => {
+      throw new ApiError(message === "folder_access_required" ? 403 : 400, message);
+    });
+    renderCard({
+      request,
+      requestMutation: mutation,
+      workspacesPayload: v2Workspaces,
+      workspacePermissions: restrictedPermissionProjection(),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Allow for this task" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(expected);
+    expect(screen.getByLabelText("Requested folder")).toHaveTextContent("/projects/freelance");
+    if (message === "folder grants cannot overlap private runtime storage") {
+      expect(screen.getByText(/includes Nanobot's private runtime files/)).toBeInTheDocument();
+    } else {
+      expect(screen.queryByText(/includes Nanobot's private runtime files/)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the selected path and request after an invalid Once path error in the alternative form", async () => {
+    const user = userEvent.setup();
+    const v2Workspaces = workspaces();
+    v2Workspaces.controls.permission_v2 = true;
+    const mutation = vi.fn(async () => {
+      throw new ApiError(400, "invalid_access_request");
+    });
+    renderCard({
+      requestMutation: mutation,
+      workspacesPayload: v2Workspaces,
+      workspacePermissions: restrictedPermissionProjection(),
+    });
+
+    await user.click(screen.getByRole("button", { name: "Choose folder" }));
+    await user.type(screen.getByLabelText("Folder path"), "/projects/freelance");
+    await user.click(screen.getByRole("button", { name: "Allow once and use folder" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Nanobot could not verify that folder. Choose an existing folder and try again.",
+    );
+    expect(screen.getByLabelText("Folder path")).toHaveValue("/projects/freelance");
+    expect(screen.getByRole("dialog", { name: "Review folder access" })).toBeInTheDocument();
+    expect(screen.getByText("Check the website and inventory projects in Freelance.")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["read", "Read only", false],
+    ["write", "Read and write", false],
+    ["execute", "Read only", true],
+  ] as const)("initializes %s access to the minimum requested capabilities", async (operation, fileAccess, commands) => {
+    const user = userEvent.setup();
+    renderCard({ request: { ...folderAccessRequestFixture, operation } });
+
+    await user.click(screen.getByRole("button", { name: "Choose folder" }));
+
+    expect(screen.getByRole("radio", { name: fileAccess })).toBeChecked();
+    if (commands) {
+      expect(screen.getByRole("checkbox", { name: "Allow commands" })).toBeChecked();
+    } else {
+      expect(screen.getByRole("checkbox", { name: "Allow commands" })).not.toBeChecked();
+    }
+  });
+
+  it.each([
+    ["/projects/freelance/README.md", "/projects/freelance"],
+    ["/README.md", "/"],
+    ["C:\\projects\\freelance\\README.md", "C:\\projects\\freelance"],
+    ["C:\\README.md", "C:\\"],
+    ["\\\\server\\share\\README.md", "\\\\server\\share"],
+  ])("shows the file %s and opens review with its containing folder %s", async (filePath, folderPath) => {
+    const user = userEvent.setup();
+    renderCard({ request: {
+      ...folderAccessRequestFixture,
+      target: { kind: "file", path: filePath },
+    } });
+
+    expect(screen.getByLabelText("Requested file")).toHaveTextContent(filePath);
+    expect(screen.getByLabelText("Folder to authorize")).toHaveTextContent(folderPath);
+    await user.click(screen.getByRole("button", { name: "Review access" }));
+    expect(screen.getByLabelText("Folder path")).toHaveValue(folderPath);
+  });
+
   it("defaults review to Allow once and exposes Always allow as the other duration", async () => {
     const user = userEvent.setup();
     const legacyWorkspaces = workspaces();
@@ -432,7 +769,7 @@ describe("FolderAccessRequestCard", () => {
     renderCard({ request: ready, workspacesPayload: v2Workspaces, workspacePermissions: permissions });
 
     expect(screen.getByRole("heading", { name: "Ready to continue" })).toBeInTheDocument();
-    expect(screen.queryByText(/The folder is not known yet\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nanobot has not identified the exact folder yet/)).not.toBeInTheDocument();
     expect(screen.getByText(status)).toBeInTheDocument();
     expect(screen.getByText("Read only · Commands off")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue task" })).toBeEnabled();
@@ -442,7 +779,7 @@ describe("FolderAccessRequestCard", () => {
     renderCard();
 
     expect(screen.getByRole("heading", { name: "Folder access needed" })).toBeInTheDocument();
-    expect(screen.getByText(/The folder is not known yet\./)).toBeInTheDocument();
+    expect(screen.getByText(/Nanobot has not identified the exact folder yet/)).toBeInTheDocument();
   });
 
   it("shows expired Once after continuation without offering another access action", () => {
@@ -470,7 +807,7 @@ describe("FolderAccessRequestCard", () => {
 
     expect(screen.getByRole("heading", { name: "Task continued" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(/One-time access has ended/);
-    expect(screen.queryByText(/The folder is not known yet\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nanobot has not identified the exact folder yet/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Choose folder" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Choose another folder" })).not.toBeInTheDocument();
@@ -513,7 +850,7 @@ describe("FolderAccessRequestCard", () => {
               : "Task can't continue",
       );
       expect(screen.getByRole("status")).toHaveTextContent(/One-time access.*ending/i);
-      expect(screen.queryByText(/The folder is not known yet\./)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Nanobot has not identified the exact folder yet/)).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Choose folder" })).not.toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Choose another folder" })).not.toBeInTheDocument();
@@ -540,7 +877,7 @@ describe("FolderAccessRequestCard", () => {
 
     expect(screen.getByRole("heading", { name: "Folder access needed" })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Choose a folder to continue this task.");
-    expect(screen.getByText(/The folder is not known yet\./)).toBeInTheDocument();
+    expect(screen.getByText(/Nanobot has not identified the exact folder yet/)).toBeInTheDocument();
     expect(screen.queryByText(/One-time access has ended|One-time access.*ending/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continue task" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose folder" })).toBeEnabled();

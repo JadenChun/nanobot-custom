@@ -315,6 +315,23 @@ def _valid_absolute_path(value: object) -> TypeGuard[str]:
     )
 
 
+def _valid_once_input_path(value: object) -> TypeGuard[str]:
+    """Accept absolute Once input, including a safely expandable current home path."""
+    if (
+        not isinstance(value, str)
+        or not value
+        or len(value) > _MAX_PATH_CHARS
+        or "\x00" in value
+    ):
+        return False
+    if value == "~" or value.startswith(("~/", "~\\")):
+        try:
+            return Path(value).expanduser().is_absolute()
+        except (OSError, RuntimeError, ValueError):
+            return False
+    return _valid_absolute_path(value)
+
+
 def parse_folder_access_need(raw: object) -> FolderAccessNeed:
     """Validate one exact need envelope at the policy-to-turn boundary."""
     if not _has_exact_keys(raw, _NEED_KEYS):
@@ -462,7 +479,7 @@ def parse_workspace_access_once_payload(raw: object) -> WorkspaceAccessOncePaylo
         or _UUID_HEX.fullmatch(request_id) is None
         or type(revision) is not int
         or revision < 1
-        or not _valid_absolute_path(path)
+        or not _valid_once_input_path(path)
         or file_access not in {"read_only", "read_write"}
         or type(commands) is not bool
         or type(grants_revision) is not int
