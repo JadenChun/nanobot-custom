@@ -1109,6 +1109,8 @@ class OpenAICompatProvider(LLMProvider):
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
+        elif tool_choice == "none":
+            kwargs["tool_choice"] = "none"
 
         # Backfill reasoning_content="" on assistants missing it: DeepSeek
         # thinking mode rejects history otherwise (#3554, #3584); "" reads
@@ -1408,6 +1410,8 @@ class OpenAICompatProvider(LLMProvider):
                 if function_choice is not None:
                     # Generic Chat choices need the Responses flat function shape.
                     body["tool_choice"] = {"type": "function", "name": function_choice.get("name")}
+        elif tool_choice == "none":
+            body["tool_choice"] = "none"
 
         extra_body = getattr(self, "_extra_body", {})
         default_tools = getattr(self._spec, "responses_default_tools", ())

@@ -724,6 +724,42 @@ def test_openai_model_passthrough() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["gpt-4o", "gpt-5-chat"])
+@pytest.mark.parametrize("empty_tools", [False, True])
+@pytest.mark.parametrize("tool_choice", [None, "none"])
+async def test_no_tools_choice_reaches_outgoing_request(
+    model: str, empty_tools: bool, tool_choice: str | None,
+) -> None:
+    mock_chat = AsyncMock(return_value=_fake_chat_response())
+    mock_responses = AsyncMock(return_value=_fake_responses_response())
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_client_class:
+        client = mock_client_class.return_value
+        client.chat.completions.create = mock_chat
+        client.responses.create = mock_responses
+        provider = OpenAICompatProvider(
+            api_key="sk-test-key", default_model=model, spec=find_by_name("openai"),
+        )
+        response = await provider.chat(
+            messages=[{"role": "user", "content": "Reply with final text only"}],
+            tools=[] if empty_tools else None,
+            model=model,
+            tool_choice=tool_choice,
+        )
+
+    assert response.finish_reason == "stop"
+    request = mock_chat if model == "gpt-4o" else mock_responses
+    unused_transport = mock_responses if model == "gpt-4o" else mock_chat
+    request.assert_awaited_once()
+    unused_transport.assert_not_awaited()
+    outgoing = request.call_args.kwargs
+    assert "tools" not in outgoing
+    if tool_choice == "none":
+        assert outgoing["tool_choice"] == "none"
+    else:
+        assert "tool_choice" not in outgoing
+
+
+@pytest.mark.asyncio
 async def test_direct_openai_gpt5_uses_responses_api() -> None:
     mock_chat = AsyncMock(return_value=_fake_chat_response())
     mock_responses = AsyncMock(return_value=_fake_responses_response("from responses"))
