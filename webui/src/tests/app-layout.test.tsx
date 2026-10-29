@@ -883,7 +883,7 @@ describe("App layout", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Working in: beta" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Use agent home/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /Clear project folder/ }));
     await waitFor(() => expect(setWorkspaceScopeSpy).toHaveBeenLastCalledWith("existing-chat", {
       project_path: "/agent/home",
       project_name: "Agent home",
@@ -893,7 +893,7 @@ describe("App layout", () => {
     act(() => {
       sessionUpdateHandlers.forEach((handler) => handler("existing-chat", "metadata", homeScope));
     });
-    expect(await screen.findByRole("button", { name: "Working in: Agent home" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Choose project folder" })).toBeInTheDocument();
 
     // A tool-driven session_updated scope change follows the same active-chat update path.
     act(() => {
@@ -921,7 +921,7 @@ describe("App layout", () => {
     render(<App />);
 
     await waitFor(() => expect(connectSpy).toHaveBeenCalled());
-    expect(await screen.findByRole("button", { name: "Working in: Agent home" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Choose project folder" })).toBeInTheDocument();
     act(() => {
       sessionUpdateHandlers.forEach((handler) => handler("selected-chat", "metadata", {
         project_path: "/tmp/selected-project",
@@ -932,7 +932,7 @@ describe("App layout", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Temporary chat" }));
 
-    expect(screen.queryByRole("button", { name: "Working in: Agent home" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Choose project folder" })).not.toBeInTheDocument();
     expect(screen.queryByText("Full access")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Message input"), {
       target: { value: "temporary project check" },
@@ -969,7 +969,7 @@ describe("App layout", () => {
     render(<App />);
 
     await waitFor(() => expect(connectSpy).toHaveBeenCalled());
-    fireEvent.click(await screen.findByRole("button", { name: "Working in: Agent home" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Choose project folder" }));
     fireEvent.change(await screen.findByLabelText("Paste path"), {
       target: { value: "C:\\missing-project" },
     });
@@ -981,7 +981,7 @@ describe("App layout", () => {
 
     await waitFor(() => expect(createChatSpy).toHaveBeenCalledTimes(1));
     expect(message).toHaveValue("keep this first message");
-    const projectButton = screen.getByRole("button", { name: "Working in: Agent home" });
+    const projectButton = screen.getByRole("button", { name: "Choose project folder" });
     await waitFor(() => expect(projectButton).toHaveFocus());
     expect(screen.getByRole("alert")).toHaveTextContent(
       "The gateway rejected this project or access mode. Choose an existing project or a different access mode, then try again.",
@@ -2867,7 +2867,14 @@ describe("App layout", () => {
     expect(screen.queryByText("Heartbeat")).not.toBeInTheDocument();
     expect(screen.queryByText("Dream")).not.toBeInTheDocument();
     expect(screen.queryByText("Unified session")).not.toBeInTheDocument();
-    expect(screen.getByText("Default workspace")).toBeInTheDocument();
+    expect(screen.getByText("Agent home")).toBeInTheDocument();
+    expect(screen.getByText("Stores agent instructions, memory, skills, and default outputs.")).toBeInTheDocument();
+    const changeAgentHome = screen.getByText("Change agent home");
+    expect(changeAgentHome.closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(changeAgentHome);
+    expect(screen.getByText(/Update agents.defaults.workspace in the configuration file shown above/)).toBeVisible();
+    expect(screen.getByText(/Existing agent files are not moved automatically/)).toBeVisible();
+    expect(screen.queryByText("Default workspace")).not.toBeInTheDocument();
     expect(screen.getByText("UTC")).toBeInTheDocument();
     expect(screen.queryByPlaceholderText("Search timezone")).not.toBeInTheDocument();
     expect(screen.queryByRole("listbox", { name: "Select timezone" })).not.toBeInTheDocument();

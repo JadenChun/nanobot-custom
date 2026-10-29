@@ -186,10 +186,24 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isCanonicalAbsolutePath(path: string): boolean {
+export function isCanonicalAbsolutePath(path: string): boolean {
   return path.startsWith("/")
     || /^[A-Za-z]:[\\/]/.test(path)
     || /^\\\\[^\\]+\\[^\\]+/.test(path);
+}
+
+function isValidWorkspaceOnceSubmittedPath(path: unknown, expectedPath: string): path is string {
+  if (
+    typeof path !== "string"
+    || path !== expectedPath
+    || !path
+    || path.length > 2048
+    || path.includes("\0")
+  ) return false;
+  return path === "~"
+    || path.startsWith("~/")
+    || path.startsWith("~\\")
+    || isCanonicalAbsolutePath(path);
 }
 
 function parseWorkspaceGrantReceipt(
@@ -486,7 +500,10 @@ function parseFolderAccessRequest(value: unknown): FolderAccessRequest | null {
   };
 }
 
-function parseWorkspaceOnceReceipt(value: unknown): WorkspaceOnceReceipt | null {
+function parseWorkspaceOnceReceipt(
+  value: unknown,
+  expectedSubmittedPath: string,
+): WorkspaceOnceReceipt | null {
   if (!isObjectRecord(value) || !hasExactKeys(value, [
     "version",
     "duration",
@@ -509,8 +526,7 @@ function parseWorkspaceOnceReceipt(value: unknown): WorkspaceOnceReceipt | null 
     || typeof value.access_request_id !== "string"
     || typeof value.task_turn_id !== "string"
     || !value.task_turn_id
-    || typeof value.submitted_path !== "string"
-    || !isCanonicalAbsolutePath(value.submitted_path)
+    || !isValidWorkspaceOnceSubmittedPath(value.submitted_path, expectedSubmittedPath)
     || typeof value.canonical_path !== "string"
     || !isCanonicalAbsolutePath(value.canonical_path)
     || (value.file_access !== "read_only" && value.file_access !== "read_write")
@@ -546,7 +562,7 @@ function parseWorkspaceOnceResult(
   const request = parseFolderAccessRequest(value.workspace_access_request);
   const scope = parseWorkspaceScope(value.workspace_scope);
   const permissions = normalizeWorkspacePermissionProjection(value.workspace_permissions);
-  const receipt = parseWorkspaceOnceReceipt(value.once_receipt);
+  const receipt = parseWorkspaceOnceReceipt(value.once_receipt, input.path);
   if (!request || !scope || !permissions || !receipt) return null;
   const selected = request.selected_access;
   const scopeAccess = scope.effective_access;

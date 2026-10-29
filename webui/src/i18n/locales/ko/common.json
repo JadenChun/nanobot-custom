@@ -1012,6 +1012,13 @@
       "selectProvider": "제공자 선택",
       "configureProvider": "제공자 설정",
       "languageAuto": "자동"
+    },
+    "agentHome": {
+      "change": "에이전트 홈 변경",
+      "changeHint": "위에 표시된 설정 파일에서 agents.defaults.workspace를 수정한 뒤 Nanobot을 다시 시작하세요. 기존 에이전트 파일은 자동으로 이동되지 않습니다.",
+      "description": "에이전트 지침, 메모리, 스킬 및 기본 출력 파일을 저장합니다.",
+      "summary": "지침, 메모리 및 스킬",
+      "title": "에이전트 홈"
     }
   },
   "chat": {
@@ -1390,7 +1397,7 @@
         "projectAria": "프로젝트 선택",
         "projectPlaceholder": "프로젝트 선택",
         "default": "제한됨",
-        "defaultShort": "기본",
+        "defaultShort": "제한됨",
         "full": "전체 접근 권한",
         "fullShort": "전체"
       }
@@ -1603,7 +1610,36 @@
       "onceRetiringFinished": "이전 작업이 끝났습니다. 일회성 액세스는 아직 종료 중입니다.",
       "onceExpired": "일회성 액세스가 끝났습니다. 계속하기 전에 폴더를 다시 검토하세요.",
       "readyOnce": "이 작업에 대한 액세스가 허용되었습니다. {{path}}에서 계속할 수 있습니다.",
-      "readyAlways": "액세스가 저장되었습니다. {{path}}에서 계속할 수 있습니다."
+      "readyAlways": "액세스가 저장되었습니다. {{path}}에서 계속할 수 있습니다.",
+      "absolutePathRequired": "이 기기의 절대 폴더 경로를 입력한 뒤 다시 시도하세요.",
+      "allowFolder": "폴더 접근 허용",
+      "allowForTask": "이 작업에 허용",
+      "changed": "작업 또는 폴더 권한이 변경되었습니다. 새로고침하여 현재 권한을 확인한 뒤 다시 시도하세요.",
+      "chooseAnotherFolder": "다른 폴더 선택",
+      "chooseNarrowerFolder": "이 폴더에는 Nanobot의 비공개 런타임 파일이 포함되어 있습니다. 범위가 더 좁은 프로젝트 폴더를 선택하세요.",
+      "commandsRequested": "명령 실행 요청됨",
+      "directoryTarget": "요청된 폴더: {{path}}",
+      "fileTarget": "차단된 파일: {{path}}. 해당 파일이 들어 있는 폴더를 명시적으로 선택하세요.",
+      "fileTargetWithFolder": "차단된 파일: {{path}}. 허용할 폴더: {{folder}}",
+      "folderMissing": "이 폴더가 없거나 디렉터리가 아닙니다. 기존 폴더를 선택한 뒤 다시 시도하세요.",
+      "folderToAuthorizeLabel": "허용할 폴더",
+      "folderUnavailable": "현재 권한으로 Nanobot이 이 폴더를 사용할 수 없습니다. 다른 폴더를 선택하거나 권한을 확인하세요.",
+      "insufficientCapabilities": "선택한 권한으로 이 요청을 충족할 수 없습니다. {{required}} 폴더를 허용하기 전에 권한을 조정하세요.",
+      "invalidFolder": "Nanobot이 이 폴더를 확인할 수 없습니다. 기존 폴더를 선택한 뒤 다시 시도하세요.",
+      "purpose": "목적: {{purpose}}",
+      "readyInsufficient": "{{path}}에 대해 선택한 권한으로 이 요청을 충족할 수 없습니다. 다른 폴더를 선택하거나 권한을 확인하세요.",
+      "requestedFileLabel": "요청된 파일",
+      "requestedFolderLabel": "요청된 폴더",
+      "requirements": {
+        "execute": "필요한 권한: 명령 실행. 파일 쓰기 권한은 필요하지 않습니다.",
+        "other": "이 요청은 필요한 파일 또는 명령 권한을 지정하지 않았습니다. 접근을 허용하기 전에 권한을 확인하세요.",
+        "read": "필요한 권한: 읽기 전용 파일 접근.",
+        "write": "필요한 권한: 파일 읽기 및 쓰기."
+      },
+      "reviewAccess": "권한 확인",
+      "selectedCapabilities": "선택한 권한: {{fileAccess}} · {{commands}}",
+      "selectedFolderScope": "선택한 폴더 범위: {{path}}",
+      "unknownTarget": "Nanobot이 아직 정확한 폴더를 식별하지 못했습니다. 폴더를 명시적으로 선택하세요."
     },
     "permissionV2": {
       "actionFailed": "액세스를 업데이트할 수 없습니다. 다시 시도하기 전에 이 채팅을 새로고침하세요.",
@@ -1632,6 +1668,10 @@
     },
     "management": {
       "commandsAvailable": "명령 사용 가능"
+    },
+    "picker": {
+      "chooseProject": "프로젝트 폴더 선택",
+      "clearProject": "프로젝트 폴더 선택 해제"
     }
   }
 }

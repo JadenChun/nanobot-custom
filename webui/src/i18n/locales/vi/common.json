@@ -1012,6 +1012,13 @@
       "selectProvider": "Chọn nhà cung cấp",
       "configureProvider": "Cấu hình nhà cung cấp",
       "languageAuto": "Tự động"
+    },
+    "agentHome": {
+      "change": "Đổi thư mục của tác nhân",
+      "changeHint": "Cập nhật agents.defaults.workspace trong tệp cấu hình hiển thị ở trên, rồi khởi động lại Nanobot. Các tệp hiện có của tác nhân sẽ không tự động được di chuyển.",
+      "description": "Lưu hướng dẫn, bộ nhớ, kỹ năng và đầu ra mặc định của tác nhân.",
+      "summary": "Hướng dẫn, bộ nhớ và kỹ năng",
+      "title": "Thư mục của tác nhân"
     }
   },
   "chat": {
@@ -1390,7 +1397,7 @@
         "projectAria": "Chọn dự án",
         "projectPlaceholder": "Chọn dự án",
         "default": "Bị hạn chế",
-        "defaultShort": "Mặc định",
+        "defaultShort": "Bị hạn chế",
         "full": "Toàn quyền truy cập",
         "fullShort": "Toàn quyền"
       }
@@ -1603,7 +1610,36 @@
       "onceRetiringFinished": "Công việc trước đó đã kết thúc. Quyền truy cập một lần vẫn đang được kết thúc.",
       "onceExpired": "Quyền truy cập một lần đã kết thúc. Hãy xem lại thư mục trước khi tiếp tục.",
       "readyOnce": "Đã cho phép truy cập cho tác vụ này. Sẵn sàng tiếp tục với {{path}}.",
-      "readyAlways": "Đã lưu quyền truy cập. Sẵn sàng tiếp tục với {{path}}."
+      "readyAlways": "Đã lưu quyền truy cập. Sẵn sàng tiếp tục với {{path}}.",
+      "absolutePathRequired": "Nhập đường dẫn thư mục tuyệt đối trên thiết bị này, rồi thử lại.",
+      "allowFolder": "Cho phép thư mục",
+      "allowForTask": "Cho phép trong tác vụ này",
+      "changed": "Tác vụ hoặc quyền truy cập thư mục đã thay đổi. Hãy làm mới và kiểm tra quyền hiện tại trước khi thử lại.",
+      "chooseAnotherFolder": "Chọn thư mục khác",
+      "chooseNarrowerFolder": "Thư mục này chứa các tệp thời gian chạy riêng tư của Nanobot. Hãy chọn một thư mục dự án có phạm vi hẹp hơn.",
+      "commandsRequested": "Đã yêu cầu chạy lệnh",
+      "directoryTarget": "Thư mục được yêu cầu: {{path}}",
+      "fileTarget": "Tệp bị chặn: {{path}}. Hãy chọn rõ thư mục chứa tệp đó.",
+      "fileTargetWithFolder": "Tệp bị chặn: {{path}}. Thư mục sẽ được cấp quyền: {{folder}}",
+      "folderMissing": "Thư mục này không tồn tại hoặc không phải là một thư mục. Hãy chọn thư mục hiện có và thử lại.",
+      "folderToAuthorizeLabel": "Thư mục sẽ được cấp quyền",
+      "folderUnavailable": "Nanobot không thể dùng thư mục này với quyền hiện tại. Hãy chọn thư mục khác hoặc kiểm tra quyền truy cập.",
+      "insufficientCapabilities": "Quyền đã chọn không đáp ứng yêu cầu này. {{required}} Hãy điều chỉnh quyền trước khi cho phép thư mục.",
+      "invalidFolder": "Nanobot không thể xác minh thư mục này. Hãy chọn thư mục hiện có và thử lại.",
+      "purpose": "Mục đích: {{purpose}}",
+      "readyInsufficient": "Quyền đã chọn cho {{path}} không đáp ứng yêu cầu này. Hãy chọn thư mục khác hoặc kiểm tra quyền truy cập.",
+      "requestedFileLabel": "Tệp được yêu cầu",
+      "requestedFolderLabel": "Thư mục được yêu cầu",
+      "requirements": {
+        "execute": "Cần quyền chạy lệnh. Không cần quyền ghi tệp.",
+        "other": "Yêu cầu này chưa chỉ rõ quyền tệp hoặc lệnh cần thiết. Hãy kiểm tra quyền trước khi cho phép truy cập.",
+        "read": "Cần quyền chỉ đọc tệp.",
+        "write": "Cần quyền đọc và ghi tệp."
+      },
+      "reviewAccess": "Kiểm tra quyền",
+      "selectedCapabilities": "Quyền đã chọn: {{fileAccess}} · {{commands}}",
+      "selectedFolderScope": "Phạm vi thư mục đã chọn: {{path}}",
+      "unknownTarget": "Nanobot chưa xác định được thư mục chính xác. Hãy chọn rõ một thư mục."
     },
     "permissionV2": {
       "actionFailed": "Không thể cập nhật quyền truy cập. Hãy làm mới cuộc trò chuyện này trước khi thử lại.",
@@ -1632,6 +1668,10 @@
     },
     "management": {
       "commandsAvailable": "Lệnh khả dụng"
+    },
+    "picker": {
+      "chooseProject": "Chọn thư mục dự án",
+      "clearProject": "Bỏ chọn thư mục dự án"
     }
   }
 }

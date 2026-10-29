@@ -1026,6 +1026,13 @@
       "selectProvider": "Selecionar provedor",
       "configureProvider": "Configurar provedor",
       "languageAuto": "Automático"
+    },
+    "agentHome": {
+      "change": "Alterar a pasta do agente",
+      "changeHint": "Altere agents.defaults.workspace no arquivo de configuração indicado acima e reinicie o Nanobot. Os arquivos existentes do agente não são movidos automaticamente.",
+      "description": "Armazena instruções, memória, habilidades e saídas padrão do agente.",
+      "summary": "Instruções, memória e habilidades",
+      "title": "Pasta do agente"
     }
   },
   "chat": {
@@ -1404,7 +1411,7 @@
         "projectAria": "Escolher projeto",
         "projectPlaceholder": "Selecionar projeto",
         "default": "Restrito",
-        "defaultShort": "Padrão",
+        "defaultShort": "Restrito",
         "full": "Acesso total",
         "fullShort": "Total"
       }
@@ -1617,7 +1624,36 @@
       "onceRetiringFinished": "O trabalho anterior terminou. O acesso pontual ainda está sendo encerrado.",
       "onceExpired": "O acesso pontual terminou. Revise a pasta novamente antes de continuar.",
       "readyOnce": "Acesso permitido para esta tarefa. Pronto para continuar em {{path}}.",
-      "readyAlways": "Acesso salvo. Pronto para continuar em {{path}}."
+      "readyAlways": "Acesso salvo. Pronto para continuar em {{path}}.",
+      "absolutePathRequired": "Digite um caminho absoluto de pasta neste dispositivo e tente novamente.",
+      "allowFolder": "Permitir pasta",
+      "allowForTask": "Permitir para esta tarefa",
+      "changed": "Esta tarefa ou as permissões da pasta mudaram. Atualize e revise as permissões antes de tentar novamente.",
+      "chooseAnotherFolder": "Escolher outra pasta",
+      "chooseNarrowerFolder": "Esta pasta contém arquivos privados de execução do Nanobot. Escolha uma pasta de projeto mais específica.",
+      "commandsRequested": "Execução de comandos solicitada",
+      "directoryTarget": "Pasta solicitada: {{path}}",
+      "fileTarget": "Arquivo bloqueado: {{path}}. Escolha explicitamente a pasta que o contém.",
+      "fileTargetWithFolder": "Arquivo bloqueado: {{path}}. Pasta a autorizar: {{folder}}",
+      "folderMissing": "Esta pasta não existe ou não é um diretório. Escolha uma pasta existente e tente novamente.",
+      "folderToAuthorizeLabel": "Pasta a autorizar",
+      "folderUnavailable": "O Nanobot não pode usar esta pasta com as permissões atuais. Escolha outra pasta ou revise suas permissões.",
+      "insufficientCapabilities": "As permissões selecionadas não atendem à solicitação. {{required}} Ajuste-as antes de autorizar a pasta.",
+      "invalidFolder": "O Nanobot não conseguiu verificar esta pasta. Escolha uma pasta existente e tente novamente.",
+      "purpose": "Finalidade: {{purpose}}",
+      "readyInsufficient": "As permissões selecionadas para {{path}} não atendem à solicitação. Escolha outra pasta ou revise suas permissões.",
+      "requestedFileLabel": "Arquivo solicitado",
+      "requestedFolderLabel": "Pasta solicitada",
+      "requirements": {
+        "execute": "Necessário: executar comandos. Não é necessário permitir a gravação de arquivos.",
+        "other": "Esta solicitação não especifica as permissões necessárias de arquivos ou comandos. Revise-as antes de permitir o acesso.",
+        "read": "Necessário: acesso somente de leitura aos arquivos.",
+        "write": "Necessário: acesso de leitura e gravação aos arquivos."
+      },
+      "reviewAccess": "Revisar permissões",
+      "selectedCapabilities": "Permissões selecionadas: {{fileAccess}} · {{commands}}",
+      "selectedFolderScope": "Escopo da pasta selecionada: {{path}}",
+      "unknownTarget": "O Nanobot ainda não identificou a pasta exata. Escolha uma pasta explicitamente."
     },
     "permissionV2": {
       "actionFailed": "Não foi possível atualizar o acesso. Atualize este chat antes de tentar novamente.",
@@ -1646,6 +1682,10 @@
     },
     "management": {
       "commandsAvailable": "Comandos disponíveis"
+    },
+    "picker": {
+      "chooseProject": "Escolher pasta do projeto",
+      "clearProject": "Limpar pasta do projeto"
     }
   }
 }

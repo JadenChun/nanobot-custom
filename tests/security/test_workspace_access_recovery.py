@@ -15,6 +15,7 @@ from nanobot.webui import workspaces as workspace_api
 from nanobot.workspace_access_recovery import (
     parse_folder_access_need,
     parse_workspace_access_action_payload,
+    parse_workspace_access_once_payload,
 )
 
 
@@ -94,6 +95,56 @@ def test_workspace_access_action_payloads_reject_malformed_edges(resolve, change
     raw.update(change)
     with pytest.raises(ValueError, match="invalid workspace access action payload"):
         parse_workspace_access_action_payload(raw, resolve=resolve)
+
+
+def _workspace_once_payload(path: str) -> dict[str, object]:
+    return {
+        "chat_id": "chat-a",
+        "access_request_id": "0" * 32,
+        "expected_revision": 1,
+        "path": path,
+        "file_access": "read_only",
+        "commands": False,
+        "expected_grants_revision": 0,
+        "expected_runtime_id": "1" * 32,
+        "expected_permission_revision": 0,
+    }
+
+
+def test_workspace_once_payload_accepts_home_path_and_preserves_submitted_spelling(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    parsed = parse_workspace_access_once_payload(_workspace_once_payload("~/subdir"))
+
+    assert parsed["path"] == "~/subdir"
+
+
+@pytest.mark.parametrize("path", [
+    "relative/subdir",
+    "~/subdir\x00/private",
+    "~nanobot-user-that-does-not-exist-8c8913/subdir",
+    "~/" + "x" * 2048,
+])
+def test_workspace_once_payload_rejects_relative_malformed_or_unbounded_home_paths(path: str) -> None:
+    with pytest.raises(ValueError, match="invalid workspace access once payload"):
+        parse_workspace_access_once_payload(_workspace_once_payload(path))
+
+
+def test_workspace_once_payload_catches_home_expansion_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_expansion(path: Path) -> Path:
+        if str(path).startswith("~"):
+            raise RuntimeError("home details must stay out of the public error")
+        return path
+
+    monkeypatch.setattr(Path, "expanduser", fail_expansion)
+
+    with pytest.raises(ValueError, match="invalid workspace access once payload"):
+        parse_workspace_access_once_payload(_workspace_once_payload("~/subdir"))
 
 
 def test_only_missing_managed_authority_uses_the_recoverable_policy_type(tmp_path: Path) -> None:

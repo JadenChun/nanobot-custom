@@ -372,7 +372,22 @@ export function RuntimeSettings({
             />
           ) : null}
           <ReadOnlyRow title={t("settings.rows.configPath")} value={settings.runtime.config_path} />
-          <ReadOnlyRow title={tx("settings.rows.workspacePath", "Default workspace")} value={settings.runtime.workspace_path} />
+          <SettingsRow
+            title={tx("settings.agentHome.title", "Agent home")}
+            description={tx("settings.agentHome.description", "Stores agent instructions, memory, skills, and default outputs.")}
+          >
+            <div className="space-y-2 text-[13px] text-muted-foreground sm:max-w-[320px] sm:text-right">
+              <code className="block break-all">{settings.runtime.workspace_path}</code>
+              <details>
+                <summary className="cursor-pointer text-[12px] font-medium text-foreground">
+                  {tx("settings.agentHome.change", "Change agent home")}
+                </summary>
+                <p className="mt-2 text-left text-[12px] leading-5">
+                  {tx("settings.agentHome.changeHint", "Update agents.defaults.workspace in the configuration file shown above, then restart Nanobot. Existing agent files are not moved automatically.")}
+                </p>
+              </details>
+            </div>
+          </SettingsRow>
           <ReadOnlyRow title={tx("settings.rows.timezone", "Timezone")} value={form.timezone} />
           {onRestart ? (
             <SettingsRow

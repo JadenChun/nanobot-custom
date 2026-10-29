@@ -46,5 +46,6 @@ Use **Settings → Channels** in the WebUI for guided setup. These guides explai
 | Add an OpenAI-compatible provider | [Configure an OpenAI-compatible provider](./configure-openai-compatible-provider.md) |
 | Improve Ollama tool prompt-cache reuse | [Configure Ollama prompt caching](./configure-ollama-prompt-cache.md) |
 | Add Langfuse tracing | [Configure Langfuse observability](./configure-langfuse-observability.md) |
+| Understand folder access and workspaces | [Folder access and workspaces](./folder-access-and-workspaces.md) |
 | Secure local tools | [Secure a local AI agent](./secure-local-ai-agent.md) |
 | Deploy the gateway | [Deploy nanobot gateway](./deploy-nanobot-gateway.md) |

@@ -31,6 +31,7 @@ import {
   fetchInstalledCliApps,
   fetchMcpPresets,
   fetchSettings,
+  isCanonicalAbsolutePath,
   listSlashCommands,
   setWorkspaceAccessMode,
   WorkspaceModeConflictError,
@@ -116,6 +117,7 @@ type WorkspaceFocusIdentity = Pick<WorkspaceScopePayload, "project_path" | "acce
 interface PendingRecoveryResolve {
   intent: FolderAccessResolveIntent;
   result: CorrelatedFolderAccessResult | null;
+  unconfirmedOnceProjection: CorrelatedFolderAccessResult | null;
   baselineFocus: WorkspaceFocusIdentity | null;
 }
 
@@ -156,7 +158,11 @@ function folderResolveProjectionMatches(
   intent: FolderAccessResolveIntent,
   result: CorrelatedFolderAccessResult,
   expectedAccessMode: WorkspaceFocusIdentity["access_mode"],
+  expectedCanonicalPath: string | null = intent.canonicalPath,
 ): boolean {
+  if (typeof expectedCanonicalPath !== "string" || !expectedCanonicalPath
+    || expectedCanonicalPath.length > 2048 || expectedCanonicalPath.includes("\0")
+    || !isCanonicalAbsolutePath(expectedCanonicalPath)) return false;
   const request = result.workspace_access_request;
   const scope = result.workspace_scope;
   const commonMatches = request.chat_id === intent.chatId
@@ -165,9 +171,9 @@ function folderResolveProjectionMatches(
     && request.task.turn_id === intent.taskTurnId
     && request.status === "ready"
     && request.can_continue
-    && request.selected_path === intent.canonicalPath
+    && request.selected_path === expectedCanonicalPath
     && request.selected_access !== null
-    && scope.project_path === intent.canonicalPath
+    && scope.project_path === expectedCanonicalPath
     && scope.access_mode === expectedAccessMode
     && scope.effective_access !== undefined
     && sameManagedAccess(request.selected_access, scope.effective_access)
@@ -181,7 +187,7 @@ function folderResolveProjectionMatches(
   const permissions = result.workspace_permissions;
   const taskAccess = permissions?.task_access;
   const selectedAccess = request.selected_access;
-  const folder = taskAccess?.folders.find((candidate) => candidate.path === intent.canonicalPath);
+  const folder = taskAccess?.folders.find((candidate) => candidate.path === expectedCanonicalPath);
   return !!permissions
     && !!taskAccess
     && !!selectedAccess
@@ -200,7 +206,7 @@ function folderResolveProjectionMatches(
     && request.task_access_state === "active"
     && scope.access_mode === "restricted"
     && selectedAccess.source === "task"
-    && selectedAccess.grant_root === intent.canonicalPath
+    && selectedAccess.grant_root === expectedCanonicalPath
     && selectedAccess.read
     && selectedAccess.write === (intent.expectedFileAccess === "read_write")
     && selectedAccess.commands.requested === intent.expectedCommands;
@@ -211,7 +217,10 @@ function folderResolveResultMatches(
   result: CorrelatedFolderAccessResult,
   expectedAccessMode: WorkspaceFocusIdentity["access_mode"],
 ): boolean {
-  if (!folderResolveProjectionMatches(intent, result, expectedAccessMode)) return false;
+  const canonicalPath = intent.duration === "once"
+    ? result.once_receipt?.canonical_path ?? null
+    : intent.canonicalPath;
+  if (!folderResolveProjectionMatches(intent, result, expectedAccessMode, canonicalPath)) return false;
   if (intent.duration !== "once") return true;
   const receipt: WorkspaceOnceReceipt | undefined = result.once_receipt;
   const request = result.workspace_access_request;
@@ -223,7 +232,7 @@ function folderResolveResultMatches(
     && receipt.request_revision === request.revision
     && receipt.task_turn_id === intent.taskTurnId
     && receipt.submitted_path === intent.submittedPath
-    && receipt.canonical_path === intent.canonicalPath
+    && receipt.canonical_path === canonicalPath
     && receipt.runtime_id === intent.expectedRuntimeId
     && receipt.permission_revision === permissions.revision
     && receipt.file_access === intent.expectedFileAccess
@@ -1064,7 +1073,7 @@ export function ThreadShell({
     }
     const focusRecord = acknowledgedWorkspaceFocusRef.current;
     const baselineFocus = focusRecord.chatId === chatId ? focusRecord.focus : null;
-    pendingRecoveryResolveRef.current = { intent, result: null, baselineFocus };
+    pendingRecoveryResolveRef.current = { intent, result: null, unconfirmedOnceProjection: null, baselineFocus };
   }, [chatId, workspaceAccessRequest, workspacePermissions]);
   const settleRecoveryResolve = useCallback((
     intent: FolderAccessResolveIntent,
@@ -1083,6 +1092,11 @@ export function ThreadShell({
       || !folderResolveResultMatches(intent, result, pending.baselineFocus.access_mode)
     ) return false;
     const alreadyAcknowledged = pending.result;
+    if (pending.unconfirmedOnceProjection
+      && !sameFolderResolveAcknowledgement(pending.unconfirmedOnceProjection, result)) {
+      pendingRecoveryResolveRef.current = null;
+      return false;
+    }
     if (
       alreadyAcknowledged
       && !sameFolderResolveAcknowledgement(alreadyAcknowledged, result)
@@ -1097,6 +1111,7 @@ export function ThreadShell({
       )
     ) return false;
     pending.result = result;
+    pending.unconfirmedOnceProjection = null;
     acknowledgedWorkspaceFocusRef.current = {
       chatId,
       focus: workspaceFocusIdentity(result.workspace_scope),
@@ -1661,7 +1676,13 @@ export function ThreadShell({
     return client.onSessionUpdate((updatedChatId, scope, workspaceScopeUpdate, accessRequestUpdate, permissionsUpdate) => {
       if (updatedChatId !== chatId) return;
       if (permissionsUpdate) updateWorkspacePermissions(permissionsUpdate);
-      const pendingResolve = pendingRecoveryResolveRef.current;
+      let pendingResolve = pendingRecoveryResolveRef.current;
+      if (pendingResolve?.intent.duration === "once" && permissionsUpdate
+        && (permissionsUpdate.runtime_id !== pendingResolve.intent.expectedRuntimeId
+          || permissionsUpdate.mode !== "restricted" || permissionsUpdate.state !== "active")) {
+        pendingRecoveryResolveRef.current = null;
+        pendingResolve = null;
+      }
       const eventResult = workspaceScopeUpdate && accessRequestUpdate
         ? {
             workspace_access_request: accessRequestUpdate,
@@ -1688,6 +1709,11 @@ export function ThreadShell({
           pendingResolve.intent,
           eventResult,
           pendingResolve.baselineFocus.access_mode,
+          pendingResolve.intent.duration === "once"
+            ? pendingResolve.result?.once_receipt?.canonical_path
+              ?? pendingResolve.unconfirmedOnceProjection?.workspace_scope.project_path
+              ?? eventResult.workspace_scope.project_path
+            : pendingResolve.intent.canonicalPath,
         )
         && sameWorkspaceFocus(
           previousFocus,
@@ -1700,6 +1726,8 @@ export function ThreadShell({
             ? sameFolderResolveAcknowledgement(pendingResolve.result, eventResult)
             : workspaceAccessRequest.revision === pendingResolve.intent.expectedRevision
               && incomingRequest.revision > workspaceAccessRequest.revision
+              && (!pendingResolve.unconfirmedOnceProjection
+                || sameFolderResolveAcknowledgement(pendingResolve.unconfirmedOnceProjection, eventResult))
         )
       );
       const requestStillMatchesResolve = !!(
@@ -1730,7 +1758,12 @@ export function ThreadShell({
         // intact so an equal-revision projection cannot turn it back into a
         // stale request while the owning reads are still in flight.
         if (pendingResolve && !pendingResolve.result?.once_receipt) {
-          pendingResolve.result = eventResult;
+          if (pendingResolve.intent.duration === "once") {
+            // A projection cannot acknowledge the canonical folder on its own.
+            pendingResolve.unconfirmedOnceProjection = eventResult;
+          } else {
+            pendingResolve.result = eventResult;
+          }
         }
       } else if (workspaceScopeUpdate && !sameCanonicalFocus) {
         // Compare the canonical folder and access mode before advancing the
@@ -1745,7 +1778,8 @@ export function ThreadShell({
           };
         }
       }
-      if (workspaceScopeUpdate) {
+      if (workspaceScopeUpdate && !(matchingResolveEvent
+        && pendingResolve?.intent.duration === "once" && !pendingResolve.result?.once_receipt)) {
         acknowledgedWorkspaceFocusRef.current = { chatId, focus: incomingFocus };
       }
       const replacedRequest = !!(

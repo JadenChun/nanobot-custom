@@ -193,8 +193,8 @@ export function OverviewSettings({
           />
           <OverviewListRow
             icon={HardDrive}
-            title={tx("settings.overview.workspace", "Workspace")}
-            value={tx("settings.values.defaultWorkspace", "Default workspace")}
+            title={tx("settings.agentHome.title", "Agent home")}
+            value={tx("settings.agentHome.summary", "Instructions, memory & skills")}
             caption={workspaceCaption}
             onClick={() => onSelectSection("runtime")}
           />

@@ -1026,6 +1026,13 @@
       "selectProvider": "Select provider",
       "configureProvider": "Configure provider",
       "languageAuto": "Auto"
+    },
+    "agentHome": {
+      "title": "Agent home",
+      "summary": "Instructions, memory & skills",
+      "description": "Stores agent instructions, memory, skills, and default outputs.",
+      "change": "Change agent home",
+      "changeHint": "Update agents.defaults.workspace in the configuration file shown above, then restart Nanobot. Existing agent files are not moved automatically."
     }
   },
   "chat": {
@@ -1404,7 +1411,7 @@
         "projectAria": "Choose project",
         "projectPlaceholder": "Select project",
         "default": "Restricted",
-        "defaultShort": "Default",
+        "defaultShort": "Restricted",
         "full": "Full access",
         "fullShort": "Full"
       }
@@ -1603,9 +1610,38 @@
     "recovery": {
       "durationTitle": "How long should this access last?",
       "allowOnce": "Allow once",
+      "allowForTask": "Allow for this task",
       "allowOnceDescription": "For this task, including Continue steps. Not saved for future tasks.",
       "alwaysAllow": "Always allow",
       "alwaysAllowDescription": "Saved for future use. Manage in Folders & projects.",
+      "allowFolder": "Allow folder",
+      "reviewAccess": "Review access",
+      "chooseAnotherFolder": "Choose another folder",
+      "purpose": "Purpose: {{purpose}}",
+      "selectedFolderScope": "Selected folder scope: {{path}}",
+      "fileTarget": "Blocked file: {{path}}. Choose its containing folder explicitly.",
+      "fileTargetWithFolder": "Blocked file: {{path}}. Folder to authorize: {{folder}}",
+      "directoryTarget": "Requested folder: {{path}}",
+      "requestedFolderLabel": "Requested folder",
+      "requestedFileLabel": "Requested file",
+      "folderToAuthorizeLabel": "Folder to authorize",
+      "commandsRequested": "Commands requested",
+      "unknownTarget": "Nanobot has not identified the exact folder yet. Choose a folder explicitly.",
+      "requirements": {
+        "read": "Required: read-only file access.",
+        "write": "Required: read and write file access.",
+        "execute": "Required: command access. File write access is not required.",
+        "other": "This request does not specify required file or command access. Review the access before allowing it."
+      },
+      "selectedCapabilities": "Selected access: {{fileAccess}} · {{commands}}",
+      "insufficientCapabilities": "The selected access cannot satisfy this request. {{required}} Adjust the access before approving this folder.",
+      "readyInsufficient": "The selected access for {{path}} cannot satisfy this request. Choose another folder or review its access.",
+      "folderMissing": "That folder is missing or is not a directory. Choose an existing folder and try again.",
+      "invalidFolder": "Nanobot could not verify that folder. Choose an existing folder and try again.",
+      "absolutePathRequired": "Enter an absolute folder path on this machine, then try again.",
+      "chooseNarrowerFolder": "This folder includes Nanobot's private runtime files. Choose a narrower project folder.",
+      "folderUnavailable": "Nanobot cannot use that folder with the current access settings. Choose a different folder or review access.",
+      "changed": "This task or folder access changed. Refresh and review the current access before trying again.",
       "allowOnceAndUse": "Allow once and use folder",
       "onceUnavailable": "One-time access is unavailable until Nanobot confirms current restricted access.",
       "onceUnavailableFull": "One-time folder access is unavailable while Full access is active.",
@@ -1646,6 +1682,10 @@
     },
     "management": {
       "commandsAvailable": "Commands available"
+    },
+    "picker": {
+      "chooseProject": "Choose project folder",
+      "clearProject": "Clear project folder"
     }
   }
 }

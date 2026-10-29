@@ -16,6 +16,7 @@ import type {
   RepositoryRow,
   WorkspacesPayload,
 } from "@/lib/types";
+import { folderAccessErrorMessage } from "@/lib/folderAccess";
 import { isAbsoluteWorkspacePath, normalizeWorkspacePath } from "@/lib/workspace";
 import { getRuntimeHost } from "@/lib/runtime";
 import { useClient } from "@/providers/ClientProvider";
@@ -39,17 +40,7 @@ function grantErrorMessage(
   error: unknown,
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
-  if (error instanceof ApiError && error.message === "native_processes_active") {
-    return t("workspace.management.nativeProcessesActive", {
-      defaultValue: "A command is still running with access it started with. Wait for it to finish before changing this folder.",
-    });
-  }
-  if (error instanceof ApiError && error.message === "native_processes_unknown") {
-    return t("workspace.management.nativeProcessesUnknown", {
-      defaultValue: "Nanobot cannot verify whether a command from this device is still running. Restarting Nanobot will not clear this state; you may need to restart this device.",
-    });
-  }
-  return errorMessage(error);
+  return folderAccessErrorMessage(error, t);
 }
 
 function isNativeAdmissionError(error: unknown): boolean {
