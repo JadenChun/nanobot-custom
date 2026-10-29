@@ -341,7 +341,10 @@ class ForegroundAgentManager:
         tools.register(ListDirTool(**fs_kwargs))
         tools.register(SearchFilesTool(**fs_kwargs))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
-        tools.register(WebFetchTool(proxy=self.web_proxy))
+        tools.register(WebFetchTool(
+            proxy=self.web_proxy,
+            tinyfish_api_key=self.web_search_config.api_key,
+        ))
 
         if "agent_browser" in profile.tools and self.agent_browser_config.enabled:
             tools.register(AgentBrowserTool(
@@ -350,6 +353,12 @@ class ForegroundAgentManager:
                 max_output_chars=self.agent_browser_config.max_output_chars,
                 working_dir=str(self.workspace),
                 read_only=True,
+                cdp_url=self.agent_browser_config.cdp_url,
+                pin_tab=self.agent_browser_config.pin_tab,
+                session=self.agent_browser_config.session,
+                launch_command=self.agent_browser_config.launch_command,
+                launch_wait_seconds=self.agent_browser_config.launch_wait_seconds,
+                executable_path=self.agent_browser_config.executable_path,
             ))
         if "agent_device" in profile.tools and self.agent_device_config.enabled:
             tools.register(AgentDeviceTool(

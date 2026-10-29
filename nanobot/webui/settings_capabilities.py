@@ -78,6 +78,7 @@ _WEB_SEARCH_PROVIDER_OPTIONS = SEARCH_PROVIDER_OPTIONS
 _WEB_SEARCH_PROVIDER_BY_NAME = {
     provider["name"]: provider for provider in _WEB_SEARCH_PROVIDER_OPTIONS
 }
+_WEB_FETCH_PROVIDERS = frozenset({"auto", "tinyfish", "jina", "local"})
 _IMAGE_GENERATION_ASPECT_RATIOS = {
     "1:1",
     "3:4",
@@ -179,6 +180,26 @@ def _comfy_mcp_status(config: Config) -> dict[str, Any]:
     }
 
 
+def _browser_session_status(config: Config) -> dict[str, Any]:
+    browser = config.tools.agent_browser
+    cdp_url = (browser.cdp_url or "").strip().rstrip("/")
+    attached = False
+    if cdp_url:
+        try:
+            response = httpx.get(f"{cdp_url}/json/version", timeout=0.5)
+            attached = response.status_code == 200
+        except (httpx.HTTPError, OSError, ValueError):
+            attached = False
+    return {
+        "cdp_url": cdp_url,
+        "attached": attached,
+        "pin_tab": browser.pin_tab,
+        "session": browser.session,
+        "launch_command": browser.launch_command,
+        "launch_wait_seconds": browser.launch_wait_seconds,
+    }
+
+
 def capability_settings_payload(
     config: Config,
     *,
@@ -220,7 +241,9 @@ def capability_settings_payload(
             },
             "fetch": {
                 "use_jina_reader": config.tools.web.fetch.use_jina_reader,
+                "provider": config.tools.web.fetch.provider,
             },
+            "browser": _browser_session_status(config),
         },
         "api": {
             "host": config.api.host,
@@ -388,6 +411,65 @@ def update_web_search_settings(config: Config, query: QueryParams) -> tuple[bool
         set_fetch_value("use_jina_reader", parse_bool(use_jina_reader, "use_jina_reader"))
         if web_config.fetch.use_jina_reader != previous_jina_reader:
             restart_required = True
+
+    fetch_provider = query_first_alias(query, "fetch_provider", "fetchProvider")
+    if fetch_provider is not None:
+        normalized = fetch_provider.strip().lower()
+        if normalized not in _WEB_FETCH_PROVIDERS:
+            raise WebUISettingsError("fetch_provider must be auto, tinyfish, jina, or local")
+        previous_fetch_provider = web_config.fetch.provider
+        set_fetch_value("provider", normalized)
+        if web_config.fetch.provider != previous_fetch_provider:
+            restart_required = True
+
+    browser = config.tools.agent_browser
+    cdp_url = query_first_alias(query, "browser_cdp_url", "browserCdpUrl")
+    if cdp_url is not None:
+        value = cdp_url.strip()
+        if value and not value.startswith(("http://", "https://")):
+            raise WebUISettingsError("browser_cdp_url must start with http:// or https://")
+        if browser.cdp_url != value:
+            browser.cdp_url = value.rstrip("/")
+            changed = True
+            restart_required = True
+
+    pin_tab = query_first_alias(query, "browser_pin_tab", "browserPinTab")
+    if pin_tab is not None:
+        value = parse_bool(pin_tab, "browser_pin_tab")
+        if browser.pin_tab != value:
+            browser.pin_tab = value
+            changed = True
+            restart_required = True
+
+    session = query_first_alias(query, "browser_session", "browserSession")
+    if session is not None:
+        value = session.strip() or "default"
+        if browser.session != value:
+            browser.session = value
+            changed = True
+            restart_required = True
+
+    launch_command = query_first_alias(query, "browser_launch_command", "browserLaunchCommand")
+    if launch_command is not None:
+        value = launch_command.strip()
+        if browser.launch_command != value:
+            browser.launch_command = value
+            changed = True
+            restart_required = True
+
+    launch_wait = query_first_alias(query, "browser_launch_wait_seconds", "browserLaunchWaitSeconds")
+    if launch_wait is not None:
+        try:
+            parsed_wait = int(launch_wait)
+        except ValueError:
+            raise WebUISettingsError("browser_launch_wait_seconds must be an integer") from None
+        if parsed_wait < 1 or parsed_wait > 120:
+            raise WebUISettingsError("browser_launch_wait_seconds must be between 1 and 120")
+        if browser.launch_wait_seconds != parsed_wait:
+            browser.launch_wait_seconds = parsed_wait
+            changed = True
+            restart_required = True
+
     return changed, restart_required
 
 

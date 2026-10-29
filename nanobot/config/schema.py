@@ -101,6 +101,17 @@ class AgentBrowserConfig(Base):
     package: str = "agent-browser"
     timeout: int = 180
     max_output_chars: int = 12000
+    # Shared browser session. When ``cdp_url`` is reachable the tool attaches to
+    # that Chromium instead of launching an isolated profile, so the agent uses
+    # the same cookies and sign-ins as the user.
+    cdp_url: str = ""
+    pin_tab: bool = True
+    session: str = "default"
+    # Launch command used to start the shared browser when the CDP endpoint is
+    # not yet listening (for example the ``chrome-agent`` wrapper).
+    launch_command: str = ""
+    launch_wait_seconds: int = 20
+    executable_path: str = ""
 
 class AgentDeviceConfig(Base):
     """Agent Device tool configuration."""

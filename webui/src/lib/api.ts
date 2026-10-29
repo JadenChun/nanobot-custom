@@ -1704,6 +1704,24 @@ export async function updateWebSearchSettings(
       ...(update.useJinaReader !== undefined
         ? { use_jina_reader: update.useJinaReader }
         : {}),
+      ...(update.fetchProvider !== undefined
+        ? { fetch_provider: update.fetchProvider }
+        : {}),
+      ...(update.browserCdpUrl !== undefined
+        ? { browser_cdp_url: update.browserCdpUrl }
+        : {}),
+      ...(update.browserPinTab !== undefined
+        ? { browser_pin_tab: update.browserPinTab }
+        : {}),
+      ...(update.browserSession !== undefined
+        ? { browser_session: update.browserSession }
+        : {}),
+      ...(update.browserLaunchCommand !== undefined
+        ? { browser_launch_command: update.browserLaunchCommand }
+        : {}),
+      ...(update.browserLaunchWaitSeconds !== undefined
+        ? { browser_launch_wait_seconds: update.browserLaunchWaitSeconds }
+        : {}),
     },
   );
 }

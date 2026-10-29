@@ -921,3 +921,74 @@ async def test_olostep_package_missing_returns_install_hint(monkeypatch):
     assert result == (
         "Error: Olostep support is not installed. Run `nanobot plugins enable olostep`."
     )
+
+
+@pytest.mark.asyncio
+async def test_tinyfish_search(monkeypatch):
+    async def mock_get(self, url, **kw):
+        assert url == "https://api.search.tinyfish.ai"
+        assert kw["headers"]["X-API-Key"] == "tinyfish-key"
+        assert kw["params"]["query"] == "nanobot"
+        return _response(json={
+            "query": "nanobot",
+            "results": [
+                {
+                    "position": 1,
+                    "site_name": "example.com",
+                    "title": "NanoBot",
+                    "snippet": "AI assistant",
+                    "url": "https://example.com",
+                }
+            ],
+            "total_results": 1,
+            "page": 0,
+        })
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+    tool = _tool(provider="tinyfish", api_key="tinyfish-key")
+    assert tool.exclusive is False
+    result = await tool.execute(query="nanobot", count=1)
+    assert "NanoBot" in result
+    assert "AI assistant" in result
+    assert "https://example.com" in result
+
+
+@pytest.mark.asyncio
+async def test_tinyfish_without_key_falls_back_to_duckduckgo(monkeypatch):
+    monkeypatch.delenv("TINYFISH_API_KEY", raising=False)
+    calls: list[str] = []
+
+    async def mock_ddg(self, query, n):
+        calls.append(query)
+        return "ddg fallback"
+
+    monkeypatch.setattr(WebSearchTool, "_search_duckduckgo", mock_ddg)
+    tool = _tool(provider="tinyfish", api_key="")
+    assert tool.exclusive is True
+    assert await tool.execute(query="nanobot") == "ddg fallback"
+    assert calls == ["nanobot"]
+
+
+@pytest.mark.asyncio
+async def test_tinyfish_invalid_key_surfaces_error(monkeypatch):
+    async def mock_get(self, url, **kw):
+        return _response(status=401, json={"error": "unauthorized"})
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+    tool = _tool(provider="tinyfish", api_key="bad-key")
+    result = await tool.execute(query="nanobot")
+    assert is_tool_error_result(result)
+
+
+@pytest.mark.asyncio
+async def test_tinyfish_rate_limit_falls_back(monkeypatch):
+    async def mock_get(self, url, **kw):
+        return _response(status=429, json={"error": "rate limited"})
+
+    async def mock_ddg(self, query, n):
+        return "ddg fallback"
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
+    monkeypatch.setattr(WebSearchTool, "_search_duckduckgo", mock_ddg)
+    tool = _tool(provider="tinyfish", api_key="tinyfish-key")
+    assert await tool.execute(query="nanobot") == "ddg fallback"

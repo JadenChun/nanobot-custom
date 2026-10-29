@@ -98,3 +98,73 @@ def test_capability_payload_reports_configured_comfy_mcp(
     assert comfy["reachable"] is True
     assert comfy["base_url"] == "http://127.0.0.1:8188"
     assert comfy["enabled_tools"] == ["generate_image", "edit_image"]
+
+
+def test_web_settings_report_browser_session_defaults() -> None:
+    payload = capability_settings_payload(Config(), oauth_status=_oauth_status)
+
+    browser = payload["web"]["browser"]
+    assert browser["cdp_url"] == ""
+    assert browser["attached"] is False
+    assert browser["pin_tab"] is True
+    assert browser["session"] == "default"
+    assert payload["web"]["fetch"]["provider"] == "auto"
+
+
+def test_web_settings_persist_browser_session(monkeypatch) -> None:
+    config = Config()
+    monkeypatch.setattr(
+        "nanobot.webui.settings_capabilities.httpx.get",
+        lambda *args, **kwargs: type("R", (), {"status_code": 200})(),
+    )
+
+    changed, restart_required = update_web_search_settings(
+        config,
+        {
+            "provider": ["tinyfish"],
+            "api_key": ["tf-key"],
+            "fetch_provider": ["tinyfish"],
+            "browser_cdp_url": ["http://127.0.0.1:9333"],
+            "browser_pin_tab": ["false"],
+            "browser_session": ["agent"],
+            "browser_launch_command": ["/home/jaden/.local/bin/chrome-agent"],
+            "browser_launch_wait_seconds": ["30"],
+        },
+    )
+
+    assert changed is True
+    assert restart_required is True
+    assert config.tools.web.search.provider == "tinyfish"
+    assert config.tools.web.fetch.provider == "tinyfish"
+    browser = config.tools.agent_browser
+    assert browser.cdp_url == "http://127.0.0.1:9333"
+    assert browser.pin_tab is False
+    assert browser.session == "agent"
+    assert browser.launch_command == "/home/jaden/.local/bin/chrome-agent"
+    assert browser.launch_wait_seconds == 30
+
+    payload = capability_settings_payload(config, oauth_status=_oauth_status)
+    assert payload["web"]["browser"]["attached"] is True
+    assert payload["web"]["browser"]["cdp_url"] == "http://127.0.0.1:9333"
+
+
+def test_web_settings_reject_invalid_browser_session_values() -> None:
+    import pytest
+
+    from nanobot.webui.settings_contracts import WebUISettingsError
+
+    with pytest.raises(WebUISettingsError):
+        update_web_search_settings(
+            Config(),
+            {"provider": ["duckduckgo"], "browser_cdp_url": ["ws://127.0.0.1:9222"]},
+        )
+    with pytest.raises(WebUISettingsError):
+        update_web_search_settings(
+            Config(),
+            {"provider": ["duckduckgo"], "fetch_provider": ["bogus"]},
+        )
+    with pytest.raises(WebUISettingsError):
+        update_web_search_settings(
+            Config(),
+            {"provider": ["duckduckgo"], "browser_launch_wait_seconds": ["0"]},
+        )

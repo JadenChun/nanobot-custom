@@ -69,6 +69,13 @@ describe("provider brand logos", () => {
     expect(providerBrand("xiaomi")?.logoUrls[0]).toBe("https://mimo.xiaomi.com/mimo-v2-pro/assets/logo.svg");
   });
 
+  it("uses the vendored TinyFish mark before remote favicons", () => {
+    expect(providerBrand("tinyfish")?.logoUrls[0]).toBe("/brand/tinyfish.png");
+    expect(providerBrand("tinyfish")?.logoUrls).toContain("https://tinyfish.ai/favicon.ico");
+    expect(providerBrand("tinyfish")?.initials).toBe("TF");
+    expect(providerBrand("tinyfish")?.color).toBe("#FF6700");
+  });
+
   it("keeps OpenRouter voice settings on the first-party brand domain", () => {
     expect(providerBrand("openrouter")?.logoUrls).toContain("https://openrouter.ai/favicon.ico");
     expect(providerBrand("openrouter")?.initials).toBe("OR");
