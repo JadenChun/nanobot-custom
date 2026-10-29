@@ -12,6 +12,7 @@ from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.policy import ToolPolicy
+from nanobot.agent.tools.base import ToolPreparationError
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import ToolCallRequest
@@ -275,12 +276,17 @@ async def _execute_tool_call(
             if len(prepared_tuple) == 3:
                 tool, params, prep_error = cast(tuple[Any, Any, str | None], prepared_tuple)
     if prep_error:
+        preparation_error_kind = (
+            prep_error.kind.value if isinstance(prep_error, ToolPreparationError) else None
+        )
         payload = _with_retry_hint(prep_error)
         event = {
             "name": tool_call.name,
             "status": "error",
             "detail": prep_error.split(": ", 1)[-1][:120],
         }
+        if preparation_error_kind is not None:
+            event["_prepare_error_kind"] = preparation_error_kind
         handled = _classify_violation(
             raw_text=prep_error,
             soft_payload=payload,

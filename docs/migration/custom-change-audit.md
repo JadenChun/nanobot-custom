@@ -35,7 +35,7 @@ Severity describes the potential migration consequence, not proof of a live inci
 
 - Local evidence: agent/runner.py _execute_tools / ToolOutcome, terminal branch near 508.
 - Upstream evidence: agent/tools/execution.py execute_tool_calls sequential loop at 53-94 has no matching terminal branch.
-- Preserve/adapt: Keep first terminal status, emit legal skipped results and stop later tools; approval_required/policy_blocked/error must not trigger another model/finalization/continuation call.
+- Preserve/adapt: Keep first terminal status, emit legal skipped results and stop later tools; approval_required/policy_blocked/dispatched errors must not trigger another model/finalization/continuation call. A fail-fast batch may make one no-tools final-text request only after the registry's typed genuinely unknown-name pre-dispatch rejection.
 - Existing migration-replacement validation targets (NOT-RUN): tests/agent/test_turn_execution.py::test_nested_policy_stop_skips_later_write_in_same_outer_batch; tests/agent/test_turn_execution.py::test_contextual_tool_stop_does_not_make_an_extra_model_call; tests/agent/test_turn_execution.py::test_contextual_tool_error_is_terminal_without_an_extra_model_call.
 - Gap or decision: Exercise imported execution path and nested read-only stop without policy elevation.
 

@@ -774,14 +774,18 @@ class AgentRunner:
                     terminal = next((r for r in results if isinstance(r, ToolOutcome)
                                      and r.stop_reason == "folder_access_required"), None)
                 results = [r.content if isinstance(r, ToolOutcome) else r for r in results]
-                tool_events.extend(new_events)
+                public_events = [
+                    {key: value for key, value in event.items() if not key.startswith("_")}
+                    for event in new_events
+                ]
+                tool_events.extend(public_events)
                 tools_used.extend(
                     tool_call.name
                     for tool_call, event in zip(response.tool_calls, new_events)
                     if event.get("status") == "ok"
                 )
                 context.tool_results = list(results)
-                context.tool_events = list(new_events)
+                context.tool_events = list(public_events)
                 completed_tool_results: list[dict[str, Any]] = []
                 for ordinal, (tool_call, result) in enumerate(zip(response.tool_calls, results)):
                     tool_message = {
@@ -837,13 +841,117 @@ class AgentRunner:
                     },
                 )
                 if terminal is not None:
-                    stop_reason = terminal.stop_reason or "policy_blocked"
-                    policy_metadata = dict(terminal.policy_metadata)
-                    final_content = str(terminal.content or "")
+                    unknown_rejection = (
+                        spec.fail_on_tool_error
+                        and terminal.stop_reason == "tool_error"
+                        and any(
+                            event.get("_prepare_error_kind") == "unknown_tool"
+                            for event in new_events
+                        )
+                    )
+                    if not unknown_rejection:
+                        stop_reason = terminal.stop_reason or "policy_blocked"
+                        policy_metadata = dict(terminal.policy_metadata)
+                        final_content = str(terminal.content or "")
+                        context.stop_reason = stop_reason
+                        context.final_content = final_content
+                        if spec.source_writer is not None:
+                            spec.source_writer.append_message(build_assistant_message(final_content))
+                        break
+
+                    streaming = hook.wants_streaming()
+                    stream_end_task: asyncio.Task[None] | None = None
+
+                    async def close_stream_end() -> None:
+                        nonlocal stream_end_task
+                        if not streaming:
+                            return
+                        if stream_end_task is None:
+                            stream_end_task = asyncio.create_task(
+                                hook.on_stream_end(context, resuming=False)
+                            )
+                        close_task = stream_end_task
+                        cancellation: asyncio.CancelledError | None = None
+                        while not close_task.done():
+                            try:
+                                await asyncio.shield(close_task)
+                            except asyncio.CancelledError as exc:
+                                cancellation = cancellation or exc
+                        try:
+                            close_task.result()
+                        except BaseException:
+                            if cancellation is None:
+                                raise
+                        if cancellation is not None:
+                            raise cancellation
+
+                    finalized_content: str | None = None
+                    finalized_response: LLMResponse | None = None
+                    try:
+                        recorded_final, finalized_content, usage = (
+                            await self._request_unknown_tool_finalization(
+                                spec,
+                                hook,
+                                context,
+                                messages,
+                                usage,
+                                request_state=request_state,
+                                round_usages=round_usages,
+                            )
+                        )
+                        if recorded_final is not None and finalized_content is not None:
+                            finalized_response = recorded_final.response
+                        if finalized_content is not None and finalized_response is not None:
+                            assistant_message = conversation_state.project_response_message(
+                                build_assistant_message(
+                                    finalized_content,
+                                    reasoning_content=finalized_response.reasoning_content,
+                                    thinking_blocks=finalized_response.thinking_blocks,
+                                ),
+                                finalized_response,
+                            )
+                            provider_state_settlement = conversation_state.observe_response(
+                                finalized_response,
+                                messages,
+                                adopt_candidate_state=spec.source_writer is None,
+                            )
+                            final_content = finalized_content
+                            stop_reason = "completed"
+                        else:
+                            stop_reason = terminal.stop_reason or "policy_blocked"
+                            policy_metadata = dict(terminal.policy_metadata)
+                            final_content = str(terminal.content or "")
+                            assistant_message = build_assistant_message(final_content)
+
+                        if streaming:
+                            if finalized_content is not None:
+                                await hook.on_stream(context, finalized_content)
+                                context.streamed_content = True
+                            await close_stream_end()
+                    except asyncio.CancelledError as cancellation:
+                        try:
+                            await close_stream_end()
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception:
+                            logger.exception("Failed to close stream after unknown-tool finalization cancellation")
+                        raise cancellation
+
+                    source_event_id = None
                     context.stop_reason = stop_reason
                     context.final_content = final_content
                     if spec.source_writer is not None:
-                        spec.source_writer.append_message(build_assistant_message(final_content))
+                        source_event_id = spec.source_writer.append_message(assistant_message)["_event_id"]
+                    if request_state.source is None:
+                        messages.append(assistant_message)
+                    else:
+                        self._append_bound_message(
+                            messages,
+                            assistant_message,
+                            request_state.source,
+                            source_event_id,
+                        )
+                    await hook.after_iteration(context)
                     break
                 empty_content_retries = 0
                 length_recovery_parts.clear()
@@ -1235,9 +1343,15 @@ class AgentRunner:
 
     def _record_and_settle(self, spec: AgentRunSpec, state: ModelRequestState,
                            ticket: SourceRequestTicket | None, response: LLMResponse,
-                           *, malformed: bool = False, no_tools: bool = False) -> RecordedResponse:
+                           *, malformed: bool = False, no_tools: bool = False,
+                           record_source_response: bool = True) -> RecordedResponse:
         try:
-            recorded = RecordedResponse(response, self._record_source_response(spec, response))
+            source_event_id = (
+                self._record_source_response(spec, response)
+                if record_source_response
+                else None
+            )
+            recorded = RecordedResponse(response, source_event_id)
         except BaseException:
             if ticket is not None and state.source is not None:
                 state.source.discard(ticket)
@@ -1591,6 +1705,75 @@ class AgentRunner:
         retry_messages.append(build_finalization_retry_message())
         return retry_messages
 
+    async def _request_unknown_tool_finalization(
+        self,
+        spec: AgentRunSpec,
+        hook: AgentHook,
+        context: AgentHookContext,
+        messages: list[dict[str, Any]],
+        usage: LLMUsage | None,
+        *,
+        request_state: ModelRequestState,
+        round_usages: list[LLMUsage],
+    ) -> tuple[RecordedResponse | None, str | None, LLMUsage | None]:
+        """Make one no-tools final-text request after a typed unknown-name rejection."""
+        note = {
+            "role": "user",
+            "content": (
+                "Tool execution has ended for this turn; no more tools can be run. Use only the "
+                "observed tool results already in the conversation. The rejected tool call and "
+                "its arguments are not evidence of completed work and must not be copied as the "
+                "answer. Follow the user's requested response format exactly. If work remains "
+                "incomplete, say so plainly and do not claim any unperformed action. Reply with "
+                "final assistant text only."
+            ),
+        }
+        if request_state.source is not None:
+            base_view = request_state.source.transcript
+            finalization_messages = base_view.messages()
+        else:
+            base_view = request_state.source_view
+            finalization_messages = messages
+        retry_messages = [*finalization_messages, note]
+        view = base_view.with_runtime(RuntimeNode(uuid.uuid4().hex, note)) if base_view is not None else None
+        recorded = await self._request_no_tools(
+            spec,
+            retry_messages,
+            request_state=request_state,
+            source_view=view,
+            transcript=finalization_messages,
+            tool_choice_none=True,
+            record_source_response=False,
+            normalize_provider_errors=True,
+        )
+
+        response = recorded.response
+        raw_usage = self._record_request_usage(spec, request_state, response)
+        round_usages.append(raw_usage)
+        usage = self._merge_usage(usage, raw_usage)
+        context.response = response
+        context.usage = raw_usage
+        context.tool_calls = []
+        reasoning_text, response.content = extract_reasoning(
+            response.reasoning_content,
+            response.thinking_blocks,
+            response.content,
+        )
+        if reasoning_text and not context.streamed_reasoning:
+            await hook.emit_reasoning(reasoning_text)
+            await hook.emit_reasoning_end()
+            context.streamed_reasoning = True
+        clean = hook.finalize_content(context, response.content)
+        if response.finish_reason != "stop" or response.has_tool_calls or is_blank_text(clean):
+            logger.warning(
+                "Unknown-tool finalization returned finish_reason='{}' with {} tool call(s); "
+                "retaining tool error",
+                response.finish_reason,
+                len(response.tool_calls),
+            )
+            return recorded, None, usage
+        return recorded, clean, usage
+
     async def _try_finalize_after_max_iterations(
         self,
         spec: AgentRunSpec,
@@ -1661,6 +1844,9 @@ class AgentRunner:
         request_state: ModelRequestState,
         transcript: list[dict[str, Any]] | None = None,
         source_view: SourceTranscript | None = None,
+        tool_choice_none: bool = False,
+        record_source_response: bool = True,
+        normalize_provider_errors: bool = False,
     ) -> RecordedResponse:
         self._check_busy_stop(spec)
         source_view = self._source_view(request_state, messages, source_view)
@@ -1679,6 +1865,8 @@ class AgentRunner:
             messages,
             tools=None,
         )
+        if tool_choice_none:
+            kwargs["tool_choice"] = "none"
         coro = spec.runtime.provider.chat_with_retry(
             **kwargs,
             provider_context=provider_context,
@@ -1690,18 +1878,40 @@ class AgentRunner:
                 if timeout_s is None
                 else await asyncio.wait_for(coro, timeout=timeout_s)
             )
-            self._check_busy_stop(spec)
         except asyncio.TimeoutError:
             response = LLMResponse(
                 content=f"Error calling LLM: timed out after {timeout_s:g}s",
                 finish_reason="error",
                 error_kind="timeout",
             )
+        except Exception as exc:
+            if not normalize_provider_errors:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                raise
+            response = LLMResponse(
+                content=f"Error calling LLM: {type(exc).__name__}: {exc}",
+                finish_reason="error",
+                error_kind="provider",
+            )
         except BaseException:
             if ticket is not None and request_state.source is not None:
                 request_state.source.discard(ticket)
             raise
-        recorded = self._record_and_settle(spec, request_state, ticket, response, no_tools=True)
+        try:
+            self._check_busy_stop(spec)
+        except BaseException:
+            if ticket is not None and request_state.source is not None:
+                request_state.source.discard(ticket)
+            raise
+        recorded = self._record_and_settle(
+            spec,
+            request_state,
+            ticket,
+            response,
+            no_tools=True,
+            record_source_response=record_source_response,
+        )
         await self.context_governor.summarize_provider_compaction(
             request_state,
             response,

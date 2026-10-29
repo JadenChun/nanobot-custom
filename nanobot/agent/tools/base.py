@@ -7,6 +7,7 @@ import typing
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from copy import deepcopy
+from enum import StrEnum
 from typing import Any, TypeVar, cast
 
 if typing.TYPE_CHECKING:
@@ -155,6 +156,39 @@ class ToolResult(str):
     @classmethod
     def error(cls, content: str) -> ToolResult:
         return cls(content, is_error=True)
+
+
+class ToolPreparationErrorKind(StrEnum):
+    """Typed reason why the registry rejected a tool call before dispatch."""
+
+    UNKNOWN_TOOL = "unknown_tool"
+    WITHHELD_TOOL = "withheld_tool"
+
+
+class ToolPreparationError(ToolResult):
+    """Tool error that preserves a registry-owned pre-dispatch classification."""
+
+    kind: ToolPreparationErrorKind
+
+    def __new__(
+        cls,
+        content: str,
+        *,
+        kind: ToolPreparationErrorKind,
+    ) -> ToolPreparationError:
+        result = cast(ToolPreparationError, super().__new__(cls, content, is_error=True))
+        result.kind = kind
+        return result
+
+    def __reduce__(self) -> tuple[Callable[..., ToolPreparationError], tuple[str, ToolPreparationErrorKind]]:
+        return _restore_tool_preparation_error, (str(self), self.kind)
+
+
+def _restore_tool_preparation_error(
+    content: str,
+    kind: ToolPreparationErrorKind,
+) -> ToolPreparationError:
+    return ToolPreparationError(content, kind=kind)
 
 
 class Tool(ABC):
