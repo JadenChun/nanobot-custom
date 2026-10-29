@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any, Iterable, TypeGuard, cast
@@ -12,6 +12,13 @@ from typing import Any, Iterable, TypeGuard, cast
 from loguru import logger
 
 _MANIFEST_NAME = "nanobot.context.json"
+_MISSING = object()
+
+
+def _strict_bool(value: object, name: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"Context repo {name} must be a boolean")
+    return value
 
 
 def _as_list(value: object) -> list[object]:
@@ -217,6 +224,7 @@ class ContextRepoRuntimeConfig:
     credential_profile: str | None = None
     manifest_name: str = _MANIFEST_NAME
     target_repo_paths: dict[str, str] = field(default_factory=dict)
+    allow_exec: bool = True
 
     @classmethod
     def from_raw(cls, raw: Any) -> "ContextRepoRuntimeConfig | None":
@@ -225,6 +233,7 @@ class ContextRepoRuntimeConfig:
         if isinstance(raw, (str, Path)):
             return cls(path=Path(raw).expanduser().resolve(strict=False))
         if _is_manifest_mapping(raw):
+            allow_exec = _strict_bool(_get_any(raw, "allowExec", "allow_exec", default=True), "allowExec")
             path = raw.get("path")
             if not path:
                 return None
@@ -232,6 +241,7 @@ class ContextRepoRuntimeConfig:
             return cls(
                 path=Path(str(path)).expanduser().resolve(strict=False),
                 read_only=bool(_get_any(raw, "readOnly", "read_only", default=False)),
+                allow_exec=allow_exec,
                 auto_sync=bool(_get_any(raw, "autoSync", "auto_sync", default=True)),
                 credential_profile=_get_any(raw, "credentialProfile", "credential_profile"),
                 manifest_name=str(_get_any(raw, "manifest", "manifestName", "manifest_name", default=_MANIFEST_NAME)),
@@ -240,12 +250,17 @@ class ContextRepoRuntimeConfig:
                     for name, path in target_paths.items()
                 },
             )
+        allow_exec = getattr(raw, "allow_exec", _MISSING)
+        if allow_exec is _MISSING:
+            allow_exec = getattr(raw, "allowExec", True)
+        normalized_allow_exec = _strict_bool(allow_exec, "allowExec")
         path = getattr(raw, "path", None)
         if not path:
             return None
         return cls(
             path=Path(str(path)).expanduser().resolve(strict=False),
             read_only=bool(getattr(raw, "read_only", getattr(raw, "readOnly", False))),
+            allow_exec=normalized_allow_exec,
             auto_sync=bool(getattr(raw, "auto_sync", getattr(raw, "autoSync", True))),
             credential_profile=getattr(raw, "credential_profile", getattr(raw, "credentialProfile", None)),
             manifest_name=str(getattr(raw, "manifest", getattr(raw, "manifest_name", _MANIFEST_NAME))),
@@ -269,12 +284,15 @@ class ManagedContextRepo:
     target_repo_paths: dict[str, str] = field(default_factory=dict)
     manifest: dict[str, Any] = field(default_factory=dict)
     manifest_path: Path | None = None
+    allow_exec: bool = True
 
     @classmethod
     def load(cls, config: ContextRepoRuntimeConfig) -> "ManagedContextRepo":
         manifest_path = config.path / config.manifest_name
         manifest: dict[str, Any] = {}
         managed = manifest_path.is_file()
+        if config.manifest_name != _MANIFEST_NAME and not managed:
+            raise ValueError(f"Configured context repo manifest is missing or not a file: {manifest_path}")
         if managed:
             try:
                 raw = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -291,6 +309,7 @@ class ManagedContextRepo:
             name=name,
             managed=managed,
             read_only=config.read_only,
+            allow_exec=config.allow_exec,
             auto_sync=config.auto_sync,
             credential_profile=credential_profile,
             target_repo_paths=config.target_repo_paths,
@@ -571,19 +590,22 @@ class ContextRepoManager:
         context_paths: Iterable[Path | str] | None = None,
         context_repos: Iterable[Any] | None = None,
     ) -> "ContextRepoManager":
-        configs: list[ContextRepoRuntimeConfig] = []
-        seen: set[Path] = set()
+        configs: dict[Path, ContextRepoRuntimeConfig] = {}
         for raw in context_repos or []:
             config = ContextRepoRuntimeConfig.from_raw(raw)
-            if config and config.path not in seen:
-                configs.append(config)
-                seen.add(config.path)
+            if config is None:
+                continue
+            previous = configs.get(config.path)
+            if previous is None:
+                configs[config.path] = config
+            elif previous.allow_exec and not config.allow_exec:
+                # Keep first-entry precedence without discarding an explicit denial.
+                configs[config.path] = replace(previous, allow_exec=False)
         for path in context_paths or []:
             config = ContextRepoRuntimeConfig.from_raw(path)
-            if config and config.path not in seen:
-                configs.append(config)
-                seen.add(config.path)
-        return cls([ManagedContextRepo.load(config) for config in configs])
+            if config and config.path not in configs:
+                configs[config.path] = config
+        return cls([ManagedContextRepo.load(config) for config in configs.values()])
 
     @property
     def paths(self) -> list[Path]:

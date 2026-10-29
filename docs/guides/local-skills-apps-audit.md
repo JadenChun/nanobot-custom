@@ -2,55 +2,53 @@
 
 **Audited:** 2026-10-29 (Kuala Lumpur)
 
-**Scope:** Read-only review of the configured nanobot Skills and Apps inventory, its shared skills access, and the online skill sources referenced by this checkout.
+**Scope:** Read-only review of the configured nanobot Skills and Apps inventory, the shared skills library, and online skill sources referenced by this checkout.
 
 ## Current inventory
 
-The configured nanobot instance reports 16 bundled skills, no workspace skills, no installed CLI apps, and no enabled Agent Plugin skills. `disabledSkills` is empty. No skills downloaded from an online marketplace were found.
+At the initial audit, the configured nanobot instance reported 16 bundled skills, no workspace skills, no installed CLI apps, and no enabled Agent Plugin skills. `disabledSkills` was empty. No skills downloaded from an online marketplace were found.
 
-The external shared-skill audit found eight folders under `/home/jaden/.agents/skills`: `dashboard-pwa-builder`, `freelance-proposal`, `invoiceshelf`, `local-llm-benchmark`, `media-generation`, `orchestrate-development`, `project-kickoff`, and `ui-wireframe-visual-verify`. These are not nanobot workspace installs. The live product should not expose their names while its access policy prevents listing or reading that library.
-
-The Skills page should distinguish workspace skills, configured shared libraries, bundled skills, and enabled Agent Plugin skills. A skill folder supplies instructions; it does not create a native app or tool row. “Enabled” describes whether nanobot may load those instructions. “Needs setup” only reflects declared CLI or environment requirements, and neither status verifies that a full workflow works.
+The external shared-skill audit found eight folders under `/home/jaden/.agents/skills`: `dashboard-pwa-builder`, `freelance-proposal`, `invoiceshelf`, `local-llm-benchmark`, `media-generation`, `orchestrate-development`, `project-kickoff`, and `ui-wireframe-visual-verify`. These folders are not nanobot workspace installs. A folder can provide instructions without creating a native app or tool row.
 
 ## Shared-library access
 
-The current config uses `contextPaths: ["/home/jaden/.agents"]` and has no `contextRepos` entries. The shared repository manifest declares `AGENTS.md` as its context entrypoint, `skills` as its skills entrypoint, and protects `AGENTS.md`, `nanobot.context.json`, and `skills/**`. The managed folder policy treats `skills/**` as protected for listing and reading, including the skills root itself. As a result, nanobot cannot safely enumerate the eight folders or read their `SKILL.md` files. The product should show a generic incomplete-catalog notice and no placeholder rows or hidden names.
+Before instance activation, the config used `contextPaths: ["/home/jaden/.agents"]` and had no `contextRepos` entry. The canonical shared manifest identifies `AGENTS.md` as context, `skills` as the skills entrypoint, and protects `AGENTS.md`, `nanobot.context.json`, and `skills/**`. That protection prevents the management catalog from enumerating the eight folders or reading their `SKILL.md` files. With this original attachment, the Skills page shows an incomplete catalog without listing hidden names.
 
-`ContextRepoManager.skill_roots()` can expand glob patterns before policy checks. Management inventory must therefore resolve only supported literal roots and mark unsupported patterns incomplete without globbing. Runtime skill loading already applies the resource policy; the management fix must keep using that same policy and must not change runtime loader behavior.
+Use a private per-instance manifest snapshot for the shared library. Copy the canonical manifest to `~/.nanobot-staging/context-views/shared-agents.json`; do not edit the canonical manifest. In that copy, remove only the `skills/**` item from `protected`, remove `entrypoints.context` if present, and remove the top-level `context` field if present. Keep every other field, including the `skills` entrypoint, `AGENTS.md`, the canonical `nanobot.context.json` protection, and the manifest's other protections. The default secret protections remain active as well.
 
-One proposed, unapplied remediation is to move `/home/jaden/.agents` from `contextPaths` into `contextRepos` as read-only, then remove `AGENTS.md` and `skills/**` from the manifest's custom protected list while keeping `nanobot.context.json` and nanobot's default secret protections protected. The sanitized config fragment would be:
+The shared root contains `AGENTS.md` but no `CONTEXT.md`. With both context fields removed from the private snapshot, nanobot will not load `AGENTS.md` as shared context, and there is no `CONTEXT.md` fallback. The source root and canonical manifest remain untouched.
+
+After the private snapshot is reviewed, the instance config can be changed separately to use it:
 
 ```json
 {
   "contextPaths": [],
   "contextRepos": [
-    { "path": "/home/jaden/.agents", "readOnly": true }
+    {
+      "path": "/home/jaden/.agents",
+      "readOnly": true,
+      "allowExec": false,
+      "autoSync": false,
+      "manifest": "/home/jaden/.nanobot-staging/context-views/shared-agents.json"
+    }
   ]
 }
 ```
 
-The corresponding manifest fragment would be:
+`readOnly` blocks filesystem writes through nanobot's resource policy. The private snapshot preserves explicit protections for sensitive paths. `allowExec: false` adds an application-level deny-first shell rule for paths within that context repo, including command working directories and referenced paths. This policy does not create an operating-system process sandbox. Existing `contextPaths`, string entries, and context-repo entries that omit `allowExec` retain their prior execution behavior. A configured custom manifest must exist as a file; a missing or invalid override is reported instead of silently becoming an unmanaged repo.
 
-```json
-{
-  "entrypoints": {
-    "context": "AGENTS.md",
-    "skills": ["skills"]
-  },
-  "protected": ["nanobot.context.json"]
-}
-```
+These are staging instructions only. This source package change and audit did not edit the live config, create the staging snapshot, change the canonical manifest, or alter legacy config.
 
-`readOnly: true` blocks writes but does not limit reads to the declared entrypoints; the shared repository's other non-protected paths would remain readable under the default read policy. The manifest keeps nanobot's default secret protections in force. Both changes matter: merely unprotecting `skills/**` while keeping the repository writable could expose the managed repository's default writable-skills rule. Shared scripts would still be subject to nanobot's separate execution policy. These are review fragments only; no config or manifest changes were made during this audit.
+## Catalog meaning and compatibility
 
-## Compatibility and cleanup
+Catalog metadata and source verification show that nanobot can safely find and read a skill entry. They do not verify that the skill's full workflow is compatible with nanobot or that external tools are configured.
 
 The eight shared folders do not declare nanobot `requires` metadata, so Skills cannot infer their system dependencies from skill metadata. Compatibility checks found these limits:
 
 - `orchestrate-development` depends on Codex-only agent roles and cannot use nanobot's current `plan_task`, `delegate_task`, `review_work`, and `explore` tools as drop-in replacements.
 - `freelance-proposal` requires the separate `documents` skill, which is not present in the shared catalog. `project-kickoff` inherits that dependency.
 - `media-generation` references six configured ComfyUI tools, but nanobot's `mcp_comfy_` tool naming and media-delivery behavior differ from the skill's assumptions.
-- Shared scripts remain blocked by the current execution policy.
+- Shared scripts remain blocked when the private context repo is configured with `allowExec: false`.
 
 The custom ComfyUI MCP configuration exposes six allowed tools with a 900-second timeout. The tools were not invoked as part of this read-only audit, so runtime connectivity and generation were not verified.
 
@@ -60,12 +58,8 @@ No deletion is justified by this audit. If a user confirms they do not use them,
 
 The Skills marketplace code searches `skills.sh` and SkillHub (`api.skillhub.cn`). ClawHub is referenced by bundled instructions rather than treated as an installed local skill source. The Apps catalog also references CLI-Anything and Re-bin/nanobot-extension registries; their remote logos are fetched separately. These online catalog entries are discovery results, not installed apps or skills until the user chooses an install action.
 
-This audit made no live config changes, shared-file writes, skill installs, dependency installs, or service changes.
+## Source-package validation
 
-## Implementation and validation
+Temporary shared-library fixtures in this checkout exercise both legacy permission mode and managed folder-grant mode. With a private manifest snapshot that exposes `skills` while retaining its other protections, the fixtures report 24 verified entries (eight shared and 16 bundled), a complete catalog, readable details, and runtime-loadable shared skills. Shared-library rows remain non-deletable, disabled skills remain listed, and the private snapshot does not add `AGENTS.md` to the prompt context.
 
-The Skills catalog now labels workspace, shared-library, bundled, and plugin sources; includes disabled entries; and distinguishes verified, setup-required, and unverified skills. It uses the gateway's configured context manager and resource policy for listing, details, mutations, and marketplace annotations. When any configured source is opaque or restricted, the UI shows a generic incomplete-catalog notice, avoids claiming unknown skills are installed or enabled, and blocks unconfirmed marketplace installs. Runtime skill loading was not changed. The Settings page loads online marketplace results only when the user opens **Browse online**.
-
-Focused checks passed: 43 Python Skills API/marketplace tests, 28 agent skill-loader tests, 28 marketplace and HTTP-route tests, 64 app-layout tests, and 5 Skills marketplace UI tests. Ruff passed for the changed Python files. The integrated WebUI suite passed 1,293 tests, gateway and context regressions passed 112 tests, the production WebUI build passed, and the sanitized preview showed the restricted catalog notice, unverified bundled rows, and disabled online installs with unknown local status.
-
-Strict typing remains debt: BasedPyright 1.40.2 analyzed 499 files with 1,659 errors and 2 warnings both before and after this change. The all-file diagnostic comparator reported `PASS_NO_NEW_DIAGNOSTICS` (zero introduced signatures); this is not a strict-clean result or P6 completion. Earlier temporary reports had disappeared, so the pristine comparison was reconstructed from tracked commit `db75ea1839a5789e10d76a89b322438c1a2b64d0` in a separate archive and rerun against the same interpreter, package environment, checker version, and strict configuration as the edited worktree. Commands, environment details, source hashes, and reports are retained at `/home/jaden/.local/state/nanobot-local-skills-apps-validation-20261029/`.
+Those results describe source-package behavior against temporary fixture paths. Instance activation is a separate step: until the private snapshot and config fragment are applied, the Skills page remains subject to the canonical `skills/**` protection. The initial audit made no live config changes, shared-file writes, skill installs, dependency installs, service changes, or deletions.

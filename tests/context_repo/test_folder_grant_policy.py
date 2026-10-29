@@ -66,6 +66,92 @@ def test_managed_policy_uses_live_read_write_and_command_grants(tmp_path, monkey
         policy.validate_path(project, "exec")
 
 
+@pytest.mark.parametrize("grant_state", ["absent", "inactive", "active"])
+def test_context_exec_denial_precedes_folder_grant_policy(
+    tmp_path: Path, grant_state: str,
+) -> None:
+    home = tmp_path / "agent"
+    shared = tmp_path / "shared"
+    home.mkdir()
+    shared.mkdir()
+    candidate = shared / "existing.txt"
+    candidate.write_text("fixture", encoding="utf-8")
+    (shared / "nanobot.context.json").write_text(
+        json.dumps({"protected": ["nanobot.context.json"]}), encoding="utf-8",
+    )
+    manager = ContextRepoManager.from_config(
+        context_repos=[{"path": str(shared), "allowExec": False}],
+    )
+    store = None
+    if grant_state != "absent":
+        store = FolderGrantStore(
+            agent_home=home,
+            instance_root=tmp_path / "instance",
+            path=tmp_path / "instance" / "webui" / "folder-grants.json",
+        )
+        if grant_state == "active":
+            _grant(store, shared, commands=True, revision=0)
+    policy = ResourceAccessPolicy(
+        workspace=home,
+        context_manager=manager,
+        restrict_to_workspace=True,
+        folder_grants=store.view if store is not None else None,
+    )
+
+    with pytest.raises(PermissionError, match="execution is disabled") as caught:
+        policy.validate_path(candidate, "exec")
+    assert type(caught.value) is PermissionError
+
+
+def test_context_exec_denial_precedes_live_full_access(tmp_path: Path) -> None:
+    home = tmp_path / "agent"
+    shared = tmp_path / "shared"
+    home.mkdir()
+    shared.mkdir()
+    candidate = shared / "tool.py"
+    candidate.write_text("pass", encoding="utf-8")
+    (shared / "nanobot.context.json").write_text("{}", encoding="utf-8")
+    manager = ContextRepoManager.from_config(
+        context_repos=[{"path": str(shared), "allowExec": False}],
+    )
+    store = FolderGrantStore(
+        agent_home=home,
+        instance_root=tmp_path / "instance",
+        path=tmp_path / "instance" / "webui" / "folder-grants.json",
+    )
+    owner = DesktopPermissionOwner()
+    source = {
+        "store_identity": "allow-exec-store",
+        "incarnation": "allow-exec-incarnation",
+        "generation": 0,
+    }
+    reference = owner.enable_full(
+        session_key="websocket:allow-exec-denied",
+        source_binding=source,
+        persistent=True,
+        existing=True,
+        local=True,
+        idle=True,
+        configured_sandbox=False,
+        supervisor_available=True,
+        stores_healthy=True,
+    )
+    policy = ResourceAccessPolicy(
+        workspace=home,
+        context_manager=manager,
+        folder_grants=store.view,
+    )
+
+    with pytest.raises(PermissionError, match="execution is disabled") as caught:
+        policy.validate_path(
+            candidate,
+            "exec",
+            permission_owner=owner,
+            permission_reference=reference,
+        )
+    assert type(caught.value) is PermissionError
+
+
 def test_explicit_once_reference_authorizes_only_its_live_root_outside_turn_context(tmp_path):
     home = tmp_path / "agent"
     selected = tmp_path / "selected"

@@ -77,6 +77,11 @@ class ContextRepoConfig(Base):
 
     path: str
     read_only: bool = False
+    allow_exec: StrictBool = Field(
+        default=True,
+        validation_alias=AliasChoices("allowExec", "allow_exec"),
+        serialization_alias="allowExec",
+    )
     auto_sync: bool = True
     credential_profile: str | None = None
     manifest: str = "nanobot.context.json"

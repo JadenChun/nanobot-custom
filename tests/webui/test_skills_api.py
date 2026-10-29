@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nanobot.agent.context import ContextBuilder
 from nanobot.agent.skills import SkillsLoader
 from nanobot.channels.websocket.runtime import WebSocketConfig
 from nanobot.config.loader import load_config, save_config
@@ -40,6 +41,233 @@ def _config(*disabled: str) -> SimpleNamespace:
             defaults=SimpleNamespace(disabled_skills=list(disabled)),
         )
     )
+
+
+_SHARED_SKILL_NAMES = (
+    "dashboard-pwa-builder",
+    "freelance-proposal",
+    "invoiceshelf",
+    "local-llm-benchmark",
+    "media-generation",
+    "orchestrate-development",
+    "project-kickoff",
+    "ui-wireframe-visual-verify",
+)
+
+
+def _make_shared_snapshot(repo: Path) -> tuple[Path, Path]:
+    skills_root = repo / "skills"
+    for name in _SHARED_SKILL_NAMES:
+        _write_skill(repo, name)
+
+    canonical = {
+        "name": "shared-agent-skills",
+        "context": "AGENTS.md",
+        "entrypoints": {"context": "AGENTS.md", "skills": ["skills"]},
+        "protected": ["AGENTS.md", "nanobot.context.json", "skills/**", "workflows/locked.md"],
+        "sync": {"autoPush": False},
+    }
+    (repo / "AGENTS.md").write_text(
+        "PRIVATE_SHARED_AGENT_INSTRUCTIONS", encoding="utf-8",
+    )
+    (repo / "nanobot.context.json").write_text(
+        json.dumps(canonical, indent=2), encoding="utf-8",
+    )
+
+    snapshot = json.loads(json.dumps(canonical))
+    snapshot.pop("context")
+    snapshot["entrypoints"].pop("context")
+    snapshot["protected"].remove("skills/**")
+    manifest = repo.parent / "nanobot-staging" / "context-views" / "shared-agents.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
+    return skills_root, manifest
+
+
+@pytest.mark.parametrize("access_mode", ["legacy", "managed"])
+def test_private_shared_snapshot_lists_and_loads_eight_skills_with_complete_catalog(
+    tmp_path: Path, access_mode: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    shared_repo = tmp_path / "shared"
+    shared_repo.mkdir()
+    shared_root, manifest = _make_shared_snapshot(shared_repo)
+    repo_config = {
+        "path": str(shared_repo),
+        "readOnly": True,
+        "allowExec": False,
+        "manifest": str(manifest),
+    }
+    manager = ContextRepoManager.from_config(context_repos=[repo_config])
+    agent_home = tmp_path / "agent-home"
+    instance_root = tmp_path / "instance"
+    agent_home.mkdir()
+    grants = FolderGrantStore(
+        agent_home=agent_home,
+        instance_root=instance_root,
+        path=instance_root / "webui" / "folder-grants.json",
+    )
+    if access_mode == "managed":
+        grants.upsert(
+            {"path": str(workspace), "file_access": "read_only", "commands": False},
+            expected_revision=0,
+        )
+    policy = ResourceAccessPolicy(
+        workspace=workspace,
+        context_manager=manager,
+        restrict_to_workspace=True,
+        folder_grants=grants.view,
+    )
+    disabled = {_SHARED_SKILL_NAMES[-1]}
+
+    payload = webui_skills_payload(
+        workspace,
+        disabled_skills=disabled,
+        context_manager=manager,
+        resource_policy=policy,
+    )
+
+    assert payload["catalog_complete"] is True, [
+        (skill["name"], skill["source"], skill["verification"])
+        for skill in payload["skills"]
+    ]
+    assert len(payload["skills"]) == 24
+    shared_rows = [skill for skill in payload["skills"] if skill["source"] == "library"]
+    builtin_rows = [skill for skill in payload["skills"] if skill["source"] == "builtin"]
+    assert {skill["name"] for skill in shared_rows} == set(_SHARED_SKILL_NAMES)
+    assert len(builtin_rows) == 16
+    assert all(skill["verification"] == "verified" for skill in [*shared_rows, *builtin_rows])
+    assert all(skill["deletable"] is False for skill in shared_rows)
+    assert next(skill for skill in shared_rows if skill["name"] == _SHARED_SKILL_NAMES[-1])["enabled"] is False
+    assert all(
+        skill["enabled"] is True
+        for skill in shared_rows
+        if skill["name"] != _SHARED_SKILL_NAMES[-1]
+    )
+    assert all("path" not in skill for skill in shared_rows)
+
+    enabled_payload = webui_skills_payload(
+        workspace,
+        context_manager=manager,
+        resource_policy=policy,
+    )
+    assert all(skill["enabled"] is True for skill in enabled_payload["skills"])
+
+    for name in _SHARED_SKILL_NAMES:
+        detail = webui_skill_detail_payload(
+            workspace,
+            name,
+            disabled_skills=disabled,
+            context_manager=manager,
+            resource_policy=policy,
+        )
+        assert detail is not None
+        assert detail["source"] == "library"
+        assert detail["enabled"] is (name not in disabled)
+        assert "path" not in detail
+        assert f"{name} description" in detail["raw_markdown"]
+
+    loader = SkillsLoader(
+        workspace,
+        extra_paths=[shared_root],
+        resource_policy=policy,
+    )
+    for name in _SHARED_SKILL_NAMES:
+        loaded = loader.load_skill(name)
+        assert loaded is not None
+        assert f"{name} description" in loaded
+
+    canonical_payload = json.loads((shared_repo / "nanobot.context.json").read_text(encoding="utf-8"))
+    snapshot_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    assert "context" in canonical_payload
+    assert canonical_payload["entrypoints"]["context"] == "AGENTS.md"
+    assert "context" not in snapshot_payload
+    assert "context" not in snapshot_payload["entrypoints"]
+    assert "skills/**" in canonical_payload["protected"]
+    assert "skills/**" not in snapshot_payload["protected"]
+    assert snapshot_payload["protected"] == [
+        "AGENTS.md", "nanobot.context.json", "workflows/locked.md",
+    ]
+    assert not (shared_repo / "CONTEXT.md").exists()
+    assert manager.context_files() == []
+
+
+def test_private_shared_snapshot_keeps_read_only_and_protected_boundaries(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    shared_repo = tmp_path / "shared"
+    shared_repo.mkdir()
+    shared_root, manifest = _make_shared_snapshot(shared_repo)
+    private_secret = shared_root / _SHARED_SKILL_NAMES[0] / "api-secret.json"
+    private_secret.write_text("PRIVATE_SKILL_SECRET", encoding="utf-8")
+    manager = ContextRepoManager.from_config(context_repos=[{
+        "path": str(shared_repo),
+        "readOnly": True,
+        "allowExec": False,
+        "manifest": str(manifest),
+    }])
+    agent_home = tmp_path / "agent-home"
+    instance_root = tmp_path / "instance"
+    agent_home.mkdir()
+    grants = FolderGrantStore(
+        agent_home=agent_home,
+        instance_root=instance_root,
+        path=instance_root / "webui" / "folder-grants.json",
+    )
+    grants.upsert(
+        {"path": str(workspace), "file_access": "read_only", "commands": False},
+        expected_revision=0,
+    )
+    policy = ResourceAccessPolicy(
+        workspace=workspace,
+        context_manager=manager,
+        restrict_to_workspace=True,
+        folder_grants=grants.view,
+    )
+    skill_file = shared_root / _SHARED_SKILL_NAMES[0] / "SKILL.md"
+    for action in ("write", "edit"):
+        with pytest.raises(PermissionError):
+            policy.validate_path(skill_file, action)
+    for protected in (shared_repo / "AGENTS.md", shared_repo / "nanobot.context.json", private_secret):
+        try:
+            policy.validate_path(protected, "read")
+        except PermissionError as exc:
+            assert "protected" in str(exc)
+        else:
+            pytest.fail(f"path was not protected: {protected}")
+    exec_denial = policy.validate_exec(f"cat {skill_file}", workspace)
+    assert type(exec_denial) is str
+    assert "Command blocked by resource policy" in exec_denial
+
+    payload = webui_skills_payload(
+        workspace,
+        context_manager=manager,
+        resource_policy=policy,
+    )
+    row = next(skill for skill in payload["skills"] if skill["name"] == _SHARED_SKILL_NAMES[0])
+    assert row["deletable"] is False
+    with pytest.raises(SkillManagementError) as caught:
+        delete_webui_skill(
+            workspace,
+            _SHARED_SKILL_NAMES[0],
+            disabled_skills=set(),
+            context_manager=manager,
+            resource_policy=policy,
+        )
+    assert caught.value.status == 403
+    assert skill_file.is_file()
+
+    context_builder = ContextBuilder(
+        workspace,
+        context_manager=manager,
+        resource_policy=policy,
+    )
+    prompt = context_builder.build_system_prompt(include_memory=False)
+    assert "PRIVATE_SHARED_AGENT_INSTRUCTIONS" not in prompt
+    assert manager.context_files() == []
 
 
 def test_disabled_skills_remain_visible_and_loadable(tmp_path: Path) -> None:

@@ -184,11 +184,13 @@ class ResourceAccessPolicy:
         permission_owner: DesktopPermissionOwner | None = None,
         permission_reference: WorkspacePermissionReference | None = None,
     ) -> None:
+        resolved = path.expanduser().resolve(strict=False)
+        if action == "exec":
+            self._deny_context_repo_exec(resolved)
         use_managed_policy = self.managed_mode if managed is None else managed
         if self._explicit_reference_is_live(permission_owner, permission_reference):
             use_managed_policy = True
         self.validate_current_workspace_identity(managed=use_managed_policy)
-        resolved = path.expanduser().resolve(strict=False)
         if use_managed_policy:
             self._validate_managed_private_path(resolved, action)
         if (
@@ -512,11 +514,19 @@ class ResourceAccessPolicy:
         return bool(rel and repo.is_protected(rel))
 
     def validate_exec(self, command: str, cwd: str | Path) -> str | FolderAccessNeededError | None:
+        cwd_path = Path(cwd).expanduser().resolve(strict=False)
+        command_paths = self._extract_command_paths(command, cwd_path)
+        try:
+            self._deny_context_repo_exec(cwd_path)
+            for candidate in command_paths:
+                self._deny_context_repo_exec(candidate)
+        except PermissionError as exc:
+            return f"Error: Command blocked by resource policy ({exc})"
+
         try:
             self.validate_current_workspace_identity()
         except PermissionError as exc:
             return f"Error: Active workspace is unavailable ({exc})"
-        cwd_path = Path(cwd).expanduser().resolve(strict=False)
         if self.managed_mode:
             if self._is_managed_repository_path(cwd_path):
                 return (
@@ -538,7 +548,7 @@ class ResourceAccessPolicy:
         except PermissionError as exc:
             return f"Error: Command blocked by resource policy ({exc})"
 
-        for candidate in self._extract_command_paths(command, cwd_path):
+        for candidate in command_paths:
             if self.managed_mode and self._is_managed_repository_path(candidate):
                 return (
                     "Error: Command blocked by resource policy "
@@ -585,6 +595,15 @@ class ResourceAccessPolicy:
                 except PermissionError as exc:
                     return f"Error: Command blocked by resource policy ({exc})"
         return None
+
+    def _deny_context_repo_exec(self, path: Path) -> None:
+        """Reject execution for any configured context repo that contains the path."""
+        resolved = path.expanduser().resolve(strict=False)
+        for repo in self.context_manager.repos:
+            if not repo.allow_exec and repo.rel_path(resolved) is not None:
+                raise PermissionError(
+                    f"execution is disabled by context repo policy ({repo.name})"
+                )
 
     def managed_repository_roots(self) -> tuple[Path, ...]:
         """Return canonical configured context and target roots for managed exec."""

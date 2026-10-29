@@ -118,6 +118,47 @@ def _enable_full(
 
 
 @pytest.mark.asyncio
+async def test_exec_preflight_denies_disabled_context_cwd_and_reference_before_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "agent-home"
+    shared = tmp_path / "shared"
+    home.mkdir()
+    shared.mkdir()
+    candidate = shared / "script.py"
+    candidate.write_text("pass", encoding="utf-8")
+    alias = home / "shared-alias"
+    alias.symlink_to(shared, target_is_directory=True)
+    (shared / "nanobot.context.json").write_text("{}", encoding="utf-8")
+    manager = ContextRepoManager.from_config(
+        context_repos=[{"path": str(shared), "allowExec": False}],
+    )
+    policy = ResourceAccessPolicy(workspace=home, context_manager=manager)
+    tool = ExecTool(working_dir=str(home), resource_policy=policy)
+    spawns: list[str] = []
+
+    async def record_spawn(*args: object, **kwargs: object) -> None:
+        _ = kwargs
+        spawns.append(str(args[0]) if args else "")
+        raise AssertionError("disabled context repo reached process launch")
+
+    monkeypatch.setattr(tool, "_spawn", record_spawn)
+
+    for command, cwd in (
+        ("python3", str(shared)),
+        (f"cat {candidate}", str(home)),
+        ("cat ../shared/script.py", str(home)),
+        (f"cat {alias / 'script.py'}", str(home)),
+    ):
+        result = await tool.execute(command=command, working_dir=cwd)
+        assert isinstance(result, ToolResult)
+        assert result.is_error
+        assert "execution is disabled" in str(result)
+
+    assert spawns == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("managed_latched", [False, True], ids=["pre-latch", "post-latch"])
 async def test_private_full_authorizes_exec_outside_cwd_before_and_after_managed_latch(
     tmp_path: Path,

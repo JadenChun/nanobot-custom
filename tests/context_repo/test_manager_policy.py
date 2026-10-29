@@ -52,6 +52,130 @@ def test_plain_repository_without_manifest_remains_supported(tmp_path: Path) -> 
     )
 
 
+@pytest.mark.parametrize("manifest_kind", ["relative", "relative-nested", "absolute", "directory"])
+def test_missing_custom_manifest_is_not_downgraded_to_plain_repo(
+    tmp_path: Path, manifest_kind: str,
+) -> None:
+    repo = tmp_path / "shared"
+    repo.mkdir()
+    if manifest_kind == "relative":
+        manifest = "shared.json"
+    elif manifest_kind == "relative-nested":
+        manifest = "nested/shared.json"
+    elif manifest_kind == "directory":
+        manifest_dir = repo / "manifest-dir"
+        manifest_dir.mkdir()
+        manifest = str(manifest_dir)
+    else:
+        manifest = str(tmp_path / "shared.json")
+
+    with pytest.raises(ValueError, match="manifest") as caught:
+        ContextRepoManager.from_config(
+            context_repos=[{"path": str(repo), "manifest": manifest}],
+        )
+
+    assert manifest in str(caught.value)
+
+
+def test_existing_custom_manifest_override_loads(tmp_path: Path) -> None:
+    repo = tmp_path / "shared"
+    repo.mkdir()
+    manifest = repo / "private.json"
+    _write_json(manifest, {"name": "private-snapshot"})
+
+    manager = ContextRepoManager.from_config(
+        context_repos=[{"path": str(repo), "manifest": str(manifest)}],
+    )
+
+    assert manager.repos[0].managed is True
+    assert manager.repos[0].name == "private-snapshot"
+    assert manager.repos[0].manifest_path == manifest
+
+
+@pytest.mark.parametrize("allow_exec", [None, True])
+def test_default_and_true_allow_exec_preserve_read_only_exec_behavior(
+    tmp_path: Path, allow_exec: bool | None,
+) -> None:
+    repo = tmp_path / "shared"
+    repo.mkdir()
+    (repo / "script.py").write_text("pass", encoding="utf-8")
+    config = {"path": str(repo), "readOnly": True}
+    if allow_exec is not None:
+        config["allowExec"] = allow_exec
+    manager = ContextRepoManager.from_config(context_repos=[config])
+    policy = ResourceAccessPolicy(workspace=tmp_path / "workspace", context_manager=manager)
+
+    assert manager.repos[0].allow_exec is True
+    policy.validate_path(repo / "script.py", "exec")
+    assert policy.validate_exec("python3 script.py", repo) is None
+
+
+@pytest.mark.parametrize("order", ["parent-first", "child-first"])
+def test_parent_exec_denial_cannot_be_bypassed_by_nested_context_or_target(
+    tmp_path: Path, order: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    parent = tmp_path / "parent"
+    nested = parent / "nested"
+    nested.mkdir(parents=True)
+    _write_json(parent / "nanobot.context.json", {
+        "targetRepos": {
+            "overlap": {"path": str(nested), "read": ["**"]},
+        },
+    })
+    parent_config = {"path": str(parent), "allowExec": False}
+    child_config = {"path": str(nested), "allowExec": True}
+    configs = (
+        [parent_config, child_config]
+        if order == "parent-first"
+        else [child_config, parent_config]
+    )
+    policy = ResourceAccessPolicy(
+        workspace=workspace,
+        context_manager=ContextRepoManager.from_config(context_repos=configs),
+    )
+
+    for candidate in (nested, nested / "missing.txt"):
+        with pytest.raises(PermissionError, match="execution is disabled") as caught:
+            policy.validate_path(candidate, "exec")
+        assert type(caught.value) is PermissionError
+
+
+@pytest.mark.parametrize("flags", [(True, False), (False, True), (False, False), (True, True)])
+@pytest.mark.parametrize("use_alias", [False, True])
+def test_duplicate_context_attachments_preserve_execution_denial(
+    tmp_path: Path, flags: tuple[bool, bool], use_alias: bool,
+) -> None:
+    repo = tmp_path / "shared"
+    repo.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(repo, target_is_directory=True)
+    _write_json(repo / "nanobot.context.json", {})
+    manager = ContextRepoManager.from_config(context_repos=[
+        {"path": str(repo), "readOnly": True, "autoSync": False, "allowExec": flags[0]},
+        {"path": str(alias if use_alias else repo), "allowExec": flags[1]},
+    ])
+    assert len(manager.repos) == 1
+    assert manager.repos[0].read_only is True
+    assert manager.repos[0].auto_sync is False
+    policy = ResourceAccessPolicy(workspace=workspace, context_manager=manager)
+    candidate = repo / "tool.py"
+    if all(flags):
+        policy.validate_path(candidate, "exec")
+        assert policy.validate_exec(f"python3 {candidate}", workspace) is None
+        assert policy.validate_exec("python3", repo) is None
+    else:
+        with pytest.raises(PermissionError, match="execution is disabled"):
+            policy.validate_path(candidate, "exec")
+        assert "execution is disabled" in str(
+            policy.validate_exec(f"python3 {candidate}", workspace),
+        )
+        assert "execution is disabled" in str(policy.validate_exec("python3", repo))
+
+
 def test_context_repo_manager_loads_manifest_and_contracts(tmp_path: Path) -> None:
     repo = tmp_path / "pota"
     (repo / "skills" / "seo-writer").mkdir(parents=True)
