@@ -41,6 +41,8 @@ interface SettingsPageProps {
   onToggleTheme: () => void;
   onBackToChat: () => void;
   skills: SkillSummary[];
+  skillsCatalogComplete: boolean;
+  skillsCatalogNotice?: string;
   onLogout?: () => void;
   isRestarting: boolean;
   hostChromeInset: boolean;
@@ -56,6 +58,8 @@ export function SettingsPage({
   onToggleTheme,
   onBackToChat,
   skills,
+  skillsCatalogComplete,
+  skillsCatalogNotice,
   onLogout,
   isRestarting,
   hostChromeInset,
@@ -483,7 +487,13 @@ export function SettingsPage({
           />
         );
       case "skills":
-        return <SkillsCatalogSettings skills={skills} />;
+        return (
+          <SkillsCatalogSettings
+            skills={skills}
+            catalogComplete={skillsCatalogComplete}
+            catalogNotice={skillsCatalogNotice}
+          />
+        );
       case "folders":
         return (
           <FoldersProjectsManager

@@ -39,10 +39,14 @@ import { useClient } from "@/providers/ClientProvider";
 
 export function SkillsMarketplace({
   installedSkills,
+  catalogComplete = true,
+  catalogNotice,
   installing,
   onInstallingChange,
 }: {
   installedSkills: SkillSummary[];
+  catalogComplete?: boolean;
+  catalogNotice?: string;
   installing: string;
   onInstallingChange: (skillId: string) => void;
 }) {
@@ -58,7 +62,11 @@ export function SkillsMarketplace({
   const [provider, setProvider] = useState<MarketplaceProvider>("all");
   const [selected, setSelected] = useState<MarketplaceSkillSummary | null>(null);
   const installedNames = useMemo(
-    () => new Set(installedSkills.map((skill) => skill.name)),
+    () => new Set(
+      installedSkills
+        .filter((skill) => skill.verification !== "unverified")
+        .map((skill) => skill.name),
+    ),
     [installedSkills],
   );
   const visibleTrending = useMemo(
@@ -156,6 +164,14 @@ export function SkillsMarketplace({
   }, [getToken, query, t]);
 
   const install = async (skill: MarketplaceSkillSummary) => {
+    if (!catalogComplete) {
+      setSelected(null);
+      setError(catalogNotice ?? t("settings.skills.catalogRestricted", {
+        defaultValue:
+          "Some configured skill sources could not be checked. Protected or unreadable skills cannot be listed or used.",
+      }));
+      return;
+    }
     setSelected(null);
     onInstallingChange(skill.id);
     setError("");
@@ -193,6 +209,23 @@ export function SkillsMarketplace({
 
   return (
     <section className="space-y-4">
+      <p className="text-[12px] leading-5 text-muted-foreground">
+        {t("settings.skills.marketplaceOnlineNotice", {
+          defaultValue:
+            "This view searches skills.sh and SkillHub online. Catalog results are not installed until you choose one.",
+        })}
+      </p>
+      {!catalogComplete ? (
+        <div
+          role="status"
+          className="rounded-control bg-amber-500/10 px-3 py-2.5 text-[12px] leading-5 text-amber-800 dark:text-amber-200"
+        >
+          {catalogNotice ?? t("settings.skills.catalogRestricted", {
+            defaultValue:
+              "Some configured skill sources could not be checked. Protected or unreadable skills cannot be listed or used.",
+          })}
+        </div>
+      ) : null}
       <div className="space-y-2">
         <div className="relative">
           <Search
@@ -257,6 +290,7 @@ export function SkillsMarketplace({
             <MarketplaceSkillGroups
               skills={visibleTrending}
               installedNames={installedNames}
+              catalogComplete={catalogComplete}
               installing={installing}
               trends={trends}
               grouped={provider === "all"}
@@ -282,6 +316,7 @@ export function SkillsMarketplace({
           <MarketplaceSkillGroups
             skills={visibleResults}
             installedNames={installedNames}
+            catalogComplete={catalogComplete}
             installing={installing}
             trends={trends}
             grouped={provider === "all"}
@@ -328,6 +363,7 @@ export function SkillsMarketplace({
               {t("common.cancel", { defaultValue: "Cancel" })}
             </AlertDialogCancel>
             <AlertDialogAction
+              disabled={!catalogComplete || Boolean(installing)}
               onClick={() => {
                 if (selected) void install(selected);
               }}
@@ -380,6 +416,7 @@ function ProviderFilter({
 function MarketplaceSkillGroups({
   skills,
   installedNames,
+  catalogComplete,
   installing,
   trends,
   grouped,
@@ -387,6 +424,7 @@ function MarketplaceSkillGroups({
 }: {
   skills: MarketplaceSkillSummary[];
   installedNames: Set<string>;
+  catalogComplete: boolean;
   installing: string;
   trends: Record<string, number[]>;
   grouped: boolean;
@@ -402,6 +440,7 @@ function MarketplaceSkillGroups({
       <MarketplaceSkillList
         skills={skills}
         installedNames={installedNames}
+        catalogComplete={catalogComplete}
         installing={installing}
         trends={trends}
         onSelect={onSelect}
@@ -433,6 +472,7 @@ function MarketplaceSkillGroups({
             <MarketplaceSkillList
               skills={providerSkills}
               installedNames={installedNames}
+              catalogComplete={catalogComplete}
               installing={installing}
               trends={trends}
               onSelect={onSelect}
@@ -447,29 +487,42 @@ function MarketplaceSkillGroups({
 function MarketplaceSkillList({
   skills,
   installedNames,
+  catalogComplete,
   installing,
   trends,
   onSelect,
 }: {
   skills: MarketplaceSkillSummary[];
   installedNames: Set<string>;
+  catalogComplete: boolean;
   installing: string;
   trends: Record<string, number[]>;
   onSelect: (skill: MarketplaceSkillSummary) => void;
 }) {
   return (
     <div className="space-y-1 px-3 pb-3 sm:px-4">
-      {skills.map((skill) => (
-        <MarketplaceSkillRow
-          key={skill.id}
-          skill={skill}
-          installed={skill.installed || installedNames.has(skill.skill_id)}
-          isInstalling={installing === skill.id}
-          installBusy={Boolean(installing)}
-          trend={trends[skill.id]}
-          onSelect={onSelect}
-        />
-      ))}
+      {skills.map((skill) => {
+        const knownInstalled = installedNames.has(skill.skill_id);
+        const installed = catalogComplete
+          ? skill.installed || knownInstalled
+          : knownInstalled;
+        const installStatusUnknown = !catalogComplete && !knownInstalled;
+        return (
+          <MarketplaceSkillRow
+            key={skill.id}
+            skill={skill}
+            installed={installed}
+            installStatusUnknown={
+              installStatusUnknown || skill.install_status_unknown === true
+            }
+            catalogComplete={catalogComplete}
+            isInstalling={installing === skill.id}
+            installBusy={Boolean(installing)}
+            trend={trends[skill.id]}
+            onSelect={onSelect}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -477,6 +530,8 @@ function MarketplaceSkillList({
 function MarketplaceSkillRow({
   skill,
   installed,
+  installStatusUnknown,
+  catalogComplete,
   isInstalling,
   installBusy,
   trend,
@@ -484,6 +539,8 @@ function MarketplaceSkillRow({
 }: {
   skill: MarketplaceSkillSummary;
   installed: boolean;
+  installStatusUnknown: boolean;
+  catalogComplete: boolean;
   isInstalling: boolean;
   installBusy: boolean;
   trend?: number[];
@@ -526,6 +583,13 @@ function MarketplaceSkillRow({
         </div>
         <div className="mt-1 flex min-w-0 items-center gap-1.5 truncate text-[12px] text-muted-foreground">
           {skill.source}
+          {installStatusUnknown ? (
+            <span className="ml-1 text-amber-700 dark:text-amber-300">
+              · {t("settings.skills.marketplaceInstallUnknown", {
+                defaultValue: "Local install status unknown",
+              })}
+            </span>
+          ) : null}
           {skill.version ? <span>· v{skill.version}</span> : null}
           {skill.provider === "skills_sh" ? (
             <>
@@ -551,7 +615,12 @@ function MarketplaceSkillRow({
         aria-label={`${actionLabel} ${skill.name}`}
         size="icon"
         variant="ghost"
-        disabled={installed || installBusy || !skill.install_supported}
+        disabled={
+          installed
+          || installBusy
+          || !catalogComplete
+          || !skill.install_supported
+        }
         onClick={() => onSelect(skill)}
         className={cn(
           "h-9 w-9 shrink-0 rounded-full bg-muted/70 text-muted-foreground transition-[opacity,color,background-color,transform] hover:scale-[1.03] hover:bg-foreground hover:text-background focus-visible:bg-foreground focus-visible:text-background focus-visible:opacity-100 sm:opacity-[0.55] sm:group-hover:opacity-100",
@@ -559,7 +628,12 @@ function MarketplaceSkillRow({
             "bg-emerald-500/10 text-emerald-700 disabled:opacity-100 dark:text-emerald-300",
         )}
         title={
-          !skill.install_supported
+          installStatusUnknown
+            ? skill.install_disabled_reason ?? t("settings.skills.marketplaceInstallUnknownHelp", {
+                defaultValue:
+                  "The local skill catalog is incomplete, so this skill cannot be safely installed.",
+              })
+            : !skill.install_supported
             ? t("settings.skills.marketplaceNpxRequired", {
                 defaultValue: "Node.js with npx is required",
               })

@@ -39,7 +39,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useSessions } from "@/hooks/useSessions";
 import { useDeferredTitleRefresh } from "@/hooks/useDeferredTitleRefresh";
 import { useSidebarState } from "@/hooks/useSidebarState";
-import { useSkills } from "@/hooks/useSkills";
+import { useSkillsCatalog } from "@/hooks/useSkills";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -1083,7 +1083,8 @@ function Shell({
   const [updatedChatIds, setUpdatedChatIds] = useState<Set<string>>(readSessionUpdateChatIds);
   const [workspaces, setWorkspaces] = useState<WorkspacesPayload | null>(null);
   const workspacesRequestRef = useRef<Promise<void> | null>(null);
-  const skills = useSkills(getToken);
+  const skillCatalog = useSkillsCatalog(getToken);
+  const skills = skillCatalog.skills;
   const pageVisible = usePageVisibility();
   const [settingsSnapshot, setSettingsSnapshot] = useState<SettingsPayload | null>(null);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -2822,6 +2823,8 @@ function Shell({
                     onModelNameChange={onModelNameChange}
                     onSettingsChange={setSettingsSnapshot}
                     skills={skills}
+                    skillsCatalogComplete={skillCatalog.catalog_complete}
+                    skillsCatalogNotice={skillCatalog.catalog_notice}
                     onSectionChange={onSettingsSectionChange}
                     onLogout={onLogout}
                     onRestart={onRestart}

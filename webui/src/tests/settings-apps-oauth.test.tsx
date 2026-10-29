@@ -41,7 +41,7 @@ describe("SettingsView Apps catalog", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") {
+      if (url === "/api/settings/cli-apps?installed_only=1" || url === "/api/settings/cli-apps") {
         return jsonResponse({ apps: [], installed_count: 0 });
       }
       if (url === "/api/settings/mcp-presets") {
@@ -154,7 +154,7 @@ describe("SettingsView Apps catalog", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") {
+      if (url === "/api/settings/cli-apps?installed_only=1" || url === "/api/settings/cli-apps") {
         return jsonResponse({ apps: [], installed_count: 0 });
       }
       if (url === "/api/settings/mcp-presets") {
@@ -167,9 +167,7 @@ describe("SettingsView Apps catalog", () => {
     requestMutationMock.mockRejectedValueOnce(new Error("Stopped after request assertion"));
 
     renderSettingsView({ initialSection: "apps" });
-    fireEvent.click(await screen.findByRole("button", { name: "Ready" }));
-    expect(await screen.findByText("No tools are ready yet.")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Xmind" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Xmind" })).toBeInTheDocument();
 
     fireEvent.click(await screen.findByRole("button", { name: "MCP" }));
 
@@ -221,7 +219,7 @@ describe("SettingsView Apps catalog", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") {
+      if (url === "/api/settings/cli-apps?installed_only=1" || url === "/api/settings/cli-apps") {
         return jsonResponse({ apps: [], installed_count: 0 });
       }
       if (url === "/api/settings/mcp-presets") {
@@ -250,7 +248,7 @@ describe("SettingsView Apps catalog", () => {
     )).toHaveTextContent("Manage");
     expect(mcpPresetRequests).toBe(2);
 
-    fireEvent.click(screen.getByRole("button", { name: "Ready" }));
+    fireEvent.click(screen.getByRole("button", { name: "Configured" }));
     expect(await screen.findByRole("heading", { name: "Xmind" })).toBeInTheDocument();
   });
 
@@ -272,7 +270,7 @@ describe("SettingsView Apps catalog", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") {
+      if (url === "/api/settings/cli-apps?installed_only=1" || url === "/api/settings/cli-apps") {
         return jsonResponse({ apps: [], installed_count: 0 });
       }
       if (url === "/api/settings/mcp-presets") {
@@ -310,9 +308,9 @@ describe("SettingsView Apps catalog", () => {
     const connected = await screen.findByRole("button", { name: "Manage team-docs" });
     expect(connected).toHaveTextContent("Manage");
     expect(connected.querySelector(".lucide-check")).not.toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Ready" }));
+    fireEvent.click(screen.getByRole("button", { name: "Configured" }));
     const readyHeading = await screen.findByRole("heading", { name: "team-docs" });
-    expect(within(readyHeading.closest("article") as HTMLElement).getByText("MCP"))
+    expect(within(readyHeading.closest("article") as HTMLElement).getByText("Custom MCP"))
       .toBeInTheDocument();
   });
 
@@ -329,7 +327,7 @@ describe("SettingsView Apps catalog", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") {
+      if (url === "/api/settings/cli-apps?installed_only=1" || url === "/api/settings/cli-apps") {
         return jsonResponse({ apps: [], installed_count: 0 });
       }
       if (url === "/api/settings/mcp-presets") {
@@ -415,7 +413,7 @@ describe("SettingsView Apps catalog", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") {
+      if (url === "/api/settings/cli-apps?installed_only=1" || url === "/api/settings/cli-apps") {
         return jsonResponse({ apps: [], installed_count: 0 });
       }
       if (url === "/api/settings/mcp-presets") {
@@ -511,7 +509,9 @@ describe("SettingsView Apps catalog", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") return jsonResponse({ apps: [], installed_count: 0 });
+      if (url === "/api/settings/cli-apps?installed_only=1" || url === "/api/settings/cli-apps") {
+        return jsonResponse({ apps: [], installed_count: 0 });
+      }
       if (url === "/api/settings/mcp-presets") {
         return jsonResponse({ presets: [xmindMcpPreset], installed_count: 0 });
       }
@@ -575,7 +575,7 @@ describe("SettingsView Apps catalog", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") {
+      if (url === "/api/settings/cli-apps?installed_only=1" || url === "/api/settings/cli-apps") {
         return jsonResponse({ apps: [], installed_count: 0 });
       }
       if (url === "/api/settings/mcp-presets") {
@@ -629,7 +629,9 @@ describe("SettingsView Apps catalog", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") return jsonResponse({ apps: [], installed_count: 0 });
+      if (url === "/api/settings/cli-apps?installed_only=1" || url === "/api/settings/cli-apps") {
+        return jsonResponse({ apps: [], installed_count: 0 });
+      }
       if (url === "/api/settings/mcp-presets") {
         return jsonResponse({ presets: [xmindMcpPreset], installed_count: 0 });
       }
@@ -682,7 +684,9 @@ describe("SettingsView Apps catalog", () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") return jsonResponse({ apps: [], installed_count: 0 });
+      if (url === "/api/settings/cli-apps?installed_only=1" || url === "/api/settings/cli-apps") {
+        return jsonResponse({ apps: [], installed_count: 0 });
+      }
       if (url === "/api/settings/mcp-presets") {
         return jsonResponse({ presets: [xmindMcpPreset], installed_count: 0 });
       }

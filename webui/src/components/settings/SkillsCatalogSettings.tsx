@@ -35,7 +35,15 @@ import type { SkillDetail, SkillSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useClient } from "@/providers/ClientProvider";
 
-export function SkillsCatalogSettings({ skills }: { skills: SkillSummary[] }) {
+export function SkillsCatalogSettings({
+  skills,
+  catalogComplete = true,
+  catalogNotice,
+}: {
+  skills: SkillSummary[];
+  catalogComplete?: boolean;
+  catalogNotice?: string;
+}) {
   const { t } = useTranslation();
   const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(null);
   const [view, setView] = useState<"installed" | "discover">("installed");
@@ -45,7 +53,21 @@ export function SkillsCatalogSettings({ skills }: { skills: SkillSummary[] }) {
     "all",
   );
   const normalizedQuery = installedQuery.trim().toLowerCase();
-  const filteredSkills = skills.filter((skill) => {
+  const catalogSkills = catalogComplete
+    ? skills
+    : skills.map((skill) =>
+      skill.source !== "workspace" && skill.verification === undefined
+        ? {
+            ...skill,
+            verification: "unverified" as const,
+            available: false,
+            unavailable_reason:
+              skill.unavailable_reason
+              ?? "A higher-priority configured skill library could not be checked.",
+          }
+        : skill,
+    );
+  const filteredSkills = catalogSkills.filter((skill) => {
     const enabled = skill.enabled !== false;
     if (installedFilter === "enabled" && !enabled) return false;
     if (installedFilter === "disabled" && enabled) return false;
@@ -58,8 +80,13 @@ export function SkillsCatalogSettings({ skills }: { skills: SkillSummary[] }) {
   const groupedSkills = [
     {
       key: "workspace",
-      label: t("settings.skills.customGroup", { defaultValue: "Custom" }),
+      label: t("settings.skills.workspaceGroup", { defaultValue: "Workspace" }),
       skills: filteredSkills.filter((skill) => skill.source === "workspace"),
+    },
+    {
+      key: "library",
+      label: t("settings.skills.sharedGroup", { defaultValue: "Shared custom" }),
+      skills: filteredSkills.filter((skill) => skill.source === "library"),
     },
     {
       key: "builtin",
@@ -67,14 +94,19 @@ export function SkillsCatalogSettings({ skills }: { skills: SkillSummary[] }) {
       skills: filteredSkills.filter((skill) => skill.source === "builtin"),
     },
     {
+      key: "plugin",
+      label: t("settings.skills.pluginGroup", { defaultValue: "Plugin" }),
+      skills: filteredSkills.filter((skill) => skill.source === "plugin"),
+    },
+    {
       key: "other",
       label: t("settings.skills.otherGroup", { defaultValue: "Other" }),
       skills: filteredSkills.filter(
-        (skill) => skill.source !== "workspace" && skill.source !== "builtin",
+        (skill) => !["workspace", "library", "builtin", "plugin"].includes(skill.source),
       ),
     },
   ].filter((group) => group.skills.length);
-  const disabledCount = skills.filter((skill) => skill.enabled === false).length;
+  const disabledCount = catalogSkills.filter((skill) => skill.enabled === false).length;
 
   return (
     <div className="space-y-7">
@@ -91,7 +123,7 @@ export function SkillsCatalogSettings({ skills }: { skills: SkillSummary[] }) {
           },
           {
             value: "discover",
-            label: t("settings.skills.discoverTab", { defaultValue: "Discover" }),
+            label: t("settings.skills.browseOnlineTab", { defaultValue: "Browse online" }),
           },
         ]}
         onChange={setView}
@@ -99,6 +131,26 @@ export function SkillsCatalogSettings({ skills }: { skills: SkillSummary[] }) {
 
       {view === "installed" ? (
         <section className="overflow-hidden rounded-panel bg-settings-surface">
+          {!catalogComplete ? (
+            <div
+              role="status"
+              className="mx-4 mt-4 rounded-control bg-amber-500/10 px-3 py-2.5 text-[12px] leading-5 text-amber-800 dark:text-amber-200"
+            >
+              {catalogNotice ?? t("settings.skills.catalogRestricted", {
+                defaultValue:
+                  "Some configured skill sources could not be checked. Protected or unreadable skills cannot be listed or used.",
+              })}
+            </div>
+          ) : null}
+          <p className="px-4 pt-4 text-[12px] leading-5 text-muted-foreground">
+            {t(
+              "settings.skills.sourceAndStatusHelp",
+              {
+                defaultValue:
+                  "Built-in skills ship with nanobot. Shared custom skills come from configured libraries. Workspace shows a storage location; download origin may be unknown. Enabled allows instructions to load; Needs setup means a declared dependency is missing. Neither status tests the workflow.",
+              },
+            )}
+          </p>
           <div className="flex flex-col gap-3 px-4 pb-2 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="relative w-full sm:max-w-[320px]">
               <Search
@@ -122,11 +174,15 @@ export function SkillsCatalogSettings({ skills }: { skills: SkillSummary[] }) {
               className="sm:w-auto"
               itemClassName="px-2.5 text-[11px]"
               options={([
-                ["all", t("settings.skills.filterAll", { defaultValue: "All" }), skills.length],
+                [
+                  "all",
+                  t("settings.skills.filterAll", { defaultValue: "All" }),
+                  catalogSkills.length,
+                ],
                 [
                   "enabled",
                   t("settings.skills.filterEnabled", { defaultValue: "Enabled" }),
-                  skills.length - disabledCount,
+                  catalogSkills.length - disabledCount,
                 ],
                 [
                   "disabled",
@@ -178,7 +234,9 @@ export function SkillsCatalogSettings({ skills }: { skills: SkillSummary[] }) {
         </section>
       ) : (
         <SkillsMarketplace
-          installedSkills={skills}
+          installedSkills={catalogSkills}
+          catalogComplete={catalogComplete}
+          catalogNotice={catalogNotice}
           installing={installingSkill}
           onInstallingChange={setInstallingSkill}
         />
@@ -204,8 +262,17 @@ function SkillCatalogRow({
 }) {
   const { t } = useTranslation();
   const enabled = skill.enabled !== false;
-  const StatusIcon = !enabled ? PowerOff : skill.available ? Check : CircleAlert;
-  const statusLabel = !enabled
+  const unverified = skill.verification === "unverified";
+  const StatusIcon = unverified
+    ? CircleAlert
+    : !enabled
+      ? PowerOff
+      : skill.available
+        ? Check
+        : CircleAlert;
+  const statusLabel = unverified
+    ? t("settings.skills.statusUnverified", { defaultValue: "Unverified" })
+    : !enabled
     ? t("settings.skills.statusDisabled", { defaultValue: "Disabled" })
     : skill.available
       ? t("settings.skills.statusEnabled", { defaultValue: "Enabled" })
@@ -243,10 +310,12 @@ function SkillCatalogRow({
         </p>
       </div>
       <span
-        title={enabled && !skill.available ? skill.unavailable_reason : undefined}
+        title={unverified || (enabled && !skill.available) ? skill.unavailable_reason : undefined}
         className={cn(
           "hidden w-[92px] shrink-0 items-center justify-end gap-1 text-[11px] font-medium sm:inline-flex",
-          !enabled
+          unverified
+            ? "text-amber-700 dark:text-amber-300"
+            : !enabled
             ? "text-muted-foreground"
             : skill.available
               ? "text-emerald-700 dark:text-emerald-300"
@@ -308,9 +377,12 @@ function SkillDetailSheet({
 
   const activeSkill = detail ?? skill;
   const enabled = activeSkill.enabled !== false;
+  const unverified = activeSkill.verification === "unverified";
   const deletable = activeSkill.deletable ?? activeSkill.source === "workspace";
   const sourceLabel = skillSourceLabel(activeSkill.source, t);
-  const statusLabel = !enabled
+  const statusLabel = unverified
+    ? t("settings.skills.statusUnverified", { defaultValue: "Unverified" })
+    : !enabled
     ? t("settings.skills.statusDisabled", { defaultValue: "Disabled" })
     : activeSkill.available
       ? t("settings.skills.statusEnabled", { defaultValue: "Enabled" })
@@ -397,7 +469,9 @@ function SkillDetailSheet({
                   <Pill>{sourceLabel}</Pill>
                   <Pill
                     tone={
-                      !enabled
+                      unverified
+                        ? "warning"
+                        : !enabled
                         ? "muted"
                         : activeSkill.available
                           ? "success"
@@ -754,10 +828,16 @@ function Pill({
 
 function skillSourceLabel(source: string, t: TFunction): string {
   if (source === "workspace") {
-    return t("settings.skills.sourceWorkspace", { defaultValue: "Custom" });
+    return t("settings.skills.sourceWorkspaceLocation", { defaultValue: "Workspace" });
+  }
+  if (source === "library") {
+    return t("settings.skills.sourceLibrary", { defaultValue: "Shared custom" });
   }
   if (source === "builtin") {
     return t("settings.skills.sourceBuiltin", { defaultValue: "Built-in" });
+  }
+  if (source === "plugin") {
+    return t("settings.skills.sourcePlugin", { defaultValue: "Plugin" });
   }
   return source;
 }

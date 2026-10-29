@@ -54,7 +54,7 @@ export function useSystemSettingsState() {
   const [cliAppsError, setCliAppsError] = useState<string | null>(null);
   const [nanobotFeaturesError, setNanobotFeaturesError] = useState<string | null>(null);
   const [cliAppsFocusName, setCliAppsFocusName] = useState<string | null>(null);
-  const [appsKindFilter, setAppsKindFilter] = useState<AppsKindFilter>("cli");
+  const [appsKindFilter, setAppsKindFilter] = useState<AppsKindFilter>("configured");
   const [mcpMessage, setMcpMessage] = useState<string | null>(null);
   const [mcpError, setMcpError] = useState<string | null>(null);
   const [automationsError, setAutomationsError] = useState<string | null>(null);

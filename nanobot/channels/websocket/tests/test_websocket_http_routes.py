@@ -778,6 +778,7 @@ async def test_webui_skills_route_requires_token_and_hides_paths(
             "deletable": True,
             "available": True,
             "unavailable_reason": "",
+            "verification": "verified",
         }
         unavailable = next(skill for skill in body["skills"] if skill["name"] == "zz-unavailable-skill")
         assert unavailable["available"] is False
@@ -825,6 +826,8 @@ async def test_webui_skill_management_routes(
         enabled: bool,
         disabled_skills: set[str],
         config_path: Path | None = None,
+        context_manager: Any = None,
+        resource_policy: Any = None,
     ) -> dict[str, Any]:
         assert workspace == tmp_path
         assert name == "custom-skill"
@@ -838,6 +841,8 @@ async def test_webui_skill_management_routes(
         *,
         disabled_skills: set[str],
         config_path: Path | None = None,
+        context_manager: Any = None,
+        resource_policy: Any = None,
     ) -> dict[str, Any]:
         assert workspace == tmp_path
         assert name == "custom-skill"
@@ -937,6 +942,8 @@ async def test_webui_skills_marketplace_routes_search_and_install(
         *,
         provider: str,
         version: str,
+        context_manager: Any = None,
+        resource_policy: Any = None,
     ) -> dict[str, Any]:
         assert source == "acme/agent-skills"
         assert skill_id == "react-testing"
@@ -979,7 +986,12 @@ async def test_webui_skills_marketplace_routes_search_and_install(
         )
         assert search_response.status_code == 200
         assert search_response.json()["skills"][0]["skill_id"] == "react-testing"
-        search.assert_awaited_once_with("react", tmp_path, provider="all")
+        search.assert_awaited_once()
+        assert search.await_args is not None
+        assert search.await_args.args == ("react", tmp_path)
+        assert search.await_args.kwargs["provider"] == "all"
+        assert search.await_args.kwargs["context_manager"] is not None
+        assert search.await_args.kwargs["resource_policy"] is not None
 
         trending_response = await _http_get(
             f"http://127.0.0.1:{port}/api/webui/skills/trending",
@@ -987,7 +999,12 @@ async def test_webui_skills_marketplace_routes_search_and_install(
         )
         assert trending_response.status_code == 200
         assert trending_response.json()["period"] == "24h"
-        trending.assert_awaited_once_with(tmp_path, provider="all")
+        trending.assert_awaited_once()
+        assert trending.await_args is not None
+        assert trending.await_args.args == (tmp_path,)
+        assert trending.await_args.kwargs["provider"] == "all"
+        assert trending.await_args.kwargs["context_manager"] is not None
+        assert trending.await_args.kwargs["resource_policy"] is not None
 
         trends_response = await _http_get(
             f"http://127.0.0.1:{port}/api/webui/skills/trends"
@@ -1038,6 +1055,8 @@ async def test_webui_skill_install_rejects_overlapping_requests(
         *,
         provider: str,
         version: str,
+        context_manager: Any = None,
+        resource_policy: Any = None,
     ) -> dict[str, Any]:
         started.set()
         await finish.wait()
@@ -1123,6 +1142,8 @@ async def test_webui_skill_install_honors_remote_install_opt_in(
         *,
         provider: str,
         version: str,
+        context_manager: Any = None,
+        resource_policy: Any = None,
     ) -> dict[str, Any]:
         skill_dir = workspace / "skills" / skill_id
         skill_dir.mkdir(parents=True)

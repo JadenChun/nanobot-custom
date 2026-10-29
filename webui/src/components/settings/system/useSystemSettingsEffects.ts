@@ -10,6 +10,7 @@ import {
   fetchApiService,
   fetchAutomations,
   fetchCliApps,
+  fetchInstalledCliApps,
   fetchMcpPresets,
   fetchNanobotFeatures,
 } from "@/lib/api";
@@ -30,6 +31,7 @@ export function useSystemSettingsEffects({
   pageVisible,
 }: SystemSettingsEffectsOptions) {
   const {
+    appsKindFilter,
     setApiService,
     setApiServiceError,
     setApiServiceLoading,
@@ -48,16 +50,22 @@ export function useSystemSettingsEffects({
   } = state;
 
   useEffect(() => {
-    if (activeSection !== "apps") return;
+    if (activeSection !== "apps" || !pageVisible) return;
     let cancelled = false;
     let retry: number | null = null;
     let retryCount = 0;
+    const browseCatalog = appsKindFilter === "cli";
+    const fetchApps = browseCatalog ? fetchCliApps : fetchInstalledCliApps;
     const loadCliApps = (showLoading: boolean) => {
       if (showLoading) setCliAppsLoading(true);
-      fetchCliApps(getToken())
+      fetchApps(getToken())
         .then((payload) => {
           if (cancelled) return;
-          if (payload.catalog_refresh_pending && retryCount < CLI_APPS_REFRESH_MAX_RETRIES) {
+          if (
+            browseCatalog
+            && payload.catalog_refresh_pending
+            && retryCount < CLI_APPS_REFRESH_MAX_RETRIES
+          ) {
             retryCount += 1;
             retry = window.setTimeout(() => {
               retry = null;
@@ -75,12 +83,13 @@ export function useSystemSettingsEffects({
           }
         });
     };
+    setCliAppsError(null);
     loadCliApps(true);
     return () => {
       cancelled = true;
       if (retry !== null) window.clearTimeout(retry);
     };
-  }, [activeSection, getToken]);
+  }, [activeSection, appsKindFilter, getToken, pageVisible]);
 
   useEffect(() => {
     if (

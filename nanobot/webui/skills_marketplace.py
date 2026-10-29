@@ -18,8 +18,11 @@ from urllib.parse import quote, urlparse
 import httpx
 
 from nanobot.agent.skills import SkillsLoader
+from nanobot.context_repo.manager import ContextRepoManager
+from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.security.network import PinnedDNSAsyncTransport
 from nanobot.security.workspace_policy import WorkspaceBoundaryError, require_path_within
+from nanobot.webui.skills_api import SkillInventory, build_skill_inventory
 
 _PROVIDER_ALL = "all"
 _PROVIDER_SKILLS_SH = "skills_sh"
@@ -52,6 +55,10 @@ _SKILLHUB_MAX_UNPACKED_BYTES = 100 * 1024 * 1024
 _SKILLHUB_MAX_FILES = 1_000
 # The skills CLI's OpenClaw adapter copies into <workspace>/skills, nanobot's layout too.
 _CLI_AGENT = "openclaw"
+_INCOMPLETE_INSTALL_MESSAGE = (
+    "The local skill catalog is incomplete, so this skill cannot be safely installed."
+)
+_UNKNOWN_LOCAL_STATUS_MESSAGE = "Local install status is unknown while a configured library is restricted."
 _weekly_cache: dict[tuple[str, str], list[int]] = {}
 _weekly_cache_expires_at = 0.0
 
@@ -81,40 +88,57 @@ async def trending_marketplace_skills(
     *,
     limit: int = 8,
     provider: str = _PROVIDER_ALL,
+    context_manager: ContextRepoManager | None = None,
+    resource_policy: ResourceAccessPolicy | None = None,
+    extra_skill_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Return provider-aware marketplace rankings without mixing metric semantics."""
+    inventory = build_skill_inventory(
+        workspace_path,
+        context_manager=context_manager,
+        resource_policy=resource_policy,
+        extra_skill_paths=extra_skill_paths,
+    )
     selected = _valid_provider(provider)
     if selected == _PROVIDER_SKILLHUB:
-        return await _trending_skillhub_skills(workspace_path, limit=limit)
+        return await _trending_skillhub_skills(workspace_path, inventory, limit=limit)
     if selected == _PROVIDER_SKILLS_SH:
-        return await _trending_skills_sh_skills(workspace_path, limit=limit)
+        return await _trending_skills_sh_skills(workspace_path, inventory, limit=limit)
 
     results = await asyncio.gather(
-        _trending_skills_sh_skills(workspace_path, limit=limit),
-        _trending_skillhub_skills(workspace_path, limit=limit),
+        _trending_skills_sh_skills(workspace_path, inventory, limit=limit),
+        _trending_skillhub_skills(workspace_path, inventory, limit=limit),
         return_exceptions=True,
     )
-    payloads = [result for result in results if isinstance(result, dict)]
+    payloads: list[dict[str, Any]] = [
+        result for result in results if isinstance(result, dict)
+    ]
     if not payloads:
         raise SkillsMarketplaceError(
             "skill marketplaces are temporarily unavailable",
             status=502,
         )
-    return {
-        "skills": [
-            skill
-            for payload in payloads
-            for skill in payload.get("skills", [])
-            if isinstance(skill, dict)
-        ],
+    skills = [
+        cast(dict[str, Any], skill)
+        for payload in payloads
+        for skill in cast(list[object], payload.get("skills", []))
+        if isinstance(skill, dict)
+    ]
+    payload: dict[str, Any] = {
+        "skills": skills,
         "period": "mixed",
         "provider": _PROVIDER_ALL,
-        "install_supported": any(bool(payload.get("install_supported")) for payload in payloads),
+        "install_supported": (
+            inventory.catalog_complete
+            and any(bool(payload.get("install_supported")) for payload in payloads)
+        ),
     }
+    return _with_catalog_status(payload, inventory)
 
 
 async def _trending_skills_sh_skills(
     workspace_path: Path,
+    inventory: SkillInventory,
     *,
     limit: int,
 ) -> dict[str, Any]:
@@ -130,7 +154,7 @@ async def _trending_skills_sh_skills(
             status=502,
         ) from exc
 
-    installed = _installed_skill_names(workspace_path)
+    installed = _verified_skill_names(inventory)
     rows = payload.get("skills", [])
     skills: list[dict[str, Any]] = []
     seen_sources: set[str] = set()
@@ -144,17 +168,19 @@ async def _trending_skills_sh_skills(
         skill = _marketplace_skill(row_payload, installed, rank=rank)
         if skill is None:
             continue
+        _annotate_local_install_status(skill, inventory)
         seen_sources.add(source)
         skills.append(skill)
         if len(skills) >= min(max(limit, 1), 20):
             break
 
-    return {
+    payload = {
         "skills": skills,
         "period": "24h",
         "provider": _PROVIDER_SKILLS_SH,
-        "install_supported": skills_install_supported(),
+        "install_supported": inventory.catalog_complete and skills_install_supported(),
     }
+    return _with_catalog_status(payload, inventory)
 
 
 async def search_marketplace_skills(
@@ -163,6 +189,9 @@ async def search_marketplace_skills(
     *,
     limit: int = 20,
     provider: str = _PROVIDER_ALL,
+    context_manager: ContextRepoManager | None = None,
+    resource_policy: ResourceAccessPolicy | None = None,
+    extra_skill_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Search one or all catalogs and annotate locally installed results."""
     normalized = " ".join(query.split())
@@ -171,39 +200,53 @@ async def search_marketplace_skills(
     if len(normalized) > 100:
         raise SkillsMarketplaceError("search query is too long")
 
+    inventory = build_skill_inventory(
+        workspace_path,
+        context_manager=context_manager,
+        resource_policy=resource_policy,
+        extra_skill_paths=extra_skill_paths,
+    )
     selected = _valid_provider(provider)
     if selected == _PROVIDER_SKILLHUB:
-        return await _search_skillhub_skills(normalized, workspace_path, limit=limit)
+        return await _search_skillhub_skills(normalized, workspace_path, inventory, limit=limit)
     if selected == _PROVIDER_SKILLS_SH:
-        return await _search_skills_sh_skills(normalized, workspace_path, limit=limit)
+        return await _search_skills_sh_skills(normalized, workspace_path, inventory, limit=limit)
 
     results = await asyncio.gather(
-        _search_skills_sh_skills(normalized, workspace_path, limit=limit),
-        _search_skillhub_skills(normalized, workspace_path, limit=limit),
+        _search_skills_sh_skills(normalized, workspace_path, inventory, limit=limit),
+        _search_skillhub_skills(normalized, workspace_path, inventory, limit=limit),
         return_exceptions=True,
     )
-    payloads = [result for result in results if isinstance(result, dict)]
+    payloads: list[dict[str, Any]] = [
+        result for result in results if isinstance(result, dict)
+    ]
     if not payloads:
         raise SkillsMarketplaceError(
             "skill marketplaces are temporarily unavailable",
             status=502,
         )
-    return {
+    skills = [
+        cast(dict[str, Any], skill)
+        for payload in payloads
+        for skill in cast(list[object], payload.get("skills", []))
+        if isinstance(skill, dict)
+    ]
+    payload: dict[str, Any] = {
         "query": normalized,
-        "skills": [
-            skill
-            for payload in payloads
-            for skill in payload.get("skills", [])
-            if isinstance(skill, dict)
-        ],
+        "skills": skills,
         "provider": _PROVIDER_ALL,
-        "install_supported": any(bool(payload.get("install_supported")) for payload in payloads),
+        "install_supported": (
+            inventory.catalog_complete
+            and any(bool(payload.get("install_supported")) for payload in payloads)
+        ),
     }
+    return _with_catalog_status(payload, inventory)
 
 
 async def _search_skills_sh_skills(
     normalized: str,
     workspace_path: Path,
+    inventory: SkillInventory,
     *,
     limit: int,
 ) -> dict[str, Any]:
@@ -221,7 +264,7 @@ async def _search_skills_sh_skills(
             status=502,
         ) from exc
 
-    installed = _installed_skill_names(workspace_path)
+    installed = _verified_skill_names(inventory)
     rows = payload.get("skills", [])
     skills: list[dict[str, Any]] = []
     for row in rows:
@@ -229,19 +272,22 @@ async def _search_skills_sh_skills(
             continue
         skill = _marketplace_skill(cast(dict[str, Any], row), installed)
         if skill is not None:
+            _annotate_local_install_status(skill, inventory)
             skills.append(skill)
 
-    return {
+    payload = {
         "query": normalized,
         "skills": skills,
         "provider": _PROVIDER_SKILLS_SH,
-        "install_supported": skills_install_supported(),
+        "install_supported": inventory.catalog_complete and skills_install_supported(),
     }
+    return _with_catalog_status(payload, inventory)
 
 
 async def _search_skillhub_skills(
     normalized: str,
     workspace_path: Path,
+    inventory: SkillInventory,
     *,
     limit: int,
 ) -> dict[str, Any]:
@@ -259,24 +305,28 @@ async def _search_skillhub_skills(
             status=502,
         ) from exc
 
-    installed = _installed_skill_names(workspace_path)
+    installed = _verified_skill_names(inventory)
     rows = payload.get("results", [])
-    skills = [
-        skill
-        for row in rows
-        if isinstance(row, dict)
-        if (skill := _skillhub_skill(cast(dict[str, Any], row), installed)) is not None
-    ]
-    return {
+    skills: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        skill = _skillhub_skill(cast(dict[str, Any], row), installed)
+        if skill is not None:
+            _annotate_local_install_status(skill, inventory)
+            skills.append(skill)
+    payload = {
         "query": normalized,
         "skills": skills,
         "provider": _PROVIDER_SKILLHUB,
-        "install_supported": True,
+        "install_supported": inventory.catalog_complete,
     }
+    return _with_catalog_status(payload, inventory)
 
 
 async def _trending_skillhub_skills(
     workspace_path: Path,
+    inventory: SkillInventory,
     *,
     limit: int,
 ) -> dict[str, Any]:
@@ -291,7 +341,7 @@ async def _trending_skillhub_skills(
             status=502,
         ) from exc
 
-    installed = _installed_skill_names(workspace_path)
+    installed = _verified_skill_names(inventory)
     rows = payload.get("skills", [])
     skills: list[dict[str, Any]] = []
     for rank, row in enumerate(rows, start=1):
@@ -299,15 +349,17 @@ async def _trending_skillhub_skills(
             continue
         skill = _skillhub_skill(cast(dict[str, Any], row), installed, rank=rank)
         if skill is not None:
+            _annotate_local_install_status(skill, inventory)
             skills.append(skill)
         if len(skills) >= min(max(limit, 1), 20):
             break
-    return {
+    payload = {
         "skills": skills,
         "period": "trending",
         "provider": _PROVIDER_SKILLHUB,
-        "install_supported": True,
+        "install_supported": inventory.catalog_complete,
     }
+    return _with_catalog_status(payload, inventory)
 
 
 async def marketplace_skill_trends(
@@ -338,8 +390,30 @@ async def install_marketplace_skill(
     *,
     provider: str = _PROVIDER_SKILLS_SH,
     version: str = "",
+    context_manager: ContextRepoManager | None = None,
+    resource_policy: ResourceAccessPolicy | None = None,
+    extra_skill_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Install one normalized marketplace result into ``<workspace>/skills``."""
+    workspace = workspace_path.expanduser().resolve()
+    if (workspace / "skills").is_symlink():
+        raise SkillsMarketplaceError("skills directory must stay inside the workspace", status=403)
+    inventory = build_skill_inventory(
+        workspace_path,
+        context_manager=context_manager,
+        resource_policy=resource_policy,
+        extra_skill_paths=extra_skill_paths,
+    )
+    existing = inventory.find(skill_id)
+    if existing is not None and existing.verification == "verified":
+        return {
+            "installed": True,
+            "already_installed": True,
+            "name": skill_id,
+            **({"provider": _PROVIDER_SKILLHUB} if provider == _PROVIDER_SKILLHUB else {}),
+        }
+    if not inventory.catalog_complete:
+        raise SkillsMarketplaceError(_INCOMPLETE_INSTALL_MESSAGE, status=409)
     selected = _valid_provider(provider, allow_all=False)
     if selected == _PROVIDER_SKILLHUB:
         return await _install_skillhub_skill(skill_id, version, workspace_path)
@@ -740,10 +814,39 @@ def _skillhub_client() -> httpx.AsyncClient:
     )
 
 
-def _installed_skill_names(workspace_path: Path) -> set[str]:
+def _verified_skill_names(inventory: SkillInventory) -> set[str]:
     return {
-        entry["name"]
-        for entry in SkillsLoader(workspace_path).list_skills(filter_unavailable=False)
+        entry.name
+        for entry in inventory.entries
+        if entry.verification == "verified"
+    }
+
+
+def _annotate_local_install_status(
+    skill: dict[str, Any],
+    inventory: SkillInventory,
+) -> None:
+    if inventory.catalog_complete:
+        return
+    if skill.get("skill_id") in _verified_skill_names(inventory):
+        return
+    skill["installed"] = False
+    skill["install_supported"] = False
+    skill["install_status_unknown"] = True
+    skill["install_disabled_reason"] = _UNKNOWN_LOCAL_STATUS_MESSAGE
+
+
+def _with_catalog_status(
+    payload: dict[str, Any],
+    inventory: SkillInventory,
+) -> dict[str, Any]:
+    if inventory.catalog_complete:
+        return payload
+    return {
+        **payload,
+        "catalog_complete": False,
+        "catalog_notice": inventory.catalog_notice,
+        "local_install_status_unknown": True,
     }
 
 

@@ -59,7 +59,7 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export type AppsKindFilter = "ready" | "cli" | "mcp";
+export type AppsKindFilter = "configured" | "cli" | "mcp";
 type AppsCatalogItem =
   | { id: string; kind: "cli"; app: CliAppInfo }
   | { id: string; kind: "mcp"; preset: McpPresetInfo };
@@ -182,8 +182,8 @@ export function AppsCatalogSettings({
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
   const filterOptions = [
-    { value: "ready", label: tx("settings.apps.filterAll", "Ready") },
-    { value: "cli", label: tx("settings.apps.filterCli", "Apps") },
+    { value: "configured", label: tx("settings.apps.filterConfigured", "Configured") },
+    { value: "cli", label: tx("settings.apps.filterBrowseApps", "Browse apps") },
     { value: "mcp", label: tx("settings.apps.filterMcp", "MCP") },
   ];
   const normalizedQuery = query.trim().toLowerCase();
@@ -196,12 +196,12 @@ export function AppsCatalogSettings({
     })),
   ]
     .filter((item) => {
-      if (normalizedQuery) return appsSearchText(item).includes(normalizedQuery);
-      if (filter === "ready") return appsReady(item);
-      if (filter === "cli") {
-        return item.kind === "cli" || item.preset.source === "agent-plugin";
-      }
-      return item.kind === "mcp" && item.preset.source !== "agent-plugin";
+      const inFilter = filter === "configured"
+        ? appsConfigured(item)
+        : filter === "cli"
+          ? item.kind === "cli" || item.preset.source === "agent-plugin"
+          : item.kind === "mcp" && item.preset.source !== "agent-plugin";
+      return inFilter && (!normalizedQuery || appsSearchText(item).includes(normalizedQuery));
     })
     .sort((left, right) => {
       const rank = Number(!appsReady(left)) - Number(!appsReady(right));
@@ -221,7 +221,7 @@ export function AppsCatalogSettings({
       ? tx("settings.apps.emptyApps", "No apps available.")
       : filter === "mcp"
         ? tx("settings.apps.emptyIntegrations", "No MCP tools available.")
-        : tx("settings.apps.emptyReady", "No tools are ready yet.");
+        : tx("settings.apps.emptyConfigured", "No apps or integrations are configured yet.");
   const emptyBrowseTarget: AppsKindFilter | null = normalizedQuery
     ? null
     : filter === "cli"
@@ -267,6 +267,22 @@ export function AppsCatalogSettings({
             onChange={(value) => onFilterChange(value as AppsKindFilter)}
           />
         </div>
+        <p className="text-[12px] leading-5 text-muted-foreground">
+          {filter === "configured"
+            ? tx(
+              "settings.apps.configuredDescription",
+              "Shows your installed apps, configured MCP servers, and plugins. Setup and connection status are shown for each integration.",
+            )
+            : filter === "cli"
+              ? tx(
+                "settings.apps.onlineCatalogDescription",
+                "Browse the online CLI app catalogs. Catalog entries are not installed apps.",
+              )
+              : tx(
+                "settings.apps.mcpDescription",
+                "MCP presets are bundled options; custom entries come from your configuration. Connection status is shown for each server.",
+              )}
+        </p>
       </section>
 
       {statusMessage ? (
@@ -292,9 +308,11 @@ export function AppsCatalogSettings({
       <section className="rounded-panel bg-settings-surface px-3 py-3 sm:px-4">
         <div className="flex items-center justify-between border-b border-border/45 pb-3">
           <SettingsSectionTitle>
-            {filter === "mcp"
-              ? tx("settings.apps.mcpTools", "MCP tools")
-              : tx("settings.apps.featured", "Tools")}
+            {filter === "configured"
+              ? tx("settings.apps.configuredItems", "Configured apps and integrations")
+              : filter === "mcp"
+                ? tx("settings.apps.mcpTools", "MCP tools")
+                : tx("settings.apps.featured", "Tools")}
           </SettingsSectionTitle>
           <span className="rounded-full bg-muted px-2.5 py-1 text-[12px] font-medium text-muted-foreground">
             {items.length}
@@ -328,7 +346,7 @@ export function AppsCatalogSettings({
                   oauthCompleting={mcpOAuthCompleting}
                   oauthCallbackError={mcpOAuthCallbackError}
                   showBrandLogos={showBrandLogos}
-                  showTypeBadge={filter !== "mcp"}
+                  showTypeBadge
                   onFieldChange={onMcpFieldChange}
                   onAction={onMcpAction}
                   onOAuthConnect={onMcpOAuthConnect}
@@ -417,7 +435,11 @@ function CliAppsCatalogRow({
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline gap-2">
           <h3 className="truncate text-[14px] font-semibold leading-5 text-foreground">{app.display_name}</h3>
-          <AppsTypeBadge>{tx("settings.apps.cliLabel", "App")}</AppsTypeBadge>
+          <AppsTypeBadge>
+            {app.installed
+              ? tx("settings.apps.sourceCliInstalled", "Installed CLI")
+              : tx("settings.apps.sourceCliCatalog", "Online catalog")}
+          </AppsTypeBadge>
         </div>
         <p className="mt-0.5 truncate text-[12.5px] leading-5 text-muted-foreground">{description}</p>
       </div>
@@ -592,8 +614,10 @@ function McpAppsCatalogRow({
             {showTypeBadge ? (
               <AppsTypeBadge>
                 {agentPlugin
-                  ? tx("settings.apps.filterPlugins", "Plugins")
-                  : tx("settings.apps.mcpLabel", "MCP")}
+                  ? tx("settings.apps.sourceAgentPlugin", "Agent plugin")
+                  : preset.source === "custom"
+                    ? tx("settings.apps.sourceCustomMcp", "Custom MCP")
+                    : tx("settings.apps.sourceBundledMcp", "Built-in MCP preset")}
               </AppsTypeBadge>
             ) : null}
           </div>
@@ -941,6 +965,11 @@ function appsReady(item: AppsCatalogItem): boolean {
   return item.preset.installed &&
     item.preset.configured &&
     item.preset.runtime_status === "connected";
+}
+
+function appsConfigured(item: AppsCatalogItem): boolean {
+  if (item.kind === "cli") return item.app.installed;
+  return item.preset.source === "agent-plugin" || item.preset.installed || item.preset.configured;
 }
 
 function appsSearchText(item: AppsCatalogItem): string {

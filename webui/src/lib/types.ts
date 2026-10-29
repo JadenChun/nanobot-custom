@@ -249,6 +249,7 @@ export interface SkillSummary {
   deletable?: boolean;
   available: boolean;
   unavailable_reason?: string;
+  verification?: "verified" | "unverified";
 }
 
 interface SkillRequirements {
@@ -271,7 +272,11 @@ export interface SkillDetail extends SkillSummary {
   raw_markdown: string;
 }
 
-export interface SkillsPayload { skills: SkillSummary[]; }
+export interface SkillsPayload {
+  skills: SkillSummary[];
+  catalog_complete?: boolean;
+  catalog_notice?: string;
+}
 
 export interface SkillActionPayload extends SkillsPayload {
   last_action: {
@@ -297,6 +302,8 @@ export interface MarketplaceSkillSummary {
   verified?: boolean;
   requires_api_key?: boolean;
   rank?: number;
+  install_status_unknown?: boolean;
+  install_disabled_reason?: string;
 }
 
 export type MarketplaceProvider = "all" | "skills_sh" | "skillhub";
@@ -306,6 +313,9 @@ export interface SkillsSearchPayload {
   skills: MarketplaceSkillSummary[];
   provider: MarketplaceProvider;
   install_supported: boolean;
+  catalog_complete?: boolean;
+  catalog_notice?: string;
+  local_install_status_unknown?: boolean;
 }
 
 export interface SkillsTrendingPayload {
@@ -313,6 +323,9 @@ export interface SkillsTrendingPayload {
   period: "24h" | "trending" | "mixed";
   provider: MarketplaceProvider;
   install_supported: boolean;
+  catalog_complete?: boolean;
+  catalog_notice?: string;
+  local_install_status_unknown?: boolean;
 }
 
 export interface SkillsTrendsPayload {

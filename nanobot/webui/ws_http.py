@@ -27,6 +27,8 @@ from websockets.http11 import Response
 
 from nanobot.bus.outbound_events import SessionUpdatedEvent
 from nanobot.command.builtin import builtin_command_palette
+from nanobot.context_repo.manager import ContextRepoManager
+from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.cron.definition_store import DefinitionStoreConflictError
 from nanobot.cron.service import (
     CronDefinitionConflictError,
@@ -373,6 +375,9 @@ class GatewayHTTPHandler:
         workspaces: WebUIWorkspaceController,
         settings: WebUISettingsServices,
         skills_workspace_path: Path,
+        context_manager: ContextRepoManager | None = None,
+        resource_policy: ResourceAccessPolicy | None = None,
+        default_restrict_to_workspace: bool = False,
         disabled_skills: set[str] | None = None,
         cron_service: CronService | None = None,
         local_trigger_store: LocalTriggerStore | None = None,
@@ -408,6 +413,17 @@ class GatewayHTTPHandler:
             )
         self.settings = settings
         self.skills_workspace_path = skills_workspace_path
+        self.skills_context_manager = context_manager or ContextRepoManager()
+        self.skills_resource_policy = resource_policy or ResourceAccessPolicy(
+            workspace=skills_workspace_path,
+            context_manager=self.skills_context_manager,
+            restrict_to_workspace=default_restrict_to_workspace,
+            folder_grants=(
+                workspaces.grant_store.view
+                if workspaces.grant_store is not None
+                else None
+            ),
+        )
         self.disabled_skills: set[str] = (
             disabled_skills if disabled_skills is not None else set()
         )
@@ -1870,6 +1886,8 @@ class GatewayHTTPHandler:
             webui_skills_payload(
                 self.skills_workspace_path,
                 disabled_skills=self.disabled_skills,
+                context_manager=self.skills_context_manager,
+                resource_policy=self.skills_resource_policy,
             )
         )
 
@@ -1884,6 +1902,8 @@ class GatewayHTTPHandler:
                 query,
                 self.skills_workspace_path,
                 provider=provider,
+                context_manager=self.skills_context_manager,
+                resource_policy=self.skills_resource_policy,
             )
         except SkillsMarketplaceError as exc:
             return _http_error(exc.status, exc.message)
@@ -1900,6 +1920,8 @@ class GatewayHTTPHandler:
             payload = await trending_marketplace_skills(
                 self.skills_workspace_path,
                 provider=provider,
+                context_manager=self.skills_context_manager,
+                resource_policy=self.skills_resource_policy,
             )
         except SkillsMarketplaceError as exc:
             return _http_error(exc.status, exc.message)
@@ -1944,6 +1966,8 @@ class GatewayHTTPHandler:
                     self.skills_workspace_path,
                     provider=provider,
                     version=version,
+                    context_manager=self.skills_context_manager,
+                    resource_policy=self.skills_resource_policy,
                 )
             except SkillsMarketplaceError as exc:
                 return _http_error(exc.status, exc.message)
@@ -1954,6 +1978,8 @@ class GatewayHTTPHandler:
             **webui_skills_payload(
                 self.skills_workspace_path,
                 disabled_skills=self.disabled_skills,
+                context_manager=self.skills_context_manager,
+                resource_policy=self.skills_resource_policy,
             ),
             "last_action": action,
         })
@@ -1985,6 +2011,8 @@ class GatewayHTTPHandler:
                     enabled=raw_enabled == "true",
                     disabled_skills=self.disabled_skills,
                     config_path=config_path,
+                    context_manager=self.skills_context_manager,
+                    resource_policy=self.skills_resource_policy,
                 )
             )
         except SkillManagementError as exc:
@@ -1994,6 +2022,8 @@ class GatewayHTTPHandler:
             **webui_skills_payload(
                 self.skills_workspace_path,
                 disabled_skills=self.disabled_skills,
+                context_manager=self.skills_context_manager,
+                resource_policy=self.skills_resource_policy,
             ),
             "last_action": action,
         })
@@ -2015,6 +2045,8 @@ class GatewayHTTPHandler:
                     name,
                     disabled_skills=self.disabled_skills,
                     config_path=config_path,
+                    context_manager=self.skills_context_manager,
+                    resource_policy=self.skills_resource_policy,
                 )
             )
         except SkillManagementError as exc:
@@ -2024,6 +2056,8 @@ class GatewayHTTPHandler:
             **webui_skills_payload(
                 self.skills_workspace_path,
                 disabled_skills=self.disabled_skills,
+                context_manager=self.skills_context_manager,
+                resource_policy=self.skills_resource_policy,
             ),
             "last_action": action,
         })
@@ -2044,6 +2078,8 @@ class GatewayHTTPHandler:
             self.skills_workspace_path,
             name,
             disabled_skills=self.disabled_skills,
+            context_manager=self.skills_context_manager,
+            resource_policy=self.skills_resource_policy,
         )
         if payload is None:
             return _http_error(404, "skill not found")

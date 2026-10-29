@@ -15,6 +15,8 @@ interface SettingsViewProps {
   onModelNameChange: (modelName: string | null) => void;
   onSettingsChange?: (payload: SettingsPayload) => void;
   skills?: SkillSummary[];
+  skillsCatalogComplete?: boolean;
+  skillsCatalogNotice?: string;
   onSectionChange?: (section: SettingsSectionKey) => void;
   onLogout?: () => void;
   onRestart?: () => void;
@@ -36,6 +38,8 @@ export function SettingsView({
   onModelNameChange,
   onSettingsChange,
   skills = [],
+  skillsCatalogComplete = true,
+  skillsCatalogNotice,
   onSectionChange,
   onLogout,
   onRestart,
@@ -64,6 +68,8 @@ export function SettingsView({
       onToggleTheme={onToggleTheme}
       onBackToChat={onBackToChat}
       skills={skills}
+      skillsCatalogComplete={skillsCatalogComplete}
+      skillsCatalogNotice={skillsCatalogNotice}
       onLogout={onLogout}
       isRestarting={isRestarting}
       hostChromeInset={hostChromeInset}

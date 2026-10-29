@@ -1126,7 +1126,7 @@ describe("App layout", () => {
 
     expect(await screen.findByRole("heading", { name: "Skills" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Search installed skills" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Custom" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Workspace" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Built-in" })).toBeInTheDocument();
     expect(screen.getByText("cron")).toBeInTheDocument();
     expect(screen.getByText("github")).toBeInTheDocument();
@@ -1356,7 +1356,7 @@ describe("App layout", () => {
     await waitFor(() => expect(connectSpy).toHaveBeenCalled());
     const sidebar = screen.getByRole("navigation", { name: "Sidebar navigation" });
     fireEvent.click(within(sidebar).getByRole("button", { name: "Skills" }));
-    const discoverTab = await screen.findByRole("tab", { name: "Discover" });
+    const discoverTab = await screen.findByRole("tab", { name: "Browse online" });
     expect(discoverTab.querySelector("svg")).toBeNull();
     fireEvent.click(discoverTab);
     expect(
@@ -1409,7 +1409,7 @@ describe("App layout", () => {
       );
     });
     fireEvent.click(screen.getByRole("tab", { name: "Installed" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Discover" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Browse online" }));
     expect(
       await screen.findByRole("button", { name: "Install find-skills" }),
     ).toBeDisabled();

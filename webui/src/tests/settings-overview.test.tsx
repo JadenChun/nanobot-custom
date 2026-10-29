@@ -81,6 +81,9 @@ describe("Settings overview and appearance", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url === "/api/settings") return jsonResponse(settingsPayload());
+        if (url === "/api/settings/cli-apps?installed_only=1") {
+          return jsonResponse({ apps: [], installed_count: 0 });
+        }
         if (url === "/api/settings/cli-apps") {
           return jsonResponse({
             apps: [],
@@ -98,6 +101,7 @@ describe("Settings overview and appearance", () => {
 
     renderSettingsView();
 
+    fireEvent.click(await screen.findByRole("button", { name: "Browse apps" }));
     expect(await screen.findByText("No apps available.")).toBeInTheDocument();
     expect(screen.queryByText("Loading Apps...")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Browse MCP tools" }));

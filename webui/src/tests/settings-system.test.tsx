@@ -50,7 +50,9 @@ describe("Settings system domains", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
-      if (url === "/api/settings/cli-apps") return jsonResponse({ apps: [], installed_count: 0 });
+      if (url === "/api/settings/cli-apps?installed_only=1") {
+        return jsonResponse({ apps: [], installed_count: 0 });
+      }
       if (url === "/api/settings/mcp-presets") {
         return jsonResponse({ presets: [agentPlugin], installed_count: 0 });
       }
@@ -72,7 +74,7 @@ describe("Settings system domains", () => {
     renderSettingsView();
 
     expect(await screen.findByText("Computer Use")).toBeInTheDocument();
-    expect(screen.getByText("Plugins")).toBeInTheDocument();
+    expect(screen.getByText("Agent plugin")).toBeInTheDocument();
     expect(screen.getByText(/Control the desktop.*screen-recording, accessibility/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Enable" }));
 
@@ -236,6 +238,13 @@ describe("Settings system domains", () => {
       if (url === "/api/settings") {
         return jsonResponse(settingsPayload());
       }
+      if (url === "/api/settings/cli-apps?installed_only=1") {
+        return jsonResponse({
+          apps: [installedAnyGen],
+          installed_count: 1,
+          catalog_updated_at: "2026-04-18",
+        });
+      }
       if (url === "/api/settings/cli-apps") {
         return jsonResponse({
           apps: [installedAnyGen],
@@ -286,6 +295,9 @@ describe("Settings system domains", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/settings") return jsonResponse(settingsPayload());
+      if (url === "/api/settings/cli-apps?installed_only=1") {
+        return jsonResponse({ apps: [], installed_count: 0 });
+      }
       if (url === "/api/settings/cli-apps") {
         return jsonResponse({
           apps: [{ ...installedAnyGen, installed: false, status: "available" }],
@@ -318,12 +330,15 @@ describe("Settings system domains", () => {
 
     renderSettingsView({ initialSection: "apps" });
 
+    const browseApps = await screen.findByRole("button", { name: "Browse apps" });
+    expect(screen.queryByText("AnyGen")).not.toBeInTheDocument();
+    fireEvent.click(browseApps);
     expect(await screen.findByText("AnyGen")).toBeInTheDocument();
     expect(
       screen.queryByText("Add tools to nanobot, then @ them in chat."),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ready" })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByRole("button", { name: "Apps" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Configured" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Browse apps" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "MCP" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Plugins" })).not.toBeInTheDocument();
     expect(screen.queryByText("Api")).not.toBeInTheDocument();

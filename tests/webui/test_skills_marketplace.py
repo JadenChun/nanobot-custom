@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
+from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.webui.skills_marketplace import (
     SkillsMarketplaceError,
     _valid_skillhub_download_url,
@@ -94,6 +96,239 @@ async def test_search_marketplace_skills_filters_and_marks_installed(
             }
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_search_and_trending_mark_shared_skills_installed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    shared_root = tmp_path / "shared" / "skills"
+    skill_dir = shared_root / "shared-tool"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: shared-tool\ndescription: Shared capability.\n---\n",
+        encoding="utf-8",
+    )
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "skills": [
+                    {
+                        "name": "Shared tool",
+                        "skillId": "shared-tool",
+                        "source": "acme/agent-skills",
+                        "installs": 4,
+                    }
+                ]
+            }
+
+    class FakeClient:
+        async def __aenter__(self) -> "FakeClient":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+        async def get(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        "nanobot.webui.skills_marketplace._skills_client",
+        lambda: FakeClient(),
+    )
+    monkeypatch.setattr(
+        "nanobot.webui.skills_marketplace.skills_install_supported",
+        lambda: True,
+    )
+
+    search = await search_marketplace_skills(
+        "shared tool",
+        workspace,
+        provider="skills_sh",
+        extra_skill_paths=[shared_root],
+    )
+    trending = await trending_marketplace_skills(
+        workspace,
+        provider="skills_sh",
+        extra_skill_paths=[shared_root],
+    )
+
+    assert search["skills"][0]["installed"] is True
+    assert trending["skills"][0]["installed"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["skills_sh", "skillhub"])
+async def test_install_does_not_shadow_shared_skill(
+    provider: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    shared_root = tmp_path / "shared" / "skills"
+    skill_dir = shared_root / "shared-tool"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: shared-tool\ndescription: Shared capability.\n---\n",
+        encoding="utf-8",
+    )
+
+    def should_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("a shared skill must not be shadowed by a marketplace install")
+
+    monkeypatch.setattr("nanobot.webui.skills_marketplace.shutil.which", should_not_run)
+    result = await install_marketplace_skill(
+        "acme/agent-skills",
+        "shared-tool",
+        workspace,
+        provider=provider,
+        extra_skill_paths=[shared_root],
+    )
+
+    assert result["installed"] is True
+    assert result["already_installed"] is True
+    assert result["name"] == "shared-tool"
+    assert not (workspace / "skills" / "shared-tool").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["skills_sh", "skillhub"])
+async def test_incomplete_catalog_blocks_new_marketplace_installs_uniformly(
+    provider: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    shared_repo = tmp_path / "shared"
+    shared_root = shared_repo / "skills"
+    skill_dir = shared_root / "hidden-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: hidden-skill\ndescription: Secret.\n---\n",
+        encoding="utf-8",
+    )
+
+    class DenySharedRoot(ResourceAccessPolicy):
+        @property
+        def managed_mode(self) -> bool:
+            return True
+
+        def validate_path(self, path: Path, action: str, **kwargs: Any) -> None:
+            if path.resolve(strict=False).is_relative_to(shared_root.resolve(strict=False)):
+                raise PermissionError("restricted")
+            super().validate_path(path, action, **kwargs)
+
+    policy = DenySharedRoot(workspace=workspace)
+
+    def no_install_side_effect(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("installation side effects must not run for an incomplete catalog")
+
+    monkeypatch.setattr("nanobot.webui.skills_marketplace.shutil.which", no_install_side_effect)
+    monkeypatch.setattr("nanobot.webui.skills_marketplace._skills_client", no_install_side_effect)
+    monkeypatch.setattr("nanobot.webui.skills_marketplace._skillhub_client", no_install_side_effect)
+
+    errors = []
+    for skill_id in ("hidden-skill", "arbitrary-new-skill"):
+        with pytest.raises(SkillsMarketplaceError) as exc_info:
+            await install_marketplace_skill(
+                "acme/agent-skills",
+                skill_id,
+                workspace,
+                provider=provider,
+                extra_skill_paths=[shared_root],
+                resource_policy=policy,
+            )
+        errors.append(exc_info.value)
+
+    assert [(error.status, error.message) for error in errors] == [
+        (409, errors[0].message),
+        (409, errors[0].message),
+    ]
+    assert errors[0].message == (
+        "The local skill catalog is incomplete, so this skill cannot be safely installed."
+    )
+    assert not (workspace / "skills").exists()
+
+
+@pytest.mark.asyncio
+async def test_marketplace_marks_unmatched_install_state_unknown_when_catalog_is_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    shared_root = tmp_path / "shared" / "skills"
+    shared_root.mkdir(parents=True)
+
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "skills": [
+                    {
+                        "name": "Unknown local status",
+                        "skillId": "unknown-local-status",
+                        "source": "acme/agent-skills",
+                    }
+                ]
+            }
+
+    class FakeClient:
+        async def __aenter__(self) -> "FakeClient":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+        async def get(self, *_args: object, **_kwargs: object) -> FakeResponse:
+            return FakeResponse()
+
+    class DenySharedRoot(ResourceAccessPolicy):
+        @property
+        def managed_mode(self) -> bool:
+            return True
+
+        def validate_path(self, path: Path, action: str, **kwargs: Any) -> None:
+            if path.resolve(strict=False).is_relative_to(shared_root.resolve(strict=False)):
+                raise PermissionError("restricted")
+            super().validate_path(path, action, **kwargs)
+
+    monkeypatch.setattr(
+        "nanobot.webui.skills_marketplace._skills_client",
+        lambda: FakeClient(),
+    )
+    monkeypatch.setattr(
+        "nanobot.webui.skills_marketplace.skills_install_supported",
+        lambda: True,
+    )
+
+    payload = await search_marketplace_skills(
+        "unknown local",
+        workspace,
+        provider="skills_sh",
+        extra_skill_paths=[shared_root],
+        resource_policy=DenySharedRoot(workspace=workspace),
+    )
+
+    skill = payload["skills"][0]
+    assert payload["catalog_complete"] is False
+    assert payload["local_install_status_unknown"] is True
+    assert payload["install_supported"] is False
+    assert skill["installed"] is False
+    assert skill["install_supported"] is False
+    assert skill["install_status_unknown"] is True
+    assert str(shared_root) not in json.dumps(payload)
 
 
 @pytest.mark.asyncio

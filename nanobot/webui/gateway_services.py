@@ -12,6 +12,7 @@ from loguru import logger as default_logger
 from nanobot.config.loader import get_config_path
 from nanobot.context_repo import ContextRepoManager
 from nanobot.context_repo.catalog import RepositoryCatalog
+from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.security.folder_grants import FolderGrantStore
 from nanobot.webui.gateway_endpoint import WebUIGatewayEndpoint
 from nanobot.webui.gateway_tokens import GatewayTokenStore
@@ -109,17 +110,24 @@ def build_gateway_services(
     sessions_root = session_manager.sessions_root if session_manager is not None else None
     grants = FolderGrantStore.for_workspace(workspace_path, sessions_root=sessions_root)
     catalog = RepositoryCatalog.for_workspace(workspace_path, sessions_root=sessions_root)
+    managed_context = context_manager or ContextRepoManager()
     workspaces = WebUIWorkspaceController(
         session_manager=session_manager,
         default_workspace=workspace_path,
         default_restrict_to_workspace=default_restrict_to_workspace,
         grant_store=grants,
         catalog=catalog,
-        context_manager=context_manager,
+        context_manager=managed_context,
         bus=bus,
         configured_exec_sandbox=configured_exec_sandbox,
     )
     focus_owner = workspaces.focus_owner
+    skills_policy = focus_owner.policy if focus_owner is not None else ResourceAccessPolicy(
+        workspace=workspace_path,
+        context_manager=managed_context,
+        restrict_to_workspace=default_restrict_to_workspace,
+        folder_grants=grants.view,
+    )
     media.set_resource_policy(focus_owner.policy if focus_owner is not None else None)
     temporary_chats = WebUITemporaryChats(
         bus=bus,
@@ -142,6 +150,9 @@ def build_gateway_services(
         workspaces=workspaces,
         settings=settings,
         skills_workspace_path=workspace_path,
+        context_manager=managed_context,
+        resource_policy=skills_policy,
+        default_restrict_to_workspace=default_restrict_to_workspace,
         disabled_skills=disabled_skills,
         cron_service=cron_service,
         local_trigger_store=local_trigger_store,
