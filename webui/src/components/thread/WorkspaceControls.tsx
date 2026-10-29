@@ -258,6 +258,7 @@ export function WorkspaceProjectPicker({
             side="bottom"
             sideOffset={8}
             aria-label={t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })}
+            onOpenAutoFocus={(event) => event.preventDefault()}
             className="w-[min(31rem,calc(100vw-1rem))] space-y-3 p-3 sm:p-4"
           >
             {isAgentHome ? (
@@ -309,10 +310,12 @@ export function WorkspaceProjectPicker({
                       disabled={disabled || !canChangeFocus}
                       onClick={() => applyProjectPath(repository.path, repository.name)}
                       title={repository.path}
+                      aria-current={sameWorkspacePath(repository.path, currentPath) ? "true" : undefined}
                       className={cn(
                         floatingItemClassName,
                         floatingItemFocusClassName,
                         "flex min-h-[44px] w-full cursor-default gap-3 px-3 py-2 text-left focus:bg-muted/55",
+                        sameWorkspacePath(repository.path, currentPath) && "bg-primary/10 text-primary",
                       )}
                     >
                       <span className="min-w-0 flex-1">
@@ -322,6 +325,9 @@ export function WorkspaceProjectPicker({
                       <span className="max-w-[45%] text-right text-[10px] text-muted-foreground">
                         {effectiveAccessLabel(repository.effective_access, t)}
                       </span>
+                      {sameWorkspacePath(repository.path, currentPath)
+                        ? <Check className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                        : null}
                     </button>
                   ))}
                 </div>
