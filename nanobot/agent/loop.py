@@ -663,7 +663,8 @@ class AgentLoop:
             fork_dependencies = build_foreground_dependencies(
                 workspace=workspace, runtime=self.runtime_resolver.runtime,
                 tools_config=_tc, restrict_to_workspace=restrict_to_workspace,
-                sessions_root=effective_root)
+                sessions_root=effective_root,
+                refresh_web_fetch_config=provider_snapshot_loader is not None)
             _owns_fork_dependencies = True
         validate_foreground_dependencies(fork_dependencies, workspace=workspace,
                                          restrict_to_workspace=restrict_to_workspace)
@@ -886,6 +887,7 @@ class AgentLoop:
                 tools_config=config.tools, restrict_to_workspace=config.tools.restrict_to_workspace,
                 config=config,
                 sessions_root=effective_root,
+                refresh_web_fetch_config=provider_snapshot_loader is not None,
             )
             extra["_owns_fork_dependencies"] = True
         if config.artifacts.enabled and extra.get("artifact_reader_factory") is None:

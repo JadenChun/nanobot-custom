@@ -9,7 +9,7 @@ import html
 import json
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qsl, quote, unquote, urljoin, urlparse
 
@@ -352,18 +352,50 @@ async def _stream_with_safe_redirects(
     )
 
 
-def _format_results(query: str, items: list[dict[str, Any]], n: int) -> str:
+def _json_object(value: object) -> dict[str, object] | None:
+    """Return a string-keyed JSON object after validating its outer shape."""
+    if not isinstance(value, dict):
+        return None
+    raw_items = cast(dict[object, object], value)
+    return {key: item for key, item in raw_items.items() if isinstance(key, str)}
+
+
+def _json_array(value: object) -> list[object] | None:
+    """Return a JSON array with elements kept at the untrusted object boundary."""
+    if not isinstance(value, list):
+        return None
+    return list(cast(list[object], value))
+
+
+def _json_text(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _format_results(query: str, items: Sequence[Mapping[str, object]], n: int) -> str:
     """Format provider results into shared plaintext output."""
     if not items:
         return f"No results for: {query}"
     lines = [f"Results for: {query}\n"]
     for i, item in enumerate(items[:n], 1):
-        title = _normalize(_strip_tags(item.get("title", "")))
-        snippet = _normalize(_strip_tags(item.get("content", "")))
-        lines.append(f"{i}. {title}\n   {item.get('url', '')}")
+        title = _normalize(_strip_tags(_json_text(item.get("title", ""))))
+        snippet = _normalize(_strip_tags(_json_text(item.get("content", ""))))
+        lines.append(f"{i}. {title}\n   {_json_text(item.get('url', ''))}")
         if snippet:
             lines.append(f"   {snippet}")
     return "\n".join(lines)
+
+
+def shared_tinyfish_search_key(provider: str, api_key: str) -> str:
+    """Share the search credential with fetching only for TinyFish search."""
+    return api_key if provider.strip().lower() == "tinyfish" else ""
+
+
+def load_web_fetch_state() -> tuple[WebFetchConfig, str]:
+    """Load current fetch settings and an eligible shared TinyFish key."""
+    from nanobot.config.loader import load_config, resolve_config_env_vars
+
+    web = resolve_config_env_vars(load_config()).tools.web
+    return web.fetch, shared_tinyfish_search_key(web.search.provider, web.search.api_key)
 
 
 def _normalize_volcengine_time_range(value: Any) -> str | None:
@@ -729,19 +761,22 @@ class WebSearchTool(Tool):
                     logger.warning("TinyFish daily allowance exhausted, falling back to DuckDuckGo")
                     return await self._search_duckduckgo(query, n)
                 r.raise_for_status()
-            raw = r.json().get("results") or []
+            raw_payload: object = r.json()
+            payload = _json_object(raw_payload)
+            raw = _json_array(payload.get("results")) if payload is not None else None
         except Exception as e:
             logger.warning("TinyFish search failed, falling back to DuckDuckGo: %s", e)
             return await self._search_duckduckgo(query, n)
-        results = [
-            {
-                "title": item.get("title", ""),
-                "url": item.get("url", ""),
-                "content": item.get("snippet") or item.get("content") or "",
-            }
-            for item in raw
-            if isinstance(item, dict)
-        ]
+        results: list[dict[str, str]] = []
+        for raw_item in raw or []:
+            item = _json_object(raw_item)
+            if item is None:
+                continue
+            results.append({
+                "title": _json_text(item.get("title", "")),
+                "url": _json_text(item.get("url", "")),
+                "content": _json_text(item.get("snippet")) or _json_text(item.get("content", "")),
+            })
         return _format_results(query, results, n)
 
     async def _search_keenable(self, query: str, n: int) -> str:
@@ -1234,18 +1269,15 @@ class WebFetchTool(Tool):
 
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
-        state_loader: Callable[[], tuple[WebFetchConfig, str]] | None = None
-        if ctx.provider_snapshot_loader is not None:
-            def _load_fetch_state() -> tuple[WebFetchConfig, str]:
-                from nanobot.config.loader import load_config, resolve_config_env_vars
-                web = resolve_config_env_vars(load_config()).tools.web
-                return web.fetch, web.search.api_key
-            state_loader = _load_fetch_state
+        state_loader = load_web_fetch_state if ctx.provider_snapshot_loader is not None else None
         return cls(
             config=ctx.config.web.fetch,
             proxy=ctx.config.web.proxy,
             user_agent=ctx.config.web.user_agent,
-            tinyfish_api_key=ctx.config.web.search.api_key,
+            tinyfish_api_key=shared_tinyfish_search_key(
+                ctx.config.web.search.provider,
+                ctx.config.web.search.api_key,
+            ),
             config_loader=state_loader,
         )
 
@@ -1395,15 +1427,18 @@ class WebFetchTool(Tool):
                     logger.debug("TinyFish fetch unavailable (HTTP %s)", r.status_code)
                     return None
                 r.raise_for_status()
-            payload = r.json()
-            results = payload.get("results") or []
+            raw_payload: object = r.json()
+            payload = _json_object(raw_payload)
+            results = _json_array(payload.get("results")) if payload is not None else None
             if not results:
                 return None
-            item = results[0]
-            text = item.get("text") or item.get("content") or ""
+            item = _json_object(results[0])
+            if item is None:
+                return None
+            text = _json_text(item.get("text")) or _json_text(item.get("content"))
             if not text:
                 return None
-            title = item.get("title", "")
+            title = _json_text(item.get("title", ""))
             if title:
                 text = f"# {title}\n\n{text}"
             truncated = len(text) > max_chars
@@ -1412,7 +1447,7 @@ class WebFetchTool(Tool):
             text = f"{_UNTRUSTED_BANNER}\n\n{text}"
             return json.dumps({
                 "url": url,
-                "finalUrl": item.get("final_url") or item.get("url") or url,
+                "finalUrl": _json_text(item.get("final_url")) or _json_text(item.get("url")) or url,
                 "status": 200,
                 "extractor": "tinyfish",
                 "truncated": truncated,

@@ -37,7 +37,13 @@ from nanobot.agent.tools.mcp import (
     is_read_only_mcp_tool,
 )
 from nanobot.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
-from nanobot.agent.tools.web import WebFetchTool, WebSearchConfig, WebSearchTool
+from nanobot.agent.tools.web import (
+    WebFetchConfig,
+    WebFetchTool,
+    WebSearchConfig,
+    WebSearchTool,
+    shared_tinyfish_search_key,
+)
 from nanobot.agent.turn import DelegationBudget, ToolOutcome, TurnContext
 from nanobot.agent.write_guard import FileLockRegistry, WriteScope
 from nanobot.config.schema import (
@@ -119,6 +125,8 @@ class ForegroundAgentManager:
         workspace: Path,
         model: str | None = None,
         web_search_config: WebSearchConfig | None = None,
+        web_fetch_config: WebFetchConfig | None = None,
+        web_fetch_config_loader: Callable[[], tuple[WebFetchConfig, str]] | None = None,
         web_proxy: str | None = None,
         agent_browser_config: AgentBrowserConfig | None = None,
         agent_device_config: AgentDeviceConfig | None = None,
@@ -148,6 +156,8 @@ class ForegroundAgentManager:
         self._baseline_runtime = runtime or LLMRuntime.capture(
             provider, self.model, context_window_tokens=context_window_tokens)
         self.web_search_config = web_search_config or WebSearchConfig()
+        self.web_fetch_config = web_fetch_config or WebFetchConfig()
+        self.web_fetch_config_loader = web_fetch_config_loader
         self.web_proxy = web_proxy
         self.agent_browser_config = agent_browser_config or AgentBrowserConfig()
         self.agent_device_config = agent_device_config or AgentDeviceConfig()
@@ -342,8 +352,13 @@ class ForegroundAgentManager:
         tools.register(SearchFilesTool(**fs_kwargs))
         tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         tools.register(WebFetchTool(
+            config=self.web_fetch_config,
             proxy=self.web_proxy,
-            tinyfish_api_key=self.web_search_config.api_key,
+            tinyfish_api_key=shared_tinyfish_search_key(
+                self.web_search_config.provider,
+                self.web_search_config.api_key,
+            ),
+            config_loader=self.web_fetch_config_loader,
         ))
 
         if "agent_browser" in profile.tools and self.agent_browser_config.enabled:

@@ -42,6 +42,27 @@ _FILE_OUTPUT_OPTIONS = frozenset({
     "--save",
     "-o",
 })
+_CONFIG_OWNED_OPTIONS = frozenset({
+    "--cdp",
+    "--session",
+    "--pin-tab",
+    "--no-pin-tab",
+    "--executable-path",
+})
+
+
+def _config_owned_option(args: Sequence[str]) -> str | None:
+    for arg in args:
+        option = arg.split("=", 1)[0].strip().lower()
+        if option in _CONFIG_OWNED_OPTIONS:
+            return option
+    return None
+
+
+def _reports_stale_pinned_tab(stdout: str, stderr: str) -> bool:
+    # agent-browser emits tab_gone in both human-readable stderr and --json
+    # stdout error objects. Checking the serialized text handles either shape.
+    return "tab_gone" in stdout.lower() or "tab_gone" in stderr.lower()
 
 
 def classify_browser_action(args: object) -> str:
@@ -234,7 +255,7 @@ class AgentBrowserTool(Tool):
             "about:blank",
         ]
         try:
-            await run_owned_process(
+            result = await run_owned_process(
                 command,
                 timeout=min(self.timeout, 60),
                 stdout=asyncio.subprocess.PIPE,
@@ -243,19 +264,19 @@ class AgentBrowserTool(Tool):
             )
         except Exception:
             return False
-        return True
+        return result.returncode == 0 and not result.timed_out
 
     def _browser_flags(self, attached: bool) -> list[str]:
         if attached:
             flags = ["--cdp", self.cdp_url]
-            if self.pin_tab:
-                flags.append("--pin-tab")
-            if self.session:
-                flags.extend(["--session", self.session])
-            return flags
-        if self.executable_path:
-            return ["--executable-path", self.executable_path]
-        return []
+            session = self.session
+        else:
+            flags = ["--executable-path", self.executable_path] if self.executable_path else []
+            session = f"nanobot-isolated-{self.session}" if self.session else "nanobot-isolated"
+        if session:
+            flags.extend(["--session", session])
+        flags.append("--pin-tab" if self.pin_tab else "--no-pin-tab")
+        return flags
 
     @property
     def name(self) -> str:
@@ -315,6 +336,17 @@ class AgentBrowserTool(Tool):
             return "Error: too many CLI arguments (max 80)"
         if any(len(arg) > 2000 for arg in args):
             return "Error: one or more CLI arguments exceed max length (2000 chars)"
+        if option := _config_owned_option(args):
+            return ToolOutcome(
+                content=f"Error: {option} is controlled by browser configuration",
+                stop_reason="policy_blocked",
+                policy_metadata={
+                    "policy": "browser_configuration",
+                    "reason": "caller-supplied configuration override",
+                    "option": option,
+                    "requires_approval": False,
+                },
+            )
         if self.read_only and working_dir is not None:
             return ToolOutcome(
                 content="Error: caller-supplied working_dir is blocked for delegated read-only browser actions",
@@ -347,7 +379,20 @@ class AgentBrowserTool(Tool):
             )
 
         needs_session = self._needs_browser_session(args)
-        attached = await self._ensure_browser_session() if needs_session else False
+        attached = False
+        if needs_session and self.cdp_url:
+            attached = await self._ensure_browser_session()
+            if not attached:
+                return json.dumps(
+                    {
+                        "error": "Configured shared browser is unavailable; browser action was not run",
+                        "browser_session": {
+                            "attached": False,
+                            "cdp_url": self.cdp_url,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
         command = [
             npx_command,
             "--yes",
@@ -375,13 +420,16 @@ class AgentBrowserTool(Tool):
 
         # A pinned tab can disappear (the user closed it). Recreate a bound tab
         # once and retry so the session does not stay wedged.
-        if (
+        stale_pinned_tab = (
             attached
             and self.pin_tab
             and result.returncode != 0
-            and "tab_gone" in stderr_text
-            and await self._reset_pinned_tab(npx_command, cwd)
-        ):
+            and not result.timed_out
+            and _reports_stale_pinned_tab(stdout_text, stderr_text)
+        )
+        if stale_pinned_tab and self.read_only:
+            return "Error: pinned browser tab is stale; delegated read-only action cannot reset a tab"
+        if stale_pinned_tab and await self._reset_pinned_tab(npx_command, cwd):
             try:
                 result = await run()
             except Exception as e:

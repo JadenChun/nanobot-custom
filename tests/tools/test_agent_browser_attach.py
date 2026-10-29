@@ -42,8 +42,9 @@ async def test_attached_session_flags_are_prepended(monkeypatch):
     assert payload["command"][:4] == ["npx", "--yes", "agent-browser", "--cdp"]
     assert payload["command"][4] == "http://127.0.0.1:9222"
     assert "--pin-tab" in payload["command"]
-    assert "--session" in payload["command"]
-    assert payload["command"][-2:] == ["agent", "snapshot"]
+    session_flag = payload["command"].index("--session")
+    assert payload["command"][session_flag + 1] == "agent"
+    assert payload["command"][-1] == "snapshot"
     assert payload["browser_session"] == {
         "attached": True,
         "cdp_url": "http://127.0.0.1:9222",
@@ -60,6 +61,7 @@ async def test_pin_tab_can_be_disabled(monkeypatch):
     payload = json.loads(await tool.execute(["snapshot"]))
 
     assert "--pin-tab" not in payload["command"]
+    assert "--no-pin-tab" in payload["command"]
     assert "--session" not in payload["command"]
 
 
@@ -84,7 +86,7 @@ async def test_launch_command_starts_shared_browser(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_unreachable_session_without_launch_uses_isolated_profile(monkeypatch):
+async def test_unreachable_configured_session_fails_before_cli_action(monkeypatch):
     process = _process()
     _prepare(monkeypatch, process)
     tool = AgentBrowserTool(
@@ -95,10 +97,8 @@ async def test_unreachable_session_without_launch_uses_isolated_profile(monkeypa
 
     payload = json.loads(await tool.execute(["snapshot"]))
 
-    assert "--cdp" not in payload["command"]
-    assert "--executable-path" in payload["command"]
-    assert "/opt/chrome" in payload["command"]
-    assert payload["browser_session"]["attached"] is False
+    assert "shared browser" in payload["error"].lower()
+    process.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -109,7 +109,10 @@ async def test_no_session_config_keeps_plain_command(monkeypatch):
 
     payload = json.loads(await tool.execute(["snapshot"]))
 
-    assert payload["command"] == ["npx", "--yes", "agent-browser", "snapshot"]
+    assert payload["command"] == [
+        "npx", "--yes", "agent-browser", "--session", "nanobot-isolated-default",
+        "--pin-tab", "snapshot",
+    ]
     assert payload["browser_session"]["attached"] is False
 
 
@@ -173,3 +176,114 @@ async def test_stale_pinned_tab_is_reset_and_retried(monkeypatch):
     assert calls[0][-2:] == ["get", "url"]
     assert calls[1][-3:] == ["tab", "new", "about:blank"]
     assert calls[2][-2:] == ["get", "url"]
+
+
+@pytest.mark.asyncio
+async def test_read_only_stale_tab_never_resets_or_retries(monkeypatch):
+    process = _process()
+    process.return_value = SimpleNamespace(
+        timed_out=False,
+        stdout=b'{"error":{"code":"tab_gone","message":"bound tab missing"}}',
+        stderr=b"",
+        returncode=1,
+    )
+    _prepare(monkeypatch, process)
+    tool = AgentBrowserTool(read_only=True, cdp_url="http://127.0.0.1:9222", session="nanobot")
+    monkeypatch.setattr(tool, "_cdp_ready", AsyncMock(return_value=True))
+
+    result = await tool.execute(["--json", "snapshot"])
+
+    assert isinstance(result, str)
+    assert "cannot reset" in result.lower()
+    process.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "override",
+    [
+        ["--cdp", "http://attacker"],
+        ["--cdp=http://attacker"],
+        ["--session", "attacker"],
+        ["--session=attacker"],
+        ["--pin-tab"],
+        ["--pin-tab=false"],
+        ["--no-pin-tab"],
+        ["snapshot", "--no-pin-tab=true"],
+        ["--executable-path", "/tmp/chrome"],
+        ["--executable-path=/tmp/chrome"],
+        ["--cdp", "http://attacker", "snapshot"],
+    ],
+)
+async def test_config_owned_browser_flags_are_rejected_before_cli(monkeypatch, override):
+    process = _process()
+    _prepare(monkeypatch, process)
+
+    result = await AgentBrowserTool().execute([*override, "snapshot"])
+
+    assert "configuration" in str(result).lower()
+    process.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_isolated_and_attached_modes_use_distinct_named_sessions(monkeypatch):
+    calls: list[list[str]] = []
+
+    async def process(command, **kwargs):
+        calls.append(list(command))
+        return SimpleNamespace(timed_out=False, stdout=b"ok", stderr=b"", returncode=0)
+
+    _prepare(monkeypatch, process)
+    tool = AgentBrowserTool(session="team")
+    monkeypatch.setattr(tool, "_cdp_ready", AsyncMock(return_value=True))
+
+    await tool.execute(["snapshot"])
+    tool.cdp_url = "http://127.0.0.1:9222"
+    await tool.execute(["snapshot"])
+
+    isolated_session = calls[0][calls[0].index("--session") + 1]
+    attached_session = calls[1][calls[1].index("--session") + 1]
+    assert isolated_session == "nanobot-isolated-team"
+    assert attached_session == "team"
+    assert isolated_session != attached_session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reset_timeout,reset_exit_code",
+    [(False, 1), (True, 0)],
+)
+async def test_json_tab_gone_retries_only_after_successful_reset(
+    monkeypatch,
+    reset_timeout,
+    reset_exit_code,
+):
+    calls: list[list[str]] = []
+
+    async def process(command, **kwargs):
+        calls.append(list(command))
+        index = len(calls)
+        if index == 1:
+            return SimpleNamespace(
+                timed_out=False,
+                stdout=b'{"error":{"code":"tab_gone"}}',
+                stderr=b"",
+                returncode=1,
+            )
+        if index == 2:
+            return SimpleNamespace(
+                timed_out=reset_timeout,
+                stdout=b"reset failed",
+                stderr=b"",
+                returncode=reset_exit_code,
+            )
+        return SimpleNamespace(timed_out=False, stdout=b"ok", stderr=b"", returncode=0)
+
+    _prepare(monkeypatch, process)
+    tool = AgentBrowserTool(cdp_url="http://127.0.0.1:9222")
+    monkeypatch.setattr(tool, "_cdp_ready", AsyncMock(return_value=True))
+
+    payload = json.loads(await tool.execute(["--json", "snapshot"]))
+
+    assert payload["exitCode"] == 1
+    assert len(calls) == 2

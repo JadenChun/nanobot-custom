@@ -49,33 +49,34 @@ def construct_core_tools(ctx: ToolContext) -> list[Tool]:
                       ("cron", CronTool), ("generate_image", ImageGenerationTool),
                       ("repository_catalog", RepositoryCatalogTool), ("save_knowledge", SaveKnowledgeTool)):
         upstream(name, cls)
-    for name, cls, cfg in (("agent_browser", AgentBrowserTool, ctx.config.agent_browser),
-                           ("agent_device", AgentDeviceTool, ctx.config.agent_device)):
-        if cls is AgentBrowserTool:
-            kwargs = dict(
-                package=cfg.package,
-                timeout=cfg.timeout,
-                max_output_chars=cfg.max_output_chars,
-                working_dir=ctx.workspace,
-                cdp_url=cfg.cdp_url,
-                pin_tab=cfg.pin_tab,
-                session=cfg.session,
-                launch_command=cfg.launch_command,
-                launch_wait_seconds=cfg.launch_wait_seconds,
-                executable_path=cfg.executable_path,
-            )
-        else:
-            kwargs = dict(
-                package=cfg.package,
-                timeout=cfg.timeout,
-                max_output_chars=cfg.max_output_chars,
-                working_dir=ctx.workspace,
-            )
-        entries.append(ToolFactory(
-            name,
-            lambda cfg=cfg: cfg.enabled,
-            lambda cls=cls, kwargs=kwargs: cls(**kwargs),
-        ))
+    browser = ctx.config.agent_browser
+    entries.append(ToolFactory(
+        "agent_browser",
+        lambda: browser.enabled,
+        lambda: AgentBrowserTool(
+            package=browser.package,
+            timeout=browser.timeout,
+            max_output_chars=browser.max_output_chars,
+            working_dir=ctx.workspace,
+            cdp_url=browser.cdp_url,
+            pin_tab=browser.pin_tab,
+            session=browser.session,
+            launch_command=browser.launch_command,
+            launch_wait_seconds=browser.launch_wait_seconds,
+            executable_path=browser.executable_path,
+        ),
+    ))
+    device = ctx.config.agent_device
+    entries.append(ToolFactory(
+        "agent_device",
+        lambda: device.enabled,
+        lambda: AgentDeviceTool(
+            package=device.package,
+            timeout=device.timeout,
+            max_output_chars=device.max_output_chars,
+            working_dir=ctx.workspace,
+        ),
+    ))
     desktop = ctx.config.desktop_use
     entries.append(ToolFactory("desktop_use", lambda: desktop.enabled, lambda: DesktopUseTool(
         screenshot_delay=desktop.screenshot_delay, typing_delay_ms=desktop.typing_delay_ms,

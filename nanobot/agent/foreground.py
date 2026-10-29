@@ -1,10 +1,12 @@
 """Compose owned foreground capabilities without activating external resources."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from nanobot.agent.delegation import ForegroundAgentManager
 from nanobot.agent.tools.context import ForkToolDependencies
+from nanobot.agent.tools.web import WebFetchConfig, load_web_fetch_state
 from nanobot.agent.write_guard import FileLockRegistry
 from nanobot.config.schema import Config, ToolsConfig
 from nanobot.context_repo import ContextRepoManager
@@ -33,6 +35,7 @@ def build_foreground_dependencies(
     *, workspace: Path, runtime: LLMRuntime, tools_config: ToolsConfig,
     restrict_to_workspace: bool, config: Config | None = None,
     sessions_root: Path | None = None,
+    refresh_web_fetch_config: bool = False,
 ) -> ForkToolDependencies:
     """Build one shared context/policy/lock graph; never connect or run tools."""
     defaults = config.agents.defaults if config is not None else None
@@ -43,11 +46,16 @@ def build_foreground_dependencies(
     optional = crawler_settings(config)
     grants = FolderGrantStore.for_workspace(workspace, sessions_root=sessions_root).view
     locks = FileLockRegistry()
+    web_fetch_config_loader: Callable[[], tuple[WebFetchConfig, str]] | None = (
+        load_web_fetch_state if refresh_web_fetch_config else None
+    )
     manager = ForegroundAgentManager(
         provider=runtime.provider, model=runtime.model, runtime=runtime,
         workspace=workspace, context_manager=context_manager,
         restrict_to_workspace=restrict_to_workspace, file_lock_registry=locks,
         web_search_config=tools_config.web.search, web_proxy=tools_config.web.proxy,
+        web_fetch_config=tools_config.web.fetch,
+        web_fetch_config_loader=web_fetch_config_loader,
         agent_browser_config=tools_config.agent_browser,
         agent_device_config=tools_config.agent_device,
         exec_config=tools_config.exec, mcp_servers=tools_config.mcp_servers,

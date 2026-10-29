@@ -10,6 +10,7 @@ from nanobot.agent.loop import AgentLoop
 from nanobot.agent.runner import AgentRunResult
 from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.web import WebFetchTool
 from nanobot.agent.write_guard import FileLockRegistry
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.utils.llm_runtime import LLMRuntime
@@ -171,5 +172,68 @@ async def test_direct_constructor_builds_coherent_owned_defaults(engine_config):
         validate_foreground_dependencies(deps, workspace=config.workspace_path, restrict_to_workspace=True)
         assert loop._owned_foreground_manager is deps.foreground_manager
         assert loop.context.context_manager is deps.resource_policy.context_manager
+    finally:
+        await loop.aclose()
+
+
+async def test_real_foreground_builder_preserves_web_fetch_policy(engine_config, monkeypatch):
+    config = engine_config
+    config.tools.web.search.provider = "brave"
+    config.tools.web.search.api_key = "brave-search-sentinel"
+    config.tools.web.fetch.provider = "local"
+    config.tools.web.fetch.use_jina_reader = False
+    deps = build(config)
+    delegated = deps.foreground_manager.tools_for_role("planner").get("web_fetch")
+    assert isinstance(delegated, WebFetchTool)
+    assert delegated.config.provider == "local"
+    assert delegated.config.use_jina_reader is False
+    assert delegated.config.blocked_hosts == []
+    assert delegated._tinyfish_fetch_key() == ""
+
+    async def readable(self, url, extract_mode, max_chars):
+        return "local result"
+
+    tinyfish = AsyncMock(return_value="tinyfish result")
+    jina = AsyncMock(return_value="jina result")
+    monkeypatch.setattr(WebFetchTool, "_fetch_readability", readable)
+    monkeypatch.setattr(WebFetchTool, "_fetch_tinyfish", tinyfish)
+    monkeypatch.setattr(WebFetchTool, "_fetch_jina", jina)
+    monkeypatch.setattr(
+        "nanobot.agent.tools.web._stream_with_safe_redirects",
+        AsyncMock(return_value=(SimpleNamespace(headers={"content-type": "text/html"}), None, None, False)),
+    )
+    monkeypatch.setattr("nanobot.agent.tools.web._validate_url_safe", lambda url: (True, ""))
+
+    assert await delegated.execute("https://allowed.example/page") == "local result"
+    blocked_config = config.model_copy(deep=True)
+    blocked_config.tools.web.fetch.provider = "tinyfish"
+    blocked_config.tools.web.fetch.api_key = "fetch-sentinel"
+    blocked_config.tools.web.fetch.blocked_hosts = ["blocked.example"]
+    blocked_deps = build(blocked_config)
+    blocked_tool = blocked_deps.foreground_manager.tools_for_role("planner").get("web_fetch")
+    assert isinstance(blocked_tool, WebFetchTool)
+    assert blocked_tool.config.blocked_hosts == ["blocked.example"]
+    blocked = str(await blocked_tool.execute("https://blocked.example/page"))
+
+    assert "disabled" in blocked.lower()
+    tinyfish.assert_not_awaited()
+    jina.assert_not_awaited()
+
+
+async def test_foreground_web_fetch_refresh_matches_core_refresh_intent(engine_config):
+    provider = ScriptedProvider([])
+    loop = AgentLoop.from_config(
+        engine_config,
+        tool_registry=ToolRegistry(),
+        provider=provider,
+        provider_snapshot_loader=Mock(),
+    )
+    try:
+        core_fetch = loop.tools.get("web_fetch")
+        delegated = loop._fork_dependencies.foreground_manager.tools_for_role("planner").get("web_fetch")
+        assert isinstance(core_fetch, WebFetchTool)
+        assert isinstance(delegated, WebFetchTool)
+        assert core_fetch._config_loader is not None
+        assert delegated._config_loader is not None
     finally:
         await loop.aclose()
