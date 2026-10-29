@@ -121,6 +121,7 @@ import {
 } from "@/lib/session-drag";
 import { formatQuotedUserMessage } from "@/lib/user-message-quote";
 import { cn } from "@/lib/utils";
+import { sameWorkspacePath } from "@/lib/workspace";
 
 const VOICE_SHORTCUT_CODE = "KeyD";
 const VOICE_SHORTCUT_ARIA = "Control+Shift+D";
@@ -1001,7 +1002,10 @@ export function ThreadComposer({
   const projectPickerAvailable =
     !!workspaceDefaultScope
     && !!onWorkspaceScopeChange;
-  const showProjectPicker = projectPickerAvailable && !workspaceControlsHidden;
+  const hasProjectFolder = !!workspaceScope && !!workspaceDefaultScope
+    && !sameWorkspacePath(workspaceScope.project_path, workspaceDefaultScope.project_path);
+  const showProjectPicker = projectPickerAvailable && hasProjectFolder && !workspaceControlsHidden;
+  const showCompactProjectPicker = projectPickerAvailable && !hasProjectFolder && !workspaceControlsHidden;
 
   useEffect(() => {
     secondEnterPromptIdRef.current = null;
@@ -1079,14 +1083,14 @@ export function ThreadComposer({
   } = useClipboardAndDrop(addFiles);
 
   useEffect(() => {
-    if (interactionDisabled || hasTouchPrimaryPointer || (workspaceError && showProjectPicker)) {
+    if (interactionDisabled || hasTouchPrimaryPointer || (workspaceError && (showProjectPicker || showCompactProjectPicker))) {
       return;
     }
     const el = textareaRef.current;
     if (!el) return;
     const id = requestAnimationFrame(() => el.focus());
     return () => cancelAnimationFrame(id);
-  }, [hasTouchPrimaryPointer, interactionDisabled, showProjectPicker, workspaceError]);
+  }, [hasTouchPrimaryPointer, interactionDisabled, showCompactProjectPicker, showProjectPicker, workspaceError]);
 
   useEffect(() => {
     if (!focusRequest || interactionDisabled) return;
@@ -2227,6 +2231,20 @@ export function ThreadComposer({
         )
       : "min-h-[50px] px-3.5 pb-1.5 pt-3 text-[16px] leading-5 sm:px-4",
   );
+  const projectPicker = (
+    <WorkspaceProjectPicker
+      compact={!hasProjectFolder}
+      disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
+      scope={workspaceScope}
+      defaultScope={workspaceDefaultScope}
+      controls={workspaceControls}
+      workspaces={workspaces}
+      error={workspaceError}
+      onPickFolder={onPickWorkspaceFolder}
+      onRefreshWorkspaces={onRefreshWorkspaces}
+      onChange={onWorkspaceScopeChange}
+    />
+  );
 
   return (
     <form
@@ -2462,6 +2480,7 @@ export function ThreadComposer({
             >
               <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
             </Button>
+            {showCompactProjectPicker && !voiceRecorder.isRecording ? projectPicker : null}
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter
                 ariaLabel={voiceRecordingStatusLabel}
@@ -2600,7 +2619,7 @@ export function ThreadComposer({
             </Button>
           </div>
         </div>
-        {projectPickerAvailable ? (
+        {projectPickerAvailable && hasProjectFolder ? (
           <div
             className="composer-workspace-drawer"
             data-composer-workspace-drawer=""
@@ -2609,17 +2628,7 @@ export function ThreadComposer({
           >
             <div className="composer-workspace-drawer-clip">
               <div className="composer-workspace-drawer-content">
-                <WorkspaceProjectPicker
-                  disabled={interactionDisabled || workspaceScopeDisabled || !showProjectPicker}
-                  scope={workspaceScope}
-                  defaultScope={workspaceDefaultScope}
-                  controls={workspaceControls}
-                  workspaces={workspaces}
-                  error={workspaceError}
-                  onPickFolder={onPickWorkspaceFolder}
-                  onRefreshWorkspaces={onRefreshWorkspaces}
-                  onChange={onWorkspaceScopeChange}
-                />
+                {projectPicker}
               </div>
             </div>
           </div>

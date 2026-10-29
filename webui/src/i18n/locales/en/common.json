@@ -1026,6 +1026,13 @@
       "selectProvider": "Select provider",
       "configureProvider": "Configure provider",
       "languageAuto": "Auto"
+    },
+    "agentHome": {
+      "title": "Agent home",
+      "summary": "Instructions, memory & skills",
+      "description": "Stores agent instructions, memory, skills, and default outputs.",
+      "change": "Change agent home",
+      "changeHint": "Update agents.defaults.workspace in the configuration file shown above, then restart Nanobot. Existing agent files are not moved automatically."
     }
   },
   "chat": {
@@ -1404,7 +1411,7 @@
         "projectAria": "Choose project",
         "projectPlaceholder": "Select project",
         "default": "Restricted",
-        "defaultShort": "Default",
+        "defaultShort": "Restricted",
         "full": "Full access",
         "fullShort": "Full"
       }
@@ -1675,6 +1682,10 @@
     },
     "management": {
       "commandsAvailable": "Commands available"
+    },
+    "picker": {
+      "chooseProject": "Choose project folder",
+      "clearProject": "Clear project folder"
     }
   }
 }

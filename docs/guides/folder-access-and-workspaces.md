@@ -10,6 +10,10 @@ Nanobot keeps instance data, agent files, and chat project folders as separate c
 
 The paths above describe the current example layout. They do not indicate that Nanobot migrated or reorganized any files.
 
+Agent home is shown in **Settings → Runtime**, including guidance for changing `agents.defaults.workspace` in the configuration file and restarting Nanobot. Changing this setting does not move existing agent files automatically.
+
+The chat composer keeps Agent home out of everyday project controls. With no project selected, use the folder button to choose a project folder. A selected project is shown as **Working in** and can be cleared without changing the Agent home configuration.
+
 ## Choose a folder for a task
 
 When a task identifies a blocked folder or file, review the exact path and purpose shown in its access request. For a file request, Nanobot shows both the original file and the containing folder that an approval would cover. If the target is unknown, choose a specific project folder yourself. A project selection is not an access grant.

@@ -1311,7 +1311,7 @@ describe("ThreadComposer", () => {
 
     const accessButton = screen.getByRole("button", { name: "Workspace access mode: Restricted" });
     expect(accessButton).toBeEnabled();
-    expect(within(accessButton).getByText("Default")).toHaveClass("thread-composer-access-label-short");
+    expect(accessButton.querySelector(".thread-composer-access-label-short")).toHaveTextContent("Restricted");
     expect(screen.getByRole("status")).toHaveTextContent(
       "Send a message to create this chat before enabling Full access.",
     );
@@ -1606,7 +1606,7 @@ describe("ThreadComposer", () => {
     expect(screen.queryByRole("button", { name: /retry|return to restricted|force clear/i })).not.toBeInTheDocument();
   });
 
-  it("keeps project selection as a compact composer dropdown", async () => {
+  it("keeps agent home out of chat while retaining project selection", async () => {
     const user = userEvent.setup();
     const onWorkspaceScopeChange = vi.fn();
     const defaultScope = {
@@ -1615,7 +1615,7 @@ describe("ThreadComposer", () => {
       access_mode: "restricted" as const,
       restrict_to_workspace: true,
     };
-    render(
+    const { container } = render(
       <ThreadComposer
         onSend={vi.fn()}
         placeholder="Ask anything..."
@@ -1631,9 +1631,12 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    expect(container.querySelector("[data-composer-workspace-drawer]")).not.toBeInTheDocument();
+    expect(screen.queryByText("Agent home")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose project folder" })).not.toHaveAttribute("title", defaultScope.project_path);
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
 
-    expect(await screen.findByRole("button", { name: /Use agent home/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Clear project folder/ })).not.toBeInTheDocument();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
     const input = screen.getByLabelText("Paste path");
@@ -1655,7 +1658,7 @@ describe("ThreadComposer", () => {
       restrict_to_workspace: false,
     }));
 
-    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
     const reopenedInput = await screen.findByLabelText("Paste path");
     fireEvent.change(reopenedInput, { target: { value: "~/Pictures/Photos" } });
     fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
@@ -1738,11 +1741,11 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
 
     const picker = await screen.findByRole("dialog");
     expect(picker).toHaveClass("overflow-y-auto");
-    expect(screen.getByRole("button", { name: /Use agent home/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Clear project folder/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Paste path")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Browse…" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Manage folders and repositories" })).toBeInTheDocument();
@@ -1854,7 +1857,7 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
     await user.click(await screen.findByRole("button", { name: "Browse…" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Folder picker unavailable");
@@ -1894,7 +1897,7 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
 
     expect(await screen.findByLabelText("Paste path")).toHaveAttribute("placeholder", placeholder);
   });
@@ -1912,7 +1915,7 @@ describe("ThreadComposer", () => {
         placeholder="Ask anything..."
         variant="hero"
         workspaceControlsHidden={workspaceControlsHidden}
-        workspaceScope={defaultScope}
+        workspaceScope={{ ...defaultScope, project_path: "/projects/current", project_name: "current" }}
         workspaceDefaultScope={defaultScope}
         workspaceControls={{ can_change_project: true, can_use_full_access: true }}
         onWorkspaceScopeChange={vi.fn()}
@@ -1932,9 +1935,9 @@ describe("ThreadComposer", () => {
     expect(drawer).toHaveAttribute("aria-hidden", "true");
     expect(within(drawer as HTMLElement).getByRole("button", {
       hidden: true,
-      name: "Working in: Agent home",
+      name: "Working in: current",
     })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Working in: Agent home" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Working in: current" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", {
       name: "Workspace access mode: Full access",
     })).not.toBeInTheDocument();
@@ -1944,7 +1947,7 @@ describe("ThreadComposer", () => {
     expect(container.querySelector("[data-composer-workspace-drawer]")).toBe(drawer);
     expect(drawer).toHaveAttribute("data-state", "open");
     expect(within(drawer as HTMLElement).getByRole("button", {
-      name: "Working in: Agent home",
+      name: "Working in: current",
     })).toBeEnabled();
   });
 
@@ -1981,7 +1984,7 @@ describe("ThreadComposer", () => {
     );
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
     await user.click(await screen.findByRole("button", { name: "Browse…" }));
 
     await waitFor(() => expect(pickFolder).toHaveBeenCalled());
@@ -2020,7 +2023,7 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    fireEvent.click(screen.getByRole("button", { name: "Choose project folder" }));
     expect(screen.getByLabelText("Paste path")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Browse…" }));
 
@@ -2054,9 +2057,9 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Working in: Agent home" }));
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
 
-    expect(await screen.findByRole("button", { name: /Use agent home/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Clear project folder/ })).not.toBeInTheDocument();
     expect(screen.getByLabelText("Paste path")).toBeInTheDocument();
   });
 

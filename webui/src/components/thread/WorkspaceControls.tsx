@@ -123,7 +123,7 @@ export function WorkspaceProjectPicker({
   const isAgentHome = !!activeScope && !!defaultScope
     && sameWorkspacePath(activeScope.project_path, defaultScope.project_path);
   const folderName = isAgentHome
-    ? t("workspace.agentHome", { defaultValue: "Agent home" })
+    ? ""
     : activeScope?.project_name || projectNameFromPath(activeScope?.project_path ?? "");
   const currentPath = activeScope?.project_path ?? defaultScope?.project_path ?? "";
   const visible = !!defaultScope
@@ -204,10 +204,12 @@ export function WorkspaceProjectPicker({
 
   if (!visible || !defaultScope || !onChange) return null;
 
-  const pathAccessibleLabel = t("workspace.picker.workingIn", {
-    folder: folderName,
-    defaultValue: `Working in: ${folderName}`,
-  });
+  const pathAccessibleLabel = isAgentHome
+    ? t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })
+    : t("workspace.picker.workingIn", {
+        folder: folderName,
+        defaultValue: `Working in: ${folderName}`,
+      });
   const effectiveAccess = activeScope?.effective_access;
   const currentAccess = effectiveAccess
     ? effectiveAccessLabel(effectiveAccess, t)
@@ -232,10 +234,10 @@ export function WorkspaceProjectPicker({
               type="button"
               disabled={disabled || pickingFolder || !canChangeFocus}
               aria-label={pathAccessibleLabel}
-              title={currentPath}
+              title={isAgentHome ? pathAccessibleLabel : currentPath}
               className={cn(
                 compact
-                  ? "thread-composer-action touch-target inline-flex h-8 items-center justify-center rounded-full border border-transparent px-2.5"
+                  ? "thread-composer-action touch-target inline-flex h-8 w-8 items-center justify-center rounded-full border border-transparent"
                   : "inline-flex h-8 min-w-0 max-w-full items-center gap-2 rounded-full px-2.5 sm:max-w-[28rem]",
                 "text-[12px] font-medium text-muted-foreground/90 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-55",
                 compact ? "hover:bg-muted/65" : "hover:bg-background/70",
@@ -245,7 +247,7 @@ export function WorkspaceProjectPicker({
               {pickingFolder
                 ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
                 : <Folder className={cn("shrink-0", compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
-              <span className="min-w-0 truncate">
+              <span className={cn("min-w-0 truncate", compact && "sr-only")}>
                 {pathAccessibleLabel}
               </span>
               {!compact ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden /> : null}
@@ -255,39 +257,44 @@ export function WorkspaceProjectPicker({
             align="start"
             side="bottom"
             sideOffset={8}
+            aria-label={t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })}
             className="w-[min(31rem,calc(100vw-1rem))] space-y-3 p-3 sm:p-4"
           >
-            <div className="space-y-1 rounded-control bg-muted/35 px-3 py-2.5">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {t("workspace.picker.currentFolder", { defaultValue: "Current folder" })}
+            {isAgentHome ? (
+              <p className="px-2 text-[13px] font-semibold">
+                {t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })}
               </p>
-              <p className="break-all text-[12px] font-medium" title={currentPath}>{currentPath}</p>
-              <p className="text-[11px] text-muted-foreground">{currentAccess}</p>
-            </div>
+            ) : (
+              <>
+                <div className="space-y-1 rounded-control bg-muted/35 px-3 py-2.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {t("workspace.picker.currentFolder", { defaultValue: "Current folder" })}
+                  </p>
+                  <p className="break-all text-[12px] font-medium" title={currentPath}>{currentPath}</p>
+                  <p className="text-[11px] text-muted-foreground">{currentAccess}</p>
+                </div>
 
-            <button
-              type="button"
-              disabled={disabled || !canChangeFocus}
-              onClick={() => applyProjectPath(defaultScope.project_path, defaultScope.project_name)}
-              className={cn(
-                floatingItemClassName,
-                floatingItemFocusClassName,
-                "flex min-h-[48px] w-full cursor-default gap-3 px-3 py-2.5 focus:bg-muted/55",
-              )}
-            >
-              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-control bg-muted text-foreground/80">
-                <Folder className="h-4 w-4" aria-hidden />
-              </span>
-              <span className="min-w-0 flex-1 text-left">
-                <span className="block truncate text-[13px] font-semibold text-foreground">
-                  {t("workspace.dialog.defaultProject", { defaultValue: "Use agent home" })}
-                </span>
-                <span className="block break-all text-[11.5px] text-muted-foreground">
-                  {defaultScope.project_path}
-                </span>
-              </span>
-              {isAgentHome ? <Check className="h-4 w-4 text-foreground/80" aria-hidden /> : null}
-            </button>
+                <button
+                  type="button"
+                  disabled={disabled || !canChangeFocus}
+                  onClick={() => applyProjectPath(defaultScope.project_path, defaultScope.project_name)}
+                  className={cn(
+                    floatingItemClassName,
+                    floatingItemFocusClassName,
+                    "flex min-h-[48px] w-full cursor-default gap-3 px-3 py-2.5 focus:bg-muted/55",
+                  )}
+                >
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-control bg-muted text-foreground/80">
+                    <Folder className="h-4 w-4" aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className="block truncate text-[13px] font-semibold text-foreground">
+                      {t("workspace.picker.clearProject", { defaultValue: "Clear project folder" })}
+                    </span>
+                  </span>
+                </button>
+              </>
+            )}
 
             {readableRepositories.length > 0 ? (
               <div className="space-y-1">
@@ -396,7 +403,7 @@ export function WorkspaceProjectPicker({
             ) : null}
           </PopoverContent>
         </Popover>
-        <span className="min-w-0 truncate text-[10.5px] text-muted-foreground" title={currentAccess}>
+        <span className={cn("min-w-0 truncate text-[10.5px] text-muted-foreground", compact && "sr-only")} title={currentAccess}>
           {currentAccess}
         </span>
         {disabled ? (
@@ -635,7 +642,7 @@ export function WorkspacePermissionV2Control({
       ? t("workspace.permissionV2.fullEndingShort", { defaultValue: "Ending" })
     : isFull
       ? t("thread.composer.workspace.fullShort", { defaultValue: "Full" })
-      : t("thread.composer.workspace.defaultShort", { defaultValue: "Default" });
+      : t("thread.composer.workspace.defaultShort", { defaultValue: "Restricted" });
   const reasonCopy = isRestrictedRetiring
     ? null
     : unavailableReason

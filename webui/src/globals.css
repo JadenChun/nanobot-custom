@@ -890,7 +890,7 @@
   }
 }
 
-@container thread-composer (max-width: 21rem) {
+@container thread-composer (max-width: 24rem) {
   .thread-composer-footer {
     column-gap: 0.25rem;
     padding-inline: 0.5rem;
