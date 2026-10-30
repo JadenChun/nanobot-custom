@@ -651,7 +651,7 @@
     animation: none;
     filter: drop-shadow(0 0 12px hsl(204 72% 52% / 0.22));
   }
-  .webkit-runtime .dark .goal-shell-glow {
+  .webkit-runtime.dark .goal-shell-glow {
     filter: drop-shadow(0 0 12px hsl(198 90% 72% / 0.28));
   }
   .webkit-runtime .host-window-shell,
