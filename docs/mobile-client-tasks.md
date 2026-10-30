@@ -1,6 +1,7 @@
 # Mobile client taskbook: OpenCode entry point
 
-Status: implementation handoff prepared 2026-10-30; no implementation or runtime qualification is claimed.
+Status: implementation handoff prepared 2026-10-30; staging baseline updated 2026-10-31.
+No mobile implementation or runtime qualification is claimed.
 Read this file first, then the matching tasks in [the implementation guide](mobile-client-implementation.md).
 The [accepted architecture](mobile-client-plan.md) remains authoritative for security and product behavior;
 the taskbook supplies the complete execution order and supersedes its older P0-only dispatch wording.
@@ -18,12 +19,13 @@ Existing browser fetch/bootstrap, broad gateway tokens and desktop native-host d
 reused as phone authority. Preserve the existing multiplexed `NanobotClient` and canonical transcript.
 
 - Work only in `/home/jaden/.codex/worktrees/mobile-client/nanobot-custom`, branch `codex/mobile-client`.
-- Inspected source HEAD: `b02919744d1765e2c7d899355df46092420afce5`; committed staging base:
-  `43462942b7b040e35dc98e01a46fe6ee23267f37`. These are source baselines, not an exact start-HEAD guard.
-  A later documentation-only handoff commit is expected; record the actual clean implementation HEAD.
-- Active permission/WebUI/provider/sandbox edits in `/home/jaden/Documents/Utilities/nanobot-custom`
-  are outside this checkout and absent from that rebase. Never stage, copy, reset, test through or
-  otherwise modify that checkout. M10 admits only committed staging updates at a clean checkpoint.
+- Current committed staging base: `a60d8c5037479848d985475eb2e1bc81159d1bb7`, included by the
+  clean 2026-10-31 rebase. The resolved Sandbox, permission, recovery and WebUI changes are included.
+  Earlier planning HEAD `b0291974` and base `43462942` are historical, not start-HEAD guards.
+  Record the actual clean implementation HEAD and fresh source/dependency manifests.
+- Future uncommitted edits in `/home/jaden/Documents/Utilities/nanobot-custom` remain outside this
+  checkout. Never stage, copy, reset, test through or otherwise modify that checkout.
+  M10's Git sync to `a60d8c50` is already done; its permission/API/test verification remains required.
 - Read `AGENTS.md`, `.agent/{design,security,gotchas}.md` and [checkout isolation](mobile-development.md).
   Freeze source/dependency/environment hashes before edits; keep an actual command and exit-code log.
 - Use this checkout's own environments, config, instance/data/workspace and unused loopback ports.
@@ -65,7 +67,7 @@ All `mobile/`, `nanobot/remote/` and `tests/remote/` paths are proposed new path
 | [M07 / P1](mobile-client-implementation.md#m07) | Independent durable owner and private IPC | M06 | Remote store/owner/IPC; `config/schema.py` | Dependency | Atomic records, role/peer isolation and fail-closed IPC pass |
 | [M08 / P1](mobile-client-implementation.md#m08) | Single-winner pairing, refresh and revoke | M07 | Remote pairing/auth/devices; tests | Dependency | Race/rotation/revoke/restore negatives pass |
 | [M09 / P1](mobile-client-implementation.md#m09) | Staged loopback listener and local approval/entry CLI | M08; explicit local mapping opt-in | Remote listener/staging/entry; tests | External | Independent owner reachable privately; exact teardown restores prior state |
-| [M10 / sync](mobile-client-implementation.md#m10) | Admit committed permission/WebUI updates | M01; committed staging fixes and passing affected tests | Mobile branch integration/manifests only | External | Clean sync, refreshed permission/API/layout manifest and affected checks |
+| [M10 / sync](mobile-client-implementation.md#m10) | Verify included permission/WebUI updates | M01; `a60d8c50` already included | Mobile branch integration/manifests only | Dependency | Refreshed permission/API/layout manifest and affected checks; rebase only if a newer target is needed |
 | [M11 / P2](mobile-client-implementation.md#m11) | Scoped gateway HTTP/WS/media edge | M09, M10 | WebUI gateway/channel edge and remote client tests | Dependency | Every declared route/frame/range checks current identity; unknown routes deny |
 | [M12 / P2](mobile-client-implementation.md#m12) | Immutable operations and replay-only reconnect contract | M11 | `inbound_commands.py`, edge/replay tests | Dependency | Lost-response/renewal/rotation effect count is 1; unknown replay never executes |
 | [M13 / P2](mobile-client-implementation.md#m13) | Remote task authority ceiling | M12, M10 | WebUI workspaces/projection/ingress; authority tests | Dependency | Phone cannot inherit local Full/grants or escape qualified restricted tasks |
@@ -92,7 +94,7 @@ All `mobile/`, `nanobot/remote/` and `tests/remote/` paths are proposed new path
 flowchart TD
   M01 --> M02 --> M03 --> M04 --> M05
   M05 --> M06 --> M07 --> M08 --> M09
-  M01 --> M10["M10: committed staging sync"]
+  M01 --> M10["M10: included staging verification"]
   M09 --> M11
   M10 --> M11
   M11 --> M12 --> M13 --> M14 --> M15 --> M16 --> M17 --> M18 --> M19 --> M20
@@ -111,9 +113,9 @@ flowchart TD
   M27 -. if VPS target .-> M29
 ```
 
-M06–M09 contract/store/listener work can proceed while committed staging fixes are awaited;
-M11 permission integration and M16 shared UI work cannot cross M10. M10 can happen earlier once
-its external gate is satisfied; it never imports uncommitted staging files. Native product preparation
+M06–M09 contract/store/listener work can proceed independently; M11 permission integration and M16
+shared UI work still require M10's verification of the included staging base. M10 can happen earlier;
+any further Git integration uses committed source at a clean checkpoint, never uncommitted files. Native product preparation
 may later overlap backend work only with disjoint ownership, but the M14 real-backend gate waits for
 M13. Default to the sequential order above; task completion does not require another human dispatch.
 M20 is an emulator-qualified development MVP; M21 and M22 are mandatory before Android distribution.
@@ -128,15 +130,16 @@ M23–M29 are optional future branches and never dependencies of M20–M22.
 Implement the ready Android MVP tasks M01–M22 in docs/mobile-client-tasks.md and
 docs/mobile-client-implementation.md, in dependency order. Read AGENTS.md and the
 accepted mobile-client-plan.md first. Work only in the dedicated codex/mobile-client
-worktree; record its actual clean starting HEAD and manifests. b0291974 is the
-inspected source baseline, so accept a subsequent docs-only handoff commit.
+worktree; record its actual clean starting HEAD and manifests. The branch already
+includes staging a60d8c50; older b0291974/43462942 references are historical.
 
 For each ready task, reconfirm its owned paths, preserve unrelated edits, capture a
 meaningful red test or deterministic pre-check, implement the smallest change, then
 run its green checks and record exact commands/exit codes and acceptance evidence.
 Do not ask for approval after each task. Preserve one writer per boundary and record
-P1/P2 -> P5a and P4 -> P5a transfers. M10 admits committed staging changes only at a
-clean checkpoint; refresh permission/API/layout assumptions before M11/M16.
+P1/P2 -> P5a and P4 -> P5a transfers. At M10 verify the included Sandbox permission/API/
+layout changes before M11/M16; update Git history only if a newer committed staging
+target is required, at a clean checkpoint. Do not skip M10's remaining evidence checks.
 
 Keep P0 entirely under mobile/ with a non-agent fixture. Stop broad mobile integration
 if native transport feasibility fails; return measured fallback evidence. Never count

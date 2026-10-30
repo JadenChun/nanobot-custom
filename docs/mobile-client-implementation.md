@@ -352,12 +352,17 @@ finish and M10 proceed. Only the operator's concrete opted-in resources may be c
 **Allowed:** serialized integration of the mobile branch and its manifests/docs only; a deliberate rebase/update
 onto the recorded committed staging SHA. **Forbidden:** editing/staging/resetting the staging checkout or copying dirty files.
 
+The clean 2026-10-31 rebase already includes staging `a60d8c5037479848d985475eb2e1bc81159d1bb7`.
+That completes the Git-sync portion only. At M10 verify ancestry and perform the remaining source,
+permission/API/layout, test and type-evidence checks; no mobile implementation was tested by the rebase.
+
 1. Check that all mobile writers have reached a clean committed checkpoint; record actual branch/HEAD/status,
    committed staging target and passing upstream affected-test evidence. Do not manufacture missing commits.
 2. Freeze pre-sync source/dependency/type/contract manifests and compare committed permission/API/runtime/layout
    seams. Active staging files and its running server are not authoritative source/test fixtures for this task.
-3. Update only `codex/mobile-client` using the selected committed history; resolve mobile conflicts deliberately
-   in this checkout, preserving accepted security clauses and unrelated changes. Record old/new bases and exact diff.
+3. If the selected staging target is already included, record ancestry without repeating the rebase.
+   Otherwise update only `codex/mobile-client`, resolving mobile conflicts in this checkout while preserving
+   accepted security clauses and unrelated changes. Record old/new bases and the exact integration diff.
 4. Re-read admitted permission owner/types, scoped API, runtime/bootstrap and layout contracts; revise mobile
    adapters/tests to current semantics through their owning tasks, not by forcing obsolete helper names/labels.
 5. Retain all original pre-mobile and pre-sync checker reports/source snapshots and their dependency hashes.
