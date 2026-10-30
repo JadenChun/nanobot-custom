@@ -1,7 +1,10 @@
 # Android-first Nanobot mobile client implementation plan
 
-Planning baseline/revision: 2026-10-30. Status: proposed specification for orchestrator acceptance.
-This document does not authorize implementation, service installation, network changes or publication.
+Planning baseline/revision: 2026-10-30. Status: accepted architecture; see the complete
+[OpenCode task backlog](mobile-client-tasks.md) and [implementation steps](mobile-client-implementation.md).
+The taskbook records the Android workflow to execute when the user invokes its OpenCode prompt.
+This planning task only prepares the handoff; production activation, service installation,
+network changes and publication retain their explicit setup/review gates.
 No mobile build, emulator, phone, VPS or model endpoint has been tested in this planning task.
 Planner: `development_planner_max`, GPT-6.1 Sol Max, for credential, transport and lifecycle boundaries.
 
@@ -32,11 +35,13 @@ Actual VPS provisioning/state migration, model serving and remote home-tool work
 
 ## Source and evidence baseline
 
-Repository HEAD inspected: `7ad57f9aaf163bd0476c2241637925343b1eb928`.
+Original architecture-review HEAD inspected: `7ad57f9aaf163bd0476c2241637925343b1eb928`.
+The current rebase and actual implementation-start manifest are tracked in
+[mobile development](mobile-development.md) and task M10; historical observations below remain dated.
 Original unrelated edits include runner/OpenAI-compatible/factory/fallback provider files and
 `test_text_tool_recovery.py`, `test_text_tool_output.py`, `test_runner_fallback.py`; later active
 runner/skills/provider work also remains outside this plan's ownership.
-Only this document is written during planning; no Git, dependencies, config or runtime changes are made.
+The original architecture planning wrote only this document; no dependencies, config or runtime changed.
 Future implementation starts in a dedicated `codex/mobile-client` worktree/branch from the accepted
 staging baseline, or reuses a suitable clean attached mobile worktree. The recent tiny-fix direct-edit
 exception does not authorize mobile implementation in this shared checkout.
@@ -390,12 +395,12 @@ and reruns focused checks; preserve prior assertions.
 | Package / owner | Allowed components and output | Depends on | Binary acceptance / rollback |
 | --- | --- | --- | --- |
 | P0 — Native transport owner: **first implementation** | New `mobile/` only: fixture UI, Capacitor shell, `native-network/`, Android adapter, emulator tests/toolchain evidence. Build/run x86_64; separately compile arm64-v8a without claiming execution. | Accepted plan, isolated staging fixture and emulator preflight | Android emulator passes the transport/custody gate below; otherwise no broad product/UI dispatch. No physical/iOS prerequisite. Remove prototype/revoke test enrollment. |
-| P1 — Identity/backend owner | New `nanobot/remote/` identity/store/IPC/auth, minimal loopback owner listener, staging local approval/entry setup-teardown modules and tests; explicit `config/schema.py` entries. Freeze the versioned route/replay contract. | P0 go; owner security review; explicit local staging setup gate | Real owner starts independently of the gateway; validated private mappings reach its listener, and teardown restores prior state. Concurrent QR consume, rotation, reset and fail-closed IPC/revocation pass. Defaults disabled; no production service install. |
+| P1 — Identity/backend owner | New `nanobot/remote/` identity/store/IPC/auth, minimal loopback owner listener, staging local approval/entry setup-teardown modules and tests; explicit `config/schema.py` entries. Freeze the versioned route/replay contract. | P0 go; explicit local staging setup gate; security review before merge/production activation | Real owner starts independently of the gateway; validated private mappings reach its listener, and teardown restores prior state. Concurrent QR consume, rotation, reset and fail-closed IPC/revocation pass. Defaults disabled; no production service install. |
 | P2 — Identity/backend owner, sequential continuation | `nanobot/webui/{gateway_endpoint,gateway_tokens,ws_http,inbound_commands,gateway_services,workspaces,media_gateway,media_api}.py`, WebSocket edge and corresponding tests; any session-policy seam gets explicit ownership first. | P1 | All route/frame/media/replay checks use current principal; safe task ceiling and local regressions pass. Disable mobile ingress; retain revocations. |
 | P3 — Native transport owner | Product Android `mobile/` shell/secure storage/media/deep-link/build integration; exact dependency lockfiles. | P1 reachable staging owner/entry PASS + P2 backend PASS | Emulator pairs/refreshes/revokes against the real backend, including instance/profile mismatch and broker-route proof; debug/internal builds only. Revert app build/revoke device. |
 | P4 — WebUI transport/layout owner | `webui/src/lib/{runtime,types,http,bootstrap,api,nanobot-client}.ts`, `App.tsx`, `main.tsx`, required chat/media/components and tests; mobile Vite output wiring. | P2/P3 emulator gate | Shared chat works in Android emulator; no private-network fetch/DOM escapes, old SW or native authority inference. Browser/desktop regressions pass. Roll back mobile adapter without replacing browser bundle. |
-| P5a — Desktop settings/control owner | Product local pairing/remote settings UI and opt-in user-service supervision; adopt the P1 entry/setup modules only after explicit backend ownership transfer, plus minimal local desktop integration/tests. | P2, P3, P4; owner security review | Chat release has local pairing/revoke/on-off setup and no runtime start/stop grant. Rollback removes owned mappings/service, not sessions or unrelated Serve config. |
-| P5b — Host lifecycle owner, later | Fixed lifecycle routes and minimal desktop integration; a later service-manager adapter only under an explicit named-file contract after P5a handoff. | P5a; independent owner-specific lifecycle review | Desktop admission remains strict; service lifecycle stays unsupported until exact-unit supervision/race/recovery tests pass. Does not block Android release. |
+| P5a — Desktop settings/control owner | Product local pairing/remote settings UI and opt-in user-service supervision; adopt the P1 entry/setup modules only after explicit backend ownership transfer, plus minimal local desktop integration/tests. | P2, P3, P4; explicit file handoff; security review before merge/production activation | Chat release has local pairing/revoke/on-off setup and no runtime start/stop grant. Rollback removes owned mappings/service, not sessions or unrelated Serve config. |
+| P5b — Host lifecycle owner, later | Fixed lifecycle routes and minimal desktop integration; a later service-manager adapter only under an explicit named-file contract after P5a handoff. | P5a; separate lifecycle scope; owner-specific review before activation/merge | Desktop admission remains strict; service lifecycle stays unsupported until exact-unit supervision/race/recovery tests pass. Does not block Android release. |
 | P6a — Release/verification owner: physical Android checkpoint | Run the named real-device acceptance below on the arm64 package; corrections return to the owning mobile/backend package. | P0–P5a emulator PASS; actual test phone | Cellular/handover/OEM/Doze/hardware custody/camera/battery gates pass before distribution. Emulator success alone cannot close this checkpoint. |
 | P6 — Release/verification owner | Reproducible packaging, dependency/license evidence, Android signing and integrated acceptance report. | P6a, not P5b/P7/iOS/VPS deployment | Signed Android install/update/revoke and rollback pass. Revert artifact and disable/revoke remote access. |
 | P7 — Permission owner, deferred | Exact-target remote-approval adapter and closest authority/replay tests only, under a new accepted contract. | P5a + explicit local scope grant design | All negative authority tests pass; Full stays local. Revoke approver scope/receipts independently. |
@@ -533,4 +538,7 @@ are deferred inputs only; do not request them for Android. If compatibility fail
 options before raising support floors. These are not reasons to seek permission to revise this plan.
 Independent review must assess the new persistent owner/IPC threat boundary, the native transport
 and media qualification, live revocation/replay linearization, safe task ceiling and lifecycle adoption.
-Recommendation: accept this plan for **P0 only**; dispatch later packages only when their stated gates pass.
+When the user invokes the OpenCode prompt, implement ready Android MVP tasks in the taskbook's dependency order,
+retaining P0 feasibility and all measured setup gates. No independent human approval is required after
+each task; review the integrated implementation before merge or production activation. Deferred packages
+remain separately scoped and are not dispatched by the Android MVP handoff.
