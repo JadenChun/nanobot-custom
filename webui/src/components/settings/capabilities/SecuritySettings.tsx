@@ -93,7 +93,7 @@ export function AdvancedSettings({
               title={tx("settings.rows.managedFolderAccess", "Managed folder access")}
               description={tx(
                 "settings.help.managedFolderAccess",
-                "Folder grants control file and command access. The default Full access preference cannot add or bypass a grant.",
+                "Stored Sandbox rules control writes. Agent map shortcuts help navigation. Full access uses normal OS-account access.",
               )}
             />
           ) : (
@@ -109,7 +109,7 @@ export function AdvancedSettings({
               <SegmentedControl
                 value={form.webuiDefaultAccessMode}
                 options={[
-                  { value: "default", label: tx("settings.values.defaultPermission", "Restricted") },
+                  { value: "default", label: tx("settings.values.defaultPermission", "Sandbox") },
                   { value: "full", label: tx("settings.values.fullAccess", "Full access") },
                 ]}
                 onChange={(webuiDefaultAccessMode) =>

@@ -66,6 +66,7 @@ class AdmittedGraphs:
             patches.setattr(socket.socket, name, _denied)
         for name in ("getaddrinfo", "create_connection"):
             patches.setattr(socket, name, _denied)
+        patches.setattr("nanobot.agent.tools.sandbox.managed_bwrap_available", lambda: False)
         patches.setattr(subprocess, "Popen", _denied)
         for name in ("system", "fork", "posix_spawn", "posix_spawnp", "execv", "execve"):
             if hasattr(os, name):

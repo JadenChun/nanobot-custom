@@ -40,6 +40,7 @@ def file_preview_payload(
     allow_folder_grants: bool = False,
     permission_owner: DesktopPermissionOwner | None = None,
     permission_reference: WorkspacePermissionReference | None = None,
+    restrict_to_root: Path | None = None,
 ) -> dict[str, Any]:
     """Return a text preview for a file allowed by the session workspace scope."""
 
@@ -51,6 +52,7 @@ def file_preview_payload(
         allow_folder_grants=allow_folder_grants,
         permission_owner=permission_owner,
         permission_reference=permission_reference,
+        restrict_to_root=restrict_to_root,
     )
 
     try:
@@ -90,6 +92,7 @@ def file_preview_availability_payload(
     allow_folder_grants: bool = False,
     permission_owner: DesktopPermissionOwner | None = None,
     permission_reference: WorkspacePermissionReference | None = None,
+    restrict_to_root: Path | None = None,
 ) -> dict[str, bool]:
     """Confirm that a path is a readable text preview candidate without loading it fully."""
 
@@ -101,6 +104,7 @@ def file_preview_availability_payload(
         allow_folder_grants=allow_folder_grants,
         permission_owner=permission_owner,
         permission_reference=permission_reference,
+        restrict_to_root=restrict_to_root,
     )
     try:
         with open(resolved, "rb") as f:
@@ -121,6 +125,7 @@ def _resolve_preview_path(
     allow_folder_grants: bool,
     permission_owner: DesktopPermissionOwner | None,
     permission_reference: WorkspacePermissionReference | None,
+    restrict_to_root: Path | None = None,
 ) -> Path:
     path = _clean_preview_path(raw_path)
     if not path:
@@ -129,11 +134,16 @@ def _resolve_preview_path(
         raise WebUIFilePreviewError(400, "path is too long")
 
     try:
+        allowed_root = (
+            restrict_to_root
+            if restrict_to_root is not None
+            else (scope.project_path if scope.restrict_to_workspace else None)
+        )
         extra_roots = [get_media_dir()] if scope.restrict_to_workspace else None
         resolved = resolve_allowed_path(
             path,
             workspace=scope.project_path,
-            allowed_root=scope.project_path if scope.restrict_to_workspace else None,
+            allowed_root=allowed_root,
             extra_allowed_roots=extra_roots,
             strict=True,
         )

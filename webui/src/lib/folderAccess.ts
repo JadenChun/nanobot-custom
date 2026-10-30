@@ -73,6 +73,16 @@ export function folderAccessErrorMessage(error: unknown, t: Translate): string {
     });
   }
 
+  if (error.message === "configured_repository_has_own_policy") {
+    return t("workspace.folders.configuredPolicy", {
+      defaultValue: "This folder has a configured repository policy. Folder grants cannot override its protected, read-only or proposal rules.",
+    });
+  }
+  if (error.message === "folder_metadata_saved_access_pending") {
+    return t("workspace.folders.partialSave", {
+      defaultValue: "The folder metadata was saved, but its Sandbox access update did not finish. Retry the same save to complete it. If a command is still running, wait for it to finish first.",
+    });
+  }
   if (error.message === "invalid_access_request") {
     return t("workspace.recovery.invalidFolder", {
       defaultValue: "Nanobot could not verify that folder. Choose an existing folder and try again.",

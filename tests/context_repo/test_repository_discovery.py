@@ -1,8 +1,6 @@
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from nanobot.context_repo.catalog import RepositoryCatalog
 from nanobot.context_repo.discovery import discover_repositories
 from nanobot.context_repo.policy import ResourceAccessPolicy
@@ -97,8 +95,9 @@ def test_discovery_rejects_unreadable_start_and_caps_traversal(tmp_path, monkeyp
             },
         }
 
-    with pytest.raises(PermissionError, match="Discovery is not allowed"):
-        discover_repositories(parent, policy=policy, catalog=catalog, access_for_path=access)
+    unlisted = discover_repositories(parent, policy=policy, catalog=catalog, access_for_path=access)
+    assert unlisted["visited_directories"] == 512
+    assert unlisted["truncated"] is True
 
     store, policy = _managed_policy(tmp_path, parent)
     catalog = RepositoryCatalog(tmp_path / "instance" / "repositories", runtime_root=tmp_path / "instance")

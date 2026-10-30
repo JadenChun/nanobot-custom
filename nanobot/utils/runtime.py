@@ -21,6 +21,18 @@ EMPTY_FINAL_RESPONSE_MESSAGE = (
     "Please try again or narrow the task."
 )
 
+CONTEXT_BUDGET_ERROR_MESSAGE = (
+    "The model request exceeds the context budget for this conversation and its tool results. "
+    "Start a new chat, reduce tool output, or switch to a model with a larger context window, "
+    "then try again."
+)
+
+CONTEXT_REPO_EXEC_DISABLED_MESSAGE = (
+    "The command was blocked because command execution is disabled for this context repository. "
+    "This turn has stopped. Use file-reading tools to inspect it, or switch to a project folder "
+    "that permits commands and retry."
+)
+
 FINALIZATION_RETRY_PROMPT = (
     "Please provide your response to the user based on the conversation above."
 )

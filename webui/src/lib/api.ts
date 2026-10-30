@@ -492,6 +492,17 @@ function parseFolderAccessRequest(value: unknown): FolderAccessRequest | null {
     || (value.selected_duration !== undefined && value.selected_duration !== null && value.selected_duration !== "once" && value.selected_duration !== "always")
     || (value.task_access_state !== undefined && value.task_access_state !== null && (typeof value.task_access_state !== "string" || !TASK_ACCESS_STATES.has(value.task_access_state)))
   ) return null;
+  if (value.folder_proposal !== undefined) {
+    const proposal = value.folder_proposal;
+    if (!isObjectRecord(proposal) || !isObjectRecord(proposal.entry)
+      || !["read_only", "read_write"].includes(String(proposal.requested_access))
+      || typeof proposal.entry.name !== "string" || typeof proposal.entry.path !== "string"
+      || !isCanonicalAbsolutePath(proposal.entry.path) || typeof proposal.entry.purpose !== "string"
+      || typeof proposal.entry.agent_map !== "boolean"
+      || !["project", "knowledge"].includes(String(proposal.entry.kind))
+      || !Array.isArray(proposal.entry.knowledge_repos) || !Array.isArray(proposal.entry.sync_paths)
+      || typeof proposal.entry.auto_sync !== "boolean") return null;
+  }
   return {
     ...(value as unknown as FolderAccessRequest),
     ...(value.selected_access === null
@@ -597,7 +608,7 @@ function parseWorkspaceOnceResult(
     || !selected.read
     || selected.write !== (input.file_access === "read_write")
     || selected.boundary !== "folder"
-    || selected.commands.requested !== input.commands
+    || (input.commands && !selected.commands.requested)
     || !sameEffectiveWorkspaceAccess(selected, scopeAccess)
     || permissions.mode !== "restricted"
     || permissions.state !== "active"
@@ -1790,4 +1801,34 @@ export async function updateTranscriptionSettings(
       max_upload_mb: update.maxUploadMb,
     },
   );
+}
+
+export interface FolderLocationEdit {
+  operation_id: string;
+  expected_grants_revision: number;
+  expected_catalog_revision: number;
+  path: string;
+  entry: RepositoryRecord | null;
+  access: "keep" | "inherit" | "read_only" | "read_write";
+}
+
+export async function editFolderLocation(transport: WebUIMutationTransport, edit: FolderLocationEdit): Promise<WorkspacesPayload> {
+  return mutation<WorkspacesPayload>(transport, "workspace.folder.edit", { ...edit });
+}
+
+export async function approveFolderProposal(transport: WebUIMutationTransport, payload: {
+  chat_id: string; access_request_id: string; expected_revision: number;
+  expected_grants_revision: number; expected_catalog_revision: number;
+  file_access: "read_only" | "read_write"; agent_map: boolean;
+}): Promise<FolderAccessActionResult> {
+  const result = await mutation<unknown>(transport, "workspace.access.add_folder", payload);
+  if (!isObjectRecord(result)) throw new ApiError(502, "Invalid folder approval response");
+  const request = parseFolderAccessRequest(result.workspace_access_request);
+  const scope = parseWorkspaceScope(result.workspace_scope);
+  if (!request || !scope || request.chat_id !== payload.chat_id
+    || request.access_request_id !== payload.access_request_id || request.revision <= payload.expected_revision
+    || request.status !== "ready" || !request.selected_path || scope.project_path !== request.selected_path) {
+    throw new ApiError(502, "Invalid folder approval response");
+  }
+  return { workspace_access_request: request, workspace_scope: scope };
 }

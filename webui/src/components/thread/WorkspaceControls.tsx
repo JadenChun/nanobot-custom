@@ -218,7 +218,7 @@ export function WorkspaceProjectPicker({
     : activeScope?.sandbox_status?.summary
       ?? (activeScope?.access_mode === "full"
         ? t("workspace.permissionV2.unavailable", { defaultValue: "Access unavailable" })
-        : t("thread.composer.workspace.default", { defaultValue: "Restricted" }));
+        : t("thread.composer.workspace.default", { defaultValue: "Sandbox" }));
   const readableRepositories = (workspaces?.management?.repositories ?? [])
     .filter((repository) => repository.exists && repository.effective_access.read);
 
@@ -530,7 +530,7 @@ export function WorkspaceAccessMenu({
       <DropdownMenuContent align="start" className="w-56">
         <AccessMenuItem
           icon={<Hand className="h-4 w-4" />}
-          label={t("thread.composer.workspace.default", { defaultValue: "Restricted" })}
+          label={t("thread.composer.workspace.default", { defaultValue: "Sandbox" })}
           selected={mode === "restricted"}
           onSelect={() => setMode("restricted")}
         />
@@ -634,21 +634,21 @@ export function WorkspacePermissionV2Control({
   const label = unavailable
     ? t("workspace.permissionV2.unavailable", { defaultValue: "Access unavailable" })
     : draftRestricted
-      ? t("thread.composer.workspace.default", { defaultValue: "Restricted" })
+      ? t("thread.composer.workspace.default", { defaultValue: "Sandbox" })
     : isRetiring
       ? t("workspace.permissionV2.fullEnding", { defaultValue: "Full access is ending" })
       : isRestrictedRetiring
-        ? t("workspace.permissionV2.restrictedEnding", { defaultValue: "Restricted · previous access ending" })
+        ? t("workspace.permissionV2.restrictedEnding", { defaultValue: "Sandbox · previous access ending" })
       : isFull
         ? t("thread.composer.workspace.full", { defaultValue: "Full access" })
-        : t("thread.composer.workspace.default", { defaultValue: "Restricted" });
+        : t("thread.composer.workspace.default", { defaultValue: "Sandbox" });
   const compactLabel = isRetiring
     ? t("workspace.permissionV2.fullEndingShort", { defaultValue: "Ending" })
     : isRestrictedRetiring
       ? t("workspace.permissionV2.fullEndingShort", { defaultValue: "Ending" })
     : isFull
       ? t("thread.composer.workspace.fullShort", { defaultValue: "Full" })
-      : t("thread.composer.workspace.defaultShort", { defaultValue: "Restricted" });
+      : t("thread.composer.workspace.defaultShort", { defaultValue: "Sandbox" });
   const reasonCopy = isRestrictedRetiring
     ? null
     : unavailableReason
@@ -666,24 +666,24 @@ export function WorkspacePermissionV2Control({
       : null;
   const restrictedRetirementMessage = permissions?.retirement?.unknown_processes
     ? t("workspace.permissionV2.restrictedEndingUnknown", {
-        defaultValue: "Nanobot cannot confirm whether earlier commands have finished. New work remains Restricted; Full access stays unavailable.",
+        defaultValue: "Nanobot cannot confirm whether earlier commands have finished. New work remains Sandbox; Full access stays unavailable.",
       })
     : permissions?.retirement?.active_processes || permissions?.retirement?.active_turn
       ? t("workspace.permissionV2.restrictedEndingActive", {
-          defaultValue: "Earlier work is still active with the previous access. New work remains Restricted; Full access stays unavailable.",
+          defaultValue: "Earlier work is still active with the previous access. New work remains Sandbox; Full access stays unavailable.",
         })
       : permissions?.retirement
         ? t("workspace.permissionV2.restrictedEndingUncounted", {
-            defaultValue: "No earlier commands are reported active or unknown, but the previous access is still ending. Restricted remains the current mode.",
+            defaultValue: "No earlier commands are reported active or unknown, but the previous access is still ending. Sandbox remains the current mode.",
           })
         : t("workspace.permissionV2.restrictedEndingPending", {
-            defaultValue: "Previous access is still ending. New work remains Restricted; Full access stays unavailable.",
+            defaultValue: "Previous access is still ending. New work remains Sandbox; Full access stays unavailable.",
           });
   const retirementMessage = permissions?.retirement?.unknown_processes
     ? t("workspace.permissionV2.retiringUnknown", { defaultValue: "Nanobot cannot yet confirm whether earlier commands have finished. Access changes are pending." })
     : permissions?.retirement?.active_processes || permissions?.retirement?.active_turn
       ? t("workspace.permissionV2.retiringActive", { defaultValue: "A command is still running with the previous access. Wait for it to finish or stop it, then retry." })
-      : t("workspace.permissionV2.retiringFinished", { defaultValue: "Earlier work has finished. Retry to confirm Restricted access." });
+      : t("workspace.permissionV2.retiringFinished", { defaultValue: "Earlier work has finished. Retry to confirm Sandbox access." });
 
   const changeMode = async (mode: WorkspaceAccessMode) => {
     if (!permissions || !onModeChange || busy) return;
@@ -745,7 +745,7 @@ export function WorkspacePermissionV2Control({
                 }}
                 className="h-9 w-full rounded-control"
               >
-                {t("workspace.permissionV2.retryRestricted", { defaultValue: "Retry returning to Restricted" })}
+                {t("workspace.permissionV2.retryRestricted", { defaultValue: "Retry returning to Sandbox" })}
               </Button>
             </div>
           ) : isFull ? (
@@ -754,14 +754,14 @@ export function WorkspacePermissionV2Control({
               <p className="text-[11.5px] leading-relaxed text-muted-foreground">{t("workspace.permissionV2.fullReach", { defaultValue: "Files and commands across this device under your OS account permissions." })}</p>
               {actionFailed ? <p role="alert" className="text-[11px] text-destructive">{t("workspace.permissionV2.actionFailed", { defaultValue: "Access could not be updated. Refresh this chat before retrying." })}</p> : null}
               <Button type="button" variant="outline" disabled={busy} onClick={() => void changeMode("restricted")} className="h-9 w-full rounded-control">
-                {t("workspace.permissionV2.returnRestricted", { defaultValue: "Return to Restricted" })}
+                {t("workspace.permissionV2.returnRestricted", { defaultValue: "Return to Sandbox" })}
               </Button>
             </div>
           ) : (
             <div className="space-y-2 p-2">
               <AccessMenuItem
                 icon={<Hand className="h-4 w-4" />}
-                label={t("thread.composer.workspace.default", { defaultValue: "Restricted" })}
+                label={t("thread.composer.workspace.default", { defaultValue: "Sandbox" })}
                 selected={permissions?.mode === "restricted" || draftRestricted}
                 onSelect={() => {}}
               />
@@ -799,7 +799,7 @@ export function WorkspacePermissionV2Control({
           <DialogHeader className="text-left">
             <DialogTitle>{t("workspace.permissionV2.confirmTitle", { defaultValue: "Enable Full access?" })}</DialogTitle>
             <DialogDescription>
-              {t("workspace.permissionV2.confirmDescription", { defaultValue: "Nanobot can read and change files and run commands beyond the selected folder under your OS account permissions. Working in is the current directory and context. New chats start in Restricted mode." })}
+              {t("workspace.permissionV2.confirmDescription", { defaultValue: "Nanobot can read and change files and run commands beyond the selected folder under your OS account permissions. Working in is the current directory and context. New chats start in Sandbox mode." })}
             </DialogDescription>
           </DialogHeader>
           {!persistentChat && !draftFullAccess ? (

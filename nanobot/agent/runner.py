@@ -7,7 +7,7 @@ import inspect
 import os
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -43,12 +43,14 @@ from nanobot.providers.base import (
     LLMResponse,
     LLMUsage,
     ProviderConversationState,
+    ToolCallRequest,
 )
 from nanobot.providers.conversation_state import (
     ConversationRequestBinding,
     ProviderConversationStateController,
     ProviderStateSettlement,
 )
+from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
 from nanobot.session.source import SourceValidationError
 from nanobot.session.source_projection import RuntimeNode
 from nanobot.session.source_request import SourceRequestLedger, SourceRequestTicket
@@ -64,6 +66,8 @@ from nanobot.utils.helpers import (
 from nanobot.utils.llm_runtime import LLMRuntime
 from nanobot.utils.prompt_templates import render_template
 from nanobot.utils.runtime import (
+    CONTEXT_BUDGET_ERROR_MESSAGE,
+    CONTEXT_REPO_EXEC_DISABLED_MESSAGE,
     EMPTY_FINAL_RESPONSE_MESSAGE,
     build_budget_exhausted_finalization_message,
     build_finalization_retry_message,
@@ -112,6 +116,28 @@ def _restore_outer_whitespace(content: str, original: str | None) -> str:
     leading = original[:leading_size]
     trailing = original[-trailing_size:] if trailing_size else ""
     return f"{leading}{content}{trailing}"
+
+
+def _context_budget_error_response(
+    exc: FinalizedRequestBudgetExceeded,
+) -> LLMResponse:
+    """Convert the local final-request guard into a typed model error."""
+    measurement = exc.measurement
+    if measurement is not None:
+        logger.warning(
+            "Local request budget rejected provider={} model={} transport={} "
+            "measured_units={} input_limit={} over_by={} completion_reserve={} "
+            "total_limit={} measurement_source={}",
+            measurement.identity.provider, measurement.identity.model, measurement.identity.transport,
+            measurement.input_tokens, measurement.input_limit_tokens, measurement.over_by,
+            measurement.completion_reserve_tokens, measurement.total_limit_tokens, measurement.source,
+        )
+    return LLMResponse(
+        content=CONTEXT_BUDGET_ERROR_MESSAGE,
+        finish_reason="error",
+        error_kind="context_length",
+        error_should_retry=False,
+    )
 
 
 @dataclass(slots=True)
@@ -197,6 +223,56 @@ class AgentRunner:
             [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None] | None = None) -> None:
         self.artifact_reader_factory = artifact_reader_factory
         self.context_governor = ContextGovernor()
+
+    @staticmethod
+    def _is_missing_skill_file_error(
+        tools: ToolRegistry,
+        tool_calls: list[ToolCallRequest],
+        results: Sequence[object],
+        terminal: ToolOutcome,
+    ) -> bool:
+        """Allow one corrected read after the built-in reader reports a missing skill."""
+        from nanobot.agent.skills import BUILTIN_SKILLS_DIR
+        from nanobot.agent.tools.filesystem import ReadFileTool
+
+        if type(tools.get("read_file")) is not ReadFileTool or terminal.policy_metadata:
+            return False
+        for tool_call, result in zip(tool_calls, results):
+            if result is not terminal or tool_call.name != "read_file":
+                continue
+            path = tool_call.arguments.get("path")
+            if not isinstance(path, str):
+                return False
+            parts = Path(path).parts
+            return (
+                len(parts) >= 3
+                and parts[-3] == "skills"
+                and parts[-1] == "SKILL.md"
+                and str(terminal.content).startswith(f"Error: File not found: {path}\n")
+                and (BUILTIN_SKILLS_DIR / parts[-2] / "SKILL.md").is_file()
+            )
+        return False
+
+    @staticmethod
+    def _is_context_repo_exec_denial(
+        tools: ToolRegistry,
+        tool_calls: list[ToolCallRequest],
+        results: Sequence[object],
+        terminal: ToolOutcome,
+    ) -> bool:
+        """Recognize the concrete shell tool's no-exec context boundary."""
+        from nanobot.agent.tools.shell import ExecTool
+
+        return (
+            type(tools.get("exec")) is ExecTool
+            and not terminal.policy_metadata
+            and str(terminal.content).startswith(
+                "Error: Command blocked by resource policy "
+                "(execution is disabled by context repo policy"
+            )
+            and any(result is terminal and call.name == "exec"
+                    for call, result in zip(tool_calls, results))
+        )
 
     @staticmethod
     def _append_bound_message(messages: list[dict[str, Any]], message: dict[str, Any],
@@ -626,6 +702,8 @@ class AgentRunner:
         # Per-turn throttle for repeated attempts against the same outside target.
         workspace_violation_counts: dict[str, int] = {}
         empty_content_retries = 0
+        missing_skill_recovery_attempted = False
+        context_repo_exec_recovery_attempted = False
         # Segments from one uninterrupted length-recovery chain. Tool work or
         # injected user input starts a new logical answer and clears the chain.
         length_recovery_parts: list[str] = []
@@ -773,6 +851,22 @@ class AgentRunner:
                 if terminal is None:
                     terminal = next((r for r in results if isinstance(r, ToolOutcome)
                                      and r.stop_reason == "folder_access_required"), None)
+                recoverable_skill_read = (
+                    terminal is not None
+                    and spec.fail_on_tool_error
+                    and terminal.stop_reason == "tool_error"
+                    and not missing_skill_recovery_attempted
+                    and iteration + 1 < spec.max_iterations
+                    and self._is_missing_skill_file_error(spec.tools, response.tool_calls, results, terminal)
+                )
+                recoverable_exec_denial = (
+                    terminal is not None
+                    and spec.fail_on_tool_error
+                    and terminal.stop_reason == "tool_error"
+                    and not context_repo_exec_recovery_attempted
+                    and iteration + 1 < spec.max_iterations
+                    and self._is_context_repo_exec_denial(spec.tools, response.tool_calls, results, terminal)
+                )
                 results = [r.content if isinstance(r, ToolOutcome) else r for r in results]
                 public_events = [
                     {key: value for key, value in event.items() if not key.startswith("_")}
@@ -840,6 +934,22 @@ class AgentRunner:
                         ),
                     },
                 )
+                if recoverable_skill_read:
+                    missing_skill_recovery_attempted = True
+                    terminal = None
+                if recoverable_exec_denial:
+                    context_repo_exec_recovery_attempted = True
+                    terminal = None
+                    self._append_bound_message(messages, {
+                        "role": "system",
+                        "content": (
+                            "Command execution is disabled for that context repository. "
+                            "Do not retry through exec, another shell, or an interpreter, "
+                            "and do not change its permissions. Use read_file or list_dir "
+                            "for permitted file inspection. If no permitted tool can "
+                            "complete the task, explain the limitation to the user."
+                        ),
+                    }, request_state.source)
                 if terminal is not None:
                     unknown_rejection = (
                         spec.fail_on_tool_error
@@ -853,6 +963,11 @@ class AgentRunner:
                         stop_reason = terminal.stop_reason or "policy_blocked"
                         policy_metadata = dict(terminal.policy_metadata)
                         final_content = str(terminal.content or "")
+                        if stop_reason == "tool_error" and final_content.startswith(
+                            "Error: Command blocked by resource policy "
+                            "(execution is disabled by context repo policy"
+                        ):
+                            final_content = CONTEXT_REPO_EXEC_DISABLED_MESSAGE
                         context.stop_reason = stop_reason
                         context.final_content = final_content
                         if spec.source_writer is not None:
@@ -1541,6 +1656,9 @@ class AgentRunner:
                     finish_reason="error",
                     error_kind="timeout",
                 )
+        except FinalizedRequestBudgetExceeded as exc:
+            # _record_and_settle discards this failed ticket exactly once.
+            response = _context_budget_error_response(exc)
         except Exception:
             if ticket is not None and request_state.source is not None:
                 request_state.source.discard(ticket)
@@ -1571,16 +1689,28 @@ class AgentRunner:
                     "error": response.content
                     or "Model request failed before the provider-hosted tool completed.",
                 })
-        if (
-            all_dropped
-            and original_finish_reason in ("tool_calls", "function_call")
-            and not malformed_retry
+        text_tool_error = (
+            response.finish_reason == "error" and response.error_kind == "malformed_tool_output"
+        )
+        if not malformed_retry and (
+            text_tool_error
+            or (all_dropped and original_finish_reason in ("tool_calls", "function_call"))
         ):
             logger.warning(
-                "Retrying LLM request after all {} malformed tool call(s) were dropped",
+                "Retrying malformed tool output ({} structured call(s) dropped)",
                 dropped,
             )
-            note = self._malformed_tool_call_retry_note(response.content)
+            if text_tool_error:
+                # Keep raw protocol text out of replayed history. The provided
+                # tool schemas remain the authority for available capabilities.
+                note = {"role": "user", "content": (
+                    "Your previous response printed an invalid tool request as text. "
+                    "Use only the provided tools through structured tool calls with JSON object "
+                    "arguments. Do not invent tools or print tool protocol markup. "
+                    "If the conversation already contains the information needed, answer directly."
+                )}
+            else:
+                note = self._malformed_tool_call_retry_note(response.content)
             retry_messages = [*messages, note]
             retry_view = source_view.with_runtime(RuntimeNode(uuid.uuid4().hex, note)) if source_view is not None else None
             retry_response, retry_usage = await self._request_model(
@@ -1884,6 +2014,8 @@ class AgentRunner:
                 finish_reason="error",
                 error_kind="timeout",
             )
+        except FinalizedRequestBudgetExceeded as exc:
+            response = _context_budget_error_response(exc)
         except Exception as exc:
             if not normalize_provider_errors:
                 if ticket is not None and request_state.source is not None:

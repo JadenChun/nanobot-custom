@@ -1943,6 +1943,8 @@ class LLMProvider(ABC):
         kind = (response.error_kind or "").strip().lower()
         if kind in {"connection", "timeout"}:
             return kind
+        if kind == "context_length":
+            return "context_length"
         if response.error_status_code == 429:
             return "rate_limit"
         if response.error_status_code is not None and response.error_status_code >= 500:

@@ -275,15 +275,40 @@ def _resolve_fallback_presets(config: Config, primary: ModelPresetConfig) -> lis
     if defaults.fallback and defaults.fallback_models:
         raise ValueError("Configure either legacy fallback or fallback_models, not both")
     if defaults.fallback:
-        return [primary.model_copy(update={"model": entry.model, "provider": entry.provider})
-                for entry in defaults.fallback]
+        presets = [
+            primary.model_copy(update={"model": entry.model, "provider": entry.provider})
+            for entry in defaults.fallback
+        ]
+        return _deduplicate_fallback_presets(primary, presets)
     presets: list[ModelPresetConfig] = []
     for fallback in defaults.fallback_models:
         if isinstance(fallback, str):
             presets.append(config.model_presets[fallback])
         else:
             presets.append(_inline_fallback_preset(primary, fallback))
-    return presets
+    return _deduplicate_fallback_presets(primary, presets)
+
+
+def _deduplicate_fallback_presets(
+    primary: ModelPresetConfig,
+    fallbacks: list[ModelPresetConfig],
+) -> list[ModelPresetConfig]:
+    """Remove primary duplicates and repeated fallback entries in stable order.
+
+    A session preset can be present in the global fallback list.  Replaying the
+    primary model there only repeats the same authentication or quota failure;
+    duplicate fallback entries have the same problem.
+    """
+    primary_key = (primary.model, primary.provider)
+    seen = {primary_key}
+    unique: list[ModelPresetConfig] = []
+    for fallback in fallbacks:
+        key = (fallback.model, fallback.provider)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(fallback)
+    return unique
 
 
 def make_provider(
@@ -409,14 +434,12 @@ def build_provider_snapshot(
         if preset_name is None and preset is None
         else preset_name
     )
-    fallback_windows = [
-        fallback.context_window_tokens
-        for fallback in _resolve_fallback_presets(config, resolved)
-    ]
     return ProviderSnapshot(
         provider=make_provider(config, preset=resolved),
         model=resolved.model,
-        context_window_tokens=min([resolved.context_window_tokens, *fallback_windows]),
+        # Budget the selected model against its configured capacity. A fallback
+        # gets its own context window when the wrapper invokes that leaf.
+        context_window_tokens=resolved.context_window_tokens,
         signature=provider_signature(config, preset=resolved),
         generation=resolved.to_generation_settings(),
         model_preset=selected_preset,

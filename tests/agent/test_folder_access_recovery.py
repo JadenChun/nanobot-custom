@@ -196,21 +196,20 @@ async def test_real_file_and_exec_adapters_emit_typed_recovery(tmp_path: Path) -
             read = await ReadFileTool(workspace=home, resource_policy=policy).execute(
                 path=str(denied / "README.md")
             )
-            assert isinstance(read, ToolOutcome)
-            assert read.stop_reason == "folder_access_required"
-            need = read.policy_metadata["folder_access"]
-            assert need["reason"] == "folder_not_granted"
-            assert need["target"] == {"kind": "file", "path": str(denied / "README.md")}
-
-            command = await ExecTool(working_dir=str(home), resource_policy=policy).execute(
-                command="find / -name README.md"
+            assert "File not found" in read
+            write = await WriteFileTool(workspace=home, resource_policy=policy).execute(
+                path=str(denied / "README.md"), content="needs approved writes",
             )
-            assert isinstance(command, ToolOutcome)
-            assert command.stop_reason == "folder_access_required"
-            command_need = command.policy_metadata["folder_access"]
-            assert command_need["operation"] == "execute"
-            assert command_need["target"] == {"kind": "directory", "path": str(project)}
-            assert "find /" not in command.content
+            assert isinstance(write, ToolOutcome)
+            assert write.stop_reason == "folder_access_required"
+            assert write.policy_metadata["folder_access"]["reason"] == "write_not_granted"
+            assert write.policy_metadata["folder_access"]["target"] == {
+                "kind": "file", "path": str(denied / "README.md"),
+            }
+            command = await ExecTool(working_dir=str(home), resource_policy=policy).execute(
+                command="printf command-available",
+            )
+            assert "command-available" in command
     finally:
         reset_workspace_scope(scope_token)
 

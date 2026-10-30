@@ -1550,7 +1550,7 @@ describe("ThreadShell", () => {
     const { rerender } = render(view(null));
     const draft = "private draft for the new Full chat";
     await user.type(screen.getByLabelText("Message input"), draft);
-    await user.click(screen.getByRole("button", { name: "Workspace access mode: Restricted" }));
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
     await user.click(screen.getByRole("button", { name: "Enable Full access" }));
 
@@ -1594,7 +1594,7 @@ describe("ThreadShell", () => {
     const { rerender } = render(view(null));
     const draft = "keep this landing draft";
     await user.type(screen.getByLabelText("Message input"), draft);
-    await user.click(screen.getByRole("button", { name: "Workspace access mode: Restricted" }));
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
     await user.click(screen.getByRole("button", { name: "Enable Full access" }));
 
@@ -4203,7 +4203,7 @@ describe("ThreadShell", () => {
     ));
     expect(await screen.findByRole("heading", { name: "Task can't continue" })).toBeInTheDocument();
     expect(await screen.findByText(
-      "One-time access is unavailable until Nanobot confirms current restricted access.",
+      "Stored Sandbox rules control writes. Agent map shortcuts help navigation. Full access uses normal OS-account access.",
     )).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
 
@@ -4213,7 +4213,7 @@ describe("ThreadShell", () => {
     await waitFor(() => expect(consumedDeferredReads).toBe(2));
 
     expect(screen.getByText(
-      "One-time access is unavailable until Nanobot confirms current restricted access.",
+      "Stored Sandbox rules control writes. Agent map shortcuts help navigation. Full access uses normal OS-account access.",
     )).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue task" })).toBeDisabled();
     expect(client.requestMutation).toHaveBeenCalledTimes(1);
@@ -5621,6 +5621,40 @@ describe("ThreadShell", () => {
     await waitFor(() => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
+  });
+
+  it("shows context-budget recovery when a model request is rejected locally", async () => {
+    const client = makeClient();
+    render(
+      wrap(
+        client,
+        <ThreadShell
+          session={session("chat-context-failure")}
+          title="Context failure"
+          onToggleSidebar={() => {}}
+          onGoHome={() => {}}
+          onNewChat={() => {}}
+        />,
+      ),
+    );
+
+    await act(async () => {});
+    act(() => {
+      client._emitChat("chat-context-failure", {
+        event: "turn_end",
+        chat_id: "chat-context-failure",
+        turn_id: "turn-context-failure",
+        outcome: "failed",
+        failure_kind: "model",
+        failure_error_kind: "context_length",
+      });
+    });
+
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("Model request exceeds the context budget");
+    expect(banner).toHaveTextContent("Start a new chat");
+    expect(banner).toHaveTextContent("larger context window");
+    expect(banner).not.toHaveTextContent("provider configuration");
   });
 
   it("moves a correlated delivery error from the banner into the failed message tooltip", async () => {

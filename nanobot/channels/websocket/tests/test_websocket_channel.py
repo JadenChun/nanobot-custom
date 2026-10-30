@@ -123,6 +123,21 @@ def _ch(bus: Any, **kw: Any) -> WebSocketChannel:
     return WebSocketChannel(cfg, bus, gateway=gateway)
 
 
+def _relocate_instance_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Move the WebUI instance root out of the test's working area.
+
+    Production keeps the instance root (``~/.nanobot``) beside the user's
+    documents rather than above them. With the default ``tmp_path`` layout every
+    sibling of the agent home would otherwise be private runtime storage.
+    """
+    instance = tmp_path.parent / f"{tmp_path.name}-instance"
+
+    def webui_dir() -> Path:
+        return instance / "webui"
+
+    monkeypatch.setattr("nanobot.security.folder_grants.get_webui_dir", webui_dir)
+
+
 def _basic_handler(bus: Any, **kw: Any) -> GatewayServices:
     cfg = WebSocketConfig.model_validate({
         "enabled": True, "allowFrom": ["*"],
@@ -1602,12 +1617,14 @@ async def test_webui_message_projects_quote_to_trusted_runtime_context(bus: Magi
 async def test_webui_message_scope_inherits_persisted_session_scope(
     bus: MagicMock,
     tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     default_workspace = tmp_path / "default"
     project = tmp_path / "project"
     default_workspace.mkdir()
     project.mkdir()
     sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
     channel = WebSocketChannel(
         {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
         bus,
@@ -1777,6 +1794,7 @@ async def test_webui_scope_expands_home_project_path(
     project.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    _relocate_instance_root(monkeypatch, tmp_path)
     channel = WebSocketChannel(
         {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
         bus,
@@ -1843,7 +1861,9 @@ async def test_webui_scope_rejects_missing_project_path(bus: MagicMock, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_webui_scope_rejects_running_scope_change(bus: MagicMock, tmp_path) -> None:
+async def test_webui_scope_rejects_running_scope_change(
+    bus: MagicMock, tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     default_workspace = tmp_path / "default"
     project = tmp_path / "project"
     other = tmp_path / "other"
@@ -1851,6 +1871,7 @@ async def test_webui_scope_rejects_running_scope_change(bus: MagicMock, tmp_path
     project.mkdir()
     other.mkdir()
     sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
     channel = WebSocketChannel(
         {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
         bus,
@@ -1901,7 +1922,9 @@ async def test_webui_scope_rejects_running_scope_change(bus: MagicMock, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_webui_set_workspace_scope_rejects_running_chat(bus: MagicMock, tmp_path) -> None:
+async def test_webui_set_workspace_scope_rejects_running_chat(
+    bus: MagicMock, tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     default_workspace = tmp_path / "default"
     project = tmp_path / "project"
     other = tmp_path / "other"
@@ -1909,6 +1932,7 @@ async def test_webui_set_workspace_scope_rejects_running_chat(bus: MagicMock, tm
     project.mkdir()
     other.mkdir()
     sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
     channel = WebSocketChannel(
         {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
         bus,

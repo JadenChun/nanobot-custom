@@ -1240,9 +1240,9 @@ class AgentLoop:
         except asyncio.CancelledError:
             await delivery.abort_stream()
             raise
-        except Exception:
+        except Exception as exc:
             try:
-                await delivery.fail(publish_completion=True)
+                await delivery.fail(publish_completion=True, error=exc)
             except asyncio.CancelledError:
                 if trusted_output_hook is not None:
                     io.delivery_error = "CancelledError"
@@ -3002,7 +3002,7 @@ class AgentLoop:
         except Exception as exc:
             notify(exc)
             try:
-                await bounded(delivery.fail(publish_completion=not continuing()))
+                await bounded(delivery.fail(publish_completion=not continuing(), error=exc))
             except Exception:
                 logger.warning('Bus failure publication failed for {}', key)
             raise

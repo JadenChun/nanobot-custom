@@ -1309,9 +1309,9 @@ describe("ThreadComposer", () => {
       />,
     );
 
-    const accessButton = screen.getByRole("button", { name: "Workspace access mode: Restricted" });
+    const accessButton = screen.getByRole("button", { name: "Workspace access mode: Sandbox" });
     expect(accessButton).toBeEnabled();
-    expect(accessButton.querySelector(".thread-composer-access-label-short")).toHaveTextContent("Restricted");
+    expect(accessButton.querySelector(".thread-composer-access-label-short")).toHaveTextContent("Sandbox");
     expect(screen.getByRole("status")).toHaveTextContent(
       "Send a message to create this chat before enabling Full access.",
     );
@@ -1339,7 +1339,7 @@ describe("ThreadComposer", () => {
     );
 
     await user.type(screen.getByPlaceholderText("Type your message..."), "Start in Full");
-    await user.click(screen.getByRole("button", { name: "Workspace access mode: Restricted" }));
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
     await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Enable Full access?");
     await user.click(screen.getByRole("button", { name: "Enable Full access" }));
@@ -1391,8 +1391,8 @@ describe("ThreadComposer", () => {
     expect(accessButton).toBeEnabled();
     expect(within(accessButton).getByText("Ending")).toHaveClass("thread-composer-access-label-short");
     await user.click(accessButton);
-    expect(screen.getByText("Earlier work has finished. Retry to confirm Restricted access.")).toBeInTheDocument();
-    const retry = screen.getByRole("button", { name: "Retry returning to Restricted" });
+    expect(screen.getByText("Earlier work has finished. Retry to confirm Sandbox access.")).toBeInTheDocument();
+    const retry = screen.getByRole("button", { name: "Retry returning to Sandbox" });
     expect(retry).toBeEnabled();
     await user.click(retry);
     expect(onRetryWorkspaceRestricted).toHaveBeenCalledTimes(1);
@@ -1468,15 +1468,15 @@ describe("ThreadComposer", () => {
     const input = screen.getByLabelText("Message input");
     fireEvent.change(input, { target: { value: "keep this draft" } });
     const accessButton = screen.getByRole("button", {
-      name: /Workspace access mode: Restricted.*previous access ending/i,
+      name: /Workspace access mode: Sandbox.*previous access ending/i,
     });
     expect(accessButton).toBeEnabled();
     fireEvent.pointerDown(accessButton);
 
     expect(await screen.findByText("Previous access is ending.")).toBeInTheDocument();
     expect(screen.getByText(/Earlier work is still active with the previous access/)).toBeInTheDocument();
-    expect(screen.getByText(/New work remains Restricted/)).toBeInTheDocument();
-    const restrictedItem = screen.getByRole("menuitem", { name: "Restricted" });
+    expect(screen.getByText(/New work remains Sandbox/)).toBeInTheDocument();
+    const restrictedItem = screen.getByRole("menuitem", { name: "Sandbox" });
     const fullItem = screen.getByRole("menuitem", { name: "Full access" });
     expect(fullItem).toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByRole("button", { name: /retry|return to restricted|force clear/i })).not.toBeInTheDocument();
@@ -1518,9 +1518,9 @@ describe("ThreadComposer", () => {
     );
 
     const accessButton = screen.getByRole("button", {
-      name: /Workspace access mode: Restricted.*previous access ending/i,
+      name: /Workspace access mode: Sandbox.*previous access ending/i,
     });
-    expect(accessButton).toHaveAttribute("title", "Restricted · previous access ending");
+    expect(accessButton).toHaveAttribute("title", "Sandbox · previous access ending");
     expect(within(accessButton).getByText("Ending")).toHaveClass("thread-composer-access-label-short");
 
     await user.click(accessButton);
@@ -1556,7 +1556,7 @@ describe("ThreadComposer", () => {
     );
 
     const accessButton = screen.getByRole("button", {
-      name: /Workspace access mode: Restricted.*previous access ending/i,
+      name: /Workspace access mode: Sandbox.*previous access ending/i,
     });
     fireEvent.pointerDown(accessButton);
 
@@ -1594,14 +1594,14 @@ describe("ThreadComposer", () => {
     );
 
     const accessButton = screen.getByRole("button", {
-      name: /Workspace access mode: Restricted.*previous access ending/i,
+      name: /Workspace access mode: Sandbox.*previous access ending/i,
     });
     fireEvent.pointerDown(accessButton);
 
     expect(await screen.findByText("Previous access is ending.")).toBeInTheDocument();
     expect(screen.getByText(/No earlier commands are reported active or unknown.*still ending/)).toBeInTheDocument();
     expect(screen.queryByText(/Earlier work has finished/)).not.toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Restricted" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Sandbox" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Full access" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByRole("button", { name: /retry|return to restricted|force clear/i })).not.toBeInTheDocument();
   });

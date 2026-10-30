@@ -52,6 +52,22 @@ def test_plain_repository_without_manifest_remains_supported(tmp_path: Path) -> 
     )
 
 
+@pytest.mark.parametrize("managed", [False, True])
+def test_read_only_no_exec_repo_prompt_explains_available_read_tools(tmp_path: Path, managed: bool):
+    if managed:
+        _write_json(tmp_path / "nanobot.context.json", {"name": "shared-agents"})
+    manager = ContextRepoManager.from_config(context_repos=[{
+        "path": str(tmp_path), "readOnly": True, "allowExec": False,
+    }])
+
+    summary = manager.prompt_summary()
+
+    assert "read-only" in summary
+    assert "Shell commands cannot access" in summary
+    assert "read_file" in summary and "list_dir" in summary
+    assert "Normal writes to managed paths are autonomous" not in summary
+
+
 @pytest.mark.parametrize("manifest_kind", ["relative", "relative-nested", "absolute", "directory"])
 def test_missing_custom_manifest_is_not_downgraded_to_plain_repo(
     tmp_path: Path, manifest_kind: str,

@@ -6,7 +6,6 @@ import { FoldersProjectsManager } from "@/components/settings/folders/FoldersPro
 import { ApiError } from "@/lib/api";
 import type {
   EffectiveWorkspaceAccess,
-  RepositoryDiscoveryPayload,
   WorkspacesPayload,
 } from "@/lib/types";
 import { ClientProvider } from "@/providers/ClientProvider";
@@ -57,6 +56,7 @@ function workspaces(): WorkspacesPayload {
       can_discover_repositories: true,
     },
     management: {
+      catalog_revision: 4,
       grants_revision: 12,
       grants: [
         {
@@ -92,7 +92,7 @@ function workspaces(): WorkspacesPayload {
           purpose: "The current application",
           kind: "project",
           knowledge_repos: ["notes"],
-          auto_sync: true,
+          auto_sync: false,
           sync_paths: ["decisions/**"],
           exists: true,
           effective_access: managedAccess,
@@ -121,204 +121,191 @@ function renderManager(
 }
 
 describe("FoldersProjectsManager", () => {
-  it("renders inherited access, unavailable commands, and missing roots", () => {
+  it("shows one folder list, inherited access, missing folders and stored Sandbox wording", () => {
     renderManager();
-
     expect(screen.getByText("/projects/child")).toBeInTheDocument();
-    expect(screen.getAllByText(/Effective access inherited from \/projects\/parent/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/Commands unavailable: sandbox unavailable/)).toBeInTheDocument();
-    expect(screen.getByText("Folder missing")).toBeInTheDocument();
-    expect(screen.getByText(/Already running confined commands keep their launch access/)).toBeInTheDocument();
+    expect(screen.getByText(/Inherited from \/projects\/parent/)).toBeInTheDocument();
+    expect(screen.getByText("Folder missing or moved")).toBeInTheDocument();
+    expect(screen.getByText(/Stored Sandbox rules control writes/)).toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   });
 
-  it("shows available native commands for a legacy access row in a v2 payload", () => {
-    const payload = workspaces();
-    const grant = payload.management!.grants[0]!;
-    grant.effective_access = {
-      ...grant.effective_access,
-      policy: "legacy",
-      source: "configured",
-      grant_root: null,
-      commands: {
-        requested: true,
-        available: true,
-        backend: "native",
-        reason: null,
-      },
-    };
-    renderManager(payload);
-
-    expect(screen.getByText("Read only · Commands available")).toBeInTheDocument();
-    expect(screen.queryByText(/Read only · Commands unavailable/)).not.toBeInTheDocument();
-  });
-
-  it("saves read/write and command choices with the current grant revision", async () => {
+  it("saves metadata, map visibility and write access in one user action", async () => {
     const user = userEvent.setup();
     const { requestMutation, onRefreshWorkspaces } = renderManager();
-
-    await user.click(screen.getByRole("button", { name: "Add folder access" }));
-    expect(screen.getByLabelText("File access")).toHaveValue("read_only");
-    expect(screen.getByRole("checkbox", { name: "Allow commands" })).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    expect(screen.getByLabelText("Sandbox access")).toHaveValue("inherit");
+    expect(screen.queryByRole("checkbox", { name: "Allow commands" })).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("Folder path"), "/projects/new");
-    await user.selectOptions(screen.getByLabelText("File access"), "read_write");
-    await user.click(screen.getByRole("checkbox", { name: "Allow commands" }));
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => expect(requestMutation).toHaveBeenCalledWith("workspace.grant.upsert", {
-      expected_revision: 12,
-      path: "/projects/new",
-      file_access: "read_write",
-      commands: true,
-    }, 20_000));
+    await user.type(screen.getByLabelText("Name"), "Reference documents");
+    await user.type(screen.getByLabelText("Purpose"), "Project records");
+    await user.selectOptions(screen.getByLabelText("Sandbox access"), "read_write");
+    await user.click(screen.getByRole("button", { name: "Save folder" }));
+    await waitFor(() => expect(requestMutation).toHaveBeenCalledWith("workspace.folder.edit", expect.objectContaining({
+      expected_grants_revision: 12, expected_catalog_revision: 4, path: "/projects/new", access: "read_write",
+      operation_id: expect.stringMatching(/^[a-f0-9]{32}$/),
+      entry: expect.objectContaining({ name: "reference-documents", label: "Reference documents", purpose: "Project records", agent_map: true }),
+    }), 20_000));
     expect(onRefreshWorkspaces).toHaveBeenCalledTimes(1);
   });
 
-  it("refreshes stale grants and asks for review without resubmitting", async () => {
-    const user = userEvent.setup();
-    const requestMutation = vi.fn(async () => {
-      throw new ApiError(409, "grants_changed");
-    });
-    const { onRefreshWorkspaces } = renderManager(workspaces(), requestMutation);
-
-    await user.click(screen.getByRole("button", { name: "Add folder access" }));
-    await user.type(screen.getByLabelText("Folder path"), "/projects/new");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Folder access changed elsewhere. Review the updated values before trying again.",
-    );
-    expect(requestMutation).toHaveBeenCalledTimes(1);
-    expect(onRefreshWorkspaces).toHaveBeenCalledTimes(1);
+  it("can save access-only metadata without adding it to the model map", async () => {
+    const user = userEvent.setup(); const { requestMutation } = renderManager();
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    await user.type(screen.getByLabelText("Folder path"), "/documents");
+    await user.click(screen.getByLabelText("Include in Agent map"));
+    await user.click(screen.getByRole("button", { name: "Save folder" }));
+    await waitFor(() => expect(requestMutation).toHaveBeenCalledWith("workspace.folder.edit", expect.objectContaining({
+      entry: expect.objectContaining({ agent_map: false }), access: "inherit",
+    }), 20_000));
   });
 
-  it.each([
-    ["native_processes_active", /Wait for it to finish/],
-    ["native_processes_unknown", /Restarting Nanobot will not clear this state; you may need to restart this device/],
-  ])("explains %s safely without presenting it as a stale grants conflict", async (code, expectedCopy) => {
-    const user = userEvent.setup();
-    const requestMutation = vi.fn(async () => {
-      throw new ApiError(409, code);
-    });
-    const { onRefreshWorkspaces } = renderManager(workspaces(), requestMutation);
-
-    await user.click(screen.getByRole("button", { name: "Add folder access" }));
-    await user.type(screen.getByLabelText("Folder path"), "/projects/new");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(expectedCopy);
-    expect(screen.queryByText(/Folder access changed elsewhere/)).not.toBeInTheDocument();
-    expect(onRefreshWorkspaces).not.toHaveBeenCalled();
+  it("groups only the nearest saved ancestors and keeps independent roots separate", () => {
+    const payload = workspaces(); const management = payload.management!;
+    management.grants.push({ ...management.grants[0]!, path: "/projects" });
+    management.repositories.push({ ...management.repositories[0]!, name: "nested", path: "/projects/client-app/docs" },
+      { ...management.repositories[0]!, name: "unrelated", path: "/projects-extra/client" },
+      { ...management.repositories[0]!, name: "remote-root", path: "/srv/reference" },
+      { ...management.repositories[0]!, name: "child-map", path: "/projects/child" });
+    renderManager(payload);
+    const row = (path: string) => screen.getByText(path).closest("[data-folder-path]");
+    expect(row("/projects")).toHaveAttribute("data-depth", "0");
+    expect(row("/projects/client-app")).toHaveAttribute("data-depth", "1");
+    expect(row("/projects/client-app/docs")).toHaveAttribute("data-depth", "2");
+    expect(row("/projects-extra/client")).toHaveAttribute("data-depth", "0");
+    expect(row("/srv/reference")).toHaveAttribute("data-depth", "0");
+    expect(screen.getAllByText("/projects/child")).toHaveLength(1);
   });
 
-  it("uses the supplied local folder chooser in the Settings manager", async () => {
-    const user = userEvent.setup();
-    const onPickFolder = vi.fn().mockResolvedValue("/projects/from-picker");
-    renderManager(workspaces(), vi.fn(async () => ({})), onPickFolder);
+  it("previews removal and inherited fallback before sending a combined edit", async () => {
+    const user = userEvent.setup(); const { requestMutation } = renderManager();
+    await user.click(screen.getByRole("button", { name: "Remove client-app" }));
+    expect(screen.getByText(/Parent rules remain/)).toBeInTheDocument();
+    expect(requestMutation).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Remove folder" }));
+    await waitFor(() => expect(requestMutation).toHaveBeenCalledWith("workspace.folder.edit", expect.objectContaining({
+      path: "/projects/client-app", entry: null, access: "inherit",
+    }), 20_000));
+  });
 
-    await user.click(screen.getByRole("button", { name: "Add folder access" }));
+  it("describes the writable agent workspace as inherited write access", async () => {
+    const user = userEvent.setup();
+    renderManager();
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    await user.type(screen.getByLabelText("Folder path"), "/agent/home/project");
+    expect(screen.getByText(/Read and write · Agent workspace/)).toBeInTheDocument();
+    expect(screen.queryByText(/Read-only by default/)).not.toBeInTheDocument();
+  });
+
+  it("prefers the more-specific writable workspace over a read-only ancestor grant", async () => {
+    const user = userEvent.setup();
+    const payload = workspaces();
+    payload.management!.grants.push({
+      ...payload.management!.grants[0]!,
+      path: "/agent",
+      file_access: "read_only",
+      effective_access: {
+        ...managedAccess,
+        grant_root: "/agent",
+        write: false,
+      },
+    });
+    renderManager(payload);
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    await user.type(screen.getByLabelText("Folder path"), "/agent/home/project");
+    expect(screen.getByText(/Read and write · Agent workspace/)).toBeInTheDocument();
+    expect(screen.queryByText(/Read-only · \/agent$/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a more-specific read-only child rule inside the workspace", async () => {
+    const user = userEvent.setup();
+    const payload = workspaces();
+    payload.management!.grants.push({
+      ...payload.management!.grants[0]!,
+      path: "/agent/home/restricted",
+      file_access: "read_only",
+      effective_access: {
+        ...managedAccess,
+        grant_root: "/agent/home/restricted",
+        write: false,
+      },
+    });
+    renderManager(payload);
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    await user.type(screen.getByLabelText("Folder path"), "/agent/home/restricted/child");
+    expect(screen.getByText(/Read-only · \/agent\/home\/restricted$/)).toBeInTheDocument();
+  });
+
+  it("shows the agent workspace default for a saved workspace folder", () => {
+    const payload = workspaces();
+    payload.management!.repositories.push({
+      ...payload.management!.repositories[0]!,
+      name: "workspace-project",
+      path: "/agent/home/project",
+      effective_access: {
+        ...managedAccess,
+        source: "agent_home",
+        grant_root: null,
+        write: true,
+      },
+    });
+    renderManager(payload);
+    expect(screen.getByText("Read and write · Agent workspace default")).toBeInTheDocument();
+  });
+
+  it("retries the identical Settings payload after a partial save", async () => {
+    const user = userEvent.setup();
+    const requestMutation = vi.fn()
+      .mockRejectedValueOnce(new ApiError(409, "folder_metadata_saved_access_pending"))
+      .mockResolvedValue({});
+    renderManager(workspaces(), requestMutation);
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    await user.type(screen.getByLabelText("Folder path"), "/projects/new");
+    await user.click(screen.getByRole("button", { name: "Save folder" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/metadata was saved/i);
+    await user.click(screen.getByRole("button", { name: "Save folder" }));
+    await waitFor(() => expect(requestMutation).toHaveBeenCalledTimes(2));
+    expect(requestMutation.mock.calls[1]![1]).toEqual(requestMutation.mock.calls[0]![1]);
+  });
+
+  it("keeps an operation id for a retry after a persistence failure", async () => {
+    const user = userEvent.setup(); const requestMutation = vi.fn().mockRejectedValueOnce(new ApiError(500, "storage unavailable")).mockResolvedValue({});
+    renderManager(workspaces(), requestMutation);
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    await user.type(screen.getByLabelText("Folder path"), "/documents");
+    await user.click(screen.getByRole("button", { name: "Save folder" }));
+    await screen.findByRole("alert");
+    await user.click(screen.getByRole("button", { name: "Save folder" }));
+    await waitFor(() => expect(requestMutation).toHaveBeenCalledTimes(2));
+    expect(requestMutation.mock.calls[1]![1]).toEqual(requestMutation.mock.calls[0]![1]);
+  });
+
+  it("preserves knowledge links and explicit Git sync settings while editing", async () => {
+    const user = userEvent.setup(); const payload = workspaces();
+    payload.management!.repositories[0]!.kind = "knowledge";
+    payload.management!.repositories[0]!.knowledge_repos = [];
+    payload.management!.repositories[0]!.auto_sync = true;
+    const { requestMutation } = renderManager(payload);
+    await user.click(screen.getByRole("button", { name: "Edit folder client-app" }));
+    await user.click(screen.getByRole("button", { name: "Save folder" }));
+    await waitFor(() => expect(requestMutation).toHaveBeenCalledWith("workspace.folder.edit", expect.objectContaining({
+      entry: expect.objectContaining({ kind: "knowledge", auto_sync: true, sync_paths: ["decisions/**"] }),
+    }), 20_000));
+  });
+
+  it("uses the supplied local folder picker", async () => {
+    const user = userEvent.setup(); const picker = vi.fn().mockResolvedValue("/documents");
+    renderManager(workspaces(), vi.fn(async () => ({})), picker);
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
     await user.click(screen.getByRole("button", { name: "Browse…" }));
-
-    expect(onPickFolder).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.getByLabelText("Folder path")).toHaveValue(
-      "/projects/from-picker",
-    ));
+    expect(screen.getByLabelText("Folder path")).toHaveValue("/documents");
   });
 
-  it("preserves knowledge sync settings when repository metadata is edited", async () => {
-    const user = userEvent.setup();
-    const requestMutation = vi.fn(async () => ({}));
-    renderManager(workspaces(), requestMutation);
-
-    await user.click(screen.getByRole("tab", { name: "Known repositories" }));
-    await user.click(screen.getByRole("button", { name: "Edit client-app" }));
-    await user.clear(screen.getByLabelText("Purpose"));
-    await user.type(screen.getByLabelText("Purpose"), "Updated application notes");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => expect(requestMutation).toHaveBeenCalledWith("repository.remember", {
-      entry: {
-        name: "client-app",
-        path: "/projects/client-app",
-        purpose: "Updated application notes",
-        kind: "project",
-        knowledge_repos: ["notes"],
-        auto_sync: true,
-        sync_paths: ["decisions/**"],
-      },
-    }, 20_000));
-  });
-
-  it("keeps a linked repository when forgetting returns repository_in_use", async () => {
-    const user = userEvent.setup();
-    const requestMutation = vi.fn(async () => {
-      throw new ApiError(409, "repository_in_use");
-    });
-    renderManager(workspaces(), requestMutation);
-
-    await user.click(screen.getByRole("tab", { name: "Known repositories" }));
-    await user.click(screen.getByRole("button", { name: "Forget client-app" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "This repository is linked from a project. Edit that project's knowledge associations before forgetting it.",
-    );
-    expect(requestMutation).toHaveBeenCalledTimes(1);
-  });
-
-  it("shows bounded discovery candidates and remembers them without granting access", async () => {
-    const user = userEvent.setup();
-    const candidateAccess = { ...managedAccess, commands: { ...managedAccess.commands, requested: false, reason: null } };
-    const discovery: RepositoryDiscoveryPayload = {
-      root: "/projects",
-      visited_directories: 4,
-      truncated: true,
-      candidates: [{
-        path: "/projects/candidate",
-        suggested_name: "candidate",
-        known_name: null,
-        effective_access: candidateAccess,
-      }],
-    };
-    const requestMutation = vi.fn(async (action: string) => {
-      if (action === "repository.discover") return discovery;
-      return {};
-    });
-    renderManager(workspaces(), requestMutation);
-
-    await user.click(screen.getByRole("tab", { name: "Known repositories" }));
-    await user.type(screen.getByLabelText("Discover repositories under a folder"), "/projects");
-    await user.click(screen.getByRole("button", { name: "Discover" }));
-
-    expect(await screen.findByText(/Results were limited/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Remember" }));
-    await user.type(screen.getByLabelText("Purpose"), "Candidate project");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    await waitFor(() => expect(requestMutation).toHaveBeenCalledWith("repository.remember", {
-      entry: {
-        name: "candidate",
-        path: "/projects/candidate",
-        purpose: "Candidate project",
-        kind: "project",
-        knowledge_repos: [],
-        auto_sync: false,
-        sync_paths: [],
-      },
-    }, 20_000));
-    expect(requestMutation.mock.calls.some(([action]) => action === "workspace.grant.upsert")).toBe(false);
-  });
-
-  it("hides remote management controls and data", () => {
-    const remote = workspaces();
-    remote.controls.can_manage_folders = false;
-    remote.controls.can_manage_catalog = false;
-    remote.controls.can_discover_repositories = false;
-    remote.management = null;
-    renderManager(remote);
-
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Folder and repository management is available only from a trusted local WebUI connection.",
-    );
+  it("does not show remote folder management data", () => {
+    const payload = workspaces(); payload.management = null; payload.controls.can_manage_folders = false; payload.controls.can_manage_catalog = false;
+    renderManager(payload);
+    expect(screen.getByRole("status")).toHaveTextContent("Folder management is available only in the local app.");
     expect(screen.queryByText("/projects/child")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add folder access" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add folder" })).toBeDisabled();
   });
 });

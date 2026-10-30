@@ -127,7 +127,7 @@ describe("Settings capabilities", () => {
     expect(screen.queryByText(/SSRF/i)).not.toBeInTheDocument();
     expect(screen.queryByText("Private Service Protection")).not.toBeInTheDocument();
     expect(screen.getByText("Default access")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Restricted" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sandbox" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Full access" })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("switch", { name: "Local services" }));

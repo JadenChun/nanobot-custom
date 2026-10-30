@@ -247,7 +247,7 @@ describe("FolderAccessRequestCard", () => {
   it("describes draft command access as requested until backend availability is known", () => {
     renderCard({ request: { ...folderAccessRequestFixture, operation: "execute" } });
 
-    expect(screen.getByText("Selected access: Read only · Commands requested")).toBeInTheDocument();
+    expect(screen.getByText("Selected access: Read only · Commands follow Sandbox file rules. Read-only folders stay read-only for programs and their child processes.")).toBeInTheDocument();
     expect(screen.queryByText("Selected access: Read only · Commands available")).not.toBeInTheDocument();
   });
 
@@ -320,7 +320,7 @@ describe("FolderAccessRequestCard", () => {
     await user.click(screen.getByRole("button", { name: "Choose folder" }));
     await user.type(screen.getByLabelText("Folder path"), "/projects/foobar");
 
-    expect(screen.getByRole("checkbox", { name: "Allow commands" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Allow commands" })).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Read only" })).toBeChecked();
   });
 
@@ -457,9 +457,9 @@ describe("FolderAccessRequestCard", () => {
 
     expect(screen.getByRole("radio", { name: fileAccess })).toBeChecked();
     if (commands) {
-      expect(screen.getByRole("checkbox", { name: "Allow commands" })).toBeChecked();
+      expect(screen.queryByRole("checkbox", { name: "Allow commands" })).not.toBeInTheDocument();
     } else {
-      expect(screen.getByRole("checkbox", { name: "Allow commands" })).not.toBeChecked();
+      expect(screen.queryByRole("checkbox", { name: "Allow commands" })).not.toBeInTheDocument();
     }
   });
 
@@ -619,7 +619,7 @@ describe("FolderAccessRequestCard", () => {
     await user.click(screen.getByRole("button", { name: "Choose folder" }));
     expect(screen.getByRole("radio", { name: "Read only" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Read and write" })).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Allow commands" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Allow commands" })).not.toBeInTheDocument();
     expect(screen.getByText(/normal chats in this Nanobot instance/i)).toBeInTheDocument();
     await user.type(screen.getByLabelText("Folder path"), "/projects/freelance");
     expect(screen.getByLabelText("Selected folder path")).toHaveTextContent("/projects/freelance");
@@ -924,7 +924,7 @@ describe("FolderAccessRequestCard", () => {
     expect(dialog).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Read only" })).toBeChecked();
     expect(screen.getByRole("radio", { name: "Read and write" })).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Allow commands" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Allow commands" })).not.toBeInTheDocument();
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -1098,5 +1098,95 @@ describe("FolderAccessRequestCard", () => {
       resolvePicker("/after/unmount");
       await delayedPicker;
     });
+  });
+});
+
+describe("folder proposals", () => {
+  const proposed: FolderAccessRequest = {
+    ...folderAccessRequestFixture,
+    folder_proposal: {
+      entry: { name: "reference-documents", path: "/projects/freelance", purpose: "Reference documents",
+        kind: "project", knowledge_repos: [], sync_paths: [], auto_sync: false, agent_map: true },
+      requested_access: "read_write",
+    },
+  };
+
+  it("lets the user choose read-only access and map visibility in one confirmation", async () => {
+    const user = userEvent.setup();
+    const mutation = vi.fn(async () => folderAccessActionResultFixture);
+    const { onUpdateRequest } = renderCard({ request: proposed, requestMutation: mutation });
+    expect(screen.getByText("Reference documents")).toBeInTheDocument();
+    expect(screen.getByText(/Read-only by default/)).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Sandbox access"), "read_only");
+    await user.click(screen.getByLabelText("Include in Agent map"));
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    await waitFor(() => expect(mutation).toHaveBeenCalledWith("workspace.access.add_folder", {
+      chat_id: proposed.chat_id, access_request_id: proposed.access_request_id,
+      expected_revision: proposed.revision, expected_grants_revision: 12, expected_catalog_revision: 0,
+      file_access: "read_only", agent_map: false,
+    }, 20_000));
+    expect(onUpdateRequest).toHaveBeenCalled();
+  });
+
+  it("shows the writable agent workspace as current write access", () => {
+    const workspaceProposal: FolderAccessRequest = {
+      ...proposed,
+      folder_proposal: {
+        ...proposed.folder_proposal!,
+        entry: { ...proposed.folder_proposal!.entry, path: "/agent/home/reference" },
+      },
+    };
+    renderCard({ request: workspaceProposal });
+    expect(screen.getByText(/Read and write · Agent workspace/)).toBeInTheDocument();
+    expect(screen.queryByText(/Read-only by default/)).not.toBeInTheDocument();
+  });
+
+  it("prefers the writable workspace over a read-only ancestor grant", () => {
+    const payload = workspaces();
+    payload.management!.grants.push({
+      path: "/agent",
+      file_access: "read_only",
+      commands: false,
+      exists: true,
+      effective_access: {
+        policy: "managed",
+        source: "grant",
+        grant_root: "/agent",
+        exists: true,
+        read: true,
+        write: false,
+        boundary: "folder",
+        commands: { requested: false, available: false, backend: "none", reason: null },
+      },
+    });
+    const workspaceProposal: FolderAccessRequest = {
+      ...proposed,
+      folder_proposal: {
+        ...proposed.folder_proposal!,
+        entry: { ...proposed.folder_proposal!.entry, path: "/agent/home/reference" },
+      },
+    };
+    renderCard({ request: workspaceProposal, workspacesPayload: payload });
+    expect(screen.getByText(/Read and write · Agent workspace/)).toBeInTheDocument();
+    expect(screen.queryByText(/Read-only · \/agent$/)).not.toBeInTheDocument();
+  });
+
+  it("declines without saving a grant or metadata", async () => {
+    const user = userEvent.setup(); const mutation = vi.fn(async () => folderAccessActionResultFixture);
+    renderCard({ request: proposed, requestMutation: mutation });
+    await user.click(screen.getByRole("button", { name: "Decline" }));
+    await waitFor(() => expect(mutation).toHaveBeenCalledTimes(1));
+    expect(mutation.mock.calls[0]![0]).toBe("workspace.access.cancel");
+  });
+
+  it("does not apply an approval reply to a different task", async () => {
+    const user = userEvent.setup();
+    let finish!: (value: typeof folderAccessActionResultFixture) => void;
+    const mutation = vi.fn(() => new Promise<typeof folderAccessActionResultFixture>((resolve) => { finish = resolve; }));
+    const { rerenderCard, onUpdateRequest } = renderCard({ request: proposed, requestMutation: mutation });
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    rerenderCard({ chatId: "another-chat", request: null });
+    await act(async () => { finish(folderAccessActionResultFixture); });
+    expect(onUpdateRequest).not.toHaveBeenCalled();
   });
 });

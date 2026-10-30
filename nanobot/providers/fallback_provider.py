@@ -502,6 +502,17 @@ class FallbackProvider(LLMProvider):
             fallback_model = fallback.model
             if has_streamed is not None and has_streamed[0]:
                 break
+            if (
+                primary_response is not None
+                and self._is_authentication_failure(primary_response)
+                and fallback.provider
+                and fallback.provider == self._primary.provider_name
+            ):
+                logger.info(
+                    "Skipping fallback '{}' on the same provider after authentication failure",
+                    fallback_model,
+                )
+                continue
             if idx == 0 and primary_skipped:
                 logger.info(
                     "Primary model '{}' circuit open, trying fallback '{}'",
@@ -689,3 +700,17 @@ class FallbackProvider(LLMProvider):
         if kind in _FALLBACK_ERROR_KINDS:
             return True
         return any(token in value for value in (kind, error_type, code, text) for token in _FALLBACK_ERROR_TOKENS)
+
+    @staticmethod
+    def _is_authentication_failure(response: LLMResponse) -> bool:
+        structured_values = (
+            (response.error_kind or "").lower(),
+            (response.error_type or "").lower(),
+            (response.error_code or "").lower(),
+            (response.content or "").lower(),
+        )
+        return response.error_status_code in {401, 403} or any(
+            token in value
+            for value in structured_values
+            for token in _AUTHENTICATION_ERROR_TOKENS
+        )

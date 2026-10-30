@@ -27,6 +27,7 @@ from websockets.http11 import Response
 
 from nanobot.bus.outbound_events import SessionUpdatedEvent
 from nanobot.command.builtin import builtin_command_palette
+from nanobot.context_repo.catalog import CatalogRevisionConflictError
 from nanobot.context_repo.manager import ContextRepoManager
 from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.cron.definition_store import DefinitionStoreConflictError
@@ -42,6 +43,7 @@ from nanobot.security.folder_grants import (
     NativeProcessesActiveError,
     NativeProcessesUnknownError,
 )
+from nanobot.security.folder_locations import FolderEditIncompleteError
 from nanobot.security.workspace_access import WorkspaceScope
 from nanobot.session.manager import JsonlSessionStore, SessionManager
 from nanobot.session.recovery import RecoveryActionError
@@ -169,12 +171,14 @@ WEBSOCKET_MUTATION_ROUTES = {
     "workspace.pick_folder": "/api/workspaces/pick-folder",
     "workspace.grant.upsert": "/api/workspaces/grants/upsert",
     "workspace.grant.revoke": "/api/workspaces/grants/revoke",
+    "workspace.access.add_folder": "/api/workspaces/access/add-folder",
     "workspace.access.resolve": "/api/workspaces/access/resolve",
     "workspace.access.continue": "/api/workspaces/access/continue",
     "workspace.access.cancel": "/api/workspaces/access/cancel",
     "workspace.access.allow_once": "/api/workspaces/access/allow-once",
     "workspace.access.mode.set": "/api/workspaces/access/mode",
     "workspace.access.prepare_full": "/api/workspaces/access/prepare-full",
+    "workspace.folder.edit": "/api/workspaces/folders/edit",
     "repository.remember": "/api/repositories/remember",
     "repository.forget": "/api/repositories/forget",
     "repository.discover": "/api/repositories/discover",
@@ -225,12 +229,14 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
     "/api/workspaces/pick-folder",
     "/api/workspaces/grants/upsert",
     "/api/workspaces/grants/revoke",
+    "/api/workspaces/access/add-folder",
     "/api/workspaces/access/resolve",
     "/api/workspaces/access/continue",
     "/api/workspaces/access/cancel",
     "/api/workspaces/access/allow-once",
     "/api/workspaces/access/mode",
     "/api/workspaces/access/prepare-full",
+    "/api/workspaces/folders/edit",
     "/api/repositories/remember",
     "/api/repositories/forget",
     "/api/repositories/discover",
@@ -423,6 +429,7 @@ class GatewayHTTPHandler:
                 if workspaces.grant_store is not None
                 else None
             ),
+            sandbox_default=workspaces.grant_store is not None,
         )
         self.disabled_skills: set[str] = (
             disabled_skills if disabled_skills is not None else set()
@@ -603,12 +610,14 @@ class GatewayHTTPHandler:
             "/api/workspaces/pick-folder",
             "/api/workspaces/grants/upsert",
             "/api/workspaces/grants/revoke",
+            "/api/workspaces/access/add-folder",
             "/api/workspaces/access/resolve",
             "/api/workspaces/access/continue",
             "/api/workspaces/access/cancel",
             "/api/workspaces/access/allow-once",
             "/api/workspaces/access/mode",
             "/api/workspaces/access/prepare-full",
+            "/api/workspaces/folders/edit",
             "/api/repositories/remember",
             "/api/repositories/forget",
             "/api/repositories/discover",
@@ -1187,6 +1196,7 @@ class GatewayHTTPHandler:
                     allow_folder_grants=local_access,
                     permission_owner=permission_owner,
                     permission_reference=permission_reference,
+                    restrict_to_root=None if local_access else scope.project_path,
                 )
             else:
                 payload = file_preview_payload(
@@ -1197,6 +1207,7 @@ class GatewayHTTPHandler:
                     allow_folder_grants=local_access,
                     permission_owner=permission_owner,
                     permission_reference=permission_reference,
+                    restrict_to_root=None if local_access else scope.project_path,
                 )
         except WebUIFilePreviewError as e:
             if is_probe and e.status in {400, 403, 404, 415}:
@@ -1556,12 +1567,14 @@ class GatewayHTTPHandler:
         if got in {
             "/api/workspaces/grants/upsert",
             "/api/workspaces/grants/revoke",
+            "/api/workspaces/folders/edit",
             "/api/repositories/remember",
             "/api/repositories/forget",
             "/api/repositories/discover",
         }:
             return await self._handle_workspace_management(connection, request, got)
         if got in {
+            "/api/workspaces/access/add-folder",
             "/api/workspaces/access/resolve",
             "/api/workspaces/access/continue",
             "/api/workspaces/access/cancel",
@@ -1621,7 +1634,9 @@ class GatewayHTTPHandler:
         if not self._matches_expected_webui_source(request, payload):
             return _http_error(409, "source_changed")
         try:
-            if path == "/api/workspaces/access/resolve":
+            if path == "/api/workspaces/access/add-folder":
+                result = owner.add_folder(payload)
+            elif path == "/api/workspaces/access/resolve":
                 result = owner.resolve(payload)
             elif path == "/api/workspaces/access/cancel":
                 result = owner.cancel(payload)
@@ -1786,6 +1801,8 @@ class GatewayHTTPHandler:
             elif path == "/api/workspaces/grants/revoke":
                 _require_payload_keys(payload, {"expected_revision", "path"})
                 self.workspaces.revoke_grant(payload)
+            elif path == "/api/workspaces/folders/edit":
+                self.workspaces.edit_folder(payload)
             elif path == "/api/repositories/remember":
                 _require_payload_keys(payload, {"entry"})
                 self.workspaces.remember_repository(payload)
@@ -1807,6 +1824,10 @@ class GatewayHTTPHandler:
                 return _http_json_response({**result})
             else:
                 return _http_error(404, "unknown workspace management action")
+        except FolderEditIncompleteError:
+            return _http_error(503, "folder_metadata_saved_access_pending")
+        except CatalogRevisionConflictError:
+            return _http_error(409, "catalog_changed")
         except GrantRevisionConflictError:
             return _http_error(409, "grants_changed")
         except NativeProcessesUnknownError:

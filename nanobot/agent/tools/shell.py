@@ -409,6 +409,11 @@ class ExecTool(Tool):
                 )
 
             self._release_process_tree(process)
+            if prepared.managed and process.returncode != 0 and "read-only file system" in result.lower():
+                result += ("\n\nSandbox blocked a write. Commands are allowed, but file changes need "
+                           "read/write access to that folder. Review its Sandbox access in Folders, "
+                           "or request the user's approval for that folder. This did not switch to Full access.")
+                return ToolResult.error(result)
             return result
 
         except Exception as e:
@@ -546,7 +551,7 @@ class ExecTool(Tool):
             policy = self.resource_policy
             grants = policy.folder_grants if policy is not None else None
             if policy is None or grants is None:
-                return ToolResult.error("Error: managed command confinement is unavailable")
+                return ToolResult.error("Error: Sandbox command confinement is unavailable")
             try:
                 grant_snapshot = grants.snapshot()
                 task_roots = ()
@@ -557,6 +562,9 @@ class ExecTool(Tool):
                     and focus.permission_owner.is_current_task_reference(focus.task_reference)
                 ):
                     task_roots = focus.permission_owner.once_roots(focus.task_reference)
+                selected_shell, shell_error = self._resolve_shell(shell)
+                if shell_error:
+                    return shell_error
                 command = wrap_managed_command(
                     command,
                     cwd=cwd,
@@ -566,9 +574,11 @@ class ExecTool(Tool):
                     grant_snapshot=grant_snapshot,
                     excluded_roots=policy.managed_repository_roots(),
                     task_roots=task_roots,
+                    shell_program=selected_shell,
+                    login=bool(login),
                 )
             except (OSError, PermissionError, RuntimeError, ValueError) as exc:
-                return ToolResult.error(f"Error: managed command confinement is unavailable ({exc})")
+                return ToolResult.error(f"Error: Sandbox command confinement is unavailable ({exc})")
             cwd = str(policy.workspace)
         if not managed and self.sandbox and workspace_root:
             root = Path(workspace_root).resolve()
@@ -606,6 +616,8 @@ class ExecTool(Tool):
             os.environ.get("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10"),
         )
 
+        if managed:
+            env["PATH"] = self._compose_path(os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"))
         if not managed and (self.path_prepend or self.path_append):
             if _IS_WINDOWS:
                 env["PATH"] = self._compose_path(env.get("PATH", ""))

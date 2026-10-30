@@ -52,6 +52,7 @@ from nanobot.session.session_messages import (
 )
 from nanobot.utils.helpers import strip_think, truncate_text
 from nanobot.utils.llm_runtime import LLMRuntime
+from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
 from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
     WEBUI_TURN_METADATA_KEY,
@@ -909,7 +910,9 @@ class WebuiTurnCoordinator:
                     failure_error_kind=failure_error_kind,
                     failure_attempts=failure_attempts,
                     failure_message=(
-                        "Model provider request failed. Check the provider configuration or "
+                        CONTEXT_BUDGET_ERROR_MESSAGE
+                        if failure_kind == "model" and failure_error_kind == "context_length"
+                        else "Model provider request failed. Check the provider configuration or "
                         "service status, then try again."
                         if failure_kind == "model"
                         else "This turn failed and has ended."

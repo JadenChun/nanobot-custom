@@ -18,7 +18,7 @@ from nanobot.context_repo.catalog import RepositoryCatalog, RepositoryEntry
 from nanobot.context_repo.policy import FolderAccessNeededError
 from nanobot.security.workspace_access import current_workspace_scope
 from nanobot.session.workspace_focus import WorkspaceFocusOwner
-from nanobot.utils.git_sync import async_sync_context_repo, git_repo_root, matches_sync_path
+from nanobot.utils.git_sync import async_sync_context_repo, matches_sync_path
 from nanobot.utils.secret_scan import find_secrets_in_blob
 
 if TYPE_CHECKING:
@@ -33,7 +33,7 @@ class RepositoryCatalogTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "List, discover, remember/update, or forget existing local Git repositories and their purposes. "
+            "List, discover, remember/update, or forget existing local folders and their purposes. In local WebUI chats, remember proposes a folder for user approval. "
             "Use knowledge_repos to associate project repositories with designated knowledge repos. "
             "Use roots then discover to find projects under authorized folders. Use select_workspace "
             "to change the current project; catalog metadata never grants access. "
@@ -44,9 +44,12 @@ class RepositoryCatalogTool(Tool):
         "type": "object", "required": ["action"], "additionalProperties": False,
         "properties": {
             "action": {"type": "string", "enum": ["list", "remember", "forget", "discover", "roots"]},
+            "label": {"type": "string", "maxLength": 80},
             "name": {"type": "string"}, "path": {"type": "string"},
             "purpose": {"type": "string"}, "kind": {"type": "string", "enum": ["project", "knowledge"]},
             "knowledge_repos": {"type": "array", "items": {"type": "string"}},
+            "agent_map": {"type": "boolean"},
+            "file_access": {"type": "string", "enum": ["read_only", "read_write"]},
             "auto_sync": {"type": "boolean"}, "sync_paths": {"type": "array", "items": {"type": "string"}},
         },
     }
@@ -79,6 +82,7 @@ class RepositoryCatalogTool(Tool):
     async def execute(self, action: str, name: str = "", path: str = "", purpose: str = "",
                       kind: str = "project", knowledge_repos: list[str] | None = None,
                       auto_sync: bool = False, sync_paths: list[str] | None = None,
+                      agent_map: bool = True, label: str = "", file_access: str = "read_only",
                       **kwargs: Any) -> str | ToolOutcome:
         try:
             if action == "list":
@@ -114,16 +118,43 @@ class RepositoryCatalogTool(Tool):
             if not Path(path).expanduser().is_absolute():
                 raise ValueError("use an absolute repository path")
             resolved = self.reader.resolve_read_path(path)
-            git_root = await asyncio.to_thread(git_repo_root, resolved)
-            if git_root != resolved:
-                raise ValueError("path must be the root of an existing Git working tree")
+            if not resolved.is_dir():
+                raise ValueError("path must be an existing folder")
             private = self.catalog.runtime_root.resolve()
             if kind == "knowledge" and (resolved.is_relative_to(private) or private.is_relative_to(resolved)):
                 raise ValueError("repository contents must be separate from runtime catalog storage")
             entry = RepositoryEntry.model_validate({
-                "name": name, "path": str(resolved), "purpose": purpose, "kind": kind,
+                "name": name, "label": label, "path": str(resolved), "purpose": purpose, "kind": kind, "agent_map": agent_map,
                 "knowledge_repos": knowledge_repos or [], "auto_sync": auto_sync, "sync_paths": sync_paths or [],
             })
+            from nanobot.agent.tools.context import current_request_context
+
+            request = current_request_context()
+            if request is not None and request.channel == "websocket" and not request.persistent_session:
+                raise ValueError("Saving folder references requires a persistent local chat")
+            if self._managed_webui_turn():
+                from nanobot.agent.tools.workspace import folder_access_outcome
+                from nanobot.workspace_access_recovery import parse_folder_proposal
+
+                policy = self.owner.policy if self.owner is not None else self.reader.resource_policy
+                if policy is None:
+                    raise ValueError("folder approval service is unavailable")
+                proposal = parse_folder_proposal({"entry": entry.model_dump(), "requested_access": file_access})
+                outcome = folder_access_outcome(FolderAccessNeededError(
+                    reason="folder_selection_required", operation="select",
+                    target={"kind": "directory", "path": str(resolved)},
+                ), policy, purpose=purpose or f"Add {name} to the folder map")
+                need = outcome.policy_metadata["folder_access"]
+                from nanobot.workspace_access_recovery import parse_folder_access_need
+
+                checked = parse_folder_access_need(need)
+                checked["folder_proposal"] = proposal
+                from nanobot.agent.turn import ToolOutcome
+
+                return ToolOutcome(
+                    content="Review the proposed folder and choose its Sandbox access in the approval card.",
+                    stop_reason="folder_access_required", policy_metadata={"folder_access": checked},
+                )
             await asyncio.to_thread(self.catalog.update, entry)
             return entry.model_dump_json()
         except FolderAccessNeededError as exc:

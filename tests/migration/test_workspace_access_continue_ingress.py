@@ -76,7 +76,7 @@ class _ProtectedWriteProvider(_RecordingProvider):
 
 
 class _RepeatedRecoveryProvider(_RecordingProvider):
-    """Drive two independently blocked project reads through canonical turns."""
+    """Drive two independently blocked project writes through canonical turns."""
 
     def __init__(self, first_project: Path, second_project: Path) -> None:
         super().__init__()
@@ -99,13 +99,13 @@ class _RepeatedRecoveryProvider(_RecordingProvider):
         elif call_number in {3, 4}:
             path = self.second_project / "README.md"
         else:
-            return LLMResponse(content="Finished both project reads.")
+            return LLMResponse(content="Finished both project writes.")
         return LLMResponse(
             content=None,
             tool_calls=[ToolCallRequest(
                 id=f"read-project-{call_number}",
-                name="read_file",
-                arguments={"path": str(path)},
+                name="write_file",
+                arguments={"path": str(path), "content": "first project marker" if call_number in {1, 2} else "second project marker"},
             )],
         )
 
@@ -601,7 +601,7 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
     handle = await composition.acquire()
     chat_id = "repeat-continue"
     key = f"websocket:{chat_id}"
-    original_task = "Read both project README files and compare their markers."
+    original_task = "Write notes to both project README files."
     grants = FolderGrantStore.for_workspace(
         config.workspace_path,
         sessions_root=handle.sessions.sessions_root,
@@ -658,7 +658,7 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
 
     async def continue_into(path: Path, request: dict[str, object]):
         grants.upsert(
-            {"path": str(path), "file_access": "read_only", "commands": False},
+            {"path": str(path), "file_access": "read_write", "commands": False},
             expected_revision=grants.snapshot().revision,
         )
         runtime_focus = handle.agent._workspace_focus_owner()
@@ -963,7 +963,7 @@ async def test_repeated_folder_recovery_continues_original_task_on_real_bus(
                 current = handle.sessions.source_backend(key).source.load_source_snapshot(key)
                 if any(
                     event.get("role") == "assistant"
-                    and event.get("content") == "Finished both project reads."
+                    and event.get("content") == "Finished both project writes."
                     for event in current.events
                 ):
                     return current

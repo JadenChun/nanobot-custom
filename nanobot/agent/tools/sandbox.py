@@ -170,182 +170,129 @@ def wrap_managed_command(
     grant_snapshot: FolderGrantSnapshot | None = None,
     excluded_roots: Iterable[Path] = (),
     task_roots: Iterable[tuple[str, str, bool]] = (),
+    shell_program: str | None = None,
+    login: bool = False,
 ) -> str:
-    """Build a bwrap command with only agent home and command-enabled grants mounted."""
+    """Read-only host view with approved writable folders and private temp/cache.
+
+    The legacy ``commands`` bit remains in stored grants for compatibility; it
+    does not gate Sandbox programs. More-specific file rules override parents.
+    Configured managed repositories retain their separate protected-path/store
+    policy. They stay hidden from shell processes; use file tools for them.
+    """
     if not managed_bwrap_available():
-        raise RuntimeError("managed bubblewrap is unavailable")
+        raise RuntimeError("Sandbox requires a working bubblewrap installation")
     home = Path(agent_home).expanduser().resolve(strict=True)
     working = Path(cwd).expanduser().resolve(strict=True)
     if not home.is_dir() or not working.is_dir():
-        raise ValueError("managed command roots must be existing directories")
+        raise ValueError("Sandbox roots must be existing directories")
     snapshot = grants.snapshot()
     if grant_snapshot is not None and grant_snapshot != snapshot:
-        raise PermissionError("folder access changed while preparing the managed command")
-    if grant_snapshot is not None:
-        snapshot = grant_snapshot
+        raise PermissionError("folder access changed while preparing the Sandbox command")
     if grants.is_private_path(working):
-        raise PermissionError("managed command cwd is inside private runtime storage")
-    checked_task_roots: list[tuple[Path, bool, bool]] = []
-    for raw_path, file_access, commands in task_roots:
-        root = Path(raw_path).expanduser()
-        canonical = root.resolve(strict=True)
-        if (
-            not canonical.is_dir()
-            or canonical != root
-            or file_access not in {"read_only", "read_write"}
-            or type(commands) is not bool
-            or grants.is_private_path(canonical)
-        ):
-            raise ValueError("Once permission root changed while preparing the command")
-        if commands and _overlaps_system_control(canonical):
-            raise ValueError("Once command root cannot cover /proc, /sys, /dev, or /run")
-        checked_task_roots.append((canonical, commands, file_access == "read_write"))
+        raise PermissionError("Sandbox cwd is inside private runtime storage")
 
-    grant = _effective_grant_for(working, snapshot, include_folder_grants)
-    task_choice = max(
-        (row for row in checked_task_roots if _is_relative_to(working, row[0])),
-        key=lambda row: len(row[0].parts),
-        default=None,
-    )
-    task_wins = task_choice is not None and (
-        grant is None or len(task_choice[0].parts) >= len(Path(grant.path).parts)
-    )
-    external_grant_commands = (
-        task_choice[1] if task_wins and task_choice is not None
-        else grant.commands if grant is not None else False
-    )
-    if not _is_relative_to(working, home):
-        if not external_grant_commands:
-            raise PermissionError("managed command cwd is not covered by command access")
-    elif (task_wins and task_choice is not None and not task_choice[1]) or (
-        not task_wins and grant is not None and not grant.commands
-    ):
-        raise PermissionError("managed command cwd is covered by a command-disabled folder grant")
-
-    resolved_exclusions = {
-        path.expanduser().resolve(strict=False) for path in excluded_roots
-    }
-    runtime_roots = {
-        Path(source).resolve(strict=False)
-        for source in (
-            "/proc", "/dev", "/tmp", "/sys", "/run",
-            "/usr", "/bin", "/lib", "/lib64", "/usr/local/bin",
-            "/etc/alternatives", "/etc/ssl/certs", "/etc/pki/tls/certs",
-            "/etc/resolv.conf", "/etc/ld.so.cache",
-        )
-    }
-    for root in resolved_exclusions:
-        if root == Path("/") or any(
-            runtime == root or root in runtime.parents for runtime in runtime_roots
-        ):
-            raise ValueError("configured repository root cannot be masked from the managed runtime")
-
-    args = ["bwrap", "--new-session", "--die-with-parent", "--unshare-pid"]
-    args += [
-        "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
-        "--tmpfs", "/sys", "--tmpfs", "/run",
-    ]
-    for source in ("/usr", "/bin", "/lib", "/lib64"):
-        if Path(source).exists():
-            args += ["--ro-bind", source, source]
-    for source in (
-        "/etc/alternatives",
-        "/etc/ssl/certs",
-        "/etc/pki/tls/certs",
-        "/etc/resolv.conf",
-        "/etc/ld.so.cache",
-    ):
-        if Path(source).exists():
-            args += ["--ro-bind-try", source, source]
-
-    private_roots = grants.sandbox_private_roots
-    masked_roots = {
-        Path("/home"),
-        Path("/root"),
-        grants.sandbox_instance_root.resolve(strict=False),
-        *(root.resolve(strict=False) for root in private_roots),
-    }
-    masked_roots = {root for root in masked_roots if not root.is_file()}
-    # Mask broad private ancestors first. Exact allowed roots are reconstructed
-    # below, then private descendants of agent home are masked again.
-    masked_paths: list[Path] = [Path("/tmp")]
-    for root in sorted(masked_roots, key=lambda path: (len(path.parts), str(path))):
-        if root == Path("/") or root in {Path("/usr"), Path("/bin"), Path("/lib"), Path("/lib64")}:
-            continue
-        args.extend(_ensure_mountpoint_args(root, reset_roots=masked_paths))
-        args += ["--tmpfs", str(root)]
-        masked_paths.append(root)
-
-    mount_roots: list[tuple[Path, bool, bool, int]] = [(home, True, True, 0)]
+    mounts: list[tuple[Path, bool, int]] = [(home, True, 0)]
     if snapshot.enabled and include_folder_grants:
         for grant in snapshot.grants:
             root = Path(grant.path)
-            if not root.is_dir() or root.resolve(strict=True) != root:
-                continue
-            if grant.commands and _overlaps_system_control(root):
-                raise ValueError("command grants cannot cover /proc, /sys, /dev, or /run")
-            mount_roots.append((root, grant.commands, grant.file_access == "read_write", 1))
-    for root, commands, write_allowed in checked_task_roots:
-        mount_roots.append((root, commands, write_allowed, 2))
-    mount_roots.sort(key=lambda item: (len(item[0].parts), str(item[0]), item[3]))
-    empty_roots: list[Path] = list(masked_paths)
-    backing_roots: list[Path] = []
-    for root, commands_allowed, write_allowed, _priority in mount_roots:
-        args.extend(_ensure_mountpoint_args(
-            root,
-            reset_roots=empty_roots,
-            backing_roots=backing_roots,
-        ))
-        if root == home:
-            args += ["--bind", str(root), str(root)]
-        elif not commands_allowed:
+            if root.is_dir() and root.resolve(strict=True) == root:
+                if _overlaps_system_control(root):
+                    raise ValueError("Sandbox write rules cannot cover /proc, /sys, /dev, or /run")
+                mounts.append((root, grant.file_access == "read_write", 1))
+    for raw_path, file_access, commands in task_roots:
+        root = Path(raw_path).expanduser()
+        if (
+            not root.is_dir() or root.resolve(strict=True) != root
+            or file_access not in {"read_only", "read_write"}
+            or type(commands) is not bool or grants.is_private_path(root)
+            or _overlaps_system_control(root)
+        ):
+            raise ValueError("Once permission root changed while preparing the command")
+        mounts.append((root, file_access == "read_write", 2))
+
+    args = ["bwrap", "--new-session", "--die-with-parent", "--unshare-pid",
+            "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev",
+            "--tmpfs", "/tmp", "--tmpfs", "/run", "--remount-ro", "/sys"]
+    # Resolver configuration may be a symlink into /run, whose sockets are
+    # hidden. Preserve only its actual regular file so network DNS still works.
+    resolver = Path("/etc/resolv.conf").resolve(strict=False)
+    if resolver.is_file() and resolver.is_relative_to(Path("/run")):
+        args += _ensure_mountpoint_args(resolver.parent, reset_roots=(Path("/run"),))
+        args += ["--ro-bind", str(resolver), str(resolver)]
+    # Hide live gateway state, credentials, catalogs and permission authority.
+    # Recreate only the agent workspace inside the hidden instance.
+    instance = grants.sandbox_instance_root.resolve(strict=False)
+    args += _ensure_mountpoint_args(instance, reset_roots=(Path("/tmp"),))
+    args += ["--tmpfs", str(instance)]
+    for root, writable, _priority in sorted(mounts, key=lambda row: (len(row[0].parts), str(row[0]), row[2])):
+        args += _ensure_mountpoint_args(root, reset_roots=(instance, Path("/tmp")))
+        args += ["--bind" if writable else "--ro-bind", str(root), str(root)]
+
+    # These roots cannot be restored by a broad writable ancestor or Once grant.
+    for root in sorted({path.expanduser().resolve(strict=False) for path in excluded_roots}, key=lambda path: len(path.parts)):
+        if root.exists():
+            if _overlaps_system_control(root) or any(
+                Path(runtime).resolve(strict=False).is_relative_to(root)
+                for runtime in ("/usr", "/bin", "/lib", "/lib64", "/etc/resolv.conf")
+            ):
+                raise ValueError("configured repository root cannot be masked from the managed runtime")
+            args += _ensure_mountpoint_args(root, reset_roots=(instance, Path("/tmp")))
             args += ["--tmpfs", str(root)]
-        elif write_allowed:
-            args += ["--bind", str(root), str(root)]
-        else:
-            args += ["--ro-bind", str(root), str(root)]
-        if commands_allowed:
-            backing_roots.append(root)
-        else:
-            empty_roots.append(root)
-
-    for private in sorted(private_roots, key=lambda path: (len(path.parts), str(path))):
+    private_roots = (instance, *grants.sandbox_private_roots)
+    for private in sorted(set(private_roots), key=lambda path: (len(path.parts), str(path))):
+        # The instance was already masked, then the workspace was restored.
+        if private == instance or (home.is_relative_to(private) and private != home):
+            continue
         if private.is_file():
-            if private.exists():
-                args += ["--ro-bind", "/dev/null", str(private)]
-            continue
-        try:
-            private.relative_to(home)
-        except ValueError:
-            continue
-        args.extend(_ensure_mountpoint_args(
-            private,
-            reset_roots=empty_roots,
-            backing_roots=backing_roots,
-        ))
-        args += ["--tmpfs", str(private)]
-        empty_roots.append(private)
-
-    # A broad command grant can contain configured repositories. Mask those
-    # roots after all home/grant mounts so nested grants cannot re-expose them.
-    for root in sorted(
-        resolved_exclusions,
-        key=lambda path: (len(path.parts), str(path)),
-    ):
-        args.extend(_ensure_mountpoint_args(
-            root,
-            reset_roots=empty_roots,
-            backing_roots=backing_roots,
-        ))
-        args += ["--tmpfs", str(root)]
-        empty_roots.append(root)
-
-    args += [
-        "--setenv", "HOME", str(home),
-        "--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin",
-        "--chdir", str(working),
-        "--", "sh", "-c", command,
-    ]
+            args += _ensure_mountpoint_args(private.parent, reset_roots=(instance, Path("/tmp")))
+            args += ["--ro-bind", "/dev/null", str(private)]
+        elif private.exists():
+            args += _ensure_mountpoint_args(private, reset_roots=(instance, Path("/tmp")))
+            args += ["--tmpfs", str(private)]
+    args += ["--setenv", "TMPDIR", "/tmp",
+             "--setenv", "XDG_CACHE_HOME", "/tmp/nanobot-cache",
+             "--setenv", "npm_config_cache", "/tmp/nanobot-cache/npm",
+             "--setenv", "XDG_DATA_HOME", "/tmp/nanobot-data",
+             "--setenv", "XDG_STATE_HOME", "/tmp/nanobot-state",
+             "--setenv", "COREPACK_HOME", "/tmp/nanobot-cache/corepack",
+             "--setenv", "COREPACK_DEFAULT_TO_LATEST", "0",
+             "--setenv", "BUN_INSTALL_CACHE_DIR", "/tmp/nanobot-cache/bun",
+             "--setenv", "PIP_CACHE_DIR", "/tmp/nanobot-cache/pip",
+             "--setenv", "UV_CACHE_DIR", "/tmp/nanobot-cache/uv",
+             "--setenv", "GOCACHE", "/tmp/nanobot-cache/go-build",
+             "--setenv", "GOMODCACHE", "/tmp/nanobot-cache/go-mod",
+             "--setenv", "GRADLE_USER_HOME", "/tmp/nanobot-cache/gradle",
+             "--chdir", str(working)]
+    # Moving XDG caches must not hide already installed Corepack runtimes.
+    # Seed only public package-manager metadata and version links, inside the
+    # Sandbox. New versions can download into private writable cache storage.
+    cache_base = Path(os.environ.get("XDG_CACHE_HOME") or (Path.home() / ".cache"))
+    corepack_source = os.environ.get("COREPACK_HOME") or str(cache_base / "node" / "corepack")
+    bootstrap = (
+        "set -e\n"
+        f"nanobot_corepack_source={shlex.quote(corepack_source)}\n"
+        'mkdir -p "$COREPACK_HOME/v1"\n'
+        'if [ -f "$nanobot_corepack_source/lastKnownGood.json" ]; then\n'
+        '  cp "$nanobot_corepack_source/lastKnownGood.json" "$COREPACK_HOME/lastKnownGood.json"\n'
+        'fi\n'
+        'for nanobot_manager in npm pnpm yarn; do\n'
+        '  mkdir -p "$COREPACK_HOME/v1/$nanobot_manager"\n'
+        '  nanobot_version_count=0\n'
+        '  for nanobot_version in "$nanobot_corepack_source/v1/$nanobot_manager/"*; do\n'
+        '    [ -d "$nanobot_version" ] || continue\n'
+        '    ln -s "$nanobot_version" "$COREPACK_HOME/v1/$nanobot_manager/${nanobot_version##*/}"\n'
+        '    nanobot_version_count=$((nanobot_version_count + 1))\n'
+        '    [ "$nanobot_version_count" -lt 128 ] || break\n'
+        '  done\n'
+        'done\n'
+        'exec "$@"'
+    )
+    args += ["--", "/bin/sh", "-c", bootstrap, "nanobot-sandbox",
+             shell_program or shutil.which("bash") or "/bin/sh"]
+    if login:
+        args.append("-l")
+    args += ["-c", command]
     return shlex.join(args)
 
 
@@ -396,20 +343,3 @@ def _overlaps_system_control(path: Path) -> bool:
         _is_relative_to(path, Path(root)) or _is_relative_to(Path(root), path)
         for root in ("/proc", "/sys", "/dev", "/run")
     )
-
-
-def _effective_grant_for(
-    path: Path,
-    snapshot: FolderGrantSnapshot,
-    include_folder_grants: bool,
-):
-    if not include_folder_grants or not snapshot.enabled:
-        return None
-    matches = [
-        grant
-        for grant in snapshot.grants
-        if Path(grant.path).is_dir()
-        and Path(grant.path).resolve(strict=True) == Path(grant.path)
-        and _is_relative_to(path, Path(grant.path))
-    ]
-    return max(matches, key=lambda grant: len(Path(grant.path).parts), default=None)

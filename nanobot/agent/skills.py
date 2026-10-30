@@ -284,6 +284,11 @@ class SkillsLoader:
             else:
                 display_root = resolved_root
             lines = [f"### {label} (`{display_root}`)"]
+            if source == "builtin" and not use_relative_roots:
+                lines.append(
+                    "Use `skills/<name>/SKILL.md` for these bundled skills. "
+                    "The built-in `read_file` tool resolves that agents-relative path."
+                )
             for entry in entries:
                 skill_name = entry["name"]
                 meta = self._get_skill_meta(skill_name)

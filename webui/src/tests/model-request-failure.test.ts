@@ -38,6 +38,19 @@ describe("model request failure copy", () => {
     );
   });
 
+  it("explains context failures without suggesting a provider outage or retries", () => {
+    const copy = resolveModelRequestFailureCopy(
+      { errorKind: "context_length", attempts: 4 },
+      i18n.t,
+    );
+
+    expect(copy.title).toBe("Model request exceeds the context budget");
+    expect(copy.body).toContain("Start a new chat");
+    expect(copy.body).toContain("larger context window");
+    expect(copy.body).not.toContain("provider configuration");
+    expect(copy.body).not.toContain("retries stopped");
+  });
+
   it("does not claim retries stopped without an attempt count", () => {
     const body = resolveModelRequestFailureCopy({ errorKind: "unknown" }, i18n.t).body;
 

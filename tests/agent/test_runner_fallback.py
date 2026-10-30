@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -248,7 +249,7 @@ def test_provider_signature_tracks_fallback_presets_and_provider_config() -> Non
     assert signature != provider_signature(Config.model_validate(changed_key))
 
 
-def test_provider_snapshot_uses_smallest_fallback_context_window() -> None:
+def test_provider_snapshot_uses_selected_primary_context_window() -> None:
     from nanobot.config.schema import Config
     from nanobot.providers.factory import build_provider_snapshot
 
@@ -280,9 +281,174 @@ def test_provider_snapshot_uses_smallest_fallback_context_window() -> None:
     with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
         snapshot = build_provider_snapshot(config)
 
-    assert snapshot.context_window_tokens == 64000
+    assert snapshot.context_window_tokens == 128000
     assert isinstance(snapshot.provider, FallbackProvider)
     assert snapshot.provider._primary_context_window_tokens == 128000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("primary_unavailable", [False, True])
+async def test_large_primary_request_keeps_capacity_and_smaller_fallback_stays_guarded(
+    primary_unavailable: bool,
+) -> None:
+    from nanobot.config.schema import Config
+    from nanobot.providers.factory import build_provider_snapshot
+    from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+    from nanobot.providers.request_budget import (
+        FinalizedRequestBudgetExceeded,
+        ProviderRequestLimits,
+    )
+
+    config = Config.model_validate({
+        "agents": {
+            "defaults": {
+                "modelPreset": "deepseek",
+                "fallbackModels": ["local-qwen"],
+            }
+        },
+        "modelPresets": {
+            "deepseek": {
+                "model": "deepseek/deepseek-v4.1-flash",
+                "provider": "commandcode",
+                "contextWindowTokens": 1_000_000,
+                "maxTokens": 65_536,
+            },
+            "local-qwen": {
+                "model": "Qwen3.8-27B-UD-Q6_K_XL",
+                "provider": "local_manager",
+                "contextWindowTokens": 165_888,
+                "maxTokens": 8_192,
+            },
+        },
+        "providers": {
+            "commandcode": {
+                "apiKey": "test-key",
+                "apiBase": "https://commandcode.example/v1",
+            },
+            "local_manager": {"apiBase": "http://127.0.0.1:8082/v1"},
+        },
+    })
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        snapshot = build_provider_snapshot(config)
+
+    assert snapshot.context_window_tokens == 1_000_000
+    assert isinstance(snapshot.provider, FallbackProvider)
+    assert snapshot.provider._primary_context_window_tokens == 1_000_000
+
+    reply = {"choices": [{"message": {"content": "primary ok"}, "finish_reason": "stop"}]}
+    primary_transport = AsyncMock(
+        side_effect=ConnectionError("primary unavailable") if primary_unavailable else None,
+        return_value=reply,
+    )
+    primary = snapshot.provider._primary
+    assert isinstance(primary, OpenAICompatProvider)
+    primary._ensure_client = AsyncMock(return_value=SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=primary_transport)),
+    ))
+    fallback_transport = AsyncMock(return_value=reply)
+    fallback = OpenAICompatProvider(api_key="fixture", provider_name="local_manager")
+    fallback._ensure_client = AsyncMock(return_value=SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=fallback_transport)),
+    ))
+    snapshot.provider._provider_factory = MagicMock(return_value=fallback)
+    messages = [{"role": "user", "content": "project evidence " * 15_000}]
+    context = ProviderCallContext(request_limits=ProviderRequestLimits(
+        total_tokens=snapshot.context_window_tokens, completion_reserve_tokens=65_536,
+    ))
+
+    if primary_unavailable:
+        with pytest.raises(FinalizedRequestBudgetExceeded) as rejected:
+            await snapshot.provider.chat_with_context(
+                provider_context=context, messages=messages, max_tokens=65_536,
+            )
+        assert rejected.value.measurement.total_limit_tokens == 165_888
+        assert rejected.value.measurement.identity.provider == "local_manager"
+    else:
+        result = await snapshot.provider.chat_with_context(
+            provider_context=context, messages=messages, max_tokens=65_536,
+        )
+        assert result.content == "primary ok"
+        snapshot.provider._provider_factory.assert_not_called()
+
+    primary_transport.assert_awaited_once()
+    fallback_transport.assert_not_awaited()
+
+
+def test_fallback_chain_omits_primary_and_duplicate_presets() -> None:
+    from nanobot.config.schema import Config
+    from nanobot.providers.factory import build_provider_snapshot
+
+    config = Config.model_validate({
+        "agents": {
+            "defaults": {
+                "modelPreset": "primary",
+                "fallbackModels": ["primary", "backup", "backup"],
+            }
+        },
+        "modelPresets": {
+            "primary": {
+                "model": "primary-model",
+                "provider": "primary_edge",
+            },
+            "backup": {
+                "model": "backup-model",
+                "provider": "backup_edge",
+            },
+        },
+        "providers": {
+            "primary_edge": {
+                "apiKey": "primary-key",
+                "apiBase": "https://primary.example/v1",
+            },
+            "backup_edge": {
+                "apiKey": "backup-key",
+                "apiBase": "https://backup.example/v1",
+            },
+        },
+    })
+
+    snapshot = build_provider_snapshot(
+        config,
+        preset_name="primary",
+    )
+
+    assert isinstance(snapshot.provider, FallbackProvider)
+    assert [
+        (preset.model, preset.provider)
+        for preset in snapshot.provider._fallback_presets
+    ] == [("backup-model", "backup_edge")]
+
+
+@pytest.mark.asyncio
+async def test_authentication_error_skips_fallback_on_same_provider() -> None:
+    primary = _FakeProvider(
+        "commandcode",
+        _make_response(
+            "invalid commandcode token",
+            finish_reason="error",
+            error_status_code=401,
+            error_kind="authentication",
+            error_should_retry=False,
+        ),
+    )
+    different_provider = _FakeProvider("backup", _make_response("backup ok"))
+    factory = MagicMock(return_value=different_provider)
+    provider = FallbackProvider(
+        primary=primary,
+        fallback_presets=[
+            _fallback("deepseek-v4", provider="commandcode"),
+            _fallback("local-qwen", provider="local_manager"),
+        ],
+        provider_factory=factory,
+    )
+
+    result = await provider.chat(messages=[{"role": "user", "content": "hi"}])
+
+    assert result.content == "backup ok"
+    assert len(different_provider.chat_calls) == 1
+    assert factory.call_count == 1
+    factory.assert_called_once_with(provider._fallback_presets[1])
 
 
 def test_factory_injects_configured_identity_into_primary_and_fallback_leaves() -> None:
@@ -816,28 +982,17 @@ class TestFallbackOnPrimaryError:
         assert primary.chat_calls[-1]["messages"] == messages
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("primary_error_kind", "primary_status", "primary_should_retry"),
-        [
-            ("server_error", 503, True),
-            ("authentication", 401, False),
-        ],
-        ids=["transient", "authentication"],
-    )
-    async def test_final_fallback_error_uses_primary_state_disposition(
+    async def test_final_fallback_error_preserves_primary_state(
         self,
-        primary_error_kind: str,
-        primary_status: int,
-        primary_should_retry: bool,
     ) -> None:
         primary = _FakeProvider(
             "primary",
             _make_response(
                 "primary unavailable",
                 finish_reason="error",
-                error_kind=primary_error_kind,
-                error_status_code=primary_status,
-                error_should_retry=primary_should_retry,
+                error_kind="server_error",
+                error_status_code=503,
+                error_should_retry=True,
             ),
         )
         primary.resumable = True

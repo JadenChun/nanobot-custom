@@ -64,30 +64,33 @@ class ResourceAccessPolicy:
         restrict_to_workspace: bool = False,
         folder_grants: FolderGrantView | None = None,
         managed_webui_only: bool = False,
+        sandbox_default: bool = False,
     ):
         self.workspace = workspace.expanduser().resolve(strict=False)
         self.context_manager = context_manager or ContextRepoManager()
         self.restrict_to_workspace = restrict_to_workspace
         self.folder_grants = folder_grants
         self.managed_webui_only = managed_webui_only
+        # The local WebUI starts in Sandbox, so its write boundary must hold
+        # before any folder has been saved. Activation of the grant store is a
+        # storage detail, not the mode switch.
+        self.sandbox_default = sandbox_default and folder_grants is not None
         self.touched_paths: set[Path] = set()
 
     @property
     def managed_mode(self) -> bool:
-        if self.folder_grants is not None and self.folder_grants.is_managed:
-            managed = True
-        else:
-            managed = False
-        if not managed and self._current_task_reference() is not None:
+        if self.folder_grants is None:
+            return self._current_task_reference() is not None
+        if self.sandbox_default:
             return True
-        if not managed:
-            return False
-        if not self.managed_webui_only:
-            return True
-        from nanobot.agent.tools.context import current_request_context
+        if self.managed_webui_only:
+            from nanobot.agent.tools.context import current_request_context
 
-        request = current_request_context()
-        return bool(request and request.channel == "websocket")
+            request = current_request_context()
+            if request is not None and request.channel == "websocket":
+                return True
+            return self._current_task_reference() is not None
+        return self.folder_grants.is_managed or self._current_task_reference() is not None
 
     @staticmethod
     def _current_task_reference() -> WorkspaceTaskAccessReference | None:
@@ -192,6 +195,13 @@ class ResourceAccessPolicy:
             use_managed_policy = True
         self.validate_current_workspace_identity(managed=use_managed_policy)
         if use_managed_policy:
+            # A host process's environ/memory/fd tree can expose the gateway's
+            # provider credentials and live authority despite filesystem masks.
+            # Sandbox commands see their own PID namespace instead.
+            if self._current_full_reference(permission_owner, permission_reference) is None:
+                proc_parts = resolved.parts
+                if len(proc_parts) >= 3 and proc_parts[1] == "proc" and proc_parts[2].isdigit():
+                    raise PermissionError("Host process state is private to the Sandbox runtime; use confined commands for process inspection")
             self._validate_managed_private_path(resolved, action)
         if (
             not use_managed_policy
@@ -296,77 +306,40 @@ class ResourceAccessPolicy:
             ):
                 raise PermissionError("Path is inside private nanobot runtime storage")
 
+        # Sandbox is a write boundary. Reads and program launches use normal
+        # OS permissions; subprocess writes are enforced by the mount namespace.
+        # Keep authority health checks even for reads so damaged state fails closed.
+        try:
+            view.snapshot()
+            grant = view.effective_grant_for(path) if allow_folder_grants else None
+        except FolderGrantsUnavailableError as exc:
+            raise PermissionError("Folder grants are unavailable") from exc
+        if action in {"read", "list", "exec"}:
+            return
+        if action not in {"write", "edit"}:
+            raise PermissionError(f"Folder access does not permit {action} for {path}")
+
+        choices: list[tuple[Path, bool, int]] = []
+        if _is_under(path, self.workspace):
+            choices.append((self.workspace, True, 0))
+        for root in self.context_manager.write_roots():
+            canonical = root.expanduser().resolve(strict=False)
+            if _is_under(path, canonical):
+                choices.append((canonical, True, 0))
+        if grant is not None:
+            choices.append((Path(grant.path), grant.file_access == "read_write", 1))
         task_choice = self._task_grant_for(
             path,
             permission_owner=permission_owner,
             permission_reference=permission_reference,
         )
         if task_choice is not None:
-            task_root, file_access, commands = task_choice
-            baseline_root = self._baseline_root_for(path, view)
-            if (
-                baseline_root is None
-                or len(task_root.parts) >= len(baseline_root.parts)
-            ):
-                if action in {"read", "list"}:
-                    return
-                if action in {"write", "edit"} and file_access == "read_write":
-                    return
-                if action == "exec" and commands:
-                    return
-                reason = "write_not_granted" if action in {"write", "edit"} else (
-                    "commands_not_granted" if action == "exec" else "folder_not_granted"
-                )
-                raise self._folder_access_needed(path, action, reason)
-
-        if _is_under(path, self.workspace):
+            task_root, file_access, _commands = task_choice
+            choices.append((task_root, file_access == "read_write", 2))
+        selected = max(choices, key=lambda row: (len(row[0].parts), row[2]), default=None)
+        if selected is not None and selected[1]:
             return
-
-        if action in {"read", "list"}:
-            if any(_is_under(path, root.expanduser().resolve(strict=False))
-                   for root in self.context_manager.read_roots()):
-                return
-            roots = list(extra_read_roots)
-            if media_root is not None:
-                roots.append(media_root)
-            if any(_is_under(path, root.expanduser().resolve(strict=False)) for root in roots):
-                return
-            if any(path == allowed.expanduser().resolve(strict=False) for allowed in extra_read_files):
-                return
-
-        if action in {"write", "edit"} and any(
-            _is_under(path, root.expanduser().resolve(strict=False))
-            for root in self.context_manager.write_roots()
-        ):
-            return
-
-        if not allow_folder_grants:
-            raise PermissionError("External folder grants are unavailable to this conversation")
-
-        try:
-            grant = view.effective_grant_for(path)
-        except FolderGrantsUnavailableError as exc:
-            raise PermissionError("Folder grants are unavailable") from exc
-        if grant is None:
-            reason = "write_not_granted" if action in {"write", "edit"} else (
-                "commands_not_granted" if action == "exec" else "folder_not_granted"
-            )
-            raise self._folder_access_needed(path, action, reason, target_kind=target_kind)
-        if action in {"read", "list"}:
-            return
-        if action in {"write", "edit"}:
-            if grant.file_access != "read_write":
-                raise self._folder_access_needed(
-                    path, action, "write_not_granted", target_kind=target_kind
-                )
-            return
-        if action == "exec":
-            if not grant.commands:
-                raise self._folder_access_needed(
-                    path, action, "commands_not_granted", target_kind=target_kind
-                )
-            return
-        raise PermissionError(f"Folder access does not permit {action} for {path}")
+        raise self._folder_access_needed(path, action, "write_not_granted", target_kind=target_kind)
 
     def _task_grant_for(
         self,
@@ -515,6 +488,23 @@ class ResourceAccessPolicy:
 
     def validate_exec(self, command: str, cwd: str | Path) -> str | FolderAccessNeededError | None:
         cwd_path = Path(cwd).expanduser().resolve(strict=False)
+        if self.managed_mode and self._current_full_reference() is None:
+            try:
+                self.validate_path(cwd_path, "exec", target_kind="directory")
+            except FolderAccessNeededError as exc:
+                return exc
+            except PermissionError as exc:
+                return f"Error: Command blocked by resource policy ({exc})"
+            if self._is_managed_repository_path(cwd_path) or any(
+                self._is_managed_repository_path(candidate)
+                for candidate in self._extract_command_paths(command, cwd_path)
+            ):
+                return ("Error: Command blocked by resource policy "
+                        "(managed_repository_policy: use file tools for configured repositories; "
+                        "their protected paths and managed stores are unavailable to shell commands)")
+            # Arguments are not execution grants. A compiler may read libraries
+            # anywhere; the Sandbox applies write rules to every child process.
+            return None
         command_paths = self._extract_command_paths(command, cwd_path)
         try:
             self._deny_context_repo_exec(cwd_path)

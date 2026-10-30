@@ -170,3 +170,28 @@ def test_prompt_catalog_stays_small_and_context_is_read_on_demand_after_switch(t
     assert all("Durable fact loaded only when requested" not in prompt for prompt in prompts)
     assert all(str(knowledge) in prompt for prompt in prompts)
     assert len(catalog.prompt_summary()) < 1500
+
+
+def test_directory_catalog_migration_merges_aliases_and_preserves_links_and_backup(tmp_path):
+    project, knowledge = tmp_path / "ordinary-project", tmp_path / "ordinary-knowledge"
+    project.mkdir()
+    knowledge.mkdir()
+    alias = tmp_path / "knowledge-alias"
+    alias.symlink_to(knowledge, target_is_directory=True)
+    catalog = RepositoryCatalog(tmp_path / "catalog")
+    catalog.root.mkdir()
+    original = json.dumps({"version": 1, "repositories": [
+        {"name": "notes", "path": str(knowledge), "kind": "knowledge", "purpose": "Decisions", "auto_sync": True, "sync_paths": ["decisions/**"]},
+        {"name": "alias", "path": str(alias), "kind": "knowledge"},
+        {"name": "project", "path": str(project), "knowledge_repos": ["alias"]},
+    ]}).encode()
+    catalog.path.write_bytes(original)
+    assert len(catalog.entries()) == 2
+    assert catalog.get("project").knowledge_repos == ["notes"]
+    catalog.update(RepositoryEntry(name="project", path=str(project), knowledge_repos=["notes"], agent_map=False), expected_revision=0)
+    assert (catalog.root / "catalog.pre-v2.json").read_bytes() == original
+    assert json.loads(catalog.path.read_text())["version"] == 2
+    assert catalog.get("notes").auto_sync
+    assert catalog.get("notes").sync_paths == ["decisions/**"]
+    assert not catalog.get("project").agent_map
+    assert catalog.get("notes").agent_map

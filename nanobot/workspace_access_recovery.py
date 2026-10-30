@@ -50,12 +50,48 @@ class FolderAccessUnknownTarget(TypedDict):
 FolderAccessTarget = FolderAccessKnownTarget | FolderAccessUnknownTarget
 
 
+class FolderProposalEntry(TypedDict):
+    name: str
+    label: str
+    path: str
+    purpose: str
+    agent_map: bool
+    kind: Literal["project", "knowledge"]
+    knowledge_repos: list[str]
+    auto_sync: bool
+    sync_paths: list[str]
+
+
+class FolderProposal(TypedDict):
+    entry: FolderProposalEntry
+    requested_access: Literal["read_only", "read_write"]
+
+
+def parse_folder_proposal(raw: object) -> FolderProposal:
+    from nanobot.context_repo.catalog import RepositoryEntry
+
+    if not _has_exact_keys(raw, {"entry", "requested_access"}):
+        raise ValueError("invalid folder proposal")
+    access = raw["requested_access"]
+    if access not in {"read_only", "read_write"}:
+        raise ValueError("invalid folder proposal access")
+    if len(json.dumps(raw, ensure_ascii=False).encode("utf-8")) > 8192:
+        raise ValueError("folder proposal is too large")
+    entry = RepositoryEntry.model_validate(raw["entry"])
+    return {"entry": {
+        "name": entry.name, "label": entry.label, "path": entry.path, "purpose": entry.purpose,
+        "agent_map": entry.agent_map, "kind": entry.kind, "knowledge_repos": entry.knowledge_repos,
+        "auto_sync": entry.auto_sync, "sync_paths": entry.sync_paths,
+    }, "requested_access": cast(Literal["read_only", "read_write"], access)}
+
+
 class FolderAccessNeed(TypedDict):
     version: Literal[1]
     reason: FolderAccessReason
     operation: FolderAccessOperation
     target: FolderAccessTarget
     purpose: str
+    folder_proposal: NotRequired[FolderProposal]
     allowed_roots: list[str]
     roots_truncated: bool
 
@@ -104,6 +140,7 @@ class WorkspaceAccessRecord(TypedDict):
     expected_scope: WorkspaceAccessExpectedScope
     resolved_grants_revision: int | None
     selection_authority: NotRequired[WorkspaceAccessSelectionAuthority | None]
+    folder_proposal: NotRequired[FolderProposal]
 
 
 class WorkspaceAccessAlwaysSelectionAuthority(TypedDict):
@@ -192,6 +229,7 @@ class FolderAccessRequest(TypedDict):
     reason: FolderAccessReason
     operation: FolderAccessOperation
     target: FolderAccessTarget
+    folder_proposal: NotRequired[FolderProposal]
     purpose: str
     selected_path: str | None
     selected_access: EffectiveWorkspaceAccess | None
@@ -334,7 +372,7 @@ def _valid_once_input_path(value: object) -> TypeGuard[str]:
 
 def parse_folder_access_need(raw: object) -> FolderAccessNeed:
     """Validate one exact need envelope at the policy-to-turn boundary."""
-    if not _has_exact_keys(raw, _NEED_KEYS):
+    if not _has_exact_keys(raw, _NEED_KEYS) and not _has_exact_keys(raw, _NEED_KEYS | {"folder_proposal"}):
         raise ValueError("invalid folder access need")
     value = raw
     version = value["version"]
@@ -388,7 +426,7 @@ def parse_folder_access_need(raw: object) -> FolderAccessNeed:
     if type(truncated) is not bool:
         raise ValueError("invalid folder access roots flag")
 
-    return {
+    result: FolderAccessNeed = {
         "version": 1,
         "reason": cast(FolderAccessReason, reason),
         "operation": cast(FolderAccessOperation, operation),
@@ -397,6 +435,9 @@ def parse_folder_access_need(raw: object) -> FolderAccessNeed:
         "allowed_roots": checked_roots,
         "roots_truncated": truncated,
     }
+    if "folder_proposal" in value:
+        result["folder_proposal"] = parse_folder_proposal(value["folder_proposal"])
+    return result
 
 
 def parse_workspace_access_action_payload(
@@ -559,6 +600,8 @@ def parse_workspace_access_record(raw: object) -> WorkspaceAccessRecord:
     value = cast(dict[str, object], raw)
     if frozenset(value) not in {
         frozenset(keys), frozenset(keys | {"selection_authority"}),
+        frozenset(keys | {"folder_proposal"}),
+        frozenset(keys | {"selection_authority", "folder_proposal"}),
     }:
         raise ValueError("invalid workspace access record")
     try:
@@ -688,6 +731,8 @@ def parse_workspace_access_record(raw: object) -> WorkspaceAccessRecord:
     }
     if "selection_authority" in value:
         result["selection_authority"] = selection_authority
+    if "folder_proposal" in value:
+        result["folder_proposal"] = parse_folder_proposal(value["folder_proposal"])
     return result
 
 

@@ -168,8 +168,8 @@ WebSocket connection ends all of them. They cannot be recovered afterward.
 
 Temporary does not mean consequence-free. Requests still go to the configured
 model provider, and tools can still change files, run commands, or affect
-external services. Temporary chats always use the default workspace in
-Restricted mode; the **Working in** control and **Full access** option are
+external services. Temporary chats always use the default workspace in Sandbox
+mode; the **Working in** control and **Full access** option are
 unavailable. Commands
 and tools that create durable goals, automations, or subagent work are also
 unavailable. Use a regular topic when you need reusable context, scheduled work,
@@ -189,36 +189,52 @@ current topic. The configured agent home continues to supply instance identity,
 skills, and memory. Switching focus does not move runtime state or copy a
 conversation into a new topic.
 
-Open **Folders & projects** from **Working in** or **Settings** to review
-folder access and remembered repositories. Folder access is a separate choice
-from project metadata:
+Open **Settings → Folders** to manage everything in one list, or use **Add
+folder** to add any existing directory. Git is optional; a plain folder works
+the same way. Each row shows:
 
-- Each folder grant independently controls **Read only** or **Read and write**
-  access and whether commands are allowed. More specific folder grants determine
-  the effective access for paths beneath them. Saved folder grants apply in
-  every regular topic in this Nanobot instance.
-- Commands for a saved grant are available only when the server can confine
-  them with Bubblewrap. Folder names and labels alone do not isolate a running
-  process.
-- Remembering a repository records its name, path, purpose, kind, and knowledge
-  links. It does not grant access, create a checkout, or change the current
-  topic. **Forget** removes only that catalog entry; repository files stay in
-  place.
-- Discover scans only a readable folder you choose. Review candidates before
-  remembering them. Existing knowledge synchronization remains opt-in and
-  separate from catalog metadata.
+- The folder's name, path, and a short purpose for the agent.
+- Its **Sandbox access**: **Inherit/default**, **Read-only**, or **Read and
+  write**. Rows also show where that access comes from: this folder, a saved
+  ancestor, or the default read-only policy.
+- Whether the folder is included in the **Agent map**.
+
+The list nests each saved folder beneath its nearest saved ancestor and keeps
+unrelated locations as independent roots; it never scans or lists folders you
+did not add. Map visibility is navigation metadata only. It does not grant
+access, and a mapped folder with default read-only access stays read-only.
+Removing a shortcut changes the map, not the parent grant; revoking an explicit
+grant shows the access that remains.
+
+Commands follow the folder's effective access. There is no separate command
+checkbox: a read-only folder cannot be written to or built in, and a read/write
+folder can run normal Bash, Git, Node, Python, and package-manager work. Sandbox
+commands need Bubblewrap on the machine; without it the mode reports that
+requirement instead of silently falling back to Full access.
+
+Remembered folders can also carry knowledge associations and Git synchronization
+settings, still under **Knowledge and Git sync** in the same form. Adding a
+navigation entry does not create a checkout or change the current topic.
+**Discover** scans only a readable folder you choose; review candidates before
+remembering them.
 
 If a normal local topic pauses because a requested folder is not accessible,
 the **Folder access needed** card keeps the original task in that conversation.
 You can select an already allowed project or review a folder path. A known
 directory may be prefilled; an unknown target starts empty, and a blocked file
 requires you to choose its containing folder explicitly. New access starts at
-**Read only** with commands off. Choose **Always** and **Save access and use
-folder** to save a grant for regular topics in this Nanobot instance. Choose
-**Once** and **Allow once and use folder** to give only the original paused task
-the selected folder capabilities. Once access is not saved, does not add a
-folder to management, and does not change the instance's saved grants. The task
-may request another folder later; each request needs its own review.
+**Read only**. Choose **Always** and **Save access and use folder** to save the
+folder and access for regular topics in this Nanobot instance. Choose **Once**
+and **Allow once and use folder** to give only the original paused task the
+selected folder capabilities. Once access is not saved, does not add a folder to
+management, and does not change the instance's saved grants. The task may
+request another folder later; each request needs its own review.
+
+When the agent proposes a folder to remember, the same card shows the path,
+purpose, current access, requested access, and whether it would join the Agent
+map. Confirming saves the folder metadata and the chosen access as one action;
+declining changes neither. If the metadata saves but the access does not, the
+card reports that partial result and can retry the same request.
 
 The card never retries the paused task automatically. After the folder has been
 checked and the card says it is ready, choose **Continue task** to resume that
@@ -232,28 +248,32 @@ confirms that access has ended. If it cannot verify that a command tree has
 stopped, the access change remains pending rather than being treated as
 complete.
 
-Regular local topics start in **Restricted** mode and use their selected folder
-plus any saved grants. **Full access** is a separate, chat-specific choice; it
-lets that topic read and change files and run commands beyond the selected
-folder, subject to your operating-system account permissions. Nanobot asks for
-confirmation before enabling it. You can choose Full while composing a new
-topic: Nanobot creates that topic and enables Full before the first message
-runs. Otherwise new topics start Restricted. Full is available only when
-whole-process supervision is available and no explicit command sandbox is
-configured; if it cannot be enabled, the topic remains Restricted and the draft
-is not sent. Other topics remain Restricted.
-Returning to Restricted fences new work immediately;
+Regular local topics start in **Sandbox**. Sandbox allows ordinary reads under
+your operating-system account and runs normal commands, but writes are limited
+to the agent home, saved read/write folders, and private temporary or cache
+storage. An explicit read-only folder overrides a writable parent. This boundary
+applies from the first message, before any folder has been saved. **Full
+access** is a separate, chat-specific choice; it lets that topic read and change
+files and run commands beyond those limits, subject to your operating-system
+account permissions. Nanobot asks for confirmation before enabling it. You can
+choose Full while composing a new topic: Nanobot creates that topic and enables
+Full before the first message runs. Otherwise new topics start in Sandbox. Full
+is available only when whole-process supervision is available and no explicit
+command sandbox is configured; if it cannot be enabled, the topic remains in
+Sandbox and the draft is not sent. Other topics remain in Sandbox.
+Returning to Sandbox fences new work immediately;
 Nanobot confirms the change only after previously started command trees are
 verified stopped. If work is still running or cannot be verified, the topic
 shows that Full access is ending and keeps the change pending. Restarting
 Nanobot does not renew Full access.
 
-Folder grants and Full-mode controls are available only from a trusted local
-WebUI connection. Remote connections may still show the active folder's
-effective status while hiding grant and catalog controls. Managed mode does not
-expose browser, device, or desktop actions as confined tools. Older clients'
-**Full access** preference cannot bypass server-managed folder grants; legacy
-gateways keep their existing access controls.
+Folder and Full-mode controls are available only from a trusted local WebUI
+connection. Remote connections may still show the active folder's effective
+status while hiding folder and Full controls, and file preview stays inside the
+focused folder. Managed mode does not expose browser, device, or desktop actions
+as confined tools. Older clients' **Full access** preference cannot bypass
+server-managed folder access; legacy gateways keep their existing access
+controls.
 
 ## Composer
 

@@ -334,6 +334,8 @@ def test_build_skills_summary_keeps_absolute_roots_for_selected_project(tmp_path
     assert summary.count(str(workspace_skills.resolve())) == 1
     assert summary.count(str(builtin.resolve())) == 1
     assert str(project.resolve()) not in summary
+    assert "Use `skills/<name>/SKILL.md` for these bundled skills." in summary
+    assert "**beta**" in summary
 
 
 @pytest.mark.parametrize("selected_project", [False, True])

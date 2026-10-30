@@ -127,6 +127,7 @@ def build_gateway_services(
         context_manager=managed_context,
         restrict_to_workspace=default_restrict_to_workspace,
         folder_grants=grants.view,
+        sandbox_default=True,
     )
     media.set_resource_policy(focus_owner.policy if focus_owner is not None else None)
     temporary_chats = WebUITemporaryChats(

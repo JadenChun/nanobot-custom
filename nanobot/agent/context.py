@@ -170,11 +170,12 @@ class ContextBuilder:
             parts.append("# Context Repositories\n\n" + self.context_manager.prompt_summary()
                          + "\nFollow each repository's writable, protected, store and proposal policies.")
         access = current_tool_workspace(root)
-        allowed_roots = self._managed_prompt_roots() if managed else (
+        allowed_roots = None if managed else (
             [access.allowed_root, *self.context_manager.read_roots()]
             if access.allowed_root is not None else None
         )
-        catalog = self.repositories.prompt_summary(allowed_roots=allowed_roots)
+        catalog = self.repositories.prompt_summary(allowed_roots=allowed_roots,
+                                                   access_for_path=self._folder_map_access if managed else None)
         if managed:
             metadata = self._managed_prompt_metadata(catalog)
             if metadata:
@@ -191,6 +192,17 @@ class ContextBuilder:
                 f"Working directory: {project_path}\n"
                 "Use it as the default root for project files and relative tool paths."
             )
+
+            if managed:
+                instructions = project_path / "AGENTS.md"
+                if instructions.is_file():
+                    resolved = instructions.resolve(strict=True)
+                    if not resolved.is_relative_to(project_path):
+                        raise PermissionError("project instructions resolve outside the current folder")
+                    self._validate_managed_prompt_file(resolved, managed=True)
+                    content = resolved.read_text(encoding="utf-8")
+                    if content.strip():
+                        parts.append(f"## Current folder instructions (AGENTS.md)\n\n{content}")
 
         if include_memory:
             if managed and self.memory.memory_file.exists():
@@ -266,19 +278,38 @@ class ContextBuilder:
                     roots.append(candidate)
         return list(dict.fromkeys(root.expanduser().resolve(strict=False) for root in roots))
 
+    def _folder_map_access(self, path: Path) -> str | None:
+        policy = self.resource_policy
+        if policy is None or not path.is_dir() or path.resolve(strict=True) != path:
+            return None
+        try:
+            policy.validate_path(path, "read")
+        except (OSError, PermissionError, RuntimeError, ValueError):
+            return None
+        try:
+            policy.validate_path(path, "write")
+        except (OSError, PermissionError, RuntimeError, ValueError):
+            return "read_only"
+        return "read_write"
+
     def _managed_prompt_metadata(self, catalog: str) -> str:
         roots = self._managed_prompt_roots()
-        root_lines = [json.dumps(str(root), ensure_ascii=True) for root in roots[:8]]
+        root_lines = [json.dumps({"path": str(root), "effective_access": self._folder_map_access(root)}, ensure_ascii=True) for root in roots[:8]]
         sections = [
-            "# Authorized Project Folders\n\n"
-            "These paths are already readable. For the complete bounded list, call "
+            "# Sandbox Folder Rules\n\n"
+            "Sandbox allows ordinary OS-account reads and commands. Writes are limited to approved "
+            "folders (including their unmapped descendants), the agent home, and private temporary/cache storage. "
+            "More-specific read-only rules override writable parents. Full access uses normal OS permissions. "
+            "Private Nanobot authority and configured context policies remain protected. "
+            "These saved roots describe capabilities, not an exclusive navigation list. Call "
             '`repository_catalog(action="roots")`; use `discover` on a path when needed.\n'
             + "\n".join(f"- {line}" for line in root_lines)
         ]
         if catalog:
             sections.append(
-                "# Repository Catalog\n\nMetadata only; read the selected repository's "
-                "instructions and relevant files on demand. Use `select_workspace` to change focus.\n"
+                "# Agent Folder Map\n\nMetadata only; read each folder's "
+                "instructions and relevant files on demand. Work across folders using absolute paths; "
+                "`select_workspace` only changes the default for relative paths. New map entries need user approval.\n"
                 + catalog
             )
         bounded: list[str] = []

@@ -72,7 +72,8 @@ class WorkspaceFocusOwner:
 
     @property
     def managed(self) -> bool:
-        return self.grants.is_managed
+        # This owner serves the local WebUI, whose default is always Sandbox.
+        return True
 
     def effective_access(
         self,
@@ -124,7 +125,7 @@ class WorkspaceFocusOwner:
             exists = target.is_dir()
             return self._legacy_access(target, exists)
 
-        snapshot = self.grants.snapshot()
+        self.grants.snapshot()
         if declared_grant is not None:
             grant_root = Path(os.path.abspath(Path(declared_grant.path).expanduser()))
             try:
@@ -147,9 +148,6 @@ class WorkspaceFocusOwner:
 
         target = logical_target if retained_root else requested.resolve(strict=False)
         exists = target.is_dir()
-        if not snapshot.enabled:
-            if not task_live and not full_live:
-                return self._managed_none(target, exists)
         if self.grants.is_private_path(target):
             return self._managed_none(target, exists)
 
@@ -179,7 +177,7 @@ class WorkspaceFocusOwner:
             else None
         )
         if task_root is not None:
-            root_path, file_access, commands = task_root
+            root_path, file_access, _commands = task_root
             baseline_root = self._baseline_access_root(target, declared_grant)
             if baseline_root is None or len(Path(root_path).parts) >= len(baseline_root.parts):
                 from nanobot.agent.tools.native_process import native_supervisor_available
@@ -187,13 +185,11 @@ class WorkspaceFocusOwner:
 
                 command_ready = (
                     exists
-                    and commands
                     and managed_bwrap_available()
                     and native_supervisor_available()
                 )
                 command_reason = (
                     None if command_ready else
-                    "not_granted" if not commands else
                     "supervisor_unavailable" if not native_supervisor_available() else
                     "sandbox_unavailable"
                 )
@@ -206,38 +202,12 @@ class WorkspaceFocusOwner:
                     "read": exists,
                     "write": exists and file_access == "read_write",
                     "commands": {
-                        "requested": commands,
+                        "requested": True,
                         "available": command_ready,
                         "backend": "bwrap" if command_ready else "none",
                         "reason": command_reason,
                     },
                 }
-
-        if _is_under(target, self.agent_home):
-            return self._managed_access(
-                target,
-                exists=exists,
-                source="agent_home",
-                grant_root=None,
-                read=True,
-                write=True,
-                commands_requested=True,
-            )
-
-        configured_read = any(_is_under(target, root.resolve(strict=False))
-                              for root in self.policy.context_manager.read_roots())
-        if configured_read:
-            configured_write = any(_is_under(target, root.resolve(strict=False))
-                                   for root in self.policy.context_manager.write_roots())
-            return self._managed_access(
-                target,
-                exists=exists,
-                source="configured",
-                grant_root=None,
-                read=True,
-                write=configured_write,
-                commands_requested=False,
-            )
 
         grant = declared_grant
         if grant is not None:
@@ -254,8 +224,40 @@ class WorkspaceFocusOwner:
                 grant = None
         if grant is None:
             grant = self.grants.effective_grant_for(target)
+
+        if _is_under(target, self.agent_home):
+            # A grant at least as specific as the workspace overrides its
+            # built-in write rule; an ancestor grant does not. This matches
+            # ResourceAccessPolicy's longest-root precedence.
+            if grant is None or len(Path(grant.path).parts) < len(self.agent_home.parts):
+                return self._managed_access(
+                    target,
+                    exists=exists,
+                    source="agent_home",
+                    grant_root=None,
+                    read=True,
+                    write=True,
+                    commands_requested=True,
+                )
+
+        configured_read = any(_is_under(target, root.resolve(strict=False))
+                              for root in self.policy.context_manager.read_roots())
+        if configured_read:
+            configured_write = any(_is_under(target, root.resolve(strict=False))
+                                   for root in self.policy.context_manager.write_roots())
+            return self._managed_access(
+                target,
+                exists=exists,
+                source="configured",
+                grant_root=None,
+                read=True,
+                write=configured_write,
+                commands_requested=True,
+            )
+
         if grant is None:
-            return self._managed_none(target, exists)
+            return self._managed_access(target, exists=exists, source="none", grant_root=None,
+                                        read=True, write=False, commands_requested=True)
         if not exists:
             return self._managed_access(
                 target,
@@ -274,7 +276,7 @@ class WorkspaceFocusOwner:
             grant_root=grant.path,
             read=True,
             write=grant.file_access == "read_write",
-            commands_requested=grant.commands,
+            commands_requested=True,
         )
 
     def _task_root_for(
@@ -477,6 +479,19 @@ class WorkspaceFocusOwner:
 
         if not target.is_absolute():
             raise WorkspaceScopeError("workspace path must be absolute")
+        if repository.strip():
+            # A saved shortcut keeps its canonical identity. The management view
+            # already treats a replacement symlink (on the path or an ancestor)
+            # as changed; selecting it must not follow the replacement.
+            try:
+                if not target.is_dir():
+                    raise WorkspaceScopeError("workspace path must be an existing directory")
+                if target.resolve(strict=True) != target:
+                    raise WorkspaceScopeError("saved folder path changed; select it again")
+            except WorkspaceScopeError:
+                raise
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise WorkspaceScopeError("workspace path must be an existing directory") from exc
         try:
             canonical = target.resolve(strict=True)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -602,12 +617,15 @@ class WorkspaceFocusOwner:
         repositories: list[dict[str, object]] = []
         for entry in self.catalog.entries():
             path = Path(entry.path)
+            access = self.effective_access(path, retained_root=True)
             repositories.append({
                 **entry.model_dump(),
-                "exists": path.is_dir(),
-                "effective_access": self.effective_access(path),
+                "exists": access["exists"],
+                "effective_access": access,
+                "git": access["exists"] and (path / ".git").exists(),
             })
         return {
+            "catalog_revision": self.catalog.snapshot().revision,
             "grants_revision": snapshot.revision,
             "grants": grant_rows,
             "repositories": repositories,
@@ -786,7 +804,7 @@ class WorkspaceFocusOwner:
         target: Path,
         *,
         exists: bool,
-        source: Literal["agent_home", "grant", "configured", "task"],
+        source: Literal["agent_home", "grant", "configured", "task", "none"],
         grant_root: str | None,
         read: bool,
         write: bool,

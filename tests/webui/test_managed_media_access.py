@@ -47,7 +47,7 @@ def _gateway(
     return gateway, store, project, media_root
 
 
-def test_replay_markdown_media_rechecks_revoked_project_access(tmp_path: Path) -> None:
+def test_replay_markdown_media_remains_readable_after_write_grant_revocation(tmp_path: Path) -> None:
     gateway, store, project, media_root = _gateway(tmp_path, managed=True)
     before = project / "before.png"
     before.write_bytes(b"authorized fixture image")
@@ -69,8 +69,8 @@ def test_replay_markdown_media_rechecks_revoked_project_access(tmp_path: Path) -
         allow_folder_grants=True,
     )
 
-    assert hidden == "![after](after.png)"
-    assert len(list(media_root.iterdir())) == 1
+    assert "/api/media/" in hidden
+    assert len(list(media_root.iterdir())) == 2
 
 
 def test_managed_media_rejects_private_symlink_and_temporary_external_source(
@@ -90,8 +90,8 @@ def test_managed_media_rejects_private_symlink_and_temporary_external_source(
     external_image = project / "temporary.png"
     external_image.write_bytes(b"temporary fixture image")
 
-    assert gateway.sign_or_stage_media_path(external_image, allow_folder_grants=False) is None
-    assert list(media_root.iterdir()) == []
+    assert gateway.sign_or_stage_media_path(external_image, allow_folder_grants=False) is not None
+    assert len(list(media_root.iterdir())) == 1
 
 
 def test_legacy_media_staging_keeps_existing_behavior(tmp_path: Path) -> None:

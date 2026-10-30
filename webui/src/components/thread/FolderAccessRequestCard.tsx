@@ -11,9 +11,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { allowWorkspaceAccessOnce, cancelWorkspaceAccessRequest, continueWorkspaceAccessRequest, resolveWorkspaceAccessRequest, upsertWorkspaceGrant } from "@/lib/api";
+import { approveFolderProposal, allowWorkspaceAccessOnce, cancelWorkspaceAccessRequest, continueWorkspaceAccessRequest, resolveWorkspaceAccessRequest, upsertWorkspaceGrant } from "@/lib/api";
 import type { FolderAccessActionResult, FolderAccessDuration, FolderAccessRequest, FolderFileAccess, WorkspaceOnceReceipt, WorkspacePermissionProjection, WorkspacesPayload, WorkspaceScopePayload } from "@/lib/types";
 import { folderAccessErrorMessage, folderForKnownTarget, folderOperationCanContinue, requiredFolderCapabilities } from "@/lib/folderAccess";
+import { pathContains } from "@/lib/folderLocations";
 import { isAbsoluteWorkspacePath, sameWorkspacePath } from "@/lib/workspace";
 import { getRuntimeHost } from "@/lib/runtime";
 import { useClient } from "@/providers/ClientProvider";
@@ -69,7 +70,7 @@ const unavailableReasonLabels: Record<string, string> = {
   continuation_unknown: "Nanobot could not confirm whether the task continued. Check the conversation before trying again.",
 };
 
-export function FolderAccessRequestCard({
+function ExistingFolderAccessRequestCard({
   chatId,
   request,
   requestLoading,
@@ -225,9 +226,6 @@ export function FolderAccessRequestCard({
     ));
   }, [management?.grants, management?.repositories, t, workspaces]);
 
-  const exactGrant = useMemo(() => management?.grants.find((grant) => sameWorkspacePath(grant.path, path)) ?? null,
-    [management?.grants, path]);
-
   const selectPath = (selectedPath: string) => {
     setPath(selectedPath);
     setSettingsTouched(true);
@@ -324,22 +322,16 @@ export function FolderAccessRequestCard({
     defaultValue: operationLabels[request.operation] ?? request.operation,
   });
   const capabilityRequirement = request.operation === "read"
-    ? t("workspace.recovery.requirements.read", { defaultValue: "Required: read-only file access; commands off." })
+    ? t("workspace.recovery.requirements.read", { defaultValue: "Required: read-only file access. Commands follow Sandbox file rules." })
     : request.operation === "write"
-      ? t("workspace.recovery.requirements.write", { defaultValue: "Required: read and write file access; commands off." })
+      ? t("workspace.recovery.requirements.write", { defaultValue: "Required: read and write file access. Commands follow Sandbox file rules." })
       : request.operation === "execute"
         ? t("workspace.recovery.requirements.execute", { defaultValue: "Required: command access; file changes are not required." })
-        : t("workspace.recovery.requirements.other", { defaultValue: "Review the file and command access needed for this request." });
+        : t("workspace.recovery.requirements.other", { defaultValue: "Review the Sandbox file access needed for this request." });
   const selectedFileAccessLabel = fileAccess === "read_write"
     ? t("workspace.management.readWrite", { defaultValue: "Read and write" })
     : t("workspace.management.readOnly", { defaultValue: "Read only" });
-  const selectedCapabilities = t("workspace.recovery.selectedCapabilities", {
-    fileAccess: selectedFileAccessLabel,
-    commands: commands
-      ? t("workspace.recovery.commandsRequested", { defaultValue: "Commands requested" })
-      : t("workspace.management.commandsOff", { defaultValue: "Commands off" }),
-    defaultValue: `Selected access: ${selectedFileAccessLabel} · ${commands ? "Commands requested" : "Commands off"}`,
-  });
+  const selectedCapabilities = `Selected access: ${selectedFileAccessLabel} · ${t("workspace.folders.commandHelp", { defaultValue: "Commands follow Sandbox file rules." })}`;
 
   const refreshAfterFailure = async (identity: ActionIdentity) => {
     try {
@@ -1131,26 +1123,7 @@ export function FolderAccessRequestCard({
                   </div>
                 </fieldset>
 
-                <div className="space-y-2">
-                  <label className="flex min-h-9 items-center gap-2 text-[12px]">
-                    <input
-                      type="checkbox"
-                      checked={commands}
-                      disabled={actionDisabled}
-                      onChange={(event) => {
-                        setCommands(event.target.checked);
-                        setSettingsTouched(true);
-                      }}
-                      className="h-4 w-4 accent-foreground"
-                    />
-                    {t("workspace.management.allowCommands", { defaultValue: "Allow commands" })}
-                  </label>
-                  {exactGrant?.effective_access.commands.requested && !exactGrant.effective_access.commands.available ? (
-                    <p className="text-[11px] text-muted-foreground">
-                      {t("workspace.management.commandUnavailable", { defaultValue: "Command access may be unavailable on this system." })}
-                    </p>
-                  ) : null}
-                </div>
+                <p className="text-xs text-muted-foreground">{t("workspace.folders.commandHelp", { defaultValue: "Commands follow Sandbox file rules. Read-only folders stay read-only for programs and their child processes." })}</p>
 
                 {!configuredCapabilitiesSufficient ? (
                   <p role="alert" className="text-[11.5px] text-destructive">{insufficientCapabilitiesMessage}</p>
@@ -1183,4 +1156,93 @@ export function FolderAccessRequestCard({
       </div>
     </section>
   );
+}
+
+
+type FolderAccessCardProps = Parameters<typeof ExistingFolderAccessRequestCard>[0];
+
+export function FolderAccessRequestCard(props: FolderAccessCardProps) {
+  if (props.request?.folder_proposal && props.request.status === "pending") {
+    return <FolderProposalCard key={props.request.access_request_id} {...props} />;
+  }
+  return <ExistingFolderAccessRequestCard {...props} />;
+}
+
+function FolderProposalCard(props: FolderAccessCardProps) {
+  const { t } = useTranslation();
+  const { client } = useClient();
+  const proposal = props.request!.folder_proposal!;
+  const mounted = useRef(true);
+  const identity = `${props.chatId}:${props.request!.access_request_id}:${props.request!.revision}:${props.request!.task.turn_id}:${props.request!.status}`;
+  const latestIdentity = useRef(identity);
+  latestIdentity.current = identity;
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const stillCurrent = () => mounted.current && latestIdentity.current === identity;
+  const [access, setAccess] = useState<FolderFileAccess>(proposal.requested_access);
+  const [mapped, setMapped] = useState(proposal.entry.agent_map !== false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const text = (key: string, fallback: string) => t(`workspace.folders.${key}`, { defaultValue: fallback });
+  const request = props.request!;
+  const management = props.workspaces?.management;
+  const current = management?.grants.filter((row) => pathContains(row.path, proposal.entry.path))
+    .sort((a, b) => b.path.length - a.path.length)[0];
+  const agentHome = props.workspaces?.agent_home ?? props.workspaces?.default_scope?.project_path;
+  const inWorkspace = !!agentHome && pathContains(agentHome, proposal.entry.path);
+  const parentAtLeastAsSpecific = !!current && !!agentHome && pathContains(agentHome, current.path);
+  const currentAccess = current && (!inWorkspace || parentAtLeastAsSpecific)
+    ? `${current.effective_access.write ? text("readWrite", "Read and write") : text("readOnly", "Read-only")} · ${current.path}`
+    : inWorkspace
+      ? text("agentWorkspaceWrite", "Read and write · Agent workspace")
+      : text("defaultReadOnly", "Read-only by default");
+  const unavailable = props.chatId !== request.chat_id || !!request.unavailable_reason || props.requestLoading || props.requestRefreshFailed || props.busy || !management;
+  const confirm = async () => {
+    if (!management || unavailable) return;
+    setPending(true); setError(null);
+    const intent: FolderAccessResolveIntent = {
+      chatId: request.chat_id, accessRequestId: request.access_request_id,
+      expectedRevision: request.revision, taskTurnId: request.task.turn_id,
+      duration: "always", expectedFileAccess: access,
+      submittedPath: proposal.entry.path, canonicalPath: proposal.entry.path,
+    };
+    props.onResolveStarted?.(intent);
+    try {
+      const result = await approveFolderProposal(client, {
+        chat_id: request.chat_id, access_request_id: request.access_request_id,
+        expected_revision: request.revision, expected_grants_revision: management.grants_revision,
+        expected_catalog_revision: management.catalog_revision ?? 0, file_access: access, agent_map: mapped,
+      });
+      if (!stillCurrent()) return;
+      if (props.onResolveResult && !props.onResolveResult(intent, result)) return;
+      props.onUpdateRequest(result.workspace_access_request);
+      props.onApplyWorkspaceScope(result.workspace_scope);
+      await props.onRefreshWorkspaces();
+      await props.onRefreshWorkspacePermissions?.();
+    } catch (reason) {
+      props.onResolveResult?.(intent, null);
+      if (!stillCurrent()) return;
+      setError(folderAccessErrorMessage(reason, t));
+      await props.onRefreshWorkspaces();
+      await props.onRefreshRequest();
+    } finally { if (stillCurrent()) setPending(false); }
+  };
+  const decline = async () => {
+    setPending(true); setError(null);
+    try {
+      const result = await cancelWorkspaceAccessRequest(client, request.chat_id, request.access_request_id, request.revision);
+      if (stillCurrent()) props.onUpdateRequest(result.workspace_access_request);
+    } catch (reason) { if (stillCurrent()) setError(folderAccessErrorMessage(reason, t)); }
+    finally { if (stillCurrent()) setPending(false); }
+  };
+  return <section className="mx-4 space-y-3 rounded-xl border bg-card p-4" aria-label={text("proposalTitle", "Add proposed folder")}>
+    <div className="flex items-center gap-2 text-sm font-medium"><Folder className="size-4" />{text("proposalTitle", "Add proposed folder")}</div>
+    <p className="text-xs text-muted-foreground">{request.task.excerpt}</p>
+    <div><p className="text-sm font-medium">{proposal.entry.label || proposal.entry.name}</p><p className="break-all font-mono text-xs">{proposal.entry.path}</p><p className="mt-1 text-sm">{proposal.entry.purpose || request.purpose}</p></div>
+    <p className="break-all text-xs text-muted-foreground">{text("currentAccess", "Current Sandbox access")}: {currentAccess}</p>
+    <label className="block space-y-1 text-xs">{text("access", "Sandbox access")}<select className="ml-2 rounded border bg-background p-1" value={access} disabled={pending || unavailable} onChange={(event) => setAccess(event.target.value as FolderFileAccess)}><option value="read_only">{text("readOnly", "Read-only")}</option><option value="read_write">{text("readWrite", "Read and write")}</option></select></label>
+    <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={mapped} disabled={pending || unavailable} onChange={(event) => setMapped(event.target.checked)} />{text("map", "Include in Agent map")}</label>
+    {unavailable && <p role="status" className="text-xs text-muted-foreground">{text("proposalUnavailable", "This task changed or its current access could not be verified. Refresh the task before confirming.")}</p>}
+    {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
+    <div className="flex gap-2"><Button size="sm" disabled={pending || unavailable} onClick={() => void confirm()}>{pending && <Loader2 className="mr-2 size-3 animate-spin" />}{text("add", "Add folder")}</Button><Button size="sm" variant="outline" disabled={pending || unavailable} onClick={() => void decline()}>{text("decline", "Decline")}</Button></div>
+  </section>;
 }

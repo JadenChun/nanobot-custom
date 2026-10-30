@@ -513,12 +513,23 @@ class ManagedContextRepo:
         return bool(_get_any(self.sync_config, "autoPush", "auto_push", default=True))
 
     def prompt_summary(self) -> str:
-        if not self.managed:
-            return (
+        if self.managed:
+            lines = [f"- {self.name}: managed context repo at {self.path}"]
+        else:
+            lines = [
                 f"- {self.name}: legacy context repo at {self.path}. "
                 "Root markdown, memory, and skills are loaded when present."
+            ]
+        if self.read_only:
+            lines.append("  File access is read-only; do not modify this repository.")
+        if not self.allow_exec:
+            lines.append(
+                "  Shell commands cannot access this repository, even for reads. "
+                "Use read_file or list_dir for permitted file inspection; "
+                "do not retry a denied command through another shell or interpreter."
             )
-        lines = [f"- {self.name}: managed context repo at {self.path}"]
+        if not self.managed:
+            return "\n".join(lines)
         if self.user_experience:
             mode = str(_get_any(self.user_experience, "audienceMode", "audience_mode", default="")).strip()
             assistant_name = str(_get_any(self.user_experience, "assistantName", "assistant_name", default="assistant")).strip()
@@ -573,7 +584,8 @@ class ManagedContextRepo:
                     hint = f"set {target.path_env}" if target.path_env else "path unresolved"
                     target_lines.append(f"{target.name} ({target.type}) unresolved; {hint}")
             lines.append(f"  Target repos: {'; '.join(target_lines)}")
-        lines.append("  Normal writes to managed paths are autonomous; protected paths and strategic changes require approval/proposals.")
+        if not self.read_only:
+            lines.append("  Normal writes to managed paths are autonomous; protected paths and strategic changes require approval/proposals.")
         return "\n".join(lines)
 
 

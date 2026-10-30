@@ -391,6 +391,8 @@ def persist_folder_access_request(
             },
             "resolved_grants_revision": None,
         }
+        if "folder_proposal" in need:
+            record["folder_proposal"] = need["folder_proposal"]
         record = parse_workspace_access_record(record)
         committed_binding = sessions.commit_workspace_access_request(
             context.session_key,
@@ -400,7 +402,7 @@ def persist_folder_access_request(
             expected_latest_input_event_id=task_input_id,
         )
         _ = committed_binding
-        return {
+        public: FolderAccessRequest = {
             "version": 1,
             "access_request_id": record["access_request_id"],
             "revision": record["revision"],
@@ -422,6 +424,9 @@ def persist_folder_access_request(
             "selected_duration": None,
             "task_access_state": None,
         }
+        if "folder_proposal" in record:
+            public["folder_proposal"] = record["folder_proposal"]
+        return public
     except (OSError, RuntimeError, SourceValidationError, TypeError, ValueError):
         # The already-recorded safe final remains the whole outcome when the
         # independent recovery metadata transaction cannot be proven.
@@ -830,7 +835,7 @@ class WorkspaceAccessRecoveryOwner:
                             unavailable = "task_access_expired"
             elif record["status"] == "continuing":
                 unavailable = "continuation_unknown"
-        return {
+        public: FolderAccessRequest = {
             "version": 1,
             "access_request_id": record["access_request_id"],
             "revision": record["revision"],
@@ -852,6 +857,9 @@ class WorkspaceAccessRecoveryOwner:
             "selected_duration": selected_duration,
             "task_access_state": task_access_state,
         }
+        if "folder_proposal" in record:
+            public["folder_proposal"] = record["folder_proposal"]
+        return public
 
     def _live_once_reference(
         self,
@@ -1001,6 +1009,8 @@ class WorkspaceAccessRecoveryOwner:
             raise WorkspaceAccessActionError(400, "invalid_access_request") from None
         key, chat_id, snapshot, record = self._load(payload.get("chat_id"))
         self._check_action_identity(payload, record)
+        if record.get("folder_proposal") is not None:
+            raise WorkspaceAccessActionError(400, "folder_proposal_requires_confirmation")
         if record["status"] not in {"pending", "ready"}:
             raise WorkspaceAccessActionError(409, "access_request_inactive")
         current_scope = self._validate_current(key, chat_id, snapshot, record)
@@ -1180,13 +1190,56 @@ class WorkspaceAccessRecoveryOwner:
             key, chat_id, latest, replacement, self.workspaces.scope_for_session_key(key),
         )
 
-    def resolve(self, raw_payload: object) -> FolderAccessActionResult:
+    def add_folder(self, raw_payload: object) -> FolderAccessActionResult:
+        from typing import Literal
+
+        from pydantic import BaseModel, ConfigDict, Field, StrictInt
+
+        class Approval(BaseModel):
+            model_config = ConfigDict(extra="forbid", strict=True)
+            chat_id: str
+            access_request_id: str
+            expected_revision: StrictInt
+            expected_grants_revision: StrictInt = Field(ge=0)
+            expected_catalog_revision: StrictInt = Field(ge=0)
+            file_access: Literal["read_only", "read_write"]
+            agent_map: bool
+
+        approval = Approval.model_validate(raw_payload)
+        key, chat_id, snapshot, record = self._load(approval.chat_id)
+        self._check_action_identity(approval.model_dump(), record)
+        if record["status"] not in {"pending", "ready"}:
+            raise WorkspaceAccessActionError(409, "access_request_inactive")
+        self._validate_current(key, chat_id, snapshot, record)
+        proposal = record.get("folder_proposal")
+        if proposal is None:
+            raise WorkspaceAccessActionError(400, "invalid_access_request")
+        entry = {**proposal["entry"], "agent_map": approval.agent_map}
+        try:
+            self.workspaces.edit_folder({
+                "operation_id": record["access_request_id"],
+                "expected_grants_revision": approval.expected_grants_revision,
+                "expected_catalog_revision": approval.expected_catalog_revision,
+                "path": proposal["entry"]["path"], "entry": entry,
+                "access": approval.file_access,
+            })
+        except (OSError, ValueError) as exc:
+            raise WorkspaceAccessActionError(409, str(exc)) from exc
+        return self.resolve({
+            "chat_id": chat_id, "access_request_id": record["access_request_id"],
+            "expected_revision": record["revision"], "path": proposal["entry"]["path"],
+            "expected_grants_revision": self.workspaces.grant_snapshot().revision,
+        }, confirmed_proposal=True)
+
+    def resolve(self, raw_payload: object, *, confirmed_proposal: bool = False) -> FolderAccessActionResult:
         payload = cast(WorkspaceAccessResolvePayload, parse_workspace_access_action_payload(
             raw_payload,
             resolve=True,
         ))
         key, chat_id, snapshot, record = self._load(payload.get("chat_id"))
         self._check_action_identity(payload, record)
+        if record.get("folder_proposal") is not None and not confirmed_proposal:
+            raise WorkspaceAccessActionError(400, "folder_proposal_requires_confirmation")
         if record["status"] not in {"pending", "ready"}:
             raise WorkspaceAccessActionError(409, "access_request_inactive")
         current_scope = self._validate_current(key, chat_id, snapshot, record)

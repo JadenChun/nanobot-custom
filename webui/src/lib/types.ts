@@ -513,6 +513,8 @@ export interface WorkspaceGrantReceipt {
 
 export interface RepositoryRecord {
   name: string;
+  label?: string;
+  agent_map?: boolean;
   path: string;
   purpose: string;
   kind: "project" | "knowledge";
@@ -522,11 +524,13 @@ export interface RepositoryRecord {
 }
 
 export interface RepositoryRow extends RepositoryRecord {
+  git?: boolean;
   exists: boolean;
   effective_access: EffectiveWorkspaceAccess;
 }
 
 export interface WorkspaceManagementPayload {
+  catalog_revision?: number;
   grants_revision: number;
   grants: FolderGrantRow[];
   repositories: RepositoryRow[];
@@ -635,6 +639,7 @@ export interface FolderAccessRequest {
   reason: FolderAccessReason;
   operation: FolderAccessOperation;
   target: FolderAccessTarget;
+  folder_proposal?: { entry: RepositoryRecord; requested_access: FolderFileAccess };
   purpose: string;
   selected_path: string | null;
   selected_access: EffectiveWorkspaceAccess | null;

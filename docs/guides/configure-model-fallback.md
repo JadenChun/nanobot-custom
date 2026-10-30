@@ -63,8 +63,9 @@ for common providers.
 
 ## Production notes
 
-- Keep fallback context windows realistic; smaller fallback windows constrain
-  how much context can fit.
+- Keep fallback context windows realistic. The primary uses its own window; a
+  smaller fallback can handle the request after failover only if the existing
+  prompt fits its limit.
 - Put cheaper or faster fallbacks before expensive ones when acceptable.
 - Use `/model <preset>` for runtime switching without editing config.
 - Keep preset names human-readable; the same name appears in the WebUI and `/model`.

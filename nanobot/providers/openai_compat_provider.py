@@ -124,6 +124,7 @@ _DEEPSEEK_MULTIMODAL_MODELS: frozenset[str] = frozenset({
     "deepseek-v4-flash-vision-exp",
 })
 _TEXT_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
+_TEXT_TOOL_CALL_PREFIX = "<tool_call>"
 # Thinking-capable MiMo models per Xiaomi docs (see
 # tests/providers/test_xiaomi_mimo_thinking.py). mimo-v2-flash is omitted
 # because it does not support thinking.
@@ -297,6 +298,27 @@ def _extract_text_tool_calls(content: str | None) -> tuple[str | None, list[Tool
     visible_parts.append(content[last:])
     visible_content = "".join(visible_parts).strip() or None
     return visible_content, tool_calls
+
+
+def _reject_unparsed_tool_output(response: LLMResponse) -> LLMResponse:
+    """Reject a bare tool envelope without guessing executable XML arguments.
+
+    Run after native/JSON tool parsing. Fenced or inline examples are ordinary
+    text; only a response starting with the protocol envelope is a candidate.
+    The runner owns the bounded corrective retry, not provider network retries.
+    """
+    if (
+        not response.has_tool_calls
+        and response.finish_reason in {"stop", "tool_calls", "function_call"}
+        and (response.content or "").lstrip().startswith(_TEXT_TOOL_CALL_PREFIX)
+    ):
+        response.content = (
+            "The model returned an invalid tool request instead of an answer. Please try again."
+        )
+        response.finish_reason = "error"
+        response.error_kind = "malformed_tool_output"
+        response.error_should_retry = False
+    return response
 
 
 def _get(obj: object, key: str) -> Any:
@@ -1629,7 +1651,7 @@ class OpenAICompatProvider(LLMProvider):
 
     def _parse(self, response: Any) -> LLMResponse:
         if isinstance(response, str):
-            return LLMResponse(content=response, finish_reason="stop")
+            return _reject_unparsed_tool_output(LLMResponse(content=response, finish_reason="stop"))
 
         response_map = self._maybe_mapping(response)
         if response_map is not None:
@@ -1645,12 +1667,12 @@ class OpenAICompatProvider(LLMProvider):
                     response_map.get("reasoning_content")
                 )
                 if content is not None:
-                    return LLMResponse(
+                    return _reject_unparsed_tool_output(LLMResponse(
                         content=content,
                         reasoning_content=reasoning_content,
                         finish_reason=str(response_map.get("finish_reason") or "stop"),
                         usage=self._extract_usage(response_map),
-                    )
+                    ))
                 return LLMResponse(
                     content="Error: API returned empty choices.",
                     finish_reason="error",
@@ -1714,13 +1736,13 @@ class OpenAICompatProvider(LLMProvider):
             if not parsed_tool_calls:
                 content, parsed_tool_calls = _extract_text_tool_calls(content)
 
-            return LLMResponse(
+            return _reject_unparsed_tool_output(LLMResponse(
                 content=content,
                 tool_calls=parsed_tool_calls,
                 finish_reason=finish_reason,
                 usage=self._extract_usage(response_map),
                 reasoning_content=reasoning_content if isinstance(reasoning_content, str) else None,
-            )
+            ))
 
         if not response.choices:
             return LLMResponse(
@@ -1765,13 +1787,13 @@ class OpenAICompatProvider(LLMProvider):
         if reasoning_content is None and getattr(msg, "reasoning", None):
             reasoning_content = msg.reasoning
 
-        return LLMResponse(
+        return _reject_unparsed_tool_output(LLMResponse(
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason or "stop",
             usage=self._extract_usage(response),
             reasoning_content=reasoning_content,
-        )
+        ))
 
     @classmethod
     def _parse_chunks(cls, chunks: list[Any]) -> LLMResponse:
@@ -1925,13 +1947,13 @@ class OpenAICompatProvider(LLMProvider):
         if not tool_calls:
             content, tool_calls = _extract_text_tool_calls(content)
 
-        return LLMResponse(
+        return _reject_unparsed_tool_output(LLMResponse(
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
             usage=usage,
             reasoning_content="".join(reasoning_parts) or None,
-        )
+        ))
 
     @classmethod
     def _extract_error_metadata(cls, e: Exception) -> dict[str, Any]:
@@ -2243,6 +2265,10 @@ class OpenAICompatProvider(LLMProvider):
                 await client.chat.completions.create(**kwargs),
             )
             chunks: list[Any] = []
+            # Withhold only a leading protocol envelope (including split tags).
+            # Ordinary answers resume streaming as soon as the prefix differs.
+            content_prefix = ""
+            content_is_text = False
             stream_iter: AsyncIterator[Any] = chat_stream.__aiter__()
             while True:
                 try:
@@ -2263,7 +2289,18 @@ class OpenAICompatProvider(LLMProvider):
                         # never see non-string content.
                         text = self._extract_text_content(raw_delta_content)
                         if text:
-                            await on_content_delta(text)
+                            if content_is_text:
+                                await on_content_delta(text)
+                            else:
+                                content_prefix += text
+                                candidate = content_prefix.lstrip()
+                                if candidate and not (
+                                    _TEXT_TOOL_CALL_PREFIX.startswith(candidate)
+                                    or candidate.startswith(_TEXT_TOOL_CALL_PREFIX)
+                                ):
+                                    content_is_text = True
+                                    await on_content_delta(content_prefix)
+                                    content_prefix = ""
                     if on_thinking_delta:
                         reasoning = getattr(delta_obj, "reasoning_content", None) or getattr(
                             delta_obj, "reasoning", None,
@@ -2297,7 +2334,18 @@ class OpenAICompatProvider(LLMProvider):
                                 "name": str(_get(function_call, "name") or ""),
                                 "arguments_delta": str(_get(function_call, "arguments") or ""),
                             })
-            return self._parse_chunks(chunks)
+            result = self._parse_chunks(chunks)
+            if (
+                on_content_delta
+                and content_prefix
+                and result.error_kind != "malformed_tool_output"
+                and result.content
+                and not result.content.lstrip().startswith(_TEXT_TOOL_CALL_PREFIX)
+            ):
+                # Flush an ambiguous literal prefix (e.g. '<') or visible text
+                # remaining after a successfully normalized JSON tool block.
+                await on_content_delta(result.content)
+            return result
         except asyncio.TimeoutError:
             return LLMResponse(
                 content=(

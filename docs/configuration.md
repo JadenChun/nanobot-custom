@@ -1542,7 +1542,11 @@ Use inline objects only when a fallback is not worth naming as a reusable preset
 
 Failover normally runs when the primary provider returns a fallbackable model/provider error before any answer text has been streamed. Stream-stall timeouts are the recovery exception: if the provider already emitted partial answer text and then stalls, nanobot closes the current stream segment and retries/fails over in a new segment. Typical fallback cases include timeouts, connection errors, 5xx server errors, 429 rate limits, overloads, authentication/permission failures such as invalid or expired credentials, and quota/balance exhaustion. It does not run for malformed requests, content filtering/refusals, or context-length/message-format errors.
 
-If fallback candidates use smaller `contextWindowTokens` values, nanobot builds context using the smallest window in the active chain so every candidate can receive the same prompt.
+Each request uses the selected model's `contextWindowTokens`. A fallback is
+checked against its own context window only if failover selects it. This lets a
+large-context primary use its capacity while a smaller backup remains available
+for transient failures; a request that only fits the primary cannot use that
+fallback.
 
 ## Transcription Settings
 

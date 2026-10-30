@@ -771,7 +771,12 @@ Use inline fallback objects only when a model is not worth naming as a preset:
 }
 ```
 
-`fallbackModels` belongs under `agents.defaults`, not inside each preset. If fallback candidates use smaller context windows, nanobot builds context using the smallest window in the active chain so every candidate can receive the same prompt. See [`configuration.md#model-fallbacks`](./configuration.md#model-fallbacks) for failure conditions.
+`fallbackModels` belongs under `agents.defaults`, not inside each preset. Each
+request uses the selected model's context window. If failover selects a smaller
+fallback, that request is checked against the fallback's own limit, and it can
+only succeed when the existing prompt fits. See
+[`configuration.md#model-fallbacks`](./configuration.md#model-fallbacks) for
+failure conditions.
 
 ## Quick Checks
 

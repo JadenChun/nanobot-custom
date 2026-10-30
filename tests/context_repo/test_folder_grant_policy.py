@@ -62,8 +62,7 @@ def test_managed_policy_uses_live_read_write_and_command_grants(tmp_path, monkey
     policy.validate_path(target, "read")
     with pytest.raises(PermissionError):
         policy.validate_path(target, "write")
-    with pytest.raises(PermissionError):
-        policy.validate_path(project, "exec")
+    policy.validate_path(project, "exec")
 
 
 @pytest.mark.parametrize("grant_state", ["absent", "inactive", "active"])
@@ -176,7 +175,7 @@ def test_explicit_once_reference_authorizes_only_its_live_root_outside_turn_cont
         task_turn_id="turn-a",
         task_input_event_id="event-a",
         path=selected,
-        file_access="read_only",
+        file_access="read_write",
         commands=False,
     )
     policy = ResourceAccessPolicy(
@@ -193,14 +192,10 @@ def test_explicit_once_reference_authorizes_only_its_live_root_outside_turn_cont
         permission_owner=owner,
         permission_reference=reference,
     )
+    policy.validate_path(target, "write", managed=True, permission_owner=owner, permission_reference=reference)
     with pytest.raises(PermissionError):
-        policy.validate_path(
-            target,
-            "write",
-            managed=True,
-            permission_owner=owner,
-            permission_reference=reference,
-        )
+        policy.validate_path(tmp_path / "outside.txt", "write", managed=True,
+                             permission_owner=owner, permission_reference=reference)
     owner.retire_once(
         session_key="websocket:chat-a",
         source_binding=source,
@@ -214,7 +209,7 @@ def test_explicit_once_reference_authorizes_only_its_live_root_outside_turn_cont
     with pytest.raises(PermissionError):
         policy.validate_path(
             target,
-            "read",
+            "write",
             managed=True,
             permission_owner=owner,
             permission_reference=reference,

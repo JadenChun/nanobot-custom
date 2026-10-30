@@ -524,7 +524,9 @@ This recipe applies when one provider sometimes rate-limits, one model is expens
 
 `fallbackModels` belongs under `agents.defaults`. String entries are preset names, not raw model names. nanobot tries the active preset first, then the fallback presets in order.
 
-Keep fallback candidates realistic. If the local fallback has a smaller context window, nanobot must build context that fits the smallest window in the active chain.
+Keep fallback candidates realistic. The active model uses its own context
+window; a local fallback with a smaller window can handle the prompt after
+failover only if that prompt fits.
 
 ## Recipe: Langfuse Tracing
 

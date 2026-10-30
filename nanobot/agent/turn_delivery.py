@@ -23,6 +23,7 @@ from nanobot.channels.notification_routes import notification_metadata
 from nanobot.events import NO_EVENTS, AgentEvent, EventSink
 from nanobot.providers.base import LLMUsage
 from nanobot.session.keys import UNIFIED_SESSION_KEY, last_channel_from_metadata
+from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
 
 if TYPE_CHECKING:
     from nanobot.utils.llm_runtime import LLMRuntime
@@ -379,11 +380,15 @@ class TurnDelivery:
                 ),
             )
 
-    async def fail(self, *, publish_completion: bool) -> None:
+    async def fail(self, *, publish_completion: bool, error: Exception | None = None) -> None:
+        from nanobot.agent.context_governance import ContextWindowExceededError
+        from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
+
+        context_error = isinstance(error, (ContextWindowExceededError, FinalizedRequestBudgetExceeded))
         response = OutboundMessage(
             channel=self.lifecycle_message.channel,
             chat_id=self.lifecycle_message.chat_id,
-            content="Sorry, I encountered an error.",
+            content=CONTEXT_BUDGET_ERROR_MESSAGE if context_error else "Sorry, I encountered an error.",
             metadata=dict(self.lifecycle_message.metadata or {}),
         )
         if self.trusted_output_hook is not None:
@@ -397,7 +402,8 @@ class TurnDelivery:
                 session_key=self.session_key,
                 metadata=self.lifecycle_message.metadata,
                 outcome="failed",
-                failure_kind="internal",
+                failure_kind="model" if context_error else "internal",
+                failure_error_kind="context_length" if context_error else None,
             )
 
     async def idle(self) -> None:

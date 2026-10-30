@@ -284,6 +284,7 @@ class WebUIWorkspaceController:
                     context_manager=managed_context,
                     restrict_to_workspace=default_restrict_to_workspace,
                     folder_grants=grant_store.view,
+                    sandbox_default=True,
                 ),
                 catalog=self.catalog,
                 bus=bus,
@@ -548,23 +549,31 @@ class WebUIWorkspaceController:
             raise FolderGrantsUnavailableError("folder grants are unavailable")
         return self.grant_store.revoke(payload.get("path"), expected_revision=_expected_revision(payload))
 
+    def edit_folder(self, payload: object) -> None:
+        from nanobot.security.folder_locations import FolderLocationEdit, apply_folder_edit
+
+        if self.grant_store is None:
+            raise FolderGrantsUnavailableError("folder grants are unavailable")
+        edit = FolderLocationEdit.model_validate(payload)
+        if edit.access == "read_write" and self.focus_owner is not None:
+            canonical = Path(edit.path).expanduser().resolve(strict=True)
+            policy = self.focus_owner.policy
+            if (policy.context_manager.find_repo_for_path(canonical) is not None
+                    or policy.context_manager.find_target_repo_for_path(canonical) is not None):
+                try:
+                    policy.validate_path(canonical, "write", managed=True)
+                except PermissionError as exc:
+                    raise ValueError("configured_repository_has_own_policy") from exc
+        apply_folder_edit(self.grant_store, self.catalog, edit)
+
     def remember_repository(self, payload: dict[str, Any]) -> RepositoryEntry:
         entry = RepositoryEntry.model_validate(payload.get("entry"))
-        path = Path(entry.path).expanduser()
-        try:
-            canonical = path.resolve(strict=True)
-        except (OSError, RuntimeError, ValueError) as exc:
-            raise ValueError("repository path must be an existing Git working tree root") from exc
+        canonical = Path(entry.path).expanduser().resolve(strict=True)
         if not canonical.is_dir():
-            raise ValueError("repository path must be an existing Git working tree root")
-        from nanobot.utils.git_sync import git_repo_root
-
-        if git_repo_root(canonical) != canonical:
-            raise ValueError("repository path must be the exact root of a Git working tree")
-        canonical_entry = RepositoryEntry.model_validate({
-            **entry.model_dump(),
-            "path": str(canonical),
-        })
+            raise ValueError("folder path must be an existing directory")
+        if self.grant_store is not None and self.grant_store.view.is_private_path(canonical):
+            raise ValueError("folder is inside private runtime storage")
+        canonical_entry = entry.model_copy(update={"path": str(canonical)})
         self.catalog.update(canonical_entry)
         return canonical_entry
 

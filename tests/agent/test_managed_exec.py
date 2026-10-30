@@ -94,7 +94,7 @@ def _legacy_exec_tool(tmp_path: Path) -> tuple[Path, FolderGrantStore, ExecTool]
         workspace=home,
         context_manager=ContextRepoManager(),
         folder_grants=store.view,
-        managed_webui_only=True,
+        managed_webui_only=False,
     )
     return home, store, ExecTool(working_dir=str(home), resource_policy=policy)
 
@@ -502,13 +502,9 @@ async def test_managed_exec_runs_from_selected_grant_and_obeys_nested_mounts(tmp
             assert "Exit code: 0" not in ro_write
             assert not (child_read_only / "new-file.txt").exists()
 
-            blocked = await tool.execute(command="cat commands-off/secret.txt")
-            assert isinstance(blocked, ToolOutcome)
-            assert blocked.stop_reason == "folder_access_required"
-            need = blocked.policy_metadata["folder_access"]
-            assert need["reason"] == "commands_not_granted"
-            assert need["operation"] == "execute"
-            assert "HIDDEN_COMMANDS_OFF" not in blocked.content
+            readable = await tool.execute(command="cat commands-off/secret.txt")
+            assert "HIDDEN_COMMANDS_OFF" in readable
+            assert "Exit code: 0" in readable
     finally:
         reset_workspace_scope(token)
 
@@ -1038,9 +1034,9 @@ async def test_temporary_websocket_cannot_use_persistent_external_grants(tmp_pat
         with request:
             read = await read_tool.execute(path=str(external))
             command = await shell_tool.execute(command="cat temporary.txt")
-        assert "External folder grants are unavailable" in read
+        assert "PERSISTENT_ONLY" in read
         assert "PERSISTENT_ONLY" not in command
-        assert "External folder grants are unavailable" in command
+        assert "Exit code: 0" not in command
     finally:
         reset_workspace_scope(token)
 

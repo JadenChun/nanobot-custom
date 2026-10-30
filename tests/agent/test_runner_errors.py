@@ -13,6 +13,7 @@ from nanobot.agent.tools import ToolResult
 from nanobot.agent.tools.execution import execute_tool_calls
 from nanobot.config.schema import AgentDefaults
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
 from tests.agent.runner_helpers import install_test_tool_dispatch, make_run_spec
 
 _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
@@ -237,6 +238,223 @@ async def test_runner_returns_structured_tool_error_to_model_for_recovery():
     assert result.tool_events == [
         {"name": "read_file", "status": "error", "detail": "Error: File not found: x"}
     ]
+
+
+@pytest.mark.asyncio
+async def test_runner_recovers_from_missing_builtin_skill_file_when_fail_fast_is_enabled(tmp_path):
+    from nanobot.agent.runner import AgentRunner
+    from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.agent.tools.registry import ToolRegistry
+
+    missing_path = str(tmp_path / "shared" / "skills" / "memory" / "SKILL.md")
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content="checking memory",
+            tool_calls=[ToolCallRequest(
+                id="call_bad",
+                name="read_file",
+                arguments={"path": missing_path},
+            )],
+            usage=None,
+        ),
+        LLMResponse(content="Used the available memory history instead.", tool_calls=[], usage=None),
+    ])
+    tools = ToolRegistry()
+    tools.register(ReadFileTool(workspace=tmp_path, restrict_to_workspace=False))
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "check past projects"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=2,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+    ))
+
+    assert provider.chat_with_retry.await_count == 2
+    assert result.final_content == "Used the available memory history instead."
+    assert result.stop_reason == "completed"
+    assert "Analyze the error above" in result.messages[2]["content"]
+
+
+@pytest.mark.asyncio
+async def test_missing_skill_file_recovery_is_limited_to_one_attempt(tmp_path):
+    from nanobot.agent.runner import AgentRunner
+    from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.agent.tools.registry import ToolRegistry
+
+    path = str(tmp_path / "shared" / "skills" / "memory" / "SKILL.md")
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
+        content=None,
+        tool_calls=[ToolCallRequest(id="bad-skill", name="read_file", arguments={"path": path})],
+    ))
+    tools = ToolRegistry()
+    tools.register(ReadFileTool(workspace=tmp_path, restrict_to_workspace=False))
+
+    result = await AgentRunner().run(make_run_spec(
+        provider, initial_messages=[{"role": "user", "content": "check memory"}],
+        tools=tools, model="test-model", max_iterations=5,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS, fail_on_tool_error=True,
+    ))
+
+    assert provider.chat_with_retry.await_count == 2
+    assert result.stop_reason == "tool_error"
+
+
+@pytest.mark.asyncio
+async def test_runner_turns_final_request_budget_rejection_into_context_error():
+    from nanobot.agent.runner import AgentRunner
+    from nanobot.utils.runtime import CONTEXT_BUDGET_ERROR_MESSAGE
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(side_effect=FinalizedRequestBudgetExceeded())
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=1,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.stop_reason == "error"
+    assert result.failure_error_kind == "context_length"
+    assert result.final_content == CONTEXT_BUDGET_ERROR_MESSAGE
+    assert result.error == result.final_content
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_retry_ordinary_read_file_error_when_fail_fast_is_enabled():
+    from nanobot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
+        content="checking",
+        tool_calls=[ToolCallRequest(
+            id="call_bad",
+            name="read_file",
+            arguments={"path": "/tmp/missing.txt"},
+        )],
+        usage=None,
+    ))
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value=ToolResult.error("Error: File not found: /tmp/missing.txt"))
+
+    result = await AgentRunner().run(make_run_spec(
+        provider,
+        initial_messages=[{"role": "user", "content": "read it"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=2,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        fail_on_tool_error=True,
+    ))
+
+    assert provider.chat_with_retry.await_count == 1
+    assert result.stop_reason == "tool_error"
+
+
+@pytest.mark.asyncio
+async def test_context_repository_exec_denial_explains_the_cause_without_retrying():
+    from nanobot.agent.runner import AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(return_value=LLMResponse(
+        content=None,
+        tool_calls=[ToolCallRequest(id="blocked", name="exec", arguments={"command": "pwd"})],
+    ))
+    raw_error = (
+        "Error: Command blocked by resource policy "
+        "(execution is disabled by context repo policy (shared-agents))"
+    )
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value=ToolResult.error(raw_error))
+
+    result = await AgentRunner().run(make_run_spec(
+        provider, initial_messages=[{"role": "user", "content": "explain the error"}],
+        tools=tools, model="test-model", max_iterations=4,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS, fail_on_tool_error=True,
+    ))
+
+    assert result.stop_reason == "tool_error"
+    assert "context repository" in result.final_content
+    assert "command execution is disabled" in result.final_content
+    assert "file-reading tools" in result.final_content
+    assert "Analyze the error above" not in result.final_content
+    assert provider.chat_with_retry.await_count == 1
+    assert raw_error in next(msg["content"] for msg in result.messages if msg["role"] == "tool")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repeat_denied_command", [False, True])
+async def test_context_repo_exec_denial_allows_one_safe_tool_recovery(
+    tmp_path, monkeypatch, repeat_denied_command,
+):
+    from nanobot.agent.runner import AgentRunner
+    from nanobot.agent.tools.filesystem import ListDirTool
+    from nanobot.agent.tools.registry import ToolRegistry
+    from nanobot.agent.tools.shell import ExecTool
+    from nanobot.context_repo import ContextRepoManager, ResourceAccessPolicy
+
+    workspace = tmp_path / "workspace"
+    shared = tmp_path / "shared"
+    workspace.mkdir()
+    shared.mkdir()
+    (shared / "skills").mkdir()
+    manager = ContextRepoManager.from_config(context_repos=[{
+        "path": str(shared), "readOnly": True, "allowExec": False,
+    }])
+    policy = ResourceAccessPolicy(workspace=workspace, context_manager=manager)
+    tools = ToolRegistry()
+    exec_tool = ExecTool(working_dir=str(workspace), resource_policy=policy)
+    spawn = AsyncMock(side_effect=AssertionError("denied command reached process launch"))
+    monkeypatch.setattr(exec_tool, "_spawn", spawn)
+    tools.register(exec_tool)
+    tools.register(ListDirTool(workspace=workspace, resource_policy=policy))
+
+    def denied_call(call_id):
+        return LLMResponse(content=None, tool_calls=[ToolCallRequest(
+            id=call_id, name="exec", arguments={"command": f"ls {shared}"},
+        )])
+
+    second = denied_call("blocked-again") if repeat_denied_command else LLMResponse(
+        content=None,
+        tool_calls=[ToolCallRequest(id="safe-list", name="list_dir", arguments={"path": str(shared)})],
+    )
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        denied_call("blocked"), second, LLMResponse(content="Found the skills folder using list_dir."),
+    ])
+
+    result = await AgentRunner().run(make_run_spec(
+        provider, initial_messages=[{"role": "user", "content": "inspect the shared skills folder"}],
+        tools=tools, model="test-model", max_iterations=5,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS, fail_on_tool_error=True,
+    ))
+
+    assert provider.chat_with_retry.await_count == (2 if repeat_denied_command else 3)
+    spawn.assert_not_awaited()
+    if repeat_denied_command:
+        assert result.stop_reason == "tool_error"
+        assert "command execution is disabled" in result.final_content
+    else:
+        assert result.stop_reason == "completed"
+        assert result.final_content == "Found the skills folder using list_dir."
+        assert "skills" in next(
+            msg["content"] for msg in result.messages if msg.get("tool_call_id") == "safe-list"
+        )
+    guidance = [msg["content"] for msg in result.messages if msg.get("role") == "system"]
+    assert any("read_file" in content and "list_dir" in content and "Do not retry" in content
+               for content in guidance)
 
 
 @pytest.mark.asyncio

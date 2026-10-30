@@ -166,9 +166,9 @@ def test_only_missing_managed_authority_uses_the_recoverable_policy_type(tmp_pat
     )
 
     with pytest.raises(FolderAccessNeededError) as denied_read:
-        policy.validate_path(project / "README.md", "read")
-    assert denied_read.value.reason == "folder_not_granted"
-    assert denied_read.value.operation == "read"
+        policy.validate_path(project / "README.md", "write")
+    assert denied_read.value.reason == "write_not_granted"
+    assert denied_read.value.operation == "write"
 
     store.upsert(
         {"path": str(project), "file_access": "read_only", "commands": False},
@@ -177,9 +177,7 @@ def test_only_missing_managed_authority_uses_the_recoverable_policy_type(tmp_pat
     with pytest.raises(FolderAccessNeededError) as denied_write:
         policy.validate_path(project / "README.md", "write")
     assert denied_write.value.reason == "write_not_granted"
-    with pytest.raises(FolderAccessNeededError) as denied_exec:
-        policy.validate_path(project, "exec")
-    assert denied_exec.value.reason == "commands_not_granted"
+    policy.validate_path(project, "exec")
 
     private = instance / "credentials" / "token.json"
     private.parent.mkdir(parents=True)
@@ -218,7 +216,7 @@ def test_recovery_target_kind_uses_tool_intent_without_probing_candidate(
 
     monkeypatch.setattr(Path, "is_dir", forbidden_probe)
     with pytest.raises(FolderAccessNeededError) as denied:
-        policy.validate_path(project, "read", target_kind="directory")
+        policy.validate_path(project, "write", target_kind="directory")
     assert denied.value.target == {"kind": "directory", "path": str(project)}
 
 

@@ -17,6 +17,7 @@ from stat import S_ISFIFO
 
 import pytest
 
+from nanobot.agent.tools.sandbox import managed_bwrap_available
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.channels.websocket.runtime import WebSocketConfig
 from nanobot.cli.gateway_runtime import _run_gateway
@@ -38,6 +39,11 @@ def main() -> None:
     assert websocket.host == "127.0.0.1"
     assert config.gateway.host == "127.0.0.1"
     endpoints = {("127.0.0.1", websocket.port), ("127.0.0.1", config.gateway.port)}
+
+    # Preflight the real Sandbox before installing the exact-effect audit hook.
+    # Only its fixed printf command is admitted below; model calls stay forbidden.
+    managed_bwrap_available()
+    allowed_shell_commands = {"printf shell-ok"}
 
     def is_expected_native_supervisor(executable: object, arguments: object) -> bool:
         if executable != sys.executable or not isinstance(arguments, (list, tuple)):
@@ -76,9 +82,11 @@ def main() -> None:
         if event == "subprocess.Popen":
             executable, arguments, _cwd, _env = args
             shells = {"/bin/sh", "/bin/bash", shutil.which("bash")}
-            shell_command = isinstance(arguments, (list, tuple)) and list(arguments) in (
-                [executable, "-c", "printf shell-ok"],
-                [executable, "-l", "-c", "printf shell-ok"],
+            shell_command = (
+                isinstance(arguments, (list, tuple))
+                and len(arguments) in {3, 4}
+                and list(arguments[:-1]) in ([executable, "-c"], [executable, "-l", "-c"])
+                and arguments[-1] in allowed_shell_commands
             )
             if executable in shells and shell_command:
                 return
@@ -99,6 +107,9 @@ def main() -> None:
             command = kwargs.get("command") or kwargs.get("cmd")
             if command != "printf shell-ok":
                 raise PermissionError(errno.EPERM, "smoke fixture command denied")
+            prepared = self._prepare_command(command, login=kwargs.get("login"), shell=kwargs.get("shell"))
+            if not isinstance(prepared, str) and hasattr(prepared, "command"):
+                allowed_shell_commands.add(prepared.command)
             return await execute(self, *args, **kwargs)
 
         patches.setattr("nanobot.migration_guard.require_runtime_ready", lambda: None)

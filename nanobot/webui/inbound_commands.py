@@ -59,6 +59,7 @@ _WEBUI_REQUEST_CACHE_TTL_S = 5 * 60.0
 _WEBUI_REQUEST_CACHE_MAX = 256
 _PREPARE_FULL_ACTION = "workspace.access.prepare_full"
 _SOURCE_BOUND_PERMISSION_ACTIONS = frozenset({
+    "workspace.access.add_folder",
     "workspace.access.allow_once",
     "workspace.access.cancel",
     "workspace.access.continue",

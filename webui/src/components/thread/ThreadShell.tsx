@@ -180,7 +180,8 @@ function folderResolveProjectionMatches(
     && (intent.expectedFileAccess === undefined
       || request.selected_access.write === (intent.expectedFileAccess === "read_write"))
     && (intent.expectedCommands === undefined
-      || request.selected_access.commands.requested === intent.expectedCommands)
+      || (request.selected_access.commands.requested === intent.expectedCommands
+        || (intent.expectedCommands === false && request.selected_access.commands.requested)))
     && (request.selected_duration == null || request.selected_duration === intent.duration);
   if (!commonMatches) return false;
   if (intent.duration !== "once") return true;
@@ -209,7 +210,8 @@ function folderResolveProjectionMatches(
     && selectedAccess.grant_root === expectedCanonicalPath
     && selectedAccess.read
     && selectedAccess.write === (intent.expectedFileAccess === "read_write")
-    && selectedAccess.commands.requested === intent.expectedCommands;
+    && (selectedAccess.commands.requested === intent.expectedCommands
+      || (intent.expectedCommands === false && selectedAccess.commands.requested));
 }
 
 function folderResolveResultMatches(
