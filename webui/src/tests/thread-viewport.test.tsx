@@ -1671,6 +1671,46 @@ describe("ThreadViewport", () => {
     expect(navigateTo).toHaveBeenCalledWith(1064);
   });
 
+  it("does not render or measure the prompt rail below the desktop breakpoint", async () => {
+    const matchMedia = vi.spyOn(window, "matchMedia").mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }) as unknown as MediaQueryList);
+
+    try {
+      const { container } = render(
+        <ThreadViewport
+          messages={makePromptExchangeMessages(5)}
+          isStreaming={false}
+          composer={<div />}
+        />,
+      );
+
+      const scroller = getScroller(container);
+      Object.defineProperties(scroller, {
+        scrollHeight: { configurable: true, value: 1800 },
+        clientHeight: { configurable: true, value: 600 },
+        scrollTop: { configurable: true, value: 0 },
+      });
+
+      await act(async () => {
+        window.dispatchEvent(new Event("resize"));
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      });
+
+      expect(screen.queryByLabelText("User prompt navigation")).not.toBeInTheDocument();
+      expect(screen.queryAllByTestId("prompt-rail-marker")).toHaveLength(0);
+    } finally {
+      matchMedia.mockRestore();
+    }
+  });
+
   it("renders markdown in prompt rail previews", async () => {
     const promptMessages = makePromptExchangeMessages(5);
     const answer = promptMessages.find((message) => message.id === "a3");

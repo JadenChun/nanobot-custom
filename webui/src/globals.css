@@ -636,6 +636,33 @@
     }
   }
 
+  /*
+   * WebKitGTK (Tauri's Linux webview) paints animated filters, text-clipped
+   * sheens, and large backdrop blurs on the main thread. Keep the static
+   * appearance but drop the per-frame paint work that competes with streamed
+   * markdown and scrolling.
+   */
+  .webkit-runtime .streaming-text-sheen::after {
+    content: none;
+    animation: none;
+    background: none;
+  }
+  .webkit-runtime .goal-shell-glow {
+    animation: none;
+    filter: drop-shadow(0 0 12px hsl(204 72% 52% / 0.22));
+  }
+  .webkit-runtime .dark .goal-shell-glow {
+    filter: drop-shadow(0 0 12px hsl(198 90% 72% / 0.28));
+  }
+  .webkit-runtime .host-window-shell,
+  .webkit-runtime .host-sidebar-glass {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .webkit-runtime .host-window-shell {
+    background-attachment: scroll, scroll;
+  }
+
   /* Subtle scrollbar that doesn't fight the dark background. */
   .scrollbar-thin {
     scrollbar-width: thin;

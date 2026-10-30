@@ -193,6 +193,11 @@ function wrap(client: ReturnType<typeof fakeClient>["client"]) {
 
 async function flushStreamFrame() {
   await act(async () => {
+    // Streamed updates are throttled to ~30 fps. Let the trailing throttle
+    // timer fire before waiting for the paint frame that applies the batch.
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 40);
+    });
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => resolve());
     });
@@ -293,6 +298,59 @@ describe("useNanobotStream", () => {
       isStreaming: true,
     });
     requestFrame.mockRestore();
+  });
+
+  it("throttles streamed flushes to one per interval", () => {
+    vi.useFakeTimers({
+      toFake: [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "requestAnimationFrame",
+        "cancelAnimationFrame",
+        "performance",
+        "Date",
+      ],
+    });
+    try {
+      const fake = fakeClient();
+      const { result } = renderHook(
+        () => useNanobotStream("chat-throttle", EMPTY_MESSAGES),
+        { wrapper: wrap(fake.client) },
+      );
+
+      act(() => {
+        fake.emit("chat-throttle", {
+          event: "delta",
+          chat_id: "chat-throttle",
+          text: "A",
+        });
+      });
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+      expect(result.current.messages[0]?.content).toBe("A");
+
+      act(() => {
+        fake.emit("chat-throttle", {
+          event: "delta",
+          chat_id: "chat-throttle",
+          text: "B",
+        });
+      });
+      act(() => {
+        vi.advanceTimersByTime(16);
+      });
+      expect(result.current.messages[0]?.content).toBe("A");
+
+      act(() => {
+        vi.advanceTimersByTime(32);
+      });
+      expect(result.current.messages[0]?.content).toBe("AB");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("coalesces hidden-tab deltas without scheduling paint frames", () => {

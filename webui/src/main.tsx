@@ -24,6 +24,14 @@ if (typeof globalThis.crypto !== "undefined" && !("randomUUID" in globalThis.cry
 const root = document.getElementById("root");
 if (!root) throw new Error("root element missing");
 
+// WebKitGTK (Tauri's Linux webview) renders filter/backdrop animations on the
+// main thread. Mark the runtime so CSS can keep the layout while dropping the
+// paint-heavy motion that makes streaming and scrolling stutter.
+const isWebKitRuntime = /AppleWebKit/i.test(navigator.userAgent)
+  && /Linux/i.test(navigator.userAgent)
+  && !/Chrome|Chromium|Edg\/|OPR\//i.test(navigator.userAgent);
+document.documentElement.classList.toggle("webkit-runtime", isWebKitRuntime);
+
 initializeLoopbackRuntimeHost();
 
 async function renderWebui(container: HTMLElement) {

@@ -11,12 +11,11 @@ import { useTranslation } from "react-i18next";
 
 import { MarkdownText } from "@/components/MarkdownText";
 import { floatingSurfaceElevationClassName } from "@/components/ui/floating-surface";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import type { UIMessage } from "@/lib/types";
 import {
-  findPromptElement,
   type PromptAnchor,
-  promptTop,
   userPromptAnchors,
 } from "@/components/thread/promptNavigation";
 
@@ -51,7 +50,7 @@ const MARKER_MIN_GAP_PX = 9;
 const MARKER_BASE_WIDTH_PX = 9;
 const MARKER_STACK_GAP_PX = 16;
 const RAIL_FALLBACK_HEIGHT_PX = 300;
-const MEASURE_RETRY_FRAMES = 4;
+const MEASURE_RETRY_FRAMES = 2;
 const HOVER_MARKER_WIDTHS_PX = [28, 22, 16, 11];
 
 export function PromptRail({
@@ -61,9 +60,33 @@ export function PromptRail({
   scrollRef,
 }: PromptRailProps) {
   const { t } = useTranslation();
+  const enabled = useMediaQuery("(min-width: 768px)");
   const railRef = useRef<HTMLDivElement>(null);
   const measuredPromptsRef = useRef<MeasuredPrompt[]>([]);
-  const promptAnchors = useMemo(() => userPromptAnchors(messages), [messages]);
+  // The rail only needs to re-anchor when the prompt set (or streaming phase)
+  // changes. Assistant tokens stream every frame and must not trigger a full
+  // prompt re-measurement.
+  const promptRevision = useMemo(() => {
+    const parts: string[] = [];
+    let userCount = 0;
+    let assistantCount = 0;
+    for (const message of messages) {
+      if (message.role === "user") {
+        parts.push(`${message.id}:${message.content.length}`);
+        userCount += 1;
+      } else if (message.role === "assistant" && message.kind !== "trace") {
+        assistantCount += 1;
+      }
+    }
+    parts.push(messages.some((message) => message.isStreaming) ? "streaming" : "idle");
+    parts.push(`users:${userCount}`, `assistants:${assistantCount}`);
+    return parts.join("|");
+  }, [messages]);
+  const promptAnchors = useMemo(
+    () => userPromptAnchors(messages),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [promptRevision],
+  );
   const [markers, setMarkers] = useState<PromptMarker[]>([]);
   const [activePromptId, setActivePromptId] = useState<string | null>(null);
   const [focusedMarkerIndex, setFocusedMarkerIndex] = useState<number | null>(null);
@@ -72,9 +95,9 @@ export function PromptRail({
     const scrollEl = scrollRef.current;
     const nextRailHeight = railRef.current?.clientHeight ?? 0;
 
-    if (!scrollEl || promptAnchors.length < MIN_PROMPTS_FOR_RAIL) {
+    if (!enabled || !scrollEl || promptAnchors.length < MIN_PROMPTS_FOR_RAIL) {
       measuredPromptsRef.current = [];
-      setMarkers([]);
+      setMarkers((current) => current.length === 0 ? current : []);
       setActivePromptId(null);
       return;
     }
@@ -82,7 +105,7 @@ export function PromptRail({
     const scrollRange = scrollEl.scrollHeight - scrollEl.clientHeight;
     if (scrollRange < RAIL_MIN_SCROLL_RANGE_PX) {
       measuredPromptsRef.current = [];
-      setMarkers([]);
+      setMarkers((current) => current.length === 0 ? current : []);
       setActivePromptId(null);
       return;
     }
@@ -90,9 +113,10 @@ export function PromptRail({
     const measured = measurePrompts(scrollEl, promptAnchors, scrollRange);
     measuredPromptsRef.current = measured;
     const grouped = groupPromptMarkers(measured, nextRailHeight);
-    setMarkers(distributeMarkerPositions(grouped, nextRailHeight));
+    const nextMarkers = distributeMarkerPositions(grouped, nextRailHeight);
+    setMarkers((current) => promptMarkersEqual(current, nextMarkers) ? current : nextMarkers);
     setActivePromptId(activePromptForScroll(measured, scrollEl.scrollTop));
-  }, [promptAnchors, scrollRef]);
+  }, [enabled, promptAnchors, scrollRef]);
 
   const updateActivePrompt = useCallback(() => {
     const scrollEl = scrollRef.current;
@@ -102,6 +126,12 @@ export function PromptRail({
   }, [scrollRef]);
 
   useEffect(() => {
+    if (!enabled) {
+      measuredPromptsRef.current = [];
+      setMarkers((current) => current.length === 0 ? current : []);
+      setActivePromptId(null);
+      return;
+    }
     let frame = 0;
     let remainingFrames = MEASURE_RETRY_FRAMES;
     const measure = () => {
@@ -113,9 +143,10 @@ export function PromptRail({
     };
     measure();
     return () => window.cancelAnimationFrame(frame);
-  }, [bottomOffset, updateMarkers]);
+  }, [bottomOffset, enabled, updateMarkers]);
 
   useEffect(() => {
+    if (!enabled) return undefined;
     const scrollEl = scrollRef.current;
     if (!scrollEl) return undefined;
 
@@ -138,16 +169,17 @@ export function PromptRail({
       scrollEl.removeEventListener("scroll", scheduleActivePrompt);
       window.removeEventListener("resize", scheduleMeasurement);
     };
-  }, [scrollRef, updateActivePrompt, updateMarkers]);
+  }, [enabled, scrollRef, updateActivePrompt, updateMarkers]);
 
   useEffect(() => {
+    if (!enabled) return undefined;
     const scrollEl = scrollRef.current;
     if (!scrollEl || typeof ResizeObserver === "undefined") return undefined;
     const observer = new ResizeObserver(() => updateMarkers());
     observer.observe(scrollEl);
     if (scrollEl.firstElementChild) observer.observe(scrollEl.firstElementChild);
     return () => observer.disconnect();
-  }, [scrollRef, updateMarkers]);
+  }, [enabled, scrollRef, updateMarkers]);
 
   if (markers.length === 0) return null;
 
@@ -250,16 +282,55 @@ function measurePrompts(
   anchors: PromptAnchor[],
   scrollRange: number,
 ): MeasuredPrompt[] {
+  // One DOM scan for all anchors. Looking each id up separately makes this
+  // O(prompts²) and runs on every measurement during streaming.
+  const elements = new Map<string, HTMLElement>();
+  for (const candidate of scrollEl.querySelectorAll<HTMLElement>("[data-user-prompt-id]")) {
+    const id = candidate.dataset.userPromptId;
+    if (id) elements.set(id, candidate);
+  }
+  if (elements.size === 0) return [];
+
+  const scrollRect = scrollEl.getBoundingClientRect();
+  const scrollTop = scrollEl.scrollTop;
   return anchors.flatMap((anchor) => {
-    const target = findPromptElement(scrollEl, anchor.id);
+    const target = elements.get(anchor.id);
     if (!target) return [];
-    const top = Math.max(0, Math.min(scrollRange, promptTop(scrollEl, target) - 16));
+    const targetRect = target.getBoundingClientRect();
+    const top = scrollRect.top !== 0 || targetRect.top !== 0
+      ? targetRect.top - scrollRect.top + scrollTop
+      : target.offsetTop;
+    const clamped = Math.max(0, Math.min(scrollRange, top - 16));
     return [{
       ...anchor,
-      top,
-      topPercent: clamp((top / scrollRange) * 100, 2, 98),
+      top: clamped,
+      topPercent: clamp((clamped / scrollRange) * 100, 2, 98),
     }];
   });
+}
+
+function promptMarkersEqual(
+  previous: PromptMarker[],
+  next: PromptMarker[],
+): boolean {
+  if (previous === next) return true;
+  if (previous.length !== next.length) return false;
+  for (let index = 0; index < previous.length; index += 1) {
+    const a = previous[index];
+    const b = next[index];
+    if (
+      a.topPercent !== b.topPercent
+      || a.count !== b.count
+      || a.label !== b.label
+      || a.preview !== b.preview
+      || a.answerPreview !== b.answerPreview
+      || a.ids.length !== b.ids.length
+      || a.ids.some((id, idIndex) => id !== b.ids[idIndex])
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function groupPromptMarkers(

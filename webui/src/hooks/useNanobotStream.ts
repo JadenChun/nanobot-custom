@@ -61,6 +61,16 @@ type PendingStreamEvent =
   | { kind: "reasoning"; text: string; turn: UIMessageTurnFields };
 
 const BACKGROUND_STREAM_FLUSH_INTERVAL_MS = 1_000;
+/** Cap streamed UI updates at ~30 fps so display refresh (60–240 Hz) cannot
+ * multiply markdown parsing and layout work. Final/terminal flushes bypass
+ * this interval and remain immediate. */
+const STREAM_FLUSH_INTERVAL_MS = 33;
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
 
 /**
  * Append a reasoning chunk to the last open reasoning stream in ``prev``.
@@ -298,6 +308,7 @@ export function useNanobotStream(
   const pendingStreamEventsRef = useRef<PendingStreamEvent[]>([]);
   const streamFrameRef = useRef<number | null>(null);
   const streamTimerRef = useRef<number | null>(null);
+  const lastStreamFlushAtRef = useRef(Number.NEGATIVE_INFINITY);
   const suppressStreamUntilTurnEndRef = useRef(false);
   const sideChannelTurnIdsRef = useRef<Set<string>>(new Set());
 
@@ -323,6 +334,7 @@ export function useNanobotStream(
       streamTimerRef.current = null;
     }
     pendingStreamEventsRef.current = [];
+    lastStreamFlushAtRef.current = Number.NEGATIVE_INFINITY;
   }, []);
 
   const isSideChannelEvent = useCallback((ev: InboundEvent) => {
@@ -559,6 +571,7 @@ export function useNanobotStream(
       return;
     }
     pendingStreamEventsRef.current = [];
+    lastStreamFlushAtRef.current = nowMs();
     setMessages((prev) => {
       let next = events.length > 0 ? applyPendingStreamEvents(prev, events) : prev;
       if (finalAnswerText !== undefined) {
@@ -619,26 +632,38 @@ export function useNanobotStream(
     });
   }, [applyPendingStreamEvents, closeActiveAssistantStream, resolveActiveAssistantIndex]);
 
+  const flushScheduledStreamEvents = useCallback(() => {
+    const events = pendingStreamEventsRef.current;
+    if (events.length === 0) return;
+    pendingStreamEventsRef.current = [];
+    lastStreamFlushAtRef.current = nowMs();
+    setMessages((prev) => applyPendingStreamEvents(prev, events));
+  }, [applyPendingStreamEvents]);
+
   const schedulePendingStreamFlush = useCallback(() => {
     if (streamFrameRef.current !== null || streamTimerRef.current !== null) return;
     if (document.visibilityState === "hidden") {
       streamTimerRef.current = window.setTimeout(() => {
         streamTimerRef.current = null;
-        const events = pendingStreamEventsRef.current;
-        if (events.length === 0) return;
-        pendingStreamEventsRef.current = [];
-        setMessages((prev) => applyPendingStreamEvents(prev, events));
+        flushScheduledStreamEvents();
       }, BACKGROUND_STREAM_FLUSH_INTERVAL_MS);
       return;
     }
-    streamFrameRef.current = window.requestAnimationFrame(() => {
-      streamFrameRef.current = null;
-      const events = pendingStreamEventsRef.current;
-      if (events.length === 0) return;
-      pendingStreamEventsRef.current = [];
-      setMessages((prev) => applyPendingStreamEvents(prev, events));
-    });
-  }, [applyPendingStreamEvents]);
+
+    const elapsed = nowMs() - lastStreamFlushAtRef.current;
+    const remaining = STREAM_FLUSH_INTERVAL_MS - elapsed;
+    if (remaining <= 0) {
+      streamFrameRef.current = window.requestAnimationFrame(() => {
+        streamFrameRef.current = null;
+        flushScheduledStreamEvents();
+      });
+      return;
+    }
+    streamTimerRef.current = window.setTimeout(() => {
+      streamTimerRef.current = null;
+      flushScheduledStreamEvents();
+    }, remaining);
+  }, [flushScheduledStreamEvents]);
 
   useEffect(() => {
     const flushOnReturn = () => {
