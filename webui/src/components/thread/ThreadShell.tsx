@@ -41,6 +41,7 @@ import {
   installedCliAppsFromPayload,
   isCliAppsPayload,
 } from "@/lib/cli-app-events";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import {
   MCP_PRESETS_CHANGED_EVENT,
   installedMcpPresetsFromPayload,
@@ -2399,7 +2400,7 @@ export function ThreadShell({
           disabled={booting || preparingFull}
           inputAriaLabel={composerInputAriaLabel}
           isStreaming={turnActive}
-          onDraftFullAccess={temporary ? undefined : handleDraftFullAccess}
+          onDraftFullAccess={temporary || isMobileRuntimeActive() ? undefined : handleDraftFullAccess}
           placeholder={
             booting || preparingFull
               ? t("thread.composer.placeholderOpening")

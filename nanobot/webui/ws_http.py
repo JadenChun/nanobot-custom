@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlencode, urlsplit, urlunsplit
 
 from loguru import logger
 from websockets.datastructures import Headers
@@ -471,6 +471,76 @@ class GatewayHTTPHandler:
         if self.session_manager is None:
             return {"sessions": []}
         return self._sessions_list_payload()
+
+    def mobile_model_settings_payload(self) -> dict[str, Any]:
+        """Return only the model-selection projection the mobile composer needs.
+
+        The phone is not a settings administrator: providers, credentials and
+        mutation controls are deliberately absent.
+        """
+        from nanobot.webui.settings_api import settings_payload
+
+        payload = self.settings.read(settings_payload, surface="mobile")
+        raw_providers = payload.get("providers")
+        providers: list[dict[str, Any]] = []
+        if isinstance(raw_providers, list):
+            for raw_provider in cast(list[Any], raw_providers):
+                if not isinstance(raw_provider, dict):
+                    continue
+                providers.append(
+                    {
+                        "name": raw_provider.get("name"),
+                        "label": raw_provider.get("label"),
+                        "configured": bool(raw_provider.get("configured")),
+                    }
+                )
+        return {
+            "agent": payload.get("agent") if isinstance(payload.get("agent"), dict) else {},
+            "model_presets": payload.get("model_presets")
+            if isinstance(payload.get("model_presets"), list)
+            else [],
+            "model_call_order": payload.get("model_call_order")
+            if isinstance(payload.get("model_call_order"), list)
+            else [],
+            "model_call_order_editable": False,
+            "providers": providers,
+        }
+
+    def mobile_workspaces_payload(self) -> dict[str, Any]:
+        """Return read-only workspace metadata for the mobile composer."""
+        return self.workspaces.payload(
+            controls_available=False,
+            folder_picker_available=False,
+            management_available=False,
+        )
+
+    def mobile_thread_payload(
+        self,
+        key: str,
+        query: dict[str, list[str]],
+    ) -> tuple[int, dict[str, Any]]:
+        """Return one persisted thread, including restricted permission state.
+
+        Mobile may read the projection but cannot enable Full access: the
+        permission projection is requested with ``controls_available=False`` so
+        the existing mode control explains the local-only boundary.
+        """
+        suffix = f"?{urlencode(query, doseq=True)}" if query else ""
+        path = f"/api/sessions/{quote(key, safe='')}/webui-thread{suffix}"
+        request = WsRequest(path, Headers())
+        setattr(request, "_nanobot_trusted_proxy_authenticated", True)
+        response = self._handle_webui_thread_get(
+            request,
+            key,
+            allow_remote_permissions=True,
+        )
+        try:
+            body = json.loads(response.body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 502, {"error": "invalid_thread_payload"}
+        if not isinstance(body, dict):
+            return 502, {"error": "invalid_thread_payload"}
+        return response.status_code, cast(dict[str, Any], body)
 
     def workspace_controls_available(self, connection: Any) -> bool:
         return (
@@ -983,6 +1053,7 @@ class GatewayHTTPHandler:
         key: str,
         *,
         connection: Any | None = None,
+        allow_remote_permissions: bool = False,
     ) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -1088,10 +1159,13 @@ class GatewayHTTPHandler:
                     "user_message_offset": 0,
                 }
         data["workspace_scope"] = self.workspaces.scope_payload(scope)
-        if (
+        local_permission_projection = (
             connection is not None
             and _is_loopback_host(self.config.host)
             and _is_local_browser_request(connection, request.headers)
+        )
+        if (
+            (local_permission_projection or allow_remote_permissions)
             and self.workspace_access_recovery is not None
             and self.session_manager is not None
         ):
@@ -1111,7 +1185,11 @@ class GatewayHTTPHandler:
                     permissions = (
                         self.workspace_access_recovery.workspace_permissions(
                             chat_id,
-                            controls_available=self.workspace_controls_available(connection),
+                            controls_available=(
+                                self.workspace_controls_available(connection)
+                                if local_permission_projection
+                                else False
+                            ),
                         )
                     )
                     # Projection may discover a durable residual after restart;

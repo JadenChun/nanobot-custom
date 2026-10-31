@@ -41,6 +41,23 @@ var routes = map[string]route{
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/read$`),
 	},
+	"mobile_model_settings": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/model-settings$`),
+	},
+	"mobile_workspaces": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/workspaces$`),
+	},
+	"mobile_thread": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/sessions/[^/]+/thread$`),
+		queries: map[string]bool{
+			"limit":     true,
+			"direction": true,
+			"before":    true,
+		},
+	},
 	"mobile_media": {
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/media/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+$`),

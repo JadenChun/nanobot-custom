@@ -15,6 +15,7 @@ import time
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Awaitable, Callable, cast
+from urllib.parse import unquote
 
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
@@ -35,10 +36,13 @@ from nanobot.webui.http_utils import (
 )
 
 _MEDIA_RE = re.compile(r"^/mobile/v1/media/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)$")
+_THREAD_RE = re.compile(r"^/mobile/v1/sessions/([^/]+)/thread$")
 _LOCAL_ROUTES = {
     "/mobile/v1/handshake": "chat.read",
     "/mobile/v1/read": "chat.read",
     "/mobile/v1/status": "chat.read",
+    "/mobile/v1/model-settings": "chat.read",
+    "/mobile/v1/workspaces": "chat.read",
 }
 _PAIRING_ROUTES = {"/mobile/v1/pair/collect", "/mobile/v1/pair/poll"}
 _REFRESH_ROUTE = "/mobile/v1/refresh"
@@ -156,6 +160,11 @@ class MobileGatewayEdge:
         replay_cache: OperationReplayCache | None = None,
         mutation_handler: Callable[[AccessIdentity, MutationEnvelope], Awaitable[dict[str, Any]]] | None = None,
         authorize_operation: Callable[[AccessIdentity], Awaitable[bool]] | None = None,
+        model_settings_handler: Callable[[AccessIdentity], Awaitable[dict[str, Any]]] | None = None,
+        workspaces_handler: Callable[[AccessIdentity], Awaitable[dict[str, Any]]] | None = None,
+        thread_handler: Callable[
+            [AccessIdentity, str, dict[str, list[str]]], Awaitable[tuple[int, dict[str, Any]]]
+        ] | None = None,
     ) -> None:
         self.validator = validator
         self.generation_provider = generation_provider
@@ -167,6 +176,9 @@ class MobileGatewayEdge:
         self.replay_cache = replay_cache
         self.mutation_handler = mutation_handler
         self.authorize_operation = authorize_operation
+        self.model_settings_handler = model_settings_handler
+        self.workspaces_handler = workspaces_handler
+        self.thread_handler = thread_handler
 
     async def authorize_websocket(self, connection: Any, request: WsRequest) -> Response | None:
         token = bearer_token(request.headers)
@@ -215,6 +227,24 @@ class MobileGatewayEdge:
                 if self.read_handler is None:
                     return http_json_response({"error": "read_unavailable"}, status=503)
                 return http_json_response(await self.read_handler(identity, query))
+            if path == "/mobile/v1/model-settings":
+                if self.model_settings_handler is None:
+                    return http_json_response({"error": "model_settings_unavailable"}, status=503)
+                return http_json_response(await self.model_settings_handler(identity))
+            if path == "/mobile/v1/workspaces":
+                if self.workspaces_handler is None:
+                    return http_json_response({"error": "workspaces_unavailable"}, status=503)
+                return http_json_response(await self.workspaces_handler(identity))
+
+        thread_match = _THREAD_RE.match(path)
+        if thread_match is not None:
+            if not identity.allows("chat.read"):
+                return http_json_response({"error": "scope_denied"}, status=403)
+            if self.thread_handler is None:
+                return http_json_response({"error": "thread_unavailable"}, status=503)
+            key = unquote(thread_match.group(1))
+            status, payload = await self.thread_handler(identity, key, query)
+            return http_json_response(payload, status=status)
 
         media_match = _MEDIA_RE.match(path)
         if media_match is not None:
@@ -260,8 +290,9 @@ class MobileGatewayEdge:
             )
         except OwnerUnavailableError:
             return http_json_response({"error": "owner_unavailable"}, status=503)
-        except OwnerRequestError:
-            return http_json_response({"error": "invalid_refresh"}, status=401)
+        except OwnerRequestError as exc:
+            code = exc.code if exc.code in {"device_revoked", "invalid_refresh"} else "invalid_refresh"
+            return http_json_response({"error": code}, status=401)
         return http_json_response(result)
 
     async def _handle_pairing(self, request: WsRequest, path: str) -> Response:

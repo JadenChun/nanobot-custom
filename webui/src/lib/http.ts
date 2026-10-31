@@ -67,6 +67,22 @@ async function mobileFetch(
       headers: { "Content-Type": "application/json" },
     });
   }
+  if (url.pathname === "/api/settings") {
+    return mobileJsonRequest(runtime, "mobile_model_settings", "/mobile/v1/model-settings");
+  }
+  if (url.pathname === "/api/workspaces") {
+    return mobileJsonRequest(runtime, "mobile_workspaces", "/mobile/v1/workspaces");
+  }
+  const thread = /^\/api\/sessions\/([^/]+)\/webui-thread$/.exec(url.pathname);
+  if (thread) {
+    const key = decodeURIComponent(thread[1]);
+    return mobileJsonRequest(
+      runtime,
+      "mobile_thread",
+      `/mobile/v1/sessions/${encodeURIComponent(key)}/thread${url.search}`,
+      { allowNotFound: true },
+    );
+  }
   const media = /^\/api\/media\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
   if (media) {
     const response = await runtime.request({
@@ -84,6 +100,29 @@ async function mobileFetch(
     });
   }
   throw new Error(`mobile operation unavailable for ${url.pathname}`);
+}
+
+async function mobileJsonRequest(
+  runtime: ReturnType<typeof getMobileRuntime> & object,
+  operation: string,
+  path: string,
+  options: { allowNotFound?: boolean } = {},
+): Promise<Response> {
+  const response = await runtime.request({ operation, method: "GET", path });
+  if (response.status === 404 && options.allowNotFound) {
+    return new Response("", { status: 404 });
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`${operation} failed: HTTP ${response.status}`);
+  }
+  return new Response(decodeBase64Text(response.bodyBase64), {
+    status: response.status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function decodeBase64Text(value: string): string {
+  return new TextDecoder().decode(decodeBase64Bytes(value));
 }
 
 function decodeBase64Bytes(value: string): Uint8Array {

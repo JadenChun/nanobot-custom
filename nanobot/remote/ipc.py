@@ -285,7 +285,9 @@ class OwnerIPCServer:
             try:
                 pair = self.tokens.refresh(installation_id, refresh_token)
             except AuthRejectedError as exc:
-                return {"ok": False, "error": {"code": "invalid_refresh", "message": str(exc)}}
+                device = self.store.get_device(installation_id)
+                code = "device_revoked" if device is None or device.revoked else "invalid_refresh"
+                return {"ok": False, "error": {"code": code, "message": str(exc)}}
             return {
                 "ok": True,
                 "result": {

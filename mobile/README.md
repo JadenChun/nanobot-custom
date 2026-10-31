@@ -30,7 +30,12 @@ the real gateway, including handshake/read/WebSocket after pairing. A later run 
 and produced real model replies in both the host mobile-edge check (`GATEWAY_MODEL_OK`, 11.7 s) and
 the phone chat (`PHONE_OK`, 0.9 s); evidence is in
 `evidence/20261031-full-gateway/`. The phone's embedded Tailscale node needs a one-time interactive
-login when its prior node state was removed. M20 final matrix is green: WebUI
+login when its prior node state was removed. The mobile bridge now also carries the
+model-preset, workspace-control and persisted-thread reads, so the composer model
+picker and the Sandbox mode menu work on the phone. Full access remains local-only;
+the phone receives the restricted projection and the server rejects client-supplied
+Full scope. The signed artifact was rebuilt with that bridge
+(`bc7f02c100cd342d5fe74b7caebe4bb88e7ab8891e37480f757ac3f5a44541f3`). M20 final matrix is green: WebUI
 1,364 passed; Python 17,111 passed, 22 skipped; phone 31 tests (8 live skipped, 23 passed). The five baseline
 failures and the order-dependent flake were repaired. M22 signed release is built and verified with
 the release keystore: v2 signature, zipalign, install, same-key update, different-key rejection and

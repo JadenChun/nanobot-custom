@@ -4,6 +4,7 @@ import base64
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 from websockets.datastructures import Headers
@@ -61,6 +62,9 @@ def edge_setup(tmp_path: Path):
         media_handler=lambda identity, sig, payload, range_header: _media(identity, sig, payload, range_header),
         attachment_handler=lambda identity, data: _attachment(identity, data),
         logout_handler=lambda identity: _logout(owner, identity),
+        model_settings_handler=lambda identity: _model_settings(identity),
+        workspaces_handler=lambda identity: _workspaces(identity),
+        thread_handler=lambda identity, key, query: _thread(identity, key, query),
     )
     try:
         yield owner, edge, pair
@@ -90,6 +94,24 @@ async def _attachment(identity: AccessIdentity, data: bytes) -> dict[str, Any]:
 async def _logout(owner: RemoteAccessOwner, identity: AccessIdentity) -> dict[str, Any]:
     owner.tokens.revoke(identity.installation_id)
     return {"installation_id": identity.installation_id, "erased": True}
+
+
+async def _model_settings(identity: AccessIdentity) -> dict[str, Any]:
+    return {"agent": {"model_preset": "default"}, "providers": [], "viewer": identity.installation_id}
+
+
+async def _workspaces(identity: AccessIdentity) -> dict[str, Any]:
+    return {"controls": {"permission_v2": True}, "viewer": identity.installation_id}
+
+
+async def _thread(
+    identity: AccessIdentity,
+    key: str,
+    query: dict[str, list[str]],
+) -> tuple[int, dict[str, Any]]:
+    if key == "missing":
+        return 404, {"error": "thread_not_found"}
+    return 200, {"key": key, "limit": query.get("limit", [None])[0], "viewer": identity.installation_id}
 
 
 @pytest.mark.asyncio
@@ -124,6 +146,38 @@ async def test_edge_handshake_read_media_scopes_and_unknown_routes(edge_setup) -
     assert (await edge.handle(None, request("/mobile/v1/read", "wrong"))).status_code == 401
     assert (await edge.handle(None, request("/mobile/v1/nope", pair.access_token))).status_code == 404
     assert (await edge.handle(None, request("/api/bootstrap", pair.access_token))) is None
+
+
+@pytest.mark.asyncio
+async def test_edge_mobile_ui_reads_and_thread(edge_setup) -> None:
+    owner, edge, pair = edge_setup
+    model = await edge.handle(None, request("/mobile/v1/model-settings", pair.access_token))
+    assert model is not None and model.status_code == 200
+    assert body(model)["agent"]["model_preset"] == "default"
+
+    workspaces = await edge.handle(None, request("/mobile/v1/workspaces", pair.access_token))
+    assert workspaces is not None and workspaces.status_code == 200
+    assert body(workspaces)["controls"]["permission_v2"] is True
+
+    key = quote("websocket:chat-1", safe="")
+    thread = await edge.handle(
+        None,
+        request(f"/mobile/v1/sessions/{key}/thread?limit=2", pair.access_token),
+    )
+    assert thread is not None and thread.status_code == 200
+    assert body(thread)["key"] == "websocket:chat-1"
+    assert body(thread)["limit"] == "2"
+
+    missing = await edge.handle(
+        None,
+        request(f"/mobile/v1/sessions/{quote('missing', safe='')}/thread", pair.access_token),
+    )
+    assert missing is not None and missing.status_code == 404
+
+    write_only = owner.tokens.issue("install-0003", ("chat.write",))
+    for path in ("/mobile/v1/model-settings", "/mobile/v1/workspaces", f"/mobile/v1/sessions/{key}/thread"):
+        denied = await edge.handle(None, request(path, write_only.access_token))
+        assert denied is not None and denied.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -304,18 +358,34 @@ async def test_edge_pairing_collect_approve_poll(edge_setup) -> None:
 
 @pytest.mark.asyncio
 async def test_edge_refresh_rotates_access_without_bearer(edge_setup) -> None:
-    _owner, edge, pair = edge_setup
+    owner, edge, pair = edge_setup
     headers = [
         ("X-Nanobot-Installation", "install-0001"),
         ("X-Nanobot-Refresh-Token", pair.refresh_token),
     ]
     response = await edge.handle(None, request("/mobile/v1/refresh", None, headers))
     assert response is not None and response.status_code == 200
-    body = json.loads(response.body)
-    assert body["access_token"].startswith("nbm_at_")
-    assert body["refresh_token"].startswith("nbm_rt_")
-    assert body["expires_in"] > 0
+    payload = json.loads(response.body)
+    assert payload["access_token"].startswith("nbm_at_")
+    assert payload["refresh_token"].startswith("nbm_rt_")
+    assert payload["expires_in"] > 0
     replay = await edge.handle(None, request("/mobile/v1/refresh", None, headers))
     assert replay is not None and replay.status_code == 401
+    assert body(replay)["error"] == "invalid_refresh"
     missing = await edge.handle(None, request("/mobile/v1/refresh", None))
     assert missing is not None and missing.status_code == 400
+
+    owner.tokens.revoke("install-0001")
+    revoked = await edge.handle(
+        None,
+        request(
+            "/mobile/v1/refresh",
+            None,
+            [
+                ("X-Nanobot-Installation", "install-0001"),
+                ("X-Nanobot-Refresh-Token", payload["refresh_token"]),
+            ],
+        ),
+    )
+    assert revoked is not None and revoked.status_code == 401
+    assert body(revoked)["error"] == "device_revoked"

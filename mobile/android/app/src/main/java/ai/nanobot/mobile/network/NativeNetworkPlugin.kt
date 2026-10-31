@@ -78,18 +78,22 @@ class NativeNetworkPlugin : Plugin() {
         }
         operationExecutor.execute {
             try {
-                val refreshed = jsonRequest(
-                    "mobile_refresh_get",
-                    "/mobile/v1/refresh",
-                    body = null,
-                    headers = mapOf(
-                        "X-Nanobot-Installation" to record.installationId,
-                        "X-Nanobot-Refresh-Token" to record.refreshToken,
-                    ),
-                )
+                var active = record
+                val refreshed = try {
+                    requestRefresh(active)
+                } catch (first: Exception) {
+                    if (!isUnauthorized(first)) throw first
+                    // A concurrent refresh may have rotated the token between our
+                    // custody read and request. Retry once with the latest record
+                    // before treating the installation as revoked.
+                    val latest = custody.load()
+                    if (latest == null || latest.refreshToken == active.refreshToken) throw first
+                    active = latest
+                    requestRefresh(active)
+                }
                 custody.saveTokens(
-                    record.origin,
-                    record.installationId,
+                    active.origin,
+                    active.installationId,
                     refreshed.getString("access_token"),
                     refreshed.getString("refresh_token"),
                     refreshed.optInt("expires_in", 600),
@@ -98,9 +102,9 @@ class NativeNetworkPlugin : Plugin() {
                 mainHandler.post { call.resolve(JSObject().put("refreshed", true)) }
             } catch (exception: Exception) {
                 val message = exception.message ?: "token refresh failed"
-                if (message.contains("HTTP 401")) {
-                    // The owner revoked this installation. Erase local custody and
-                    // return to the pairing gate instead of leaving stale access.
+                if (isUnauthorized(exception) && message.contains("device_revoked")) {
+                    // Only a confirmed owner revocation erases local custody. A
+                    // transient/raced invalid_refresh must not orphan the tsnet state.
                     try {
                         custody.logout(serverReachable = true)
                         custody.purgeMedia()
@@ -726,6 +730,19 @@ class NativeNetworkPlugin : Plugin() {
             TimeUnit.MILLISECONDS
         )
     }
+
+    private fun requestRefresh(record: CustodyRecord): JSONObject = jsonRequest(
+        "mobile_refresh_get",
+        "/mobile/v1/refresh",
+        body = null,
+        headers = mapOf(
+            "X-Nanobot-Installation" to record.installationId,
+            "X-Nanobot-Refresh-Token" to record.refreshToken,
+        ),
+    )
+
+    private fun isUnauthorized(exception: Exception): Boolean =
+        (exception.message ?: "").contains("HTTP 401")
 
     private fun startTransport(origin: String, installationId: String, hostname: String): CustodyRecord {
         stopInternal()

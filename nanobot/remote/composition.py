@@ -88,6 +88,19 @@ def build_mobile_edge(
         await asyncio.to_thread(client.revoke, identity.installation_id)
         return {"installation_id": identity.installation_id, "erased": True}
 
+    async def model_settings_handler(_identity: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(http.mobile_model_settings_payload)
+
+    async def workspaces_handler(_identity: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(http.mobile_workspaces_payload)
+
+    async def thread_handler(
+        _identity: Any,
+        key: str,
+        query: dict[str, list[str]],
+    ) -> tuple[int, dict[str, Any]]:
+        return await asyncio.to_thread(http.mobile_thread_payload, key, query)
+
     return MobileGatewayEdge(
         validator,
         generation_provider=lambda: 1,
@@ -95,4 +108,7 @@ def build_mobile_edge(
         media_handler=media_handler,
         attachment_handler=attachment_handler,
         logout_handler=logout_handler,
+        model_settings_handler=model_settings_handler,
+        workspaces_handler=workspaces_handler,
+        thread_handler=thread_handler,
     )
