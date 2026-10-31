@@ -2,9 +2,10 @@ import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import "./globals.css";
+import "./styles/mobile-shell.css";
 import { initializeI18n } from "./i18n";
 import { initializeLoopbackRuntimeHost } from "./lib/runtime";
-import { shouldRegisterServiceWorker } from "./lib/mobile-runtime";
+import { isMobileRuntimeActive, shouldRegisterServiceWorker } from "./lib/mobile-runtime";
 
 // `crypto.randomUUID` is only defined in secure contexts (HTTPS or localhost).
 // LAN access over plain HTTP leaves it undefined, which crashes components that
@@ -34,6 +35,7 @@ const isWebKitRuntime = /AppleWebKit/i.test(navigator.userAgent)
 document.documentElement.classList.toggle("webkit-runtime", isWebKitRuntime);
 
 initializeLoopbackRuntimeHost();
+if (isMobileRuntimeActive()) document.documentElement.classList.add("mobile-runtime");
 
 async function renderWebui(container: HTMLElement) {
   await initializeI18n();

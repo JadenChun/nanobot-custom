@@ -1,0 +1,22 @@
+html.mobile-runtime,
+html.mobile-runtime body,
+html.mobile-runtime #root {
+  height: 100%;
+  min-height: 100%;
+  overscroll-behavior: none;
+}
+
+html.mobile-runtime body {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 767px) {
+  html.mobile-runtime textarea,
+  html.mobile-runtime input {
+    font-size: 16px;
+  }
+}
