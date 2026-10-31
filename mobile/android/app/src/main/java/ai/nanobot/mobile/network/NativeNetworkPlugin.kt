@@ -1,7 +1,9 @@
 package ai.nanobot.mobile.network
 
+import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
@@ -9,14 +11,19 @@ import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
+import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import ai.nanobot.mobile.attachments.AttachmentLimits
+import ai.nanobot.mobile.attachments.AttachmentPolicy
+import ai.nanobot.mobile.media.MediaHandleStore
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
+import androidx.activity.result.ActivityResult
 
 @CapacitorPlugin(name = "NativeNetwork")
 class NativeNetworkPlugin : Plugin() {
@@ -25,6 +32,8 @@ class NativeNetworkPlugin : Plugin() {
     private var pollTask: ScheduledFuture<*>? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val custody by lazy { CustodyStore(context) }
+    private val mediaHandles by lazy { MediaHandleStore(context) }
+    private val attachmentLimits = AttachmentLimits()
 
     @PluginMethod
     fun abiVersion(call: PluginCall) {
@@ -234,6 +243,53 @@ class NativeNetworkPlugin : Plugin() {
     fun stop(call: PluginCall) {
         stopInternal()
         call.resolve()
+    }
+
+    @PluginMethod
+    fun pickAttachment(call: PluginCall) {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        startActivityForResult(call, intent, "attachmentPicked")
+    }
+
+    @ActivityCallback
+    fun attachmentPicked(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        if (result.resultCode != Activity.RESULT_OK) {
+            call.reject("attachment selection cancelled")
+            return
+        }
+        val uri = result.data?.data
+        if (uri == null) {
+            call.reject("attachment URI is missing")
+            return
+        }
+        try {
+            val resolver = context.contentResolver
+            val name = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            } ?: "attachment"
+            val mediaType = resolver.getType(uri) ?: "application/octet-stream"
+            val bytes = resolver.openInputStream(uri)?.use { it.readNBytes(attachmentLimits.maxBytes + 1) }
+                ?: throw IllegalArgumentException("attachment cannot be opened")
+            if (bytes.size > attachmentLimits.maxBytes) {
+                call.reject("attachment exceeds the limit")
+                return
+            }
+            AttachmentPolicy.validate(name, mediaType, bytes.size.toLong(), attachmentLimits)
+            val handle = mediaHandles.put(bytes, mediaType, "bin")
+            call.resolve(
+                JSObject()
+                    .put("handleId", handle.id)
+                    .put("name", name)
+                    .put("mediaType", mediaType)
+                    .put("size", bytes.size)
+            )
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "attachment selection failed")
+        }
     }
 
     @PluginMethod
