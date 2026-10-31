@@ -7,8 +7,8 @@ Status: M01–M04 and M06–M13 are implemented and tested locally. M05 embedded
 the M09 owned Serve mapping were exercised live from the x86_64 emulator and then cleaned up;
 M05 media/deep-link and M15–M22 still require the remaining live backend/device work. M14 live
 pairing plus refresh/replay/revoke were exercised against the isolated owner data plane. M15 native
-media handles and exact pairing-link parsing are in place; native media fetch, picker and UI binding
-remain. See `docs/mobile-client-tasks.md`.
+media handles, fetcher/attachment policy and exact target binding are in place; the product event
+adapter, picker activity and shared UI remain. See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
 
