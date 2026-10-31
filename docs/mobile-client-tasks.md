@@ -2,7 +2,7 @@
 
 Status: Android M01–M22 implemented and qualified on the A142 / Android 16 arm64 device.
 The final signed release is `mobile/evidence/20261031-m22-release/nanobot-mobile-release.apk`
-(SHA-256 `f46ed353cdbc9057311d08b5e9f0c3c58a388b17e3768d7a239ced200ba2fa70`). Automated gates are
+(SHA-256 `a99f064c2c6eec3da906c3f4ef1552f3a0619f84176aa51248ef9f5cf08c7751`). Automated gates are
 green: Python 17,111 passed / 22 skipped; WebUI 1,364 passed; phone 31 tests (8 live skipped, 23
 passed). Device checks passed for QR/product pairing, camera and library attachments, signed media,
 token refresh, cellular/Wi-Fi handover, orientation, process death, Doze, Back, font scaling and a

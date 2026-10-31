@@ -515,7 +515,7 @@ class NativeNetworkPlugin : Plugin() {
         integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
         integrator.setPrompt("Scan the Nanobot pairing QR code")
         integrator.setBeepEnabled(false)
-        integrator.setOrientationLocked(false)
+        integrator.setOrientationLocked(true)
         startActivityForResult(call, integrator.createScanIntent(), "qrScanned")
     }
 

@@ -37,7 +37,7 @@ and the product client had no access-token refresh. WebSocket IDs now use numeri
 frame bound is 512 KiB, and a 401 triggers native refresh rotation and one retry. The mobile
 composer now offers Camera and Library sources; camera capture, compression, attachment and send
 passed on the A142. Small-image send and the live refresh instrumentation test also passed.
-TalkBack was explicitly skipped. Cellular/Wi-Fi handover passed: Wi-Fi was disabled, cellular became the default network, Wi-Fi was re-enabled, and the existing WebSocket accepted a follow-up message. Remaining gate is final human review/acceptance.
+TalkBack was explicitly skipped. Cellular/Wi-Fi handover passed: Wi-Fi was disabled, cellular became the default network, Wi-Fi was re-enabled, and the existing WebSocket accepted a follow-up message. The QR scanner is locked to portrait; scanning and cancellation return to the normal portrait app. Remaining gate is final human review/acceptance.
 See `docs/mobile-client-tasks.md`.
 
 
