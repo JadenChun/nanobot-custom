@@ -48,14 +48,17 @@ same client surface the desktop WebUI exposes, including:
 - skills install/update/delete and marketplace;
 - automations management;
 - session delete and temporary chats;
-- workspace grants, folder management, workspace mode and Full access;
+- workspace grants, a server-backed folder browser, workspace mode and Full access;
 - runtime restart/stop where the WebUI exposes it;
 - remote-access settings, with an explicit warning before disabling the entry.
 
 The native operating-system folder picker remains a server-desktop dialog and cannot be
-operated by a phone. Folder management from the phone uses server-side path entry and
-the existing management APIs. This is a UI transport limit, not a retained security
-boundary.
+operated by a phone. The owner-client UI instead provides a server-backed directory browser:
+the phone lists directories through a bounded server API, navigates breadcrumbs, and submits
+the selected path to the existing folder-management APIs. It returns directory names and
+metadata only, never file contents, and confines browsing to configured server roots with
+canonical/symlink checks. This is a mobile implementation of the picker, not a retained
+security boundary.
 
 ### Threat model and safeguards
 

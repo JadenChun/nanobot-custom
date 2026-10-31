@@ -928,15 +928,19 @@ tests. **Forbidden:** a mobile-only fork of settings or hidden authority paths.
 
 1. Re-enable Settings, Apps, Skills, Automations, Manage models and the full settings surface on
    mobile. Remove the model-only settings projection; use the full WebUI payload.
-2. Use full workspace controls for owner phones. Keep the native folder picker unavailable to the
-   phone and use the existing server-side path/management dialog instead.
+2. Use full workspace controls for owner phones. Add an owner-only server directory-listing API
+   and a mobile folder browser (breadcrumbs, directory list, path entry, "Use this folder") that
+   submits the selected path to the existing folder-management APIs. Return directory names/metadata
+   only; canonicalize paths, reject symlink escapes and confine browsing to configured server roots.
+   The native desktop dialog is not involved.
 3. Allow workspace mode and Full access from the phone with the existing confirmation dialogs.
 4. Restore the full slash-command palette for owner clients, including restart/lifecycle commands
    exposed by the WebUI.
 5. Keep the mobile composer layout responsive; settings pages must render at phone width.
 
-**Checks:** settings pages load and save; folder path management works; Full access can be enabled
-and returned; slash commands execute; phone-width UI tests pass.
+**Checks:** settings pages load and save; the mobile folder browser lists/navigates server directories,
+rejects traversal/symlink escape, and grants the selected path; Full access can be enabled and returned;
+slash commands execute; phone-width UI tests pass.
 **Gate/evidence:** real-phone settings/apps/skills/automations/full-access checks plus screenshots.
 **Rollback/inputs:** hide the re-enabled surfaces and revoke owner access; server config remains
 authoritative.
@@ -977,3 +981,30 @@ self-revoke and remote-entry-off recovery guidance pass.
 **Checks:** full automated matrix, owner-client device matrix, update/re-auth evidence, signed artifact.
 **Gate/evidence:** all gates green and final human acceptance. No owner-client parity claim before M34.
 **Rollback/inputs:** restore the prior signed release and revoke owner devices; preserve server state.
+
+
+<a id="m35"></a>
+## M35 — Desktop instance and owner-service integration
+
+**Objective/prerequisites:** [M30](#m30)–[M33](#m33); identify the actual desktop Nanobot instance/config and
+its current gateway process. **Allowed:** the selected desktop config, remote-access owner/service wiring,
+Serve mapping scripts/runbook, pairing/device evidence. **Forbidden:** a second agent, a second gateway on the
+same instance, or leaving the temporary test gateway as the product target.
+
+1. Select the desktop app's gateway config (for example `~/.nanobot-staging/config.json`) and record its
+   gateway/websocket ports, workspace, provider and current process. Do not reuse the temporary
+   `/tmp/opencode/full-gateway` config.
+2. Add remote-access state under the selected instance data and start exactly one independent owner for
+   that instance. The desktop app or a user service must own/restart the owner; it must not be a manual
+   process lost on logout/reboot.
+3. Map the owned private Serve prefix to the desktop gateway's WebSocket port (the mobile edge is served
+   there), verify TLS/tailnet routing and remove the test mapping.
+4. Pair the phone to the desktop instance, then verify the same model, tools, history, settings, workspace
+   and Full-access behavior used by the desktop WebUI. Confirm update persistence and owner restart.
+5. Retire the temporary gateway and test credentials. Document how the desktop app/owner is started and how
+   the phone recovers if the gateway is stopped; use M23/M24 only if remote start/stop is required.
+
+**Checks:** one desktop gateway, one owner, one Serve mapping; phone and desktop see the same instance;
+restart/update persistence; no test gateway or stale device records.
+**Gate/evidence:** real desktop gateway pairing plus settings/model/history/Full-access device evidence.
+**Rollback/inputs:** remove only the owned Serve mapping/owner state; preserve the desktop app and its data.
