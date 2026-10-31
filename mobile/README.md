@@ -15,11 +15,15 @@ pre-existing baseline failures. M18 headless management and the shared Remote Ac
 user-service install/restart/removal passed and was cleaned up. M20 automated WebUI/emulator/Python
 matrix is captured; five pre-existing baseline Python failures remain. M21 arm64 execution, live
 M14 data path and hardware Keystore passed on a physical A142/Android 16 phone. M16 paired-target
-persistence boots the packaged shared UI through the native transport (handshake/read 200), and the
-shared `/mobile/v1/ws` bridge now opens on the physical phone (connected chat shell). Signed media
-resolves through native handles in shared attachments/lightbox; pairing deep links are captured and
-handed to the plugin. M20 final matrix: WebUI 1363, Python 17,103 with five pre-existing baseline
-failures, phone 29 tests (4 live skipped). Remaining manual device matrix and M22 signing remain.
+persistence boots the packaged shared UI through the native transport, and the shared
+`/mobile/v1/ws` bridge opens on the physical phone against both the staging fixture and a real
+production-composed gateway. The real-gateway run passed handshake/read 200, WebSocket ready/attach,
+media full/range/oversize/hostile cases, and live revocation denial. Signed media resolves through
+native handles in shared attachments/lightbox; pairing deep links are captured and handed to the
+plugin, although test pairing still injects owner-issued tokens rather than exchanging a product
+pairing challenge. M20 final matrix: WebUI 1363, Python 17,103 with five pre-existing baseline
+failures, phone 29 tests (4 live skipped). Remaining product pairing UX, manual device matrix and
+M22 signing remain.
 See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
