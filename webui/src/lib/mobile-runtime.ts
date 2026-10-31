@@ -33,6 +33,12 @@ export interface MobileEvent {
   [key: string]: unknown;
 }
 
+export interface MobilePickedCamera {
+  name: string;
+  mediaType: string;
+  dataBase64: string;
+}
+
 export interface MobileTransport {
   start(origin: string, installationId: string, hostname: string): Promise<void>;
   status(): Promise<Record<string, unknown>>;
@@ -41,6 +47,7 @@ export interface MobileTransport {
   onEvent(listener: (event: MobileEvent) => void): Promise<() => void>;
   openLogin(): Promise<void>;
   refresh(): Promise<boolean>;
+  pickCamera?(): Promise<MobilePickedCamera>;
   wsOpen(path: string, headers?: Record<string, string>): Promise<number>;
   wsSend(wsId: number, data: Uint8Array, kind?: "text" | "binary"): Promise<void>;
   wsClose(wsId: number): Promise<void>;

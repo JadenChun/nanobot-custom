@@ -2,7 +2,10 @@ package ai.nanobot.mobile.network
 
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.os.Handler
 import android.os.Looper
@@ -31,6 +34,8 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import androidx.activity.result.ActivityResult
+import androidx.core.content.FileProvider
+import java.io.ByteArrayOutputStream
 
 @CapacitorPlugin(name = "NativeNetwork")
 class NativeNetworkPlugin : Plugin() {
@@ -44,6 +49,7 @@ class NativeNetworkPlugin : Plugin() {
     private val custody by lazy { CustodyStore(context) }
     private val mediaHandles by lazy { MediaHandleStore(context) }
     private val attachmentLimits = AttachmentLimits()
+    private var pendingCameraFile: java.io.File? = null
 
     @PluginMethod
     fun abiVersion(call: PluginCall) {
@@ -460,6 +466,96 @@ class NativeNetworkPlugin : Plugin() {
     fun stop(call: PluginCall) {
         stopInternal()
         call.resolve()
+    }
+
+    @PluginMethod
+    fun pickCamera(call: PluginCall) {
+        val directory = context.cacheDir.resolve("nanobot-media")
+        if (!directory.exists() && !directory.mkdirs()) {
+            call.reject("camera directory could not be created")
+            return
+        }
+        val file = directory.resolve("camera-" + System.currentTimeMillis() + ".jpg")
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+        if (intent.resolveActivity(context.packageManager) == null) {
+            call.reject("no camera application is available")
+            return
+        }
+        pendingCameraFile = file
+        startActivityForResult(call, intent, "cameraPicked")
+    }
+
+    @ActivityCallback
+    fun cameraPicked(call: PluginCall?, result: ActivityResult) {
+        val file = pendingCameraFile
+        pendingCameraFile = null
+        if (call == null) {
+            file?.delete()
+            return
+        }
+        if (result.resultCode != Activity.RESULT_OK || file == null || !file.exists()) {
+            file?.delete()
+            call.reject("camera capture cancelled")
+            return
+        }
+        try {
+            val bytes = boundedCameraBytes(file)
+            val name = "camera-" + System.currentTimeMillis() + ".jpg"
+            AttachmentPolicy.validate(name, "image/jpeg", bytes.size.toLong(), attachmentLimits)
+            call.resolve(
+                JSObject()
+                    .put("name", name)
+                    .put("mediaType", "image/jpeg")
+                    .put("size", bytes.size)
+                    .put("dataBase64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+            )
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "camera capture failed")
+        } finally {
+            file.delete()
+        }
+    }
+
+    private fun boundedCameraBytes(file: java.io.File): ByteArray {
+        val original = file.readBytes()
+        if (original.size <= attachmentLimits.maxBytes) return original
+        val bitmap = BitmapFactory.decodeByteArray(original, 0, original.size)
+            ?: throw IllegalArgumentException("camera image cannot be decoded")
+        var maxDimension = 1600
+        var quality = 82
+        while (true) {
+            val scaled = scaleDown(bitmap, maxDimension)
+            val output = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, quality, output)
+            if (scaled !== bitmap) scaled.recycle()
+            val bytes = output.toByteArray()
+            if (bytes.size <= attachmentLimits.maxBytes) {
+                bitmap.recycle()
+                return bytes
+            }
+            if (maxDimension <= 640 && quality <= 55) {
+                bitmap.recycle()
+                throw IllegalArgumentException("camera image exceeds the attachment limit")
+            }
+            maxDimension = maxOf(640, maxDimension - 320)
+            quality = maxOf(55, quality - 8)
+        }
+    }
+
+    private fun scaleDown(bitmap: Bitmap, maxDimension: Int): Bitmap {
+        val largest = maxOf(bitmap.width, bitmap.height)
+        if (largest <= maxDimension) return bitmap
+        val ratio = maxDimension.toFloat() / largest.toFloat()
+        return Bitmap.createScaledBitmap(
+            bitmap,
+            maxOf(1, (bitmap.width * ratio).toInt()),
+            maxOf(1, (bitmap.height * ratio).toInt()),
+            true,
+        )
     }
 
     @PluginMethod

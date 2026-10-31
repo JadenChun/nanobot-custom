@@ -18,6 +18,7 @@
       return function () { void handle.remove(); };
     },
     openLogin: async function () { await plugin.openLogin(); },
+    pickCamera: async function () { return await plugin.pickCamera(); },
     refresh: async function () {
       try {
         await plugin.refresh();

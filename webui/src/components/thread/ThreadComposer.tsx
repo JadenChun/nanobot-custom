@@ -53,6 +53,12 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   floatingItemClassName,
   floatingSurfaceElevationClassName,
   floatingSurfaceVisualClassName,
@@ -90,6 +96,7 @@ import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import type { SendAttachment, SendOptions } from "@/hooks/useNanobotStream";
 import { useVoiceRecorder, type VoiceRecorderErrorKey } from "@/hooks/useVoiceRecorder";
+import { getMobileRuntime } from "@/lib/mobile-runtime";
 import type {
   CliAppInfo,
   ChatSummary,
@@ -1072,6 +1079,23 @@ export function ThreadComposer({
     },
     [enqueue, formatRejection, interactionDisabled],
   );
+
+  const mobileTransport = getMobileRuntime()?.transport;
+  const pickCamera = useCallback(async () => {
+    if (!mobileTransport?.pickCamera) return;
+    try {
+      const picked = await mobileTransport.pickCamera();
+      if (!picked) return;
+      const binary = atob(picked.dataBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      addFiles([new File([bytes], picked.name, { type: picked.mediaType })]);
+    } catch (error) {
+      setInlineError(error instanceof Error ? error.message : "Camera capture failed");
+    }
+  }, [addFiles, mobileTransport]);
 
   const {
     isDragging,
@@ -2464,22 +2488,52 @@ export function ThreadComposer({
               hidden
               onChange={onFilePick}
             />
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              disabled={attachButtonDisabled}
-              aria-label={t("thread.composer.attachImage")}
-              onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                "thread-composer-action touch-target rounded-full text-muted-foreground hover:text-foreground",
-                isHero
-                  ? "h-8 w-8 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card"
-                  : "h-9 w-9 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card",
-              )}
-            >
-              <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
-            </Button>
+            {mobileTransport?.pickCamera ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    disabled={attachButtonDisabled}
+                    aria-label={t("thread.composer.attachImage")}
+                    className={cn(
+                      "thread-composer-action touch-target rounded-full text-muted-foreground hover:text-foreground",
+                      isHero
+                        ? "h-8 w-8 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card"
+                        : "h-9 w-9 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card",
+                    )}
+                  >
+                    <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="start">
+                  <DropdownMenuItem onSelect={() => void pickCamera()}>
+                    Take a photo
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                    Choose from library
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                disabled={attachButtonDisabled}
+                aria-label={t("thread.composer.attachImage")}
+                onClick={() => fileInputRef.current?.click()}
+                className={cn(
+                  "thread-composer-action touch-target rounded-full text-muted-foreground hover:text-foreground",
+                  isHero
+                    ? "h-8 w-8 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card"
+                    : "h-9 w-9 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card",
+                )}
+              >
+                <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
+              </Button>
+            )}
             {showCompactProjectPicker && !voiceRecorder.isRecording ? projectPicker : null}
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter

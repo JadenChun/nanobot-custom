@@ -32,10 +32,10 @@ portrait/landscape layout, process death, forced Doze, Back/relaunch, font scale
 battery/thermal snapshot. Device-tool checks found and fixed three real defects: Capacitor numeric
 WebSocket IDs were rejected by `getLong`, the mobile frame bound was too small for a 144 KB image,
 and the product client had no access-token refresh. WebSocket IDs now use numeric fallbacks, the
-frame bound is 512 KiB, and a 401 triggers native refresh rotation and one retry. A small image
-attaches and sends through the live gateway, and the live refresh instrumentation test passes.
-TalkBack was explicitly skipped. Remaining gaps are camera capture, cellular handover, and final
-human review.
+frame bound is 512 KiB, and a 401 triggers native refresh rotation and one retry. The mobile
+composer now offers Camera and Library sources; camera capture, compression, attachment and send
+passed on the A142. Small-image send and the live refresh instrumentation test also passed.
+TalkBack was explicitly skipped. Remaining gates are cellular handover and final human review.
 See `docs/mobile-client-tasks.md`.
 
 
