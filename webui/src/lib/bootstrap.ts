@@ -1,5 +1,6 @@
 import type { BootstrapResponse } from "./types";
 import { fetchWithTimeout } from "./http";
+import { getMobileRuntime } from "./mobile-runtime";
 
 const SECRET_STORAGE_KEY = "nanobot-webui.bootstrap-secret";
 const URL_SECRET_PARAM = "bootstrapSecret";
@@ -71,6 +72,21 @@ export async function fetchBootstrap(
   secret: string = "",
   timeoutMs?: number,
 ): Promise<BootstrapResponse> {
+  const mobile = getMobileRuntime();
+  if (mobile) {
+    await mobile.handshake();
+    return {
+      ws_path: "/mobile/v1/ws",
+      runtime_surface: "native",
+      runtime_capabilities: {
+        can_export_diagnostics: false,
+        can_open_logs: false,
+        can_pick_folder: false,
+        can_restart_engine: false,
+      },
+      model_name: null,
+    };
+  }
   const headers: Record<string, string> = {};
   if (secret) {
     headers["X-Nanobot-Auth"] = secret;

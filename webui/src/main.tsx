@@ -4,6 +4,7 @@ import App from "./App";
 import "./globals.css";
 import { initializeI18n } from "./i18n";
 import { initializeLoopbackRuntimeHost } from "./lib/runtime";
+import { shouldRegisterServiceWorker } from "./lib/mobile-runtime";
 
 // `crypto.randomUUID` is only defined in secure contexts (HTTPS or localhost).
 // LAN access over plain HTTP leaves it undefined, which crashes components that
@@ -42,7 +43,7 @@ async function renderWebui(container: HTMLElement) {
 
 void renderWebui(root);
 
-if ("serviceWorker" in navigator) {
+if ("serviceWorker" in navigator && shouldRegisterServiceWorker()) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js", {

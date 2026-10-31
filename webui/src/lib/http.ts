@@ -1,10 +1,16 @@
 const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 
+import { getMobileRuntime } from "./mobile-runtime";
+
 export async function fetchWithTimeout(
   input: RequestInfo | URL,
   init: RequestInit = {},
   timeoutMs: number = DEFAULT_HTTP_TIMEOUT_MS,
 ): Promise<Response> {
+  const mobile = getMobileRuntime();
+  if (mobile) {
+    return mobileFetch(mobile, input, init);
+  }
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return fetch(input, init);
   }
@@ -40,4 +46,49 @@ export async function fetchWithTimeout(
     if (timeoutId !== undefined) clearTimeout(timeoutId);
     externalSignal?.removeEventListener("abort", abortFromExternal);
   }
+}
+
+
+async function mobileFetch(
+  runtime: ReturnType<typeof getMobileRuntime> & object,
+  input: RequestInfo | URL,
+  init: RequestInit,
+): Promise<Response> {
+  const method = (init.method ?? "GET").toUpperCase();
+  if (method !== "GET") {
+    throw new Error("mobile operation unavailable over the read bridge");
+  }
+  const raw = typeof input === "string" ? input : input instanceof URL ? input.pathname : input.url;
+  const url = new URL(raw, typeof window === "undefined" ? "https://mobile.local" : window.location.origin);
+  if (url.pathname === "/api/sessions") {
+    const body = await runtime.read("/mobile/v1/read");
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  const media = /^\/api\/media\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
+  if (media) {
+    const response = await runtime.request({
+      operation: "mobile_media",
+      method: "GET",
+      path: `/mobile/v1/media/${media[1]}/${media[2]}`,
+      headers: init.headers as Record<string, string> | undefined,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`mobile media failed: HTTP ${response.status}`);
+    }
+    return new Response(decodeBase64Bytes(response.bodyBase64).buffer as ArrayBuffer, {
+      status: response.status,
+      headers: response.headers,
+    });
+  }
+  throw new Error(`mobile operation unavailable for ${url.pathname}`);
+}
+
+function decodeBase64Bytes(value: string): Uint8Array {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }

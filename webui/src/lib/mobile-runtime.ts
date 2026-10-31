@@ -52,6 +52,29 @@ export interface MobileRuntime {
   handshake(): Promise<Record<string, unknown>>;
   read(path?: string): Promise<Record<string, unknown>>;
   onEvent(listener: (event: MobileEvent) => void): Promise<() => void>;
+  createWebSocket(url: string): WebSocket;
+}
+
+let installedMobileRuntime: MobileRuntime | null = null;
+
+export function installMobileRuntime(runtime: MobileRuntime): void {
+  installedMobileRuntime = runtime;
+}
+
+export function getMobileRuntime(): MobileRuntime | null {
+  return installedMobileRuntime;
+}
+
+export function isMobileRuntimeActive(): boolean {
+  return installedMobileRuntime !== null;
+}
+
+export function resetMobileRuntime(): void {
+  installedMobileRuntime = null;
+}
+
+export function shouldRegisterServiceWorker(): boolean {
+  return !isMobileRuntimeActive();
 }
 
 class MobileRuntimeError extends Error {}
@@ -108,7 +131,7 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
     });
   };
 
-  return {
+  const runtime: MobileRuntime = {
     transport,
     request,
     async handshake() {
@@ -126,7 +149,74 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    createWebSocket(url) {
+      return new MobileWebSocket(runtime, url) as unknown as WebSocket;
+    },
   };
+  return runtime;
+}
+
+class MobileWebSocket {
+  binaryType: BinaryType = "blob";
+  onclose: ((this: WebSocket, ev: CloseEvent) => unknown) | null = null;
+  onerror: ((this: WebSocket, ev: Event) => unknown) | null = null;
+  onmessage: ((this: WebSocket, ev: MessageEvent) => unknown) | null = null;
+  onopen: ((this: WebSocket, ev: Event) => unknown) | null = null;
+  readyState = 0;
+  readonly url: string;
+  private wsId = 0;
+  private unsubscribe: (() => void) | null = null;
+
+  constructor(private runtime: MobileRuntime, url: string) {
+    this.url = url;
+    const parsed = new URL(url);
+    if (parsed.pathname !== "/mobile/v1/ws") {
+      throw new Error("mobile socket path is not allowlisted");
+    }
+    void this.open();
+  }
+
+  private async open(): Promise<void> {
+    try {
+      this.unsubscribe = await this.runtime.onEvent((event) => this.handleEvent(event));
+      this.wsId = await this.runtime.transport.wsOpen("/mobile/v1/ws");
+      this.readyState = 1;
+      this.onopen?.call(this as unknown as WebSocket, new Event("open"));
+    } catch {
+      this.fail();
+    }
+  }
+
+  send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+    if (this.readyState !== 1 || typeof data !== "string") {
+      throw new Error("mobile socket accepts text frames only");
+    }
+    void this.runtime.transport.wsSend(this.wsId, new TextEncoder().encode(data), "text");
+  }
+
+  close(): void {
+    this.readyState = 2;
+    if (this.wsId) void this.runtime.transport.wsClose(this.wsId);
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    this.readyState = 3;
+    this.onclose?.call(this as unknown as WebSocket, new CloseEvent("close", { code: 1000 }));
+  }
+
+  private handleEvent(event: MobileEvent): void {
+    if (event.type === "ws_frame" && event.ws_id === this.wsId) {
+      const raw = typeof event.data_base64 === "string" ? atob(event.data_base64) : "";
+      this.onmessage?.call(this as unknown as WebSocket, new MessageEvent("message", { data: raw }));
+    } else if (event.type === "ws_closed" && event.ws_id === this.wsId) {
+      this.readyState = 3;
+      this.onclose?.call(this as unknown as WebSocket, new CloseEvent("close", { code: Number(event.code ?? 1000) }));
+    }
+  }
+
+  private fail(): void {
+    this.readyState = 3;
+    this.onerror?.call(this as unknown as WebSocket, new Event("error"));
+  }
 }
 
 function decodeBase64(value: string): string {

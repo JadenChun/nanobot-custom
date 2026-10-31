@@ -8,8 +8,9 @@ the M09 owned Serve mapping were exercised live from the x86_64 emulator and the
 M05 media/deep-link and M15–M22 still require the remaining live backend/device work. M14 live
 pairing plus refresh/replay/revoke were exercised against the isolated owner data plane. M15 native
 media handles, fetcher/attachment policy, exact target binding and the Capacitor attachment picker
-are in place. M16 has a tested shared mobile runtime contract; App/bootstrap/client wiring and the
-M17 chat layout remain. See `docs/mobile-client-tasks.md`.
+are in place. M16 runtime is wired into bootstrap/HTTP/client surface, mobile service-worker registration is
+disabled and shared assets package to `mobile/www-shared`. M17 chat layout remains.
+See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
 
