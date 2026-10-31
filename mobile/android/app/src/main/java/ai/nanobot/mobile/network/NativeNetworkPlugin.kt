@@ -11,6 +11,7 @@ import android.provider.OpenableColumns
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
+import com.getcapacitor.BridgeActivity
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
 import com.getcapacitor.Plugin
@@ -96,7 +97,23 @@ class NativeNetworkPlugin : Plugin() {
                 )
                 mainHandler.post { call.resolve(JSObject().put("refreshed", true)) }
             } catch (exception: Exception) {
-                mainHandler.post { call.reject(exception.message ?: "token refresh failed") }
+                val message = exception.message ?: "token refresh failed"
+                if (message.contains("HTTP 401")) {
+                    // The owner revoked this installation. Erase local custody and
+                    // return to the pairing gate instead of leaving stale access.
+                    try {
+                        custody.logout(serverReachable = true)
+                        custody.purgeMedia()
+                    } catch (_: Exception) {
+                        // Custody may already be gone; the reload still resets UI.
+                    }
+                    mainHandler.post {
+                        call.reject("pairing was revoked")
+                        (activity as? BridgeActivity)?.getBridge()?.getWebView()?.reload()
+                    }
+                } else {
+                    mainHandler.post { call.reject(message) }
+                }
             }
         }
     }
