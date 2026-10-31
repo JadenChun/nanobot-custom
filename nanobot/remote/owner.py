@@ -13,16 +13,21 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from nanobot.remote.auth import TokenService
 from nanobot.remote.ipc import OwnerIPCServer
+from nanobot.remote.pairing import PairingService
 from nanobot.remote.store import RemoteAccessStore
 
 
 class RemoteAccessOwner:
     def __init__(self, state_dir: Path | str | None = None, socket_path: Path | str | None = None) -> None:
         self.store = RemoteAccessStore(state_dir)
+        self.tokens = TokenService(self.store)
+        self.pairing = PairingService(self.store, self.tokens)
         self.server = OwnerIPCServer(
             self.store,
             Path(socket_path) if socket_path else None,
+            pairing=self.pairing,
         )
 
     def start(self) -> None:

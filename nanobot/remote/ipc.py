@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from nanobot.remote.pairing import PairingError, PairingService
 from nanobot.remote.store import RemoteAccessStore, StoreError
 
 MAX_IPC_LINE_BYTES = 64 * 1024
@@ -24,8 +25,14 @@ class IPCDeniedError(PermissionError):
 class OwnerIPCServer:
     """Owner-only Unix socket with peer-UID and role checks."""
 
-    def __init__(self, store: RemoteAccessStore, socket_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        store: RemoteAccessStore,
+        socket_path: Path | None = None,
+        pairing: PairingService | None = None,
+    ) -> None:
         self.store = store
+        self.pairing = pairing
         self.socket_path = Path(socket_path) if socket_path else store.root / IPC_SOCKET_NAME
         self._socket: socket.socket | None = None
         self._thread: threading.Thread | None = None
@@ -212,6 +219,49 @@ class OwnerIPCServer:
             return {"ok": False, "error": {"code": "denied", "message": "gateway role cannot use local administration"}}
         if method == "list_devices":
             return {"ok": True, "result": self.store.snapshot()["devices"]}
+        if method == "pair_create":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            origin = params.get("origin")
+            label = params.get("label")
+            chat_consent = params.get("chat_consent")
+            media_consent = params.get("media_consent", False)
+            if not isinstance(origin, str) or not isinstance(label, str) or not isinstance(chat_consent, bool) or not isinstance(media_consent, bool):
+                return {"ok": False, "error": {"code": "bad_request", "message": "origin, label, chat_consent and media_consent are required"}}
+            try:
+                offer = self.pairing.create_challenge(
+                    origin=origin,
+                    label=label,
+                    chat_consent=chat_consent,
+                    media_consent=media_consent,
+                )
+            except (PairingError, ValueError) as exc:
+                return {"ok": False, "error": {"code": "pairing_rejected", "message": str(exc)}}
+            return {"ok": True, "result": {**offer.__dict__, "scopes": list(offer.scopes)}}
+        if method == "pair_approve":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = params.get("pairing_id")
+            code = params.get("comparison_code")
+            scopes = params.get("scopes")
+            if not isinstance(pairing_id, str) or not isinstance(code, str):
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing_id and comparison_code are required"}}
+            try:
+                approved = self.pairing.approve(
+                    pairing_id=pairing_id,
+                    comparison_code=code,
+                    scopes=tuple(scopes) if isinstance(scopes, list) else None,
+                )
+            except (PairingError, ValueError) as exc:
+                return {"ok": False, "error": {"code": "pairing_rejected", "message": str(exc)}}
+            return {"ok": True, "result": {"pairing_id": approved.pairing_id, "installation_id": approved.installation_id, "scopes": list(approved.scopes)}}
+        if method == "pair_cancel":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = params.get("pairing_id")
+            if not isinstance(pairing_id, str):
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing_id is required"}}
+            return {"ok": True, "result": {"cancelled": self.pairing.cancel(pairing_id)}}
         if method == "set_enabled":
             enabled = params.get("enabled")
             if not isinstance(enabled, bool):

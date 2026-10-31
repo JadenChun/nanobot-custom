@@ -73,6 +73,46 @@ class RemoteAccessClient:
             require_admin=True,
         )
 
+    def create_pairing(
+        self,
+        *,
+        origin: str,
+        label: str,
+        chat_consent: bool,
+        media_consent: bool = False,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_create",
+            {
+                "origin": origin,
+                "label": label,
+                "chat_consent": chat_consent,
+                "media_consent": media_consent,
+            },
+            role="admin",
+            require_admin=True,
+        )
+
+    def approve_pairing(
+        self,
+        *,
+        pairing_id: str,
+        comparison_code: str,
+        scopes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_approve",
+            {"pairing_id": pairing_id, "comparison_code": comparison_code, "scopes": scopes},
+            role="admin",
+            require_admin=True,
+        )
+
+    def cancel_pairing(self, pairing_id: str) -> bool:
+        result = self._call(
+            "pair_cancel", {"pairing_id": pairing_id}, role="admin", require_admin=True
+        )
+        return bool(result.get("cancelled"))
+
     def rotate_refresh(self, installation_id: str, refresh_token: str) -> dict[str, Any]:
         return self._call(
             "rotate_refresh",
