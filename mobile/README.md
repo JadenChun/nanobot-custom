@@ -11,7 +11,8 @@ media handles, fetcher/attachment policy, exact target binding and the Capacitor
 are in place. M16 runtime is wired into bootstrap/HTTP/client surface, mobile service-worker registration is
 disabled and shared assets package to `mobile/www-shared`. M17 adds mobile safe-area CSS, Back/Escape
 handling and connection/recovery notices. The full Python suite has 17,098 passing tests and five
-pre-existing baseline failures; settings/supervision/device release remain.
+pre-existing baseline failures. M18 headless local management and M19 owned supervision plan/adapter
+are implemented; live service install, settings UI, device qualification and release remain.
 See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
