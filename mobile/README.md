@@ -10,7 +10,8 @@ pairing plus refresh/replay/revoke were exercised against the isolated owner dat
 media handles, fetcher/attachment policy, exact target binding and the Capacitor attachment picker
 are in place. M16 runtime is wired into bootstrap/HTTP/client surface, mobile service-worker registration is
 disabled and shared assets package to `mobile/www-shared`. M17 adds mobile safe-area CSS, Back/Escape
-handling and connection/recovery notices. Settings/supervision/device release remain.
+handling and connection/recovery notices. The full Python suite has 17,098 passing tests and five
+pre-existing baseline failures; settings/supervision/device release remain.
 See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
