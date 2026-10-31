@@ -302,23 +302,72 @@
     } catch (_) {
       target = null;
     }
+    async function connectTarget(link) {
+      await transport.start(link.origin, link.installationId, "nanobot-" + String(link.installationId).slice(-6));
+      for (var i = 0; i < 180; i += 1) {
+        var status = await plugin.status();
+        if (status && status.state === "ready") return;
+        if (status && status.state === "error") throw new Error("native transport failed");
+        await new Promise(function (resolve) { setTimeout(resolve, 500); });
+      }
+      throw new Error("native transport readiness timeout");
+    }
+
+    function presentReauth(link, initialMessage) {
+      var stale = document.querySelector(".mobile-reauth");
+      if (stale) stale.remove();
+      var panel = textElement("section", "mobile-pairing mobile-reauth");
+      panel.setAttribute("role", "main");
+      var card = textElement("div", "mobile-pairing-card");
+      panel.appendChild(card);
+      var title = textElement("h1", "mobile-pairing-title", "Reconnect this phone");
+      card.appendChild(title);
+      card.appendChild(textElement("p", "mobile-pairing-copy", "Your Nanobot pairing is saved. Tailscale needs a fresh sign-in before this phone can reach the server."));
+      var status = textElement("p", "mobile-pairing-status", initialMessage || "Tailscale sign-in is required.");
+      status.setAttribute("aria-live", "polite");
+      card.appendChild(status);
+      var actions = textElement("div", "mobile-pairing-actions");
+      var login = textElement("button", "mobile-pairing-button", "Open Tailscale login");
+      login.type = "button";
+      login.addEventListener("click", function () {
+        status.classList.remove("is-error");
+        status.textContent = "Opening Tailscale sign-in...";
+        void plugin.openLogin().catch(function (error) {
+          status.textContent = String(error && error.message ? error.message : error);
+        });
+      });
+      actions.appendChild(login);
+      var retry = textElement("button", "mobile-pairing-button", "Retry");
+      retry.type = "button";
+      retry.addEventListener("click", function () {
+        status.classList.remove("is-error");
+        status.textContent = "Connecting to the server...";
+        void connectTarget(link).then(function () {
+          panel.remove();
+          resolveReady();
+        }).catch(function (error) {
+          status.textContent = String(error && error.message ? error.message : error);
+          status.classList.add("is-error");
+        });
+      });
+      actions.appendChild(retry);
+      card.appendChild(actions);
+      document.body.appendChild(panel);
+    }
+
     if (target && target.hasAccess) {
       try {
-        await transport.start(target.origin, target.installationId, "nanobot-" + String(target.installationId).slice(-6));
-        for (var i = 0; i < 180; i += 1) {
-          var status = await plugin.status();
-          if (status && status.state === "ready") {
-            resolveReady();
-            return;
-          }
-          if (status && status.state === "error") throw new Error("native transport failed");
-          await new Promise(function (resolve) { setTimeout(resolve, 500); });
-        }
-        throw new Error("native transport readiness timeout");
+        await connectTarget(target);
+        resolveReady();
       } catch (error) {
-        rejectReady(error);
-        return;
+        var message = String(error && error.message ? error.message : error);
+        if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
+          presentReauth(target, message);
+        } else {
+          rejectReady(error);
+        }
       }
+      return;
     }
     presentPairing();
   })();

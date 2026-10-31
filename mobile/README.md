@@ -30,12 +30,17 @@ the real gateway, including handshake/read/WebSocket after pairing. A later run 
 and produced real model replies in both the host mobile-edge check (`GATEWAY_MODEL_OK`, 11.7 s) and
 the phone chat (`PHONE_OK`, 0.9 s); evidence is in
 `evidence/20261031-full-gateway/`. The phone's embedded Tailscale node needs a one-time interactive
-login when its prior node state was removed. The mobile bridge now also carries the
+login when its prior node state was removed. Normal in-place app updates preserve both
+the encrypted Nanobot custody and the embedded Tailscale state; uninstall/clear-data
+requires a fresh pairing. If tsnet asks for a new login while custody is intact, the
+app offers a re-auth panel instead of erasing the pairing. Use
+`mobile/scripts/install-release-update.sh` (or a Play Store update) for in-place
+updates; do not uninstall unless a fresh pairing is intended. The mobile bridge now also carries the
 model-preset, workspace-control and persisted-thread reads, so the composer model
 picker and the Sandbox mode menu work on the phone. Full access remains local-only;
 the phone receives the restricted projection and the server rejects client-supplied
 Full scope. The signed artifact was rebuilt with that bridge and the Nanobot launcher
-icon/splash (`f53f9f61a9c8f6783e8d7cf4926ba3a9e2bae7749e6e3c4826084856e70d81ad`). M20 final matrix is green: WebUI
+icon/splash (`936803375e50f9b54ca243eb2ea1609b4b1aa706bc5bd7182ce83e7ff4e3edd7`). M20 final matrix is green: WebUI
 1,364 passed; Python 17,111 passed, 22 skipped; phone 31 tests (8 live skipped, 23 passed). The five baseline
 failures and the order-dependent flake were repaired. M22 signed release is built and verified with
 the release keystore: v2 signature, zipalign, install, same-key update, different-key rejection and
