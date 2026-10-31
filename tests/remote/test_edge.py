@@ -19,6 +19,8 @@ from nanobot.remote.edge import (
     OwnerAccessValidator,
 )
 from nanobot.remote.owner import RemoteAccessOwner
+from nanobot.remote.protocol import MutationEnvelope, MutationMode, stable_operation_digest
+from nanobot.remote.replay import OperationReplayCache
 
 
 def token_headers(token: str) -> Headers:
@@ -175,3 +177,52 @@ async def test_edge_revocation_owner_loss_and_logout(edge_setup) -> None:
     owner.stop()
     unavailable = await edge.handle(None, request("/mobile/v1/handshake", pair.access_token))
     assert unavailable is not None and unavailable.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_edge_mutation_frame_uses_replay_cache(edge_setup) -> None:
+    owner, original, _pair = edge_setup
+    cache = OperationReplayCache()
+    effects = 0
+
+    async def mutate(_identity, _envelope):
+        nonlocal effects
+        effects += 1
+        return {"effect": effects}
+
+    edge = MobileGatewayEdge(
+        original.validator,
+        generation_provider=lambda: int(owner.store.snapshot()["revision"]),
+        socket_epoch=7,
+        replay_cache=cache,
+        mutation_handler=mutate,
+    )
+    identity = AccessIdentity(
+        "install-0001", ("chat.read", "chat.write", "media.read", "attachment.write", "device.self.logout"), 0, 2
+    )
+    digest = stable_operation_digest("device-0001", "chat.send", {"text": "hello"})
+    envelope = MutationEnvelope.model_validate(
+        {
+            "request_id": "req-edge-1",
+            "installation_id": "install-0001",
+            "principal": "device-0001",
+            "action": "chat.send",
+            "digest": digest,
+            "gateway_generation": int(owner.store.snapshot()["revision"]),
+            "epoch": 7,
+            "mode": "submit",
+            "payload": {"text": "hello"},
+        }
+    )
+    first = await edge.handle_ws_frame(
+        identity, 7, {"type": "mutation", "envelope": envelope.model_dump(mode="json")}
+    )
+    assert first["ok"] is True
+    assert first["result"]["decision"] == "applied"
+    replay_envelope = envelope.model_copy(update={"mode": MutationMode.REPLAY_ONLY})
+    second = await edge.handle_ws_frame(
+        identity, 7, {"type": "mutation", "envelope": replay_envelope.model_dump(mode="json")}
+    )
+    assert second["ok"] is True
+    assert second["result"]["decision"] == "replayed"
+    assert effects == 1

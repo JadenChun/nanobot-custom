@@ -23,8 +23,11 @@ from nanobot.remote.client import OwnerRequestError, OwnerUnavailableError, Remo
 from nanobot.remote.protocol import (
     BRIDGE_VERSION,
     MOBILE_PROTOCOL_VERSION,
+    MutationEnvelope,
+    MutationOutcome,
     default_limits,
 )
+from nanobot.remote.replay import OperationReplayCache
 from nanobot.webui.http_utils import (
     bearer_token,
     http_json_response,
@@ -138,6 +141,9 @@ class MobileGatewayEdge:
         media_handler: Callable[[AccessIdentity, str, str | None], Awaitable[MediaResult]] | None = None,
         attachment_handler: Callable[[AccessIdentity, bytes], Awaitable[dict[str, Any]]] | None = None,
         logout_handler: Callable[[AccessIdentity], Awaitable[dict[str, Any]]] | None = None,
+        replay_cache: OperationReplayCache | None = None,
+        mutation_handler: Callable[[AccessIdentity, MutationEnvelope], Awaitable[dict[str, Any]]] | None = None,
+        authorize_operation: Callable[[AccessIdentity], Awaitable[bool]] | None = None,
     ) -> None:
         self.validator = validator
         self.generation_provider = generation_provider
@@ -146,6 +152,9 @@ class MobileGatewayEdge:
         self.media_handler = media_handler
         self.attachment_handler = attachment_handler
         self.logout_handler = logout_handler
+        self.replay_cache = replay_cache
+        self.mutation_handler = mutation_handler
+        self.authorize_operation = authorize_operation
 
     async def handle(self, _connection: Any, request: WsRequest) -> Response | None:
         path, query = parse_request_path(request.path)
@@ -249,6 +258,35 @@ class MobileGatewayEdge:
             if len(body) > self._attachment_limit():
                 return {"ok": False, "error": "attachment_too_large"}
             return {"ok": True, "result": await self.attachment_handler(identity, body)}
+        if frame_type == "mutation":
+            self.authorize_ws_frame(identity, epoch, "chat.write")
+            if self.replay_cache is None or self.mutation_handler is None:
+                return {"ok": False, "error": "mutation_unavailable"}
+            raw_envelope = payload.get("envelope")
+            if not isinstance(raw_envelope, dict):
+                return {"ok": False, "error": "invalid_envelope"}
+            try:
+                envelope = MutationEnvelope.model_validate(raw_envelope)
+            except ValueError:
+                return {"ok": False, "error": "invalid_envelope"}
+            if envelope.installation_id != identity.installation_id:
+                return {"ok": False, "error": "installation_mismatch"}
+
+            async def authorize() -> bool:
+                if self.authorize_operation is not None:
+                    return await self.authorize_operation(identity)
+                return identity.allows("chat.write")
+
+            outcome: MutationOutcome = await self.replay_cache.execute(
+                envelope,
+                current_generation=self.generation_provider(),
+                current_epoch=epoch,
+                authorize=authorize,
+                effect=lambda item: self.mutation_handler(identity, item)
+                if self.mutation_handler is not None
+                else _empty_effect(item),
+            )
+            return {"ok": True, "result": outcome.model_dump(mode="json")}
         if frame_type == "logout":
             self.authorize_ws_frame(identity, epoch, "device.self.logout")
             if self.logout_handler is None:
@@ -269,3 +307,7 @@ def _headers(items: list[tuple[str, str]]) -> Any:
     from websockets.datastructures import Headers
 
     return Headers(items)
+
+
+async def _empty_effect(_envelope: MutationEnvelope) -> dict[str, Any]:
+    return {}
