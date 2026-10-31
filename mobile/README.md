@@ -13,8 +13,9 @@ disabled and shared assets package to `mobile/www-shared`. M17 adds mobile safe-
 handling and connection/recovery notices. The full Python suite has 17,098 passing tests and five
 pre-existing baseline failures. M18 headless management and the shared Remote Access settings page are implemented. M19 live owned
 user-service install/restart/removal passed and was cleaned up. M20 automated WebUI/emulator/Python
-matrix is captured; five pre-existing baseline Python failures remain. Physical-phone and signed
-release gates remain.
+matrix is captured; five pre-existing baseline Python failures remain. M21 arm64 execution and the
+live M14 data path passed on a physical A142/Android 16 phone; the remaining manual device matrix
+and M22 signing/release remain.
 See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
