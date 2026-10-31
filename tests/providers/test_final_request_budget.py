@@ -13,11 +13,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import tiktoken
 
+import nanobot.providers.openai_codex_provider as codex_provider_module
 from nanobot.providers.anthropic_provider import AnthropicProvider
 from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
 from nanobot.providers.base import LLMProvider, LLMResponse, LLMUsage, ProviderCallContext
 from nanobot.providers.bedrock_provider import BedrockProvider
 from nanobot.providers.fallback_provider import FallbackProvider
+from nanobot.providers.github_copilot_provider import GitHubCopilotProvider
 from nanobot.providers.openai_codex_provider import OpenAICodexProvider
 from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.openai_responses import build_responses_state
@@ -26,6 +28,7 @@ from nanobot.providers.request_budget import (
     FinalizedRequestBudgetExceeded,
     ProviderRequestLimits,
     TransportIdentity,
+    _canonicalize_finalized_value,
     measure_finalized_request,
     validate_finalized_request,
 )
@@ -36,15 +39,28 @@ from nanobot.providers.xai_grok_provider import (
 )
 
 
-def _png_data_uri(width: int, height: int, padding: int = 1_000_000) -> str:
+def _png_data_uri(width: int, height: int, padding: int = 0) -> str:
+    def chunk(name: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + name
+            + data
+            + struct.pack(">I", zlib.crc32(name + data))
+        )
+
+    if padding < 0:
+        raise ValueError("PNG padding must not be negative")
+    row = b"\x00" + b"\x00" * (width * 3)
+    pixels = zlib.compress(row * height)
     ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    ihdr = (
-        struct.pack(">I", len(ihdr_data))
-        + b"IHDR"
-        + ihdr_data
-        + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr_data))
+    ancillary = chunk(b"tEXt", b"Comment\x00" + b"x" * padding) if padding else b""
+    payload = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr_data)
+        + ancillary
+        + chunk(b"IDAT", pixels)
+        + chunk(b"IEND", b"")
     )
-    payload = b"\x89PNG\r\n\x1a\n" + ihdr + b"\x00" * padding
     return "data:image/png;base64," + base64.b64encode(payload).decode()
 
 
@@ -57,7 +73,7 @@ def _limits(*, total: int) -> ProviderCallContext:
 
 
 def _provider(create: AsyncMock) -> OpenAICompatProvider:
-    provider = OpenAICompatProvider(api_key="fixture", default_model="fixture-model")
+    provider = OpenAICompatProvider(api_key="fixture", default_model="gpt-4o")
     provider._ensure_client = AsyncMock(return_value=SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
     ))
@@ -98,8 +114,8 @@ def _exact_context(provider: OpenAICompatProvider, *, messages: list[dict[str, o
 
 
 def test_measurement_uses_tokenizer_estimate_with_a_safety_margin() -> None:
-    identity = TransportIdentity("fixture", "fixture_transport", "fixture-model")
-    body = {"model": "fixture-model", "input": ["ASCII", "emoji: 😀"], "max_tokens": 1}
+    identity = TransportIdentity("openai", "openai_chat_completions", "gpt-4o")
+    body = {"model": "gpt-4o", "input": ["ASCII", "emoji: 😀"], "max_tokens": 1}
 
     measurement = measure_finalized_request(
         identity,
@@ -114,7 +130,7 @@ def test_measurement_uses_tokenizer_estimate_with_a_safety_margin() -> None:
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    exact = len(tiktoken.get_encoding("cl100k_base").encode(encoded.decode("utf-8")))
+    exact = len(tiktoken.get_encoding("o200k_base").encode(encoded.decode("utf-8")))
     assert measurement.source == "canonical_json_tiktoken"
     assert measurement.input_tokens >= exact
     assert measurement.input_tokens < len(encoded)
@@ -127,8 +143,8 @@ def test_measurement_fails_closed_to_the_byte_ceiling_without_a_tokenizer(
         raise RuntimeError("tokenizer unavailable")
 
     monkeypatch.setattr("nanobot.providers.request_budget.tiktoken.get_encoding", unavailable)
-    identity = TransportIdentity("fixture", "fixture_transport", "fixture-model")
-    body = {"model": "fixture-model", "input": ["plain text"], "max_tokens": 1}
+    identity = TransportIdentity("openai", "openai_chat_completions", "gpt-4o")
+    body = {"model": "gpt-4o", "input": ["plain text"], "max_tokens": 1}
 
     measurement = measure_finalized_request(
         identity,
@@ -148,15 +164,17 @@ def test_measurement_fails_closed_to_the_byte_ceiling_without_a_tokenizer(
 
 
 def test_inline_image_is_measured_as_vision_tokens_not_base64_wire_bytes() -> None:
-    identity = TransportIdentity("local", "openai_chat_completions", "vision-model")
-    image = _png_data_uri(1024, 1024)
+    identity = TransportIdentity("openai", "openai_chat_completions", "gpt-4o")
+    image = _png_data_uri(1024, 1024, padding=250_000)
     body = {
-        "model": "vision-model",
+        "model": "gpt-4o",
         "max_tokens": 1,
         "messages": [{"role": "user", "content": [
             {"type": "text", "text": "compare these images"},
             {"type": "image_url", "image_url": {"url": image}},
-            {"type": "image_url", "image_url": {"url": _png_data_uri(1024, 1024)}},
+            {"type": "image_url", "image_url": {
+                "url": _png_data_uri(1024, 1024, padding=250_000),
+            }},
         ]}],
     }
 
@@ -177,16 +195,17 @@ def test_inline_image_is_measured_as_vision_tokens_not_base64_wire_bytes() -> No
 
 
 def test_local_165k_window_accepts_long_text_with_parallel_images() -> None:
-    identity = TransportIdentity("local_manager", "openai_chat_completions_stream", "local-model")
+    model = "Qwen3.8-27B-UD-Q6_K_XL"
+    identity = TransportIdentity("local_manager", "openai_chat_completions_stream", model)
     content: list[dict[str, object]] = [
-        {"type": "text", "text": "project evidence " * 30_000},
+        {"type": "text", "text": "x" * 80_000},
     ]
     content.extend(
         {"type": "image_url", "image_url": {"url": _png_data_uri(1024, 1024)}}
         for _ in range(3)
     )
     body = {
-        "model": "local-model",
+        "model": model,
         "max_tokens": 8_192,
         "messages": [{"role": "user", "content": content}],
     }
@@ -202,13 +221,818 @@ def test_local_165k_window_accepts_long_text_with_parallel_images() -> None:
     )
 
     assert measurement.fits
-    assert 60_000 < measurement.input_tokens < 90_000
+    assert 80_000 < measurement.input_tokens < 90_000
+    assert measurement.source.startswith("canonical_json_utf8_bytes")
     assert "+inline_image" in measurement.source
+
+
+def test_known_openai_model_uses_its_selected_tiktoken_encoding() -> None:
+    text = "didSelectRowAtIndexPath" * 22_000
+    identity = TransportIdentity("openai", "openai_chat_completions", "gpt-4o")
+    body = {
+        "model": "gpt-4o",
+        "max_tokens": 8_192,
+        "messages": [{"role": "user", "content": text}],
+    }
+    assert len(tiktoken.get_encoding("o200k_base").encode(text)) == 132_000
+
+    with pytest.raises(FinalizedRequestBudgetExceeded) as exceeded:
+        validate_finalized_request(
+            identity,
+            body,
+            ProviderRequestLimits(total_tokens=128_000, completion_reserve_tokens=8_192,
+                                  safety_buffer_tokens=0),
+        )
+
+    assert exceeded.value.measurement is not None
+    assert exceeded.value.measurement.input_tokens >= 132_000
+    assert exceeded.value.measurement.source == "canonical_json_tiktoken"
+
+
+def test_unknown_local_model_uses_utf8_bytes_instead_of_guessed_encoding() -> None:
+    identity = TransportIdentity("local_manager", "openai_chat_completions", "custom-qwen-alias")
+    body = {
+        "model": "custom-qwen-alias",
+        "messages": [{"role": "user", "content": "x" * 480_000}],
+    }
+
+    with pytest.raises(FinalizedRequestBudgetExceeded) as exceeded:
+        validate_finalized_request(
+            identity, body,
+            ProviderRequestLimits(total_tokens=165_888, completion_reserve_tokens=8_192,
+                                  safety_buffer_tokens=1_024),
+        )
+
+    assert exceeded.value.measurement is not None
+    assert exceeded.value.measurement.input_tokens > 480_000
+    assert exceeded.value.measurement.source == "canonical_json_utf8_bytes"
+
+
+@pytest.mark.parametrize("model", ["gpt-4o-FAKE", "vendor/gpt-4o-compatible", "gpt-5.6-sol-fake"])
+def test_fake_and_aliased_model_names_fall_back_to_utf8_bytes(model: str) -> None:
+    identity = TransportIdentity("openai", "openai_chat_completions", model)
+    measurement = measure_finalized_request(
+        identity,
+        {"model": model, "messages": [{"role": "user", "content": "plain text"}]},
+        ProviderRequestLimits(total_tokens=100_000, safety_buffer_tokens=0),
+    )
+    assert measurement.source == "canonical_json_utf8_bytes"
+
+
+@pytest.mark.parametrize(
+    ("transport", "body"),
+    [
+        (
+            "anthropic_messages",
+            {
+                "messages": [{"role": "assistant", "content": [{
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "read_file",
+                    "input": {"image_url": {"url": "data:image/png;base64," + "A" * 100_000}},
+                }]}],
+            },
+        ),
+        (
+            "bedrock_converse",
+            {
+                "messages": [{"role": "user", "content": [{
+                    "toolResult": {"toolUseId": "call_1", "content": [{
+                        "json": {"image_url": "data:image/png;base64," + "A" * 100_000},
+                    }]},
+                }]}],
+            },
+        ),
+        (
+            "openai_chat_completions",
+            {
+                "messages": [{"role": "user", "content": [{
+                    "type": "text",
+                    "text": "data:image/png;base64," + "A" * 100_000,
+                    "image_url": {"url": "data:image/png;base64," + "A" * 100_000},
+                }]}],
+                "tools": [{"type": "function", "function": {
+                    "name": "tool", "parameters": {"default": {
+                        "image_url": "data:image/png;base64," + "A" * 100_000,
+                    }},
+                }}],
+                "metadata": {"image_url": "data:image/png;base64," + "A" * 100_000},
+            },
+        ),
+    ],
+)
+def test_media_lookalikes_in_tool_json_schemas_and_metadata_are_text(
+    transport: str, body: dict[str, object],
+) -> None:
+    identity = TransportIdentity("fixture", transport, "unknown-model")
+    body_with_model = {"model": "unknown-model", "max_tokens": 1, **body}
+
+    with pytest.raises(FinalizedRequestBudgetExceeded) as exceeded:
+        validate_finalized_request(
+            identity, body_with_model,
+            ProviderRequestLimits(total_tokens=10_000, completion_reserve_tokens=1,
+                                  safety_buffer_tokens=0),
+        )
+
+    assert exceeded.value.measurement is not None
+    assert "inline_image" not in exceeded.value.measurement.source
+
+
+def test_responses_function_output_image_is_counted_once_and_not_mutated() -> None:
+    image = _png_data_uri(1024, 1024, padding=16)
+    body = {
+        "model": "gpt-4o",
+        "input": [{
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "output": [{"type": "input_image", "image_url": image, "detail": "auto"}],
+        }],
+    }
+    original = json.loads(json.dumps(body))
+    identity = TransportIdentity("openai", "openai_responses", "gpt-4o")
+
+    canonical, supplemental, kinds = __import__(
+        "nanobot.providers.request_budget", fromlist=["_canonicalize_finalized_value"],
+    )._canonicalize_finalized_value(body, identity)
+
+    assert body == original
+    assert canonical["input"][0]["output"][0]["image_url"] == {
+        "__nanobot_inline_media__": "image",
+    }
+    assert 0 < supplemental < 2_000
+    assert kinds == frozenset({"inline_image"})
+
+
+@pytest.mark.asyncio
+async def test_responses_extra_body_nested_image_url_metadata_remains_text() -> None:
+    create = AsyncMock(return_value={"output": []})
+    nested_file_id = "x" * 200_000
+    image_url_metadata = {
+        "file_id": nested_file_id,
+        "url": "https://example.test/nested-lookalike.png",
+    }
+    overridden_input = [{
+        "type": "message",
+        "role": "user",
+        "content": [{
+            "type": "input_image",
+            "file_id": "file_parent_image",
+            "detail": "auto",
+            "image_url": image_url_metadata,
+        }],
+    }]
+    provider = OpenAICompatProvider(
+        api_key="fixture",
+        default_model="gpt-4o",
+        extra_body={"input": overridden_input},
+    )
+    provider._should_use_responses_api = lambda *_: True
+    provider._ensure_client = AsyncMock(return_value=SimpleNamespace(
+        responses=SimpleNamespace(create=create),
+    ))
+    messages = [{"role": "user", "content": "converted by the provider"}]
+    original_messages = json.loads(json.dumps(messages))
+    body = provider._build_responses_body(
+        messages, None, None, 1, 0.0, None, None,
+    )
+    original_body = json.loads(json.dumps(body))
+    identity = TransportIdentity("openai", "openai_responses", "gpt-4o")
+
+    with pytest.raises(FinalizedRequestBudgetExceeded) as exceeded:
+        await provider.chat_with_context(
+            provider_context=_limits(total=5_000),
+            messages=messages,
+            max_tokens=1,
+        )
+
+    canonical, supplemental, kinds = _canonicalize_finalized_value(body, identity)
+    canonical_image = canonical["input"][0]["content"][0]
+    parent_only = {
+        "model": "gpt-4o",
+        "input": [{"type": "message", "role": "user", "content": [{
+            "type": "input_image",
+            "file_id": "file_parent_image",
+            "detail": "auto",
+        }]}],
+    }
+    _canonical_parent_only, parent_image_units, _parent_kinds = (
+        _canonicalize_finalized_value(parent_only, identity)
+    )
+
+    assert body["input"] == overridden_input
+    assert canonical_image["file_id"] == {"__nanobot_inline_media__": "image"}
+    assert canonical_image["image_url"] == image_url_metadata
+    assert supplemental == parent_image_units
+    assert kinds == frozenset({"remote_image"})
+    assert exceeded.value.measurement is not None
+    assert exceeded.value.measurement.input_tokens > 4_999
+    assert body == original_body
+    assert messages == original_messages
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_file_id_metadata_remains_text_and_blocks_dispatch() -> None:
+    create = AsyncMock()
+    provider = _provider(create)
+    file_id = "file-metadata-" + "x" * 200_000
+    messages = [{"role": "user", "content": [{
+        "type": "image_url",
+        "image_url": {
+            "url": "https://example.test/supported-image.png",
+            "file_id": file_id,
+        },
+    }]}]
+    original = json.loads(json.dumps(messages))
+    body = provider._build_kwargs(messages, None, None, 1, 0.7, None, None)
+    identity = TransportIdentity("openai", "openai_chat_completions", "gpt-4o")
+    canonical, _supplemental, _kinds = _canonicalize_finalized_value(body, identity)
+    canonical_content = canonical["messages"][0]["content"][0]
+    assert canonical_content["image_url"]["file_id"] == file_id
+    assert messages == original
+
+    with pytest.raises(FinalizedRequestBudgetExceeded) as exceeded:
+        await provider.chat_with_context(
+            provider_context=_limits(total=10_000), messages=messages, max_tokens=1,
+        )
+
+    assert exceeded.value.measurement is not None
+    assert exceeded.value.measurement.input_tokens > 10_000
+    assert "remote_image" in exceeded.value.measurement.source
+    assert messages == original
+    create.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("model", "detail", "expected"),
+    [
+        ("gpt-4o", "low", 85),
+        ("gpt-4o", "high", 765),
+        ("gpt-4o", "auto", 765),
+        ("gpt-4o-mini", "low", 2_833),
+        ("gpt-4o-mini", "high", 25_501),
+        ("gpt-4o-mini", "auto", 25_501),
+        ("gpt-5.6-sol", "low", 308),
+        ("gpt-5.6-sol", "high", 3_000),
+        ("gpt-5.6-sol", "auto", 36_000),
+        ("gpt-5.5", "low", 308),
+        ("gpt-5.5", "high", 3_000),
+        ("gpt-5.4-mini", "low", 7_373),
+        ("gpt-5.4-mini", "high", 3_000),
+        ("gpt-5.4-mini", "original", 12_000),
+        ("gpt-4.1-mini", "high", 9_954),
+        ("gpt-4.1-nano", "auto", 73_800),
+    ],
+)
+def test_openai_model_and_detail_image_allowances(model: str, detail: str, expected: int) -> None:
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": [{
+            "type": "image_url", "image_url": {
+                "url": _png_data_uri(1024, 1024, 16), "detail": detail,
+            },
+        }]}],
+    }
+    canonical, supplemental, _ = __import__(
+        "nanobot.providers.request_budget", fromlist=["_canonicalize_finalized_value"],
+    )._canonicalize_finalized_value(
+        body, TransportIdentity("openai", "openai_chat_completions", model),
+    )
+    assert canonical["messages"][0]["content"][0]["image_url"]["url"] == {
+        "__nanobot_inline_media__": "image",
+    }
+    assert supplemental == expected
+
+
+def test_tile_model_handles_non_square_tiny_and_opaque_images_conservatively() -> None:
+    identity = TransportIdentity("openai", "openai_chat_completions", "gpt-4o")
+    non_square = {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": [{
+            "type": "image_url", "image_url": {
+                "url": _png_data_uri(1024, 512), "detail": "high",
+            },
+        }]}],
+    }
+    _canonical, non_square_tokens, _kinds = _canonicalize_finalized_value(
+        non_square, identity,
+    )
+    assert non_square_tokens == 425
+
+    tiny = {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": [{
+            "type": "image_url", "image_url": {"url": _png_data_uri(1, 1)},
+        }]}],
+    }
+    _canonical, tiny_tokens, _kinds = _canonicalize_finalized_value(tiny, identity)
+    assert tiny_tokens == 255
+
+    opaque = {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": [{
+            "type": "image_url", "image_url": {"url": "data:image/png;base64,b3BhcXVl"},
+        }]}],
+    }
+    _canonical, opaque_tokens, _kinds = _canonicalize_finalized_value(opaque, identity)
+    assert opaque_tokens == 1_445
+
+
+def test_dated_image_model_is_supported_and_malformed_date_alias_is_rejected() -> None:
+    dated_model = "gpt-4o-2024-08-06"
+    dated_body = {
+        "model": dated_model,
+        "messages": [{"role": "user", "content": [{
+            "type": "image_url", "image_url": {"url": _png_data_uri(1024, 1024)},
+        }]}],
+    }
+    _canonical, allowance, _kinds = _canonicalize_finalized_value(
+        dated_body,
+        TransportIdentity("openai", "openai_chat_completions", dated_model),
+    )
+    assert allowance == 765
+
+    invalid_model = "gpt-4o-2024-99-99"
+    with pytest.raises(FinalizedRequestBudgetExceeded):
+        validate_finalized_request(
+            TransportIdentity("openai", "openai_chat_completions", invalid_model),
+            {
+                "model": invalid_model,
+                "messages": [{"role": "user", "content": [{
+                    "type": "image_url", "image_url": {"url": _png_data_uri(64, 64)},
+                }]}],
+            },
+            ProviderRequestLimits(total_tokens=100_000, safety_buffer_tokens=0),
+        )
+
+
+@pytest.mark.parametrize(
+    ("model", "detail", "expected"),
+    [
+        ("claude-sonnet-4-6", None, 1_600),
+        ("claude-opus-4-7", None, 4_816),
+        ("claude-opus-4-7", "high", 4_816),
+    ],
+)
+def test_claude_default_and_high_resolution_bounds(
+    model: str, detail: str | None, expected: int,
+) -> None:
+    encoded_image = _png_data_uri(512, 512).split(",", 1)[1]
+    block: dict[str, object] = {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": encoded_image,
+        },
+    }
+    if detail is not None:
+        block["detail"] = detail
+    canonical, supplemental, kinds = _canonicalize_finalized_value(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": [block]}],
+        },
+        TransportIdentity("anthropic", "anthropic_messages", model),
+    )
+    assert canonical["messages"][0]["content"][0]["source"]["data"] == {
+        "__nanobot_inline_media__": "image",
+    }
+    assert supplemental == expected
+    assert kinds == frozenset({"inline_image"})
+
+
+def test_bedrock_default_claude_opus_47_supports_binary_images() -> None:
+    encoded_image = _png_data_uri(512, 512).split(",", 1)[1]
+    payload = base64.b64decode(encoded_image)
+    body = {
+        "modelId": "global.anthropic.claude-opus-4-7",
+        "messages": [{"role": "user", "content": [{
+            "image": {"format": "png", "source": {"bytes": payload}},
+        }]}],
+    }
+    _canonical, supplemental, kinds = _canonicalize_finalized_value(
+        body,
+        TransportIdentity("bedrock", "bedrock_converse", "global.anthropic.claude-opus-4-7"),
+    )
+    assert supplemental == 4_816
+    assert kinds == frozenset({"bedrock_binary_media"})
+
+
+def test_six_high_detail_gpt4o_mini_images_exceed_128k() -> None:
+    model = "gpt-4o-mini"
+    image = _png_data_uri(1024, 1024)
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": [
+            {
+                "type": "image_url",
+                "image_url": {"url": image, "detail": "high"},
+            }
+            for _ in range(6)
+        ]}],
+    }
+    identity = TransportIdentity("openai", "openai_chat_completions", model)
+    measured = measure_finalized_request(
+        identity,
+        body,
+        ProviderRequestLimits(total_tokens=200_000, safety_buffer_tokens=0),
+    )
+    assert measured.input_tokens >= 6 * 25_501
+    assert "inline_image" in measured.source
+
+    with pytest.raises(FinalizedRequestBudgetExceeded) as exceeded:
+        validate_finalized_request(
+            identity,
+            body,
+            ProviderRequestLimits(total_tokens=128_000, safety_buffer_tokens=0),
+        )
+    assert exceeded.value.measurement is not None
+    assert exceeded.value.measurement.input_tokens >= 153_006
+
+
+@pytest.mark.asyncio
+async def test_chat_block_detail_cannot_lower_image_allowance_through_provider_converter() -> None:
+    image = _png_data_uri(1024, 1024)
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(
+            message=SimpleNamespace(content="ok", tool_calls=None), finish_reason="stop",
+        )],
+        usage=None,
+    )
+    parent_create = AsyncMock(return_value=response)
+    parent_provider = OpenAICompatProvider(
+        api_key="fixture", default_model="gpt-4o-mini",
+    )
+    parent_provider._ensure_client = AsyncMock(return_value=SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=parent_create)),
+    ))
+    parent_detail_messages = [{"role": "user", "content": [{
+        "type": "image_url",
+        "image_url": {"url": image},
+        "detail": "low",
+    } for _ in range(6)]}]
+    parent_body = parent_provider._build_kwargs(
+        parent_detail_messages, None, None, 1, 0.7, None, None,
+    )
+    identity = TransportIdentity("openai", "openai_chat_completions", "gpt-4o-mini")
+    parent_measurement = measure_finalized_request(
+        identity,
+        parent_body,
+        ProviderRequestLimits(total_tokens=128_000, safety_buffer_tokens=0),
+    )
+
+    with pytest.raises(FinalizedRequestBudgetExceeded):
+        await parent_provider.chat_with_context(
+            provider_context=_limits(total=128_000),
+            messages=parent_detail_messages,
+            max_tokens=1,
+        )
+
+    nested_create = AsyncMock(return_value=response)
+    nested_provider = OpenAICompatProvider(
+        api_key="fixture", default_model="gpt-4o-mini",
+    )
+    nested_provider._ensure_client = AsyncMock(return_value=SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=nested_create)),
+    ))
+    nested_detail_messages = [{"role": "user", "content": [{
+        "type": "image_url",
+        "image_url": {"url": image, "detail": "low"},
+    } for _ in range(6)]}]
+    nested_body = nested_provider._build_kwargs(
+        nested_detail_messages, None, None, 1, 0.7, None, None,
+    )
+    nested_measurement = measure_finalized_request(
+        identity,
+        nested_body,
+        ProviderRequestLimits(total_tokens=128_000, safety_buffer_tokens=0),
+    )
+    await nested_provider.chat_with_context(
+        provider_context=_limits(total=128_000),
+        messages=nested_detail_messages,
+        max_tokens=1,
+    )
+
+    assert parent_measurement.input_tokens >= 6 * 25_501
+    assert not parent_measurement.fits
+    assert parent_create.await_count == 0
+    assert nested_measurement.fits
+    assert nested_measurement.input_tokens >= 6 * 2_833
+    assert nested_measurement.input_tokens < 20_000
+    nested_create.assert_awaited_once()
+
+
+def test_image_allowance_limit_passes_exactly_and_rejects_one_token_under() -> None:
+    model = "gpt-4o-mini"
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": [{
+            "type": "image_url",
+            "image_url": {"url": _png_data_uri(1024, 1024), "detail": "high"},
+        }]}],
+    }
+    identity = TransportIdentity("openai", "openai_chat_completions", model)
+    measurement = measure_finalized_request(
+        identity,
+        body,
+        ProviderRequestLimits(total_tokens=100_000, safety_buffer_tokens=0),
+    )
+    assert validate_finalized_request(
+        identity,
+        body,
+        ProviderRequestLimits(total_tokens=measurement.input_tokens, safety_buffer_tokens=0),
+    ).fits
+    with pytest.raises(FinalizedRequestBudgetExceeded) as exceeded:
+        validate_finalized_request(
+            identity,
+            body,
+            ProviderRequestLimits(total_tokens=measurement.input_tokens - 1,
+                                  safety_buffer_tokens=0),
+        )
+    assert exceeded.value.measurement is not None
+    assert exceeded.value.measurement.over_by == 1
+
+
+def test_bedrock_tool_result_json_is_text_and_does_not_open_nested_media() -> None:
+    provider = BedrockProvider(region="fixture", client=SimpleNamespace())
+    messages = [{
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": [{"json": {
+            "document": "normal document text",
+            "metadata": {
+                "image_url": {"url": "data:image/png;base64," + "A" * 2_000},
+            },
+        }}],
+    }]
+    body = provider._build_kwargs(messages, None, None, 1, 0.7, None, None)
+    identity = TransportIdentity("bedrock", "bedrock_converse", str(body["modelId"]))
+    measurement = measure_finalized_request(
+        identity,
+        body,
+        ProviderRequestLimits(total_tokens=10_000, safety_buffer_tokens=0),
+    )
+    assert measurement.fits
+    assert "bedrock_binary_media" not in measurement.source
+    assert "inline_image" not in measurement.source
+    assert "remote_image" not in measurement.source
+    assert "canonical_json_utf8_bytes" in measurement.source
+    assert measurement.input_tokens > 2_000
+    result_json = body["messages"][0]["content"][0]["toolResult"]["content"][0]["json"]
+    assert result_json["document"] == "normal document text"
+    assert result_json["metadata"]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_anthropic_tool_result_nested_image_is_counted_once_and_input_is_preserved() -> None:
+    provider = AnthropicProvider(api_key="fixture", default_model="claude-sonnet-4-6")
+    image = _png_data_uri(64, 64)
+    messages = [{
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": [{"type": "image_url", "image_url": {"url": image}}],
+    }]
+    original = json.loads(json.dumps(messages))
+    body = provider._build_kwargs(messages, None, None, 1, 0.7, None, None)
+    _canonical, supplemental, kinds = _canonicalize_finalized_value(
+        body,
+        TransportIdentity("anthropic", "anthropic_messages", str(body["model"])),
+    )
+    assert messages == original
+    assert supplemental == 1_600
+    assert kinds == frozenset({"inline_image"})
+
+
+def test_bedrock_tool_result_nested_image_is_counted_once_and_input_is_preserved() -> None:
+    provider = BedrockProvider(region="fixture", client=SimpleNamespace())
+    messages = [{
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": [{"type": "image_url", "image_url": {
+            "url": _png_data_uri(64, 64),
+        }}],
+    }]
+    original = json.loads(json.dumps(messages))
+    body = provider._build_kwargs(messages, None, None, 1, 0.7, None, None)
+    _canonical, supplemental, kinds = _canonicalize_finalized_value(
+        body,
+        TransportIdentity("bedrock", "bedrock_converse", str(body["modelId"])),
+    )
+    assert messages == original
+    assert supplemental == 4_816
+    assert kinds == frozenset({"bedrock_binary_media"})
+
+
+@pytest.mark.asyncio
+async def test_anthropic_tool_input_lookalike_blocks_dispatch_as_text() -> None:
+    create = AsyncMock()
+    provider = AnthropicProvider(api_key="fixture", default_model="claude-sonnet-4-6")
+    provider._client = SimpleNamespace(messages=SimpleNamespace(create=create))
+    large_uri = "data:image/png;base64," + "A" * 100_000
+    messages = [
+        {"role": "user", "content": "inspect"},
+        {"role": "assistant", "content": None, "tool_calls": [{
+            "id": "call_1",
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "arguments": json.dumps({"image_url": {"url": large_uri}}),
+            },
+        }]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "done"},
+    ]
+
+    with pytest.raises(FinalizedRequestBudgetExceeded) as exceeded:
+        await provider.chat_with_context(
+            provider_context=_limits(total=10_000),
+            messages=messages,
+            max_tokens=1,
+        )
+    assert exceeded.value.measurement is not None
+    assert exceeded.value.measurement.input_tokens > 100_000
+    assert "inline_image" not in exceeded.value.measurement.source
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bedrock_tool_json_data_uri_blocks_dispatch_as_text() -> None:
+    client = SimpleNamespace(converse=MagicMock())
+    provider = BedrockProvider(region="fixture", client=client)
+    large_uri = "data:image/png;base64," + "A" * 100_000
+
+    with pytest.raises(FinalizedRequestBudgetExceeded) as exceeded:
+        await provider.chat_with_context(
+            provider_context=_limits(total=10_000),
+            messages=[{
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": {"image_url": large_uri},
+            }],
+            max_tokens=1,
+        )
+    assert exceeded.value.measurement is not None
+    assert exceeded.value.measurement.input_tokens > 100_000
+    assert "inline_image" not in exceeded.value.measurement.source
+    assert client.converse.call_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_type", ["input_audio", "input_video", "input_file"])
+async def test_unbounded_openai_media_blocks_never_dispatch(media_type: str) -> None:
+    create = AsyncMock()
+    provider = _provider(create)
+
+    with pytest.raises(FinalizedRequestBudgetExceeded):
+        await provider.chat_with_context(
+            provider_context=_limits(total=100_000),
+            messages=[{"role": "user", "content": [{"type": media_type, "data": "payload"}]}],
+            max_tokens=1,
+        )
+    create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("media_key", ["audio", "video", "document"])
+async def test_unbounded_bedrock_media_blocks_never_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    media_key: str,
+) -> None:
+    client = SimpleNamespace(converse=MagicMock())
+    provider = BedrockProvider(region="fixture", client=client)
+    monkeypatch.setattr(
+        provider,
+        "_build_kwargs",
+        lambda *_args: {
+            "modelId": "global.anthropic.claude-opus-4-7",
+            "messages": [{"role": "user", "content": [{media_key: {"format": "fixture"}}]}],
+        },
+    )
+
+    with pytest.raises(FinalizedRequestBudgetExceeded):
+        await provider.chat_with_context(
+            provider_context=_limits(total=100_000),
+            messages=[{"role": "user", "content": "unbounded media"}],
+            max_tokens=1,
+        )
+    assert client.converse.call_count == 0
+
+
+@pytest.mark.parametrize("detail", ["original", "ultra", ""])
+def test_unsupported_image_detail_fails_closed(detail: str) -> None:
+    body = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": [{
+            "type": "image_url", "image_url": {
+                "url": _png_data_uri(64, 64, 16), "detail": detail,
+            },
+        }]}],
+    }
+    with pytest.raises(FinalizedRequestBudgetExceeded):
+        validate_finalized_request(
+            TransportIdentity("openai", "openai_chat_completions", "gpt-4o-mini"),
+            body, ProviderRequestLimits(total_tokens=100_000, safety_buffer_tokens=0),
+        )
+
+
+@pytest.mark.asyncio
+async def test_registered_codex_default_dispatches_image_under_its_model_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    send = AsyncMock(return_value=LLMResponse(content="ok"))
+    monkeypatch.setattr(
+        codex_provider_module, "get_codex_token",
+        lambda **_kwargs: SimpleNamespace(account_id="fixture", access="fixture"),
+    )
+    monkeypatch.setattr(codex_provider_module, "_request_codex", send)
+    provider = OpenAICodexProvider()
+    image = _png_data_uri(512, 512)
+
+    await provider.chat_with_context(
+        provider_context=_limits(total=100_000),
+        messages=[{"role": "user", "content": [{
+            "type": "image_url", "image_url": {"url": image},
+        }]}],
+        max_tokens=1,
+    )
+
+    send.assert_awaited_once()
+    body = send.await_args.args[2]
+    assert body["model"] == "gpt-5.6-sol"
+    measurement = measure_finalized_request(
+        TransportIdentity("openai_codex", "openai_codex_responses", "gpt-5.6-sol"),
+        body,
+        ProviderRequestLimits(total_tokens=100_000, safety_buffer_tokens=0),
+    )
+    assert measurement.fits
+    assert "inline_image" in measurement.source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model", "expected_endpoint"),
+    [
+        ("github-copilot/gpt-4.1", "chat"),
+        ("github-copilot/gpt-5.4-mini", "responses"),
+    ],
+)
+async def test_registered_copilot_defaults_dispatch_images_with_model_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+    model: str,
+    expected_endpoint: str,
+) -> None:
+    chat_create = AsyncMock(return_value=SimpleNamespace(
+        choices=[SimpleNamespace(
+            message=SimpleNamespace(content="ok", tool_calls=None), finish_reason="stop",
+        )],
+        usage=None,
+    ))
+    response_create = AsyncMock(return_value={
+        "output": [{"type": "message", "role": "assistant", "content": [
+            {"type": "output_text", "text": "ok"},
+        ]}],
+        "status": "completed",
+        "usage": {},
+    })
+    client = SimpleNamespace(
+        api_key="fixture",
+        chat=SimpleNamespace(completions=SimpleNamespace(create=chat_create)),
+        responses=SimpleNamespace(create=response_create),
+    )
+    provider = GitHubCopilotProvider(default_model=model)
+    monkeypatch.setattr(provider, "_refresh_client_api_key", AsyncMock())
+    provider._ensure_client = AsyncMock(return_value=client)
+    image = _png_data_uri(512, 512)
+
+    await provider.chat_with_context(
+        provider_context=_limits(total=100_000),
+        messages=[{"role": "user", "content": [{
+            "type": "image_url", "image_url": {"url": image},
+        }]}],
+        max_tokens=1,
+    )
+
+    if expected_endpoint == "chat":
+        chat_create.assert_awaited_once()
+        response_create.assert_not_awaited()
+        body = chat_create.await_args.kwargs
+        transport = "openai_chat_completions"
+    else:
+        response_create.assert_awaited_once()
+        chat_create.assert_not_awaited()
+        body = response_create.await_args.kwargs
+        transport = "openai_responses"
+    measurement = measure_finalized_request(
+        TransportIdentity("github_copilot", transport, str(body["model"])),
+        body,
+        ProviderRequestLimits(total_tokens=100_000, safety_buffer_tokens=0),
+    )
+    assert measurement.fits
+    assert "inline_image" in measurement.source
 
 
 def test_text_embedded_media_data_uri_still_counts_as_text_tokens() -> None:
     identity = TransportIdentity("local", "openai_chat_completions", "text-model")
-    image = _png_data_uri(1024, 1024)
+    image = _png_data_uri(1024, 1024, padding=100_000)
     body = {
         "model": "text-model",
         "max_tokens": 1,
@@ -228,9 +1052,9 @@ def test_text_embedded_media_data_uri_still_counts_as_text_tokens() -> None:
 
 
 def test_remote_image_uses_a_bounded_vision_allowance() -> None:
-    identity = TransportIdentity("local", "openai_chat_completions", "vision-model")
+    identity = TransportIdentity("openai", "openai_chat_completions", "gpt-4o-mini")
     body = {
-        "model": "vision-model",
+        "model": "gpt-4o-mini",
         "max_tokens": 1,
         "messages": [{"role": "user", "content": [
             {"type": "image_url", "image_url": {"url": "https://example.test/image.png"}},
@@ -244,16 +1068,16 @@ def test_remote_image_uses_a_bounded_vision_allowance() -> None:
     )
 
     assert not measurement.fits
-    assert 16_000 < measurement.input_tokens < 17_000
+    assert 48_000 < measurement.input_tokens < 50_000
     assert "remote_image" in measurement.source
 
 
 def test_anthropic_image_sources_use_a_bounded_vision_allowance() -> None:
-    identity = TransportIdentity("anthropic", "anthropic_messages", "vision-model")
+    identity = TransportIdentity("anthropic", "anthropic_messages", "claude-sonnet-4-6")
     inline = _png_data_uri(1024, 1024)
     encoded = inline.split(";base64,", 1)[1]
     inline_body = {
-        "model": "vision-model",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 1,
         "messages": [{"role": "user", "content": [{
             "type": "image",
@@ -270,7 +1094,7 @@ def test_anthropic_image_sources_use_a_bounded_vision_allowance() -> None:
     assert "inline_image" in inline_measurement.source
 
     remote_body = {
-        "model": "vision-model",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 1,
         "messages": [{"role": "user", "content": [{
             "type": "image",
@@ -280,7 +1104,7 @@ def test_anthropic_image_sources_use_a_bounded_vision_allowance() -> None:
     remote_measurement = measure_finalized_request(
         identity,
         remote_body,
-        ProviderRequestLimits(total_tokens=16_000, safety_buffer_tokens=0),
+        ProviderRequestLimits(total_tokens=1_600, completion_reserve_tokens=0, safety_buffer_tokens=0),
     )
     assert not remote_measurement.fits
     assert "remote_image" in remote_measurement.source

@@ -1,6 +1,10 @@
 import base64
 import struct
+import subprocess
+import sys
 import zlib
+
+import pytest
 
 from nanobot.utils.media_tokens import (
     MAX_AUDIO_TOKENS,
@@ -16,15 +20,24 @@ from nanobot.utils.media_tokens import (
 
 
 def png_payload(width: int, height: int, padding: int = 0) -> bytes:
-    signature = b"\x89PNG\r\n\x1a\n"
+    def chunk(name: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + name
+            + data
+            + struct.pack(">I", zlib.crc32(name + data))
+        )
+
     ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    ihdr = (
-        struct.pack(">I", len(ihdr_data))
-        + b"IHDR"
-        + ihdr_data
-        + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr_data))
+    pixels = zlib.compress((b"\x00" + b"\x00" * (width * 3)) * height)
+    ancillary = chunk(b"tEXt", b"Comment\x00" + b"x" * padding) if padding else b""
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr_data)
+        + ancillary
+        + chunk(b"IDAT", pixels)
+        + chunk(b"IEND", b"")
     )
-    return signature + ihdr + b"\x00" * padding
 
 
 def data_uri(payload: bytes, mime: str = "image/png") -> str:
@@ -88,3 +101,39 @@ def test_media_blocks_cover_chat_responses_and_anthropic_shapes() -> None:
         "image": {"source": {"bytes": png_payload(1024, 1024)}},
     })[1] == "image"
     assert media_block_tokens({"type": "text", "text": "plain"}) is None
+
+
+def test_data_uri_header_parser_handles_valid_and_malformed_headers_promptly() -> None:
+    snippets = [
+        "from nanobot.utils.media_tokens import inline_media_tokens",
+        "import sys, time",
+        "started = time.monotonic()",
+        "cases = [",
+        "'data:image/png;charset=utf-8;name=example;base64,iVBORw0KGgo=',",
+        "'data:image/png' + ';' * 25,",
+        "'data:image/png;' + ';x' * 100000,",
+        "]",
+        "for value in cases: inline_media_tokens(value)",
+        "assert time.monotonic() - started < 1.5",
+    ]
+    subprocess.run(
+        [sys.executable, "-c", "\n".join(snippets)],
+        check=True,
+        timeout=2,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("header", "expected"),
+    [
+        ("data:image/png;base64,", "image"),
+        ("data:image/png;charset=utf-8;base64,", "image"),
+        ("data:audio/wav;rate=16000;base64,", "audio"),
+        ("data:video/mp4;codecs=h264;base64,", "video"),
+    ],
+)
+def test_data_uri_header_parameters_are_parsed_once(header: str, expected: str) -> None:
+    assert inline_media_tokens(header + "aGVsbG8=") is not None
+    assert inline_media_tokens(header + "aGVsbG8=")[1] == expected

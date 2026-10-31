@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from nanobot.providers.base import LLMUsage
 
 _TOOLS_TOKEN_CACHE_MAX_ENTRIES = 64
-_TOOLS_TOKEN_CACHE: dict[int, tuple[tuple[int, ...], dict[bool, int]]] = {}
+_TOOLS_TOKEN_CACHE: dict[tuple[int, str], tuple[tuple[int, ...], dict[bool, int]]] = {}
 _T = TypeVar("_T")
 
 
@@ -105,35 +105,36 @@ def sanitize_surrogates_deep(value: Any) -> Any:
     return value
 
 
-@lru_cache(maxsize=1)
-def _get_token_encoding() -> Any:
-    return tiktoken.get_encoding("cl100k_base")
+@lru_cache(maxsize=8)
+def _get_token_encoding(encoding_name: str = "cl100k_base") -> Any:
+    return tiktoken.get_encoding(encoding_name)
 
 
 def _cache_tools_token_count(
-    tools_id: int,
+    cache_key: tuple[int, str],
     fingerprint: tuple[int, ...],
     counts: dict[bool, int],
 ) -> None:
     if (
-        tools_id not in _TOOLS_TOKEN_CACHE
+        cache_key not in _TOOLS_TOKEN_CACHE
         and len(_TOOLS_TOKEN_CACHE) >= _TOOLS_TOKEN_CACHE_MAX_ENTRIES
     ):
         _TOOLS_TOKEN_CACHE.pop(next(iter(_TOOLS_TOKEN_CACHE)))
-    _TOOLS_TOKEN_CACHE[tools_id] = (fingerprint, counts)
+    _TOOLS_TOKEN_CACHE[cache_key] = (fingerprint, counts)
 
 
 def _estimate_tools_tokens(
     enc: Any,
     tools: list[dict[str, Any]],
     *,
+    encoding_name: str,
     leading_separator: bool,
 ) -> int:
     """Estimate stable tool definition tokens without re-encoding every loop."""
     # ToolRegistry keeps the returned definitions list alive until the registry changes.
-    tools_id = id(tools)
+    cache_key = (id(tools), encoding_name)
     fingerprint = tuple(id(tool) for tool in tools)
-    cached = _TOOLS_TOKEN_CACHE.get(tools_id)
+    cached = _TOOLS_TOKEN_CACHE.get(cache_key)
     if cached and cached[0] == fingerprint:
         token_count = cached[1].get(leading_separator)
         if token_count is not None:
@@ -147,7 +148,7 @@ def _estimate_tools_tokens(
         rendered = "\n" + rendered
     token_count = len(enc.encode(rendered))
     counts[leading_separator] = token_count
-    _cache_tools_token_count(tools_id, fingerprint, counts)
+    _cache_tools_token_count(cache_key, fingerprint, counts)
     return token_count
 
 
@@ -728,6 +729,8 @@ def build_assistant_message(
 def _estimate_prompt_tokens_with_source(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
+    model: str | None = None,
+    provider_name: str = "",
 ) -> tuple[int, str]:
     """Estimate prompt tokens and identify the counter used.
 
@@ -767,13 +770,34 @@ def _estimate_prompt_tokens_with_source(
 
     message_payload = "\n".join(parts)
     per_message_overhead = len(messages) * 4
+    counter_source = "tiktoken"
     try:
-        enc = _get_token_encoding()
+        if model is None:
+            encoding_name = "cl100k_base"
+        else:
+            from nanobot.providers.request_budget import known_tiktoken_encoding
+
+            encoding_name = known_tiktoken_encoding(provider_name, model)
+        if encoding_name is None:
+            # Preserve the historical logical-pressure estimate for arbitrary
+            # models, but label it as a compatibility estimate rather than the
+            # selected model's authoritative tokenizer. Final dispatch limits
+            # retain their stricter UTF-8 byte fallback for unknown names.
+            encoding_name = "cl100k_base"
+            counter_source = "tiktoken_compatibility"
+        enc = _get_token_encoding(encoding_name)
         tool_tokens = (
-            _estimate_tools_tokens(enc, tools, leading_separator=bool(parts)) if tools else 0
+            _estimate_tools_tokens(
+                enc, tools, encoding_name=encoding_name, leading_separator=bool(parts),
+            )
+            if tools
+            else 0
         )
         message_tokens = len(enc.encode(message_payload)) if message_payload else 0
-        return message_tokens + tool_tokens + per_message_overhead + media_tokens, "tiktoken"
+        return (
+            message_tokens + tool_tokens + per_message_overhead + media_tokens,
+            counter_source,
+        )
     except Exception:
         tool_payload = (
             ("\n" if message_payload else "") + json.dumps(tools, ensure_ascii=False)
@@ -860,7 +884,12 @@ def estimate_prompt_tokens_chain(
             tokens, source = cast(tuple[object, object], provider_counter(messages, tools, model))
             if isinstance(tokens, (int, float)) and tokens > 0:
                 return int(tokens), str(source or "provider_counter")
-    estimated, source = _estimate_prompt_tokens_with_source(messages, tools)
+    provider_name = getattr(provider, "provider_name", "")
+    if not isinstance(provider_name, str):
+        provider_name = ""
+    estimated, source = _estimate_prompt_tokens_with_source(
+        messages, tools, model, provider_name,
+    )
     if estimated > 0:
         return int(estimated), source
     return 0, "none"

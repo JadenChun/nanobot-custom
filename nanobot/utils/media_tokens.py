@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import base64
 import math
-import re
 import struct
 from collections.abc import Mapping
+from datetime import date
 from typing import cast
 
-# Qwen2/2.5/3-VL use 28x28 merged patches and cap an image at 16,384 visual
-# tokens.  Other hosted vision APIs stay below that ceiling for a single image.
+# These generic values are retained for logical estimates that do not have a
+# selected transport identity. Final request measurement uses model policies
+# below and never treats these as universal provider limits.
 MAX_IMAGE_TOKENS = 16_384
 MAX_AUDIO_TOKENS = 8_192
 MAX_VIDEO_TOKENS = 32_768
@@ -33,10 +34,7 @@ _AUDIO_TYPES = frozenset({"audio", "audio_url", "input_audio", "output_audio"})
 _VIDEO_TYPES = frozenset({"video", "video_url", "input_video", "output_video"})
 _DOCUMENT_TYPES = frozenset({"document", "input_file", "file"})
 
-_DATA_URI_RE = re.compile(
-    r"^data:(?P<mime>[^;,]+)(?P<params>(?:;[^,]*)*);base64,(?P<data>.*)$",
-    re.IGNORECASE | re.DOTALL,
-)
+_MAX_DATA_URI_HEADER_CHARS = 4_096
 _MAX_HEADER_BASE64_CHARS = 512 * 1024
 _SOF_MARKERS = frozenset(
     {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
@@ -148,6 +146,190 @@ def estimate_image_tokens(width: int, height: int) -> int:
     )
 
 
+def _valid_dated_model(model: str, bases: tuple[str, ...]) -> str | None:
+    """Return a canonical base only for a complete supported dated name."""
+    for base in bases:
+        prefix = f"{base}-"
+        if not model.startswith(prefix):
+            continue
+        suffix = model[len(prefix):]
+        try:
+            date.fromisoformat(suffix)
+        except ValueError:
+            continue
+        if len(suffix) == 10:
+            return base
+    return None
+
+
+def _selected_model(provider: str, model: str) -> str:
+    """Strip only routing prefixes owned by the selected provider."""
+    lowered = model.strip().lower()
+    prefixes: tuple[str, ...] = ()
+    if provider == "openai_codex":
+        prefixes = ("openai-codex/", "openai_codex/")
+    elif provider == "github_copilot":
+        prefixes = ("github-copilot/",)
+    elif provider == "bedrock":
+        prefixes = (
+            "global.anthropic.", "anthropic.", "us.anthropic.", "eu.anthropic.",
+            "apac.anthropic.",
+        )
+    for prefix in prefixes:
+        if lowered.startswith(prefix):
+            return lowered[len(prefix):]
+    return lowered
+
+
+def _openai_image_model(provider: str, model: str) -> str | None:
+    selected = _selected_model(provider, model)
+    openai_models = (
+        "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1",
+        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini",
+        "gpt-5.4",
+    )
+    if selected in openai_models:
+        return selected
+    return _valid_dated_model(selected, openai_models)
+
+
+def _claude_image_model(provider: str, model: str) -> str | None:
+    selected = _selected_model(provider, model)
+    claude_bases = tuple(
+        f"claude-{family}-4-{version}"
+        for version in ("5", "6")
+        for family in ("haiku", "sonnet", "opus")
+    ) + ("claude-opus-4-7",)
+    if selected in claude_bases:
+        return selected
+    for base in claude_bases:
+        suffix = selected[len(base):] if selected.startswith(f"{base}-") else ""
+        if not suffix:
+            continue
+        dated = suffix.removeprefix("-").removesuffix("-v1:0")
+        if len(dated) == 8 and dated.isdigit():
+            try:
+                date.fromisoformat(f"{dated[:4]}-{dated[4:6]}-{dated[6:8]}")
+            except ValueError:
+                continue
+            return base
+        if suffix == "-v1:0":
+            return base
+    return None
+
+
+def model_image_tokens(
+    provider: str,
+    model: str,
+    dimensions: tuple[int, int] | None,
+    detail: str | None,
+    *,
+    remote: bool = False,
+) -> int:
+    """Return a bounded image allowance for one selected provider/model.
+
+    A missing dimension pair means the image is remote, opaque, or a file
+    reference. Policies either provide a documented upper bound or reject it.
+    """
+    selected = _selected_model(provider, model)
+    effective_detail = "auto" if detail is None else detail.strip().lower()
+    if detail is not None and effective_detail not in {"low", "high", "auto", "original"}:
+        raise ValueError("unsupported image detail")
+
+    if provider == "local_manager" and selected == "qwen3.8-27b-ud-q6_k_xl":
+        if effective_detail not in {"low", "high", "auto"}:
+            raise ValueError("unsupported local image detail")
+        if dimensions is None:
+            raise ValueError("local image dimensions are unavailable")
+        width, height = dimensions
+        if width <= 0 or height <= 0:
+            raise ValueError("local image dimensions are invalid")
+        patches = math.ceil(width / 28) * math.ceil(height / 28)
+        area = math.ceil(width * height / 750)
+        return max(_MIN_IMAGE_TOKENS, patches, area) + _IMAGE_FRAMING_TOKENS
+
+    openai_model = _openai_image_model(provider, model)
+    if openai_model is not None:
+        if openai_model in {"gpt-4o", "gpt-4o-mini"}:
+            base, tile = (85, 170) if openai_model == "gpt-4o" else (2_833, 5_667)
+            if effective_detail == "low":
+                return base
+            if effective_detail not in {"high", "auto"}:
+                raise ValueError("unsupported image detail for selected model")
+            if dimensions is None or remote:
+                return base + 8 * tile
+            width, height = dimensions
+            if width <= 0 or height <= 0:
+                raise ValueError("image dimensions are invalid")
+            scale = min(1.0, 2_048 / max(width, height))
+            scaled_width = max(1, math.ceil(width * scale))
+            scaled_height = max(1, math.ceil(height * scale))
+            short_edge = min(scaled_width, scaled_height)
+            scale = min(1.0, 768 / short_edge)
+            scaled_width = max(1, math.ceil(scaled_width * scale))
+            scaled_height = max(1, math.ceil(scaled_height * scale))
+            tile_count = math.ceil(scaled_width / 512) * math.ceil(scaled_height / 512)
+            return base + tile_count * tile
+
+        if openai_model.startswith(("gpt-5.6-", "gpt-5.5")):
+            if effective_detail == "low":
+                return 308
+            if effective_detail == "high":
+                return 3_000
+            if effective_detail in {"auto", "original"}:
+                return 36_000 if openai_model.startswith("gpt-5.6-") else 12_000
+            raise ValueError("unsupported image detail for selected model")
+        if openai_model in {"gpt-5.4", "gpt-5.4-mini"}:
+            if effective_detail == "low":
+                return 7_373
+            if effective_detail in {"high", "auto"}:
+                return 3_000
+            if effective_detail == "original":
+                return 12_000
+            raise ValueError("unsupported image detail for selected model")
+        if openai_model == "gpt-4.1-mini":
+            if effective_detail in {"low", "high", "auto"}:
+                return 9_954
+            raise ValueError("unsupported image detail for selected model")
+        if openai_model == "gpt-4.1-nano":
+            if effective_detail in {"low", "high", "auto"}:
+                return 73_800
+            raise ValueError("unsupported image detail for selected model")
+        if openai_model == "gpt-4.1":
+            # The base model follows the documented 4o high-resolution tile rule.
+            base, tile = 85, 170
+            if effective_detail == "low":
+                return base
+            if effective_detail not in {"high", "auto"}:
+                raise ValueError("unsupported image detail for selected model")
+            if dimensions is None or remote:
+                return base + 8 * tile
+            width, height = dimensions
+            if width <= 0 or height <= 0:
+                raise ValueError("image dimensions are invalid")
+            scale = min(1.0, 2_048 / max(width, height))
+            width = max(1, math.ceil(width * scale))
+            height = max(1, math.ceil(height * scale))
+            scale = min(1.0, 768 / min(width, height))
+            width = max(1, math.ceil(width * scale))
+            height = max(1, math.ceil(height * scale))
+            return base + math.ceil(width / 512) * math.ceil(height / 512) * tile
+
+    claude_model = _claude_image_model(provider, model)
+    if claude_model is not None:
+        if claude_model == "claude-opus-4-7":
+            if effective_detail in {"auto", "high"}:
+                return 4_784 + _IMAGE_FRAMING_TOKENS
+            if effective_detail == "standard":
+                return 1_568 + _IMAGE_FRAMING_TOKENS
+            raise ValueError("unsupported image detail for selected Claude model")
+        if effective_detail in {"auto", "standard"}:
+            return 1_568 + _IMAGE_FRAMING_TOKENS
+        raise ValueError("unsupported image detail for selected Claude model")
+
+    raise ValueError("no image accounting policy for selected model")
+
+
 def unknown_image_tokens(encoded_bytes: int) -> int:
     """Bound an image whose container format could not be parsed.
 
@@ -175,21 +357,50 @@ def media_token_ceiling(kind: str) -> int:
     return MAX_IMAGE_TOKENS
 
 
-def inline_media_tokens(value: str) -> tuple[int, str] | None:
-    """Estimate tokens for a ``data:<mime>;base64,...`` payload."""
-    match = _DATA_URI_RE.match(value.strip())
-    if match is None:
+def _parse_data_uri(value: str) -> tuple[str, str] | None:
+    """Parse a data URI with one bounded header split and one parameter pass."""
+    start = len(value) - len(value.lstrip())
+    end = len(value.rstrip())
+    comma = value.find(",", start, min(end, start + _MAX_DATA_URI_HEADER_CHARS + 1))
+    if comma < 0:
         return None
-    mime = match.group("mime")
+    header = value[start:comma]
+    payload = value[comma + 1 : end]
+    if not header[:5].lower() == "data:":
+        return None
+    components = header[5:].split(";")
+    mime = components[0].strip()
+    if not mime or not any(component.strip().lower() == "base64" for component in components[1:]):
+        return None
+    return mime, payload
+
+
+def inline_media_details(value: str) -> tuple[str, tuple[int, int] | None, int] | None:
+    """Return MIME family, decoded image dimensions, and decoded prefix size."""
+    parsed = _parse_data_uri(value)
+    if parsed is None:
+        return None
+    mime, payload = parsed
     family = _media_family(mime)
     if family is None:
         return None
     if family != "image":
-        return media_token_ceiling(family), family
-    raw_prefix = _decode_prefix(match.group("data"))
+        return family, None, 0
+    raw_prefix = _decode_prefix(payload)
     dimensions = image_dimensions(raw_prefix)
+    return family, dimensions, len(raw_prefix)
+
+
+def inline_media_tokens(value: str) -> tuple[int, str] | None:
+    """Estimate tokens for a ``data:<mime>;base64,...`` payload."""
+    details = inline_media_details(value)
+    if details is None:
+        return None
+    family, dimensions, encoded_bytes = details
+    if family != "image":
+        return media_token_ceiling(family), family
     if dimensions is None:
-        return unknown_image_tokens(len(raw_prefix)), family
+        return unknown_image_tokens(encoded_bytes), family
     return estimate_image_tokens(*dimensions), family
 
 
@@ -289,9 +500,11 @@ __all__ = [
     "binary_media_tokens",
     "estimate_image_tokens",
     "image_dimensions",
+    "inline_media_details",
     "inline_media_tokens",
     "media_block_tokens",
     "media_token_ceiling",
+    "model_image_tokens",
     "remote_media_tokens",
     "unknown_image_tokens",
 ]

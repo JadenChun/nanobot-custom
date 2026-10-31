@@ -69,7 +69,7 @@ def unit_encoding(monkeypatch: pytest.MonkeyPatch) -> Encoding:
     )
 
     def get_encoding(name: str) -> Encoding:
-        assert name == "cl100k_base"
+        assert name in {"cl100k_base", "o200k_base"}
         return encoding
 
     monkeypatch.setattr(helpers.tiktoken, "get_encoding", get_encoding)
@@ -81,7 +81,7 @@ def test_estimate_prompt_tokens_chain_falls_back_without_provider_counter(
 ) -> None:
     tokens, source = estimate_prompt_tokens_chain(
         _NoCounterProvider(),
-        "test-model",
+        "gpt-4o",
         [{"role": "user", "content": "hello"}],
     )
 
@@ -94,7 +94,7 @@ def test_estimate_prompt_tokens_chain_falls_back_when_provider_counter_fails(
 ) -> None:
     tokens, source = estimate_prompt_tokens_chain(
         _BrokenCounterProvider(),
-        "test-model",
+        "gpt-4o",
         [{"role": "user", "content": "hello"}],
     )
 
@@ -109,7 +109,9 @@ def test_estimate_prompt_tokens_uses_conservative_fallback_when_tiktoken_fails(
     monkeypatch.setattr(
         helpers,
         "_get_token_encoding",
-        lambda: (_ for _ in ()).throw(RuntimeError("encoding unavailable")),
+        lambda _name="cl100k_base": (_ for _ in ()).throw(
+            RuntimeError("encoding unavailable")
+        ),
     )
 
     content = "你" * 1_000
@@ -117,7 +119,7 @@ def test_estimate_prompt_tokens_uses_conservative_fallback_when_tiktoken_fails(
     tokens = estimate_prompt_tokens(messages)
     chain_tokens, source = estimate_prompt_tokens_chain(
         _NoCounterProvider(),
-        "test-model",
+        "gpt-4o",
         messages,
     )
 
@@ -138,7 +140,7 @@ def test_unit_encoding_is_real_bpe_without_external_assets(
     if "你" in text:
         assert len(encoded) < len(text.encode("utf-8"))
     messages = [{"role": "user", "content": text}]
-    tokens, source = estimate_prompt_tokens_chain(_NoCounterProvider(), "test-model", messages)
+    tokens, source = estimate_prompt_tokens_chain(_NoCounterProvider(), "gpt-4o", messages)
     assert tokens == len(encoded) + 4
     assert source == "tiktoken"
 
@@ -147,7 +149,9 @@ def test_estimate_message_tokens_uses_utf8_byte_fallback(monkeypatch) -> None:
     monkeypatch.setattr(
         helpers,
         "_get_token_encoding",
-        lambda: (_ for _ in ()).throw(RuntimeError("encoding unavailable")),
+        lambda _name="cl100k_base": (_ for _ in ()).throw(
+            RuntimeError("encoding unavailable")
+        ),
     )
     content = "🙂你" * 100
 
@@ -160,7 +164,9 @@ def test_truncate_text_to_tokens_uses_utf8_byte_budget_fallback(monkeypatch) -> 
     monkeypatch.setattr(
         helpers,
         "_get_token_encoding",
-        lambda: (_ for _ in ()).throw(RuntimeError("encoding unavailable")),
+        lambda _name="cl100k_base": (_ for _ in ()).throw(
+            RuntimeError("encoding unavailable")
+        ),
     )
 
     result = truncate_text_to_tokens("🙂你" * 100, 40)
@@ -201,6 +207,82 @@ def test_estimate_prompt_tokens_caches_tools_encoding(monkeypatch) -> None:
     assert get_encoding_calls == 1
     rendered_tools = "\n" + json.dumps(tools, ensure_ascii=False)
     assert fake_encoding.encoded.count(rendered_tools) == 1
+
+
+def test_prompt_chain_uses_known_encoding_and_labels_unknown_alias_compatibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names: list[str] = []
+
+    class FakeEncoding:
+        def encode(self, text: str) -> list[int]:
+            return list(range(max(1, len(text) // 4)))
+
+    def get_encoding(name: str) -> FakeEncoding:
+        names.append(name)
+        return FakeEncoding()
+
+    monkeypatch.setattr(helpers.tiktoken, "get_encoding", get_encoding)
+    message = [{"role": "user", "content": "selected tokenizer"}]
+    known_count, known_source = estimate_prompt_tokens_chain(
+        _NoCounterProvider(), "gpt-4o", message,
+    )
+    dated_count, dated_source = estimate_prompt_tokens_chain(
+        _NoCounterProvider(), "gpt-4o-2024-08-06", message,
+    )
+    unknown_count, unknown_source = estimate_prompt_tokens_chain(
+        _NoCounterProvider(), "gpt-4o-FAKE", message,
+    )
+
+    assert names == ["o200k_base", "cl100k_base"]
+    assert known_count > 0
+    assert known_source == "tiktoken"
+    assert dated_count > 0
+    assert dated_source == "tiktoken"
+    assert unknown_count == max(1, len("selected tokenizer") // 4) + 4
+    assert unknown_source == "tiktoken_compatibility"
+
+
+def test_provider_owned_routing_prefixes_are_narrowly_supported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names: list[str] = []
+
+    class FakeEncoding:
+        def encode(self, text: str) -> list[int]:
+            return list(range(max(1, len(text) // 4)))
+
+    def get_encoding(name: str) -> FakeEncoding:
+        names.append(name)
+        return FakeEncoding()
+
+    class _NamedProvider:
+        def __init__(self, provider_name: str) -> None:
+            self.provider_name = provider_name
+
+    monkeypatch.setattr(helpers.tiktoken, "get_encoding", get_encoding)
+    messages = [{"role": "user", "content": "routed model"}]
+    codex_count, codex_source = estimate_prompt_tokens_chain(
+        _NamedProvider("openai_codex"),
+        "openai-codex/gpt-5.6-sol",
+        messages,
+    )
+    copilot_count, copilot_source = estimate_prompt_tokens_chain(
+        _NamedProvider("github_copilot"),
+        "github-copilot/gpt-4.1",
+        messages,
+    )
+    unowned_count, unowned_source = estimate_prompt_tokens_chain(
+        _NamedProvider("openai"),
+        "openai-codex/gpt-5.6-sol",
+        messages,
+    )
+
+    assert names == ["o200k_base", "cl100k_base"]
+    assert codex_count > 0 and codex_source == "tiktoken"
+    assert copilot_count > 0 and copilot_source == "tiktoken"
+    assert unowned_count == max(1, len("routed model") // 4) + 4
+    assert unowned_source == "tiktoken_compatibility"
 
 
 def test_estimate_prompt_tokens_recomputes_when_tool_items_change(monkeypatch) -> None:
@@ -245,7 +327,7 @@ def test_estimate_prompt_tokens_counts_images_as_bounded_vision_tokens(
     }
 
     tokens, source = estimate_prompt_tokens_chain(
-        _NoCounterProvider(), "test-model", [message],
+        _NoCounterProvider(), "gpt-4o", [message],
     )
 
     assert source == "tiktoken"
