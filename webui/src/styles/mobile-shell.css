@@ -27,7 +27,7 @@ html.mobile-runtime body {
   inset: 0;
   z-index: 2147483000;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: calc(1rem + env(safe-area-inset-top, 0px)) 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
   background: hsl(var(--background, 0 0% 19%));
@@ -37,6 +37,7 @@ html.mobile-runtime body {
 
 .mobile-pairing-card {
   width: min(32rem, 100%);
+  margin-block: auto;
   display: grid;
   gap: 0.9rem;
   padding: 1.25rem;

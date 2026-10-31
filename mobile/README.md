@@ -27,7 +27,9 @@ the real gateway, including handshake/read/WebSocket after pairing. M20 final ma
 passed; Python 17,104 passed with five pre-existing baseline failures and one order-dependent
 flake that passes in isolation; phone 37 tests (6 live skipped). M22 signed release is built and
 verified with the release keystore: v2 signature, zipalign, install, same-key update, different-key
-rejection and uninstall/reinstall all passed. Remaining gates are the M21 manual device matrix, the
+rejection and uninstall/reinstall all passed. Automated M21 checks on the signed release also pass:
+portrait/landscape layout, process death, forced Doze, Back/relaunch, font scale 1.3 and a
+battery/thermal snapshot. Remaining gates are the hands-on cellular/picker/accessibility matrix, the
 five baseline Python failures, and final human review.
 See `docs/mobile-client-tasks.md`.
 
