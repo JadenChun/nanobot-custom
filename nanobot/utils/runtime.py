@@ -22,9 +22,8 @@ EMPTY_FINAL_RESPONSE_MESSAGE = (
 )
 
 CONTEXT_BUDGET_ERROR_MESSAGE = (
-    "The model request exceeds the context budget for this conversation and its tool results. "
-    "Start a new chat, reduce tool output, or switch to a model with a larger context window, "
-    "then try again."
+    "The model request exceeds this model's context budget. Start a new chat, reduce attached "
+    "images or tool output, or switch to a model with a larger context window, then try again."
 )
 
 CONTEXT_REPO_EXEC_DISABLED_MESSAGE = (

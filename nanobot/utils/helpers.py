@@ -20,6 +20,8 @@ from zoneinfo import ZoneInfo
 import tiktoken
 from loguru import logger
 
+from nanobot.utils.media_tokens import media_block_tokens
+
 if TYPE_CHECKING:
     from nanobot.providers.base import LLMUsage
 
@@ -733,6 +735,7 @@ def _estimate_prompt_tokens_with_source(
     reasoning_content, tool_call_id, name, plus per-message framing overhead.
     """
     parts: list[str] = []
+    media_tokens = 0
     for msg in messages:
         content = msg.get("content")
         if isinstance(content, str):
@@ -744,6 +747,10 @@ def _estimate_prompt_tokens_with_source(
                     text = part.get("text", "")
                     if isinstance(text, str) and text:
                         parts.append(text)
+                elif part is not None:
+                    media = media_block_tokens(part)
+                    if media is not None:
+                        media_tokens += media[0]
 
         tc = msg.get("tool_calls")
         if tc:
@@ -766,7 +773,7 @@ def _estimate_prompt_tokens_with_source(
             _estimate_tools_tokens(enc, tools, leading_separator=bool(parts)) if tools else 0
         )
         message_tokens = len(enc.encode(message_payload)) if message_payload else 0
-        return message_tokens + tool_tokens + per_message_overhead, "tiktoken"
+        return message_tokens + tool_tokens + per_message_overhead + media_tokens, "tiktoken"
     except Exception:
         tool_payload = (
             ("\n" if message_payload else "") + json.dumps(tools, ensure_ascii=False)
@@ -775,7 +782,7 @@ def _estimate_prompt_tokens_with_source(
         )
         payload = message_payload + tool_payload
         estimated = len(payload.encode("utf-8"))
-        return estimated + per_message_overhead, "heuristic"
+        return estimated + per_message_overhead + media_tokens, "heuristic"
 
 
 def estimate_prompt_tokens(
@@ -791,6 +798,7 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
     """Estimate prompt tokens contributed by one persisted message."""
     content = message.get("content")
     parts: list[str] = []
+    media_tokens = 0
     if isinstance(content, str):
         parts.append(content)
     elif isinstance(content, list):
@@ -800,8 +808,21 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
                 text = part.get("text", "")
                 if isinstance(text, str) and text:
                     parts.append(text)
+            elif part is not None:
+                media = media_block_tokens(part)
+                if media is not None:
+                    media_tokens += media[0]
+                else:
+                    parts.append(json.dumps(raw_part, ensure_ascii=False))
             else:
                 parts.append(json.dumps(raw_part, ensure_ascii=False))
+    elif isinstance(content, dict):
+        block_content = cast(dict[str, Any], content)
+        media = media_block_tokens(block_content)
+        if media is not None:
+            media_tokens += media[0]
+        else:
+            parts.append(json.dumps(block_content, ensure_ascii=False))
     elif content is not None:
         parts.append(json.dumps(content, ensure_ascii=False))
 
@@ -818,12 +839,12 @@ def estimate_message_tokens(message: dict[str, Any]) -> int:
 
     payload = "\n".join(parts)
     if not payload:
-        return 4
+        return max(4, media_tokens + 4)
     try:
         enc = _get_token_encoding()
-        return max(4, len(enc.encode(payload)) + 4)
+        return max(4, len(enc.encode(payload)) + 4 + media_tokens)
     except Exception:
-        return max(4, len(payload.encode("utf-8")) + 4)
+        return max(4, len(payload.encode("utf-8")) + 4 + media_tokens)
 
 
 def estimate_prompt_tokens_chain(

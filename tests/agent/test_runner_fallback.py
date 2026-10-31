@@ -352,7 +352,7 @@ async def test_large_primary_request_keeps_capacity_and_smaller_fallback_stays_g
         chat=SimpleNamespace(completions=SimpleNamespace(create=fallback_transport)),
     ))
     snapshot.provider._provider_factory = MagicMock(return_value=fallback)
-    messages = [{"role": "user", "content": "project evidence " * 15_000}]
+    messages = [{"role": "user", "content": "project evidence " * 55_000}]
     context = ProviderCallContext(request_limits=ProviderRequestLimits(
         total_tokens=snapshot.context_window_tokens, completion_reserve_tokens=65_536,
     ))

@@ -1,4 +1,7 @@
+import base64
 import json
+import struct
+import zlib
 from collections.abc import Iterator
 
 import pytest
@@ -20,6 +23,18 @@ class _NoCounterProvider:
 class _BrokenCounterProvider:
     def estimate_prompt_tokens(self, messages, tools=None, model=None):
         raise RuntimeError("counter unavailable")
+
+
+def _inline_image_data_uri() -> str:
+    ihdr_data = struct.pack(">IIBBBBB", 1024, 1024, 8, 2, 0, 0, 0)
+    ihdr = (
+        struct.pack(">I", len(ihdr_data))
+        + b"IHDR"
+        + ihdr_data
+        + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr_data))
+    )
+    payload = b"\x89PNG\r\n\x1a\n" + ihdr + b"\x00" * 1_000_000
+    return "data:image/png;base64," + base64.b64encode(payload).decode()
 
 
 @pytest.fixture(autouse=True)
@@ -216,6 +231,40 @@ def test_estimate_prompt_tokens_recomputes_when_tool_items_change(monkeypatch) -
     after_tools = "\n" + json.dumps(tools, ensure_ascii=False)
     assert before_tools in fake_encoding.encoded
     assert after_tools in fake_encoding.encoded
+
+
+def test_estimate_prompt_tokens_counts_images_as_bounded_vision_tokens(
+    unit_encoding: Encoding,
+) -> None:
+    message = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "compare"},
+            {"type": "image_url", "image_url": {"url": _inline_image_data_uri()}},
+        ],
+    }
+
+    tokens, source = estimate_prompt_tokens_chain(
+        _NoCounterProvider(), "test-model", [message],
+    )
+
+    assert source == "tiktoken"
+    assert 1_300 <= tokens < 5_000
+    assert estimate_message_tokens(message) < 5_000
+
+
+def test_estimate_prompt_tokens_does_not_count_image_payload_as_text(
+    unit_encoding: Encoding,
+) -> None:
+    image = _inline_image_data_uri()
+    text_only = estimate_prompt_tokens([{"role": "user", "content": image}])
+    with_image = estimate_prompt_tokens([{
+        "role": "user",
+        "content": [{"type": "image_url", "image_url": {"url": image}}],
+    }])
+
+    assert with_image < 5_000
+    assert with_image < text_only // 100
 
 
 def test_module_local_setup_does_not_replay_other_test_caches() -> None:

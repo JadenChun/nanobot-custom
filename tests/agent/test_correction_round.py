@@ -121,7 +121,7 @@ def test_session_generation_rejects_stale_append_and_merges_identical_messages(t
 @pytest.mark.asyncio
 async def test_direct_provider_transport_is_budget_guarded():
     provider, calls = concrete_provider(content="ok")
-    oversized = [{"role": "user", "content": "x" * 5000}]
+    oversized = [{"role": "user", "content": "x" * 20_000}]
     with pytest.raises(FinalizedRequestBudgetExceeded):
         await provider.chat_once(messages=oversized, max_tokens=1, provider_context=provider_limits(2048))
     assert calls == []
@@ -129,7 +129,7 @@ async def test_direct_provider_transport_is_budget_guarded():
                                      max_tokens=1, provider_context=provider_limits(2048))
     assert result.content == "ok"
     assert calls == ["chat"]
-    assert oversized == [{"role": "user", "content": "x" * 5000}]
+    assert oversized == [{"role": "user", "content": "x" * 20_000}]
 
 
 @pytest.mark.asyncio

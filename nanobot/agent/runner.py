@@ -126,7 +126,7 @@ def _context_budget_error_response(
     if measurement is not None:
         logger.warning(
             "Local request budget rejected provider={} model={} transport={} "
-            "measured_units={} input_limit={} over_by={} completion_reserve={} "
+            "measured_tokens={} input_limit={} over_by={} completion_reserve={} "
             "total_limit={} measurement_source={}",
             measurement.identity.provider, measurement.identity.model, measurement.identity.transport,
             measurement.input_tokens, measurement.input_limit_tokens, measurement.over_by,

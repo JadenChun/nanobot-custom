@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import base64
 import json
+import struct
+import zlib
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import tiktoken
 
 from nanobot.providers.anthropic_provider import AnthropicProvider
 from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
@@ -31,6 +34,18 @@ from nanobot.providers.xai_grok_provider import (
     _XAIHTTPError,
     _XAIIncompleteHostedToolError,
 )
+
+
+def _png_data_uri(width: int, height: int, padding: int = 1_000_000) -> str:
+    ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    ihdr = (
+        struct.pack(">I", len(ihdr_data))
+        + b"IHDR"
+        + ihdr_data
+        + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr_data))
+    )
+    payload = b"\x89PNG\r\n\x1a\n" + ihdr + b"\x00" * padding
+    return "data:image/png;base64," + base64.b64encode(payload).decode()
 
 
 def _limits(*, total: int) -> ProviderCallContext:
@@ -82,7 +97,7 @@ def _exact_context(provider: OpenAICompatProvider, *, messages: list[dict[str, o
     ))
 
 
-def test_measurement_uses_utf8_bytes_as_a_conservative_textual_ceiling() -> None:
+def test_measurement_uses_tokenizer_estimate_with_a_safety_margin() -> None:
     identity = TransportIdentity("fixture", "fixture_transport", "fixture-model")
     body = {"model": "fixture-model", "input": ["ASCII", "emoji: 😀"], "max_tokens": 1}
 
@@ -99,8 +114,176 @@ def test_measurement_uses_utf8_bytes_as_a_conservative_textual_ceiling() -> None
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
+    exact = len(tiktoken.get_encoding("cl100k_base").encode(encoded.decode("utf-8")))
+    assert measurement.source == "canonical_json_tiktoken"
+    assert measurement.input_tokens >= exact
+    assert measurement.input_tokens < len(encoded)
+
+
+def test_measurement_fails_closed_to_the_byte_ceiling_without_a_tokenizer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(_name: str) -> object:
+        raise RuntimeError("tokenizer unavailable")
+
+    monkeypatch.setattr("nanobot.providers.request_budget.tiktoken.get_encoding", unavailable)
+    identity = TransportIdentity("fixture", "fixture_transport", "fixture-model")
+    body = {"model": "fixture-model", "input": ["plain text"], "max_tokens": 1}
+
+    measurement = measure_finalized_request(
+        identity,
+        body,
+        ProviderRequestLimits(total_tokens=100_000, safety_buffer_tokens=0),
+    )
+
+    encoded = json.dumps(
+        body,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
     assert measurement.input_tokens == len(encoded)
     assert measurement.source == "canonical_json_utf8_bytes"
+
+
+def test_inline_image_is_measured_as_vision_tokens_not_base64_wire_bytes() -> None:
+    identity = TransportIdentity("local", "openai_chat_completions", "vision-model")
+    image = _png_data_uri(1024, 1024)
+    body = {
+        "model": "vision-model",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "compare these images"},
+            {"type": "image_url", "image_url": {"url": image}},
+            {"type": "image_url", "image_url": {"url": _png_data_uri(1024, 1024)}},
+        ]}],
+    }
+
+    measurement = measure_finalized_request(
+        identity,
+        body,
+        ProviderRequestLimits(
+            total_tokens=165_888,
+            completion_reserve_tokens=8_192,
+            safety_buffer_tokens=1_024,
+        ),
+    )
+
+    assert measurement.fits
+    assert measurement.input_tokens < 10_000
+    assert "inline_image" in measurement.source
+    assert measurement.input_tokens < len(image) // 100
+
+
+def test_local_165k_window_accepts_long_text_with_parallel_images() -> None:
+    identity = TransportIdentity("local_manager", "openai_chat_completions_stream", "local-model")
+    content: list[dict[str, object]] = [
+        {"type": "text", "text": "project evidence " * 30_000},
+    ]
+    content.extend(
+        {"type": "image_url", "image_url": {"url": _png_data_uri(1024, 1024)}}
+        for _ in range(3)
+    )
+    body = {
+        "model": "local-model",
+        "max_tokens": 8_192,
+        "messages": [{"role": "user", "content": content}],
+    }
+
+    measurement = measure_finalized_request(
+        identity,
+        body,
+        ProviderRequestLimits(
+            total_tokens=165_888,
+            completion_reserve_tokens=8_192,
+            safety_buffer_tokens=1_024,
+        ),
+    )
+
+    assert measurement.fits
+    assert 60_000 < measurement.input_tokens < 90_000
+    assert "+inline_image" in measurement.source
+
+
+def test_text_embedded_media_data_uri_still_counts_as_text_tokens() -> None:
+    identity = TransportIdentity("local", "openai_chat_completions", "text-model")
+    image = _png_data_uri(1024, 1024)
+    body = {
+        "model": "text-model",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "untrusted page: " + image},
+        ]}],
+    }
+
+    measurement = measure_finalized_request(
+        identity,
+        body,
+        ProviderRequestLimits(total_tokens=100_000, safety_buffer_tokens=0),
+    )
+
+    assert not measurement.fits
+    assert "inline_image" not in measurement.source
+
+
+def test_remote_image_uses_a_bounded_vision_allowance() -> None:
+    identity = TransportIdentity("local", "openai_chat_completions", "vision-model")
+    body = {
+        "model": "vision-model",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "https://example.test/image.png"}},
+        ]}],
+    }
+
+    measurement = measure_finalized_request(
+        identity,
+        body,
+        ProviderRequestLimits(total_tokens=16_000, completion_reserve_tokens=1, safety_buffer_tokens=0),
+    )
+
+    assert not measurement.fits
+    assert 16_000 < measurement.input_tokens < 17_000
+    assert "remote_image" in measurement.source
+
+
+def test_anthropic_image_sources_use_a_bounded_vision_allowance() -> None:
+    identity = TransportIdentity("anthropic", "anthropic_messages", "vision-model")
+    inline = _png_data_uri(1024, 1024)
+    encoded = inline.split(";base64,", 1)[1]
+    inline_body = {
+        "model": "vision-model",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": [{
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": encoded},
+        }]}],
+    }
+    inline_measurement = measure_finalized_request(
+        identity,
+        inline_body,
+        ProviderRequestLimits(total_tokens=165_888, safety_buffer_tokens=1_024),
+    )
+    assert inline_measurement.fits
+    assert inline_measurement.input_tokens < 10_000
+    assert "inline_image" in inline_measurement.source
+
+    remote_body = {
+        "model": "vision-model",
+        "max_tokens": 1,
+        "messages": [{"role": "user", "content": [{
+            "type": "image",
+            "source": {"type": "url", "url": "https://example.test/image.png"},
+        }]}],
+    }
+    remote_measurement = measure_finalized_request(
+        identity,
+        remote_body,
+        ProviderRequestLimits(total_tokens=16_000, safety_buffer_tokens=0),
+    )
+    assert not remote_measurement.fits
+    assert "remote_image" in remote_measurement.source
 
 
 @pytest.mark.asyncio
@@ -702,7 +885,7 @@ async def test_codex_native_compaction_and_generation_each_validate_before_dispa
                 provider=state_provider,
                 model="gpt-5.6-sol",
                 input_items=body["input"],
-                output_items=[{"type": "compaction", "encrypted_content": "x" * 4_096}],
+                output_items=[{"type": "compaction", "encrypted_content": "x" * 16_384}],
                 usage=LLMUsage.reported(input_tokens=95, output_tokens=1),
             ),
         )

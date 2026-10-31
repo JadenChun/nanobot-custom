@@ -10,11 +10,21 @@ cannot be represented deterministically.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import cast
 
+import tiktoken
+
+from nanobot.utils.media_tokens import (
+    binary_media_tokens,
+    inline_media_tokens,
+    remote_media_tokens,
+)
+
 DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER = 1024
+TOKEN_ESTIMATE_SAFETY_RATIO = 1.15
 _BEDROCK_BINARY_MEDIA_KEYS = frozenset({"image", "document", "video"})
 _BEDROCK_BINARY_FRAMING_BYTES = 64
 
@@ -175,80 +185,207 @@ def _supported_bedrock_binary_kind(
     return None
 
 
+def _block_media_kind(parent: Mapping[str, object]) -> str | None:
+    """Return the media family declared by a structured content block."""
+    block_type = parent.get("type")
+    if not isinstance(block_type, str):
+        return None
+    lowered = block_type.lower()
+    for kind in ("image", "audio", "video"):
+        if kind in lowered:
+            return kind
+    return None
+
+
+def _media_field_kind(
+    key: str,
+    parent: Mapping[str, object],
+    path: tuple[str, ...],
+    media_context: str | None = None,
+) -> str | None:
+    """Identify fields whose string payload is inline or remote media.
+
+    Only known media fields receive a media allowance. A data URI embedded in
+    ordinary text still counts against the text token measurement.
+    """
+    parent_type = parent.get("type")
+    if key == "image_url":
+        return "image"
+    if media_context is not None and key in {"url", "data", "file_url"}:
+        return media_context
+    if key == "url" and (
+        "image_url" in path or parent_type in {"image", "input_image"} or "image" in parent
+    ):
+        return "image"
+    if key == "data":
+        if parent_type == "base64":
+            media_type = parent.get("media_type")
+            if isinstance(media_type, str):
+                lowered = media_type.lower()
+                if lowered.startswith("image/"):
+                    return "image"
+                if lowered.startswith("audio/"):
+                    return "audio"
+                if lowered.startswith("video/"):
+                    return "video"
+        joined = "/".join(path).lower()
+        for kind in ("image", "audio", "video"):
+            if kind in joined:
+                return kind
+    return None
+
+
+def _media_mime_hint(kind: str, parent: Mapping[str, object]) -> str:
+    """Infer the MIME type for provider-native base64 fields."""
+    media_type = parent.get("media_type")
+    if isinstance(media_type, str) and media_type:
+        return media_type
+    fmt = parent.get("format")
+    if isinstance(fmt, str) and fmt:
+        return f"{kind}/{fmt.lstrip('.')}"
+    return f"{kind}/unknown"
+
+
+def _measured_media_string(
+    value: str,
+    kind: str,
+    mime_hint: str | None = None,
+) -> tuple[int, str] | None:
+    """Return (tokens, source_suffix) for one media-bearing string field."""
+    estimate = inline_media_tokens(value)
+    if estimate is None and mime_hint is not None:
+        estimate = inline_media_tokens(f"data:{mime_hint};base64,{value}")
+    if estimate is not None:
+        tokens, measured_kind = estimate
+        return tokens, f"inline_{measured_kind}"
+    lowered = value.strip().lower()
+    if lowered.startswith(("http://", "https://")):
+        return remote_media_tokens(kind), f"remote_{kind}"
+    return None
+
+
 def _canonicalize_finalized_value(
     value: object,
     identity: TransportIdentity,
     path: tuple[str, ...] = (),
+    media_context: str | None = None,
 ) -> tuple[object, int, frozenset[str]]:
-    """Return canonical JSON data and Bedrock binary transport bytes.
+    """Return canonical JSON data and supplemental token/byte units.
 
     Bedrock Converse accepts raw ``bytes`` only below documented media sources
     and replayed ``reasoningContent.redactedContent`` blocks. Their content is
     replaced with a length-only marker so measurement never retains binary
     data. Every other non-JSON value remains opaque and therefore fails closed.
+
+    Inline media is replaced with a marker and contributes a bounded vision
+    allowance rather than its base64 wire length, which is not a text-token
+    measurement. Text is measured separately with a tokenizer.
     """
     if isinstance(value, bytes):
         kind = _supported_bedrock_binary_kind(identity, path)
         if kind is None:
             raise ValueError("unsupported binary finalized request value")
-        # AWS serializes binary SDK values separately from JSON. Reserve its
-        # worst-case Base64 wire expansion plus fixed binary framing; this is
-        # a conservative byte ceiling, not a provider tokenization estimate.
+        if kind == "bedrock_binary_media":
+            media_kind = path[-3] if len(path) >= 3 else "image"
+            units = binary_media_tokens(value, media_kind)
+            return (
+                {"__nanobot_bedrock_binary_bytes__": len(value)},
+                units,
+                frozenset({kind}),
+            )
+        # Redacted reasoning is opaque token content, not decodable media.
         transport_bytes = 4 * ((len(value) + 2) // 3) + _BEDROCK_BINARY_FRAMING_BYTES
         return {"__nanobot_bedrock_binary_bytes__": len(value)}, transport_bytes, frozenset({kind})
     if isinstance(value, dict):
         canonical: dict[str, object] = {}
-        binary_transport_bytes = 0
-        binary_kinds: set[str] = set()
-        for key, item in cast(dict[object, object], value).items():
-            if not isinstance(key, str):
+        supplemental_units = 0
+        measurement_kinds: set[str] = set()
+        mapping = cast(Mapping[str, object], value)
+        block_media = media_context or _block_media_kind(mapping)
+        for raw_key, item in cast(dict[object, object], value).items():
+            if not isinstance(raw_key, str):
                 raise ValueError("finalized provider request keys must be strings")
-            converted, item_binary_bytes, item_binary_kinds = _canonicalize_finalized_value(
+            key = raw_key
+            media_kind = _media_field_kind(key, mapping, (*path, key), block_media)
+            if media_kind is not None and isinstance(item, str):
+                mime_hint = (
+                    _media_mime_hint(media_kind, mapping)
+                    if key in {"data", "file_data"}
+                    else None
+                )
+                measured_media = _measured_media_string(item, media_kind, mime_hint)
+                if measured_media is not None:
+                    tokens, source_suffix = measured_media
+                    canonical[key] = {"__nanobot_inline_media__": media_kind}
+                    supplemental_units += tokens
+                    measurement_kinds.add(source_suffix)
+                    continue
+            converted, item_units, item_kinds = _canonicalize_finalized_value(
                 item,
                 identity,
                 (*path, key),
+                block_media,
             )
             canonical[key] = converted
-            binary_transport_bytes += item_binary_bytes
-            binary_kinds.update(item_binary_kinds)
-        return canonical, binary_transport_bytes, frozenset(binary_kinds)
+            supplemental_units += item_units
+            measurement_kinds.update(item_kinds)
+        return canonical, supplemental_units, frozenset(measurement_kinds)
     if isinstance(value, (list, tuple)):
         canonical_list: list[object] = []
-        binary_transport_bytes = 0
-        binary_kinds = set()
+        supplemental_units = 0
+        measurement_kinds = set()
         for index, item in enumerate(cast(list[object] | tuple[object, ...], value)):
-            converted, item_binary_bytes, item_binary_kinds = _canonicalize_finalized_value(
+            converted, item_units, item_kinds = _canonicalize_finalized_value(
                 item,
                 identity,
                 (*path, str(index)),
+                media_context,
             )
             canonical_list.append(converted)
-            binary_transport_bytes += item_binary_bytes
-            binary_kinds.update(item_binary_kinds)
-        return canonical_list, binary_transport_bytes, frozenset(binary_kinds)
+            supplemental_units += item_units
+            measurement_kinds.update(item_kinds)
+        return canonical_list, supplemental_units, frozenset(measurement_kinds)
     if value is None or isinstance(value, str | int | float | bool):
         return value, 0, frozenset()
     raise ValueError("unsupported finalized provider request value")
+
+
+def _text_token_measurement(encoded: bytes) -> tuple[int, str]:
+    """Estimate text tokens, failing closed to the older byte ceiling.
+
+    A raw UTF-8 byte ceiling is a provable upper bound, but it overstates
+    ordinary prose by roughly four times and reduces a large provider window
+    to a fraction of its usable capacity. Tokenization with a safety ratio is
+    the practical guard; if the tokenizer is unavailable, the byte ceiling is
+    retained rather than allowing an unmeasured body through.
+    """
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")
+        tokens = len(encoding.encode(encoded.decode("utf-8")))
+        return max(1, math.ceil(tokens * TOKEN_ESTIMATE_SAFETY_RATIO)), (
+            "canonical_json_tiktoken"
+        )
+    except Exception:
+        return max(1, len(encoded)), "canonical_json_utf8_bytes"
 
 
 def _serialized_input_measurement(
     identity: TransportIdentity,
     body: Mapping[str, object],
 ) -> tuple[int, str]:
-    """Count a content-free canonical body with a conservative byte ceiling.
+    """Count a content-free canonical body with conservative token units.
 
-    UTF-8 bytes are used as token-equivalent units instead of dividing by four:
-    a supported text tokenizer can consume no more than one token per input
-    byte, while a four-byte heuristic can undercount Unicode and adversarial
-    tokenization.  This is intentionally conservative and does not claim an
-    exact provider tokenizer result. Supported Bedrock media and redacted
-    reasoning binary fields add their Base64-size ceiling and fixed framing
-    allowance without inferring provider tokenization from file contents.
+    Text is measured with a tokenizer and a safety ratio. Inline and
+    provider-native media are replaced by a bounded vision allowance because
+    base64 bytes are not text tokens. Bedrock redacted-reasoning bytes retain
+    their Base64-size ceiling.
     """
     if not isinstance(body, dict):
         raise ValueError("finalized provider request is not a JSON object")
     try:
-        canonical, binary_transport_bytes, binary_kinds = _canonicalize_finalized_value(body, identity)
+        canonical, supplemental_units, measurement_kinds = _canonicalize_finalized_value(
+            body, identity,
+        )
         encoded = json.dumps(
             canonical,
             ensure_ascii=False,
@@ -258,10 +395,10 @@ def _serialized_input_measurement(
         ).encode("utf-8")
     except (TypeError, ValueError, UnicodeError) as exc:
         raise ValueError("finalized provider request cannot be measured") from exc
-    source = "canonical_json_utf8_bytes"
-    for kind in sorted(binary_kinds):
+    text_units, source = _text_token_measurement(encoded)
+    for kind in sorted(measurement_kinds):
         source += f"+{kind}"
-    return max(1, len(encoded) + binary_transport_bytes), source
+    return max(1, text_units + supplemental_units), source
 
 
 def measure_finalized_request(
