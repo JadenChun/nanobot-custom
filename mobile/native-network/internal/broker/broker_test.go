@@ -88,6 +88,7 @@ func testServer(t *testing.T) *httptest.Server {
 		if err != nil {
 			return
 		}
+		conn.SetReadLimit(512 * 1024)
 		defer conn.Close(websocket.StatusNormalClosure, "")
 		for {
 			typ, data, err := conn.Read(r.Context())
@@ -413,5 +414,26 @@ func TestHTTPPairingRouteAllowsOnlyBoundedHeaders(t *testing.T) {
 		Headers:   map[string]string{"X-Admin": "1"},
 	}); err == nil {
 		t.Fatal("unlisted pairing header was accepted")
+	}
+}
+
+func TestWebSocketAllowsAttachmentSizedFrame(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.MaxWSFrameBytes = 512 * 1024 })
+	wsID, err := core.WSOpen(WSRequest{Operation: "fixture_ws", Path: "/fixture/v1/ws"})
+	if err != nil {
+		t.Fatalf("WSOpen: %v", err)
+	}
+	waitEvent(t, core, "ws_open")
+	payload := make([]byte, 200*1024)
+	for i := range payload {
+		payload[i] = 'x'
+	}
+	if err := core.WSSend(wsID, 0, payload); err != nil {
+		t.Fatalf("attachment-sized WSSend: %v", err)
+	}
+	event := waitEvent(t, core, "ws_frame")
+	if event["bytes"].(float64) != float64(len(payload)) {
+		t.Fatalf("ws frame bytes: %v", event["bytes"])
 	}
 }

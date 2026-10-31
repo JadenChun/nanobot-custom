@@ -7,6 +7,7 @@ import android.provider.OpenableColumns
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
+import android.util.Log
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -309,7 +310,7 @@ class NativeNetworkPlugin : Plugin() {
     @PluginMethod
     fun cancel(call: PluginCall) {
         val current = transportHandle
-        val requestId = call.getLong("requestId")
+        val requestId = callLong(call, "requestId")
         if (current == 0L || requestId == null) {
             call.reject("transport and requestId are required")
             return
@@ -361,7 +362,7 @@ class NativeNetworkPlugin : Plugin() {
     @PluginMethod
     fun wsSend(call: PluginCall) {
         val current = transportHandle
-        val wsId = call.getLong("wsId")
+        val wsId = callLong(call, "wsId")
         val dataBase64 = call.getString("dataBase64")
         val kindName = call.getString("kind") ?: "text"
         if (current == 0L || wsId == null || dataBase64 == null) {
@@ -381,7 +382,7 @@ class NativeNetworkPlugin : Plugin() {
     @PluginMethod
     fun wsClose(call: PluginCall) {
         val current = transportHandle
-        val wsId = call.getLong("wsId")
+        val wsId = callLong(call, "wsId")
         if (current == 0L || wsId == null) {
             call.reject("transport and wsId are required")
             return
@@ -547,6 +548,7 @@ class NativeNetworkPlugin : Plugin() {
             .put("hostname", record.hostname)
             .put("state_dir", stateDir.absolutePath)
             .put("state_key_base64", record.stateKeyBase64)
+            .put("max_ws_frame_bytes", 512 * 1024)
         val newHandle = NativeNetwork.start(config.toString())
         if (newHandle == 0L) {
             throw IllegalStateException(NativeNetwork.lastError())
@@ -629,6 +631,12 @@ class NativeNetworkPlugin : Plugin() {
         if (current != 0L) {
             NativeNetwork.stop(current)
         }
+    }
+
+    private fun callLong(call: PluginCall, key: String): Long? {
+        return call.getInt(key)?.toLong()
+            ?: call.getLong(key)
+            ?: call.getDouble(key)?.toLong()
     }
 
     private fun isApprovedLoginURL(raw: String): Boolean {

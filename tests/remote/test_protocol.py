@@ -230,7 +230,7 @@ def test_ttl_and_limit_defaults() -> None:
     assert limits["access_ttl_seconds"] <= 600
     assert limits["challenge_ttl_seconds"] == 120
     assert limits["refresh_idle_seconds"] == 30 * 24 * 60 * 60
-    assert limits["max_ws_frame_bytes"] == 64 * 1024
+    assert limits["max_ws_frame_bytes"] == 512 * 1024
     assert limits["max_attachment_bytes"] == 256 * 1024
     assert limits["max_media_response_bytes"] == 2 * 1024 * 1024
 
