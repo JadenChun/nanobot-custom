@@ -1,0 +1,135 @@
+"""Client for the owner-only Unix-socket IPC (M07)."""
+
+from __future__ import annotations
+
+import json
+import socket
+from pathlib import Path
+from typing import Any
+
+MAX_IPC_RESPONSE_BYTES = 1024 * 1024
+
+
+class OwnerUnavailableError(RuntimeError):
+    """The independent owner cannot be reached within the bounded timeout."""
+
+
+class OwnerRequestError(RuntimeError):
+    """The owner rejected or failed a request."""
+
+
+class RemoteAccessClient:
+    def __init__(
+        self,
+        socket_path: Path | str,
+        *,
+        timeout: float = 2.0,
+        admin_token: str | None = None,
+    ) -> None:
+        self.socket_path = Path(socket_path)
+        self.timeout = timeout
+        self.admin_token = admin_token
+
+    def ping(self) -> dict[str, Any]:
+        return self._call("ping", {}, role="gateway")
+
+    def status(self) -> dict[str, Any]:
+        return self._call("status", {}, role="gateway")
+
+    def validate(self, installation_id: str, refresh_token: str) -> dict[str, Any]:
+        return self._call(
+            "validate",
+            {"installation_id": installation_id, "refresh_token": refresh_token},
+            role="gateway",
+        )
+
+    def revoke(self, installation_id: str) -> dict[str, Any]:
+        return self._call("revoke", {"installation_id": installation_id}, role="gateway")
+
+    def list_devices(self) -> list[dict[str, Any]]:
+        return self._call("list_devices", {}, role="admin", require_admin=True)
+
+    def set_enabled(self, enabled: bool) -> bool:
+        return self._call(
+            "set_enabled", {"enabled": enabled}, role="admin", require_admin=True
+        )
+
+    def add_device(
+        self,
+        installation_id: str,
+        label: str,
+        scopes: list[str],
+        refresh_token: str,
+    ) -> dict[str, Any]:
+        return self._call(
+            "add_device",
+            {
+                "installation_id": installation_id,
+                "label": label,
+                "scopes": scopes,
+                "refresh_token": refresh_token,
+            },
+            role="admin",
+            require_admin=True,
+        )
+
+    def rotate_refresh(self, installation_id: str, refresh_token: str) -> dict[str, Any]:
+        return self._call(
+            "rotate_refresh",
+            {"installation_id": installation_id, "refresh_token": refresh_token},
+            role="admin",
+            require_admin=True,
+        )
+
+    def _call(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        role: str,
+        require_admin: bool = False,
+    ) -> Any:
+        if require_admin and not self.admin_token:
+            raise OwnerRequestError("admin token is required")
+        request = {"method": method, "params": params, "role": role}
+        if require_admin:
+            request["admin_token"] = self.admin_token
+        payload = json.dumps(request, separators=(",", ":")).encode("utf-8") + b"\n"
+        connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        connection.settimeout(self.timeout)
+        try:
+            connection.connect(str(self.socket_path))
+            connection.sendall(payload)
+            raw = self._recv_line(connection)
+        except (OSError, TimeoutError) as exc:
+            raise OwnerUnavailableError("remote-access owner is unavailable") from exc
+        finally:
+            connection.close()
+        try:
+            response = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise OwnerRequestError("owner returned malformed JSON") from exc
+        if not isinstance(response, dict) or not isinstance(response.get("ok"), bool):
+            raise OwnerRequestError("owner returned an invalid response")
+        if not response["ok"]:
+            error = response.get("error", {})
+            raise OwnerRequestError(str(error.get("message", "owner request failed")))
+        return response.get("result")
+
+    def _recv_line(self, connection: socket.socket) -> str:
+        chunks: list[bytes] = []
+        total = 0
+        while total <= MAX_IPC_RESPONSE_BYTES:
+            chunk = connection.recv(min(4096, MAX_IPC_RESPONSE_BYTES + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if b"\n" in chunk:
+                break
+        if total > MAX_IPC_RESPONSE_BYTES:
+            raise OwnerRequestError("owner response exceeds the bounded size")
+        data = b"".join(chunks).split(b"\n", 1)[0]
+        if not data:
+            raise OwnerRequestError("owner closed the connection without a response")
+        return data.decode("utf-8")

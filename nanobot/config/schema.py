@@ -767,6 +767,16 @@ class GatewayConfig(Base):
     telegram_busy: TelegramBusyConfig = Field(default_factory=TelegramBusyConfig)
 
 
+class RemoteAccessConfig(Base):
+    """Independent mobile device authority; defaults off and owns no gateway state."""
+
+    enabled: StrictBool = False
+    state_dir: str | None = None
+    socket_path: str | None = None
+    owner_timeout_seconds: float = Field(default=2.0, gt=0, le=10.0, allow_inf_nan=False)
+
+
+
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
@@ -890,6 +900,11 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
+    remote_access: RemoteAccessConfig = Field(
+        default_factory=RemoteAccessConfig,
+        validation_alias=AliasChoices("remoteAccess", "remote_access"),
+        serialization_alias="remoteAccess",
+    )
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     artifacts: ArtifactsConfig = Field(default_factory=ArtifactsConfig)
     model_presets: dict[str, ModelPresetConfig] = Field(
