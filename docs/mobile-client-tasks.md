@@ -1,8 +1,14 @@
 # Mobile client taskbook: OpenCode entry point
 
-Status: implementation handoff prepared 2026-10-30; staging baseline updated 2026-10-31.
-No mobile implementation or runtime qualification is claimed.
-Read this file first, then the matching tasks in [the implementation guide](mobile-client-implementation.md).
+Status: Android M01–M22 implemented and qualified on the A142 / Android 16 arm64 device.
+The final signed release is `mobile/evidence/20261031-m22-release/nanobot-mobile-release.apk`
+(SHA-256 `f0a41f2b53549808f94140cbdac583f60560ccb7f27b64b825822be44f5a6022`). Automated gates are
+green: Python 17,111 passed / 22 skipped; WebUI 1,364 passed; phone 39 tests (7 live skipped, 32
+passed). Device checks passed for product pairing, camera and library attachments, signed media,
+token refresh, cellular/Wi-Fi handover, orientation, process death, Doze, Back, font scaling and a
+battery/thermal snapshot. TalkBack was explicitly skipped by product decision. Final human
+acceptance/review remains. Read this file first, then the matching tasks in
+[the implementation guide](mobile-client-implementation.md).
 The [accepted architecture](mobile-client-plan.md) remains authoritative for security and product behavior;
 the taskbook supplies the complete execution order and supersedes its older P0-only dispatch wording.
 
