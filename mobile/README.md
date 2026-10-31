@@ -35,7 +35,7 @@ model-preset, workspace-control and persisted-thread reads, so the composer mode
 picker and the Sandbox mode menu work on the phone. Full access remains local-only;
 the phone receives the restricted projection and the server rejects client-supplied
 Full scope. The signed artifact was rebuilt with that bridge and the Nanobot launcher
-icon/splash (`5526c902823b527a8c3a3aef3fdefe1123129de1cdc3ba53f4161ad79d27dbef`). M20 final matrix is green: WebUI
+icon/splash (`ac0e3263fc9bf7f4936b65f8a113bdbd8a47901d95709b3728ccde69fb0a329d`). M20 final matrix is green: WebUI
 1,364 passed; Python 17,111 passed, 22 skipped; phone 31 tests (8 live skipped, 23 passed). The five baseline
 failures and the order-dependent flake were repaired. M22 signed release is built and verified with
 the release keystore: v2 signature, zipalign, install, same-key update, different-key rejection and

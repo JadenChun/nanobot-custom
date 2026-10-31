@@ -30,6 +30,7 @@ import {
   CircleHelp,
   CornerDownRight,
   FileText,
+  Folder,
   GripVertical,
   History,
   ImageIcon,
@@ -52,6 +53,7 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -966,6 +968,7 @@ export function ThreadComposer({
   onQuotedContextChange,
 }: ThreadComposerProps) {
   const { t } = useTranslation();
+  const mobileComposer = isMobileRuntimeActive();
   const [value, setValue] = useState("");
   const [selectedSessionMentions, setSelectedSessionMentions] = useState<SessionMention[]>([]);
   const [sessionDragPreview, setSessionDragPreview] = useState<{
@@ -2270,6 +2273,45 @@ export function ThreadComposer({
     />
   );
 
+  const accessControl = workspaceScope && !workspaceControlsHidden ? (
+    <WorkspacePermissionV2Control
+      enabled={workspaces?.controls.permission_v2 === true}
+      permissions={workspacePermissions}
+      loading={workspacePermissionsLoading}
+      error={workspacePermissionsError}
+      disabled={persistentWorkspaceChat && interactionDisabled}
+      persistentChat={persistentWorkspaceChat}
+      draftFullAccess={!persistentWorkspaceChat && !!onDraftFullAccess}
+      onRequestFullAccess={
+        !persistentWorkspaceChat && onDraftFullAccess
+          ? () => onDraftFullAccess(value)
+          : undefined
+      }
+      isHero={mobileComposer ? false : isHero}
+      onModeChange={onWorkspaceAccessModeChange}
+      onRetryRestricted={onRetryWorkspaceRestricted}
+    />
+  ) : null;
+
+  const modelControl = modelLabel && !voiceRecorder.isRecording ? (
+    <ModelPresetBadge
+      label={modelLabel}
+      modelDetail={modelDetail}
+      modelPreset={modelPreset}
+      modelPresets={modelPresets}
+      onPresetChange={onModelPresetChange}
+      onManageModels={onManageModels}
+      onRequestComposerFocus={() => textareaRef.current?.focus()}
+      provider={modelProvider}
+      providerLabel={modelProviderLabel}
+      needsSetup={modelNeedsSetup}
+      attentionRequest={modelSetupAttentionRequest}
+      fallbackModelName={fallbackModelName}
+      isHero={mobileComposer ? false : isHero}
+      onClick={modelNeedsSetup ? onModelBadgeClick : undefined}
+    />
+  ) : null;
+
   return (
     <form
       ref={formRef}
@@ -2463,6 +2505,21 @@ export function ThreadComposer({
             {inlineError}
           </div>
         ) : null}
+        {mobileComposer && !voiceRecorder.isRecording && (accessControl || modelControl) ? (
+          <div className="thread-composer-mobile-controls flex min-w-0 flex-wrap items-center gap-1.5 px-3 pb-1 pt-0.5">
+            {accessControl}
+            {modelControl}
+            {hasProjectFolder && workspaceScope ? (
+              <span
+                className="inline-flex h-9 min-w-0 max-w-[38vw] items-center gap-1.5 rounded-control bg-muted/35 px-2.5 text-[12px] font-semibold text-muted-foreground"
+                title={workspaceScope.project_path}
+              >
+                <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="truncate">{workspaceScope.project_name}</span>
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <div
           className={cn(
             "thread-composer-footer flex flex-nowrap items-center motion-safe:transition-[padding-bottom] motion-safe:[transition-duration:220ms] motion-safe:ease-in-out",
@@ -2534,7 +2591,7 @@ export function ThreadComposer({
                 <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
               </Button>
             )}
-            {showCompactProjectPicker && !voiceRecorder.isRecording ? projectPicker : null}
+            {showCompactProjectPicker && !mobileComposer && !voiceRecorder.isRecording ? projectPicker : null}
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter
                 ariaLabel={voiceRecordingStatusLabel}
@@ -2543,25 +2600,7 @@ export function ThreadComposer({
                 isHero={isHero}
                 levels={voiceRecorder.levels}
               />
-            ) : workspaceScope && !workspaceControlsHidden ? (
-              <WorkspacePermissionV2Control
-                enabled={workspaces?.controls.permission_v2 === true}
-                permissions={workspacePermissions}
-                loading={workspacePermissionsLoading}
-                error={workspacePermissionsError}
-                disabled={persistentWorkspaceChat && interactionDisabled}
-                persistentChat={persistentWorkspaceChat}
-                draftFullAccess={!persistentWorkspaceChat && !!onDraftFullAccess}
-                onRequestFullAccess={
-                  !persistentWorkspaceChat && onDraftFullAccess
-                    ? () => onDraftFullAccess(value)
-                    : undefined
-                }
-                isHero={isHero}
-                onModeChange={onWorkspaceAccessModeChange}
-                onRetryRestricted={onRetryWorkspaceRestricted}
-              />
-            ) : null}
+            ) : !mobileComposer ? accessControl : null}
           </div>
           <div
             className={cn(
@@ -2569,24 +2608,7 @@ export function ThreadComposer({
               isHero ? "gap-1.5" : "gap-2",
             )}
           >
-            {modelLabel && !voiceRecorder.isRecording ? (
-              <ModelPresetBadge
-                label={modelLabel}
-                modelDetail={modelDetail}
-                modelPreset={modelPreset}
-                modelPresets={modelPresets}
-                onPresetChange={onModelPresetChange}
-                onManageModels={onManageModels}
-                onRequestComposerFocus={() => textareaRef.current?.focus()}
-                provider={modelProvider}
-                providerLabel={modelProviderLabel}
-                needsSetup={modelNeedsSetup}
-                attentionRequest={modelSetupAttentionRequest}
-                fallbackModelName={fallbackModelName}
-                isHero={isHero}
-                onClick={modelNeedsSetup ? onModelBadgeClick : undefined}
-              />
-            ) : null}
+            {!mobileComposer ? modelControl : null}
             {!voiceRecorder.isRecording ? (
               <ComposerUsagePopover
                 context={contextUsage}
@@ -2673,7 +2695,7 @@ export function ThreadComposer({
             </Button>
           </div>
         </div>
-        {projectPickerAvailable && hasProjectFolder ? (
+        {projectPickerAvailable && hasProjectFolder && !mobileComposer ? (
           <div
             className="composer-workspace-drawer"
             data-composer-workspace-drawer=""

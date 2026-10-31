@@ -37,6 +37,7 @@ import type {
 } from "@/lib/types";
 import { getRuntimeHost } from "@/lib/runtime";
 import { cn } from "@/lib/utils";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import {
   isAbsoluteWorkspacePath,
   projectNameFromPath,
@@ -607,6 +608,7 @@ export function WorkspacePermissionV2Control({
   onRequestFullAccess?: () => void | Promise<void>;
 }) {
   const { t } = useTranslation();
+  const mobile = isMobileRuntimeActive();
   const [confirmFull, setConfirmFull] = useState(false);
   const [pending, setPending] = useState(false);
   const [actionFailed, setActionFailed] = useState(false);
@@ -714,6 +716,8 @@ export function WorkspacePermissionV2Control({
               isFull || isRestrictedRetiring
                 ? "bg-transparent text-orange-600 hover:bg-orange-500/8 dark:text-orange-300 dark:hover:bg-orange-400/10"
                 : "bg-transparent text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground dark:hover:bg-white/[0.06]",
+              mobile && !isFull && !isRestrictedRetiring
+                && "border-border/55 bg-card/70 hover:bg-card",
             )}
           >
             {isFull || isRestrictedRetiring
@@ -789,7 +793,7 @@ export function WorkspacePermissionV2Control({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
-      {!persistentChat && !draftFullAccess ? (
+      {!persistentChat && !draftFullAccess && !mobile ? (
         <span role="status" className="max-w-[min(19rem,65vw)] px-2 text-[10px] leading-tight text-muted-foreground">
           {t("workspace.permissionV2.sessionRequired", { defaultValue: "Send a message to create this chat before enabling Full access." })}
         </span>

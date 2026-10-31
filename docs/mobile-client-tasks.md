@@ -1,9 +1,9 @@
 # Mobile client taskbook: OpenCode entry point
 
 Status: Android M01–M22 implemented and qualified on the A142 / Android 16 arm64 device.
-The final signed release is `mobile/evidence/20261031-m22-release/nanobot-mobile-release.apk`
-(SHA-256 `5526c902823b527a8c3a3aef3fdefe1123129de1cdc3ba53f4161ad79d27dbef`). Automated gates are
-green: Python 17,111 passed / 22 skipped; WebUI 1,368 passed; phone 31 tests (8 live skipped, 23
+The final signed release is `mobile/evidence/20261101-m22-release/nanobot-mobile-release.apk`
+(SHA-256 `ac0e3263fc9bf7f4936b65f8a113bdbd8a47901d95709b3728ccde69fb0a329d`). Automated gates are
+green: Python 17,111 passed / 22 skipped; WebUI 1,369 passed; phone 31 tests (8 live skipped, 23
 passed). Device checks passed for QR/product pairing, camera and library attachments, signed media,
 token refresh, cellular/Wi-Fi handover, orientation, process death, Doze, Back, font scaling and a
 battery/thermal snapshot. A full gateway with the local `Qwen3.8-27B-UD-Q6_K_XL` provider then
