@@ -19,9 +19,9 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
-from nanobot.remote.protocol import ContractError, validate_scopes
+from nanobot.remote.protocol import REFRESH_IDLE_SECONDS, ContractError, validate_scopes
 
 try:  # POSIX selected-OS boundary; Windows tests use the thread lock only.
     import fcntl
@@ -83,7 +83,9 @@ def hash_refresh_token(token: str) -> str:
 class RemoteAccessStore:
     """Atomic, mode-restricted state under ``<instance-root>/remote-access``."""
 
-    def __init__(self, root: Path | str | None = None) -> None:
+    def __init__(
+        self, root: Path | str | None = None, *, clock: Callable[[], float] = time.time
+    ) -> None:
         if root is None:
             from nanobot.config.paths import get_data_dir
 
@@ -93,6 +95,7 @@ class RemoteAccessStore:
         self.lock_path = self.root / "state.lock"
         self.admin_token_path = self.root / "admin.token"
         self._thread_lock = threading.RLock()
+        self.clock = clock
 
     def ensure_root(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -150,7 +153,7 @@ class RemoteAccessStore:
             raise StoreError("revision must be positive")
         if len(state.devices) > MAX_DEVICES or len(state.owned_entries) > MAX_OWNED_ENTRIES:
             raise StoreError("state exceeds the bounded device/entry count")
-        state.updated_at = time.time()
+        state.updated_at = self.clock()
         payload = json.dumps(self._to_dict(state), sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
         )
@@ -208,14 +211,42 @@ class RemoteAccessStore:
                 installation_id=installation_id,
                 label=label[:64],
                 scopes=tuple(scopes),
-                created_at=time.time(),
-                last_seen_at=time.time(),
+                created_at=self.clock(),
+                last_seen_at=self.clock(),
                 refresh_hash=hash_refresh_token(refresh_token),
             )
             state.devices[installation_id] = device
             state.revision += 1
             self._save_locked(state)
             return device
+
+    def get_device(self, installation_id: str) -> RemoteDevice | None:
+        state = self.load()
+        return state.devices.get(installation_id) if state else None
+
+    def update_scopes(self, installation_id: str, scopes: tuple[str, ...]) -> RemoteDevice:
+        with self._locked():
+            state = self._require_state()
+            device = state.devices.get(installation_id)
+            if device is None or device.revoked:
+                raise StoreError("device is not active")
+            try:
+                validate_scopes(scopes)
+            except ContractError as exc:
+                raise StoreError(str(exc)) from exc
+            updated = RemoteDevice(
+                installation_id=device.installation_id,
+                label=device.label,
+                scopes=tuple(scopes),
+                created_at=device.created_at,
+                last_seen_at=device.last_seen_at,
+                refresh_hash=device.refresh_hash,
+                revoked_at=device.revoked_at,
+            )
+            state.devices[installation_id] = updated
+            state.revision += 1
+            self._save_locked(state)
+            return updated
 
     def rotate_refresh(self, installation_id: str, refresh_token: str) -> RemoteDevice:
         with self._locked():
@@ -228,7 +259,7 @@ class RemoteAccessStore:
                 label=device.label,
                 scopes=device.scopes,
                 created_at=device.created_at,
-                last_seen_at=time.time(),
+                last_seen_at=self.clock(),
                 refresh_hash=hash_refresh_token(refresh_token),
                 revoked_at=device.revoked_at,
             )
@@ -250,7 +281,7 @@ class RemoteAccessStore:
                 created_at=device.created_at,
                 last_seen_at=device.last_seen_at,
                 refresh_hash=device.refresh_hash,
-                revoked_at=device.revoked_at or time.time(),
+                revoked_at=device.revoked_at or self.clock(),
             )
             state.devices[installation_id] = updated
             state.revision += 1
@@ -263,6 +294,9 @@ class RemoteAccessStore:
             return None
         device = state.devices.get(installation_id)
         if device is None or device.revoked:
+            return None
+        now = self.clock()
+        if now - device.last_seen_at > REFRESH_IDLE_SECONDS:
             return None
         if not hmac.compare_digest(device.refresh_hash, hash_refresh_token(refresh_token)):
             return None
