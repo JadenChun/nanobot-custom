@@ -64,6 +64,12 @@ def _workspace(tmp_path: Path, *, jsonl: bytes | None = None) -> Path:
     return memory
 
 
+def _stable_stat(path: Path) -> tuple[int, int, int, int, int]:
+    """Compare file identity/content metadata without volatile atime."""
+    value = path.stat()
+    return (value.st_mode, value.st_size, value.st_mtime_ns, value.st_ctime_ns, value.st_ino)
+
+
 def _finalize(tmp_path: Path):
     return finalize.finalize_prepared_conversion(tmp_path, workspace_id=_WORKSPACE_ID)
 
@@ -90,7 +96,7 @@ def _phases(tmp_path: Path) -> list[str]:
 def test_complete_and_idempotent(tmp_path: Path, jsonl: bytes | None) -> None:
     memory = _workspace(tmp_path, jsonl=jsonl)
     original = (memory / "HISTORY.md").read_bytes()
-    original_stat = (memory / "HISTORY.md").stat()
+    original_stat = _stable_stat(memory / "HISTORY.md")
     receipt = (memory / ".consolidation.pending.json").read_bytes()
     result = _finalize(tmp_path)
     assert result.phase == "COMPLETE"
@@ -103,7 +109,7 @@ def test_complete_and_idempotent(tmp_path: Path, jsonl: bytes | None) -> None:
         assert not (memory / "HISTORY.md.bak").is_symlink()
     else:
         assert not (memory / "HISTORY.md.bak").exists()
-        assert (memory / "HISTORY.md").stat() == original_stat
+        assert _stable_stat(memory / "HISTORY.md") == original_stat
         assert (memory / "HISTORY.md").read_bytes() == original
 
 
