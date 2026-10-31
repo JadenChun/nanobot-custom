@@ -24,6 +24,7 @@ class NativeNetworkPlugin : Plugin() {
     private val pollExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private var pollTask: ScheduledFuture<*>? = null
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val custody by lazy { CustodyStore(context) }
 
     @PluginMethod
     fun abiVersion(call: PluginCall) {
@@ -41,7 +42,13 @@ class NativeNetworkPlugin : Plugin() {
         }
         stopInternal()
         val stateRoot = context.filesDir.resolve("network-state")
-        val safeInstallation = installationId.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
+        val record = try {
+            custody.loadOrCreate(origin, installationId, hostname)
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "native custody rejected the installation")
+            return
+        }
+        val safeInstallation = record.installationId.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
         val stateDir = stateRoot.resolve(safeInstallation)
         if (!stateDir.exists() && !stateDir.mkdirs()) {
             call.reject("native state directory could not be created")
@@ -52,10 +59,11 @@ class NativeNetworkPlugin : Plugin() {
         stateDir.setReadable(true, true)
         stateDir.setWritable(true, true)
         val config = JSONObject()
-            .put("origin", origin)
-            .put("installation_id", installationId)
-            .put("hostname", hostname)
+            .put("origin", record.origin)
+            .put("installation_id", record.installationId)
+            .put("hostname", record.hostname)
             .put("state_dir", stateDir.absolutePath)
+            .put("state_key_base64", record.stateKeyBase64)
         val newHandle = NativeNetwork.start(config.toString())
         if (newHandle == 0L) {
             call.reject(NativeNetwork.lastError())
@@ -226,6 +234,33 @@ class NativeNetworkPlugin : Plugin() {
     fun stop(call: PluginCall) {
         stopInternal()
         call.resolve()
+    }
+
+    @PluginMethod
+    fun custodyStatus(call: PluginCall) {
+        val result = JSObject()
+        custody.status().forEach { (key, value) -> result.put(key, value) }
+        call.resolve(result)
+    }
+
+    @PluginMethod
+    fun logout(call: PluginCall) {
+        val serverReachable = call.getBoolean("serverReachable") ?: false
+        val current = transportHandle
+        transportHandle = 0L
+        pollTask?.cancel(false)
+        pollTask = null
+        if (current != 0L) {
+            NativeNetwork.stop(current)
+        }
+        val pending = try {
+            custody.logout(serverReachable)
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "custody erasure failed")
+            return
+        }
+        custody.purgeMedia()
+        call.resolve(JSObject().put("serverRevocationPending", pending))
     }
 
     override fun handleOnDestroy() {

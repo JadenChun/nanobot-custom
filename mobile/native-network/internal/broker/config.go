@@ -41,6 +41,7 @@ type Config struct {
 	AuthKey        string `json:"auth_key,omitempty"`
 	ControlURL     string `json:"control_url,omitempty"`
 	Mode           string `json:"mode,omitempty"`
+	StateKeyBase64 string `json:"state_key_base64,omitempty"`
 
 	QueueSize        int `json:"queue_size,omitempty"`
 	MaxResponseBytes int `json:"max_response_bytes,omitempty"`

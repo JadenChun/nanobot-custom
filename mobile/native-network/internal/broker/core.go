@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/http"
@@ -78,6 +79,18 @@ func (c *Core) Start() error {
 		c.mu.Unlock()
 		return ErrBusy
 	}
+	c.mu.Unlock()
+
+	key, err := base64.StdEncoding.DecodeString(c.cfg.StateKeyBase64)
+	if err != nil || len(key) != 32 {
+		return fmt.Errorf("%w: state_key_base64 must contain a 32-byte key", ErrInvalid)
+	}
+	store, err := NewEncryptedFileStore(c.cfg.StateDir, key)
+	if err != nil {
+		return err
+	}
+
+	c.mu.Lock()
 	c.started = true
 	c.stopped = false
 	c.state = "starting"
@@ -87,6 +100,7 @@ func (c *Core) Start() error {
 	_ = c.emit(map[string]any{"type": "node_state", "state": "starting", "origin": c.cfg.Origin})
 	node := &tsnet.Server{
 		Dir:        c.cfg.StateDir,
+		Store:      store,
 		Hostname:   c.cfg.Hostname,
 		AuthKey:    c.cfg.AuthKey,
 		ControlURL: c.cfg.ControlURL,

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <exclude domain="file" path="custody/" />
+    <exclude domain="file" path="network-state/" />
+    <exclude domain="file" path="nanobot-tmp/" />
+    <exclude domain="sharedpref" path="nanobot_custody.xml" />
+    <exclude domain="cache" path="." />
+</full-backup-content>

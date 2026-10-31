@@ -29,6 +29,9 @@ Android instrumentation and then executes the fixture probe.
 
 - The C ABI accepts only a validated `https://` origin plus installation/hostname/state-dir;
   the `tsnet` transport is the only production mode.
+- `state_key_base64` is supplied only by native Keystore custody. The native transport uses it
+  with `EncryptedFileStore` to AES-GCM-wrap the `ipn.StateStore` records; plaintext node state
+  is never written by the transport. The C ABI rejects a missing or short key at start.
 - HTTP operations are named and resolved against exact method/path patterns and allowlisted
   query keys; arbitrary URLs, localhost, unknown headers and oversized bodies are denied.
 - Redirects must remain same-origin and resolve to an allowlisted GET route; cross-origin

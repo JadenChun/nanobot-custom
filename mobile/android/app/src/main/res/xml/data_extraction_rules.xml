@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="custody/" />
+        <exclude domain="file" path="network-state/" />
+        <exclude domain="file" path="nanobot-tmp/" />
+        <exclude domain="sharedpref" path="nanobot_custody.xml" />
+        <exclude domain="cache" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="custody/" />
+        <exclude domain="file" path="network-state/" />
+        <exclude domain="file" path="nanobot-tmp/" />
+        <exclude domain="sharedpref" path="nanobot_custody.xml" />
+        <exclude domain="cache" path="." />
+    </device-transfer>
+</data-extraction-rules>
