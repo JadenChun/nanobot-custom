@@ -10,7 +10,7 @@ pairing plus refresh/replay/revoke were exercised against the isolated owner dat
 media handles, fetcher/attachment policy, exact target binding and the Capacitor attachment picker
 are in place. M16 runtime is wired into bootstrap/HTTP/client surface, mobile service-worker registration is
 disabled and shared assets package to `mobile/www-shared`. M17 adds mobile safe-area CSS, Back/Escape
-handling and connection/recovery notices. The full Python suite is green: 17,110 passed, 22
+handling and connection/recovery notices. The full Python suite is green: 17,111 passed, 22
 skipped. M18 headless management and the shared Remote Access settings page are implemented. M19 live owned
 user-service install/restart/removal passed and was cleaned up. M20 automated WebUI/emulator/Python
 matrix is captured; five pre-existing baseline Python failures remain. M21 arm64 execution, live
@@ -24,7 +24,7 @@ shows its installation ID, Remote Access settings creates the exact `nanobot://p
 native bridge collects the owner challenge and displays the comparison code, then polls approval
 and stores the issued tokens in Keystore custody. The full flow passed on the A142 phone against
 the real gateway, including handshake/read/WebSocket after pairing. M20 final matrix is green: WebUI
-1,364 passed; Python 17,110 passed, 22 skipped; phone 37 tests (6 live skipped). The five baseline
+1,364 passed; Python 17,111 passed, 22 skipped; phone 39 tests (7 live skipped). The five baseline
 failures and the order-dependent flake were repaired. M22 signed release is built and verified with
 the release keystore: v2 signature, zipalign, install, same-key update, different-key rejection and
 uninstall/reinstall all passed. Automated M21 checks on the signed release also pass:
