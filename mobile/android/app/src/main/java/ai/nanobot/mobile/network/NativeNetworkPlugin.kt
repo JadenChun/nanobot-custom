@@ -84,6 +84,27 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun target(call: PluginCall) {
+        val record = try {
+            custody.load()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "custody is unavailable")
+            return
+        }
+        if (record == null) {
+            call.reject("no paired target")
+            return
+        }
+        call.resolve(
+            JSObject()
+                .put("origin", record.origin)
+                .put("installationId", record.installationId)
+                .put("hasAccess", record.accessToken.isNotBlank())
+                .put("hasRefresh", record.refreshToken.isNotBlank())
+        )
+    }
+
+    @PluginMethod
     fun status(call: PluginCall) {
         val current = transportHandle
         if (current == 0L) {
@@ -117,11 +138,18 @@ class NativeNetworkPlugin : Plugin() {
             .put("method", method)
             .put("path", path)
         val headers = call.getObject("headers")
+        val copied = JSONObject()
         if (headers != null) {
-            val copied = JSONObject()
             for (key in headers.keys()) {
                 copied.put(key, headers.getString(key))
             }
+        }
+        // Inject the custody access token natively; JS never receives it.
+        val record = try { custody.load() } catch (_: Exception) { null }
+        if (record != null && record.accessToken.isNotBlank() && !copied.has("Authorization")) {
+            copied.put("Authorization", "Bearer ${record.accessToken}")
+        }
+        if (copied.length() > 0) {
             request.put("headers", copied)
         }
         call.getString("bodyBase64")?.let { request.put("body_base64", it) }
