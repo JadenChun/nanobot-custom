@@ -36,6 +36,11 @@ class RemoteAccessClient:
     def status(self) -> dict[str, Any]:
         return self._call("status", {}, role="gateway")
 
+    def validate_access(self, access_token: str) -> dict[str, Any]:
+        return self._call(
+            "validate_access", {"access_token": access_token}, role="gateway"
+        )
+
     def validate(self, installation_id: str, refresh_token: str) -> dict[str, Any]:
         return self._call(
             "validate",

@@ -81,6 +81,7 @@ def build_gateway_services(
     skill_state_action: Callable[[set[str]], None] | None = None,
     recovery_action: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
     logger: Any = default_logger,
+    mobile_edge: Any | None = None,
 ) -> GatewayServices:
     settings = WebUISettingsServices.create(
         config_path or get_config_path(),
@@ -167,7 +168,9 @@ def build_gateway_services(
         recovery_action=recovery_action,
         log=logger,
     )
-    endpoint = WebUIGatewayEndpoint(config=config, http=http, tokens=tokens)
+    endpoint = WebUIGatewayEndpoint(
+        config=config, http=http, tokens=tokens, mobile_edge=mobile_edge
+    )
     return GatewayServices(
         http=http,
         endpoint=endpoint,

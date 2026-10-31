@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+from nanobot.remote.auth import AuthRejectedError, TokenService
 from nanobot.remote.pairing import PairingError, PairingService
 from nanobot.remote.store import RemoteAccessStore, StoreError
 
@@ -30,9 +31,11 @@ class OwnerIPCServer:
         store: RemoteAccessStore,
         socket_path: Path | None = None,
         pairing: PairingService | None = None,
+        tokens: TokenService | None = None,
     ) -> None:
         self.store = store
         self.pairing = pairing
+        self.tokens = tokens
         self.socket_path = Path(socket_path) if socket_path else store.root / IPC_SOCKET_NAME
         self._socket: socket.socket | None = None
         self._thread: threading.Thread | None = None
@@ -190,6 +193,27 @@ class OwnerIPCServer:
             return {"ok": True, "result": {"version": 1, "started_at": self._started_at}}
         if method == "status":
             return {"ok": True, "result": self.store.snapshot()}
+        if method == "validate_access":
+            if self.tokens is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "token service is not running"}}
+            access_token = _string_param(params, "access_token")
+            if access_token is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "access_token is required"}}
+            try:
+                grant = self.tokens.validate_access(access_token)
+            except AuthRejectedError as exc:
+                return {"ok": True, "result": {"valid": False, "message": str(exc)}}
+            revision = self.store.snapshot()["revision"]
+            return {
+                "ok": True,
+                "result": {
+                    "valid": True,
+                    "installation_id": grant.installation_id,
+                    "scopes": list(grant.scopes),
+                    "expires_at": grant.expires_at,
+                    "generation": revision,
+                },
+            }
         if method == "validate":
             installation_id = _string_param(params, "installation_id")
             refresh_token = _string_param(params, "refresh_token")
