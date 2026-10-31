@@ -58,6 +58,25 @@ class CustodyStoreInstrumentedTest {
     }
 
     @Test
+    fun installationIdentityIsStableBeforePairing() {
+        val first = store.installationIdentity()
+        val second = store.installationIdentity()
+        assertEquals(first, second)
+        assertTrue(Regex("^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$").matches(first))
+        store.clear()
+        val replacement = store.installationIdentity()
+        assertTrue(replacement != first)
+    }
+
+    @Test
+    fun installationIdentityFollowsCustodyAfterPairing() {
+        val pending = store.installationIdentity()
+        val created = store.loadOrCreate("https://fixture.example:8443", "install-phone-1")
+        assertEquals("install-phone-1", store.installationIdentity())
+        assertTrue(created.installationId != pending)
+    }
+
+    @Test
     fun originAndInstallationMismatchFailClosed() {
         val created = store.loadOrCreate("https://fixture.example:8443", null)
         assertThrows(CustodyMismatchException::class.java) {

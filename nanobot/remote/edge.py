@@ -40,6 +40,17 @@ _LOCAL_ROUTES = {
     "/mobile/v1/read": "chat.read",
     "/mobile/v1/status": "chat.read",
 }
+_PAIRING_ROUTES = {"/mobile/v1/pair/collect", "/mobile/v1/pair/poll"}
+_PAIRING_STATUS = {
+    "pairing_rate_limited": 429,
+    "pairing_not_found": 404,
+    "pairing_expired": 410,
+    "pairing_consumed": 410,
+    "pairing_busy": 409,
+    "remote_access_disabled": 503,
+    "pairing_rejected": 403,
+    "bad_request": 400,
+}
 
 
 class EdgeAuthError(RuntimeError):
@@ -171,6 +182,8 @@ class MobileGatewayEdge:
         path, query = parse_request_path(request.path)
         if path != "/mobile/v1" and not path.startswith("/mobile/v1/"):
             return None
+        if path in _PAIRING_ROUTES:
+            return await self._handle_pairing(request, path)
         token = bearer_token(request.headers)
         if not token:
             return http_json_response({"error": "missing_access"}, status=401)
@@ -224,6 +237,46 @@ class MobileGatewayEdge:
             reason = HTTPStatus(result.status).phrase
             return Response(result.status, reason, _headers(headers), result.body)
         return http_json_response({"error": "not_found"}, status=404)
+
+    async def _handle_pairing(self, request: WsRequest, path: str) -> Response:
+        headers = request.headers
+
+        def header(name: str) -> str:
+            value = headers.get(name)
+            return value.strip() if isinstance(value, str) else ""
+
+        pairing_id = header("X-Nanobot-Pairing-Id")
+        nonce = header("X-Nanobot-Pairing-Nonce")
+        collector_secret = header("X-Nanobot-Pairing-Secret")
+        if not pairing_id or not nonce or not collector_secret:
+            return http_json_response({"error": "bad_request"}, status=400)
+        try:
+            if path.endswith("/collect"):
+                installation_id = header("X-Nanobot-Installation")
+                label = header("X-Nanobot-Label") or "mobile"
+                if not installation_id:
+                    return http_json_response({"error": "bad_request"}, status=400)
+                result = await asyncio.to_thread(
+                    self.validator.client.collect_pairing,
+                    pairing_id=pairing_id,
+                    nonce=nonce,
+                    collector_secret=collector_secret,
+                    installation_id=installation_id,
+                    label=label,
+                )
+            else:
+                result = await asyncio.to_thread(
+                    self.validator.client.poll_pairing,
+                    pairing_id=pairing_id,
+                    nonce=nonce,
+                    collector_secret=collector_secret,
+                )
+        except OwnerUnavailableError:
+            return http_json_response({"error": "owner_unavailable"}, status=503)
+        except OwnerRequestError as exc:
+            status = _PAIRING_STATUS.get(exc.code, 400)
+            return http_json_response({"error": exc.code}, status=status)
+        return http_json_response(result)
 
     def _handshake(self, identity: AccessIdentity) -> dict[str, Any]:
         capabilities = {

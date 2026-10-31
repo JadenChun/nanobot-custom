@@ -71,6 +71,18 @@ func testServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("/fixture/v1/redirect", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://evil.example/steal", http.StatusFound)
 	})
+	mux.HandleFunc("/mobile/v1/pair/collect", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Nanobot-Pairing-Id") != "pair-1" ||
+			r.Header.Get("X-Nanobot-Pairing-Nonce") != "nonce-1" ||
+			r.Header.Get("X-Nanobot-Pairing-Secret") != "secret-1" ||
+			r.Header.Get("X-Nanobot-Installation") != "install-1" ||
+			r.Header.Get("X-Nanobot-Label") != "phone" {
+			http.Error(w, "missing pairing headers", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"pairing_id":"pair-1","comparison_code":"123456"}`))
+	})
 	mux.HandleFunc("/fixture/v1/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -365,5 +377,41 @@ func TestHTTPQueueFull(t *testing.T) {
 	}
 	if _, err := core.HTTP(HTTPRequest{Operation: "fixture_read", Method: "GET", Path: "/fixture/v1/read"}); err != ErrQueueFull {
 		t.Fatalf("HTTP queue bound: %v", err)
+	}
+}
+
+func TestHTTPPairingRouteAllowsOnlyBoundedHeaders(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, nil)
+	id, err := core.HTTP(HTTPRequest{
+		Operation: "mobile_pair_collect",
+		Method:    http.MethodGet,
+		Path:      "/mobile/v1/pair/collect",
+		Headers: map[string]string{
+			"X-Nanobot-Pairing-Id":     "pair-1",
+			"X-Nanobot-Pairing-Nonce":  "nonce-1",
+			"X-Nanobot-Pairing-Secret": "secret-1",
+			"X-Nanobot-Installation":   "install-1",
+			"X-Nanobot-Label":          "phone",
+		},
+	})
+	if err != nil || id == 0 {
+		t.Fatalf("pairing HTTP: id=%d err=%v", id, err)
+	}
+	event := waitEvent(t, core, "http_response")
+	if event["status"].(float64) != 200 {
+		t.Fatalf("status: %v", event["status"])
+	}
+	body, err := base64.StdEncoding.DecodeString(event["body_base64"].(string))
+	if err != nil || !strings.Contains(string(body), `"comparison_code":"123456"`) {
+		t.Fatalf("body: %q err=%v", body, err)
+	}
+	if _, err := core.HTTP(HTTPRequest{
+		Operation: "mobile_pair_collect",
+		Method:    http.MethodGet,
+		Path:      "/mobile/v1/pair/collect",
+		Headers:   map[string]string{"X-Admin": "1"},
+	}); err == nil {
+		t.Fatal("unlisted pairing header was accepted")
 	}
 }

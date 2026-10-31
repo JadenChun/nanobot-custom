@@ -213,6 +213,31 @@ class CustodyStore(context: Context) {
         return updated
     }
 
+    /**
+     * Return the installation identity used for pairing. Before the first
+     * successful pairing this is a persistent app-private UUID; afterwards it
+     * is the installation bound inside the encrypted custody record.
+     */
+    @Synchronized
+    fun installationIdentity(): String {
+        val existing = load()
+        if (existing != null) return existing.installationId
+        val file = pendingInstallationFile()
+        if (file.exists()) {
+            val value = file.readText(Charsets.UTF_8).trim()
+            if (Regex("^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$").matches(value)) return value
+            file.delete()
+        }
+        ensureDirectory()
+        val generated = UUID.randomUUID().toString()
+        file.writeText(generated, Charsets.UTF_8)
+        file.setReadable(false, false)
+        file.setWritable(false, false)
+        file.setReadable(true, true)
+        file.setWritable(true, true)
+        return generated
+    }
+
     @Synchronized
     fun status(): Map<String, Any> {
         val record = try {
@@ -267,6 +292,7 @@ class CustodyStore(context: Context) {
     fun clear() {
         recordFile.delete()
         File(custodyDir, "record.tmp").delete()
+        pendingInstallationFile().delete()
         try {
             if (keyStore.containsAlias(ALIAS)) {
                 keyStore.deleteEntry(ALIAS)
@@ -289,6 +315,8 @@ class CustodyStore(context: Context) {
     }
 
     internal fun recordFileForTest(): File = recordFile
+
+    private fun pendingInstallationFile(): File = File(custodyDir, "installation.id")
 
     private fun ensureDirectory() {
         if (!custodyDir.exists() && !custodyDir.mkdirs()) {

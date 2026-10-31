@@ -17,6 +17,10 @@ class OwnerUnavailableError(RuntimeError):
 class OwnerRequestError(RuntimeError):
     """The owner rejected or failed a request."""
 
+    def __init__(self, message: str, *, code: str = "owner_error") -> None:
+        super().__init__(message)
+        self.code = code
+
 
 class RemoteAccessClient:
     def __init__(
@@ -83,6 +87,44 @@ class RemoteAccessClient:
             },
             role="admin",
             require_admin=True,
+        )
+
+    def collect_pairing(
+        self,
+        *,
+        pairing_id: str,
+        nonce: str,
+        collector_secret: str,
+        installation_id: str,
+        label: str,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_collect",
+            {
+                "pairing_id": pairing_id,
+                "nonce": nonce,
+                "collector_secret": collector_secret,
+                "installation_id": installation_id,
+                "label": label,
+            },
+            role="pairing",
+        )
+
+    def poll_pairing(
+        self,
+        *,
+        pairing_id: str,
+        nonce: str,
+        collector_secret: str,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_poll",
+            {
+                "pairing_id": pairing_id,
+                "nonce": nonce,
+                "collector_secret": collector_secret,
+            },
+            role="pairing",
         )
 
     def create_pairing(
@@ -172,7 +214,10 @@ class RemoteAccessClient:
         if not payload_response["ok"]:
             raw_error = payload_response.get("error")
             error = cast(dict[str, Any], raw_error) if isinstance(raw_error, dict) else {}
-            raise OwnerRequestError(str(error.get("message", "owner request failed")))
+            raise OwnerRequestError(
+                str(error.get("message", "owner request failed")),
+                code=str(error.get("code", "owner_error")),
+            )
         return payload_response.get("result")
 
     def _recv_line(self, connection: socket.socket) -> str:

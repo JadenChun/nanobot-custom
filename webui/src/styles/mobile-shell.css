@@ -20,3 +20,112 @@ html.mobile-runtime body {
     font-size: 16px;
   }
 }
+
+/* Native pairing gate: rendered by mobile-bootstrap.js before React mounts. */
+.mobile-pairing {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: calc(1rem + env(safe-area-inset-top, 0px)) 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
+  background: hsl(var(--background, 0 0% 19%));
+  color: hsl(var(--foreground, 0 0% 98%));
+  overflow-y: auto;
+}
+
+.mobile-pairing-card {
+  width: min(32rem, 100%);
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.25rem;
+  border: 1px solid hsl(var(--border, 240 4% 16%));
+  border-radius: 1rem;
+  background: hsl(var(--card, 240 5% 8%));
+}
+
+.mobile-pairing-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.mobile-pairing-copy {
+  margin: 0;
+  color: hsl(var(--muted-foreground, 240 5% 65%));
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+
+.mobile-pairing-status {
+  margin: 0;
+  font-size: 0.925rem;
+}
+
+.mobile-pairing-status.is-error {
+  color: hsl(var(--destructive, 0 84% 60%));
+}
+
+.mobile-pairing-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.mobile-pairing-label {
+  flex: 0 0 auto;
+  color: hsl(var(--muted-foreground, 240 5% 65%));
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mobile-pairing-value {
+  display: block;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid hsl(var(--border, 240 4% 16%));
+  border-radius: 0.45rem;
+  background: hsl(var(--muted, 240 4% 12%));
+  font-size: 0.8rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.mobile-pairing-code {
+  margin-top: 0.25rem;
+  padding: 0.9rem;
+  border: 1px solid hsl(var(--border, 240 4% 16%));
+  border-radius: 0.75rem;
+  background: hsl(var(--muted, 240 4% 12%));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: 0.35em;
+  text-align: center;
+}
+
+.mobile-pairing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.mobile-pairing-button {
+  min-height: 2.5rem;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid hsl(var(--border, 240 4% 16%));
+  border-radius: 0.55rem;
+  background: hsl(var(--secondary, 240 4% 15%));
+  color: inherit;
+  font-size: 0.85rem;
+}
+
+.mobile-pairing-button[hidden] {
+  display: none;
+}

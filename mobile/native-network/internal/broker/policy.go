@@ -50,6 +50,14 @@ var routes = map[string]route{
 		pattern: regexp.MustCompile(`^/mobile/v1/ws$`),
 		ws:      true,
 	},
+	"mobile_pair_collect": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/pair/collect$`),
+	},
+	"mobile_pair_poll": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/pair/poll$`),
+	},
 	"mobile_refresh": {
 		method:  http.MethodPost,
 		pattern: regexp.MustCompile(`^/mobile/v1/refresh$`),
@@ -102,12 +110,17 @@ var routes = map[string]route{
 }
 
 var allowedHeaders = map[string]bool{
-	"authorization":       true,
-	"content-type":        true,
-	"accept":              true,
-	"range":               true,
-	"if-none-match":       true,
-	"x-fixture-bootstrap": true,
+	"authorization":            true,
+	"content-type":             true,
+	"accept":                   true,
+	"range":                    true,
+	"if-none-match":            true,
+	"x-fixture-bootstrap":      true,
+	"x-nanobot-pairing-id":     true,
+	"x-nanobot-pairing-nonce":  true,
+	"x-nanobot-pairing-secret": true,
+	"x-nanobot-installation":   true,
+	"x-nanobot-label":          true,
 }
 
 func resolveRoute(cfg *Config, origin *url.URL, operation, method, rawPath string) (*url.URL, route, error) {

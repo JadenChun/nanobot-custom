@@ -12,7 +12,19 @@ from pathlib import Path
 from typing import Any, cast
 
 from nanobot.remote.auth import AuthRejectedError, TokenService
-from nanobot.remote.pairing import PairingError, PairingService
+from nanobot.remote.pairing import (
+    PairingBusyError,
+    PairingConsumedError,
+    PairingDisabledError,
+    PairingError,
+    PairingExpiredError,
+    PairingNotFoundError,
+    PairingPending,
+    PairingRateLimitedError,
+    PairingRejectedError,
+    PairingResult,
+    PairingService,
+)
 from nanobot.remote.store import RemoteAccessStore, StoreError
 
 MAX_IPC_LINE_BYTES = 64 * 1024
@@ -185,10 +197,80 @@ class OwnerIPCServer:
         params: dict[str, Any] = cast(dict[str, Any], raw_params) if isinstance(raw_params, dict) else {}
         if method is None or not isinstance(raw_params, dict):
             return {"ok": False, "error": {"code": "bad_request", "message": "method and params are required"}}
-        if role not in {"gateway", "admin"}:
+        if role not in {"gateway", "admin", "pairing"}:
             return {"ok": False, "error": {"code": "denied", "message": "role is not admitted"}}
         if role == "admin" and not self.store.check_admin_token(_string_param(params, "admin_token") or _string_param(request, "admin_token")):
             return {"ok": False, "error": {"code": "denied", "message": "admin token is not valid"}}
+        if method == "pair_collect":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = _string_param(params, "pairing_id")
+            nonce = _string_param(params, "nonce")
+            collector_secret = _string_param(params, "collector_secret")
+            installation_id = _string_param(params, "installation_id")
+            label = _string_param(params, "label")
+            if None in (pairing_id, nonce, collector_secret, installation_id, label):
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing fields are required"}}
+            try:
+                pending = self.pairing.collect(
+                    pairing_id=cast(str, pairing_id),
+                    nonce=cast(str, nonce),
+                    collector_secret=cast(str, collector_secret),
+                    installation_id=cast(str, installation_id),
+                    label=cast(str, label),
+                )
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            return {
+                "ok": True,
+                "result": {
+                    "pairing_id": pending.pairing_id,
+                    "comparison_code": pending.comparison_code,
+                    "expires_at": pending.expires_at,
+                    "installation_id": pending.installation_id,
+                },
+            }
+        if method == "pair_poll":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = _string_param(params, "pairing_id")
+            nonce = _string_param(params, "nonce")
+            collector_secret = _string_param(params, "collector_secret")
+            if None in (pairing_id, nonce, collector_secret):
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing fields are required"}}
+            try:
+                result = self.pairing.poll(
+                    pairing_id=cast(str, pairing_id),
+                    nonce=cast(str, nonce),
+                    collector_secret=cast(str, collector_secret),
+                )
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            if isinstance(result, PairingResult):
+                return {
+                    "ok": True,
+                    "result": {
+                        "status": "approved",
+                        "pairing_id": result.pairing_id,
+                        "installation_id": result.installation_id,
+                        "access_token": result.access_token,
+                        "refresh_token": result.refresh_token,
+                        "expires_in": result.expires_in,
+                        "refresh_expires_in": result.refresh_expires_in,
+                        "scopes": list(result.scopes),
+                    },
+                }
+            assert isinstance(result, PairingPending)
+            return {
+                "ok": True,
+                "result": {
+                    "status": "pending",
+                    "pairing_id": result.pairing_id,
+                    "comparison_code": result.comparison_code,
+                    "expires_at": result.expires_at,
+                    "installation_id": result.installation_id,
+                },
+            }
         if method == "ping":
             return {"ok": True, "result": {"version": 1, "started_at": self._started_at}}
         if method == "status":
@@ -263,8 +345,8 @@ class OwnerIPCServer:
             except StoreError as exc:
                 return {"ok": False, "error": {"code": "not_found", "message": str(exc)}}
             return {"ok": True, "result": {"installation_id": device.installation_id, "revoked": device.revoked}}
-        if role == "gateway":
-            return {"ok": False, "error": {"code": "denied", "message": "gateway role cannot use local administration"}}
+        if role in {"gateway", "pairing"}:
+            return {"ok": False, "error": {"code": "denied", "message": "role cannot use local administration"}}
         if method == "list_devices":
             return {"ok": True, "result": self.store.snapshot()["devices"]}
         if method == "pair_create":
@@ -360,3 +442,21 @@ def _string_list_param(params: dict[str, Any], key: str) -> list[str] | None:
     if not all(isinstance(item, str) for item in values):
         return None
     return [item for item in values if isinstance(item, str)]
+
+
+def _pairing_code(exc: PairingError) -> str:
+    if isinstance(exc, PairingRateLimitedError):
+        return "pairing_rate_limited"
+    if isinstance(exc, PairingNotFoundError):
+        return "pairing_not_found"
+    if isinstance(exc, PairingExpiredError):
+        return "pairing_expired"
+    if isinstance(exc, PairingConsumedError):
+        return "pairing_consumed"
+    if isinstance(exc, PairingBusyError):
+        return "pairing_busy"
+    if isinstance(exc, PairingDisabledError):
+        return "remote_access_disabled"
+    if isinstance(exc, PairingRejectedError):
+        return "pairing_rejected"
+    return "pairing_error"

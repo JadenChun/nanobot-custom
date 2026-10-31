@@ -10,7 +10,7 @@ pairing plus refresh/replay/revoke were exercised against the isolated owner dat
 media handles, fetcher/attachment policy, exact target binding and the Capacitor attachment picker
 are in place. M16 runtime is wired into bootstrap/HTTP/client surface, mobile service-worker registration is
 disabled and shared assets package to `mobile/www-shared`. M17 adds mobile safe-area CSS, Back/Escape
-handling and connection/recovery notices. The full Python suite has 17,098 passing tests and five
+handling and connection/recovery notices. The full Python suite has 17,103 passing tests and five
 pre-existing baseline failures. M18 headless management and the shared Remote Access settings page are implemented. M19 live owned
 user-service install/restart/removal passed and was cleaned up. M20 automated WebUI/emulator/Python
 matrix is captured; five pre-existing baseline Python failures remain. M21 arm64 execution, live
@@ -19,11 +19,13 @@ persistence boots the packaged shared UI through the native transport, and the s
 `/mobile/v1/ws` bridge opens on the physical phone against both the staging fixture and a real
 production-composed gateway. The real-gateway run passed handshake/read 200, WebSocket ready/attach,
 media full/range/oversize/hostile cases, and live revocation denial. Signed media resolves through
-native handles in shared attachments/lightbox; pairing deep links are captured and handed to the
-plugin, although test pairing still injects owner-issued tokens rather than exchanging a product
-pairing challenge. M20 final matrix: WebUI 1363, Python 17,103 with five pre-existing baseline
-failures, phone 29 tests (4 live skipped). Remaining product pairing UX, manual device matrix and
-M22 signing remain.
+native handles in shared attachments/lightbox. Product pairing now works end to end: the phone
+shows its installation ID, Remote Access settings creates the exact `nanobot://pair` link, the
+native bridge collects the owner challenge and displays the comparison code, then polls approval
+and stores the issued tokens in Keystore custody. The full flow passed on the A142 phone against
+the real gateway, including handshake/read/WebSocket after pairing. M20 final matrix: WebUI 1363,
+Python 17,103 with five pre-existing baseline failures. Remaining manual device matrix and M22
+signing remain.
 See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain

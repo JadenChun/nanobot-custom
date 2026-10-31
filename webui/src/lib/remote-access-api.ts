@@ -18,8 +18,26 @@ export interface RemoteAccessStatus {
 export interface RemotePairingOffer {
   pairing_id: string;
   comparison_code: string;
+  nonce: string;
+  collector_secret: string;
+  expires_at: number;
   expiration?: number;
   scopes?: string[];
+}
+
+/** Build the phone deep link for one owner-issued pairing challenge. */
+export function buildMobilePairingLink(
+  origin: string,
+  installationId: string,
+  offer: RemotePairingOffer,
+): string {
+  const challenge = `${offer.pairing_id}.${offer.nonce}.${offer.collector_secret}`;
+  const params = new URLSearchParams({
+    origin: origin.trim().replace(/\/+$/, ""),
+    installation: installationId.trim(),
+    challenge,
+  });
+  return `nanobot://pair?${params.toString()}`;
 }
 
 async function request<T>(

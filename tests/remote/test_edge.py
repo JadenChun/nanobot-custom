@@ -238,3 +238,65 @@ async def test_mobile_websocket_authorization_binds_identity(edge_setup) -> None
     assert connection.mobile_identity.installation_id == "install-0001"
     denied = await edge.authorize_websocket(connection, request("/mobile/v1/ws"))
     assert denied is not None and denied.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_edge_pairing_collect_approve_poll(edge_setup) -> None:
+    owner, edge, _pair = edge_setup
+    offer = owner.pairing.create_challenge(
+        origin="https://fedora.taila1e707.ts.net",
+        label="phone",
+        chat_consent=True,
+        media_consent=True,
+    )
+    pairing_headers = [
+        ("X-Nanobot-Pairing-Id", offer.pairing_id),
+        ("X-Nanobot-Pairing-Nonce", offer.nonce),
+        ("X-Nanobot-Pairing-Secret", offer.collector_secret),
+    ]
+    collect = await edge.handle(
+        None,
+        request(
+            "/mobile/v1/pair/collect",
+            None,
+            [*pairing_headers, ("X-Nanobot-Installation", "install-pair-1"), ("X-Nanobot-Label", "phone")],
+        ),
+    )
+    assert collect is not None and collect.status_code == 200
+    pending = body(collect)
+    assert pending["pairing_id"] == offer.pairing_id
+    assert pending["comparison_code"] == offer.comparison_code
+
+    waiting = await edge.handle(None, request("/mobile/v1/pair/poll", None, pairing_headers))
+    assert waiting is not None and waiting.status_code == 200
+    assert body(waiting)["status"] == "pending"
+
+    owner.pairing.approve(pairing_id=offer.pairing_id, comparison_code=offer.comparison_code)
+    approved = await edge.handle(None, request("/mobile/v1/pair/poll", None, pairing_headers))
+    assert approved is not None and approved.status_code == 200
+    result = body(approved)
+    assert result["status"] == "approved"
+    assert result["installation_id"] == "install-pair-1"
+    assert result["access_token"].startswith("nbm_at_")
+    assert result["refresh_token"].startswith("nbm_rt_")
+
+    consumed = await edge.handle(None, request("/mobile/v1/pair/poll", None, pairing_headers))
+    assert consumed is not None and consumed.status_code == 410
+    assert body(consumed)["error"] == "pairing_consumed"
+
+    missing = await edge.handle(None, request("/mobile/v1/pair/collect", None))
+    assert missing is not None and missing.status_code == 400
+    wrong = await edge.handle(
+        None,
+        request(
+            "/mobile/v1/pair/collect",
+            None,
+            [
+                ("X-Nanobot-Pairing-Id", offer.pairing_id),
+                ("X-Nanobot-Pairing-Nonce", offer.nonce),
+                ("X-Nanobot-Pairing-Secret", "wrong-secret"),
+                ("X-Nanobot-Installation", "install-pair-1"),
+            ],
+        ),
+    )
+    assert wrong is not None and wrong.status_code == 403

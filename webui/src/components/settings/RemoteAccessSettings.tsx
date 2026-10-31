@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import {
   approveRemotePairing,
+  buildMobilePairingLink,
   fetchRemoteAccessStatus,
   revokeRemoteDevice,
   setRemoteAccessEnabled,
@@ -19,9 +20,14 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [origin, setOrigin] = useState("");
+  const [installationId, setInstallationId] = useState("");
   const [label, setLabel] = useState("phone");
   const [pairingId, setPairingId] = useState("");
   const [code, setCode] = useState("");
+  const [approvalCode, setApprovalCode] = useState("");
+  const [mediaConsent, setMediaConsent] = useState(false);
+  const [pairingLink, setPairingLink] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -35,6 +41,12 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
   useEffect(() => {
     if (!initialStatus) void refresh();
   }, [initialStatus, refresh]);
+
+  useEffect(() => {
+    if (!origin && typeof window !== "undefined" && window.location.protocol === "https:") {
+      setOrigin(window.location.origin);
+    }
+  }, [origin]);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -118,6 +130,16 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
           />
         </label>
         <label className="block text-xs">
+          Phone installation ID
+          <input
+            aria-label="Phone installation ID"
+            value={installationId}
+            onChange={(event) => setInstallationId(event.target.value)}
+            placeholder="Shown on the phone pairing screen"
+            className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm"
+          />
+        </label>
+        <label className="block text-xs">
           Label
           <input
             aria-label="Device label"
@@ -126,23 +148,60 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
             className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm"
           />
         </label>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            aria-label="Allow chat media and attachments"
+            checked={mediaConsent}
+            onChange={(event) => setMediaConsent(event.target.checked)}
+          />
+          Allow chat media and attachments
+        </label>
         <button
           type="button"
-          disabled={busy || !origin.trim()}
+          disabled={busy || !origin.trim() || !installationId.trim()}
           onClick={() => void run(async () => {
             const offer = await startRemotePairing(token, {
               origin: origin.trim(),
               label,
               chatConsent: true,
-              mediaConsent: false,
+              mediaConsent,
             });
             setPairingId(offer.pairing_id);
             setCode(offer.comparison_code);
+            setApprovalCode("");
+            setPairingLink(buildMobilePairingLink(origin, installationId, offer));
           })}
           className="rounded-md border px-3 py-1.5 text-sm"
         >
           Create pairing challenge
         </button>
+        {pairingLink ? (
+          <div className="grid gap-2 rounded-xl border p-3 text-sm">
+            <p className="text-xs text-muted-foreground">
+              Open this link on the phone. Keep it private until the codes match.
+            </p>
+            <textarea
+              aria-label="Phone pairing link"
+              readOnly
+              value={pairingLink}
+              rows={4}
+              className="w-full break-all rounded-md border bg-transparent px-2 py-1.5 font-mono text-xs"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard?.writeText(pairingLink).then(() => {
+                  setCopied(true);
+                  window.setTimeout(() => setCopied(false), 1500);
+                }).catch(() => undefined);
+              }}
+              className="w-fit rounded-md border px-3 py-1.5 text-sm"
+            >
+              {copied ? "Copied" : "Copy link"}
+            </button>
+          </div>
+        ) : null}
         {pairingId ? (
           <div className="grid gap-2 rounded-xl border p-3 text-sm">
             <p>Comparison code: <strong>{code}</strong></p>
@@ -150,17 +209,18 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
               Comparison code from the phone
               <input
                 aria-label="Approval comparison code"
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
+                value={approvalCode}
+                onChange={(event) => setApprovalCode(event.target.value)}
                 className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm"
               />
             </label>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || !approvalCode.trim()}
               onClick={() => void run(async () => {
-                await approveRemotePairing(token, { pairingId, comparisonCode: code });
+                await approveRemotePairing(token, { pairingId, comparisonCode: approvalCode });
                 setPairingId("");
+                setPairingLink("");
               })}
               className="w-fit rounded-md border px-3 py-1.5 text-sm"
             >
