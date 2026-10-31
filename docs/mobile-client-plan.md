@@ -75,6 +75,21 @@ the device is re-paired or explicitly upgraded. New pairings receive the owner s
 The “Paired phone: chat M1” deny rows below describe that legacy profile, not the new
 owner-client profile.
 
+### API shape
+
+There is one feature API: the existing desktop `/api/*` HTTP routes and the existing
+`webui_request` WebSocket mutations. The mobile app must not grow a parallel set of
+feature routes. `/mobile/v1` remains the thin device-auth edge for pairing, refresh,
+handshake and device lifecycle; after an owner token is issued, the native transport
+uses the standard `/api/*` paths and the standard WebSocket path.
+
+The owner token is injected by the native transport and validated at the gateway
+boundary. Standard HTTP/WS authorization marks the connection as an owner client so
+the existing settings, workspace, session and mutation handlers apply their normal
+logic without a second implementation. The old `/mobile/v1/model-settings`,
+`/mobile/v1/workspaces`, `/mobile/v1/sessions/*/thread` and `/mobile/v1/api?path=...`
+feature shims are transitional and should be removed once the owner path is qualified.
+
 ## Source and evidence baseline
 
 Original architecture-review HEAD inspected: `7ad57f9aaf163bd0476c2241637925343b1eb928`.

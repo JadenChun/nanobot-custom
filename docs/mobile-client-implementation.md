@@ -893,10 +893,13 @@ requires local approval.
 `inbound_commands.py`, mobile runtime HTTP/WS tests. **Forbidden:** a second session/agent owner,
 raw localhost proxy, or credential export.
 
-1. Replace the chat-only mobile API allowlist with an owner-authorized read bridge that dispatches
-   declared `/api/*` reads through the existing WebUI handlers. Keep media binary routing separate.
-2. Treat an owner mobile socket as authorized for the existing `webui_request` mutation surface,
-   including settings, apps, skills, automations, workspace, session delete and recovery actions.
+1. Use the standard WebUI feature API. `/mobile/v1` remains the thin device-auth edge for
+   pairing/refresh/handshake; mobile owner requests use the existing `/api/*` HTTP routes and
+   the standard WebSocket path. Do not add a second feature-route namespace. Keep media binary
+   routing in the same standard media route.
+2. Validate the owner device token at the standard HTTP/WS boundary and propagate the owner
+   identity so the existing `webui_request` mutation surface, settings handlers and local-only
+   checks apply the owner policy. Desktop browser/token behavior remains unchanged.
 3. Make workspace-control and Full-access authorization consult the owner scope instead of
    loopback-only checks; preserve source/revision/receipt validation.
 4. Include private permission projections and session-update fields for owner mobile sockets.
