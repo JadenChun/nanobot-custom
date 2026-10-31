@@ -62,6 +62,22 @@ install_go() {
   "${toolchain}/go/bin/go" version
 }
 
+install_uv() {
+  local url sha actual
+  url="$(json uv url)"; sha="$(json uv sha256)"
+  if [[ -x "${toolchain}/uv/uv" ]]; then
+    echo "uv: already present"
+    return
+  fi
+  echo "uv: downloading"
+  curl -fsSL -o "${download_dir}/uv.tar.gz" "$url"
+  actual="$(sha256_of "${download_dir}/uv.tar.gz")"
+  [[ "$actual" == "$sha" ]] || { echo "uv checksum mismatch: $actual != $sha" >&2; exit 1; }
+  mkdir -p "${toolchain}/uv"
+  tar -xzf "${download_dir}/uv.tar.gz" -C "${toolchain}/uv" --strip-components=1
+  "${toolchain}/uv/uv" --version
+}
+
 install_cmdline_tools() {
   local url sha actual
   url="$(json android_cmdline_tools url)"; sha="$(json android_cmdline_tools sha1)"
@@ -108,6 +124,7 @@ install_android_sdk() {
 
 install_jdk
 install_go
+install_uv
 install_cmdline_tools
 install_android_sdk
 

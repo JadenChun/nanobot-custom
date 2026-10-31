@@ -1,0 +1,90 @@
+{
+  "contract": "nanobot-mobile-fixture",
+  "version": 1,
+  "label": "fixture, not a Nanobot backend",
+  "transport": {
+    "bind": "loopback-only",
+    "default_host": "127.0.0.1",
+    "default_port": 8123,
+    "schemes": ["http", "https-test-only"],
+    "websocket_path": "/fixture/v1/ws"
+  },
+  "auth": {
+    "bootstrap_header": "X-Fixture-Bootstrap",
+    "access_header": "Authorization: Bearer <access_token>",
+    "admin_header": "X-Fixture-Admin",
+    "synthetic_only": true,
+    "access_ttl_seconds": 300,
+    "refresh_ttl_seconds": 3600,
+    "rotation_invalidates_previous_pair": true
+  },
+  "capabilities": {
+    "chat": true,
+    "media": true,
+    "lifecycle": false,
+    "fixture": true
+  },
+  "endpoints": [
+    {"method": "GET", "path": "/health", "auth": "none"},
+    {"method": "POST", "path": "/fixture/v1/bootstrap", "auth": "bootstrap"},
+    {"method": "POST", "path": "/fixture/v1/refresh", "auth": "refresh"},
+    {"method": "GET", "path": "/fixture/v1/read", "auth": "access"},
+    {"method": "POST", "path": "/fixture/v1/mutation", "auth": "access"},
+    {"method": "GET", "path": "/fixture/v1/counter", "auth": "none"},
+    {"method": "GET", "path": "/fixture/v1/media/{name}", "auth": "access"},
+    {"method": "POST", "path": "/fixture/v1/attachment", "auth": "access"},
+    {"method": "GET", "path": "/fixture/v1/redirect", "auth": "none"},
+    {"method": "WS", "path": "/fixture/v1/ws", "auth": "synthetic"},
+    {"method": "POST", "path": "/fixture/v1/admin/reset", "auth": "admin"},
+    {"method": "POST", "path": "/fixture/v1/admin/mode", "auth": "admin"},
+    {"method": "POST", "path": "/fixture/v1/admin/expire", "auth": "admin"}
+  ],
+  "errors": {
+    "401": ["bad_access", "expired_access", "bad_refresh", "expired_refresh", "bad_bootstrap", "bootstrap_expired"],
+    "403": ["revoked", "admin_denied"],
+    "409": ["instance_mismatch"],
+    "413": ["attachment_too_large"],
+    "416": ["range_not_satisfiable"],
+    "503": ["response_lost"]
+  },
+  "limits": {
+    "attachment_bytes": 262144,
+    "ws_frame_bytes": 65536,
+    "media_range_mode": "single-range",
+    "max_ws_stream_frames": 20
+  },
+  "media": {
+    "samples": {
+      "sample.png": "image/png",
+      "sample.mp3": "audio/mpeg",
+      "sample.mp4": "video/mp4",
+      "untrusted.svg": "image/svg+xml",
+      "untrusted.html": "text/html"
+    },
+    "range_headers": ["Range", "Content-Range", "Accept-Ranges", "ETag", "Cache-Control"],
+    "untrusted_samples_contain_scripts": true
+  },
+  "mutation": {
+    "idempotency_key": "request_id",
+    "counter": "GET /fixture/v1/counter",
+    "modes": ["mutation_delayed", "mutation_lost_inflight", "mutation_lost_response"],
+    "lost_response_effect_count": 1
+  },
+  "modes": [
+    "bootstrap_expired",
+    "bootstrap_revoked",
+    "refresh_lost_response",
+    "expire_access",
+    "expire_refresh",
+    "revoke",
+    "read_wrong_instance",
+    "media_revoked",
+    "ws_disconnect"
+  ],
+  "reset": {
+    "endpoint": "POST /fixture/v1/admin/reset",
+    "clears": ["tokens", "counter", "handled_request_ids", "mode", "revocation"],
+    "resets_counter_increments": true
+  },
+  "no_agent": true
+}

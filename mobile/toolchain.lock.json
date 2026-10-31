@@ -13,6 +13,11 @@
     "url": "https://go.dev/dl/go1.27.3.linux-amd64.tar.gz",
     "sha256": "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40"
   },
+  "uv": {
+    "version": "0.13.6",
+    "url": "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-unknown-linux-gnu.tar.gz",
+    "sha256": "f29c3e94ffabd7e6f3ba521dba169a9b7ec12100bf3257087f0f24f6123f3645"
+  },
   "android_cmdline_tools": {
     "version": "23.0",
     "build": "16111833",

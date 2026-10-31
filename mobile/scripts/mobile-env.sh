@@ -18,7 +18,7 @@ export GOCACHE="${MOBILE_TOOLCHAIN}/go-cache"
 export GOMODCACHE="${MOBILE_TOOLCHAIN}/go-mod-cache"
 export GOPATH="${MOBILE_TOOLCHAIN}/go-path"
 
-export PATH="${JAVA_HOME}/bin:${MOBILE_TOOLCHAIN}/go/bin:${ANDROID_SDK_ROOT}/platform-tools:${ANDROID_SDK_ROOT}/emulator:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${PATH}"
+export PATH="${JAVA_HOME}/bin:${MOBILE_TOOLCHAIN}/go/bin:${MOBILE_TOOLCHAIN}/uv:${ANDROID_SDK_ROOT}/platform-tools:${ANDROID_SDK_ROOT}/emulator:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${PATH}"
 
 mkdir -p "${ANDROID_AVD_HOME}" "${ANDROID_USER_HOME}" "${GRADLE_USER_HOME}" \
   "${GOCACHE}" "${GOMODCACHE}" "${GOPATH}"
