@@ -1,0 +1,49 @@
+# Nanobot mobile client
+
+Android-first mobile client for a Nanobot server. The selected server owns the Python agent,
+sessions, memory, tools, files and provider credentials; the phone is a scoped client.
+
+Status: **M01 development scaffold only**. No mobile transport, identity, pairing backend or
+product chat UI exists yet. See `docs/mobile-client-tasks.md` and the implementation guide on
+this branch for the authoritative backlog.
+
+## Isolated toolchain
+
+All build inputs stay inside this checkout and are ignored by Git:
+
+```bash
+mobile/scripts/bootstrap-toolchain.sh   # JDK 21, Go 1.27.3, Android SDK 36, NDK, CMake, AVD image
+source mobile/scripts/mobile-env.sh     # exports the checkout-local paths
+```
+
+Pinned versions, URLs and checksums are recorded in `toolchain.lock.json`. The script does not
+modify system packages, services or user-wide SDK paths.
+
+## Fixture build
+
+```bash
+cd mobile
+bun install --frozen-lockfile
+bun run build
+bunx cap sync android
+cd android && ./gradlew :app:assembleDebug
+```
+
+`M01` also ships a fixture-only JNI/CMake probe (`android/app/src/main/cpp/probe.c`) that reports
+the executing ABI and page size. It grants no network, file or credential authority.
+
+## Emulator qualification
+
+```bash
+mobile/scripts/qualify-emulator.sh --evidence-dir <private-run-directory>
+```
+
+The runner builds, creates/reuses an x86_64 API 36 AVD, installs the debug APK, waits for the
+native probe marker, captures a screenshot and cleans up the emulator unless `--keep-emulator`
+is passed. Evidence stays under the gitignored `mobile/evidence/`.
+
+Emulator `37.2.13` crashes in its packaged SwiftShader renderer on this Fedora 44 host when
+headless software rendering is requested (`-gpu swiftshader_indirect`, `-gpu off`, `-gpu guest`).
+The runner therefore defaults to `-gpu host`, which uses the host GPU and KVM and booted the
+API 36 image in about 17 seconds. Override with `NANOBOT_MOBILE_EMULATOR_GPU` or `--gpu` when a
+different host requires software rendering, and record the result with the evidence.
