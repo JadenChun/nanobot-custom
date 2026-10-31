@@ -25,6 +25,14 @@ var routes = map[string]route{
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/remote/v1/health$`),
 	},
+	"remote_pair_collect": {
+		method:  http.MethodPost,
+		pattern: regexp.MustCompile(`^/remote/v1/pair/collect$`),
+	},
+	"remote_pair_poll": {
+		method:  http.MethodPost,
+		pattern: regexp.MustCompile(`^/remote/v1/pair/poll$`),
+	},
 	"fixture_read": {
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/fixture/v1/read$`),

@@ -5,8 +5,9 @@ sessions, memory, tools, files and provider credentials; the phone is a scoped c
 
 Status: M01–M04 and M06–M13 are implemented and tested locally. M05 embedded tsnet login and
 the M09 owned Serve mapping were exercised live from the x86_64 emulator and then cleaned up;
-M05 media/deep-link and M14–M22 still require the remaining live backend/device work. See
-`docs/mobile-client-tasks.md`.
+M05 media/deep-link and M14–M22 still require the remaining live backend/device work. M14 live
+pairing has been exercised against the owner; refresh/revoke/replay and product custody remain.
+See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
 
