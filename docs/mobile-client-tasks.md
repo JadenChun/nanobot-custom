@@ -22,8 +22,10 @@ the taskbook supplies the complete execution order and supersedes its older P0-o
 Deliver Android chat, history, streaming, attachments and managed previews using the shared React UI,
 Capacitor and one embedded userspace Tailscale node. The selected server runs the only Python agent
 and owns tools, files, sessions, skills, memory and provider credentials. Persistent work survives phone
-disconnect. No provider keys or local/native/Full authority reach the phone. iOS and future host work
-are fully specified below but separately scoped and are not Android release dependencies.
+disconnect. No provider keys or process-local native permission references reach the phone; an
+owner-paired phone receives delegated settings/Full authority, while legacy chat-only devices remain
+restricted. iOS and future host work are fully specified below but separately scoped and are not
+Android release dependencies.
 
 There is no mobile scaffold or authenticated mobile device protocol in the inspected source.
 Existing browser fetch/bootstrap, broad gateway tokens and desktop native-host detection cannot be
@@ -81,19 +83,19 @@ All `mobile/`, `nanobot/remote/` and `tests/remote/` paths are proposed new path
 | [M10 / sync](mobile-client-implementation.md#m10) | Verify included permission/WebUI updates | M01; `a60d8c50` already included | Mobile branch integration/manifests only | Dependency | Refreshed permission/API/layout manifest and affected checks; rebase only if a newer target is needed |
 | [M11 / P2](mobile-client-implementation.md#m11) | Scoped gateway HTTP/WS/media edge | M09, M10 | WebUI gateway/channel edge and remote client tests | Dependency | Every declared route/frame/range checks current identity; unknown routes deny |
 | [M12 / P2](mobile-client-implementation.md#m12) | Immutable operations and replay-only reconnect contract | M11 | `inbound_commands.py`, edge/replay tests | Dependency | Lost-response/renewal/rotation effect count is 1; unknown replay never executes |
-| [M13 / P2](mobile-client-implementation.md#m13) | Remote task authority ceiling | M12, M10 | WebUI workspaces/projection/ingress; authority tests | Dependency | Phone cannot inherit local Full/grants or escape qualified restricted tasks |
+| [M13 / P2](mobile-client-implementation.md#m13) | Task/workspace authority boundary | M12, M10 | WebUI workspaces/projection/ingress; authority tests | Dependency | Owner and legacy phones both enforce current task/workspace policy; owner can request Full, legacy cannot inherit it |
 | [M14 / P3](mobile-client-implementation.md#m14) | Android identity against real backend | M05, M09, M13 | `mobile/` product profile/pair/auth/connection | Dependency | Emulator pairs, renews, revokes and isolates instance/profile using native path |
 | [M15 / P3](mobile-client-implementation.md#m15) | Product native media, attachments and deep links | M14 | `mobile/` native resources/pickers/links | Dependency | Real-backend ranges, limits, cleanup and recovery pass in emulator |
 | [M16 / P4](mobile-client-implementation.md#m16) | Shared runtime/bootstrap/client transport | M10, M15 | Shared `webui/src/lib/`, entry/build files/tests | Dependency | Shared client replay/HTTP use broker; browser/desktop and mobile SW checks pass |
 | [M17 / P4](mobile-client-implementation.md#m17) | Android chat layout and recovery UX | M16 | Shared chat/media/components/styles/tests | Dependency | Chat continuity, keyboard/Back/accessibility and denied-state UI pass |
-| [M18 / P5a](mobile-client-implementation.md#m18) | Local pairing/device/revoke/remote on-off settings | M17; explicit ownership handoff | Remote/config + local settings modules/tests | Dependency | Local-only management and owned data/control off/recovery pass |
+| [M18 / P5a](mobile-client-implementation.md#m18) | Pairing/device/revoke/remote on-off settings | M17; explicit ownership handoff | Remote/config + local settings modules/tests | Dependency | Local setup and owner-client management both work; owned data/control off/recovery pass |
 | [M19 / P5a](mobile-client-implementation.md#m19) | Opt-in independent controller supervision | M18; concrete local service opt-in | Remote supervisor/entry + minimal desktop glue | External | Controller survives gateway stop; exact install/remove preserves other services |
 | [M20 / integration](mobile-client-implementation.md#m20) | Automated regressions and review-candidate evidence | M19 | Tests/evidence/docs; corrections return to owners | Dependency | Automated gates/evidence pass; no human review stop before device tests/packaging |
 | [M21 / P6a](mobile-client-implementation.md#m21) | Physical Android qualification | M20; actual Android phone | Device runner/evidence only | External | arm64 execution, cellular/Doze/custody/power/camera/update tests pass |
 | [M22 / P6](mobile-client-implementation.md#m22) | Reproducible signed APK and final review/rollback | M21; selected signing identity | Mobile release/build/notices/evidence | External | Signed install/update/revoke/rollback and complete review handoff pass |
 | [M23 / P5b](mobile-client-implementation.md#m23) | Guarded desktop lifecycle capability | M19; later explicit lifecycle scope/review | Fixed remote lifecycle + desktop/gateway adapter | Deferred | Strict desktop ownership/races/Quit tests pass before activation |
 | [M24 / P5b later](mobile-client-implementation.md#m24) | Exact registered service-manager lifecycle | M23; named-unit adapter contract | Remote service adapter + gateway service tests | Deferred | Exact-manager Stop defeats `Restart=always`; no arbitrary PID/unit authority |
-| [M25 / P7](mobile-client-implementation.md#m25) | Exact-target remote approvals | M18; fresh local scope design/grant | Remote permission adapter/authority tests | Deferred | Target/source/task/revision receipts are single-use; Full remains local |
+| [M25 / P7](mobile-client-implementation.md#m25) | Exact-target remote approvals (legacy/external) | M18; fresh local scope design/grant | Remote permission adapter/authority tests | Deferred | Superseded for owner clients by M30–M33; legacy target receipts remain single-use |
 | [M26 / P8](mobile-client-implementation.md#m26) | iOS adapter, custody, media and qualification | M06, M16; future iOS scope/toolchain | `mobile/ios/`; explicit shared-file handoff | Deferred | Actual signed iOS/device evidence; no edge into Android release |
 | [M27 / future VPS](mobile-client-implementation.md#m27) | Headless data plane/operator/permission qualification | M20; selected host and future scope | Headless remote/docs/tests, named deployment files later | Deferred | Headless chat works with lifecycle unsupported and qualified task boundary |
 | [M28 / future model](mobile-client-implementation.md#m28) | Private server-to-model data link | M20; M27 only for VPS topology | Server provider config/runbook; no phone provider code | Deferred | Authenticated inference/stream failure distinction; SSRF/admin boundaries preserved |

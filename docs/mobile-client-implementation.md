@@ -435,14 +435,16 @@ No UI/backend network input blocks these tests. M16 must consume these vectors r
 <a id="m13"></a>
 ## M13 — Qualified remote task and media authority ceiling (P2)
 
-**Objective/prerequisites:** [M12](#m12) and refreshed [M10](#m10) permission semantics; phone ingress must stay restricted.
+**Objective/prerequisites:** [M12](#m12) and refreshed [M10](#m10) permission semantics; owner and
+legacy phone ingress must enforce the same current task/workspace policy.
 **Allowed:** existing `nanobot/webui/{workspaces,session_projection,inbound_commands,media_gateway,ws_http}.py`,
 channel edge and corresponding permission/native-admission tests. **Forbidden:** core runner/provider or unassigned permission-owner edits.
 
 1. Trace current restricted/default managed-task admission from the updated permission owner; document exact
    source/task/revision binding. Use existing authority seams, not an obsolete helper name or broad boolean.
-2. Intersect mobile requests with server-selected restricted authority at dispatch; deny Full/native references,
-   arbitrary workspace changes, settings/system commands, temporary chat/delete/automation/skills/package management.
+2. Intersect owner requests with current server-selected authority at dispatch. Owner clients may request
+   Full/workspace/settings/temporary/delete/automation/skills/package actions; legacy chat-only clients deny
+   those. Never serialize native references to either client.
 3. Continue existing chats only when their current task/scope qualifies; otherwise allow authorized reads and
    durable “Approval is needed on the server” guidance. Never silently rewrite focus/grants or open a folder picker.
 4. Recheck authority at media projection/reconnect and concurrent local permission edits; persistent sessions
@@ -452,7 +454,8 @@ channel edge and corresponding permission/native-admission tests. **Forbidden:**
 
 **Checks:** current permission API/authority/native-admission tests plus remote ceiling cases; test malicious
 scope/native fields, stale source/revision, concurrent desktop grants and unauthorized media/history projection.
-**Gate/evidence:** no remote privilege inheritance/side-effect escape and supported restricted chat remains usable;
+**Gate/evidence:** owner and legacy clients cannot escape the current policy/source binding; supported chat
+remains usable for both;
 retain authority path diagram, negative matrix, local regressions and type evidence.
 **Rollback/inputs:** disable mobile sends without weakening local permissions; preserve reads only if independently
 authorized. Any required session/permission-owner file extension needs a named single-writer handoff before editing it.
@@ -546,7 +549,8 @@ SW remnants if any. M10 API/layout drift requires a fresh seam manifest, not edi
 2. Present sign-in, pending pairing/comparison/expiry, connecting, refresh uncertainty, revoke, protocol/instance
    mismatch, reconnect/outcome-unknown, entry-off, gateway offline/stopped and model failure distinctly.
 3. Bind native previews/attachments/deep links to current chat; keep one source chooser, correct cancel/denial
-   behavior and bounded loading/error states. Hide/deny unsupported lifecycle, folder picker and local-only controls.
+   behavior and bounded loading/error states. Owner clients use the full settings/lifecycle/workspace surface;
+   the native server folder dialog remains unavailable to the phone and uses server-side path management.
 4. Keep theme/font/navigation preferences on-device; permitted titles/model/sidebar mutations remain shared
    server state. Existing ineligible chats show durable local-approval guidance without rewriting their authority.
 5. Reconnect/resume/remount during text/tool streaming and confirm active chat/turn IDs and canonical transcript
@@ -565,18 +569,21 @@ iOS, lifecycle adapter or new provider configuration is required for this emulat
 **Objective/prerequisites:** [M17](#m17) plus recorded P1/P2 and P4 named-file ownership transfer.
 **Allowed:** transferred `nanobot/remote/` entry/approval/management modules and config entries;
 `nanobot/webui/settings_{routes,contracts,services,system}.py`, shared settings controller/contracts/page and
-proposed `RemoteAccessSettings.tsx`/tests; minimal product local CLI registration. **Forbidden:** remote admin grants.
+proposed `RemoteAccessSettings.tsx`/tests; minimal product local CLI registration. **Forbidden:** a second device
+identity store or a second pairing flow; owner-client grants are handled by M30.
 
 1. Record exact transferred files/current hashes and stop prior writers; reuse P1 setup/approval/entry code
    rather than implementing a second identity store or mapping controller. Keep module CLI usable headlessly.
-2. Add strictly local authenticated device list, QR/compare/expiry/history-media consent, approve/cancel/revoke
-   and sanitized audit/status. Remote identity/proxy headers cannot open enrollment/admin/folder management.
+2. Add authenticated device list, QR/compare/expiry/history-media/full-control consent, approve/cancel/revoke
+   and sanitized audit/status. Local comparison-code approval remains mandatory; owner clients may manage
+   their own devices/settings through M30–M33.
 3. Add explicit selected-instance/private-entry setup showing exact mapping changes/recovery and initial off;
    enable only after local opt-in and current listener/permission/proxy readiness checks.
 4. Implement off ordering: deny admissions/retire sockets, remove only owned **data and control** mappings,
    verify observed state and retain “unconfirmed” on lost acknowledgment. Re-enable requires local management.
 5. Test revoke during chat/media/replay and owner/gateway unavailability; retain sessions/revocations and distinguish
-   disconnect-phone, entry-off and gateway-stop. M1 advertises status only, with no runtime start/stop grant.
+   disconnect-phone, entry-off and gateway-stop. Owner clients use the WebUI lifecycle surface; service-manager
+   lifecycle remains M23/M24.
 
 **Checks:** local settings/remote-entry tests plus WebUI and existing settings-route tests; negative remote,
 CSRF/origin/proxy spoof, concurrent toggle/revoke, mapping conflict and lost-ack cases must deny or report honestly.
@@ -752,8 +759,8 @@ under a named-file handoff. **Forbidden:** global Full, opaque local-reference s
    owner locally; consume atomically and prevent replay/approval at another task/session/device.
 4. Test changed source/target, stale revision, expired/reused receipt, another device and scope revoke racing
    consume/delivery; assert no filesystem/task effect outside the granted target/read-write extent.
-5. Add narrowly scoped UI/audit and independent authority review; keep Full and all unrelated management local,
-   then rehearse scope/receipt revocation while preserving ordinary restricted chat.
+5. Add narrowly scoped UI/audit and independent authority review. This task is superseded for owner clients
+   by M30–M33; retain it only for legacy/external exact-target approvals.
 
 **Checks:** future authority/receipt/replay tests plus current native/permission regressions and full-source
 type comparison; denial tests count effects, not merely hidden buttons or status codes.

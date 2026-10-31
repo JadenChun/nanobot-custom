@@ -25,12 +25,13 @@ not a second agent. Model inference may run on that server, a hosted API or a se
 Flutter/React Native are fallback design changes only after concrete spike evidence and an accepted revision.
 The wrapper shares UI; transport, secure storage, app suspension, signing and platform builds remain native work.
 
-The first useful release supports persistent chat, history, streaming, existing attachment limits and
-managed media previews. It does not implicitly grant settings administration, shell commands or Full access.
-Phone disconnect must detach persistent chat without cancelling its work. Temporary chats remain
-connection-owned and are excluded from the first mobile release because disconnect currently discards them.
-Non-goals: local phone inference, a second gateway, offline private history/write queues, push delivery,
-global Full, unrestricted remote administration, a desktop-shell rewrite and store publication.
+The first chat-only release supported persistent chat, history, streaming, existing attachment limits and
+managed media previews without settings administration, shell commands or Full access. The current
+owner-client release (M30+) grants the paired phone the same WebUI surface as the desktop, including
+settings, tools and Full access. Phone disconnect must detach persistent chat without cancelling its
+work. Temporary chats remain connection-owned and are discarded on disconnect, but are available to
+owner clients. Non-goals: local phone inference, a second gateway, offline private history/write queues,
+push delivery, anonymous or non-owner administration, a desktop-shell rewrite and store publication.
 Actual VPS provisioning/state migration, model serving and remote home-tool workers are also out of scope.
 
 ## Owner-client revision — 2026-11-01
@@ -336,35 +337,34 @@ On a headless server the authenticated local operator CLI supplies the equivalen
 boundary; it grants no desktop-native authority or new filesystem scope. Unsupported actions are
 absent from advertised capabilities and denied server-side, independently of the client's OS.
 
-| Capability | Authenticated local browser | Admitted local desktop | Paired phone: chat M1 | Anonymous / proxy assertion alone | Phone with explicit later owner scope |
+| Capability | Authenticated local browser | Admitted local desktop | Paired phone: legacy chat | Anonymous / proxy assertion alone | Paired phone: owner client (current) |
 | --- | --- | --- | --- | --- | --- |
-| Pair approve, revoke devices, add scopes | Strict local UI checks | Local owner checks | Self logout only | Deny | No enrollment/admin delegation in this plan |
-| Bootstrap and read sessions/history | Existing local auth | Existing local auth | Scoped mobile routes, explicit read consent | Deny | Same scoped reads |
-| Persistent chat/send/attach/media | Existing policy | Existing policy | Allow within approved chat/task policy | Deny | Same plus separately admitted targets |
-| Temporary chat, session delete, automation/skills install | Existing policy | Existing policy | Deny in M1 | Deny | Separate future scope/specification |
-| Provider/config/MCP/package management, user-shell ingress | Existing policy | Existing policy | Deny | Deny | Outside this plan |
-| Folder picker/repository grants/Full | Existing local/native checks | Existing authority/receipts | Deny | Deny | Exact-target proposal only; Full remains local |
-| Runtime start/status/stop | Existing owner semantics | Existing handle admission | Status only, no lifecycle actions | Deny | Fixed selected gateway; lifecycle gate required |
-| All remote entry on/off | Local explicit setup/toggle | Local explicit setup/toggle | Show status/disconnect phone | Deny | Disable owned entry only; re-enable locally |
+| Pair approve, revoke devices, add scopes | Strict local UI checks | Local owner checks | Self logout only | Deny | Owner may manage devices and remote entry, including self-revoke |
+| Bootstrap and read sessions/history | Existing local auth | Existing local auth | Scoped mobile routes, explicit read consent | Deny | Same standard reads with owner token |
+| Persistent chat/send/attach/media | Existing policy | Existing policy | Allow within approved chat/task policy | Deny | Same standard chat surface |
+| Temporary chat, session delete, automation/skills install | Existing policy | Existing policy | Deny in M1 | Deny | Allow with owner confirmation and audit |
+| Provider/config/MCP/package management, user-shell ingress | Existing policy | Existing policy | Deny | Deny | Allow; provider keys remain write-only |
+| Folder picker/repository grants/Full | Existing local/native checks | Existing authority/receipts | Deny | Deny | Allow; native folder dialog unavailable to phone, use server-side path management; Full requires phone confirmation |
+| Runtime start/status/stop | Existing owner semantics | Existing handle admission | Status only, no lifecycle actions | Deny | Allow WebUI lifecycle actions; service-manager lifecycle remains separately scoped |
+| All remote entry on/off | Local explicit setup/toggle | Local explicit setup/toggle | Show status/disconnect phone | Deny | Allow with warning; self-disable recovery guidance |
 
-Pairing consent explicitly grants reading this instance's persistent chat history/media; the UI must
-not imply a device-private server history. Existing chats remain the same server chats. M1 permits
-new persistent mobile chats with server-selected restricted scope; existing chats can be continued
-only when current scope and task permission policy qualify. Otherwise they remain readable with
-“Approval is needed on the server.” Do not silently rewrite an existing chat's focus or grants.
+Pairing consent explicitly grants full owner control of this Nanobot instance, including reading its
+persistent chat history/media and changing settings, tools and workspace access. The UI must not imply
+a device-private server history. Existing chats remain the same server chats. Owner clients may create
+and continue chats with the same scope choices as the desktop; legacy chat-only devices retain the
+restricted behavior until re-paired. Do not silently rewrite an existing chat's focus or grants.
 
-At phone ingress, intersect the requested task with `restricted_default_scope()`/existing managed
-task authority; reject client-supplied Full, native references, arbitrary workspace changes and
-settings actions. Never inherit a live local Full reference or make global folder grants available
-merely because a session persists. The backend owner must prove this ceiling at dispatch and media
-projection, including reconnect and concurrent local edits. If existing edge seams cannot enforce
-it, stop for a bounded security design revision; runner/provider edits are not an escape hatch.
-Normal agent work inside an already approved restricted workspace may have effects; chat-first
-does not promise read-only execution. Unconfigured/unmanaged installations must establish a supported
-local permission boundary before mobile sends are enabled. Blocked folder requests show durable
-inline server-operator approval guidance; no phone action opens a computer folder picker.
-Retain the selected server's filesystem policy. A VPS with no qualified permission boundary may
-advertise sends/target actions unsupported; mobile compatibility does not implement remote VPS grants.
+At owner-phone ingress, authenticate the owner scope and then apply the same task, workspace and
+permission policy as the desktop WebUI. Owner clients may request Full or workspace changes; the server
+must still bind the request to the current source/task/revision and must never serialize native
+permission references to the phone. Legacy chat-only devices keep the restricted ceiling until
+re-paired. The backend owner must prove authorization at dispatch and media projection, including
+reconnect and concurrent edits. If existing seams cannot enforce the owner/legacy distinction, stop
+for a bounded security design revision; runner/provider edits are not an escape hatch.
+Normal agent work may have effects; Full access is explicit and confirmed on the phone. Unconfigured
+installations must establish a supported server-side permission boundary before sends are enabled.
+The phone cannot operate the server's native folder picker; folder management uses server-side path
+entry. Retain the selected server's filesystem policy.
 
 A later exact-target permission package requires a fresh local grant of a remote-approver scope,
 server-owned target/session/task/source/revision binding, single-use receipt, expiry and explicit
@@ -428,7 +428,7 @@ The client supplies neither arbitrary unit names/systemctl commands nor process/
 | --- | --- |
 | Disconnect this phone | Stop its embedded connection/clear local credentials as selected; server and other clients keep running. |
 | Stop gateway (later privileged phase) | Stop only the admitted runtime/unit through its advertised owner adapter. Controller and private entry remain for authenticated Start/status. Unsupported lifecycle is denied. |
-| Disable remote access | Deny mobile admissions and retire connections, then remove owned data **and control** Serve mappings. Server-local operator UI/CLI/SSH is the recovery path. |
+| Disable remote access | Owner client may disable it after an explicit warning; deny new admissions, retire connections, then remove owned data/control mappings. If the phone disables its only entry, show server-local recovery guidance. |
 | Re-enable remote access | Authenticated server-local setup restores validated owned mappings; a separately established SSH route can be used manually, but is neither provisioned nor assumed here. |
 | Quit Nanobot desktop | Preserve the current guarded desktop Quit/stop semantics; do not silently reinterpret Quit as “keep the agent running.” Controller alone does not auto-start the agent afterward. |
 
@@ -554,7 +554,7 @@ approval and teardown; its final CLI, selectors and reversible mapping diff must
 | P6a physical Android | Actual cellular/Wi-Fi handover, OEM/Doze behavior, hardware-backed custody, arm64 execution, battery/thermal/camera/permissions and update/reinstall/revoke evidence; standalone phone VPN disabled. |
 | Staging dependency | P1 local opt-in, independent owner listener readiness, exact private mapping reachability and restoration/teardown pass before P3; no product settings UI or new agent instance is required. |
 | Host-neutral contract | Fixtures prove origin/installation/profile isolation, one active connection, no silent failover/merge and server-advertised capabilities. A chat-compatible backend advertising lifecycle unsupported must allow chat while hiding/denying start/stop controls. Simulated gateway-online/model-unavailable stays distinct; provider secrets stay server-side. No live VPS/model deployment is required. |
-| Regression/privacy | Browser/native desktop flows pass; remote probes keep local-only controls false. Both gateway binds stay loopback; no Funnel/public listener, bootstrap-secret copies, provider keys, private SW cache or privilege-bearing remote content. |
+| Regression/privacy | Browser/native desktop flows pass; owner probes receive the full client surface, legacy/chat-only probes keep local-only controls false. Both gateway binds stay loopback; no Funnel/public listener, bootstrap-secret copies, provider keys, private SW cache or privilege-bearing remote content. |
 
 Follow `docs/migration/p6-error-attribution.md`: freeze before/after full-source checker output under
 identical dependencies; retain source hashes, environment/commands and zero new diagnostic signatures
