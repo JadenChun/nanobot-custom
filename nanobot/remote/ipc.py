@@ -193,6 +193,27 @@ class OwnerIPCServer:
             return {"ok": True, "result": {"version": 1, "started_at": self._started_at}}
         if method == "status":
             return {"ok": True, "result": self.store.snapshot()}
+        if method == "refresh_access":
+            if self.tokens is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "token service is not running"}}
+            installation_id = _string_param(params, "installation_id")
+            refresh_token = _string_param(params, "refresh_token")
+            if installation_id is None or refresh_token is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "installation_id and refresh_token are required"}}
+            try:
+                pair = self.tokens.refresh(installation_id, refresh_token)
+            except AuthRejectedError as exc:
+                return {"ok": False, "error": {"code": "invalid_refresh", "message": str(exc)}}
+            return {
+                "ok": True,
+                "result": {
+                    "access_token": pair.access_token,
+                    "refresh_token": pair.refresh_token,
+                    "expires_in": pair.expires_in,
+                    "refresh_expires_in": pair.refresh_expires_in,
+                    "scopes": list(pair.scopes),
+                },
+            }
         if method == "validate_access":
             if self.tokens is None:
                 return {"ok": False, "error": {"code": "unavailable", "message": "token service is not running"}}

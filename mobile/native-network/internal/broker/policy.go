@@ -33,6 +33,26 @@ var routes = map[string]route{
 		method:  http.MethodPost,
 		pattern: regexp.MustCompile(`^/remote/v1/pair/poll$`),
 	},
+	"mobile_handshake": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/handshake$`),
+	},
+	"mobile_read": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/read$`),
+	},
+	"mobile_refresh": {
+		method:  http.MethodPost,
+		pattern: regexp.MustCompile(`^/mobile/v1/refresh$`),
+	},
+	"mobile_mutation": {
+		method:  http.MethodPost,
+		pattern: regexp.MustCompile(`^/mobile/v1/mutation$`),
+	},
+	"mobile_logout": {
+		method:  http.MethodPost,
+		pattern: regexp.MustCompile(`^/mobile/v1/logout$`),
+	},
 	"fixture_read": {
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/fixture/v1/read$`),
