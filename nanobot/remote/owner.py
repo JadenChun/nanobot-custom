@@ -28,6 +28,7 @@ class RemoteAccessOwner:
             self.store,
             Path(socket_path) if socket_path else None,
             pairing=self.pairing,
+            tokens=self.tokens,
         )
 
     def start(self) -> None:
