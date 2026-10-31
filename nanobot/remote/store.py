@@ -7,7 +7,6 @@ Plaintext refresh credentials are never persisted.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import hmac
 import json
@@ -19,7 +18,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, cast
 
 from nanobot.remote.protocol import REFRESH_IDLE_SECONDS, ContractError, validate_scopes
 
@@ -94,27 +93,15 @@ class RemoteAccessStore:
         self.state_path = self.root / "state.json"
         self.lock_path = self.root / "state.lock"
         self.admin_token_path = self.root / "admin.token"
-        self._thread_lock = threading.RLock()
+        self.thread_lock = threading.RLock()
         self.clock = clock
 
     def ensure_root(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.root, 0o700)
 
-    @contextlib.contextmanager
-    def _locked(self) -> Iterator[None]:
-        self.ensure_root()
-        with self._thread_lock:
-            if fcntl is None:
-                yield
-                return
-            lock_fd = os.open(self.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX)
-                yield
-            finally:
-                fcntl.flock(lock_fd, fcntl.LOCK_UN)
-                os.close(lock_fd)
+    def _locked(self) -> "_StoreLock":
+        return _StoreLock(self)
 
     def load(self) -> RemoteAccessState | None:
         if self.state_path.is_symlink():
@@ -129,10 +116,11 @@ class RemoteAccessStore:
             raise StoreCorruptError("state file is not valid JSON") from exc
         if not isinstance(raw, dict):
             raise StoreCorruptError("state root must be an object")
-        version = raw.get("version")
+        raw_dict = cast(dict[str, Any], raw)
+        version = raw_dict.get("version")
         if version != STATE_VERSION:
             raise StoreVersionError(f"unsupported remote-access state version: {version!r}")
-        return self._from_dict(raw)
+        return self._from_dict(raw_dict)
 
     def load_or_create(self) -> RemoteAccessState:
         with self._locked():
@@ -401,13 +389,17 @@ class RemoteAccessStore:
             raise StoreCorruptError("installation_id is missing")
         if not isinstance(revision, int) or revision < 1:
             raise StoreCorruptError("revision is invalid")
-        devices_raw = raw.get("devices", {})
-        if not isinstance(devices_raw, dict) or len(devices_raw) > MAX_DEVICES:
+        raw_devices = raw.get("devices", {})
+        if not isinstance(raw_devices, dict):
+            raise StoreCorruptError("devices are invalid")
+        devices_raw = cast(dict[str, Any], raw_devices)
+        if len(devices_raw) > MAX_DEVICES:
             raise StoreCorruptError("devices are invalid")
         devices: dict[str, RemoteDevice] = {}
-        for key, value in devices_raw.items():
-            if not isinstance(value, dict):
+        for key, raw_value in devices_raw.items():
+            if not isinstance(raw_value, dict):
                 raise StoreCorruptError("device record is invalid")
+            value = cast(dict[str, Any], raw_value)
             try:
                 scopes = tuple(value.get("scopes", ()))
                 validate_scopes(scopes)
@@ -429,13 +421,17 @@ class RemoteAccessStore:
             if device.installation_id != key:
                 raise StoreCorruptError("device key does not match its record")
             devices[key] = device
-        entries_raw = raw.get("owned_entries", [])
-        if not isinstance(entries_raw, list) or len(entries_raw) > MAX_OWNED_ENTRIES:
+        raw_entries = raw.get("owned_entries", [])
+        if not isinstance(raw_entries, list):
+            raise StoreCorruptError("owned entries are invalid")
+        entries_raw = cast(list[Any], raw_entries)
+        if len(entries_raw) > MAX_OWNED_ENTRIES:
             raise StoreCorruptError("owned entries are invalid")
         entries: list[dict[str, Any]] = []
-        for entry in entries_raw:
-            if not isinstance(entry, dict):
+        for raw_entry in entries_raw:
+            if not isinstance(raw_entry, dict):
                 raise StoreCorruptError("owned entry is invalid")
+            entry = cast(dict[str, Any], raw_entry)
             entries.append(
                 {
                     "kind": str(entry.get("kind", ""))[:32],
@@ -453,3 +449,23 @@ class RemoteAccessStore:
             owned_entries=entries,
             updated_at=float(updated_at) if isinstance(updated_at, (int, float)) else time.time(),
         )
+
+
+class _StoreLock:
+    def __init__(self, store: RemoteAccessStore) -> None:
+        self.store = store
+        self.fd: int | None = None
+
+    def __enter__(self) -> None:
+        self.store.ensure_root()
+        self.store.thread_lock.acquire()
+        if fcntl is not None:
+            self.fd = os.open(self.store.lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(self.fd, fcntl.LOCK_EX)
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
+        if self.fd is not None and fcntl is not None:
+            fcntl.flock(self.fd, fcntl.LOCK_UN)
+            os.close(self.fd)
+            self.fd = None
+        self.store.thread_lock.release()

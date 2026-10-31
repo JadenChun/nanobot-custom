@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import socket
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 MAX_IPC_RESPONSE_BYTES = 1024 * 1024
 
@@ -131,9 +131,12 @@ class RemoteAccessClient:
     ) -> Any:
         if require_admin and not self.admin_token:
             raise OwnerRequestError("admin token is required")
-        request = {"method": method, "params": params, "role": role}
+        request: dict[str, Any] = {"method": method, "params": params, "role": role}
         if require_admin:
-            request["admin_token"] = self.admin_token
+            admin_token = self.admin_token
+            if not admin_token:
+                raise OwnerRequestError("admin token is required")
+            request["admin_token"] = admin_token
         payload = json.dumps(request, separators=(",", ":")).encode("utf-8") + b"\n"
         connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         connection.settimeout(self.timeout)
@@ -149,12 +152,16 @@ class RemoteAccessClient:
             response = json.loads(raw)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise OwnerRequestError("owner returned malformed JSON") from exc
-        if not isinstance(response, dict) or not isinstance(response.get("ok"), bool):
+        if not isinstance(response, dict):
             raise OwnerRequestError("owner returned an invalid response")
-        if not response["ok"]:
-            error = response.get("error", {})
+        payload_response = cast(dict[str, Any], response)
+        if not isinstance(payload_response.get("ok"), bool):
+            raise OwnerRequestError("owner returned an invalid response")
+        if not payload_response["ok"]:
+            raw_error = payload_response.get("error")
+            error = cast(dict[str, Any], raw_error) if isinstance(raw_error, dict) else {}
             raise OwnerRequestError(str(error.get("message", "owner request failed")))
-        return response.get("result")
+        return payload_response.get("result")
 
     def _recv_line(self, connection: socket.socket) -> str:
         chunks: list[bytes] = []

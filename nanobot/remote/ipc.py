@@ -9,7 +9,7 @@ import struct
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from nanobot.remote.pairing import PairingError, PairingService
 from nanobot.remote.store import RemoteAccessStore, StoreError
@@ -125,7 +125,7 @@ class OwnerIPCServer:
             if not isinstance(request, dict):
                 self._write(connection, {"ok": False, "error": {"code": "bad_request", "message": "request must be an object"}})
                 return
-            response = self._dispatch(request)
+            response = self._dispatch(cast(dict[str, Any], request))
             self._write(connection, response)
         except IPCDeniedError as exc:
             self._write(connection, {"ok": False, "error": {"code": "denied", "message": str(exc)}})
@@ -174,23 +174,26 @@ class OwnerIPCServer:
             pass
 
     def _dispatch(self, request: dict[str, Any]) -> dict[str, Any]:
-        method = request.get("method")
-        role = request.get("role")
-        params = request.get("params", {})
-        if not isinstance(method, str) or not isinstance(params, dict):
+        raw_method = request.get("method")
+        raw_role = request.get("role")
+        raw_params = request.get("params", {})
+        method = raw_method if isinstance(raw_method, str) else None
+        role = raw_role if isinstance(raw_role, str) else None
+        params: dict[str, Any] = cast(dict[str, Any], raw_params) if isinstance(raw_params, dict) else {}
+        if method is None or not isinstance(raw_params, dict):
             return {"ok": False, "error": {"code": "bad_request", "message": "method and params are required"}}
         if role not in {"gateway", "admin"}:
             return {"ok": False, "error": {"code": "denied", "message": "role is not admitted"}}
-        if role == "admin" and not self.store.check_admin_token(request.get("admin_token")):
+        if role == "admin" and not self.store.check_admin_token(_string_param(params, "admin_token") or _string_param(request, "admin_token")):
             return {"ok": False, "error": {"code": "denied", "message": "admin token is not valid"}}
         if method == "ping":
             return {"ok": True, "result": {"version": 1, "started_at": self._started_at}}
         if method == "status":
             return {"ok": True, "result": self.store.snapshot()}
         if method == "validate":
-            installation_id = params.get("installation_id")
-            refresh_token = params.get("refresh_token")
-            if not isinstance(installation_id, str) or not isinstance(refresh_token, str):
+            installation_id = _string_param(params, "installation_id")
+            refresh_token = _string_param(params, "refresh_token")
+            if installation_id is None or refresh_token is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "installation_id and refresh_token are required"}}
             device = self.store.validate_refresh(installation_id, refresh_token)
             if device is None:
@@ -207,8 +210,8 @@ class OwnerIPCServer:
         if method == "revoke":
             if role not in {"gateway", "admin"}:
                 return {"ok": False, "error": {"code": "denied", "message": "revocation is not admitted"}}
-            installation_id = params.get("installation_id")
-            if not isinstance(installation_id, str):
+            installation_id = _string_param(params, "installation_id")
+            if installation_id is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "installation_id is required"}}
             try:
                 device = self.store.revoke_device(installation_id)
@@ -222,11 +225,11 @@ class OwnerIPCServer:
         if method == "pair_create":
             if self.pairing is None:
                 return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
-            origin = params.get("origin")
-            label = params.get("label")
-            chat_consent = params.get("chat_consent")
-            media_consent = params.get("media_consent", False)
-            if not isinstance(origin, str) or not isinstance(label, str) or not isinstance(chat_consent, bool) or not isinstance(media_consent, bool):
+            origin = _string_param(params, "origin")
+            label = _string_param(params, "label")
+            chat_consent = _bool_param(params, "chat_consent")
+            media_consent = _bool_param(params, "media_consent", default=False)
+            if origin is None or label is None or chat_consent is None or media_consent is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "origin, label, chat_consent and media_consent are required"}}
             try:
                 offer = self.pairing.create_challenge(
@@ -241,16 +244,16 @@ class OwnerIPCServer:
         if method == "pair_approve":
             if self.pairing is None:
                 return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
-            pairing_id = params.get("pairing_id")
-            code = params.get("comparison_code")
-            scopes = params.get("scopes")
-            if not isinstance(pairing_id, str) or not isinstance(code, str):
+            pairing_id = _string_param(params, "pairing_id")
+            code = _string_param(params, "comparison_code")
+            scopes = _string_list_param(params, "scopes")
+            if pairing_id is None or code is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "pairing_id and comparison_code are required"}}
             try:
                 approved = self.pairing.approve(
                     pairing_id=pairing_id,
                     comparison_code=code,
-                    scopes=tuple(scopes) if isinstance(scopes, list) else None,
+                    scopes=tuple(scopes) if scopes is not None else None,
                 )
             except (PairingError, ValueError) as exc:
                 return {"ok": False, "error": {"code": "pairing_rejected", "message": str(exc)}}
@@ -258,23 +261,23 @@ class OwnerIPCServer:
         if method == "pair_cancel":
             if self.pairing is None:
                 return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
-            pairing_id = params.get("pairing_id")
-            if not isinstance(pairing_id, str):
+            pairing_id = _string_param(params, "pairing_id")
+            if pairing_id is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "pairing_id is required"}}
             return {"ok": True, "result": {"cancelled": self.pairing.cancel(pairing_id)}}
         if method == "set_enabled":
-            enabled = params.get("enabled")
-            if not isinstance(enabled, bool):
+            enabled = _bool_param(params, "enabled")
+            if enabled is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "enabled must be boolean"}}
             return {"ok": True, "result": self.store.set_enabled(enabled).enabled}
         if method == "add_device":
-            installation_id = params.get("installation_id")
-            label = params.get("label")
-            scopes = params.get("scopes")
-            refresh_token = params.get("refresh_token")
-            if not all(isinstance(value, str) for value in (installation_id, label, refresh_token)):
+            installation_id = _string_param(params, "installation_id")
+            label = _string_param(params, "label")
+            scopes = _string_list_param(params, "scopes")
+            refresh_token = _string_param(params, "refresh_token")
+            if installation_id is None or label is None or refresh_token is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "device fields are required"}}
-            if not isinstance(scopes, list) or not all(isinstance(scope, str) for scope in scopes):
+            if scopes is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "scopes must be a string list"}}
             device = self.store.add_device(
                 installation_id=installation_id,
@@ -284,11 +287,31 @@ class OwnerIPCServer:
             )
             return {"ok": True, "result": {"installation_id": device.installation_id}}
         if method == "rotate_refresh":
-            installation_id = params.get("installation_id")
-            refresh_token = params.get("refresh_token")
-            if not isinstance(installation_id, str) or not isinstance(refresh_token, str):
+            installation_id = _string_param(params, "installation_id")
+            refresh_token = _string_param(params, "refresh_token")
+            if installation_id is None or refresh_token is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "installation_id and refresh_token are required"}}
             device = self.store.rotate_refresh(installation_id, refresh_token)
             return {"ok": True, "result": {"installation_id": device.installation_id}}
         return {"ok": False, "error": {"code": "unknown_method", "message": "unknown owner method"}}
 
+
+
+def _string_param(params: dict[str, Any], key: str) -> str | None:
+    value = params.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _bool_param(params: dict[str, Any], key: str, *, default: bool | None = None) -> bool | None:
+    value = params.get(key, default)
+    return value if isinstance(value, bool) else None
+
+
+def _string_list_param(params: dict[str, Any], key: str) -> list[str] | None:
+    value = params.get(key)
+    if not isinstance(value, list):
+        return None
+    values = cast(list[Any], value)
+    if not all(isinstance(item, str) for item in values):
+        return None
+    return [item for item in values if isinstance(item, str)]

@@ -10,7 +10,7 @@ import sys
 import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from nanobot.remote.client import OwnerRequestError, OwnerUnavailableError, RemoteAccessClient
 from nanobot.remote.http import RemoteHTTPListener
@@ -66,15 +66,17 @@ class TailscaleServeAdapter:
         value = json.loads(result.stdout or "{}")
         if not isinstance(value, dict):
             raise RuntimeError("tailscale returned a non-object JSON value")
-        return value
+        return cast(dict[str, Any], value)
 
     def plan(self, *, origin: str, listener_port: int, prefix: str = PREFIX) -> ServePlan:
         status = self.status_json()
         serve = self.serve_status_json()
         funnel = self.funnel_status_json()
+        raw_self = status.get("Self")
+        self_info = cast(dict[str, Any], raw_self) if isinstance(raw_self, dict) else {}
         prior = {
             "backend_state": status.get("BackendState"),
-            "dns_name": str((status.get("Self") or {}).get("DNSName", "")),
+            "dns_name": str(self_info.get("DNSName", "")),
             "serve": serve,
             "funnel": funnel,
         }
@@ -84,7 +86,6 @@ class TailscaleServeAdapter:
         if status.get("BackendState") != "Running":
             ready = False
             warnings.append("tailscale backend is not running")
-        self_info = status.get("Self") or {}
         dns_name = str(self_info.get("DNSName", "")).rstrip(".")
         expected_origin = f"https://{dns_name}" if dns_name else ""
         if not dns_name:

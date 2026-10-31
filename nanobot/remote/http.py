@@ -7,7 +7,7 @@ from dataclasses import asdict
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
-from typing import Any
+from typing import Any, cast
 
 from nanobot.remote.pairing import (
     PairingBusyError,
@@ -146,7 +146,7 @@ def _make_handler(pairing: PairingService) -> type[BaseHTTPRequestHandler]:
                 raise ValueError("request body is not JSON") from exc
             if not isinstance(value, dict):
                 raise ValueError("request body must be an object")
-            return value
+            return cast(dict[str, Any], value)
 
         def _write(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
             body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -157,7 +157,7 @@ def _make_handler(pairing: PairingService) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, _format: str, *_args: object) -> None:
+        def log_message(self, format: str, *args: Any) -> None:
             return
 
     return Handler
