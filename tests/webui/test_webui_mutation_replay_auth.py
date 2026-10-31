@@ -14,7 +14,7 @@ from nanobot.security.folder_grants import FolderGrantStore
 from nanobot.security.workspace_access import default_workspace_scope
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.runtime_authority import DurableSessionAuthority, SessionAuthorityLease
-from nanobot.webui.inbound_commands import WebUICommandRouter
+from nanobot.webui.inbound_commands import WebUICommandRouter, _mobile_mutation_allowed
 from nanobot.webui.workspaces import (
     WebUIWorkspaceController,
     WorkspacePermissionActionError,
@@ -685,3 +685,13 @@ async def test_prepare_admission_binding_is_checked_before_controller_execution(
     finally:
         if lease.close is not None:
             await lease.close()
+
+
+def test_mobile_mutation_allowlist_is_sidebar_only() -> None:
+    mobile = SimpleNamespace(mobile_identity=object())
+    assert _mobile_mutation_allowed(mobile, "sidebar.update") is True
+    assert _mobile_mutation_allowed(mobile, "recovery.continue") is True
+    assert _mobile_mutation_allowed(mobile, "recovery.dismiss") is True
+    assert _mobile_mutation_allowed(mobile, "session.delete") is False
+    assert _mobile_mutation_allowed(mobile, "settings.agent.update") is False
+    assert _mobile_mutation_allowed(SimpleNamespace(), "sidebar.update") is False

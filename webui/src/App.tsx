@@ -41,6 +41,7 @@ import { useMobileBack } from "@/hooks/useMobileBack";
 import { useSessions } from "@/hooks/useSessions";
 import { useDeferredTitleRefresh } from "@/hooks/useDeferredTitleRefresh";
 import { useSidebarState } from "@/hooks/useSidebarState";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import { useSkillsCatalog } from "@/hooks/useSkills";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
@@ -2549,6 +2550,7 @@ function Shell({
     onRequestRenameProject,
     onNewChatInProject,
     onOpenSettings,
+    settingsAvailable: !isMobileRuntimeActive(),
     onOpenApps,
     onOpenAutomations,
     onOpenSkills,

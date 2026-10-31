@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any, Awaitable, Callable, cast
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
@@ -37,6 +37,12 @@ from nanobot.webui.http_utils import (
 
 _MEDIA_RE = re.compile(r"^/mobile/v1/media/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)$")
 _THREAD_RE = re.compile(r"^/mobile/v1/sessions/([^/]+)/thread$")
+_MOBILE_API_ROUTES = (
+    (re.compile(r"^/api/commands$"), frozenset()),
+    (re.compile(r"^/api/sessions/[^/]+/file-preview$"), frozenset({"path", "probe"})),
+    (re.compile(r"^/api/sessions/[^/]+/automations$"), frozenset()),
+    (re.compile(r"^/api/webui/sidebar-state$"), frozenset()),
+)
 _LOCAL_ROUTES = {
     "/mobile/v1/handshake": "chat.read",
     "/mobile/v1/read": "chat.read",
@@ -146,6 +152,22 @@ class OwnerAccessValidator:
                     self._cache.pop(key, None)
 
 
+def _allowed_mobile_api_path(raw_path: str) -> str | None:
+    """Return the exact allowlisted chat read path, including its query."""
+    if not raw_path or len(raw_path) > 4096:
+        return None
+    parsed = urlsplit(raw_path)
+    if parsed.scheme or parsed.netloc or parsed.fragment:
+        return None
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    for pattern, allowed_query in _MOBILE_API_ROUTES:
+        if pattern.fullmatch(parsed.path):
+            if set(query) - allowed_query:
+                return None
+            return raw_path
+    return None
+
+
 class MobileGatewayEdge:
     def __init__(
         self,
@@ -165,6 +187,7 @@ class MobileGatewayEdge:
         thread_handler: Callable[
             [AccessIdentity, str, dict[str, list[str]]], Awaitable[tuple[int, dict[str, Any]]]
         ] | None = None,
+        api_handler: Callable[[AccessIdentity, str], Awaitable[tuple[int, dict[str, Any]]]] | None = None,
     ) -> None:
         self.validator = validator
         self.generation_provider = generation_provider
@@ -179,6 +202,7 @@ class MobileGatewayEdge:
         self.model_settings_handler = model_settings_handler
         self.workspaces_handler = workspaces_handler
         self.thread_handler = thread_handler
+        self.api_handler = api_handler
 
     async def authorize_websocket(self, connection: Any, request: WsRequest) -> Response | None:
         token = bearer_token(request.headers)
@@ -235,6 +259,18 @@ class MobileGatewayEdge:
                 if self.workspaces_handler is None:
                     return http_json_response({"error": "workspaces_unavailable"}, status=503)
                 return http_json_response(await self.workspaces_handler(identity))
+
+        if path == "/mobile/v1/api":
+            if not identity.allows("chat.read"):
+                return http_json_response({"error": "scope_denied"}, status=403)
+            if self.api_handler is None:
+                return http_json_response({"error": "api_unavailable"}, status=503)
+            raw_path = (query.get("path") or [""])[0]
+            allowed_path = _allowed_mobile_api_path(raw_path)
+            if allowed_path is None:
+                return http_json_response({"error": "path_not_allowed"}, status=400)
+            status, payload = await self.api_handler(identity, allowed_path)
+            return http_json_response(payload, status=status)
 
         thread_match = _THREAD_RE.match(path)
         if thread_match is not None:

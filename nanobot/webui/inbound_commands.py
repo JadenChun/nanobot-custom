@@ -58,6 +58,11 @@ if TYPE_CHECKING:
 _WEBUI_REQUEST_CACHE_TTL_S = 5 * 60.0
 _WEBUI_REQUEST_CACHE_MAX = 256
 _PREPARE_FULL_ACTION = "workspace.access.prepare_full"
+_MOBILE_MUTATION_ACTIONS = frozenset({
+    "sidebar.update",
+    "recovery.continue",
+    "recovery.dismiss",
+})
 _SOURCE_BOUND_PERMISSION_ACTIONS = frozenset({
     "workspace.access.add_folder",
     "workspace.access.allow_once",
@@ -144,6 +149,14 @@ class WebUICommandTransport(Protocol):
         workspace_access_request: FolderAccessRequest | None = None,
         workspace_permissions: WorkspacePermissionProjection | None = None,
     ) -> None: ...
+
+
+def _mobile_mutation_allowed(connection: Any, action: str) -> bool:
+    """Allow only shared sidebar organization from an authenticated mobile socket."""
+    return (
+        getattr(connection, "mobile_identity", None) is not None
+        and action in _MOBILE_MUTATION_ACTIONS
+    )
 
 
 class WebUICommandRouter:
@@ -786,15 +799,6 @@ class WebUICommandRouter:
                 detail="invalid webui request_id",
             )
             return
-        if connection not in self._webui_connections:
-            await self.send_webui_response(
-                connection,
-                request_id,
-                status=403,
-                message="access_denied",
-            )
-            return
-
         action = envelope.get("action")
         payload = envelope.get("payload")
         if not isinstance(action, str) or re.fullmatch(
@@ -814,6 +818,17 @@ class WebUICommandRouter:
                 request_id,
                 status=400,
                 message="WebUI mutation payload must be an object",
+            )
+            return
+        if (
+            connection not in self._webui_connections
+            and not _mobile_mutation_allowed(connection, action)
+        ):
+            await self.send_webui_response(
+                connection,
+                request_id,
+                status=403,
+                message="access_denied",
             )
             return
 

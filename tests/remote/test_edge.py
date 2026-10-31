@@ -65,6 +65,7 @@ def edge_setup(tmp_path: Path):
         model_settings_handler=lambda identity: _model_settings(identity),
         workspaces_handler=lambda identity: _workspaces(identity),
         thread_handler=lambda identity, key, query: _thread(identity, key, query),
+        api_handler=lambda identity, path: _api(identity, path),
     )
     try:
         yield owner, edge, pair
@@ -112,6 +113,10 @@ async def _thread(
     if key == "missing":
         return 404, {"error": "thread_not_found"}
     return 200, {"key": key, "limit": query.get("limit", [None])[0], "viewer": identity.installation_id}
+
+
+async def _api(identity: AccessIdentity, path: str) -> tuple[int, dict[str, Any]]:
+    return 200, {"path": path, "viewer": identity.installation_id}
 
 
 @pytest.mark.asyncio
@@ -178,6 +183,38 @@ async def test_edge_mobile_ui_reads_and_thread(edge_setup) -> None:
     for path in ("/mobile/v1/model-settings", "/mobile/v1/workspaces", f"/mobile/v1/sessions/{key}/thread"):
         denied = await edge.handle(None, request(path, write_only.access_token))
         assert denied is not None and denied.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_edge_allowlisted_chat_api_proxy(edge_setup) -> None:
+    _owner, edge, pair = edge_setup
+    encoded = quote("/api/commands", safe="")
+    allowed = await edge.handle(None, request(f"/mobile/v1/api?path={encoded}", pair.access_token))
+    assert allowed is not None and allowed.status_code == 200
+    assert body(allowed)["path"] == "/api/commands"
+
+    preview = quote(
+        "/api/sessions/websocket%3Achat-1/file-preview?path=notes%2Fready.md&probe=1",
+        safe="",
+    )
+    allowed_preview = await edge.handle(
+        None,
+        request(f"/mobile/v1/api?path={preview}", pair.access_token),
+    )
+    assert allowed_preview is not None and allowed_preview.status_code == 200
+    assert "file-preview" in body(allowed_preview)["path"]
+
+    for raw in (
+        "/api/settings",
+        "/api/webui/skills",
+        "/api/sessions/websocket%3Achat-1/file-preview?path=notes&unexpected=1",
+        "https://evil.test/api/commands",
+    ):
+        denied = await edge.handle(
+            None,
+            request(f"/mobile/v1/api?path={quote(raw, safe='')}", pair.access_token),
+        )
+        assert denied is not None and denied.status_code == 400
 
 
 @pytest.mark.asyncio

@@ -73,6 +73,9 @@ async function mobileFetch(
   if (url.pathname === "/api/workspaces") {
     return mobileJsonRequest(runtime, "mobile_workspaces", "/mobile/v1/workspaces");
   }
+  if (isMobileChatApiPath(url.pathname)) {
+    return mobileApiRequest(runtime, `${url.pathname}${url.search}`);
+  }
   const thread = /^\/api\/sessions\/([^/]+)\/webui-thread$/.exec(url.pathname);
   if (thread) {
     const key = decodeURIComponent(thread[1]);
@@ -100,6 +103,29 @@ async function mobileFetch(
     });
   }
   throw new Error(`mobile operation unavailable for ${url.pathname}`);
+}
+
+function isMobileChatApiPath(path: string): boolean {
+  return (
+    path === "/api/commands"
+    || path === "/api/webui/sidebar-state"
+    || /^\/api\/sessions\/[^/]+\/(file-preview|automations)$/.test(path)
+  );
+}
+
+async function mobileApiRequest(
+  runtime: ReturnType<typeof getMobileRuntime> & object,
+  path: string,
+): Promise<Response> {
+  const response = await runtime.request({
+    operation: "mobile_api",
+    method: "GET",
+    path: `/mobile/v1/api?path=${encodeURIComponent(path)}`,
+  });
+  return new Response(decodeBase64Text(response.bodyBase64), {
+    status: response.status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 async function mobileJsonRequest(

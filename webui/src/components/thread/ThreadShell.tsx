@@ -2346,7 +2346,7 @@ export function ThreadShell({
           modelNeedsSetup={modelBadge.needsSetup}
           fallbackModelName={fallbackModelName}
           onModelBadgeClick={modelBadge.needsSetup ? onOpenModelSettings : undefined}
-          onManageModels={onOpenModelSettings}
+          onManageModels={isMobileRuntimeActive() ? undefined : onOpenModelSettings}
           contextUsage={composerContextUsage}
           recentRoundUsage={composerRoundUsage}
           variant={composerVariant}
@@ -2416,7 +2416,7 @@ export function ThreadShell({
           modelNeedsSetup={modelBadge.needsSetup}
           fallbackModelName={fallbackModelName}
           onModelBadgeClick={modelBadge.needsSetup ? onOpenModelSettings : undefined}
-          onManageModels={onOpenModelSettings}
+          onManageModels={isMobileRuntimeActive() ? undefined : onOpenModelSettings}
           contextUsage={composerContextUsage}
           recentRoundUsage={composerRoundUsage}
           variant="hero"

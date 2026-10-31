@@ -64,6 +64,8 @@ interface SidebarProps {
   onOpenApps: () => void;
   onOpenSkills: () => void;
   onOpenAutomations: () => void;
+  /** Server administration is local-only; mobile hides these entry points. */
+  settingsAvailable?: boolean;
   onSettingsIntent?: () => void;
   onOpenSearch: () => void;
   activeUtility?: "apps" | "skills" | "automations" | null;
@@ -197,33 +199,37 @@ export function Sidebar(props: SidebarProps) {
           onClick={props.onOpenSearch}
           icon={<Search className="h-4 w-4" />}
         />
-        <SidebarActionButton
-          collapsed={collapsed}
-          label={t("sidebar.apps")}
-          onClick={props.onOpenApps}
-          onIntent={props.onSettingsIntent}
-          active={props.activeUtility === "apps"}
-          selectionRef={activeActionRef}
-          icon={<Blocks className="h-4 w-4" />}
-        />
-        <SidebarActionButton
-          collapsed={collapsed}
-          label={t("sidebar.skills.title")}
-          onClick={props.onOpenSkills}
-          onIntent={props.onSettingsIntent}
-          active={props.activeUtility === "skills"}
-          selectionRef={activeActionRef}
-          icon={<Brain className="h-4 w-4" />}
-        />
-        <SidebarActionButton
-          collapsed={collapsed}
-          label={t("sidebar.automations", { defaultValue: "Automations" })}
-          onClick={props.onOpenAutomations}
-          onIntent={props.onSettingsIntent}
-          active={props.activeUtility === "automations"}
-          selectionRef={activeActionRef}
-          icon={<CalendarClock className="h-4 w-4" />}
-        />
+        {props.settingsAvailable !== false ? (
+          <>
+            <SidebarActionButton
+              collapsed={collapsed}
+              label={t("sidebar.apps")}
+              onClick={props.onOpenApps}
+              onIntent={props.onSettingsIntent}
+              active={props.activeUtility === "apps"}
+              selectionRef={activeActionRef}
+              icon={<Blocks className="h-4 w-4" />}
+            />
+            <SidebarActionButton
+              collapsed={collapsed}
+              label={t("sidebar.skills.title")}
+              onClick={props.onOpenSkills}
+              onIntent={props.onSettingsIntent}
+              active={props.activeUtility === "skills"}
+              selectionRef={activeActionRef}
+              icon={<Brain className="h-4 w-4" />}
+            />
+            <SidebarActionButton
+              collapsed={collapsed}
+              label={t("sidebar.automations", { defaultValue: "Automations" })}
+              onClick={props.onOpenAutomations}
+              onIntent={props.onSettingsIntent}
+              active={props.activeUtility === "automations"}
+              selectionRef={activeActionRef}
+              icon={<CalendarClock className="h-4 w-4" />}
+            />
+          </>
+        ) : null}
         {props.archivedCount ? (
           <SidebarActionButton
             collapsed={collapsed}
@@ -292,14 +298,16 @@ export function Sidebar(props: SidebarProps) {
           collapsed && "w-14 flex-col px-0",
         )}
       >
-        <SidebarActionButton
-          collapsed={collapsed}
-          label={t("sidebar.settings")}
-          onClick={props.onOpenSettings}
-          onIntent={props.onSettingsIntent}
-          className={collapsed ? undefined : "flex-1"}
-          icon={<Settings className="h-4 w-4" />}
-        />
+        {props.settingsAvailable !== false ? (
+          <SidebarActionButton
+            collapsed={collapsed}
+            label={t("sidebar.settings")}
+            onClick={props.onOpenSettings}
+            onIntent={props.onSettingsIntent}
+            className={collapsed ? undefined : "flex-1"}
+            icon={<Settings className="h-4 w-4" />}
+          />
+        ) : null}
         <ConnectionBadge />
       </div>
     </nav>

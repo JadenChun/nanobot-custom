@@ -101,6 +101,9 @@ def build_mobile_edge(
     ) -> tuple[int, dict[str, Any]]:
         return await asyncio.to_thread(http.mobile_thread_payload, key, query)
 
+    async def api_handler(_identity: Any, path: str) -> tuple[int, dict[str, Any]]:
+        return await http.mobile_api_payload(path)
+
     return MobileGatewayEdge(
         validator,
         generation_provider=lambda: 1,
@@ -111,4 +114,5 @@ def build_mobile_edge(
         model_settings_handler=model_settings_handler,
         workspaces_handler=workspaces_handler,
         thread_handler=thread_handler,
+        api_handler=api_handler,
     )

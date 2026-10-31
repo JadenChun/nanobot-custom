@@ -35,7 +35,7 @@ model-preset, workspace-control and persisted-thread reads, so the composer mode
 picker and the Sandbox mode menu work on the phone. Full access remains local-only;
 the phone receives the restricted projection and the server rejects client-supplied
 Full scope. The signed artifact was rebuilt with that bridge
-(`bc7f02c100cd342d5fe74b7caebe4bb88e7ab8891e37480f757ac3f5a44541f3`). M20 final matrix is green: WebUI
+(`b32949b3ddd5af3498c85787d780a60be58c1cd8842312d3ff1754d2c34fc91f`). M20 final matrix is green: WebUI
 1,364 passed; Python 17,111 passed, 22 skipped; phone 31 tests (8 live skipped, 23 passed). The five baseline
 failures and the order-dependent flake were repaired. M22 signed release is built and verified with
 the release keystore: v2 signature, zipalign, install, same-key update, different-key rejection and

@@ -358,6 +358,31 @@ def _resolve_bootstrap_model_name(
 # ---------------------------------------------------------------------------
 
 
+_MOBILE_COMMAND_NAMES = frozenset({
+    "/new",
+    "/compact",
+    "/stop",
+    "/status",
+    "/model",
+    "/history",
+    "/goal",
+    "/skill",
+    "/help",
+})
+
+
+def _filter_mobile_commands(payload: dict[str, Any]) -> dict[str, Any]:
+    commands = payload.get("commands")
+    if not isinstance(commands, list):
+        return payload
+    filtered = [
+        command
+        for command in cast(list[Any], commands)
+        if isinstance(command, dict) and command.get("command") in _MOBILE_COMMAND_NAMES
+    ]
+    return {**payload, "commands": filtered}
+
+
 class GatewayHTTPHandler:
     """Handles all HTTP routes served alongside the WebSocket endpoint.
 
@@ -514,6 +539,24 @@ class GatewayHTTPHandler:
             management_available=False,
         )
 
+    async def mobile_api_payload(self, path: str) -> tuple[int, dict[str, Any]]:
+        """Dispatch one allowlisted mobile chat read through the local handler."""
+        request = WsRequest(path, Headers())
+        setattr(request, "_nanobot_trusted_proxy_authenticated", True)
+        response = await self.dispatch(None, request, internal=True)
+        if response is None:
+            return 404, {"error": "not_found"}
+        try:
+            body = json.loads(response.body) if response.body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 502, {"error": "invalid_response"}
+        if not isinstance(body, dict):
+            return 502, {"error": "invalid_response"}
+        payload = cast(dict[str, Any], body)
+        if path == "/api/commands":
+            payload = _filter_mobile_commands(payload)
+        return response.status_code, payload
+
     def mobile_thread_payload(
         self,
         key: str,
@@ -568,7 +611,13 @@ class GatewayHTTPHandler:
 
     # -- Main dispatch ------------------------------------------------------
 
-    async def dispatch(self, connection: Any, request: WsRequest) -> Any | None:
+    async def dispatch(
+        self,
+        connection: Any,
+        request: WsRequest,
+        *,
+        internal: bool = False,
+    ) -> Any | None:
         """Route an HTTP request. Returns Response or None."""
         got, _ = _parse_request_path(request.path)
         started = time.perf_counter()
@@ -576,7 +625,8 @@ class GatewayHTTPHandler:
         setattr(
             request,
             "_nanobot_trusted_proxy_authenticated",
-            _is_trusted_proxy_authenticated_request(connection, request.headers, self.config),
+            internal
+            or _is_trusted_proxy_authenticated_request(connection, request.headers, self.config),
         )
 
         try:

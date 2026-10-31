@@ -70,6 +70,46 @@ describe("mobile HTTP bridge", () => {
     await expect(response.json()).resolves.toEqual({ controls: { permission_v2: true } });
   });
 
+  it("maps allowlisted chat API reads through the generic proxy", async () => {
+    const encodedCommands = "/mobile/v1/api?path=" + encodeURIComponent("/api/commands");
+    const encodedPreview = "/mobile/v1/api?path=" + encodeURIComponent(
+      "/api/sessions/websocket%3Achat-1/file-preview?path=notes%2Fready.md&probe=1",
+    );
+    const { runtime, request } = runtimeWith({
+      [encodedCommands]: {
+        requestId: 1,
+        status: 200,
+        headers: {},
+        bodyBase64: encode({ commands: [] }),
+      },
+      [encodedPreview]: {
+        requestId: 2,
+        status: 200,
+        headers: {},
+        bodyBase64: encode({ available: true }),
+      },
+    });
+    installMobileRuntime(runtime);
+
+    const commands = await fetchWithTimeout("/api/commands");
+    await expect(commands.json()).resolves.toEqual({ commands: [] });
+    expect(request).toHaveBeenCalledWith({
+      operation: "mobile_api",
+      method: "GET",
+      path: encodedCommands,
+    });
+
+    const preview = await fetchWithTimeout(
+      "/api/sessions/websocket%3Achat-1/file-preview?path=notes%2Fready.md&probe=1",
+    );
+    await expect(preview.json()).resolves.toEqual({ available: true });
+    expect(request).toHaveBeenCalledWith({
+      operation: "mobile_api",
+      method: "GET",
+      path: encodedPreview,
+    });
+  });
+
   it("maps thread reads, keeps the query, and carries 404 through", async () => {
     const { runtime, request } = runtimeWith({
       "/mobile/v1/sessions/websocket%3Achat-1/thread?limit=2": {
