@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, cast
 
+from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
 from websockets.http11 import Request as WsRequest
 
@@ -45,6 +46,8 @@ class MobileDataServer:
             mutation_handler=self.mutation,
         )
         self.port = port
+        self.ws_port = port + 1 if port else 0
+        self._ws_server: Any = None
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -76,11 +79,78 @@ class MobileDataServer:
         self._server = server
         self._thread = threading.Thread(target=server.serve_forever, name="mobile-data", daemon=True)
         self._thread.start()
+        ws_server = asyncio.run_coroutine_threadsafe(
+            self._start_ws(self.ws_port),
+            loop,
+        ).result(timeout=10)
+        self._ws_server = ws_server
+        self.ws_port = int(ws_server.sockets[0].getsockname()[1])
         return int(server.server_address[1])
+
+    async def _start_ws(self, port: int) -> Any:
+        return await serve(self._ws_handler, "127.0.0.1", port, max_size=MAX_BODY)
+
+    async def _ws_handler(self, websocket: ServerConnection) -> None:
+        headers = websocket.request.headers if websocket.request is not None else {}
+        token = _bearer(headers.get("Authorization"))
+        if token is None:
+            await websocket.close(1008, "missing access")
+            return
+        try:
+            await self.edge.validator.validate(token)
+        except EdgeAuthError:
+            await websocket.close(1008, "invalid access")
+            return
+        chat_id = "fixture-chat"
+        await websocket.send(json.dumps({"event": "ready", "chat_id": chat_id}))
+        async for raw in websocket:
+            try:
+                frame = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(frame, dict):
+                continue
+            kind = frame.get("type")
+            if kind in {"new_chat", "new_temporary_chat"}:
+                await websocket.send(json.dumps({
+                    "event": "attached",
+                    "chat_id": chat_id,
+                    "temporary": kind == "new_temporary_chat",
+                }))
+            elif kind == "attach":
+                await websocket.send(json.dumps({"event": "attached", "chat_id": frame.get("chat_id", chat_id)}))
+            elif kind == "message":
+                turn_id = str(frame.get("turn_id") or "fixture-turn")
+                await websocket.send(json.dumps({
+                    "event": "message_accepted",
+                    "chat_id": frame.get("chat_id", chat_id),
+                    "turn_id": turn_id,
+                }))
+                await websocket.send(json.dumps({
+                    "event": "message",
+                    "chat_id": frame.get("chat_id", chat_id),
+                    "turn_id": turn_id,
+                    "role": "assistant",
+                    "content": "fixture reply",
+                }))
+                await websocket.send(json.dumps({
+                    "event": "turn_end",
+                    "chat_id": frame.get("chat_id", chat_id),
+                    "turn_id": turn_id,
+                }))
 
     def stop(self) -> None:
         loop = self._loop
         self._loop = None
+        ws_server = self._ws_server
+        self._ws_server = None
+        if ws_server is not None:
+            ws_server.close()
+            if loop is not None:
+                try:
+                    asyncio.run_coroutine_threadsafe(ws_server.wait_closed(), loop).result(timeout=5)
+                except Exception:
+                    pass
         if loop is not None:
             loop.call_soon_threadsafe(loop.stop)
         server = self._server

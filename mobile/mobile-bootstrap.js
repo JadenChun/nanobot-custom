@@ -19,7 +19,7 @@
     },
     openLogin: async function () { await plugin.openLogin(); },
     wsOpen: async function (path, headers) {
-      var result = await plugin.wsOpen({ operation: "fixture_ws", path: path, headers: headers });
+      var result = await plugin.wsOpen({ operation: "mobile_ws", path: path, headers: headers });
       return result.wsId;
     },
     wsSend: async function (wsId, data, kind) {

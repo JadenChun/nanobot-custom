@@ -193,11 +193,17 @@ class NativeNetworkPlugin : Plugin() {
         }
         val request = JSONObject().put("operation", operation).put("path", path)
         val headers = call.getObject("headers")
+        val copied = JSONObject()
         if (headers != null) {
-            val copied = JSONObject()
             for (key in headers.keys()) {
                 copied.put(key, headers.getString(key))
             }
+        }
+        val record = try { custody.load() } catch (_: Exception) { null }
+        if (record != null && record.accessToken.isNotBlank() && !copied.has("Authorization")) {
+            copied.put("Authorization", "Bearer ${record.accessToken}")
+        }
+        if (copied.length() > 0) {
             request.put("headers", copied)
         }
         val wsId = NativeNetwork.wsOpen(current, request.toString())

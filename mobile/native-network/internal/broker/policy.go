@@ -45,6 +45,11 @@ var routes = map[string]route{
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/media/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+$`),
 	},
+	"mobile_ws": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/ws$`),
+		ws:      true,
+	},
 	"mobile_refresh": {
 		method:  http.MethodPost,
 		pattern: regexp.MustCompile(`^/mobile/v1/refresh$`),
