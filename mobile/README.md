@@ -24,7 +24,7 @@ shows its installation ID, Remote Access settings creates the exact `nanobot://p
 native bridge collects the owner challenge and displays the comparison code, then polls approval
 and stores the issued tokens in Keystore custody. The full flow passed on the A142 phone against
 the real gateway, including handshake/read/WebSocket after pairing. M20 final matrix is green: WebUI
-1,364 passed; Python 17,111 passed, 22 skipped; phone 39 tests (7 live skipped). The five baseline
+1,364 passed; Python 17,111 passed, 22 skipped; phone 31 tests (8 live skipped, 23 passed). The five baseline
 failures and the order-dependent flake were repaired. M22 signed release is built and verified with
 the release keystore: v2 signature, zipalign, install, same-key update, different-key rejection and
 uninstall/reinstall all passed. Automated M21 checks on the signed release also pass:
