@@ -18,7 +18,8 @@ M14 data path and hardware Keystore passed on a physical A142/Android 16 phone. 
 persistence boots the packaged shared UI through the native transport (handshake/read 200), and the
 shared `/mobile/v1/ws` bridge now opens on the physical phone (connected chat shell). Signed media
 resolves through native handles in shared attachments/lightbox; pairing deep links are captured and
-handed to the plugin. Remaining real-backend pairing UX, manual device matrix and M22 signing remain.
+handed to the plugin. M20 final matrix: WebUI 1363, Python 17,103 with five pre-existing baseline
+failures, phone 29 tests (4 live skipped). Remaining manual device matrix and M22 signing remain.
 See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
