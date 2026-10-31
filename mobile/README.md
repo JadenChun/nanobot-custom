@@ -3,9 +3,9 @@
 Android-first mobile client for a Nanobot server. The selected server owns the Python agent,
 sessions, memory, tools, files and provider credentials; the phone is a scoped client.
 
-Status: M01–M04 and M06–M10 are implemented and tested locally; M05 live embedded-tailnet
-enrollment and M09 live Serve mapping are pending external opt-in. Product chat/UI and device
-release work (M11–M22) follow the taskbook. See `docs/mobile-client-tasks.md` for the backlog.
+Status: M01–M04 and M06–M13 are implemented and tested locally. M05 live embedded-tailnet
+enrollment and M09 live Serve mapping are pending external opt-in; M14–M22 require that live
+path plus a physical Android phone and signing identity. See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
 
