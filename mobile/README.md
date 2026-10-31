@@ -10,8 +10,8 @@ pairing plus refresh/replay/revoke were exercised against the isolated owner dat
 media handles, fetcher/attachment policy, exact target binding and the Capacitor attachment picker
 are in place. M16 runtime is wired into bootstrap/HTTP/client surface, mobile service-worker registration is
 disabled and shared assets package to `mobile/www-shared`. M17 adds mobile safe-area CSS, Back/Escape
-handling and connection/recovery notices. The full Python suite has 17,103 passing tests and five
-pre-existing baseline failures. M18 headless management and the shared Remote Access settings page are implemented. M19 live owned
+handling and connection/recovery notices. The full Python suite has 17,104 passing tests and five
+pre-existing baseline failures plus one order-dependent flake that passes in isolation. M18 headless management and the shared Remote Access settings page are implemented. M19 live owned
 user-service install/restart/removal passed and was cleaned up. M20 automated WebUI/emulator/Python
 matrix is captured; five pre-existing baseline Python failures remain. M21 arm64 execution, live
 M14 data path and hardware Keystore passed on a physical A142/Android 16 phone. M16 paired-target
@@ -23,9 +23,10 @@ native handles in shared attachments/lightbox. Product pairing now works end to 
 shows its installation ID, Remote Access settings creates the exact `nanobot://pair` link, the
 native bridge collects the owner challenge and displays the comparison code, then polls approval
 and stores the issued tokens in Keystore custody. The full flow passed on the A142 phone against
-the real gateway, including handshake/read/WebSocket after pairing. M20 final matrix: WebUI 1363,
-Python 17,103 with five pre-existing baseline failures. Remaining manual device matrix and M22
-signing remain.
+the real gateway, including handshake/read/WebSocket after pairing. M20 final matrix: WebUI 1,363
+passed; Python 17,104 passed with five pre-existing baseline failures and one order-dependent
+flake that passes in isolation; phone 37 tests (6 live skipped). Remaining manual device matrix and
+M22 signing remain.
 See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
