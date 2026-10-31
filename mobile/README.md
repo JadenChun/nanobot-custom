@@ -25,8 +25,10 @@ native bridge collects the owner challenge and displays the comparison code, the
 and stores the issued tokens in Keystore custody. The full flow passed on the A142 phone against
 the real gateway, including handshake/read/WebSocket after pairing. M20 final matrix: WebUI 1,363
 passed; Python 17,104 passed with five pre-existing baseline failures and one order-dependent
-flake that passes in isolation; phone 37 tests (6 live skipped). Remaining manual device matrix and
-M22 signing remain.
+flake that passes in isolation; phone 37 tests (6 live skipped). M22 signed release is built and
+verified with the release keystore: v2 signature, zipalign, install, same-key update, different-key
+rejection and uninstall/reinstall all passed. Remaining gates are the M21 manual device matrix, the
+five baseline Python failures, and final human review.
 See `docs/mobile-client-tasks.md`.
 
 

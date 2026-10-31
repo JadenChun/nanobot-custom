@@ -4,5 +4,4 @@
     <exclude domain="file" path="network-state/" />
     <exclude domain="file" path="nanobot-tmp/" />
     <exclude domain="sharedpref" path="nanobot_custody.xml" />
-    <exclude domain="cache" path="." />
 </full-backup-content>
