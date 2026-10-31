@@ -861,3 +861,109 @@ by separately opted-in live checks; count writers and verify state hashes before
 restore-tested backups and operator-visible profile change; no silent identity adoption or grant transfer.
 **Rollback/inputs:** restore only reconciled state with revoked identities still denied; retain both evidence sets.
 Source/target, downtime/cutover choice, state paths and identity mode are future decisions, never Android prerequisites.
+
+<a id="m30"></a>
+## M30 — Owner scope on the existing pairing (owner-client revision)
+
+**Objective/prerequisites:** accepted 2026-11-01 owner-client revision and [M14](#m14).
+**Allowed boundary:** `nanobot/remote/{protocol,pairing,auth,store,management}.py`,
+remote pairing tests, and the existing local Remote Access settings UI. **Forbidden:** a second
+pairing flow or a separate admin credential.
+
+1. Add the single `owner` scope to supported scopes and grant it with new pairings after the
+   comparison-code approval. Keep chat/media scopes for compatibility.
+2. Return `owner` in the handshake capabilities and expose it to the mobile runtime.
+3. Keep legacy chat-only devices working; add an explicit re-pair/upgrade path rather than
+   silently widening existing tokens.
+4. State in the pairing UI that the phone receives full Nanobot control.
+5. Test scope validation, approval, refresh/rotation, revoke, and legacy compatibility.
+
+**Checks:** owner scope reaches the phone; non-owner/legacy tokens stay chat-only; revoke denies
+owner and chat; pairing tests and token tests pass.
+**Gate/evidence:** a real phone pairs once, handshake reports owner, and the same token is accepted
+by the owner bridge; legacy denial tests remain green.
+**Rollback/inputs:** revoke owner devices and re-pair; legacy devices are unaffected. Pairing still
+requires local approval.
+
+<a id="m31"></a>
+## M31 — Full mobile WebUI read and mutation bridge
+
+**Objective/prerequisites:** [M30](#m30).
+**Allowed boundary:** `nanobot/remote/edge.py`, `composition.py`, `nanobot/webui/ws_http.py`,
+`inbound_commands.py`, mobile runtime HTTP/WS tests. **Forbidden:** a second session/agent owner,
+raw localhost proxy, or credential export.
+
+1. Replace the chat-only mobile API allowlist with an owner-authorized read bridge that dispatches
+   declared `/api/*` reads through the existing WebUI handlers. Keep media binary routing separate.
+2. Treat an owner mobile socket as authorized for the existing `webui_request` mutation surface,
+   including settings, apps, skills, automations, workspace, session delete and recovery actions.
+3. Make workspace-control and Full-access authorization consult the owner scope instead of
+   loopback-only checks; preserve source/revision/receipt validation.
+4. Include private permission projections and session-update fields for owner mobile sockets.
+5. Keep non-owner/legacy sockets denied; add positive and negative tests for every new route/action.
+
+**Checks:** representative GETs, settings mutations, skill/automation actions, session delete,
+workspace mode and Full access; unknown/oversized paths deny; legacy tokens remain denied.
+**Gate/evidence:** full WebUI read/mutation matrix passes from the phone; provider keys never appear
+in responses; owner and legacy authorization tests both pass.
+**Rollback/inputs:** disable owner scope admission and revoke owner devices; desktop/browser flows
+remain unchanged.
+
+<a id="m32"></a>
+## M32 — Full client UI, settings, workspace and Full access
+
+**Objective/prerequisites:** [M31](#m31).
+**Allowed boundary:** shared `webui/src` settings/sidebar/composer/workspace components and their
+tests. **Forbidden:** a mobile-only fork of settings or hidden authority paths.
+
+1. Re-enable Settings, Apps, Skills, Automations, Manage models and the full settings surface on
+   mobile. Remove the model-only settings projection; use the full WebUI payload.
+2. Use full workspace controls for owner phones. Keep the native folder picker unavailable to the
+   phone and use the existing server-side path/management dialog instead.
+3. Allow workspace mode and Full access from the phone with the existing confirmation dialogs.
+4. Restore the full slash-command palette for owner clients, including restart/lifecycle commands
+   exposed by the WebUI.
+5. Keep the mobile composer layout responsive; settings pages must render at phone width.
+
+**Checks:** settings pages load and save; folder path management works; Full access can be enabled
+and returned; slash commands execute; phone-width UI tests pass.
+**Gate/evidence:** real-phone settings/apps/skills/automations/full-access checks plus screenshots.
+**Rollback/inputs:** hide the re-enabled surfaces and revoke owner access; server config remains
+authoritative.
+
+<a id="m33"></a>
+## M33 — Owner-action safeguards
+
+**Objective/prerequisites:** [M31](#m31).
+**Allowed boundary:** shared confirmation UI, remote audit logging, owner mutation tests.
+**Forbidden:** silent destructive mutations or provider-secret exposure.
+
+1. Add explicit confirmation for session delete, skill/MCP/CLI install or removal, automation
+   creation/run, Full access, remote-entry disable and runtime restart.
+2. Audit owner mutations with installation ID, action, target and result; never log tokens or keys.
+3. Keep provider API keys write-only; redact secrets from settings reads and errors.
+4. Keep self-revoke available and ensure revoke invalidates owner access immediately.
+5. Preserve short access-token TTL and refresh rotation; add optional step-up auth as a follow-up.
+
+**Checks:** confirmation required; audit entry written; keys absent from all mobile responses;
+self-revoke and remote-entry-off recovery guidance pass.
+**Gate/evidence:** audit/redaction/confirmation tests and a live device revoke check.
+**Rollback/inputs:** disable owner mutations and revoke owner devices.
+
+<a id="m34"></a>
+## M34 — Owner-client qualification and release
+
+**Objective/prerequisites:** [M32](#m32), [M33](#m33).
+**Allowed boundary:** tests/evidence/release artifacts.
+**Forbidden:** claiming full parity without real-phone and full-suite evidence.
+
+1. Run the full Python, WebUI, Go and Android suites; repair regressions through the owning tasks.
+2. Re-pair the phone as an owner client and verify settings, skills, automations, workspace/Full,
+   session delete, restart and remote-access self-revoke.
+3. Verify update persistence (`adb install -r`) and one-time Tailscale re-auth behavior.
+4. Build the signed release, run install/update/different-key rejection, and record evidence.
+5. Update this taskbook, the mobile README and the final artifact hash; hand off for human acceptance.
+
+**Checks:** full automated matrix, owner-client device matrix, update/re-auth evidence, signed artifact.
+**Gate/evidence:** all gates green and final human acceptance. No owner-client parity claim before M34.
+**Rollback/inputs:** restore the prior signed release and revoke owner devices; preserve server state.

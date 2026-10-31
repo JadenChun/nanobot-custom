@@ -1,6 +1,9 @@
 # Mobile client taskbook: OpenCode entry point
 
 Status: Android M01–M22 implemented and qualified on the A142 / Android 16 arm64 device.
+The 2026-11-01 owner-client revision is accepted: the paired phone is the same full
+Nanobot client as the desktop WebUI, not a restricted chat viewer. M30–M34 define that
+revision; the old chat-only “M1” profile remains only for legacy devices.
 The final signed release is `mobile/evidence/20261101-m22-release/nanobot-mobile-release.apk`
 (SHA-256 `936803375e50f9b54ca243eb2ea1609b4b1aa706bc5bd7182ce83e7ff4e3edd7`). Automated gates are
 green: Python 17,111 passed / 22 skipped; WebUI 1,369 passed; phone 31 tests (8 live skipped, 23
@@ -96,6 +99,20 @@ All `mobile/`, `nanobot/remote/` and `tests/remote/` paths are proposed new path
 | [M28 / future model](mobile-client-implementation.md#m28) | Private server-to-model data link | M20; M27 only for VPS topology | Server provider config/runbook; no phone provider code | Deferred | Authenticated inference/stream failure distinction; SSRF/admin boundaries preserved |
 | [M29 / future migration](mobile-client-implementation.md#m29) | Controlled state/identity cutover | M22; M27 if migrating to VPS; future scope | Migration runbook/checks; exact state paths later | Deferred | One authoritative writer, explicit identity/pairing and tested rollback |
 
+### Owner-client revision — M30–M34
+
+| Task | Objective | Prerequisites | Main ownership | Gate/evidence |
+| --- | --- | --- | --- | --- |
+| [M30](mobile-client-implementation.md#m30) | Owner scope on the existing pairing | Accepted plan revision; M14 pairing | Remote protocol/owner/pairing tests | New pairings grant `owner`; comparison-code approval; legacy chat-only devices remain valid until re-paired |
+| [M31](mobile-client-implementation.md#m31) | Full mobile WebUI read/mutation bridge | M30 | Edge, `ws_http`, `inbound_commands`, mobile runtime tests | All desktop WebUI GETs and `webui_request` mutations work from a paired owner phone; scope denial for non-owner |
+| [M32](mobile-client-implementation.md#m32) | Re-enable full client UI, settings, workspace and Full | M31 | Shared UI + mobile route tests | Settings/apps/skills/automations, folder management, workspace mode and Full access work on the phone; native picker replaced by server-side path management |
+| [M33](mobile-client-implementation.md#m33) | Owner-action safeguards | M31 | Shared UI + audit/confirmation tests | Destructive actions confirm; owner mutations audit installation/action; provider keys never returned; self-revoke works |
+| [M34](mobile-client-implementation.md#m34) | Owner-client device and release qualification | M32, M33 | Tests/evidence/release | Full suite, real phone, update/pairing persistence, signed artifact and acceptance evidence |
+
+M25 exact-target remote approvals are superseded for owner clients by M30–M33; the
+old scope remains documented for non-owner/legacy deployments. M23/M24 service-manager
+lifecycle remains deferred; owner clients use the existing WebUI restart/stop surface.
+
 ## Dependency order and finish lines
 
 ```mermaid
@@ -119,6 +136,11 @@ flowchart TD
   M22 -. separately scoped .-> M29
   M27 -. if VPS topology .-> M28
   M27 -. if VPS target .-> M29
+  M14 --> M30["M30: owner scope on existing pairing"]
+  M30 --> M31["M31: full mobile read/mutation bridge"]
+  M31 --> M32["M32: full client UI, workspace and Full"]
+  M32 --> M33["M33: owner-action safeguards"]
+  M33 --> M34["M34: owner-client qualification and release"]
 ```
 
 M06–M09 contract/store/listener work can proceed independently; M11 permission integration and M16

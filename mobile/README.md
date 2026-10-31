@@ -37,9 +37,10 @@ app offers a re-auth panel instead of erasing the pairing. Use
 `mobile/scripts/install-release-update.sh` (or a Play Store update) for in-place
 updates; do not uninstall unless a fresh pairing is intended. The mobile bridge now also carries the
 model-preset, workspace-control and persisted-thread reads, so the composer model
-picker and the Sandbox mode menu work on the phone. Full access remains local-only;
-the phone receives the restricted projection and the server rejects client-supplied
-Full scope. The signed artifact was rebuilt with that bridge and the Nanobot launcher
+picker and the Sandbox mode menu work on the phone. The 2026-11-01 owner-client revision changes the phone from a
+restricted chat viewer to the same full Nanobot client as the desktop WebUI, with no
+separate admin pairing. Implementation is tracked in M30–M34; the current signed
+artifact is still the chat-scoped build until those tasks land. The signed artifact was rebuilt with that bridge and the Nanobot launcher
 icon/splash (`936803375e50f9b54ca243eb2ea1609b4b1aa706bc5bd7182ce83e7ff4e3edd7`). M20 final matrix is green: WebUI
 1,364 passed; Python 17,111 passed, 22 skipped; phone 31 tests (8 live skipped, 23 passed). The five baseline
 failures and the order-dependent flake were repaired. M22 signed release is built and verified with

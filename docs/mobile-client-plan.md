@@ -1,6 +1,6 @@
 # Android-first Nanobot mobile client implementation plan
 
-Planning baseline/revision: 2026-10-30. Status: accepted architecture; see the complete
+Planning baseline/revision: 2026-11-01 (owner-client revision). Status: accepted architecture; see the complete
 [OpenCode task backlog](mobile-client-tasks.md) and [implementation steps](mobile-client-implementation.md).
 The taskbook records the Android workflow to execute when the user invokes its OpenCode prompt.
 This planning task only prepares the handoff; production activation, service installation,
@@ -32,6 +32,48 @@ connection-owned and are excluded from the first mobile release because disconne
 Non-goals: local phone inference, a second gateway, offline private history/write queues, push delivery,
 global Full, unrestricted remote administration, a desktop-shell rewrite and store publication.
 Actual VPS provisioning/state migration, model serving and remote home-tool workers are also out of scope.
+
+## Owner-client revision — 2026-11-01
+
+The product decision has changed: the paired phone is the **same owner client** as the
+desktop WebUI, not a restricted chat viewer. There is one pairing and one owner
+capability; there is no separate chat pairing and admin pairing.
+
+The server still runs the agent, tools, models, sessions and provider credentials. The
+phone is a full remote control of that server. A paired phone may read and write the
+same client surface the desktop WebUI exposes, including:
+
+- settings, providers, model presets, MCP, CLI apps and API service;
+- skills install/update/delete and marketplace;
+- automations management;
+- session delete and temporary chats;
+- workspace grants, folder management, workspace mode and Full access;
+- runtime restart/stop where the WebUI exposes it;
+- remote-access settings, with an explicit warning before disabling the entry.
+
+The native operating-system folder picker remains a server-desktop dialog and cannot be
+operated by a phone. Folder management from the phone uses server-side path entry and
+the existing management APIs. This is a UI transport limit, not a retained security
+boundary.
+
+### Threat model and safeguards
+
+The phone is now a trusted owner device. Anyone with the unlocked phone or a stolen
+refresh token can administer Nanobot until the device is revoked. This is the accepted
+tradeoff for full client parity. Required safeguards:
+
+- Pairing consent explicitly states that the phone receives full control.
+- Destructive actions show a phone confirmation.
+- Mobile owner mutations are audit-logged with installation ID and action.
+- Device revocation invalidates owner access; self-revoke remains available.
+- Provider API keys remain write-only and are never returned to the phone.
+- Short access-token TTL and refresh rotation remain mandatory.
+- Optional step-up authentication can be added later without changing the owner scope.
+
+For legacy devices paired before this revision, the old chat-only scope remains until
+the device is re-paired or explicitly upgraded. New pairings receive the owner scope.
+The “Paired phone: chat M1” deny rows below describe that legacy profile, not the new
+owner-client profile.
 
 ## Source and evidence baseline
 
