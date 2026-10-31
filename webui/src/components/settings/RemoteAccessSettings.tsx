@@ -1,3 +1,4 @@
+import QRCode from "qrcode";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -27,6 +28,7 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
   const [approvalCode, setApprovalCode] = useState("");
   const [mediaConsent, setMediaConsent] = useState(false);
   const [pairingLink, setPairingLink] = useState("");
+  const [qrDataUrl, setQrDataUrl] = useState("");
   const [copied, setCopied] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -47,6 +49,26 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
       setOrigin(window.location.origin);
     }
   }, [origin]);
+
+  useEffect(() => {
+    if (!pairingLink) {
+      setQrDataUrl("");
+      return;
+    }
+    let cancelled = false;
+    void QRCode.toDataURL(pairingLink, {
+      width: 224,
+      margin: 1,
+      color: { dark: "#111827", light: "#ffffff" },
+    }).then((url) => {
+      if (!cancelled) setQrDataUrl(url);
+    }).catch(() => {
+      if (!cancelled) setQrDataUrl("");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [pairingLink]);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -130,12 +152,12 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
           />
         </label>
         <label className="block text-xs">
-          Phone installation ID
+          Phone installation ID (optional)
           <input
             aria-label="Phone installation ID"
             value={installationId}
             onChange={(event) => setInstallationId(event.target.value)}
-            placeholder="Shown on the phone pairing screen"
+            placeholder="Leave blank to generate one for the QR"
             className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm"
           />
         </label>
@@ -159,7 +181,7 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
         </label>
         <button
           type="button"
-          disabled={busy || !origin.trim() || !installationId.trim()}
+          disabled={busy || !origin.trim()}
           onClick={() => void run(async () => {
             const offer = await startRemotePairing(token, {
               origin: origin.trim(),
@@ -167,10 +189,12 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
               chatConsent: true,
               mediaConsent,
             });
+            const targetInstallation = installationId.trim() || crypto.randomUUID();
+            setInstallationId(targetInstallation);
             setPairingId(offer.pairing_id);
             setCode(offer.comparison_code);
             setApprovalCode("");
-            setPairingLink(buildMobilePairingLink(origin, installationId, offer));
+            setPairingLink(buildMobilePairingLink(origin, targetInstallation, offer));
           })}
           className="rounded-md border px-3 py-1.5 text-sm"
         >
@@ -181,6 +205,13 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
             <p className="text-xs text-muted-foreground">
               Open this link on the phone. Keep it private until the codes match.
             </p>
+            {qrDataUrl ? (
+              <img
+                src={qrDataUrl}
+                alt="Phone pairing QR code"
+                className="h-44 w-44 rounded-lg border bg-white p-2"
+              />
+            ) : null}
             <textarea
               aria-label="Phone pairing link"
               readOnly

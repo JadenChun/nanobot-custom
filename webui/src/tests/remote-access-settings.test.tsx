@@ -2,6 +2,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("qrcode", () => ({
+  default: {
+    toDataURL: vi.fn(async () => "data:image/png;base64,qr"),
+  },
+}));
+
 import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
 
 const status = {
@@ -66,6 +72,7 @@ describe("RemoteAccessSettings", () => {
     await userEvent.type(screen.getByLabelText("Phone installation ID"), "install-phone-1");
     await userEvent.click(screen.getByRole("button", { name: "Create pairing challenge" }));
     await waitFor(() => expect(screen.getByText("123456")).toBeInTheDocument());
+    expect(await screen.findByAltText("Phone pairing QR code")).toBeInTheDocument();
     const link = screen.getByLabelText("Phone pairing link") as HTMLTextAreaElement;
     expect(link.value).toContain("nanobot://pair?");
     expect(link.value).toContain("installation=install-phone-1");

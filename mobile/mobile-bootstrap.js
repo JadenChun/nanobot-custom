@@ -118,6 +118,20 @@
     card.appendChild(codeHint);
 
     var actions = textElement("div", "mobile-pairing-actions");
+    var scan = textElement("button", "mobile-pairing-button", "Scan QR code");
+    scan.type = "button";
+    scan.addEventListener("click", function () {
+      if (typeof plugin.scanPairingQr !== "function") {
+        status.textContent = "QR scanning is unavailable in this build.";
+        return;
+      }
+      status.classList.remove("is-error");
+      status.textContent = "Opening QR scanner...";
+      void plugin.scanPairingQr().catch(function (error) {
+        status.textContent = String(error && error.message ? error.message : error);
+      });
+    });
+    actions.appendChild(scan);
     var login = textElement("button", "mobile-pairing-button", "Open Tailscale login");
     login.type = "button";
     login.hidden = true;

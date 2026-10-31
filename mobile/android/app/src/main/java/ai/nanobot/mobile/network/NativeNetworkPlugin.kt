@@ -1,5 +1,6 @@
 package ai.nanobot.mobile.network
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.graphics.Bitmap
@@ -10,13 +11,15 @@ import android.provider.OpenableColumns
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
-import android.util.Log
 import com.getcapacitor.JSObject
+import com.getcapacitor.PermissionState
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
+import com.getcapacitor.annotation.Permission
+import com.getcapacitor.annotation.PermissionCallback
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import ai.nanobot.mobile.attachments.AttachmentLimits
@@ -35,9 +38,13 @@ import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import androidx.activity.result.ActivityResult
 import androidx.core.content.FileProvider
+import com.google.zxing.integration.android.IntentIntegrator
 import java.io.ByteArrayOutputStream
 
-@CapacitorPlugin(name = "NativeNetwork")
+@CapacitorPlugin(
+    name = "NativeNetwork",
+    permissions = [Permission(alias = "camera", strings = [Manifest.permission.CAMERA])],
+)
 class NativeNetworkPlugin : Plugin() {
     @Volatile private var transportHandle: Long = 0L
     private val pollExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
@@ -466,6 +473,46 @@ class NativeNetworkPlugin : Plugin() {
     fun stop(call: PluginCall) {
         stopInternal()
         call.resolve()
+    }
+
+    @PluginMethod
+    fun scanPairingQr(call: PluginCall) {
+        if (getPermissionState("camera") != PermissionState.GRANTED) {
+            requestPermissionForAlias("camera", call, "cameraPermission")
+            return
+        }
+        launchQrScanner(call)
+    }
+
+    @PermissionCallback
+    fun cameraPermission(call: PluginCall) {
+        if (getPermissionState("camera") == PermissionState.GRANTED) {
+            launchQrScanner(call)
+        } else {
+            call.reject("camera permission is required to scan the pairing QR code")
+        }
+    }
+
+    private fun launchQrScanner(call: PluginCall) {
+        val integrator = IntentIntegrator(activity)
+        integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
+        integrator.setPrompt("Scan the Nanobot pairing QR code")
+        integrator.setBeepEnabled(false)
+        integrator.setOrientationLocked(false)
+        startActivityForResult(call, integrator.createScanIntent(), "qrScanned")
+    }
+
+    @ActivityCallback
+    fun qrScanned(call: PluginCall?, result: ActivityResult) {
+        if (call == null) return
+        val parsed = IntentIntegrator.parseActivityResult(result.resultCode, result.data)
+        val raw = parsed?.contents
+        if (raw.isNullOrBlank()) {
+            call.reject("QR scan cancelled")
+            return
+        }
+        MainActivity.pendingPairingLink = raw
+        call.resolve(JSObject().put("scanned", true))
     }
 
     @PluginMethod
