@@ -29,8 +29,11 @@ failures and the order-dependent flake were repaired. M22 signed release is buil
 the release keystore: v2 signature, zipalign, install, same-key update, different-key rejection and
 uninstall/reinstall all passed. Automated M21 checks on the signed release also pass:
 portrait/landscape layout, process death, forced Doze, Back/relaunch, font scale 1.3 and a
-battery/thermal snapshot. Remaining gates are the hands-on cellular/picker/accessibility matrix and
-final human review.
+battery/thermal snapshot. Device-tool checks found and fixed two real defects: Capacitor numeric
+WebSocket IDs were rejected by `getLong`, and the mobile frame bound was too small for a 144 KB
+image. A small image now attaches and sends through the live gateway. Remaining gaps are camera
+capture, product token refresh after the 10-minute access TTL, hands-on TalkBack/cellular handover,
+and final human review.
 See `docs/mobile-client-tasks.md`.
 
 
