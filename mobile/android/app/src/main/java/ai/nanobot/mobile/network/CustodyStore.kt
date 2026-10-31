@@ -186,6 +186,34 @@ class CustodyStore(context: Context) {
     }
 
     @Synchronized
+    fun saveTokens(
+        origin: String,
+        installationId: String,
+        accessToken: String,
+        refreshToken: String,
+        accessExpiresIn: Int = 600,
+        refreshExpiresIn: Int = 30 * 24 * 60 * 60,
+    ): CustodyRecord {
+        if (accessToken.isBlank() || refreshToken.isBlank()) {
+            throw CustodyException("paired credentials are empty")
+        }
+        if (accessToken.length > 512 || refreshToken.length > 512) {
+            throw CustodyException("paired credentials exceed the bound")
+        }
+        val record = loadOrCreate(origin, installationId)
+        val now = System.currentTimeMillis()
+        val updated = record.copy(
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            accessExpiresAt = now + accessExpiresIn * 1000L,
+            refreshExpiresAt = now + refreshExpiresIn * 1000L,
+            updatedAt = now,
+        )
+        save(updated)
+        return updated
+    }
+
+    @Synchronized
     fun status(): Map<String, Any> {
         val record = try {
             load()

@@ -31,6 +31,7 @@ if (typeof globalThis.crypto !== "undefined" && !("randomUUID" in globalThis.cry
 
 const root = document.getElementById("root");
 if (!root) throw new Error("root element missing");
+const appRoot: HTMLElement = root;
 
 const injectedMobileTransport = (window as Window & { nanobotMobileTransport?: MobileTransport })
   .nanobotMobileTransport;
@@ -55,7 +56,19 @@ async function renderWebui(container: HTMLElement) {
   ReactDOM.createRoot(container).render(<App />);
 }
 
-void renderWebui(root);
+async function startWebui(): Promise<void> {
+  try {
+    await (window as Window & { nanobotMobileReady?: Promise<void> }).nanobotMobileReady;
+  } catch {
+    // The shared UI shows its bootstrap/auth state when no target is ready.
+  }
+  if (injectedMobileTransport) {
+    installMobileRuntime(createMobileRuntime(injectedMobileTransport));
+  }
+  await renderWebui(appRoot);
+}
+
+void startWebui();
 
 if ("serviceWorker" in navigator && shouldRegisterServiceWorker()) {
   window.addEventListener("load", () => {
