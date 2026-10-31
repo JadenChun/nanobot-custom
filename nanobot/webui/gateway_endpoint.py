@@ -61,6 +61,10 @@ class WebUIGatewayEndpoint:
     ) -> Any:
         """Route one listener request to a WS handshake or the HTTP application."""
         got, query = parse_request_path(request.path)
+        if got == "/mobile/v1/ws" and is_websocket_upgrade(request):
+            if self._mobile_edge is None:
+                return connection.respond(404, "Not Found")
+            return await self._mobile_edge.authorize_websocket(connection, request)
         if got == "/mobile/v1" or got.startswith("/mobile/v1/"):
             if self._mobile_edge is None:
                 return connection.respond(404, "Not Found")

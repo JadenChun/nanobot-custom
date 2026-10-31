@@ -227,3 +227,14 @@ async def test_edge_mutation_frame_uses_replay_cache(edge_setup) -> None:
     assert second["ok"] is True
     assert second["result"]["decision"] == "replayed"
     assert effects == 1
+
+
+@pytest.mark.asyncio
+async def test_mobile_websocket_authorization_binds_identity(edge_setup) -> None:
+    _owner, edge, pair = edge_setup
+    connection = type("Connection", (), {})()
+    response = await edge.authorize_websocket(connection, request("/mobile/v1/ws", pair.access_token))
+    assert response is None
+    assert connection.mobile_identity.installation_id == "install-0001"
+    denied = await edge.authorize_websocket(connection, request("/mobile/v1/ws"))
+    assert denied is not None and denied.status_code == 401

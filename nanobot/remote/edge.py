@@ -156,6 +156,17 @@ class MobileGatewayEdge:
         self.mutation_handler = mutation_handler
         self.authorize_operation = authorize_operation
 
+    async def authorize_websocket(self, connection: Any, request: WsRequest) -> Response | None:
+        token = bearer_token(request.headers)
+        if not token:
+            return http_json_response({"error": "missing_access"}, status=401)
+        try:
+            identity = await self.validator.validate(token)
+        except EdgeAuthError as exc:
+            return http_json_response({"error": exc.code}, status=exc.status)
+        setattr(connection, "mobile_identity", identity)
+        return None
+
     async def handle(self, _connection: Any, request: WsRequest) -> Response | None:
         path, query = parse_request_path(request.path)
         if path != "/mobile/v1" and not path.startswith("/mobile/v1/"):
