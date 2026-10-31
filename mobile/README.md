@@ -25,7 +25,12 @@ phone scans the QR or opens the link, the native bridge collects the owner chall
 comparison code, then polls approval and stores the issued tokens in Keystore custody. The device
 remains linked until it is revoked in Remote Access settings; revoke denies new admissions. The
 full flow passed on the A142 phone against
-the real gateway, including handshake/read/WebSocket after pairing. M20 final matrix is green: WebUI
+the real gateway, including handshake/read/WebSocket after pairing. A later run against a full
+`nanobot gateway` with the local `Qwen3.8-27B-UD-Q6_K_XL` provider completed the same phone pairing
+and produced real model replies in both the host mobile-edge check (`GATEWAY_MODEL_OK`, 11.7 s) and
+the phone chat (`PHONE_OK`, 0.9 s); evidence is in
+`evidence/20261031-full-gateway/`. The phone's embedded Tailscale node needs a one-time interactive
+login when its prior node state was removed. M20 final matrix is green: WebUI
 1,364 passed; Python 17,111 passed, 22 skipped; phone 31 tests (8 live skipped, 23 passed). The five baseline
 failures and the order-dependent flake were repaired. M22 signed release is built and verified with
 the release keystore: v2 signature, zipalign, install, same-key update, different-key rejection and

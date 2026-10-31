@@ -6,8 +6,10 @@ The final signed release is `mobile/evidence/20261031-m22-release/nanobot-mobile
 green: Python 17,111 passed / 22 skipped; WebUI 1,364 passed; phone 31 tests (8 live skipped, 23
 passed). Device checks passed for QR/product pairing, camera and library attachments, signed media,
 token refresh, cellular/Wi-Fi handover, orientation, process death, Doze, Back, font scaling and a
-battery/thermal snapshot. TalkBack was explicitly skipped by product decision. Final human
-acceptance/review remains. Read this file first, then the matching tasks in
+battery/thermal snapshot. A full gateway with the local `Qwen3.8-27B-UD-Q6_K_XL` provider then
+completed real phone pairing and model turns (`GATEWAY_MODEL_OK` host check, `PHONE_OK` on the
+phone); see `mobile/evidence/20261031-full-gateway/`. TalkBack was explicitly skipped by product
+decision. Final human acceptance/review remains. Read this file first, then the matching tasks in
 [the implementation guide](mobile-client-implementation.md).
 The [accepted architecture](mobile-client-plan.md) remains authoritative for security and product behavior;
 the taskbook supplies the complete execution order and supersedes its older P0-only dispatch wording.
