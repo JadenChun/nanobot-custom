@@ -16,6 +16,7 @@ emulator_port="${NANOBOT_MOBILE_EMULATOR_PORT:-5590}"
 emulator_gpu="${NANOBOT_MOBILE_EMULATOR_GPU:-host}"
 serial="emulator-${emulator_port}"
 keep_emulator=0
+native_tests=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -24,6 +25,7 @@ while [[ $# -gt 0 ]]; do
     --port) emulator_port="$2"; serial="emulator-${emulator_port}"; shift 2 ;;
     --gpu) emulator_gpu="$2"; shift 2 ;;
     --keep-emulator) keep_emulator=1; shift ;;
+    --native-tests) native_tests=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -65,6 +67,8 @@ adb version
   bun run build
   bunx cap sync android
 )
+
+"${script_dir}/build-native-network.sh"
 
 (
   cd "${MOBILE_ROOT}/android"
@@ -148,6 +152,15 @@ adb -s "${serial}" shell settings put global transition_animation_scale 0
 adb -s "${serial}" shell settings put global animator_duration_scale 0
 
 adb -s "${serial}" install -r -t "${apk}"
+if [[ "${native_tests}" -eq 1 ]]; then
+  (
+    cd "${MOBILE_ROOT}/android"
+    ANDROID_SERIAL="${serial}" ./gradlew --no-daemon :app:connectedDebugAndroidTest
+  )
+  # The instrumentation runner uninstalls the target app; restore it for the
+  # fixture shell/probe phase.
+  adb -s "${serial}" install -r -t "${apk}"
+fi
 adb -s "${serial}" logcat -c
 adb -s "${serial}" shell am force-stop ai.nanobot.mobile
 adb -s "${serial}" shell am start -W -n ai.nanobot.mobile/.MainActivity

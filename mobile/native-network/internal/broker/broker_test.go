@@ -1,0 +1,369 @@
+package broker
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+)
+
+func testCore(t *testing.T, server *httptest.Server, mutate func(*Config)) *Core {
+	t.Helper()
+	cfg := Config{
+		Origin:          server.URL,
+		InstallationID:  "fixture-installation",
+		Hostname:        "fixture-host",
+		StateDir:        t.TempDir(),
+		AllowTestRoutes: true,
+		QueueSize:       64,
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	core, err := NewTestCore(cfg, func(ctx context.Context, network, address string) (net.Conn, error) {
+		return net.Dial("tcp", strings.TrimPrefix(server.URL, "https://"))
+	})
+	if err != nil {
+		t.Fatalf("NewTestCore: %v", err)
+	}
+	// Trust the httptest certificate exactly as its own client does; production
+	// still relies on the system roots and standard hostname/SNI validation.
+	testTransport := server.Client().Transport.(*http.Transport)
+	coreTransport := core.httpClient.Transport.(*http.Transport)
+	coreTransport.TLSClientConfig = testTransport.TLSClientConfig.Clone()
+	t.Cleanup(func() { _ = core.Stop() })
+	return core
+}
+
+func testServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/fixture/v1/bootstrap", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"fixture":true}`))
+	})
+	mux.HandleFunc("/fixture/v1/read", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("cursor") == "slow" {
+			time.Sleep(3 * time.Second)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	})
+	mux.HandleFunc("/fixture/v1/counter", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(strings.Repeat("x", 4096)))
+	})
+	mux.HandleFunc("/fixture/v1/media/sample.png", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.Header().Set("Content-Range", "bytes 0-3/8")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("PNG!"))
+	})
+	mux.HandleFunc("/fixture/v1/redirect", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://evil.example/steal", http.StatusFound)
+	})
+	mux.HandleFunc("/fixture/v1/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "")
+		for {
+			typ, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			if err := conn.Write(r.Context(), typ, data); err != nil {
+				return
+			}
+		}
+	})
+	server := httptest.NewTLSServer(mux)
+	t.Cleanup(server.Close)
+	return server
+}
+
+func waitEvent(t *testing.T, core *Core, eventType string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	buffer := make([]byte, 512*1024)
+	for time.Now().Before(deadline) {
+		n, err := core.PollEvent(buffer)
+		if err != nil {
+			t.Fatalf("PollEvent: %v", err)
+		}
+		if n == 0 {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		var event map[string]any
+		if err := json.Unmarshal(buffer[:n], &event); err != nil {
+			t.Fatalf("event JSON: %v", err)
+		}
+		if event["type"] == eventType {
+			return event
+		}
+	}
+	t.Fatalf("event %q not observed", eventType)
+	return nil
+}
+
+func TestHTTPReadAndRange(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, nil)
+
+	id, err := core.HTTP(HTTPRequest{
+		Operation: "fixture_read",
+		Method:    "GET",
+		Path:      "/fixture/v1/read?cursor=next",
+	})
+	if err != nil || id == 0 {
+		t.Fatalf("HTTP: id=%d err=%v", id, err)
+	}
+	event := waitEvent(t, core, "http_response")
+	if event["status"].(float64) != 200 {
+		t.Fatalf("status: %v", event["status"])
+	}
+	if event["request_id"].(float64) != float64(id) {
+		t.Fatalf("request id: %v", event["request_id"])
+	}
+	body, err := base64.StdEncoding.DecodeString(event["body_base64"].(string))
+	if err != nil || string(body) != `{"items":[]}` {
+		t.Fatalf("body: %q err=%v", body, err)
+	}
+
+	id, err = core.HTTP(HTTPRequest{
+		Operation: "fixture_media",
+		Method:    "GET",
+		Path:      "/fixture/v1/media/sample.png",
+		Headers:   map[string]string{"Range": "bytes=0-3"},
+	})
+	if err != nil || id == 0 {
+		t.Fatalf("media HTTP: id=%d err=%v", id, err)
+	}
+	event = waitEvent(t, core, "http_response")
+	headers := event["headers"].(map[string]any)
+	if headers["content-range"] != "bytes 0-3/8" {
+		t.Fatalf("content-range: %v", headers)
+	}
+}
+
+func TestHTTPPolicyDeniesArbitraryTargets(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, nil)
+
+	cases := []HTTPRequest{
+		{Operation: "fixture_read", Method: "POST", Path: "/fixture/v1/read"},
+		{Operation: "fixture_read", Method: "GET", Path: "/admin"},
+		{Operation: "unknown", Method: "GET", Path: "/fixture/v1/read"},
+		{Operation: "fixture_read", Method: "GET", Path: "https://evil.example/fixture/v1/read"},
+		{Operation: "fixture_read", Method: "GET", Path: "/fixture/v1/read?cursor=next&extra=1"},
+		{Operation: "fixture_read", Method: "GET", Path: "/fixture/v1/read", Headers: map[string]string{"X-Fixture-Admin": "fixture-admin"}},
+	}
+	for index, request := range cases {
+		if _, err := core.HTTP(request); err == nil {
+			t.Fatalf("case %d was accepted", index)
+		}
+	}
+	if _, err := core.HTTP(HTTPRequest{Operation: "fixture_read", Method: "GET", Path: "/fixture/v1/read", BodyBase64: base64.StdEncoding.EncodeToString(make([]byte, defaultBodyLimit+1))}); err == nil {
+		t.Fatal("oversized body was accepted")
+	}
+}
+
+func TestHTTPResponseTooLarge(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.MaxResponseBytes = 32 })
+	if _, err := core.HTTP(HTTPRequest{Operation: "fixture_counter", Method: "GET", Path: "/fixture/v1/counter"}); err != nil {
+		t.Fatalf("HTTP: %v", err)
+	}
+	event := waitEvent(t, core, "http_error")
+	if event["code"] != "too_large" {
+		t.Fatalf("code: %v", event)
+	}
+}
+
+func TestHTTPCrossOriginRedirectDenied(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, nil)
+	if _, err := core.HTTP(HTTPRequest{Operation: "fixture_redirect", Method: "GET", Path: "/fixture/v1/redirect?to=https://evil.example/x"}); err != nil {
+		t.Fatalf("HTTP: %v", err)
+	}
+	event := waitEvent(t, core, "http_error")
+	if event["code"] != "redirect_denied" {
+		t.Fatalf("code: %v", event)
+	}
+}
+
+func TestHTTPCancellationAndTLSMismatch(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, nil)
+	id, err := core.HTTP(HTTPRequest{Operation: "fixture_read", Method: "GET", Path: "/fixture/v1/read?cursor=slow", TimeoutMS: 5000})
+	if err != nil {
+		t.Fatalf("HTTP: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if err := core.Cancel(id); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	event := waitEvent(t, core, "http_error")
+	if event["code"] != "cancelled" {
+		t.Fatalf("code: %v", event)
+	}
+
+	mismatch := testCore(t, server, func(cfg *Config) {
+		cfg.Origin = strings.Replace(server.URL, "127.0.0.1", "wrong.example", 1)
+	})
+	if _, err := mismatch.HTTP(HTTPRequest{Operation: "fixture_read", Method: "GET", Path: "/fixture/v1/read"}); err != nil {
+		t.Fatalf("HTTP: %v", err)
+	}
+	event = waitEvent(t, mismatch, "http_error")
+	if event["code"] != "tls" {
+		t.Fatalf("TLS mismatch code: %v", event)
+	}
+}
+
+func TestWebSocketEchoAndClose(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, nil)
+	wsID, err := core.WSOpen(WSRequest{Operation: "fixture_ws", Path: "/fixture/v1/ws"})
+	if err != nil || wsID != 1 {
+		t.Fatalf("WSOpen: id=%d err=%v", wsID, err)
+	}
+	waitEvent(t, core, "ws_open")
+	if err := core.WSSend(wsID, 0, []byte("ping")); err != nil {
+		t.Fatalf("WSSend: %v", err)
+	}
+	event := waitEvent(t, core, "ws_frame")
+	if event["kind"] != "text" {
+		t.Fatalf("kind: %v", event)
+	}
+	data, err := base64.StdEncoding.DecodeString(event["data_base64"].(string))
+	if err != nil || string(data) != "ping" {
+		t.Fatalf("frame: %q err=%v", data, err)
+	}
+	if err := core.WSClose(wsID); err != nil {
+		t.Fatalf("WSClose: %v", err)
+	}
+	waitEvent(t, core, "ws_closed")
+}
+
+func TestBoundedQueuesAndBufferRetention(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.QueueSize = 1 })
+	if err := core.emit(map[string]any{"type": "one"}); err != nil {
+		t.Fatalf("emit one: %v", err)
+	}
+	if err := core.emit(map[string]any{"type": "two"}); err != ErrQueueFull {
+		t.Fatalf("second emit: %v", err)
+	}
+	small := make([]byte, 2)
+	if _, err := core.PollEvent(small); err != ErrBufferSmall {
+		t.Fatalf("small poll: %v", err)
+	}
+	buffer := make([]byte, 512)
+	n, err := core.PollEvent(buffer)
+	if err != nil || n == 0 {
+		t.Fatalf("retained poll: n=%d err=%v", n, err)
+	}
+	if string(buffer[:n]) != `{"type":"one"}` {
+		t.Fatalf("retained event: %s", buffer[:n])
+	}
+}
+
+func TestLifecycleAndLoginURLValidation(t *testing.T) {
+	core := &Core{state: "new", events: make(chan []byte, 1)}
+	if err := core.Stop(); err != nil {
+		t.Fatalf("stop new: %v", err)
+	}
+	if err := core.Stop(); err != nil {
+		t.Fatalf("duplicate stop: %v", err)
+	}
+	busy := &Core{started: true, stopped: false, events: make(chan []byte, 1)}
+	if err := busy.Start(); err != ErrBusy {
+		t.Fatalf("duplicate start: %v", err)
+	}
+	unavailable := &Core{
+		cfg:    Config{Origin: "https://fixture.example:8443", InstallationID: "i", Hostname: "h", StateDir: t.TempDir()},
+		state:  "starting",
+		events: make(chan []byte, 4),
+	}
+	unavailable.origin, _ = url.Parse(unavailable.cfg.Origin)
+	if _, err := unavailable.HTTP(HTTPRequest{Operation: "fixture_read", Method: "GET", Path: "/fixture/v1/read"}); err != ErrUnavailable {
+		t.Fatalf("unavailable transport accepted HTTP: %v", err)
+	}
+	for _, valid := range []string{
+		"https://login.tailscale.com/a/abc",
+		"https://controlplane.tailscale.com/a/abc",
+	} {
+		if _, err := validateLoginURL(valid); err != nil {
+			t.Fatalf("valid login URL rejected: %s: %v", valid, err)
+		}
+	}
+	for _, invalid := range []string{
+		"http://login.tailscale.com/a/abc",
+		"https://evil.example/a/abc",
+		"https://login.tailscale.com.evil.example/a/abc",
+		"https://user@login.tailscale.com/a/abc",
+		"https://login.tailscale.com/a/abc#fragment",
+	} {
+		if _, err := validateLoginURL(invalid); err == nil {
+			t.Fatalf("invalid login URL accepted: %s", invalid)
+		}
+	}
+}
+
+func TestWebSocketBoundsAndDuplicateOpen(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.MaxWSFrameBytes = 16 })
+	wsID, err := core.WSOpen(WSRequest{Operation: "fixture_ws", Path: "/fixture/v1/ws"})
+	if err != nil {
+		t.Fatalf("WSOpen: %v", err)
+	}
+	waitEvent(t, core, "ws_open")
+	if _, err := core.WSOpen(WSRequest{Operation: "fixture_ws", Path: "/fixture/v1/ws"}); err != ErrBusy {
+		t.Fatalf("duplicate WSOpen: %v", err)
+	}
+	if err := core.WSSend(wsID, 0, make([]byte, 17)); err != ErrTooLarge {
+		t.Fatalf("oversize WSSend: %v", err)
+	}
+	if err := core.WSSend(wsID, 2, []byte("x")); err == nil {
+		t.Fatal("invalid frame kind accepted")
+	}
+	if err := core.WSClose(wsID + 1); err != ErrNotFound {
+		t.Fatalf("unknown WSClose: %v", err)
+	}
+
+	session := &wsSession{id: 7, core: core, out: make(chan wsOut, 1)}
+	core.mu.Lock()
+	core.ws = session
+	core.mu.Unlock()
+	if err := core.WSSend(7, 0, []byte("one")); err != nil {
+		t.Fatalf("first queued send: %v", err)
+	}
+	if err := core.WSSend(7, 0, []byte("two")); err != ErrQueueFull {
+		t.Fatalf("send queue bound: %v", err)
+	}
+	core.mu.Lock()
+	core.ws = nil
+	core.mu.Unlock()
+}
+
+func TestHTTPQueueFull(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, func(cfg *Config) { cfg.QueueSize = 1 })
+	if err := core.emit(map[string]any{"type": "filler"}); err != nil {
+		t.Fatalf("filler: %v", err)
+	}
+	if _, err := core.HTTP(HTTPRequest{Operation: "fixture_read", Method: "GET", Path: "/fixture/v1/read"}); err != ErrQueueFull {
+		t.Fatalf("HTTP queue bound: %v", err)
+	}
+}

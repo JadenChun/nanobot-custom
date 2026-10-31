@@ -9,6 +9,8 @@ android/.gradle/
 android/.kotlin/
 android/build/
 android/app/build/
+android/app/.cxx/
+android/app/src/main/jniLibs/
 android/local.properties
 android/.idea/
 android/capacitor-cordova-android-plugins/build/
