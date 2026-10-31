@@ -14,9 +14,9 @@ handling and connection/recovery notices. The full Python suite has 17,098 passi
 pre-existing baseline failures. M18 headless management and the shared Remote Access settings page are implemented. M19 live owned
 user-service install/restart/removal passed and was cleaned up. M20 automated WebUI/emulator/Python
 matrix is captured; five pre-existing baseline Python failures remain. M21 arm64 execution, live
-M14 data path and hardware Keystore passed on a physical A142/Android 16 phone. M16 packaged shared
-UI loads on the phone but still needs pairing-to-custody target startup. Remaining manual device
-matrix and M22 signing/release remain.
+M14 data path and hardware Keystore passed on a physical A142/Android 16 phone. M16 paired-target
+persistence boots the packaged shared UI through the native transport (handshake/read 200). The
+WebSocket data path, remaining manual device matrix and M22 signing/release remain.
 See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
