@@ -20,6 +20,7 @@ function transportFixture() {
       return () => { listener = null; };
     }),
     openLogin: vi.fn(async () => undefined),
+    refresh: vi.fn(async () => true),
     wsOpen: vi.fn(async () => 1),
     wsSend: vi.fn(async () => undefined),
     wsClose: vi.fn(async () => undefined),
@@ -30,6 +31,7 @@ function transportFixture() {
     emit: (event: MobileEvent) => listener?.(event),
     http,
     cancel,
+    refresh: transport.refresh,
   };
 }
 
@@ -84,5 +86,26 @@ describe("mobile runtime transport", () => {
       body_base64: btoa("{\"mobile_protocol\":1}"),
     });
     await expect(promise).resolves.toEqual({ mobile_protocol: 1 });
+  });
+
+  it("refreshes once after a 401 and retries the named request", async () => {
+    const fixture = transportFixture();
+    let calls = 0;
+    fixture.http.mockImplementation(async () => {
+      calls += 1;
+      return calls;
+    });
+    const runtime = createMobileRuntime(fixture.transport);
+    const promise = runtime.request({
+      operation: "mobile_media",
+      method: "GET",
+      path: "/mobile/v1/media/sig/payload",
+    });
+    await vi.waitFor(() => expect(fixture.http).toHaveBeenCalledTimes(1));
+    fixture.emit({ type: "http_response", request_id: 1, status: 401, headers: {}, body_base64: "" });
+    await vi.waitFor(() => expect(fixture.http).toHaveBeenCalledTimes(2));
+    expect(fixture.refresh).toHaveBeenCalledTimes(1);
+    fixture.emit({ type: "http_response", request_id: 2, status: 200, headers: {}, body_base64: "" });
+    await expect(promise).resolves.toMatchObject({ status: 200 });
   });
 });

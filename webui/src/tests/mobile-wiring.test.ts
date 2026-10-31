@@ -23,6 +23,7 @@ function fakeRuntime(): MobileRuntime {
     cancel: vi.fn(async () => undefined),
     onEvent: vi.fn(async () => () => undefined),
     openLogin: vi.fn(async () => undefined),
+    refresh: vi.fn(async () => true),
     wsOpen: vi.fn(async () => 1),
     wsSend: vi.fn(async () => undefined),
     wsClose: vi.fn(async () => undefined),

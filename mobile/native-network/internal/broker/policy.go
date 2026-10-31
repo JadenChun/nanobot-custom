@@ -58,6 +58,10 @@ var routes = map[string]route{
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/pair/poll$`),
 	},
+	"mobile_refresh_get": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/refresh$`),
+	},
 	"mobile_refresh": {
 		method:  http.MethodPost,
 		pattern: regexp.MustCompile(`^/mobile/v1/refresh$`),
@@ -121,6 +125,7 @@ var allowedHeaders = map[string]bool{
 	"x-nanobot-pairing-secret": true,
 	"x-nanobot-installation":   true,
 	"x-nanobot-label":          true,
+	"x-nanobot-refresh-token":  true,
 }
 
 func resolveRoute(cfg *Config, origin *url.URL, operation, method, rawPath string) (*url.URL, route, error) {

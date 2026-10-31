@@ -83,6 +83,15 @@ func testServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"pairing_id":"pair-1","comparison_code":"123456"}`))
 	})
+	mux.HandleFunc("/mobile/v1/refresh", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Nanobot-Installation") != "install-1" ||
+			r.Header.Get("X-Nanobot-Refresh-Token") != "refresh-1" {
+			http.Error(w, "missing refresh headers", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"nbm_at_new","refresh_token":"nbm_rt_new","expires_in":600}`))
+	})
 	mux.HandleFunc("/fixture/v1/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
@@ -435,5 +444,30 @@ func TestWebSocketAllowsAttachmentSizedFrame(t *testing.T) {
 	event := waitEvent(t, core, "ws_frame")
 	if event["bytes"].(float64) != float64(len(payload)) {
 		t.Fatalf("ws frame bytes: %v", event["bytes"])
+	}
+}
+
+func TestHTTPRefreshRouteUsesBoundedHeaders(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, nil)
+	id, err := core.HTTP(HTTPRequest{
+		Operation: "mobile_refresh_get",
+		Method:    http.MethodGet,
+		Path:      "/mobile/v1/refresh",
+		Headers: map[string]string{
+			"X-Nanobot-Installation":  "install-1",
+			"X-Nanobot-Refresh-Token": "refresh-1",
+		},
+	})
+	if err != nil || id == 0 {
+		t.Fatalf("refresh HTTP: id=%d err=%v", id, err)
+	}
+	event := waitEvent(t, core, "http_response")
+	if event["status"].(float64) != 200 {
+		t.Fatalf("status: %v", event["status"])
+	}
+	body, err := base64.StdEncoding.DecodeString(event["body_base64"].(string))
+	if err != nil || !strings.Contains(string(body), `"access_token":"nbm_at_new"`) {
+		t.Fatalf("body: %q err=%v", body, err)
 	}
 }

@@ -300,3 +300,22 @@ async def test_edge_pairing_collect_approve_poll(edge_setup) -> None:
         ),
     )
     assert wrong is not None and wrong.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_edge_refresh_rotates_access_without_bearer(edge_setup) -> None:
+    _owner, edge, pair = edge_setup
+    headers = [
+        ("X-Nanobot-Installation", "install-0001"),
+        ("X-Nanobot-Refresh-Token", pair.refresh_token),
+    ]
+    response = await edge.handle(None, request("/mobile/v1/refresh", None, headers))
+    assert response is not None and response.status_code == 200
+    body = json.loads(response.body)
+    assert body["access_token"].startswith("nbm_at_")
+    assert body["refresh_token"].startswith("nbm_rt_")
+    assert body["expires_in"] > 0
+    replay = await edge.handle(None, request("/mobile/v1/refresh", None, headers))
+    assert replay is not None and replay.status_code == 401
+    missing = await edge.handle(None, request("/mobile/v1/refresh", None))
+    assert missing is not None and missing.status_code == 400

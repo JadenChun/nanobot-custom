@@ -18,6 +18,14 @@
       return function () { void handle.remove(); };
     },
     openLogin: async function () { await plugin.openLogin(); },
+    refresh: async function () {
+      try {
+        await plugin.refresh();
+        return true;
+      } catch (_) {
+        return false;
+      }
+    },
     wsOpen: async function (path, headers) {
       var result = await plugin.wsOpen({ operation: "mobile_ws", path: path, headers: headers });
       return result.wsId;

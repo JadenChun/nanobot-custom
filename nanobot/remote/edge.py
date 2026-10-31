@@ -41,6 +41,7 @@ _LOCAL_ROUTES = {
     "/mobile/v1/status": "chat.read",
 }
 _PAIRING_ROUTES = {"/mobile/v1/pair/collect", "/mobile/v1/pair/poll"}
+_REFRESH_ROUTE = "/mobile/v1/refresh"
 _PAIRING_STATUS = {
     "pairing_rate_limited": 429,
     "pairing_not_found": 404,
@@ -184,6 +185,8 @@ class MobileGatewayEdge:
             return None
         if path in _PAIRING_ROUTES:
             return await self._handle_pairing(request, path)
+        if path == _REFRESH_ROUTE:
+            return await self._handle_refresh(request)
         token = bearer_token(request.headers)
         if not token:
             return http_json_response({"error": "missing_access"}, status=401)
@@ -237,6 +240,29 @@ class MobileGatewayEdge:
             reason = HTTPStatus(result.status).phrase
             return Response(result.status, reason, _headers(headers), result.body)
         return http_json_response({"error": "not_found"}, status=404)
+
+    async def _handle_refresh(self, request: WsRequest) -> Response:
+        headers = request.headers
+
+        def header(name: str) -> str:
+            value = headers.get(name)
+            return value.strip() if isinstance(value, str) else ""
+
+        installation_id = header("X-Nanobot-Installation")
+        refresh_token = header("X-Nanobot-Refresh-Token")
+        if not installation_id or not refresh_token:
+            return http_json_response({"error": "bad_request"}, status=400)
+        try:
+            result = await asyncio.to_thread(
+                self.validator.client.refresh_access,
+                installation_id,
+                refresh_token,
+            )
+        except OwnerUnavailableError:
+            return http_json_response({"error": "owner_unavailable"}, status=503)
+        except OwnerRequestError:
+            return http_json_response({"error": "invalid_refresh"}, status=401)
+        return http_json_response(result)
 
     async def _handle_pairing(self, request: WsRequest, path: str) -> Response:
         headers = request.headers

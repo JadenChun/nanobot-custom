@@ -40,6 +40,7 @@ export interface MobileTransport {
   cancel(requestId: number): Promise<void>;
   onEvent(listener: (event: MobileEvent) => void): Promise<() => void>;
   openLogin(): Promise<void>;
+  refresh(): Promise<boolean>;
   wsOpen(path: string, headers?: Record<string, string>): Promise<number>;
   wsSend(wsId: number, data: Uint8Array, kind?: "text" | "binary"): Promise<void>;
   wsClose(wsId: number): Promise<void>;
@@ -117,7 +118,7 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
     return listening;
   };
 
-  const request = async (input: MobileHttpRequest, timeoutMs = 30_000): Promise<MobileHttpResponse> => {
+  const execute = async (input: MobileHttpRequest, timeoutMs: number): Promise<MobileHttpResponse> => {
     await ensureListener();
     const requestId = await transport.http(input);
     if (!requestId) throw new MobileRuntimeError("mobile request was not admitted");
@@ -129,6 +130,15 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
       }, timeoutMs);
       pending.set(requestId, { resolve, reject, timer });
     });
+  };
+
+  const request = async (input: MobileHttpRequest, timeoutMs = 30_000): Promise<MobileHttpResponse> => {
+    let response = await execute(input, timeoutMs);
+    if (response.status === 401) {
+      const refreshed = await transport.refresh().catch(() => false);
+      if (refreshed) response = await execute(input, timeoutMs);
+    }
+    return response;
   };
 
   const runtime: MobileRuntime = {

@@ -51,6 +51,44 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun refresh(call: PluginCall) {
+        val record = try {
+            custody.load()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "custody is unavailable")
+            return
+        }
+        if (record == null || record.refreshToken.isBlank()) {
+            call.reject("no refresh credential")
+            return
+        }
+        operationExecutor.execute {
+            try {
+                val refreshed = jsonRequest(
+                    "mobile_refresh_get",
+                    "/mobile/v1/refresh",
+                    body = null,
+                    headers = mapOf(
+                        "X-Nanobot-Installation" to record.installationId,
+                        "X-Nanobot-Refresh-Token" to record.refreshToken,
+                    ),
+                )
+                custody.saveTokens(
+                    record.origin,
+                    record.installationId,
+                    refreshed.getString("access_token"),
+                    refreshed.getString("refresh_token"),
+                    refreshed.optInt("expires_in", 600),
+                    refreshed.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
+                )
+                mainHandler.post { call.resolve(JSObject().put("refreshed", true)) }
+            } catch (exception: Exception) {
+                mainHandler.post { call.reject(exception.message ?: "token refresh failed") }
+            }
+        }
+    }
+
+    @PluginMethod
     fun start(call: PluginCall) {
         val origin = call.getString("origin")
         val installationId = call.getString("installationId")

@@ -24,16 +24,18 @@ shows its installation ID, Remote Access settings creates the exact `nanobot://p
 native bridge collects the owner challenge and displays the comparison code, then polls approval
 and stores the issued tokens in Keystore custody. The full flow passed on the A142 phone against
 the real gateway, including handshake/read/WebSocket after pairing. M20 final matrix is green: WebUI
-1,363 passed; Python 17,110 passed, 22 skipped; phone 37 tests (6 live skipped). The five baseline
+1,364 passed; Python 17,110 passed, 22 skipped; phone 37 tests (6 live skipped). The five baseline
 failures and the order-dependent flake were repaired. M22 signed release is built and verified with
 the release keystore: v2 signature, zipalign, install, same-key update, different-key rejection and
 uninstall/reinstall all passed. Automated M21 checks on the signed release also pass:
 portrait/landscape layout, process death, forced Doze, Back/relaunch, font scale 1.3 and a
-battery/thermal snapshot. Device-tool checks found and fixed two real defects: Capacitor numeric
-WebSocket IDs were rejected by `getLong`, and the mobile frame bound was too small for a 144 KB
-image. A small image now attaches and sends through the live gateway. Remaining gaps are camera
-capture, product token refresh after the 10-minute access TTL, hands-on TalkBack/cellular handover,
-and final human review.
+battery/thermal snapshot. Device-tool checks found and fixed three real defects: Capacitor numeric
+WebSocket IDs were rejected by `getLong`, the mobile frame bound was too small for a 144 KB image,
+and the product client had no access-token refresh. WebSocket IDs now use numeric fallbacks, the
+frame bound is 512 KiB, and a 401 triggers native refresh rotation and one retry. A small image
+attaches and sends through the live gateway, and the live refresh instrumentation test passes.
+TalkBack was explicitly skipped. Remaining gaps are camera capture, cellular handover, and final
+human review.
 See `docs/mobile-client-tasks.md`.
 
 
