@@ -216,8 +216,15 @@ def test_preservation_acquisition_complete_phase_matrix(phase, monkeypatch):
 
     store._files = Files.__new__(Files)
     opens = []
+    real_open = os.open
+    real_fchmod = os.fchmod
+    real_fstat = os.fstat
+    real_fsync = os.fsync
+    real_close = os.close
 
     def opened(_name, flags, *_args, **_kwargs):
+        if _name != ".lease":
+            return real_open(_name, flags, *_args, **_kwargs)
         if flags & os.O_EXCL:
             step("create")
             if phase == "existing":
@@ -229,6 +236,8 @@ def test_preservation_acquisition_complete_phase_matrix(phase, monkeypatch):
         return fd
 
     def chmod(_fd, _mode):
+        if _fd not in opens:
+            return real_fchmod(_fd, _mode)
         step("chmod")
         if phase == "chmod-exists":
             raise FileExistsError("fchmod catch extent")
@@ -236,6 +245,8 @@ def test_preservation_acquisition_complete_phase_matrix(phase, monkeypatch):
     stats = []
 
     def fstat(_fd):
+        if _fd not in opens:
+            return real_fstat(_fd)
         name = "constructor-stat" if stats else "inode-stat"
         stats.append(name)
         step(name)
@@ -248,6 +259,8 @@ def test_preservation_acquisition_complete_phase_matrix(phase, monkeypatch):
         step("check-" + str(len(checks)))
 
     def fsync(fd):
+        if fd != 901 and fd not in opens:
+            return real_fsync(fd)
         step("fsync-root" if fd == 901 else "fsync-file")
 
     def bound():
@@ -266,6 +279,8 @@ def test_preservation_acquisition_complete_phase_matrix(phase, monkeypatch):
             raise REPROOF
 
     def close(_fd):
+        if _fd not in opens:
+            return real_close(_fd)
         step("close")
         if phase == "cleanup-close":
             raise FAILURE

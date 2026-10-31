@@ -138,6 +138,10 @@ async def test_real_runner_resistant_effect_keeps_resources_until_join_and_expli
     from nanobot.runtime_errors import RuntimeOwnedWorkError
     from nanobot.session.mode_storage import LifetimeWriterLease
 
+    # This drill exercises shutdown cancellation, not the LLM wall-clock timeout.
+    # Disable the provider wait_for wrapper so cancellation reaches the resistant
+    # effect directly.
+    monkeypatch.setenv("NANOBOT_LLM_TIMEOUT_S", "0")
     config = config_at(tmp_path)
     store, item, clock = definitions(tmp_path)
     effects = Effects()

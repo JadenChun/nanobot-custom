@@ -129,7 +129,9 @@ async def test_full_steer_reaches_next_model_once_and_never_mid_effect(sessions,
             if context.source_writer is not None:
                 row = inbox.entries()[0]
                 assert row.source_event_ids
-                assert row.source_event_ids[0] in {event["_event_id"] for event in context.source_writer.stream_events()}
+                assert row.source_event_ids[0] in {
+                    event["_event_id"] for event in context.source_writer.committed_events
+                }
             return LLMResponse(content="final response")
 
         provider.chat_with_retry = AsyncMock(side_effect=chat)
