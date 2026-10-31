@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
+import json
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -42,7 +44,7 @@ class ServicePlan:
                 "RestartSec=2",
                 "NoNewPrivileges=true",
                 "PrivateTmp=true",
-                f"StateDirectory={self.state_dir.name}",
+                "Environment=PYTHONUNBUFFERED=1",
                 "",
                 "[Install]",
                 "WantedBy=default.target",
@@ -153,3 +155,53 @@ def _quote(value: str) -> str:
 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--state-dir", type=Path, required=True)
+    parser.add_argument("--socket", type=Path, required=True)
+    parser.add_argument("--unit-dir", type=Path)
+    parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--json", action="store_true")
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name in ("plan", "install", "remove", "status"):
+        sub.add_parser(name)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = _parse_args()
+    config = RemoteAccessConfig(
+        enabled=True,
+        state_dir=str(args.state_dir),
+        socket_path=str(args.socket),
+    )
+    plan = build_service_plan(
+        config,
+        python_executable=args.python,
+        unit_dir=args.unit_dir,
+    )
+    adapter = SystemdUserAdapter()
+    if args.command == "plan":
+        result: object = {
+            "unit": plan.unit_name,
+            "path": str(plan.unit_path),
+            "unit_text": plan.unit_text(),
+        }
+    elif args.command == "install":
+        result = adapter.install(plan, apply=args.apply)
+    elif args.command == "remove":
+        result = adapter.remove(plan, apply=args.apply)
+    else:
+        result = {"unit": plan.unit_name, "status": adapter.status(plan)}
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(result)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
