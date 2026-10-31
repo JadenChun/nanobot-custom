@@ -34,7 +34,7 @@ from nanobot.webui.http_utils import (
     parse_request_path,
 )
 
-_MEDIA_RE = re.compile(r"^/mobile/v1/media/([A-Za-z0-9._-]{1,64})$")
+_MEDIA_RE = re.compile(r"^/mobile/v1/media/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)$")
 _LOCAL_ROUTES = {
     "/mobile/v1/handshake": "chat.read",
     "/mobile/v1/read": "chat.read",
@@ -138,7 +138,7 @@ class MobileGatewayEdge:
         generation_provider: Callable[[], int],
         socket_epoch: int | None = None,
         read_handler: Callable[[AccessIdentity, dict[str, list[str]]], Awaitable[dict[str, Any]]] | None = None,
-        media_handler: Callable[[AccessIdentity, str, str | None], Awaitable[MediaResult]] | None = None,
+        media_handler: Callable[[AccessIdentity, str, str, str | None], Awaitable[MediaResult]] | None = None,
         attachment_handler: Callable[[AccessIdentity, bytes], Awaitable[dict[str, Any]]] | None = None,
         logout_handler: Callable[[AccessIdentity], Awaitable[dict[str, Any]]] | None = None,
         replay_cache: OperationReplayCache | None = None,
@@ -198,6 +198,7 @@ class MobileGatewayEdge:
             result = await self.media_handler(
                 identity,
                 media_match.group(1),
+                media_match.group(2),
                 request.headers.get("Range"),
             )
             if result.status < 200 or result.status >= 300:

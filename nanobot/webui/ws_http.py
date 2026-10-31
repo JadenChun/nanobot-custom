@@ -466,6 +466,12 @@ class GatewayHTTPHandler:
             mcp_oauth_redirect_uri=self._mcp_oauth_redirect_uri,
         )
 
+    def mobile_read_payload(self) -> dict[str, Any]:
+        """Return the projection used by the authenticated mobile read edge."""
+        if self.session_manager is None:
+            return {"sessions": []}
+        return self._sessions_list_payload()
+
     def workspace_controls_available(self, connection: Any) -> bool:
         return (
             _is_loopback_host(self.config.host)

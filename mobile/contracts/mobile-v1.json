@@ -26,7 +26,7 @@
     {"method": "GET", "path": "/mobile/v1/read", "scope": "chat.read", "replay": "none", "websocket": false},
     {"method": "POST", "path": "/mobile/v1/refresh", "scope": "chat.read", "replay": "none", "websocket": false},
     {"method": "POST", "path": "/mobile/v1/mutation", "scope": "chat.write", "replay": "submit", "websocket": false},
-    {"method": "GET", "path": "/mobile/v1/media/{name}", "scope": "media.read", "replay": "none", "websocket": false},
+    {"method": "GET", "path": "/mobile/v1/media/{sig}/{payload}", "scope": "media.read", "replay": "none", "websocket": false},
     {"method": "POST", "path": "/mobile/v1/attachment", "scope": "attachment.write", "replay": "none", "websocket": false},
     {"method": "GET", "path": "/mobile/v1/status", "scope": "chat.read", "replay": "none", "websocket": false},
     {"method": "POST", "path": "/mobile/v1/logout", "scope": "device.self.logout", "replay": "none", "websocket": false},

@@ -58,7 +58,7 @@ def edge_setup(tmp_path: Path):
         generation_provider=lambda: int(owner.store.snapshot()["revision"]),
         socket_epoch=7,
         read_handler=lambda identity, query: _read(identity, query),
-        media_handler=lambda identity, name, range_header: _media(identity, name, range_header),
+        media_handler=lambda identity, sig, payload, range_header: _media(identity, sig, payload, range_header),
         attachment_handler=lambda identity, data: _attachment(identity, data),
         logout_handler=lambda identity: _logout(owner, identity),
     )
@@ -72,8 +72,9 @@ async def _read(identity: AccessIdentity, query: dict[str, list[str]]) -> dict[s
     return {"items": [identity.installation_id], "cursor": query.get("cursor", [None])[0]}
 
 
-async def _media(identity: AccessIdentity, name: str, range_header: str | None) -> MediaResult:
+async def _media(identity: AccessIdentity, sig: str, payload: str, range_header: str | None) -> MediaResult:
     assert identity.installation_id == "install-0001"
+    assert sig == "sig" and payload == "payload"
     return MediaResult(
         status=206,
         body=b"PNG!",
@@ -112,7 +113,7 @@ async def test_edge_handshake_read_media_scopes_and_unknown_routes(edge_setup) -
 
     media = await edge.handle(
         None,
-        request("/mobile/v1/media/sample.png", pair.access_token, [("Range", "bytes=0-3")]),
+        request("/mobile/v1/media/sig/payload", pair.access_token, [("Range", "bytes=0-3")]),
     )
     assert media is not None and media.status_code == 206
     assert media.body == b"PNG!"
@@ -131,7 +132,7 @@ async def test_edge_scope_denial_and_ws_frame_epoch(edge_setup) -> None:
     limited = owner.tokens.issue("install-0002", ("chat.read",))
     response = await edge.handle(None, request("/mobile/v1/handshake", limited.access_token))
     assert response is not None and response.status_code == 200
-    media = await edge.handle(None, request("/mobile/v1/media/sample.png", limited.access_token))
+    media = await edge.handle(None, request("/mobile/v1/media/sig/payload", limited.access_token))
     assert media is not None and media.status_code == 403
 
     identity = AccessIdentity("install-0001", ("chat.read", "attachment.write"), 0, 2)

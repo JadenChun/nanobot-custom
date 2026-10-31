@@ -282,7 +282,7 @@ ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("GET", "/mobile/v1/read", "chat.read"),
     RouteSpec("POST", "/mobile/v1/refresh", "chat.read"),
     RouteSpec("POST", "/mobile/v1/mutation", "chat.write", replay="submit"),
-    RouteSpec("GET", "/mobile/v1/media/{name}", "media.read"),
+    RouteSpec("GET", "/mobile/v1/media/{sig}/{payload}", "media.read"),
     RouteSpec("POST", "/mobile/v1/attachment", "attachment.write"),
     RouteSpec("GET", "/mobile/v1/status", "chat.read"),
     RouteSpec("POST", "/mobile/v1/logout", "device.self.logout"),
