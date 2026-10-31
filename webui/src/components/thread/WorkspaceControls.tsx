@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Check, ChevronDown, Folder, Hand, Loader2 } from "lucide-react";
+import { Check, ChevronDown, Folder, Loader2, Monitor, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -491,7 +491,7 @@ export function WorkspaceAccessMenu({
           "bg-transparent text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground dark:hover:bg-white/[0.06]",
         )}
       >
-        <Hand className="thread-composer-access-icon mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+        <ShieldCheck className="thread-composer-access-icon mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
         <span className="thread-composer-access-label-full min-w-0 truncate">{accessLabel}</span>
         <span className="thread-composer-access-label-short hidden min-w-0 truncate">{shortAccessLabel}</span>
       </Button>
@@ -515,9 +515,9 @@ export function WorkspaceAccessMenu({
           )}
         >
           {isFull ? (
-            <AlertTriangle className="thread-composer-access-icon mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <Monitor className="thread-composer-access-icon mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           ) : (
-            <Hand className="thread-composer-access-icon mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <ShieldCheck className="thread-composer-access-icon mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           )}
           <span aria-hidden className="thread-composer-access-label-full min-w-0 truncate">
             {accessLabel}
@@ -530,13 +530,13 @@ export function WorkspaceAccessMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56">
         <AccessMenuItem
-          icon={<Hand className="h-4 w-4" />}
+          icon={<ShieldCheck className="h-4 w-4" />}
           label={t("thread.composer.workspace.default", { defaultValue: "Sandbox" })}
           selected={mode === "restricted"}
           onSelect={() => setMode("restricted")}
         />
         <AccessMenuItem
-          icon={<AlertTriangle className="h-4 w-4" />}
+          icon={<Monitor className="h-4 w-4" />}
           label={t("thread.composer.workspace.full", { defaultValue: "Full access" })}
           selected={mode === "full"}
           disabled={!canUseFullAccess}
@@ -720,9 +720,9 @@ export function WorkspacePermissionV2Control({
                 && "border-border/55 bg-card/70 hover:bg-card",
             )}
           >
-            {isFull || isRestrictedRetiring
-              ? <AlertTriangle className="mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-              : <Hand className="mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />}
+            {isFull
+              ? <Monitor className="mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              : <ShieldCheck className="mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />}
             <span aria-hidden className="thread-composer-access-label-full min-w-0 truncate">{label}</span>
             <span aria-hidden className="thread-composer-access-label-short hidden min-w-0 truncate">{compactLabel}</span>
             {loading ? <Loader2 className="ml-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />}
@@ -764,13 +764,13 @@ export function WorkspacePermissionV2Control({
           ) : (
             <div className="space-y-2 p-2">
               <AccessMenuItem
-                icon={<Hand className="h-4 w-4" />}
+                icon={<ShieldCheck className="h-4 w-4" />}
                 label={t("thread.composer.workspace.default", { defaultValue: "Sandbox" })}
                 selected={permissions?.mode === "restricted" || draftRestricted}
                 onSelect={() => {}}
               />
               <AccessMenuItem
-                icon={<AlertTriangle className="h-4 w-4" />}
+                icon={<Monitor className="h-4 w-4" />}
                 label={t("thread.composer.workspace.full", { defaultValue: "Full access" })}
                 selected={false}
                 disabled={!fullAvailable || busy}
