@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
@@ -89,6 +90,11 @@ func (c *Core) Start() error {
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(c.cfg.StateDir, 0o700); err != nil {
+		return err
+	}
+	// Android has no writable temp/cache default for Tailscale's log state.
+	_ = os.Setenv("TS_LOGS_DIR", c.cfg.StateDir)
 
 	c.mu.Lock()
 	c.started = true

@@ -21,6 +21,10 @@ var routes = map[string]route{
 		method:  http.MethodPost,
 		pattern: regexp.MustCompile(`^/fixture/v1/bootstrap$`),
 	},
+	"remote_health": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/remote/v1/health$`),
+	},
 	"fixture_read": {
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/fixture/v1/read$`),

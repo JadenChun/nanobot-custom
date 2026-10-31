@@ -82,13 +82,15 @@ def _make_handler(pairing: PairingService) -> type[BaseHTTPRequestHandler]:
         sys_version = ""
 
         def do_GET(self) -> None:  # noqa: N802 - stdlib handler naming
-            if self.path == "/remote/v1/health":
+            path = _normalized_path(self.path)
+            if path == "/health":
                 self._write(HTTPStatus.OK, {"ok": True, "version": 1})
                 return
             self._write(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
         def do_POST(self) -> None:  # noqa: N802 - stdlib handler naming
-            if self.path not in {"/remote/v1/pair/collect", "/remote/v1/pair/poll"}:
+            path = _normalized_path(self.path)
+            if path not in {"/pair/collect", "/pair/poll"}:
                 self._write(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
             try:
@@ -97,7 +99,7 @@ def _make_handler(pairing: PairingService) -> type[BaseHTTPRequestHandler]:
                 self._write(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
                 return
             try:
-                if self.path.endswith("/collect"):
+                if path.endswith("/collect"):
                     result = pairing.collect(
                         pairing_id=_required(payload, "pairing_id"),
                         nonce=_required(payload, "nonce"),
@@ -161,6 +163,15 @@ def _make_handler(pairing: PairingService) -> type[BaseHTTPRequestHandler]:
             return
 
     return Handler
+
+
+def _normalized_path(raw: str) -> str:
+    path = raw.split("?", 1)[0]
+    if path == "/remote/v1":
+        return "/"
+    if path.startswith("/remote/v1/"):
+        return path[len("/remote/v1") :]
+    return path
 
 
 def _required(payload: dict[str, Any], key: str) -> str:
