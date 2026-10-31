@@ -16,8 +16,9 @@ user-service install/restart/removal passed and was cleaned up. M20 automated We
 matrix is captured; five pre-existing baseline Python failures remain. M21 arm64 execution, live
 M14 data path and hardware Keystore passed on a physical A142/Android 16 phone. M16 paired-target
 persistence boots the packaged shared UI through the native transport (handshake/read 200), and the
-shared `/mobile/v1/ws` bridge now opens on the physical phone (connected chat shell). Media/deep-link
-UI binding, remaining manual device matrix and M22 signing/release remain.
+shared `/mobile/v1/ws` bridge now opens on the physical phone (connected chat shell). Signed media
+resolves through native handles in shared attachments/lightbox; pairing deep links are captured and
+handed to the plugin. Remaining real-backend pairing UX, manual device matrix and M22 signing remain.
 See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain

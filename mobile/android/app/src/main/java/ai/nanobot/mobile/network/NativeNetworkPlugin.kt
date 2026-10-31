@@ -17,6 +17,8 @@ import java.net.URI
 import java.nio.charset.StandardCharsets
 import ai.nanobot.mobile.attachments.AttachmentLimits
 import ai.nanobot.mobile.attachments.AttachmentPolicy
+import ai.nanobot.mobile.MainActivity
+import ai.nanobot.mobile.links.PairingLinkParser
 import ai.nanobot.mobile.media.MediaHandleStore
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -81,6 +83,22 @@ class NativeNetworkPlugin : Plugin() {
         transportHandle = newHandle
         startPoller()
         call.resolve(JSObject().put("state", "starting"))
+    }
+
+    @PluginMethod
+    fun consumePairingLink(call: PluginCall) {
+        val raw = MainActivity.pendingPairingLink
+        MainActivity.pendingPairingLink = null
+        if (raw == null) {
+            call.reject("no pending pairing link")
+            return
+        }
+        try {
+            val link = PairingLinkParser.parse(raw)
+            call.resolve(JSObject().put("origin", link.origin).put("installationId", link.installationId).put("challenge", link.challenge))
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pairing link is invalid")
+        }
     }
 
     @PluginMethod

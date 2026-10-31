@@ -33,7 +33,12 @@
   window.nanobotMobileTransport = transport;
 
   window.nanobotMobileReady = (async function () {
-    var target = await plugin.target();
+    var target;
+    try {
+      target = await plugin.target();
+    } catch (_) {
+      target = await plugin.consumePairingLink();
+    }
     await transport.start(target.origin, target.installationId, "nanobot-" + String(target.installationId).slice(-6));
     for (var i = 0; i < 180; i += 1) {
       var status = await plugin.status();

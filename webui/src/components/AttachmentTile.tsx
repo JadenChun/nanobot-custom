@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { FileIcon, ImageIcon, PlaySquare } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { useMobileMediaUrl } from "@/lib/mobile-media";
 import { cn } from "@/lib/utils";
 import type { UIMediaAttachment } from "@/lib/types";
 
@@ -15,7 +16,8 @@ interface AttachmentTileProps {
 export function AttachmentTile({ attachment, className, inline = false, variant = "default" }: AttachmentTileProps) {
   const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
-  const hasUrl = typeof attachment.url === "string" && attachment.url.length > 0;
+  const resolvedUrl = useMobileMediaUrl(attachment.url);
+  const hasUrl = typeof resolvedUrl === "string" && resolvedUrl.length > 0;
   const label = attachmentLabel(attachment, t);
 
   if (attachment.kind === "image" && hasUrl && !failed) {
@@ -27,7 +29,7 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
         variant={variant}
       >
         <a
-          href={attachment.url}
+          href={resolvedUrl}
           target="_blank"
           rel="noreferrer noopener"
           className="block bg-muted/20"
@@ -36,7 +38,7 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
             : t("lightbox.open", { defaultValue: "Open image" })}
         >
           <img
-            src={attachment.url}
+            src={resolvedUrl}
             alt={attachment.name ?? ""}
             loading="lazy"
             decoding="async"
@@ -61,7 +63,7 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
         variant={variant}
       >
         <video
-          src={attachment.url}
+          src={resolvedUrl}
           controls
           preload="metadata"
           className={cn(
@@ -89,7 +91,7 @@ export function AttachmentTile({ attachment, className, inline = false, variant 
   if (hasUrl && !failed) {
     return (
       <a
-        href={attachment.url}
+        href={resolvedUrl}
         download={attachment.name ?? label}
         title={attachment.name ?? undefined}
         aria-label={label}
