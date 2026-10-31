@@ -11,9 +11,10 @@ media handles, fetcher/attachment policy, exact target binding and the Capacitor
 are in place. M16 runtime is wired into bootstrap/HTTP/client surface, mobile service-worker registration is
 disabled and shared assets package to `mobile/www-shared`. M17 adds mobile safe-area CSS, Back/Escape
 handling and connection/recovery notices. The full Python suite has 17,098 passing tests and five
-pre-existing baseline failures. M18 headless management and the shared Remote Access settings page are implemented; M19 has an
-owned supervision plan/adapter. Live service install, integrated device qualification and release
-remain.
+pre-existing baseline failures. M18 headless management and the shared Remote Access settings page are implemented. M19 live owned
+user-service install/restart/removal passed and was cleaned up. M20 automated WebUI/emulator/Python
+matrix is captured; five pre-existing baseline Python failures remain. Physical-phone and signed
+release gates remain.
 See `docs/mobile-client-tasks.md`.
 
 ## Isolated toolchain
