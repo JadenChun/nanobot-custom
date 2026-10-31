@@ -7,6 +7,7 @@ import {
   Globe2,
   Folder,
   ImageIcon,
+  Smartphone,
   LogOut,
   MessageCircle,
   Mic,
@@ -43,6 +44,7 @@ const SETTINGS_NAV_ITEMS: Array<{ key: SettingsSectionKey; icon: LucideIcon; fal
   { key: "folders", icon: Folder, fallback: "Folders & projects" },
   { key: "runtime", icon: Server, fallback: "System" },
   { key: "advanced", icon: ShieldCheck, fallback: "Security" },
+  { key: "remote_access", icon: Smartphone, fallback: "Remote access" },
 ];
 
 export function standaloneSectionTitle(section: SettingsSectionKey): string {

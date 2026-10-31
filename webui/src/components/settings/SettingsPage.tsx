@@ -1,5 +1,6 @@
 import { ChevronLeft, Loader2 } from "lucide-react";
 
+import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
 import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettings";
 import { ImageGenerationSettings } from "@/components/settings/capabilities/ImageGenerationSettings";
 import { AdvancedSettings } from "@/components/settings/capabilities/SecuritySettings";
@@ -523,6 +524,8 @@ export function SettingsPage({
             onInstallCapability={(name) => void installCapabilities([name])}
           />
         );
+      case "remote_access":
+        return <RemoteAccessSettings token={token} />;
       case "advanced":
         return (
           <AdvancedSettings

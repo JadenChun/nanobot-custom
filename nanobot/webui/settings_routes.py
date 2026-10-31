@@ -125,6 +125,14 @@ _CAPABILITY_ROUTES = {
     "/api/settings/network-safety/update": "network-update",
 }
 
+_REMOTE_ROUTES = {
+    "/api/settings/remote-access": "status",
+    "/api/settings/remote-access/enable": "enable",
+    "/api/settings/remote-access/revoke": "revoke",
+    "/api/settings/remote-access/pairing/start": "pair-start",
+    "/api/settings/remote-access/pairing/approve": "pair-approve",
+}
+
 _SYSTEM_ROUTES = {
     "/api/settings/cli-apps": "cli-list",
     "/api/settings/cli-apps/install": "cli-install",
@@ -175,6 +183,10 @@ _SETTINGS_MUTATION_PATHS = frozenset({
     "/api/settings/channels/configure",
     "/api/settings/pairing/approve",
     "/api/settings/pairing/deny",
+    "/api/settings/remote-access/enable",
+    "/api/settings/remote-access/revoke",
+    "/api/settings/remote-access/pairing/start",
+    "/api/settings/remote-access/pairing/approve",
     "/api/settings/mcp-oauth/start",
     "/api/settings/mcp-oauth/complete",
     "/api/settings/mcp-oauth/cancel",
@@ -289,6 +301,12 @@ class WebUISettingsRouter:
             return await asyncio.to_thread(self._handle_settings_usage)
 
         domain, action = route
+        if domain == "remote":
+            from nanobot.webui.settings_remote import handle_remote_access
+
+            return await asyncio.to_thread(
+                handle_remote_access, self.settings.config, request, path
+            )
         domain_request = self._domain_request(
             connection,
             request,
@@ -340,6 +358,8 @@ class WebUISettingsRouter:
             return "capabilities", action
         if action := _SYSTEM_ROUTES.get(path):
             return "system", action
+        if action := _REMOTE_ROUTES.get(path):
+            return "remote", action
         if _channel_connect_route(path) is not None:
             return "system", "channel-connect"
         return None

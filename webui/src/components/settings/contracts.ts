@@ -13,7 +13,8 @@ export type SettingsSectionKey =
   | "automations"
   | "skills"
   | "runtime"
-  | "advanced";
+  | "advanced"
+  | "remote_access";
 
 type PendingRestartSection = "runtime" | "browser" | "image";
 export type PendingRestartSections = Record<PendingRestartSection, boolean>;
