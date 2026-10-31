@@ -1,6 +1,21 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
 
+def releaseKeystorePath = System.getenv("NANOBOT_MOBILE_KEYSTORE") ?: "${System.properties['user.home']}/.config/nanobot-mobile/release.keystore"
+def releaseKeyAlias = System.getenv("NANOBOT_MOBILE_KEY_ALIAS")
+def releaseStorePassword = System.getenv("NANOBOT_MOBILE_KEYSTORE_PASSWORD")
+def releaseKeyPassword = System.getenv("NANOBOT_MOBILE_KEY_PASSWORD") ?: releaseStorePassword
+def releasePasswordFile = System.getenv("NANOBOT_MOBILE_KEYSTORE_PASSWORD_FILE")
+if (!releaseStorePassword && releasePasswordFile) {
+    def passwordSource = new File(releasePasswordFile)
+    if (passwordSource.isFile()) {
+        releaseStorePassword = passwordSource.text.trim()
+        if (!releaseKeyPassword) releaseKeyPassword = releaseStorePassword
+    }
+}
+def releaseKeystore = new File(releaseKeystorePath)
+def hasReleaseSigning = releaseKeystore.isFile() && releaseKeyAlias && releaseStorePassword
+
 android {
     namespace = "ai.nanobot.mobile"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -31,8 +46,21 @@ android {
             version '3.31.6'
         }
     }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile releaseKeystore
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
     buildTypes {
         release {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
@@ -70,4 +98,20 @@ try {
     }
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+
+tasks.register("verifyReleaseSigning") {
+    doLast {
+        if (!hasReleaseSigning) {
+            throw new GradleException(
+                "Release signing is not configured. Set NANOBOT_MOBILE_KEYSTORE, " +
+                "NANOBOT_MOBILE_KEY_ALIAS and a password environment variable, or run " +
+                "mobile/scripts/build-release.sh."
+            )
+        }
+    }
+}
+
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    dependsOn("verifyReleaseSigning")
 }

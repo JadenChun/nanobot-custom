@@ -29,6 +29,34 @@ flake that passes in isolation; phone 37 tests (6 live skipped). Remaining manua
 M22 signing remain.
 See `docs/mobile-client-tasks.md`.
 
+
+## Release signing
+
+Release signing is configured from the environment, never from tracked files. The default
+keystore path is `~/.config/nanobot-mobile/release.keystore` and must be mode `600`.
+
+Create a private `~/.config/nanobot-mobile/release.env` (mode `600`) with:
+
+```bash
+NANOBOT_MOBILE_KEYSTORE=$HOME/.config/nanobot-mobile/release.keystore
+NANOBOT_MOBILE_KEY_ALIAS=<key-alias>
+NANOBOT_MOBILE_KEYSTORE_PASSWORD=<store-password>
+NANOBOT_MOBILE_KEY_PASSWORD=<key-password>
+```
+
+`NANOBOT_MOBILE_KEYSTORE_PASSWORD_FILE` can point at a single-line password file instead of
+`NANOBOT_MOBILE_KEYSTORE_PASSWORD`. The key password defaults to the store password.
+
+Build and verify the signed release:
+
+```bash
+mobile/scripts/build-release.sh
+```
+
+The script packages `mobile/www-shared` and the native transport, runs `assembleRelease`,
+checks `zipalign` and `apksigner`, and writes the APK, certificate report and SHA-256 under
+`mobile/evidence/<date>-m22-release/`. Release tasks fail closed when signing material is absent.
+
 ## Isolated toolchain
 
 All build inputs stay inside this checkout and are ignored by Git:
