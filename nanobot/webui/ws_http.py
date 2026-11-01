@@ -887,6 +887,22 @@ class GatewayHTTPHandler:
                 return _http_error(503, "audit_unavailable")
         try:
             response = await self._dispatch_resolved(connection, request, path)
+        except asyncio.CancelledError:
+            if (
+                getattr(self, "owner_audit_client", None) is not None
+                and isinstance(audit_installation, str)
+                and audit_installation
+            ):
+                try:
+                    getattr(self, "owner_audit_client").audit_event(
+                        installation_id=audit_installation,
+                        operation=action,
+                        decision="failed",
+                        actor_installation_id=audit_installation,
+                    )
+                except Exception:
+                    self._log.debug("owner audit cancellation write failed", exc_info=True)
+            raise
         except Exception:
             if (
                 getattr(self, "owner_audit_client", None) is not None

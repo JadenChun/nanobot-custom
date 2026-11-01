@@ -66,6 +66,28 @@ def test_owner_permission_adapter_consumes_admission(tmp_path) -> None:
         owner.stop()
 
 
+def test_owner_permission_adapter_mints_grant_release(tmp_path) -> None:
+    owner = _owner(tmp_path)
+    try:
+        token = _pair_owner(owner)
+        adapter = OwnerPermissionAdapter(
+            RemoteAccessClient(owner.socket_path, timeout=2.0)
+        )
+        context = adapter.authorize(
+            access_token=token,
+            installation_id="install-owner",
+            action="workspace.grant.revoke",
+            payload={"expected_revision": 3, "path": "/tmp/project"},
+        )
+        assert context.installation_id == "install-owner"
+        assert context.operation.value == "grant.release"
+        journal = owner.store.snapshot()["audit"]
+        assert journal[-1]["operation"] == "grant.release"
+        assert journal[-1]["decision"] == "consumed"
+    finally:
+        owner.stop()
+
+
 def test_owner_permission_adapter_denies_revoked_device(tmp_path) -> None:
     owner = _owner(tmp_path)
     try:

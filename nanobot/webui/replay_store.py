@@ -18,6 +18,8 @@ from typing import Any, Callable, cast
 
 _MAX_ENTRIES = 256
 _TTL_SECONDS = 60 * 60
+_IN_PROGRESS_TTL_SECONDS = 24 * 60 * 60
+_UNCERTAIN_TTL_SECONDS = 7 * 24 * 60 * 60
 _VERSION = 1
 
 
@@ -45,15 +47,21 @@ class DurableWebUIReplay:
         *,
         max_entries: int = _MAX_ENTRIES,
         ttl_s: int = _TTL_SECONDS,
+        in_progress_ttl_s: int = _IN_PROGRESS_TTL_SECONDS,
+        uncertain_ttl_s: int = _UNCERTAIN_TTL_SECONDS,
         clock: Callable[[], float] = time.time,
     ) -> None:
         if max_entries < 1:
             raise ValueError("max_entries must be at least one")
         if ttl_s < 1:
             raise ValueError("ttl_s must be positive")
+        if in_progress_ttl_s < 1 or uncertain_ttl_s < 1:
+            raise ValueError("replay liveness TTLs must be positive")
         self.path = Path(path)
         self.max_entries = max_entries
         self.ttl_s = ttl_s
+        self.in_progress_ttl_s = in_progress_ttl_s
+        self.uncertain_ttl_s = uncertain_ttl_s
         self.clock = clock
         self._lock = threading.RLock()
         self._corrupt = False
@@ -184,12 +192,24 @@ class DurableWebUIReplay:
             self._save()
 
     def _prune_locked(self, *, make_room: bool = False) -> None:
+        """Expire results and age stale crash windows without dropping fresh ones.
+
+        ``in_progress`` entries older than 24 hours are converted to ``uncertain``
+        (the effect may have run). ``uncertain`` entries expire after 7 days, which
+        defines the documented at-most-once window; after that a new request may
+        run again. Fresh ``in_progress`` entries are never evicted at capacity, so
+        a crash loop fails closed until the age policy releases them.
+        """
         now = self.clock()
         for request_id, entry in list(self._entries.items()):
-            if (
-                entry.get("state") == "completed"
-                and now - float(entry.get("updated_at", now)) > self.ttl_s
-            ):
+            state = entry.get("state")
+            age = now - float(entry.get("updated_at", now))
+            if state == "completed" and age > self.ttl_s:
+                self._entries.pop(request_id, None)
+            elif state == "in_progress" and age > self.in_progress_ttl_s:
+                entry["state"] = "uncertain"
+                entry["updated_at"] = now
+            elif state == "uncertain" and age > self.uncertain_ttl_s:
                 self._entries.pop(request_id, None)
         overflow = len(self._entries) - self.max_entries + (1 if make_room else 0)
         if overflow <= 0:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -80,3 +82,33 @@ def test_unowned_unit_is_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(SupervisionError):
         adapter.install(bad)
+
+
+def test_supervision_cli_plan_carries_listener_port(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "nanobot.remote.supervision",
+            "--state-dir",
+            str(tmp_path),
+            "--socket",
+            str(tmp_path / "owner.sock"),
+            "--unit-dir",
+            str(tmp_path / "units"),
+            "--python",
+            "/usr/bin/python3",
+            "--listener-port",
+            "18124",
+            "--json",
+            "plan",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert "--listener-port" in payload["unit_text"]
+    assert "18124" in payload["unit_text"]

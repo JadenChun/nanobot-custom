@@ -164,6 +164,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--unit-dir", type=Path)
+    parser.add_argument("--listener-port", type=int, default=None)
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -179,6 +180,7 @@ def main() -> int:
         enabled=True,
         state_dir=str(args.state_dir),
         socket_path=str(args.socket),
+        listener_port=args.listener_port,
     )
     plan = build_service_plan(
         config,
