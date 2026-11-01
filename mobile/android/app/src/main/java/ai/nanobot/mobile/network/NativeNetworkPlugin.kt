@@ -538,6 +538,23 @@ class NativeNetworkPlugin : Plugin() {
 
     @PluginMethod
     fun pickCamera(call: PluginCall) {
+        if (getPermissionState("camera") != PermissionState.GRANTED) {
+            requestPermissionForAlias("camera", call, "cameraPickPermission")
+            return
+        }
+        launchCameraPick(call)
+    }
+
+    @PermissionCallback
+    fun cameraPickPermission(call: PluginCall) {
+        if (getPermissionState("camera") == PermissionState.GRANTED) {
+            launchCameraPick(call)
+        } else {
+            call.reject("camera permission is required to take a photo")
+        }
+    }
+
+    private fun launchCameraPick(call: PluginCall) {
         val directory = context.cacheDir.resolve("nanobot-media")
         if (!directory.exists() && !directory.mkdirs()) {
             call.reject("camera directory could not be created")
@@ -554,7 +571,13 @@ class NativeNetworkPlugin : Plugin() {
             return
         }
         pendingCameraFile = file
-        startActivityForResult(call, intent, "cameraPicked")
+        try {
+            startActivityForResult(call, intent, "cameraPicked")
+        } catch (exception: SecurityException) {
+            pendingCameraFile = null
+            file.delete()
+            call.reject("camera permission is required to take a photo")
+        }
     }
 
     @ActivityCallback
