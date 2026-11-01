@@ -85,7 +85,13 @@ describe("mobile runtime wiring", () => {
   it("denies unsupported browser operations and exposes a native socket factory", async () => {
     const runtime = fakeRuntime();
     installMobileRuntime(runtime);
-    await expect(fetchWithTimeout("/api/settings/version-check")).rejects.toThrow("mobile operation unavailable");
+    await expect(fetchWithTimeout("/not-an-api")).rejects.toThrow("mobile operation unavailable");
+    const version = await fetchWithTimeout("/api/settings/version-check");
+    expect(version.status).toBe(200);
+    expect(runtime.request).toHaveBeenCalledWith(expect.objectContaining({
+      operation: "mobile_feature",
+      path: "/mobile/v1/feature?path=" + encodeURIComponent("/api/settings/version-check"),
+    }));
     expect(isNativeRuntime()).toBe(true);
     expect(createRuntimeHost("browser").socketFactory).toBeTypeOf("function");
     expect(shouldRegisterServiceWorker()).toBe(false);

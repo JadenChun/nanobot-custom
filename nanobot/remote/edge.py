@@ -21,9 +21,11 @@ from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
 from nanobot.remote.client import OwnerRequestError, OwnerUnavailableError, RemoteAccessClient
+from nanobot.remote.operations import OperationRegistryError, load_registry
 from nanobot.remote.protocol import (
     BRIDGE_VERSION,
     MOBILE_PROTOCOL_VERSION,
+    OWNER_SCOPE,
     MutationEnvelope,
     MutationOutcome,
     default_limits,
@@ -52,6 +54,14 @@ _LOCAL_ROUTES = {
 }
 _PAIRING_ROUTES = {"/mobile/v1/pair/collect", "/mobile/v1/pair/poll"}
 _REFRESH_ROUTE = "/mobile/v1/refresh"
+_LEGACY_MUTATION_ACTIONS = frozenset(
+    {
+        "session.delete",
+        "sidebar.update",
+        "recovery.continue",
+        "recovery.dismiss",
+    }
+)
 _PAIRING_STATUS = {
     "pairing_rate_limited": 429,
     "pairing_not_found": 404,
@@ -80,6 +90,10 @@ class AccessIdentity:
 
     def allows(self, scope: str) -> bool:
         return scope in self.scopes
+
+    @property
+    def is_owner(self) -> bool:
+        return OWNER_SCOPE in self.scopes
 
 
 @dataclass(frozen=True)
@@ -188,6 +202,7 @@ class MobileGatewayEdge:
             [AccessIdentity, str, dict[str, list[str]]], Awaitable[tuple[int, dict[str, Any]]]
         ] | None = None,
         api_handler: Callable[[AccessIdentity, str], Awaitable[tuple[int, dict[str, Any]]]] | None = None,
+        feature_handler: Callable[[AccessIdentity, str], Awaitable[tuple[int, dict[str, Any]]]] | None = None,
     ) -> None:
         self.validator = validator
         self.generation_provider = generation_provider
@@ -203,6 +218,7 @@ class MobileGatewayEdge:
         self.workspaces_handler = workspaces_handler
         self.thread_handler = thread_handler
         self.api_handler = api_handler
+        self.feature_handler = feature_handler
 
     async def authorize_websocket(self, connection: Any, request: WsRequest) -> Response | None:
         token = bearer_token(request.headers)
@@ -259,6 +275,21 @@ class MobileGatewayEdge:
                 if self.workspaces_handler is None:
                     return http_json_response({"error": "workspaces_unavailable"}, status=503)
                 return http_json_response(await self.workspaces_handler(identity))
+
+        if path == "/mobile/v1/feature":
+            if not identity.is_owner:
+                return http_json_response({"error": "owner_required"}, status=403)
+            if self.feature_handler is None:
+                return http_json_response({"error": "feature_unavailable"}, status=503)
+            raw_path = (query.get("path") or [""])[0]
+            try:
+                spec = load_registry().match_read(raw_path)
+            except OperationRegistryError:
+                spec = None
+            if spec is None or not spec.enabled:
+                return http_json_response({"error": "path_not_allowed"}, status=400)
+            status, payload = await self.feature_handler(identity, raw_path)
+            return http_json_response(payload, status=status)
 
         if path == "/mobile/v1/api":
             if not identity.allows("chat.read"):
@@ -377,6 +408,7 @@ class MobileGatewayEdge:
             "media": "media.read" in identity.scopes,
             "attachments": "attachment.write" in identity.scopes,
             "lifecycle": False,
+            "owner": identity.is_owner,
         }
         return {
             "mobile_protocol": MOBILE_PROTOCOL_VERSION,
@@ -417,7 +449,6 @@ class MobileGatewayEdge:
                 return {"ok": False, "error": "attachment_too_large"}
             return {"ok": True, "result": await self.attachment_handler(identity, body)}
         if frame_type == "mutation":
-            self.authorize_ws_frame(identity, epoch, "chat.write")
             if self.replay_cache is None or self.mutation_handler is None:
                 return {"ok": False, "error": "mutation_unavailable"}
             raw_envelope = payload.get("envelope")
@@ -429,6 +460,18 @@ class MobileGatewayEdge:
                 return {"ok": False, "error": "invalid_envelope"}
             if envelope.installation_id != identity.installation_id:
                 return {"ok": False, "error": "installation_mismatch"}
+            try:
+                spec = load_registry().mutations.get(envelope.action)
+            except OperationRegistryError:
+                spec = None
+            if spec is None or not spec.enabled:
+                return {"ok": False, "error": "operation_not_allowed"}
+            if not identity.is_owner and envelope.action not in _LEGACY_MUTATION_ACTIONS:
+                return {"ok": False, "error": "owner_required"}
+            try:
+                self.authorize_ws_frame(identity, epoch, "chat.write")
+            except EdgeAuthError as exc:
+                return {"ok": False, "error": exc.code}
 
             async def authorize() -> bool:
                 if self.authorize_operation is not None:

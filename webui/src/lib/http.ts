@@ -1,6 +1,6 @@
 const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 
-import { getMobileRuntime } from "./mobile-runtime";
+import { getMobileRuntime, mobileOwnerCapability } from "./mobile-runtime";
 
 export async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -68,6 +68,9 @@ async function mobileFetch(
     });
   }
   if (url.pathname === "/api/settings") {
+    if (mobileOwnerCapability()) {
+      return mobileFeatureRequest(runtime, `${url.pathname}${url.search}`);
+    }
     return mobileJsonRequest(runtime, "mobile_model_settings", "/mobile/v1/model-settings");
   }
   if (url.pathname === "/api/workspaces") {
@@ -102,7 +105,35 @@ async function mobileFetch(
       headers: response.headers,
     });
   }
+  if (isStandardReadPath(url.pathname)) {
+    return mobileFeatureRequest(runtime, `${url.pathname}${url.search}`);
+  }
   throw new Error(`mobile operation unavailable for ${url.pathname}`);
+}
+
+function isStandardReadPath(path: string): boolean {
+  return path.startsWith("/api/");
+}
+
+async function mobileFeatureRequest(
+  runtime: ReturnType<typeof getMobileRuntime> & object,
+  path: string,
+): Promise<Response> {
+  const response = await runtime.request({
+    operation: "mobile_feature",
+    method: "GET",
+    path: `/mobile/v1/feature?path=${encodeURIComponent(path)}`,
+  });
+  if (response.status === 403) {
+    throw new Error("owner_required: this action needs the full owner capability");
+  }
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`mobile feature failed: HTTP ${response.status}`);
+  }
+  return new Response(decodeBase64Text(response.bodyBase64), {
+    status: response.status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 function isMobileChatApiPath(path: string): boolean {

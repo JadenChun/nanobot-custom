@@ -152,11 +152,25 @@ class WebUICommandTransport(Protocol):
 
 
 def _mobile_mutation_allowed(connection: Any, action: str) -> bool:
-    """Allow only shared sidebar organization from an authenticated mobile socket."""
-    return (
-        getattr(connection, "mobile_identity", None) is not None
-        and action in _MOBILE_MUTATION_ACTIONS
-    )
+    """Allow legacy chat organization and enabled owner operations.
+
+    The operation registry is the single allowlist for owner devices; a legacy
+    chat-only device keeps the three shared-organization actions.
+    """
+    identity = getattr(connection, "mobile_identity", None)
+    if identity is None:
+        return False
+    if action in _MOBILE_MUTATION_ACTIONS:
+        return True
+    if not getattr(identity, "is_owner", False):
+        return False
+    try:
+        from nanobot.remote.operations import load_registry
+
+        spec = load_registry().mutations.get(action)
+    except Exception:
+        return False
+    return spec is not None and spec.enabled
 
 
 class WebUICommandRouter:
@@ -1062,7 +1076,9 @@ class WebUICommandRouter:
         result: WebUIRequestResult,
         source_binding: dict[str, object] | None,
     ) -> None:
-        if connection not in self._webui_connections:
+        if connection not in self._webui_connections and not _mobile_mutation_allowed(
+            connection, action
+        ):
             await self.send_webui_response(
                 connection,
                 request_id,

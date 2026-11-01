@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from nanobot.remote.edge import AccessIdentity
+from nanobot.webui.inbound_commands import _mobile_mutation_allowed
+from nanobot.webui.ws_http import GatewayHTTPHandler
+
+
+def mobile_connection(identity: AccessIdentity | None):
+    return SimpleNamespace(mobile_identity=identity)
+
+
+def test_legacy_mobile_keeps_only_shared_organization_actions() -> None:
+    connection = mobile_connection(
+        AccessIdentity("install-legacy", ("chat.read", "chat.write"), 1e12, 1)
+    )
+    assert _mobile_mutation_allowed(connection, "sidebar.update")
+    assert _mobile_mutation_allowed(connection, "recovery.continue")
+    assert not _mobile_mutation_allowed(connection, "settings.agent.update")
+    assert not _mobile_mutation_allowed(connection, "automation.enable")
+    assert not _mobile_mutation_allowed(connection, "workspace.grant.upsert")
+
+
+def test_owner_mobile_allows_enabled_registry_actions_only() -> None:
+    connection = mobile_connection(
+        AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1)
+    )
+    assert _mobile_mutation_allowed(connection, "settings.agent.update")
+    assert _mobile_mutation_allowed(connection, "settings.provider.create")
+    assert _mobile_mutation_allowed(connection, "automation.enable")
+    assert _mobile_mutation_allowed(connection, "skill.install")
+    assert not _mobile_mutation_allowed(connection, "workspace.grant.upsert")
+    assert not _mobile_mutation_allowed(connection, "settings.remote_access.enable")
+    assert not _mobile_mutation_allowed(connection, "unregistered.action")
+
+
+def test_webui_connection_without_mobile_identity_is_not_mobile_allowed() -> None:
+    assert not _mobile_mutation_allowed(SimpleNamespace(), "sidebar.update")
+
+
+@pytest.mark.asyncio
+async def test_mobile_mutation_payload_denies_non_owner_and_planned() -> None:
+    stub = SimpleNamespace()
+    legacy = AccessIdentity("install-legacy", ("chat.read", "chat.write"), 1e12, 1)
+    status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
+        stub, legacy, "settings.agent.update", {}
+    )
+    assert status == 403
+    assert payload["error"] == "owner_required"
+
+    owner = AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1)
+    status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
+        stub, owner, "workspace.grant.upsert", {}
+    )
+    assert status == 403
+    assert payload["error"] == "operation_not_allowed"
+
+    status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
+        stub, owner, "unregistered.action", {}
+    )
+    assert status == 403
+    assert payload["error"] == "operation_not_allowed"

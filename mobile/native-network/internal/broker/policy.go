@@ -54,6 +54,11 @@ var routes = map[string]route{
 		pattern: regexp.MustCompile(`^/mobile/v1/api$`),
 		queries: map[string]bool{"path": true},
 	},
+	"mobile_feature": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/feature$`),
+		queries: map[string]bool{"path": true},
+	},
 	"mobile_thread": {
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/sessions/[^/]+/thread$`),

@@ -7,10 +7,18 @@
     "chat.write",
     "media.read",
     "attachment.write",
-    "device.self.logout"
+    "device.self.logout",
+    "owner"
   ],
-  "mandatory_capabilities": ["chat"],
-  "optional_capabilities": ["media", "attachments", "lifecycle"],
+  "mandatory_capabilities": [
+    "chat"
+  ],
+  "optional_capabilities": [
+    "media",
+    "attachments",
+    "lifecycle",
+    "owner"
+  ],
   "limits": {
     "access_ttl_seconds": 600,
     "challenge_ttl_seconds": 120,
@@ -21,32 +29,149 @@
     "max_request_body_bytes": 1048576
   },
   "routes": [
-    {"method": "GET", "path": "/mobile/v1/handshake", "scope": "chat.read", "replay": "none", "websocket": false},
-    {"method": "POST", "path": "/mobile/v1/bootstrap", "scope": "chat.read", "replay": "none", "websocket": false},
-    {"method": "GET", "path": "/mobile/v1/read", "scope": "chat.read", "replay": "none", "websocket": false},
-    {"method": "POST", "path": "/mobile/v1/refresh", "scope": "chat.read", "replay": "none", "websocket": false},
-    {"method": "POST", "path": "/mobile/v1/mutation", "scope": "chat.write", "replay": "submit", "websocket": false},
-    {"method": "GET", "path": "/mobile/v1/media/{sig}/{payload}", "scope": "media.read", "replay": "none", "websocket": false},
-    {"method": "POST", "path": "/mobile/v1/attachment", "scope": "attachment.write", "replay": "none", "websocket": false},
-    {"method": "GET", "path": "/mobile/v1/status", "scope": "chat.read", "replay": "none", "websocket": false},
-    {"method": "POST", "path": "/mobile/v1/logout", "scope": "device.self.logout", "replay": "none", "websocket": false},
-    {"method": "GET", "path": "/mobile/v1/ws", "scope": "chat.read", "replay": "none", "websocket": true},
-    {"method": "POST", "path": "/remote/v1/pair/challenge", "scope": "local.admin", "replay": "none", "websocket": false},
-    {"method": "POST", "path": "/remote/v1/pair/collect", "scope": "local.admin", "replay": "none", "websocket": false},
-    {"method": "POST", "path": "/remote/v1/pair/approve", "scope": "local.admin", "replay": "none", "websocket": false},
-    {"method": "GET", "path": "/remote/v1/devices", "scope": "local.admin", "replay": "none", "websocket": false},
-    {"method": "POST", "path": "/remote/v1/devices/{id}/revoke", "scope": "local.admin", "replay": "none", "websocket": false},
-    {"method": "GET", "path": "/remote/v1/status", "scope": "local.admin", "replay": "none", "websocket": false}
+    {
+      "method": "GET",
+      "path": "/mobile/v1/handshake",
+      "scope": "chat.read",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/v1/bootstrap",
+      "scope": "chat.read",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/v1/read",
+      "scope": "chat.read",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/v1/feature",
+      "scope": "owner",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/v1/refresh",
+      "scope": "chat.read",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/v1/mutation",
+      "scope": "chat.write",
+      "replay": "submit",
+      "websocket": false
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/v1/media/{sig}/{payload}",
+      "scope": "media.read",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/v1/attachment",
+      "scope": "attachment.write",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/v1/status",
+      "scope": "chat.read",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "POST",
+      "path": "/mobile/v1/logout",
+      "scope": "device.self.logout",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "GET",
+      "path": "/mobile/v1/ws",
+      "scope": "chat.read",
+      "replay": "none",
+      "websocket": true
+    },
+    {
+      "method": "POST",
+      "path": "/remote/v1/pair/challenge",
+      "scope": "local.admin",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "POST",
+      "path": "/remote/v1/pair/collect",
+      "scope": "local.admin",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "POST",
+      "path": "/remote/v1/pair/approve",
+      "scope": "local.admin",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "GET",
+      "path": "/remote/v1/devices",
+      "scope": "local.admin",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "POST",
+      "path": "/remote/v1/devices/{id}/revoke",
+      "scope": "local.admin",
+      "replay": "none",
+      "websocket": false
+    },
+    {
+      "method": "GET",
+      "path": "/remote/v1/status",
+      "scope": "local.admin",
+      "replay": "none",
+      "websocket": false
+    }
   ],
   "mutation": {
-    "identity": ["installation_id", "gateway_generation", "request_id"],
-    "modes": ["submit", "replay_only"],
-    "decisions": ["applied", "replayed", "outcome_unknown", "denied"],
+    "identity": [
+      "installation_id",
+      "gateway_generation",
+      "request_id"
+    ],
+    "modes": [
+      "submit",
+      "replay_only"
+    ],
+    "decisions": [
+      "applied",
+      "replayed",
+      "outcome_unknown",
+      "denied"
+    ],
     "outcome_unknown_status": 409
   },
   "pairing": {
     "challenge_ttl_seconds": 120,
     "access_ttl_seconds": 600,
-    "refresh_idle_seconds": 2592000
+    "refresh_idle_seconds": 2592000,
+    "full_control_consent_required_for_owner": true,
+    "shared_history_consent_required_for_owner": true
   }
 }

@@ -35,10 +35,12 @@ SUPPORTED_SCOPES = frozenset(
         "media.read",
         "attachment.write",
         "device.self.logout",
+        "owner",
     }
 )
 MANDATORY_CAPABILITIES = frozenset({"chat"})
-OPTIONAL_CAPABILITIES = frozenset({"media", "attachments", "lifecycle"})
+OPTIONAL_CAPABILITIES = frozenset({"media", "attachments", "lifecycle", "owner"})
+OWNER_SCOPE = "owner"
 
 _INSTALLATION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$")
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -78,6 +80,7 @@ class Capabilities(BaseModel):
     media: bool = False
     attachments: bool = False
     lifecycle: bool = False
+    owner: bool = False
 
     def validate_mandatory(self) -> None:
         for capability in MANDATORY_CAPABILITIES:
@@ -221,6 +224,8 @@ class PairingChallenge(BaseModel):
     expires_at: int
     chat_consent: bool
     media_consent: bool
+    full_control_consent: bool = False
+    shared_history_consent: bool = False
 
     @field_validator("origin")
     @classmethod
@@ -280,6 +285,7 @@ ROUTES: tuple[RouteSpec, ...] = (
     RouteSpec("GET", "/mobile/v1/handshake", "chat.read"),
     RouteSpec("POST", "/mobile/v1/bootstrap", "chat.read"),
     RouteSpec("GET", "/mobile/v1/read", "chat.read"),
+    RouteSpec("GET", "/mobile/v1/feature", "owner"),
     RouteSpec("POST", "/mobile/v1/refresh", "chat.read"),
     RouteSpec("POST", "/mobile/v1/mutation", "chat.write", replay="submit"),
     RouteSpec("GET", "/mobile/v1/media/{sig}/{payload}", "media.read"),

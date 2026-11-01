@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createMobileRuntime, type MobileEvent, type MobileTransport } from "@/lib/mobile-runtime";
+import {
+  createMobileRuntime,
+  mobileOwnerCapability,
+  resetMobileRuntime,
+  type MobileEvent,
+  type MobileTransport,
+} from "@/lib/mobile-runtime";
 
 function transportFixture() {
   let listener: ((event: MobileEvent) => void) | null = null;
@@ -107,5 +113,32 @@ describe("mobile runtime transport", () => {
     expect(fixture.refresh).toHaveBeenCalledTimes(1);
     fixture.emit({ type: "http_response", request_id: 2, status: 200, headers: {}, body_base64: "" });
     await expect(promise).resolves.toMatchObject({ status: 200 });
+  });
+});
+
+
+describe("mobile owner capability", () => {
+  it("tracks the negotiated owner capability and resets on teardown", async () => {
+    const fixture = transportFixture();
+    const runtime = createMobileRuntime(fixture.transport);
+    expect(mobileOwnerCapability()).toBe(false);
+
+    const promise = runtime.handshake();
+    await vi.waitFor(() => expect(fixture.http).toHaveBeenCalled());
+    fixture.emit({
+      type: "http_response",
+      request_id: 1,
+      status: 200,
+      headers: { "content-type": "application/json" },
+      body_base64: btoa(JSON.stringify({
+        mobile_protocol: 1,
+        capabilities: { chat: true, owner: true },
+      })),
+    });
+    await promise;
+    expect(mobileOwnerCapability()).toBe(true);
+
+    resetMobileRuntime();
+    expect(mobileOwnerCapability()).toBe(false);
   });
 });

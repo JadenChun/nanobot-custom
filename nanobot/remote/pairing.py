@@ -19,6 +19,7 @@ from nanobot.remote.auth import (
 )
 from nanobot.remote.protocol import (
     CHALLENGE_TTL_SECONDS,
+    OWNER_SCOPE,
     ContractError,
     PairingChallenge,
     validate_installation_id,
@@ -72,6 +73,8 @@ class PairingOffer:
     chat_consent: bool
     media_consent: bool
     scopes: tuple[str, ...]
+    full_control_consent: bool = False
+    shared_history_consent: bool = False
 
 
 @dataclass(frozen=True)
@@ -136,11 +139,15 @@ class PairingService:
         chat_consent: bool,
         media_consent: bool,
         scopes: tuple[str, ...] | None = None,
+        full_control_consent: bool = False,
+        shared_history_consent: bool = False,
         ttl_seconds: int = CHALLENGE_TTL_SECONDS,
     ) -> PairingOffer:
         origin = validate_origin(origin)
         if not chat_consent:
             raise PairingRejectedError("chat consent is required")
+        if shared_history_consent and not full_control_consent:
+            raise PairingRejectedError("shared-history consent requires full-control consent")
         if ttl_seconds <= 0 or ttl_seconds > CHALLENGE_TTL_SECONDS:
             raise PairingRejectedError("challenge lifetime is outside the accepted bound")
         state = self.store.load()
@@ -150,7 +157,13 @@ class PairingService:
             computed = ["chat.read", "chat.write"]
             if media_consent:
                 computed.extend(["media.read", "attachment.write"])
+            if full_control_consent:
+                computed.append(OWNER_SCOPE)
             scopes = tuple(computed)
+        elif full_control_consent and OWNER_SCOPE not in scopes:
+            raise PairingRejectedError("full-control consent requires the owner scope")
+        elif OWNER_SCOPE in scopes and not full_control_consent:
+            raise PairingRejectedError("owner scope requires full-control consent")
         try:
             validate_scopes(scopes)
         except ContractError as exc:
@@ -167,6 +180,8 @@ class PairingService:
             chat_consent=chat_consent,
             media_consent=media_consent,
             scopes=tuple(scopes),
+            full_control_consent=full_control_consent,
+            shared_history_consent=shared_history_consent,
         )
         with self._lock:
             self._challenges[offer.pairing_id] = _Challenge(offer=offer, scopes=tuple(scopes))
@@ -207,6 +222,8 @@ class PairingService:
                 expires_at=challenge.offer.expires_at,
                 chat_consent=challenge.offer.chat_consent,
                 media_consent=challenge.offer.media_consent,
+                full_control_consent=challenge.offer.full_control_consent,
+                shared_history_consent=challenge.offer.shared_history_consent,
             )
             return PairingPending(
                 pairing_id=challenge.offer.pairing_id,

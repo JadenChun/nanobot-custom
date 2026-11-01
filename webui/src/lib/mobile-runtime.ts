@@ -64,6 +64,16 @@ export interface MobileRuntime {
 }
 
 let installedMobileRuntime: MobileRuntime | null = null;
+let ownerCapability = false;
+
+/** Whether the paired device negotiated the owner capability (M30/M31). */
+export function mobileOwnerCapability(): boolean {
+  return ownerCapability;
+}
+
+export function setMobileOwnerCapability(value: boolean): void {
+  ownerCapability = value;
+}
 
 export function installMobileRuntime(runtime: MobileRuntime): void {
   installedMobileRuntime = runtime;
@@ -79,6 +89,7 @@ export function isMobileRuntimeActive(): boolean {
 
 export function resetMobileRuntime(): void {
   installedMobileRuntime = null;
+  ownerCapability = false;
 }
 
 export function shouldRegisterServiceWorker(): boolean {
@@ -154,7 +165,14 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
     async handshake() {
       const response = await request({ operation: "mobile_handshake", method: "GET", path: "/mobile/v1/handshake" });
       if (response.status !== 200) throw new MobileRuntimeError(`handshake_status_${response.status}`);
-      return JSON.parse(decodeBase64(response.bodyBase64)) as Record<string, unknown>;
+      const payload = JSON.parse(decodeBase64(response.bodyBase64)) as Record<string, unknown>;
+      const capabilities = payload.capabilities;
+      setMobileOwnerCapability(
+        typeof capabilities === "object"
+          && capabilities !== null
+          && (capabilities as Record<string, unknown>).owner === true,
+      );
+      return payload;
     },
     async read(path = "/mobile/v1/read") {
       const response = await request({ operation: "mobile_read", method: "GET", path });

@@ -6349,14 +6349,15 @@
             ]
           },
           "status": {
-            "desktop_implementation": "planned",
+            "desktop_implementation": "present",
             "mobile_implementation": "absent",
             "evidence": [
-              "M37 planned contract"
+              "nanobot/webui/workspace_directories.py",
+              "tests/webui/test_workspace_directories.py"
             ]
           },
           "exception": null,
-          "notes": ""
+          "notes": "M37 implements bounded roots/list/resolve; grant commit still consumes a resolve token in the permission owner."
         },
         {
           "id": "workspace.directories.list",
@@ -6413,14 +6414,15 @@
             ]
           },
           "status": {
-            "desktop_implementation": "planned",
+            "desktop_implementation": "present",
             "mobile_implementation": "absent",
             "evidence": [
-              "M37 planned contract"
+              "nanobot/webui/workspace_directories.py",
+              "tests/webui/test_workspace_directories.py"
             ]
           },
           "exception": null,
-          "notes": ""
+          "notes": "M37 implements bounded roots/list/resolve; grant commit still consumes a resolve token in the permission owner."
         },
         {
           "id": "workspace.directories.resolve",
@@ -6471,14 +6473,15 @@
             ]
           },
           "status": {
-            "desktop_implementation": "planned",
+            "desktop_implementation": "present",
             "mobile_implementation": "absent",
             "evidence": [
-              "M37 planned contract"
+              "nanobot/webui/workspace_directories.py",
+              "tests/webui/test_workspace_directories.py"
             ]
           },
           "exception": null,
-          "notes": ""
+          "notes": "M37 implements bounded roots/list/resolve; grant commit still consumes a resolve token in the permission owner."
         }
       ]
     },
@@ -7432,16 +7435,16 @@
       "reuse": "authority/projection present; requalify checks"
     },
     "M30": {
-      "state": "absent",
-      "reuse": "owner administration/scopes not implemented"
+      "state": "partial",
+      "reuse": "owner scope, typed delegation and owner admission implemented; permission grant/Full adapter pending M37 integration"
     },
     "M31": {
-      "state": "absent",
-      "reuse": "standard feature API/native registry not implemented"
+      "state": "partial",
+      "reuse": "operation registry, owner feature reads and owner mutation allowlist implemented; UI adaptation is M32"
     },
     "M37": {
-      "state": "absent",
-      "reuse": "workspace_directories.py does not exist"
+      "state": "present",
+      "reuse": "directory browser implemented in webui/workspace_directories.py with bounded tests; grant/Full adapter remains M30/M37 integration"
     },
     "M14": {
       "state": "historical-report",
@@ -7511,14 +7514,14 @@
   "gate_notes": {
     "inventory_completeness": "Every desktop mutation/read/WS action inspected is represented; planned M37 rows marked implementation=planned.",
     "known_gaps": [
-      "M30 owner administration and full-control consent are absent.",
-      "M31 standard feature API and bounded native operation registry are absent.",
-      "M37 directory browser API is absent.",
       "M32 full owner settings/apps/skills/automation/workspace UI on phone width is absent.",
       "M33 device audit/secret-safety sweep is incomplete.",
       "M18 remote-access settings handlers are described as local-only but lack an explicit local check.",
       "Provider OAuth/MCP OAuth callbacks require a remote-safe callback design in M31.",
-      "Remote package installs are default-denied by policy; owner UX must surface, not bypass, this."
+      "Remote package installs are default-denied by policy; owner UX must surface, not bypass, this.",
+      "M32 full owner settings/apps/skills/automation UI remains to be exercised on phone width.",
+      "M33 acting-device audit/secret-safety sweep remains incomplete.",
+      "Grant/Full owner delegation still needs to consume a fresh M37 resolve token inside the permission owner."
     ]
   }
 }

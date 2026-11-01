@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any, cast
 
 from nanobot.remote.auth import AuthRejectedError, TokenService
+from nanobot.remote.delegation import (
+    DelegatedAdminOperation,
+    DelegationError,
+    OwnerDelegationService,
+    current_digest,
+)
 from nanobot.remote.pairing import (
     PairingBusyError,
     PairingConsumedError,
@@ -44,10 +50,12 @@ class OwnerIPCServer:
         socket_path: Path | None = None,
         pairing: PairingService | None = None,
         tokens: TokenService | None = None,
+        delegation: OwnerDelegationService | None = None,
     ) -> None:
         self.store = store
         self.pairing = pairing
         self.tokens = tokens
+        self.delegation = delegation
         self.socket_path = Path(socket_path) if socket_path else store.root / IPC_SOCKET_NAME
         self._socket: socket.socket | None = None
         self._thread: threading.Thread | None = None
@@ -347,6 +355,17 @@ class OwnerIPCServer:
             except StoreError as exc:
                 return {"ok": False, "error": {"code": "not_found", "message": str(exc)}}
             return {"ok": True, "result": {"installation_id": device.installation_id, "revoked": device.revoked}}
+        if method in {
+            "delegate_authorize",
+            "delegate_consume",
+            "delegate_execute",
+            "device_list",
+            "device_rename",
+            "device_revoke",
+            "device_self_revoke",
+            "entry_status",
+        }:
+            return self._dispatch_delegation(role, method, params)
         if role in {"gateway", "pairing"}:
             return {"ok": False, "error": {"code": "denied", "message": "role cannot use local administration"}}
         if method == "list_devices":
@@ -424,6 +443,200 @@ class OwnerIPCServer:
             return {"ok": True, "result": {"installation_id": device.installation_id}}
         return {"ok": False, "error": {"code": "unknown_method", "message": "unknown owner method"}}
 
+    def _dispatch_delegation(
+        self,
+        role: str | None,
+        method: str,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self.delegation is None:
+            return {"ok": False, "error": {"code": "unavailable", "message": "delegation is not running"}}
+        if role not in {"gateway", "admin"}:
+            return {"ok": False, "error": {"code": "denied", "message": "role cannot delegate"}}
+        access_token = _string_param(params, "access_token")
+        if method == "delegate_authorize":
+            if access_token is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "access_token is required"}}
+            operation = _string_param(params, "operation")
+            request_id = _string_param(params, "request_id")
+            digest = _string_param(params, "digest")
+            if operation is None or request_id is None or digest is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "operation, request_id and digest are required"}}
+            try:
+                context, admission, payload = self.delegation.authorize(
+                    access_token=access_token,
+                    operation=operation,
+                    request_id=request_id,
+                    digest=digest,
+                    arguments=params.get("arguments"),
+                )
+            except DelegationError as exc:
+                return {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
+            return {
+                "ok": True,
+                "result": {
+                    "admission": {
+                        "handle": admission.handle,
+                        "installation_id": admission.installation_id,
+                        "operation": admission.operation.value,
+                        "digest": admission.digest,
+                        "record_revision": admission.record_revision,
+                        "expires_at": admission.expires_at,
+                    },
+                    "context": _context_payload(context),
+                    "arguments": payload,
+                },
+            }
+        if method == "delegate_consume":
+            handle = _string_param(params, "handle")
+            installation_id = _string_param(params, "installation_id")
+            operation = _string_param(params, "operation")
+            digest = _string_param(params, "digest")
+            if None in (handle, installation_id, operation, digest):
+                return {"ok": False, "error": {"code": "bad_request", "message": "admission fields are required"}}
+            try:
+                context = self.delegation.consume(
+                    handle=cast(str, handle),
+                    installation_id=cast(str, installation_id),
+                    operation=cast(str, operation),
+                    digest=cast(str, digest),
+                )
+            except DelegationError as exc:
+                return {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
+            return {"ok": True, "result": {"context": _context_payload(context)}}
+        if method == "delegate_execute":
+            if access_token is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "access_token is required"}}
+            operation = _string_param(params, "operation")
+            request_id = _string_param(params, "request_id")
+            if operation is None or request_id is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "operation and request_id are required"}}
+            try:
+                context = self.delegation.authenticate(access_token)
+                payload = self.delegation.authorize(
+                    access_token=access_token,
+                    operation=operation,
+                    request_id=request_id,
+                    digest=current_digest(
+                        operation,
+                        request_id,
+                        params.get("arguments") if isinstance(params.get("arguments"), dict) else {},
+                        context.installation_id,
+                    ),
+                    arguments=params.get("arguments"),
+                )[2]
+                result = self._execute_delegated(context, operation, payload)
+            except DelegationError as exc:
+                return {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
+            return {"ok": True, "result": result}
+        if access_token is None:
+            return {"ok": False, "error": {"code": "bad_request", "message": "access_token is required"}}
+        try:
+            context = self.delegation.authenticate(access_token)
+        except DelegationError as exc:
+            return {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
+        if method == "device_list":
+            if not context.is_owner:
+                return {"ok": False, "error": {"code": "owner_required", "message": "owner capability is required"}}
+            return {"ok": True, "result": {"devices": _safe_devices(self.store.snapshot()["devices"])}}
+        if method == "device_rename":
+            target = _string_param(params, "target_installation_id")
+            label = _string_param(params, "label")
+            if target is None or label is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "target and label are required"}}
+            try:
+                result = self._require_owner_operation(context, DelegatedAdminOperation.DEVICE_RENAME)
+                del result
+                return {"ok": True, "result": self.delegation.rename_device(target, label)}
+            except DelegationError as exc:
+                return {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
+        if method == "device_revoke":
+            target = _string_param(params, "target_installation_id")
+            if target is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "target is required"}}
+            try:
+                self._require_owner_operation(context, DelegatedAdminOperation.DEVICE_REVOKE)
+                return {"ok": True, "result": self.delegation.revoke_device(target)}
+            except DelegationError as exc:
+                return {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
+        if method == "device_self_revoke":
+            try:
+                return {"ok": True, "result": self.delegation.revoke_device(context.installation_id)}
+            except DelegationError as exc:
+                return {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
+        if method == "entry_status":
+            if not context.is_owner:
+                return {"ok": False, "error": {"code": "owner_required", "message": "owner capability is required"}}
+            return {"ok": True, "result": {"entries": self.store.snapshot()["owned_entries"]}}
+        return {"ok": False, "error": {"code": "unknown_method", "message": "unknown owner method"}}
+
+    @staticmethod
+    def _require_owner_operation(
+        context: Any,
+        operation: DelegatedAdminOperation,
+    ) -> None:
+        if not context.is_owner:
+            raise DelegationError("owner_required", "owner capability is required")
+
+    def _execute_delegated(
+        self,
+        context: Any,
+        operation: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if operation == DelegatedAdminOperation.DEVICE_LIST.value:
+            if not context.is_owner:
+                raise DelegationError("owner_required", "owner capability is required")
+            return {"devices": _safe_devices(self.store.snapshot()["devices"])}
+        if operation == DelegatedAdminOperation.DEVICE_RENAME.value:
+            self._require_owner_operation(context, DelegatedAdminOperation.DEVICE_RENAME)
+            return self.delegation.rename_device(payload["target_installation_id"], payload["label"]) if self.delegation else {}
+        if operation == DelegatedAdminOperation.DEVICE_REVOKE.value:
+            self._require_owner_operation(context, DelegatedAdminOperation.DEVICE_REVOKE)
+            return self.delegation.revoke_device(payload["target_installation_id"]) if self.delegation else {}
+        if operation == DelegatedAdminOperation.DEVICE_SELF_REVOKE.value:
+            return self.delegation.revoke_device(context.installation_id) if self.delegation else {}
+        if operation == DelegatedAdminOperation.ENTRY_STATUS.value:
+            if not context.is_owner:
+                raise DelegationError("owner_required", "owner capability is required")
+            return {"entries": self.store.snapshot()["owned_entries"]}
+        raise DelegationError(
+            "unimplemented_operation",
+            "this delegated operation is handled by the gateway permission adapter",
+            status=501,
+        )
+
+
+def _context_payload(context: Any) -> dict[str, Any]:
+    return {
+        "installation_id": context.installation_id,
+        "principal": context.principal,
+        "scopes": list(context.scopes),
+        "record_revision": context.record_revision,
+        "expires_at": context.expires_at,
+    }
+
+
+def _safe_devices(devices: object) -> list[dict[str, Any]]:
+    if not isinstance(devices, dict):
+        return []
+    safe: list[dict[str, Any]] = []
+    for device in cast(dict[str, Any], devices).values():
+        if not isinstance(device, dict):
+            continue
+        record = cast(dict[str, Any], device)
+        safe.append(
+            {
+                "installation_id": record.get("installation_id", ""),
+                "label": record.get("label", ""),
+                "scopes": record.get("scopes", []),
+                "created_at": record.get("created_at", 0),
+                "last_seen_at": record.get("last_seen_at", 0),
+                "revoked_at": record.get("revoked_at"),
+                "status": "revoked" if record.get("revoked_at") else "active",
+            }
+        )
+    return safe
 
 
 def _string_param(params: dict[str, Any], key: str) -> str | None:

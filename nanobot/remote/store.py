@@ -236,6 +236,26 @@ class RemoteAccessStore:
             self._save_locked(state)
             return updated
 
+    def rename_device(self, installation_id: str, label: str) -> RemoteDevice:
+        with self._locked():
+            state = self._require_state()
+            device = state.devices.get(installation_id)
+            if device is None or device.revoked:
+                raise StoreError("device is not active")
+            updated = RemoteDevice(
+                installation_id=device.installation_id,
+                label=label[:64],
+                scopes=device.scopes,
+                created_at=device.created_at,
+                last_seen_at=device.last_seen_at,
+                refresh_hash=device.refresh_hash,
+                revoked_at=device.revoked_at,
+            )
+            state.devices[installation_id] = updated
+            state.revision += 1
+            self._save_locked(state)
+            return updated
+
     def rotate_refresh(self, installation_id: str, refresh_token: str) -> RemoteDevice:
         with self._locked():
             state = self._require_state()

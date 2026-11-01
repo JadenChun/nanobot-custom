@@ -66,6 +66,7 @@ def edge_setup(tmp_path: Path):
         workspaces_handler=lambda identity: _workspaces(identity),
         thread_handler=lambda identity, key, query: _thread(identity, key, query),
         api_handler=lambda identity, path: _api(identity, path),
+        feature_handler=lambda identity, path: _feature(identity, path),
     )
     try:
         yield owner, edge, pair
@@ -117,6 +118,12 @@ async def _thread(
 
 async def _api(identity: AccessIdentity, path: str) -> tuple[int, dict[str, Any]]:
     return 200, {"path": path, "viewer": identity.installation_id}
+
+
+async def _feature(identity: AccessIdentity, path: str) -> tuple[int, dict[str, Any]]:
+    if path == "/api/settings":
+        return 200, {"owner": True, "viewer": identity.installation_id}
+    return 404, {"error": "feature_not_found"}
 
 
 @pytest.mark.asyncio
@@ -292,18 +299,18 @@ async def test_edge_mutation_frame_uses_replay_cache(edge_setup) -> None:
     identity = AccessIdentity(
         "install-0001", ("chat.read", "chat.write", "media.read", "attachment.write", "device.self.logout"), 0, 2
     )
-    digest = stable_operation_digest("device-0001", "chat.send", {"text": "hello"})
+    digest = stable_operation_digest("device-0001", "sidebar.update", {"state": {}})
     envelope = MutationEnvelope.model_validate(
         {
             "request_id": "req-edge-1",
             "installation_id": "install-0001",
             "principal": "device-0001",
-            "action": "chat.send",
+            "action": "sidebar.update",
             "digest": digest,
             "gateway_generation": int(owner.store.snapshot()["revision"]),
             "epoch": 7,
             "mode": "submit",
-            "payload": {"text": "hello"},
+            "payload": {"state": {}},
         }
     )
     first = await edge.handle_ws_frame(
@@ -426,3 +433,94 @@ async def test_edge_refresh_rotates_access_without_bearer(edge_setup) -> None:
     )
     assert revoked is not None and revoked.status_code == 401
     assert body(revoked)["error"] == "device_revoked"
+
+
+@pytest.mark.asyncio
+async def test_owner_feature_reads_use_registry_and_deny_legacy(edge_setup) -> None:
+    owner, edge, pair = edge_setup
+    owner_pair = owner.tokens.issue("install-owner", ("chat.read", "chat.write", "owner"))
+
+    owner_response = await edge.handle(
+        None,
+        request("/mobile/v1/feature?path=%2Fapi%2Fsettings", owner_pair.access_token),
+    )
+    assert owner_response is not None and owner_response.status_code == 200
+    assert body(owner_response)["owner"] is True
+
+    legacy = await edge.handle(
+        None,
+        request("/mobile/v1/feature?path=%2Fapi%2Fsettings", pair.access_token),
+    )
+    assert legacy is not None and legacy.status_code == 403
+    assert body(legacy)["error"] == "owner_required"
+
+    for path in (
+        "%2Fapi%2F..%2Fsecret",
+        "https%3A%2F%2Fevil.example%2Fapi%2Fsessions",
+        "%2Fmobile%2Fv1%2Fread",
+        "%2Fapi%2Funknown",
+        "%2Fapi%2Fworkspace-directories%2Fmissing",
+    ):
+        denied = await edge.handle(
+            None,
+            request(f"/mobile/v1/feature?path={path}", owner_pair.access_token),
+        )
+        assert denied is not None and denied.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_owner_ws_mutation_registry_and_legacy_ceiling(edge_setup) -> None:
+    owner, _edge, pair = edge_setup
+    owner.tokens.issue("install-owner", ("chat.read", "chat.write", "owner"))
+    effects: list[str] = []
+
+    async def mutation(identity: AccessIdentity, envelope: MutationEnvelope) -> dict[str, Any]:
+        effects.append(envelope.action)
+        return {"ok": True}
+
+    edge = MobileGatewayEdge(
+        _edge.validator,
+        generation_provider=lambda: int(owner.store.snapshot()["revision"]),
+        socket_epoch=7,
+        replay_cache=OperationReplayCache(),
+        mutation_handler=mutation,
+    )
+
+    def envelope(installation_id: str, action: str, request_id: str) -> dict[str, Any]:
+        payload = {"request_id": request_id, "installation_id": installation_id}
+        return {
+            "request_id": request_id,
+            "installation_id": installation_id,
+            "principal": f"mobile:{installation_id}",
+            "action": action,
+            "digest": stable_operation_digest(f"mobile:{installation_id}", action, payload),
+            "gateway_generation": int(owner.store.snapshot()["revision"]),
+            "epoch": 7,
+            "mode": "submit",
+            "payload": payload,
+        }
+
+    owner_frame = await edge.handle_ws_frame(
+        AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1),
+        7,
+        {"type": "mutation", "envelope": envelope("install-owner", "sidebar.update", "req-owner")},
+    )
+    assert owner_frame["ok"] is True
+    assert effects == ["sidebar.update"]
+
+    legacy_settings = await edge.handle_ws_frame(
+        AccessIdentity("install-0001", ("chat.read", "chat.write"), 1e12, 1),
+        7,
+        {"type": "mutation", "envelope": envelope("install-0001", "settings.agent.update", "req-legacy")},
+    )
+    assert legacy_settings["ok"] is False
+    assert legacy_settings["error"] == "owner_required"
+
+    planned = await edge.handle_ws_frame(
+        AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1),
+        7,
+        {"type": "mutation", "envelope": envelope("install-owner", "workspace.grant.upsert", "req-planned")},
+    )
+    assert planned["ok"] is False
+    assert planned["error"] == "operation_not_allowed"
+    assert effects == ["sidebar.update"]

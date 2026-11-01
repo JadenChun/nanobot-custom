@@ -4,6 +4,7 @@ import { fetchWithTimeout } from "@/lib/http";
 import {
   installMobileRuntime,
   resetMobileRuntime,
+  setMobileOwnerCapability,
   type MobileHttpResponse,
   type MobileRuntime,
 } from "@/lib/mobile-runtime";
@@ -137,5 +138,69 @@ describe("mobile HTTP bridge", () => {
 
     const missing = await fetchWithTimeout("/api/sessions/websocket%3Amissing/webui-thread");
     expect(missing.status).toBe(404);
+  });
+});
+
+describe("owner mobile feature bridge", () => {
+  it("uses the owner feature route for full settings when owner is negotiated", async () => {
+    const { runtime, request } = runtimeWith({
+      ["/mobile/v1/feature?path=" + encodeURIComponent("/api/settings")]: {
+        requestId: 1,
+        status: 200,
+        headers: {},
+        bodyBase64: encode({ owners: true }),
+      },
+    });
+    installMobileRuntime(runtime);
+    setMobileOwnerCapability(true);
+
+    const response = await fetchWithTimeout("/api/settings");
+    await expect(response.json()).resolves.toEqual({ owners: true });
+    expect(request).toHaveBeenCalledWith({
+      operation: "mobile_feature",
+      method: "GET",
+      path: "/mobile/v1/feature?path=" + encodeURIComponent("/api/settings"),
+    });
+  });
+
+  it("routes unknown API reads through the feature route and surfaces owner denial", async () => {
+    const providerPath = "/mobile/v1/feature?path=" + encodeURIComponent("/api/settings/provider-models?provider=openai");
+    const deniedPath = "/mobile/v1/feature?path=" + encodeURIComponent("/api/webui/automations");
+    const { runtime } = runtimeWith({
+      [providerPath]: {
+        requestId: 1,
+        status: 200,
+        headers: {},
+        bodyBase64: encode({ models: [] }),
+      },
+      [deniedPath]: {
+        requestId: 2,
+        status: 403,
+        headers: {},
+        bodyBase64: encode({ error: "owner_required" }),
+      },
+    });
+    installMobileRuntime(runtime);
+
+    const models = await fetchWithTimeout("/api/settings/provider-models?provider=openai");
+    await expect(models.json()).resolves.toEqual({ models: [] });
+
+    await expect(fetchWithTimeout("/api/webui/automations")).rejects.toThrow("owner_required");
+  });
+
+  it("keeps the legacy model-only settings read without owner capability", async () => {
+    const { runtime } = runtimeWith({
+      "/mobile/v1/model-settings": {
+        requestId: 1,
+        status: 200,
+        headers: {},
+        bodyBase64: encode({ agent: {} }),
+      },
+    });
+    installMobileRuntime(runtime);
+    setMobileOwnerCapability(false);
+
+    const response = await fetchWithTimeout("/api/settings");
+    await expect(response.json()).resolves.toEqual({ agent: {} });
   });
 });

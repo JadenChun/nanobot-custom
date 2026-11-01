@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from nanobot.remote.auth import TokenService
+from nanobot.remote.delegation import OwnerDelegationService
 from nanobot.remote.ipc import OwnerIPCServer
 from nanobot.remote.pairing import PairingService
 from nanobot.remote.store import RemoteAccessStore
@@ -24,11 +25,13 @@ class RemoteAccessOwner:
         self.store = RemoteAccessStore(state_dir)
         self.tokens = TokenService(self.store)
         self.pairing = PairingService(self.store, self.tokens)
+        self.delegation = OwnerDelegationService(self.store, self.tokens)
         self.server = OwnerIPCServer(
             self.store,
             Path(socket_path) if socket_path else None,
             pairing=self.pairing,
             tokens=self.tokens,
+            delegation=self.delegation,
         )
 
     def start(self) -> None:

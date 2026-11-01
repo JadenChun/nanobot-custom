@@ -767,6 +767,48 @@ class GatewayConfig(Base):
     telegram_busy: TelegramBusyConfig = Field(default_factory=TelegramBusyConfig)
 
 
+class DirectoryBrowserRootConfig(Base):
+    """One explicitly configured label for the remote folder browser."""
+
+    id: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=64)
+    path: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("id")
+    @classmethod
+    def _id(cls, value: str) -> str:
+        import re
+
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", value) is None:
+            raise ValueError("directory root id is invalid")
+        return value
+
+    @field_validator("path")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        if "\x00" in value or not value.strip():
+            raise ValueError("directory root path is invalid")
+        if not Path(value).expanduser().is_absolute():
+            raise ValueError("directory root path must be absolute")
+        return value
+
+
+class DirectoryBrowserConfig(Base):
+    """Bounded folder-browser roots; empty means explicit setup is required."""
+
+    roots: list[DirectoryBrowserRootConfig] = Field(default_factory=list)
+
+    @field_validator("roots")
+    @classmethod
+    def _roots(cls, value: list[DirectoryBrowserRootConfig]) -> list[DirectoryBrowserRootConfig]:
+        if len(value) > 32:
+            raise ValueError("at most 32 directory roots are allowed")
+        ids = [root.id for root in value]
+        if len(set(ids)) != len(ids):
+            raise ValueError("directory root ids must be unique")
+        return value
+
+
 class RemoteAccessConfig(Base):
     """Independent mobile device authority; defaults off and owns no gateway state."""
 
@@ -774,6 +816,7 @@ class RemoteAccessConfig(Base):
     state_dir: str | None = None
     socket_path: str | None = None
     owner_timeout_seconds: float = Field(default=2.0, gt=0, le=10.0, allow_inf_nan=False)
+    directory_browser: DirectoryBrowserConfig = Field(default_factory=DirectoryBrowserConfig)
 
 
 
