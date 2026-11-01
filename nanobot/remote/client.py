@@ -183,6 +183,67 @@ class RemoteAccessClient:
         )
         return bool(result.get("cancelled"))
 
+    def delegate_authorize(
+        self,
+        *,
+        access_token: str,
+        operation: str,
+        request_id: str,
+        digest: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return self._call(
+            "delegate_authorize",
+            {
+                "access_token": access_token,
+                "operation": operation,
+                "request_id": request_id,
+                "digest": digest,
+                "arguments": arguments or {},
+            },
+            role="gateway",
+        )
+
+    def delegate_consume(
+        self,
+        *,
+        handle: str,
+        installation_id: str,
+        operation: str,
+        digest: str,
+    ) -> dict[str, Any]:
+        return self._call(
+            "delegate_consume",
+            {
+                "handle": handle,
+                "installation_id": installation_id,
+                "operation": operation,
+                "digest": digest,
+            },
+            role="gateway",
+        )
+
+    def audit_event(
+        self,
+        *,
+        installation_id: str,
+        operation: str,
+        decision: str,
+        request_id: str | None = None,
+        actor_installation_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._call(
+            "audit_event",
+            {
+                "installation_id": installation_id,
+                "operation": operation,
+                "decision": decision,
+                "request_id": request_id,
+                "actor_installation_id": actor_installation_id,
+            },
+            role="gateway",
+        )
+
     def rotate_refresh(self, installation_id: str, refresh_token: str) -> dict[str, Any]:
         return self._call(
             "rotate_refresh",

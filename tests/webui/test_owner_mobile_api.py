@@ -93,3 +93,52 @@ def test_remote_access_settings_actions_map_to_mutation_paths() -> None:
     assert GatewayHTTPHandler._webui_mutation_path(
         "settings.remote_access.pairing.approve", {}
     ) == "/api/settings/remote-access/pairing/approve"
+
+
+@pytest.mark.asyncio
+async def test_owner_standard_mutation_writes_actor_audit() -> None:
+    from websockets.datastructures import Headers
+    from websockets.http11 import Response
+
+    from nanobot.webui.http_utils import http_json_response
+
+    audits: list[dict[str, object]] = []
+
+    class _Audit:
+        def audit_event(self, **kwargs):
+            audits.append(kwargs)
+            return kwargs
+
+    async def dispatch(_connection, _request, _path):
+        return http_json_response({"ok": True})
+
+    stub = SimpleNamespace(
+        owner_audit_client=_Audit(),
+        authorize_webui_mutation=lambda *_args: None,
+        _webui_mutation_path=GatewayHTTPHandler._webui_mutation_path,
+        _connection_headers=lambda _connection: Headers(),
+        _dispatch_resolved=dispatch,
+    )
+    owner = AccessIdentity(
+        "install-owner",
+        ("chat.read", "chat.write", "owner"),
+        1e12,
+        1,
+    )
+    connection = SimpleNamespace(mobile_identity=owner)
+    response = await GatewayHTTPHandler.dispatch_webui_mutation(
+        stub,
+        connection,
+        "sidebar.update",
+        {"state": {}},
+    )
+    assert isinstance(response, Response)
+    assert response.status_code == 200
+    assert audits == [
+        {
+            "installation_id": "install-owner",
+            "operation": "sidebar.update",
+            "decision": "applied",
+            "actor_installation_id": "install-owner",
+        }
+    ]

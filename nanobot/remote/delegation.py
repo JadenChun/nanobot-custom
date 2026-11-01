@@ -91,11 +91,11 @@ _ALLOWED_ARGUMENTS: dict[DelegatedAdminOperation, frozenset[str]] = {
     DelegatedAdminOperation.ENTRY_UPDATE: frozenset({"entry_id", "settings"}),
     DelegatedAdminOperation.ENTRY_DISABLE: frozenset({"entry_id"}),
     DelegatedAdminOperation.GRANT_PROPOSAL: frozenset({"chat_id", "target", "extent"}),
-    DelegatedAdminOperation.GRANT_COMMIT: frozenset({"proposal_id"}),
-    DelegatedAdminOperation.GRANT_RELEASE: frozenset({"proposal_id"}),
+    DelegatedAdminOperation.GRANT_COMMIT: frozenset({"proposal_id", "payload_digest"}),
+    DelegatedAdminOperation.GRANT_RELEASE: frozenset({"proposal_id", "payload_digest"}),
     DelegatedAdminOperation.FULL_PROPOSAL: frozenset({"chat_id"}),
-    DelegatedAdminOperation.FULL_COMMIT: frozenset({"proposal_id"}),
-    DelegatedAdminOperation.FULL_RELEASE: frozenset({"proposal_id"}),
+    DelegatedAdminOperation.FULL_COMMIT: frozenset({"proposal_id", "payload_digest"}),
+    DelegatedAdminOperation.FULL_RELEASE: frozenset({"proposal_id", "payload_digest"}),
 }
 
 
@@ -205,6 +205,13 @@ def validate_arguments(
         DelegatedAdminOperation.FULL_RELEASE,
     }:
         required_string("proposal_id", max_length=128)
+        payload_digest = payload.get("payload_digest")
+        if not isinstance(payload_digest, str) or not _DIGEST_RE.fullmatch(payload_digest):
+            raise DelegationError(
+                "invalid_arguments",
+                "payload_digest must be a lowercase SHA-256",
+                status=400,
+            )
     elif store is not None and device_installation_id is not None:
         # Argument-free operations still bind the store for symmetry.
         del store, device_installation_id

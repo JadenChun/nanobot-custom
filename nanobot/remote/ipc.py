@@ -362,6 +362,25 @@ class OwnerIPCServer:
                 actor_installation_id=actor,
             )
             return {"ok": True, "result": {"installation_id": device.installation_id, "revoked": device.revoked}}
+        if method == "audit_event":
+            if role not in {"gateway", "admin"}:
+                return {"ok": False, "error": {"code": "denied", "message": "role cannot audit"}}
+            installation_id = _string_param(params, "installation_id")
+            operation = _string_param(params, "operation")
+            decision = _string_param(params, "decision")
+            if installation_id is None or operation is None or decision is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "audit fields are required"}}
+            try:
+                entry = self.store.record_audit(
+                    installation_id=installation_id,
+                    operation=operation,
+                    decision=decision,
+                    request_id=_string_param(params, "request_id"),
+                    actor_installation_id=_string_param(params, "actor_installation_id"),
+                )
+            except StoreError as exc:
+                return {"ok": False, "error": {"code": "unavailable", "message": str(exc)}}
+            return {"ok": True, "result": entry}
         if method in {
             "delegate_authorize",
             "delegate_consume",

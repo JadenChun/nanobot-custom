@@ -503,6 +503,8 @@ class GatewayHTTPHandler:
         self.local_trigger_pending_ids = local_trigger_pending_ids
         self._log = log
         self._runtime_surface = runtime_surface
+        self.owner_permission_adapter: Any | None = None
+        self.owner_audit_client: Any | None = None
 
         from nanobot.webui.settings_api import runtime_capabilities as _rc
         from nanobot.webui.settings_routes import WebUISettingsRouter
@@ -831,6 +833,24 @@ class GatewayHTTPHandler:
             setattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR, expected_binding)
         response = await self._dispatch_resolved(connection, request, path)
         if isinstance(response, Response):
+            identity = getattr(connection, "mobile_identity", None)
+            installation = getattr(identity, "installation_id", None)
+            if (
+                200 <= response.status_code < 300
+                and getattr(self, "owner_audit_client", None) is not None
+                and isinstance(installation, str)
+                and installation
+            ):
+                try:
+                    await asyncio.to_thread(
+                        getattr(self, "owner_audit_client").audit_event,
+                        installation_id=installation,
+                        operation=action,
+                        decision="applied",
+                        actor_installation_id=installation,
+                    )
+                except Exception:
+                    self._log.debug("owner audit write failed", exc_info=True)
             return response
         return _http_error(404, "WebUI mutation action not found")
 
@@ -2017,6 +2037,19 @@ class GatewayHTTPHandler:
         owner_authorized = _typed_owner_identity(connection) is not None
         if not local_ui and not owner_authorized:
             return _http_error(403, "local_ui_required")
+        if owner_authorized:
+            action_name = (
+                "workspace.access.prepare_full"
+                if path == "/api/workspaces/access/prepare-full"
+                else "workspace.access.mode.set"
+            )
+            permission_failure = await self._authorize_owner_permission(
+                connection,
+                action_name,
+                payload,
+            )
+            if permission_failure is not None:
+                return permission_failure
         try:
             if path == "/api/workspaces/access/prepare-full":
                 result = self.workspaces.prepare_full(
@@ -2060,6 +2093,38 @@ class GatewayHTTPHandler:
         except Exception:
             self._log.exception("workspace mode committed but event publication failed")
         return _http_json_response(dict(result))
+
+    async def _authorize_owner_permission(
+        self,
+        connection: Any,
+        action: str,
+        payload: dict[str, Any],
+    ) -> Response | None:
+        identity = _typed_owner_identity(connection)
+        if identity is None:
+            return None
+        adapter = getattr(self, "owner_permission_adapter", None)
+        if adapter is None:
+            return _http_error(503, "owner_permission_unavailable")
+        token = getattr(connection, "mobile_access_token", None)
+        if not isinstance(token, str) or not token:
+            return _http_error(401, "missing_access")
+        from nanobot.remote.permissions import PermissionAdapterError
+
+        try:
+            await asyncio.to_thread(
+                adapter.authorize,
+                access_token=token,
+                installation_id=identity.installation_id,
+                action=action,
+                payload=payload,
+            )
+        except PermissionAdapterError as exc:
+            return _http_error(exc.status, exc.code)
+        except Exception:
+            self._log.exception("owner permission adapter failed")
+            return _http_error(503, "owner_permission_unavailable")
+        return None
 
     def _owner_grant_payload(
         self,
@@ -2199,6 +2264,13 @@ class GatewayHTTPHandler:
         owner_identity = _typed_owner_identity(connection)
         owner_authorized = owner_identity is not None
         if path == "/api/workspaces/grants/upsert" and owner_authorized:
+            permission_failure = await self._authorize_owner_permission(
+                connection,
+                "workspace.grant.upsert",
+                payload,
+            )
+            if permission_failure is not None:
+                return permission_failure
             try:
                 payload = self._owner_grant_payload(request, payload)
             except Exception as exc:

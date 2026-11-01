@@ -269,13 +269,13 @@ export function RemoteFolderBrowserDialog({
                 value={manualPath}
                 onChange={(event) => setManualPath(event.target.value)}
                 className="min-w-0 flex-1 rounded-md border bg-transparent px-2 py-1.5 text-xs"
-                placeholder="relative/path"
+                placeholder="relative/path or /absolute/path"
               />
               <Button
                 type="button"
                 variant="outline"
                 disabled={loading}
-                onClick={() => void load(rootId, manualPath.replace(/^\/+|\/+$/g, ""))}
+                onClick={() => void load(rootId, manualPath.trim())}
               >
                 {t("workspace.remoteBrowser.open", { defaultValue: "Open" })}
               </Button>
