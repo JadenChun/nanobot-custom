@@ -434,6 +434,16 @@ class WebSocketChannel(BaseChannel):
     async def revalidate_mobile_connection(self, connection: ServerConnection) -> bool:
         return await self.gateway.endpoint.revalidate_mobile_connection(connection)
 
+    async def _revalidate_raw_mobile_frame(self, connection: ServerConnection) -> bool:
+        identity = getattr(connection, "mobile_identity", None)
+        if identity is None:
+            return True
+        if not isinstance(getattr(identity, "installation_id", None), str):
+            return True
+        if not isinstance(getattr(identity, "scopes", None), (tuple, list, set, frozenset)):
+            return True
+        return await self.revalidate_mobile_connection(connection)
+
     async def webui_send_event(
         self,
         connection: ServerConnection,
@@ -857,6 +867,13 @@ class WebSocketChannel(BaseChannel):
                 content = _parse_inbound_payload(raw)
                 if content is None:
                     continue
+                if not await self._revalidate_raw_mobile_frame(connection):
+                    await self._send_event(connection, "error", detail="access_expired")
+                    try:
+                        await connection.close(1008, "access expired")
+                    except Exception:
+                        pass
+                    break
                 # WebSocket already authenticates at handshake time (token),
                 # so pairing is not applicable. Treat as non-DM to avoid
                 # sending pairing codes to an already-authenticated client.

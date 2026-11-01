@@ -80,7 +80,7 @@ class WorkspaceDirectoryBrowser:
 
     def roots(self) -> dict[str, Any]:
         roots, policy_revision = self._roots()
-        return {
+        payload = {
             "roots": [
                 {
                     "id": root.id,
@@ -93,6 +93,8 @@ class WorkspaceDirectoryBrowser:
             "policy_revision": policy_revision,
             "empty": not roots,
         }
+        self._check_size(payload)
+        return payload
 
     def list(
         self,
@@ -321,6 +323,8 @@ class WorkspaceDirectoryBrowser:
                 relative = candidate.relative_to(root.path)
             except ValueError as exc:
                 raise DirectoryBrowserError(403, "outside_root") from exc
+            if len(relative.parts) > MAX_DEPTH:
+                raise DirectoryBrowserError(400, "path_too_deep")
             return PurePosixPath(*relative.parts)
         return self._normalize_relative(relative_path)
 

@@ -388,3 +388,29 @@ def test_resolve_and_cursor_stores_are_bounded(tmp_path) -> None:
             directory_snapshot="snapshot",
         )
     assert len(service._cursors) <= 256
+
+
+def test_roots_response_is_bounded(tmp_path) -> None:
+    deep = tmp_path
+    for index in range(10):
+        deep = deep / ("d" * 200 + str(index))
+        deep.mkdir()
+    path = str(deep)
+    roots = [
+        DirectoryBrowserRootConfig(id=f"r{index}", label="x" * 64, path=path)
+        for index in range(32)
+    ]
+    service = WorkspaceDirectoryBrowser(lambda: DirectoryBrowserConfig(roots=roots))
+    with pytest.raises(DirectoryBrowserError) as exc:
+        service.roots()
+    assert exc.value.code == "response_too_large"
+
+
+def test_absolute_path_depth_is_bounded(tmp_path) -> None:
+    root = tmp_path / "projects"
+    root.mkdir()
+    service = browser(root)
+    deep = root.joinpath(*(["a"] * 65))
+    with pytest.raises(DirectoryBrowserError) as exc:
+        service.list(root_id="projects", relative_path=str(deep))
+    assert exc.value.code == "path_too_deep"

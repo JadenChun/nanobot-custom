@@ -415,3 +415,22 @@ def test_audit_records_acting_owner_for_device_revoke(tmp_path) -> None:
     assert entry["installation_id"] == "install-legacy"
     assert entry["actor_installation_id"] == "install-owner"
     assert entry["operation"] == "device.revoke"
+
+
+def test_ipc_revoke_audits_acting_device(tmp_path) -> None:
+    from nanobot.remote.client import RemoteAccessClient
+    from nanobot.remote.owner import RemoteAccessOwner
+
+    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner.start()
+    owner.store.set_enabled(True)
+    try:
+        paired = owner.tokens.issue("install-target", ("chat.read", "chat.write"))
+        client = RemoteAccessClient(owner.socket_path, admin_token=owner.store.admin_token())
+        client.revoke("install-target", actor_installation_id="install-owner")
+        entry = owner.store.snapshot()["audit"][-1]
+        assert entry["installation_id"] == "install-target"
+        assert entry["actor_installation_id"] == "install-owner"
+        assert paired.scopes
+    finally:
+        owner.stop()

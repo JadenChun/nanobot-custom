@@ -171,6 +171,7 @@ def _mobile_denial_message(connection: Any, action: str) -> str:
     """Name the documented local-only exception instead of a generic denial."""
     if _typed_mobile_identity(connection) is not None and (
         action.startswith("settings.remote_access.")
+        or action == "workspace.pick_folder"
         or action in {"settings.channel.configure", "settings.channel.connect.start",
                       "settings.channel.connect.poll", "settings.channel.connect.cancel"}
     ):

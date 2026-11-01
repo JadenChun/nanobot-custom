@@ -350,6 +350,7 @@ class OwnerIPCServer:
             installation_id = _string_param(params, "installation_id")
             if installation_id is None:
                 return {"ok": False, "error": {"code": "bad_request", "message": "installation_id is required"}}
+            actor = _string_param(params, "actor_installation_id")
             try:
                 device = self.store.revoke_device(installation_id)
             except StoreError as exc:
@@ -358,6 +359,7 @@ class OwnerIPCServer:
                 installation_id=device.installation_id,
                 operation="device.revoke",
                 decision="applied",
+                actor_installation_id=actor,
             )
             return {"ok": True, "result": {"installation_id": device.installation_id, "revoked": device.revoked}}
         if method in {

@@ -59,8 +59,20 @@ class RemoteAccessClient:
             role="gateway",
         )
 
-    def revoke(self, installation_id: str) -> dict[str, Any]:
-        return self._call("revoke", {"installation_id": installation_id}, role="gateway")
+    def revoke(
+        self,
+        installation_id: str,
+        *,
+        actor_installation_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._call(
+            "revoke",
+            {
+                "installation_id": installation_id,
+                "actor_installation_id": actor_installation_id,
+            },
+            role="gateway",
+        )
 
     def list_devices(self) -> list[dict[str, Any]]:
         return self._call("list_devices", {}, role="admin", require_admin=True)

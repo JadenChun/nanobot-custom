@@ -283,7 +283,16 @@ class MobileGatewayEdge:
             if path == "/mobile/v1/read":
                 if self.read_handler is None:
                     return http_json_response({"error": "read_unavailable"}, status=503)
-                return http_json_response(await self.read_handler(identity, query))
+                try:
+                    payload = await asyncio.wait_for(
+                        self.read_handler(identity, query),
+                        timeout=self._timeout("sessions.list"),
+                    )
+                except TimeoutError:
+                    return http_json_response({"error": "read_timeout"}, status=504)
+                if not self._fits(payload, "sessions.list"):
+                    return http_json_response({"error": "response_too_large"}, status=413)
+                return http_json_response(payload)
             if path == "/mobile/v1/model-settings":
                 if self.model_settings_handler is None:
                     return http_json_response({"error": "model_settings_unavailable"}, status=503)
@@ -305,7 +314,13 @@ class MobileGatewayEdge:
                 spec = None
             if spec is None or not spec.enabled:
                 return http_json_response({"error": "path_not_allowed"}, status=400)
-            status, payload = await self.feature_handler(identity, raw_path)
+            try:
+                status, payload = await asyncio.wait_for(
+                    self.feature_handler(identity, raw_path),
+                    timeout=spec.timeout_s or 30,
+                )
+            except TimeoutError:
+                return http_json_response({"error": "feature_timeout"}, status=504)
             if spec.max_response_bytes is not None:
                 encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 if len(encoded) > spec.max_response_bytes:
@@ -331,7 +346,15 @@ class MobileGatewayEdge:
             if self.thread_handler is None:
                 return http_json_response({"error": "thread_unavailable"}, status=503)
             key = unquote(thread_match.group(1))
-            status, payload = await self.thread_handler(identity, key, query)
+            try:
+                status, payload = await asyncio.wait_for(
+                    self.thread_handler(identity, key, query),
+                    timeout=self._timeout("sessions.thread"),
+                )
+            except TimeoutError:
+                return http_json_response({"error": "thread_timeout"}, status=504)
+            if not self._fits(payload, "sessions.thread"):
+                return http_json_response({"error": "response_too_large"}, status=413)
             return http_json_response(payload, status=status)
 
         media_match = _MEDIA_RE.match(path)
@@ -517,6 +540,19 @@ class MobileGatewayEdge:
             await self.validator.invalidate(identity.installation_id)
             return {"ok": True, "result": result}
         return {"ok": False, "error": "unknown_frame"}
+
+    @staticmethod
+    def _timeout(operation: str) -> float:
+        spec = load_registry().by_id(operation)
+        return float(spec.timeout_s or 30) if spec else 30.0
+
+    @staticmethod
+    def _fits(payload: Any, operation: str) -> bool:
+        spec = load_registry().by_id(operation)
+        if spec is None or spec.max_response_bytes is None:
+            return True
+        encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        return len(encoded) <= spec.max_response_bytes
 
     def _attachment_limit(self) -> int:
         return default_limits()["max_attachment_bytes"]

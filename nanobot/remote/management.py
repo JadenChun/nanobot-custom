@@ -23,8 +23,16 @@ class RemoteAccessManager:
     def devices(self) -> list[dict[str, Any]]:
         return self.client.list_devices()
 
-    def revoke(self, installation_id: str) -> dict[str, Any]:
-        return self.client.revoke(installation_id)
+    def revoke(
+        self,
+        installation_id: str,
+        *,
+        actor_installation_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.client.revoke(
+            installation_id,
+            actor_installation_id=actor_installation_id,
+        )
 
     def create_pairing(
         self,

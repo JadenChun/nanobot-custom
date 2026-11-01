@@ -6486,3 +6486,31 @@ def test_handle_webui_thread_get_does_not_backfill_hidden_subagent_result(
     body = json.loads(resp.body.decode())
     assert [message["role"] for message in body["messages"]] == ["assistant"]
     assert [message["content"] for message in body["messages"]] == ["subagent summary"]
+
+
+@pytest.mark.asyncio
+async def test_raw_mobile_frames_revalidate_before_plain_text() -> None:
+    from types import SimpleNamespace
+
+    from nanobot.channels.websocket.runtime import WebSocketChannel
+    from nanobot.remote.edge import AccessIdentity
+
+    calls: list[str] = []
+
+    async def revalidate(_connection):
+        calls.append("checked")
+        return False
+
+    channel = object.__new__(WebSocketChannel)
+    channel.gateway = SimpleNamespace(
+        endpoint=SimpleNamespace(revalidate_mobile_connection=revalidate)
+    )
+    identity = AccessIdentity("install-expired", ("chat.read", "owner"), 0, 1)
+    assert await channel._revalidate_raw_mobile_frame(
+        SimpleNamespace(mobile_identity=identity)
+    ) is False
+    assert calls == ["checked"]
+    # Loose mocks are not mobile identities and do not trigger owner IPC.
+    assert await channel._revalidate_raw_mobile_frame(
+        SimpleNamespace(mobile_identity=object())
+    ) is True
