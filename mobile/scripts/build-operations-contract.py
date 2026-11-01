@@ -1,7 +1,8 @@
 """Build the shared bounded operation registry from the M36 parity inventory.
 
 Writes both the authoritative server contract and the mobile copy, then a test
-asserts they stay identical. Planned M37 operations are declared but disabled.
+asserts they stay identical. The formerly planned M37 workspace operations are
+now enabled; only explicit local-only exceptions remain disabled.
 """
 from __future__ import annotations
 
@@ -12,13 +13,6 @@ ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = ROOT / "mobile/contracts/desktop-parity.json"
 SERVER_OUT = ROOT / "nanobot/remote/contracts/operations-v1.json"
 MOBILE_OUT = ROOT / "mobile/contracts/operations-v1.json"
-
-PLANNED_PREFIXES = (
-    "workspace.grant.",
-    "workspace.access.",
-    "workspace.folder.",
-    "workspace.repository.",
-)
 
 
 def kind_for(api: dict) -> str:
@@ -41,14 +35,6 @@ def main() -> int:
                 continue
             api = row["api"]
             kind = kind_for(api)
-            planned = (
-                row["id"].startswith(PLANNED_PREFIXES)
-                and row["id"] not in {
-                    "workspace.grant.upsert",
-                    "workspace.access.prepare_full",
-                    "workspace.access.mode.set",
-                }
-            )
             bounds = native.get("bounds", {})
             operations.append(
                 {
@@ -61,8 +47,8 @@ def main() -> int:
                     "action": api.get("mutation_action"),
                     "ws_type": api.get("ws_type"),
                     "scope": "owner",
-                    "enabled": not planned,
-                    "planned_task": "M37" if planned else None,
+                    "enabled": True,
+                    "planned_task": None,
                     "replay": native.get("replay", "none"),
                     "bounds": {
                         "max_request_bytes": bounds.get("max_request_bytes"),

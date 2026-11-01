@@ -33,7 +33,7 @@ def test_owner_mobile_allows_enabled_registry_actions_only() -> None:
     assert _mobile_mutation_allowed(connection, "automation.enable")
     assert _mobile_mutation_allowed(connection, "skill.install")
     assert _mobile_mutation_allowed(connection, "workspace.grant.upsert")
-    assert not _mobile_mutation_allowed(connection, "workspace.grant.revoke")
+    assert _mobile_mutation_allowed(connection, "workspace.grant.revoke")
     assert not _mobile_mutation_allowed(connection, "settings.remote_access.enable")
     assert not _mobile_mutation_allowed(connection, "unregistered.action")
 
@@ -43,7 +43,7 @@ def test_webui_connection_without_mobile_identity_is_not_mobile_allowed() -> Non
 
 
 @pytest.mark.asyncio
-async def test_mobile_mutation_payload_denies_non_owner_and_planned() -> None:
+async def test_mobile_mutation_payload_denies_non_owner_and_local_only() -> None:
     stub = SimpleNamespace()
     legacy = AccessIdentity("install-legacy", ("chat.read", "chat.write"), 1e12, 1)
     status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
@@ -54,7 +54,7 @@ async def test_mobile_mutation_payload_denies_non_owner_and_planned() -> None:
 
     owner = AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1)
     status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
-        stub, owner, "workspace.grant.revoke", {}
+        stub, owner, "settings.remote_access.enable", {}
     )
     assert status == 403
     assert payload["error"] == "operation_not_allowed"
