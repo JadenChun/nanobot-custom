@@ -27,20 +27,28 @@ html.mobile-runtime body {
   inset: 0;
   z-index: 2147483000;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  padding: calc(1rem + env(safe-area-inset-top, 0px)) 1rem calc(1rem + env(safe-area-inset-bottom, 0px));
+  padding: calc(0.75rem + env(safe-area-inset-top, 0px)) 0.75rem calc(0.75rem + env(safe-area-inset-bottom, 0px));
   background: hsl(var(--background, 0 0% 19%));
   color: hsl(var(--foreground, 0 0% 98%));
   overflow-y: auto;
 }
 
+.mobile-pairing *,
+.mobile-pairing *::before,
+.mobile-pairing *::after {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
 .mobile-pairing-card {
-  width: min(32rem, 100%);
-  margin-block: auto;
-  display: grid;
-  gap: 0.9rem;
-  padding: 1.25rem;
+  width: min(26rem, 100%);
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1rem;
   border: 1px solid hsl(var(--border, 240 4% 16%));
   border-radius: 1rem;
   background: hsl(var(--card, 240 5% 8%));
@@ -48,85 +56,206 @@ html.mobile-runtime body {
 
 .mobile-pairing-title {
   margin: 0;
-  font-size: 1.35rem;
+  font-size: 1.25rem;
   font-weight: 600;
+  line-height: 1.25;
 }
 
 .mobile-pairing-copy {
   margin: 0;
   color: hsl(var(--muted-foreground, 240 5% 65%));
-  font-size: 0.875rem;
-  line-height: 1.45;
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.mobile-pairing-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid hsl(var(--border, 240 4% 16%));
+  border-radius: 0.6rem;
+  background: hsl(var(--muted, 240 4% 12%) / 0.55);
+}
+
+.mobile-pairing-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.mobile-pairing-label {
+  color: hsl(var(--muted-foreground, 240 5% 65%));
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.mobile-pairing-pill {
+  max-width: 65%;
+  overflow: hidden;
+  padding: 0.16rem 0.5rem;
+  border-radius: 999px;
+  background: hsl(var(--muted, 240 4% 14%));
+  color: hsl(var(--foreground, 0 0% 98%));
+  font-size: 0.75rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-pairing-pill.is-ok {
+  background: hsl(152 40% 18%);
+  color: hsl(152 70% 78%);
+}
+
+.mobile-pairing-pill.is-warn {
+  background: hsl(38 45% 20%);
+  color: hsl(38 90% 78%);
+}
+
+.mobile-pairing-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.mobile-pairing-input-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.mobile-pairing-input {
+  flex: 1 1 auto;
+  height: 2.6rem;
+  padding: 0 0.6rem;
+  border: 1px solid hsl(var(--border, 240 4% 16%));
+  border-radius: 0.5rem;
+  background: hsl(var(--background, 0 0% 19%));
+  color: inherit;
+  font-size: 16px;
+}
+
+.mobile-pairing-primary {
+  flex: 0 0 auto;
+  min-height: 2.6rem;
+  padding: 0 0.9rem;
+  border: 1px solid hsl(var(--primary, 0 0% 98%));
+  border-radius: 0.5rem;
+  background: hsl(var(--primary, 0 0% 98%));
+  color: hsl(var(--primary-foreground, 0 0% 9%));
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.mobile-pairing-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: hsl(var(--muted-foreground, 240 5% 65%));
+  font-size: 0.7rem;
+}
+
+.mobile-pairing-divider::before,
+.mobile-pairing-divider::after {
+  flex: 1;
+  height: 1px;
+  background: hsl(var(--border, 240 4% 16%));
+  content: "";
+}
+
+.mobile-pairing-scan {
+  width: 100%;
+  min-height: 2.6rem;
+  border: 1px solid hsl(var(--border, 240 4% 16%));
+  border-radius: 0.5rem;
+  background: hsl(var(--secondary, 240 4% 15%));
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.mobile-pairing-code-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid hsl(var(--border, 240 4% 16%));
+  border-radius: 0.6rem;
+  background: hsl(var(--muted, 240 4% 12%));
+}
+
+.mobile-pairing-code-block[hidden] {
+  display: none;
+}
+
+.mobile-pairing-code {
+  padding: 0.1rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.9rem;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-align: center;
 }
 
 .mobile-pairing-status {
   margin: 0;
-  font-size: 0.925rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
 }
 
 .mobile-pairing-status.is-error {
   color: hsl(var(--destructive, 0 84% 60%));
 }
 
-.mobile-pairing-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.6rem;
-  min-width: 0;
-}
-
-.mobile-pairing-label {
-  flex: 0 0 auto;
-  color: hsl(var(--muted-foreground, 240 5% 65%));
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.mobile-pairing-value {
-  display: block;
-  min-width: 0;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid hsl(var(--border, 240 4% 16%));
-  border-radius: 0.45rem;
-  background: hsl(var(--muted, 240 4% 12%));
-  font-size: 0.8rem;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-  white-space: normal;
-  word-break: break-word;
-}
-
-.mobile-pairing-code {
-  margin-top: 0.25rem;
-  padding: 0.9rem;
-  border: 1px solid hsl(var(--border, 240 4% 16%));
-  border-radius: 0.75rem;
-  background: hsl(var(--muted, 240 4% 12%));
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 2rem;
-  font-weight: 600;
-  letter-spacing: 0.35em;
-  text-align: center;
-}
-
 .mobile-pairing-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
+  gap: 0.4rem;
 }
 
 .mobile-pairing-button {
-  min-height: 2.5rem;
-  padding: 0.5rem 0.85rem;
+  min-height: 2.4rem;
+  padding: 0.4rem 0.75rem;
   border: 1px solid hsl(var(--border, 240 4% 16%));
-  border-radius: 0.55rem;
+  border-radius: 0.5rem;
   background: hsl(var(--secondary, 240 4% 15%));
   color: inherit;
-  font-size: 0.85rem;
+  font: inherit;
+  font-size: 0.8rem;
 }
 
 .mobile-pairing-button[hidden] {
   display: none;
+}
+
+.mobile-pairing-details {
+  color: hsl(var(--muted-foreground, 240 5% 65%));
+  font-size: 0.75rem;
+}
+
+.mobile-pairing-details summary {
+  width: fit-content;
+  cursor: pointer;
+  padding: 0.15rem 0;
+}
+
+.mobile-pairing-installation {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.mobile-pairing-value {
+  flex: 1 1 auto;
+  padding: 0.25rem 0.4rem;
+  border-radius: 0.35rem;
+  background: hsl(var(--muted, 240 4% 12%));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
 }

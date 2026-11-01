@@ -84,23 +84,79 @@
     var card = textElement("div", "mobile-pairing-card");
     panel.appendChild(card);
 
-    var title = textElement("h1", "mobile-pairing-title", "Pair this phone");
+    var title = textElement("h1", "mobile-pairing-title", "Connect this phone");
     title.id = "mobile-pairing-title";
     card.appendChild(title);
-    card.appendChild(textElement("p", "mobile-pairing-copy", "This phone is not paired yet. Open the pairing link created in Nanobot Remote Access settings."));
+    card.appendChild(textElement("p", "mobile-pairing-copy", "Pair with the Nanobot desktop app."));
 
-    var status = textElement("p", "mobile-pairing-status", "Waiting for a pairing link.");
+    var statusList = textElement("div", "mobile-pairing-status-list");
+    var serverRow = textElement("div", "mobile-pairing-status-row");
+    serverRow.appendChild(textElement("span", "mobile-pairing-label", "Server"));
+    var serverPill = textElement("span", "mobile-pairing-pill", "Not selected");
+    serverRow.appendChild(serverPill);
+    statusList.appendChild(serverRow);
+    var nodeRow = textElement("div", "mobile-pairing-status-row");
+    nodeRow.appendChild(textElement("span", "mobile-pairing-label", "Tailscale"));
+    var nodePill = textElement("span", "mobile-pairing-pill", "Connects when pairing");
+    nodeRow.appendChild(nodePill);
+    statusList.appendChild(nodeRow);
+    card.appendChild(statusList);
+
+    var form = textElement("form", "mobile-pairing-form");
+    var inputLabel = textElement("label", "mobile-pairing-label", "Pairing code or link");
+    inputLabel.setAttribute("for", "mobile-pairing-input");
+    form.appendChild(inputLabel);
+    var inputRow = textElement("div", "mobile-pairing-input-row");
+    var input = document.createElement("input");
+    input.id = "mobile-pairing-input";
+    input.className = "mobile-pairing-input";
+    input.type = "text";
+    input.autocomplete = "off";
+    input.autocapitalize = "off";
+    input.spellcheck = false;
+    input.placeholder = "Paste the pairing link";
+    inputRow.appendChild(input);
+    var pairButton = textElement("button", "mobile-pairing-primary", "Pair");
+    pairButton.type = "submit";
+    inputRow.appendChild(pairButton);
+    form.appendChild(inputRow);
+    card.appendChild(form);
+
+    var divider = textElement("div", "mobile-pairing-divider");
+    divider.appendChild(textElement("span", "", "or"));
+    card.appendChild(divider);
+
+    var scan = textElement("button", "mobile-pairing-scan", "Scan QR code");
+    scan.type = "button";
+    card.appendChild(scan);
+
+    var codeBlock = textElement("div", "mobile-pairing-code-block");
+    codeBlock.hidden = true;
+    codeBlock.appendChild(textElement("p", "mobile-pairing-copy", "Confirm this code on the desktop, then approve the phone."));
+    var code = textElement("div", "mobile-pairing-code", "------");
+    code.setAttribute("aria-label", "Comparison code");
+    codeBlock.appendChild(code);
+    card.appendChild(codeBlock);
+
+    var status = textElement("p", "mobile-pairing-status", "Enter the pairing link shown on the desktop or scan its QR code.");
     status.setAttribute("aria-live", "polite");
     card.appendChild(status);
 
-    var originRow = textElement("div", "mobile-pairing-row");
-    originRow.appendChild(textElement("span", "mobile-pairing-label", "Server"));
-    var originValue = textElement("code", "mobile-pairing-value", "not selected");
-    originRow.appendChild(originValue);
-    card.appendChild(originRow);
+    var actions = textElement("div", "mobile-pairing-actions");
+    var login = textElement("button", "mobile-pairing-button", "Open Tailscale login");
+    login.type = "button";
+    login.hidden = true;
+    actions.appendChild(login);
+    var retry = textElement("button", "mobile-pairing-button", "Retry");
+    retry.type = "button";
+    retry.hidden = true;
+    actions.appendChild(retry);
+    card.appendChild(actions);
 
-    var installationRow = textElement("div", "mobile-pairing-row");
-    installationRow.appendChild(textElement("span", "mobile-pairing-label", "Installation ID"));
+    var details = document.createElement("details");
+    details.className = "mobile-pairing-details";
+    details.appendChild(textElement("summary", "", "Device details"));
+    var installationRow = textElement("div", "mobile-pairing-installation");
     var installationValue = textElement("code", "mobile-pairing-value", "loading");
     installationRow.appendChild(installationValue);
     var copyInstallation = textElement("button", "mobile-pairing-button", "Copy");
@@ -109,52 +165,20 @@
       copyText(installationValue.textContent || "", copyInstallation);
     });
     installationRow.appendChild(copyInstallation);
-    card.appendChild(installationRow);
-
-    var code = textElement("div", "mobile-pairing-code", "------");
-    code.setAttribute("aria-label", "Comparison code");
-    card.appendChild(code);
-    var codeHint = textElement("p", "mobile-pairing-copy", "Compare this code with the server, then approve the phone in Remote Access settings.");
-    card.appendChild(codeHint);
-
-    var actions = textElement("div", "mobile-pairing-actions");
-    var scan = textElement("button", "mobile-pairing-button", "Scan QR code");
-    scan.type = "button";
-    scan.addEventListener("click", function () {
-      if (typeof plugin.scanPairingQr !== "function") {
-        status.textContent = "QR scanning is unavailable in this build.";
-        return;
-      }
-      status.classList.remove("is-error");
-      status.textContent = "Opening QR scanner...";
-      void plugin.scanPairingQr().catch(function (error) {
-        status.textContent = String(error && error.message ? error.message : error);
-      });
-    });
-    actions.appendChild(scan);
-    var login = textElement("button", "mobile-pairing-button", "Open Tailscale login");
-    login.type = "button";
-    login.hidden = true;
-    login.addEventListener("click", function () {
-      void plugin.openLogin().catch(function (error) {
-        status.textContent = String(error && error.message ? error.message : error);
-      });
-    });
-    actions.appendChild(login);
-    var retry = textElement("button", "mobile-pairing-button", "Retry");
-    retry.type = "button";
-    retry.hidden = true;
-    actions.appendChild(retry);
-    card.appendChild(actions);
+    details.appendChild(installationRow);
+    card.appendChild(details);
 
     document.body.appendChild(panel);
     return {
       panel: panel,
       status: status,
-      origin: originValue,
+      server: serverPill,
+      node: nodePill,
       installation: installationValue,
+      input: input,
+      form: form,
       code: code,
-      codeHint: codeHint,
+      codeBlock: codeBlock,
       login: login,
       retry: retry
     };
@@ -172,6 +196,51 @@
     var pollTimer = null;
     var stopped = false;
     var lastLink = null;
+    var identityRef = null;
+
+    function hostLabel(origin) {
+      try {
+        return new URL(origin).host;
+      } catch (_) {
+        return origin || "Not selected";
+      }
+    }
+
+    function setPill(element, text, tone) {
+      element.textContent = text;
+      element.classList.remove("is-ok", "is-warn");
+      if (tone) element.classList.add(tone);
+    }
+
+    function parseLink(value) {
+      var url;
+      try {
+        url = new URL(value);
+      } catch (_) {
+        return null;
+      }
+      if (url.protocol !== "nanobot:" || url.host !== "pair") return null;
+      var origin = url.searchParams.get("origin") || "";
+      var installationId = url.searchParams.get("installation") || "";
+      var challenge = url.searchParams.get("challenge") || "";
+      if (!origin || !installationId || !challenge) return null;
+      return { origin: origin, installationId: installationId, challenge: challenge };
+    }
+
+    function linkFromInput(raw) {
+      var value = String(raw || "").trim();
+      if (!value) return null;
+      if (value.indexOf("nanobot://") === 0) return value;
+      if (value.indexOf("origin=") >= 0) return "nanobot://pair?" + value.replace(/^\?/, "");
+      if (identityRef && identityRef.origin && /^[A-Za-z0-9._-]{16,256}$/.test(value)) {
+        return "nanobot://pair?" + [
+          "origin=" + encodeURIComponent(identityRef.origin),
+          "installation=" + encodeURIComponent(identityRef.installationId),
+          "challenge=" + encodeURIComponent(value)
+        ].join("&");
+      }
+      return null;
+    }
 
     function stopTimers() {
       if (pairingLinkTimer) clearInterval(pairingLinkTimer);
@@ -201,6 +270,7 @@
       try {
         var result = await plugin.pairPoll({ pairingId: pairingId });
         if (result && result.status === "approved") {
+          setPill(ui.node, "Connected", "is-ok");
           ui.status.textContent = "Paired. Loading Nanobot...";
           finish();
           return;
@@ -208,13 +278,14 @@
         if (result && result.comparison_code) {
           ui.code.textContent = result.comparison_code;
         }
-        ui.status.textContent = "Waiting for approval on the server.";
+        ui.status.textContent = "Waiting for approval on the desktop.";
         ui.status.classList.remove("is-error");
         pollTimer = setTimeout(function () { void poll(pairingId); }, 2000);
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
-          ui.status.textContent = "Tailscale login is required before pairing can continue.";
+          setPill(ui.node, "Login required", "is-warn");
+          ui.status.textContent = "Sign in to Tailscale, then retry.";
           ui.login.hidden = false;
           ui.retry.hidden = false;
           return;
@@ -229,23 +300,30 @@
       ui.retry.hidden = true;
       ui.login.hidden = true;
       ui.status.classList.remove("is-error");
-      ui.origin.textContent = link.origin || "unknown";
+      setPill(ui.server, hostLabel(link.origin), "is-ok");
+      ui.server.title = link.origin || "";
+      setPill(ui.node, "Connecting", "is-warn");
       ui.installation.textContent = link.installationId || "unknown";
+      ui.codeBlock.hidden = false;
+      ui.code.textContent = "------";
       ui.status.textContent = "Connecting to the server...";
       try {
         var collected = await plugin.pairStart({
           origin: link.origin,
           installationId: link.installationId,
+          challenge: link.challenge,
           label: "android"
         });
         ui.installation.textContent = collected.installationId || link.installationId;
         ui.code.textContent = collected.comparison_code || "------";
-        ui.status.textContent = "Waiting for approval on the server.";
+        setPill(ui.node, "Connected", "is-ok");
+        ui.status.textContent = "Confirm the code on the desktop, then approve.";
         void poll(collected.pairing_id);
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
-          ui.status.textContent = "Tailscale login is required before pairing can continue.";
+          setPill(ui.node, "Login required", "is-warn");
+          ui.status.textContent = "Sign in to Tailscale, then retry.";
           ui.login.hidden = false;
           ui.retry.hidden = false;
           return;
@@ -268,23 +346,43 @@
       }, 1000);
     }
 
+    ui.form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var link = linkFromInput(ui.input.value);
+      var parsed = link ? parseLink(link) : null;
+      if (!parsed) {
+        ui.status.textContent = "Paste the full pairing link shown on the desktop, or scan its QR code.";
+        ui.status.classList.add("is-error");
+        return;
+      }
+      void begin(parsed);
+    });
+
     ui.retry.addEventListener("click", function () {
       ui.retry.hidden = true;
       ui.login.hidden = true;
       ui.status.classList.remove("is-error");
-      ui.status.textContent = "Waiting for a pairing link.";
+      setPill(ui.node, "Connecting", "is-warn");
       if (lastLink) {
         void begin(lastLink);
       } else {
+        ui.status.textContent = "Enter the pairing link or scan the QR code.";
         watchForLink();
       }
+    });
+
+    ui.login.addEventListener("click", function () {
+      void plugin.openLogin().catch(function (error) {
+        ui.status.textContent = String(error && error.message ? error.message : error);
+      });
     });
 
     void (async function () {
       try {
         var identity = await plugin.pairingIdentity();
+        identityRef = identity;
         ui.installation.textContent = identity.installationId;
-        if (identity.origin) ui.origin.textContent = identity.origin;
+        if (identity.origin) setPill(ui.server, hostLabel(identity.origin), "is-ok");
         console.log("NANOBOT_MOBILE_PAIRING_ID " + identity.installationId);
         console.log("NANOBOT_PAIRING_PANELS " + document.querySelectorAll(".mobile-pairing").length);
       } catch (error) {
