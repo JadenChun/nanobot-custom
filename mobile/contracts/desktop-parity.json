@@ -6001,13 +6001,13 @@
           },
           "status": {
             "desktop_implementation": "present",
-            "mobile_implementation": "absent",
+            "mobile_implementation": "partial",
             "evidence": [
               "desktop handler only"
             ]
           },
           "exception": null,
-          "notes": ""
+          "notes": "Owner-authorized through the fresh resolve-token commit path; physical QA pending."
         },
         {
           "id": "workspace.access.prepare_full",
@@ -6061,13 +6061,13 @@
           },
           "status": {
             "desktop_implementation": "present",
-            "mobile_implementation": "absent",
+            "mobile_implementation": "partial",
             "evidence": [
               "desktop handler only"
             ]
           },
           "exception": null,
-          "notes": ""
+          "notes": "Owner-authorized through the fresh resolve-token commit path; physical QA pending."
         },
         {
           "id": "workspace.folder.edit",
@@ -7485,11 +7485,11 @@
     },
     "M32": {
       "state": "present",
-      "reuse": "owner settings/apps/skills/automations navigation, server folder browser, remote-access local-only gating implemented; physical QA pending"
+      "reuse": "owner settings/apps/skills/automations, server folder browser (pagination/manual path), Full/mode controls and remote-access WS mutations implemented; physical QA pending"
     },
     "M33": {
-      "state": "present",
-      "reuse": "device revoke confirmation, bounded sanitized owner audit, redaction/TTL tests implemented"
+      "state": "partial",
+      "reuse": "revoke confirmation, actor-bound owner audit and redaction/TTL tests implemented; standard-mutation audit and fail-closed audit retention remain"
     },
     "M34": {
       "state": "pending",
@@ -7516,8 +7516,9 @@
     "inventory_completeness": "Every desktop mutation/read/WS action inspected is represented; planned M37 rows marked implementation=planned.",
     "known_gaps": [
       "M32/M33 phone-width and physical-device verification remains M21/M34.",
-      "Full-mode preparation and folder access-recovery owner commits remain disabled in the registry pending the permission adapter handoff.",
-      "M35 isolated desktop-equivalent instance qualification remains pending.",
+      "The separate permission-owner adapter/receipt module (M30 D10) remains absent; grant/Full use the process-local resolve token and existing workspace controller.",
+      "Standard session/automation/skill mutations are not yet written to the owner audit ring.",
+      "M35 live private mapping/real-gateway/emulator matrix remains pending.",
       "M20-M22 physical/signing/release evidence remains external/pending.",
       "M39/M40 installed activation requires explicit external opt-in."
     ]
