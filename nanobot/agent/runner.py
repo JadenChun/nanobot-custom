@@ -1503,19 +1503,13 @@ class AgentRunner:
             source_view=source_view,
         )
         source_view = self._source_view(request_state, messages, request_state.source_view)
-
-        self._check_busy_stop(spec)
-        ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
-        kwargs = self._build_request_kwargs(
-            spec,
-            messages,
-            tools=tool_definitions,
-        )
         wants_streaming = hook.wants_streaming()
 
         active_hosted_tools: dict[str, dict[str, Any]] = {}
         native_reasoning_open = False
         native_reasoning_close_task: asyncio.Task[None] | None = None
+        attempt_emitted_content = False
+        attempt_emitted_reasoning = False
         request_started_at = 0.0
         first_output_at: float | None = None
         generation_started_at: float | None = None
@@ -1537,6 +1531,37 @@ class AgentRunner:
                 return
             generation_elapsed_s += max(0.0, time.perf_counter() - generation_started_at)
             generation_started_at = None
+
+        thinking_buf = ""
+
+        async def _stream(delta: str) -> None:
+            nonlocal attempt_emitted_content
+            _generation_delta(delta)
+            if delta:
+                attempt_emitted_content = True
+                context.streamed_content = True
+                await _close_native_reasoning()
+            await hook.on_stream(context, delta)
+
+        async def _thinking(delta: str) -> None:
+            nonlocal attempt_emitted_reasoning, native_reasoning_open, thinking_buf
+            if not delta:
+                return
+            _generation_delta(delta)
+            prev_clean = strip_reasoning_tags(thinking_buf)
+            thinking_buf += delta
+            new_clean = strip_reasoning_tags(thinking_buf)
+            incremental = new_clean[len(prev_clean):]
+            if incremental:
+                attempt_emitted_reasoning = True
+                context.streamed_reasoning = True
+                native_reasoning_open = True
+                await hook.emit_reasoning(incremental)
+
+        async def _stream_recover() -> None:
+            _pause_generation()
+            await _close_native_reasoning()
+            await hook.on_stream_end(context, resuming=True)
 
         async def _close_native_reasoning() -> None:
             nonlocal native_reasoning_open, native_reasoning_close_task
@@ -1577,49 +1602,6 @@ class AgentRunner:
             elif event.get("phase") in {"end", "error"}:
                 active_hosted_tools.pop(call_id, None)
 
-        if wants_streaming:
-            thinking_buf = ""
-
-            async def _stream(delta: str) -> None:
-                _generation_delta(delta)
-                if delta:
-                    context.streamed_content = True
-                    await _close_native_reasoning()
-                await hook.on_stream(context, delta)
-
-            async def _thinking(delta: str) -> None:
-                nonlocal native_reasoning_open, thinking_buf
-                if not delta:
-                    return
-                _generation_delta(delta)
-                prev_clean = strip_reasoning_tags(thinking_buf)
-                thinking_buf += delta
-                new_clean = strip_reasoning_tags(thinking_buf)
-                incremental = new_clean[len(prev_clean):]
-                if incremental:
-                    context.streamed_reasoning = True
-                    native_reasoning_open = True
-                    await hook.emit_reasoning(incremental)
-
-            async def _stream_recover() -> None:
-                _pause_generation()
-                await _close_native_reasoning()
-                await hook.on_stream_end(context, resuming=True)
-
-            coro = spec.runtime.provider.chat_stream_with_retry(
-                **kwargs,
-                provider_context=provider_context,
-                on_content_delta=_stream,
-                on_thinking_delta=_thinking,
-                on_tool_call_delta=_provider_tool_event,
-                on_stream_recover=_stream_recover,
-            )
-        else:
-            coro = spec.runtime.provider.chat_with_retry(
-                **kwargs,
-                provider_context=provider_context,
-            )
-
         # Streaming requests also have provider-level idle timeouts
         # (NANOBOT_STREAM_IDLE_TIMEOUT_S), but a stream that keeps producing
         # very slow deltas can still run forever. Use a more generous wall-clock
@@ -1630,39 +1612,95 @@ class AgentRunner:
             if wants_streaming and timeout_s is not None
             else timeout_s
         )
-        request_started_at = time.perf_counter()
-        try:
-            response = (
-                await coro if outer_timeout_s is None
-                else await asyncio.wait_for(coro, timeout=outer_timeout_s)
-            )
+        recovery_used = False
+        original_budget_error: FinalizedRequestBudgetExceeded | None = None
+        ticket: SourceRequestTicket | None = None
+        while True:
             self._check_busy_stop(spec)
-        except asyncio.CancelledError:
-            if ticket is not None and request_state.source is not None:
-                request_state.source.discard(ticket)
-            _pause_generation()
-            await _close_native_reasoning()
-            raise
-        except asyncio.TimeoutError:
-            if outer_timeout_s is None:
-                response = LLMResponse(
-                    content="Error calling LLM: stream stalled",
-                    finish_reason="error",
-                    error_kind="timeout",
+            attempt_emitted_content = False
+            attempt_emitted_reasoning = False
+            ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
+            kwargs = self._build_request_kwargs(spec, messages, tools=tool_definitions)
+            if wants_streaming:
+                coro = spec.runtime.provider.chat_stream_with_retry(
+                    **kwargs,
+                    provider_context=provider_context,
+                    on_content_delta=_stream,
+                    on_thinking_delta=_thinking,
+                    on_tool_call_delta=_provider_tool_event,
+                    on_stream_recover=_stream_recover,
                 )
             else:
-                response = LLMResponse(
-                    content=f"Error calling LLM: timed out after {outer_timeout_s:g}s",
-                    finish_reason="error",
-                    error_kind="timeout",
+                coro = spec.runtime.provider.chat_with_retry(
+                    **kwargs,
+                    provider_context=provider_context,
                 )
-        except FinalizedRequestBudgetExceeded as exc:
-            # _record_and_settle discards this failed ticket exactly once.
-            response = _context_budget_error_response(exc)
-        except Exception:
-            if ticket is not None and request_state.source is not None:
-                request_state.source.discard(ticket)
-            raise
+            request_started_at = time.perf_counter()
+            try:
+                response = (
+                    await coro if outer_timeout_s is None
+                    else await asyncio.wait_for(coro, timeout=outer_timeout_s)
+                )
+                self._check_busy_stop(spec)
+            except asyncio.CancelledError:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
+                _pause_generation()
+                await _close_native_reasoning()
+                raise
+            except asyncio.TimeoutError:
+                if outer_timeout_s is None:
+                    response = LLMResponse(
+                        content="Error calling LLM: stream stalled",
+                        finish_reason="error",
+                        error_kind="timeout",
+                    )
+                else:
+                    response = LLMResponse(
+                        content=f"Error calling LLM: timed out after {outer_timeout_s:g}s",
+                        finish_reason="error",
+                        error_kind="timeout",
+                    )
+                break
+            except FinalizedRequestBudgetExceeded as exc:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
+                if original_budget_error is None:
+                    original_budget_error = exc
+                if (
+                    not recovery_used
+                    and not attempt_emitted_content
+                    and not attempt_emitted_reasoning
+                    and not active_hosted_tools
+                ):
+                    self._check_busy_stop(spec)
+                    recovered = await self.context_governor.recover_finalized_request(
+                        request_state,
+                        measurement=exc.measurement,
+                        tool_definitions=tool_definitions,
+                        transcript=transcript,
+                        source_view=source_view,
+                    )
+                    if recovered is not None:
+                        messages, provider_context = recovered
+                        source_view = self._source_view(
+                            request_state, messages, request_state.source_view,
+                        )
+                        recovery_used = True
+                        first_output_at = None
+                        generation_started_at = None
+                        generation_elapsed_s = 0.0
+                        continue
+                response = _context_budget_error_response(original_budget_error)
+                break
+            except Exception:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
+                raise
+            break
         dropped, all_dropped, original_finish_reason = self._drop_malformed_tool_calls(response)
         recorded = self._record_and_settle(spec, request_state, ticket, response, malformed=dropped > 0)
         _pause_generation()
@@ -1988,48 +2026,75 @@ class AgentRunner:
             source_view=source_view,
         )
         source_view = self._source_view(request_state, messages, request_state.source_view)
-        self._check_busy_stop(spec)
-        ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
-        kwargs = self._build_request_kwargs(
-            spec,
-            messages,
-            tools=None,
-        )
-        if tool_choice_none:
-            kwargs["tool_choice"] = "none"
-        coro = spec.runtime.provider.chat_with_retry(
-            **kwargs,
-            provider_context=provider_context,
-        )
         timeout_s = self._resolve_llm_timeout_s(spec)
-        try:
-            response = (
-                await coro
-                if timeout_s is None
-                else await asyncio.wait_for(coro, timeout=timeout_s)
+        recovery_used = False
+        original_budget_error: FinalizedRequestBudgetExceeded | None = None
+        ticket: SourceRequestTicket | None = None
+        while True:
+            self._check_busy_stop(spec)
+            ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
+            kwargs = self._build_request_kwargs(spec, messages, tools=None)
+            if tool_choice_none:
+                kwargs["tool_choice"] = "none"
+            coro = spec.runtime.provider.chat_with_retry(
+                **kwargs,
+                provider_context=provider_context,
             )
-        except asyncio.TimeoutError:
-            response = LLMResponse(
-                content=f"Error calling LLM: timed out after {timeout_s:g}s",
-                finish_reason="error",
-                error_kind="timeout",
-            )
-        except FinalizedRequestBudgetExceeded as exc:
-            response = _context_budget_error_response(exc)
-        except Exception as exc:
-            if not normalize_provider_errors:
+            try:
+                response = (
+                    await coro
+                    if timeout_s is None
+                    else await asyncio.wait_for(coro, timeout=timeout_s)
+                )
+            except asyncio.TimeoutError:
+                response = LLMResponse(
+                    content=f"Error calling LLM: timed out after {timeout_s:g}s",
+                    finish_reason="error",
+                    error_kind="timeout",
+                )
+                break
+            except FinalizedRequestBudgetExceeded as exc:
                 if ticket is not None and request_state.source is not None:
                     request_state.source.discard(ticket)
+                    ticket = None
+                if original_budget_error is None:
+                    original_budget_error = exc
+                if not recovery_used:
+                    self._check_busy_stop(spec)
+                    recovered = await self.context_governor.recover_finalized_request(
+                        request_state,
+                        measurement=exc.measurement,
+                        tool_definitions=None,
+                        transcript=transcript,
+                        source_view=source_view,
+                    )
+                    if recovered is not None:
+                        messages, provider_context = recovered
+                        source_view = self._source_view(
+                            request_state, messages, request_state.source_view,
+                        )
+                        recovery_used = True
+                        continue
+                response = _context_budget_error_response(original_budget_error)
+                break
+            except Exception as exc:
+                if not normalize_provider_errors:
+                    if ticket is not None and request_state.source is not None:
+                        request_state.source.discard(ticket)
+                        ticket = None
+                    raise
+                response = LLMResponse(
+                    content=f"Error calling LLM: {type(exc).__name__}: {exc}",
+                    finish_reason="error",
+                    error_kind="provider",
+                )
+                break
+            except BaseException:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
                 raise
-            response = LLMResponse(
-                content=f"Error calling LLM: {type(exc).__name__}: {exc}",
-                finish_reason="error",
-                error_kind="provider",
-            )
-        except BaseException:
-            if ticket is not None and request_state.source is not None:
-                request_state.source.discard(ticket)
-            raise
+            break
         try:
             self._check_busy_stop(spec)
         except BaseException:
