@@ -14,7 +14,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 _MAX_ENTRIES = 256
 _TTL_SECONDS = 60 * 60
@@ -68,17 +68,22 @@ class DurableWebUIReplay:
             self._corrupt = True
             return {}
         try:
-            raw = json.loads(text)
+            raw_value: Any = json.loads(text)
         except ValueError:
             self._corrupt = True
             return {}
-        entries = raw.get("entries") if isinstance(raw, dict) else None
-        if not isinstance(entries, dict):
+        if not isinstance(raw_value, dict):
             self._corrupt = True
             return {}
+        raw = cast(dict[str, Any], raw_value)
+        entries_value = raw.get("entries")
+        if not isinstance(entries_value, dict):
+            self._corrupt = True
+            return {}
+        entries = cast(dict[str, Any], entries_value)
         clean: dict[str, dict[str, Any]] = {}
         for key, value in entries.items():
-            if isinstance(key, str) and isinstance(value, dict):
+            if isinstance(value, dict):
                 clean[key] = value
         return clean
 

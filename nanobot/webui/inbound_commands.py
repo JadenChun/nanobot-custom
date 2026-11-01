@@ -1008,9 +1008,12 @@ class WebUICommandRouter:
                 )
                 return
             if durable_state == "completed":
-                stored = durable_entry.get("result") if durable_entry else None
-                if not isinstance(stored, dict):
-                    stored = {}
+                stored_value = durable_entry.get("result") if durable_entry else None
+                stored: dict[str, Any] = (
+                    cast(dict[str, Any], stored_value)
+                    if isinstance(stored_value, dict)
+                    else {}
+                )
                 cached = WebUIRequestResult(
                     status=stored.get("status"),
                     message=stored.get("message"),

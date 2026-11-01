@@ -535,7 +535,7 @@ class MobileGatewayEdge:
 
             async def apply_effect(item: MutationEnvelope) -> dict[str, Any]:
                 if self.mutation_handler is None:
-                    return _empty_effect(item)
+                    return await _empty_effect(item)
                 return await asyncio.wait_for(
                     self.mutation_handler(identity, item),
                     timeout=float(spec.timeout_s or 30),
