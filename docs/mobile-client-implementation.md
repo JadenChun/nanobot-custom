@@ -1014,7 +1014,10 @@ raw-URL/localhost proxy, duplicate feature API/agent/session owner, exported cre
    contract/registry entries use typed fixture vectors here; M37 implements and positively qualifies them.
 2. Authenticate owner at standard HTTP/WS boundaries and attach verified device context. Existing feature
    handlers apply owner policy, current task/workspace/permission checks and M30 delegation; do not set
-   `is_local`/`is_native` or manufacture native references. Local/browser auth stays unchanged.
+   `is_local`/`is_native` or manufacture native references. Local/browser auth stays unchanged. The owner
+   bridge must explicitly deny server-local initial remote enable/re-enable, new-device challenge/approval
+   and scope upgrade with the documented local-required error; do not expose them as ordinary settings or
+   device actions.
 3. Implement bounded named native registry entries for **all** required HTTP methods/WS actions and binary/
    auth flows: fixed origin/path templates, typed parameters, schemas, scope, time/byte/frame/media bounds,
    redirects/callback validation and cancellation. Reject undeclared methods/paths/substitutions/ports/headers.
@@ -1098,7 +1101,9 @@ and `webui/src/lib/server-directories.ts`. Exact existing paths/hashes are task 
 
 1. Use the shared Settings/Apps/Skills/Automations/provider/model/API-service pages and full payloads for
    owner devices. Remove legacy-only owner gating/model-only projection. Preserve legacy hidden/denied
-   management and current server capabilities; no second mobile feature implementation.
+   management and current server capabilities; no second mobile feature implementation. Hide or disable
+   the server-local initial remote enable/re-enable, new-device challenge/approval and scope-upgrade
+   actions, showing local recovery/enrollment guidance instead.
 2. Consume M37 roots/list/resolve in a phone-friendly folder browser with breadcrumbs, directory/manual
    entry, bounded loading/error/permission/stale states and “Use this folder.” Native desktop picker remains
    desktop-only. Submit the verified target through the existing grant mutation and fresh confirmation.
