@@ -40,6 +40,7 @@ import {
   formatMessageEndTime,
 } from "@/lib/format";
 import { toMediaAttachment } from "@/lib/media";
+import { useMobileMediaUrl } from "@/lib/mobile-media";
 import { matchingSlashCommand } from "@/lib/slash-command";
 import { sessionHandleColor } from "@/lib/session-handle";
 import { parseQuotedUserMessage } from "@/lib/user-message-quote";
@@ -801,6 +802,8 @@ function UserImageCell({
   onOpen?: () => void;
 }) {
   const hasUrl = typeof image.url === "string" && image.url.length > 0;
+  const resolvedUrl = useMobileMediaUrl(image.url);
+  const displayUrl = resolvedUrl ?? (hasUrl ? image.url : undefined);
   const tileClasses = cn(
     "relative overflow-hidden border border-border/60 bg-muted/40",
     size === "large"
@@ -809,7 +812,7 @@ function UserImageCell({
     "shadow-[0_6px_18px_-14px_rgba(0,0,0,0.45)]",
   );
 
-  if (hasUrl && onOpen) {
+  if (hasUrl && displayUrl && onOpen) {
     return (
       <button
         type="button"
@@ -822,7 +825,7 @@ function UserImageCell({
         )}
       >
         <img
-          src={image.url}
+          src={displayUrl}
           alt={image.name ?? ""}
           loading="lazy"
           decoding="async"

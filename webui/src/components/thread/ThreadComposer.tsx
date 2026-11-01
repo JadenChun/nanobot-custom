@@ -2295,7 +2295,7 @@ export function ThreadComposer({
 
   const modelControl = modelLabel && !voiceRecorder.isRecording ? (
     <ModelPresetBadge
-      label={modelLabel}
+      label={mobileComposer ? modelDetail || modelLabel : modelLabel}
       modelDetail={modelDetail}
       modelPreset={modelPreset}
       modelPresets={modelPresets}

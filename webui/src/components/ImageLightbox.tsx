@@ -165,7 +165,7 @@ export function ImageLightbox({
           {/* Invisible preload — browser decodes adjacent images so prev/next swap is instant. */}
           <div aria-hidden className="hidden">
             {preload.map((img, i) => (
-              <img key={`${img.url}-${i}`} src={img.url} alt="" />
+              <PreloadImage key={`${img.url}-${i}`} image={img} />
             ))}
           </div>
         </DialogPrimitive.Content>
@@ -178,6 +178,11 @@ interface NavButtonProps {
   side: "left" | "right";
   label: string;
   onClick: React.MouseEventHandler<HTMLButtonElement>;
+}
+
+function PreloadImage({ image }: { image: UIImage }) {
+  const src = useMobileMediaUrl(image.url);
+  return src ? <img src={src} alt="" /> : null;
 }
 
 function NavButton({ side, label, onClick }: NavButtonProps) {
