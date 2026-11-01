@@ -688,7 +688,10 @@ async def test_prepare_admission_binding_is_checked_before_controller_execution(
 
 
 def test_mobile_mutation_allowlist_is_sidebar_only() -> None:
-    mobile = SimpleNamespace(mobile_identity=object())
+    from nanobot.remote.edge import AccessIdentity
+
+    legacy = AccessIdentity("install-legacy", ("chat.read", "chat.write"), 1e12, 1)
+    mobile = SimpleNamespace(mobile_identity=legacy)
     assert _mobile_mutation_allowed(mobile, "sidebar.update") is True
     assert _mobile_mutation_allowed(mobile, "recovery.continue") is True
     assert _mobile_mutation_allowed(mobile, "recovery.dismiss") is True
