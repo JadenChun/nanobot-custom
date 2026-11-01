@@ -2505,19 +2505,12 @@ export function ThreadComposer({
             {inlineError}
           </div>
         ) : null}
-        {mobileComposer && !voiceRecorder.isRecording && (accessControl || modelControl) ? (
-          <div className="thread-composer-mobile-controls flex min-w-0 flex-wrap items-center gap-1.5 px-3 pb-1 pt-0.5">
-            {accessControl}
-            {modelControl}
-            {hasProjectFolder && workspaceScope ? (
-              <span
-                className="inline-flex h-9 min-w-0 max-w-[38vw] items-center gap-1.5 rounded-control bg-muted/35 px-2.5 text-[12px] font-semibold text-muted-foreground"
-                title={workspaceScope.project_path}
-              >
-                <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                <span className="truncate">{workspaceScope.project_name}</span>
-              </span>
-            ) : null}
+        {mobileComposer && !voiceRecorder.isRecording && modelControl ? (
+          <div className="thread-composer-mobile-model-row">
+            <span className="thread-composer-mobile-model-label">
+              {t("thread.composer.modelLabel", { defaultValue: "Model" })}
+            </span>
+            <div className="thread-composer-mobile-model-control">{modelControl}</div>
           </div>
         ) : null}
         <div
@@ -2592,6 +2585,16 @@ export function ThreadComposer({
               </Button>
             )}
             {showCompactProjectPicker && !mobileComposer && !voiceRecorder.isRecording ? projectPicker : null}
+            {mobileComposer && !voiceRecorder.isRecording ? accessControl : null}
+            {mobileComposer && !voiceRecorder.isRecording && hasProjectFolder && workspaceScope ? (
+              <span
+                className="thread-composer-mobile-project"
+                title={workspaceScope.project_path}
+              >
+                <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="truncate">{workspaceScope.project_name}</span>
+              </span>
+            ) : null}
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter
                 ariaLabel={voiceRecordingStatusLabel}
@@ -2609,7 +2612,7 @@ export function ThreadComposer({
             )}
           >
             {!mobileComposer ? modelControl : null}
-            {!voiceRecorder.isRecording ? (
+            {!voiceRecorder.isRecording && !mobileComposer ? (
               <ComposerUsagePopover
                 context={contextUsage}
                 rounds={recentRoundUsage}

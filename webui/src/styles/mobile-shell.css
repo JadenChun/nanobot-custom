@@ -285,3 +285,81 @@ html.mobile-runtime body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
 }
+
+/* Mobile composer: model gets its own readable row; controls share one row. */
+.thread-composer-mobile-model-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.75rem 0.1rem;
+}
+
+.thread-composer-mobile-model-label {
+  flex: 0 0 auto;
+  color: hsl(var(--muted-foreground, 240 5% 65%));
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.thread-composer-mobile-model-control {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.thread-composer-mobile-model-control .composer-model-badge {
+  width: 100%;
+  max-width: 100%;
+  justify-content: flex-start;
+}
+
+.thread-composer-mobile-model-control .thread-composer-model-label {
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+.thread-composer-mobile-project {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  max-width: 8.5rem;
+  height: 2.25rem;
+  padding: 0 0.55rem;
+  overflow: hidden;
+  border-radius: 0.55rem;
+  background: hsl(var(--muted, 240 4% 14%) / 0.55);
+  color: hsl(var(--muted-foreground, 240 5% 65%));
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.thread-composer-mobile-project .truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .thread-composer-footer.thread-composer-footer {
+    gap: 0.35rem;
+  }
+
+  .thread-composer-footer .thread-composer-footer-primary {
+    gap: 0.35rem;
+    overflow: hidden;
+  }
+
+  .thread-composer-footer .thread-composer-footer-actions {
+    gap: 0.25rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .thread-composer-mobile-project {
+    max-width: 7.5rem;
+  }
+}

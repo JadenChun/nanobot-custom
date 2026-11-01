@@ -3804,7 +3804,7 @@ describe("ThreadComposer", () => {
 describe("ThreadComposer — mobile controls", () => {
   afterEach(() => resetMobileRuntime());
 
-  it("moves access and model controls into a dedicated mobile row", () => {
+  it("gives the model its own mobile row and keeps access in the control row", () => {
     const runtime: MobileRuntime = {
       transport: {} as MobileRuntime["transport"],
       request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
@@ -3844,13 +3844,13 @@ describe("ThreadComposer — mobile controls", () => {
       />,
     );
 
-    const strip = container.querySelector(".thread-composer-mobile-controls");
+    const modelRow = container.querySelector(".thread-composer-mobile-model-row");
     const footer = container.querySelector(".thread-composer-footer");
-    expect(strip).not.toBeNull();
+    expect(modelRow).not.toBeNull();
     expect(footer).not.toBeNull();
-    expect(within(strip as HTMLElement).getAllByText("Sandbox").length).toBeGreaterThan(0);
-    expect(within(strip as HTMLElement).getByText("Default")).toBeInTheDocument();
-    expect(footer?.textContent).not.toContain("Sandbox");
+    expect(within(modelRow as HTMLElement).getByText("Default")).toBeInTheDocument();
+    expect(within(footer as HTMLElement).getAllByText("Sandbox").length).toBeGreaterThan(0);
+    expect(modelRow?.textContent).not.toContain("Sandbox");
     expect(footer?.textContent).not.toContain("Default");
   });
 });
