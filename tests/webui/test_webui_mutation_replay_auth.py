@@ -841,7 +841,7 @@ def test_owner_delegated_workspace_paths_allow_owner_mobile() -> None:
 
 
 @pytest.mark.asyncio
-async def test_product_mutation_effect_timeout(monkeypatch) -> None:
+async def test_product_mutation_effect_timeout(monkeypatch, tmp_path) -> None:
     from nanobot.remote import operations as operations_module
 
     spec = SimpleNamespace(timeout_s=0.01, max_request_bytes=1024)
@@ -863,3 +863,12 @@ async def test_product_mutation_effect_timeout(monkeypatch) -> None:
     )
     assert result.status == 504
     assert result.message == "timeout"
+
+    store = DurableWebUIReplay(Path(tmp_path) / "replay.json")
+    assert store.begin("req-timeout", "workspace.access.resolve", "digest", None)
+    router._durable_replay = store
+    router._record_replay_result("req-timeout", result)
+    restarted = DurableWebUIReplay(Path(tmp_path) / "replay.json")
+    assert restarted.lookup(
+        "req-timeout", "workspace.access.resolve", "digest", None
+    )[0] == "uncertain"

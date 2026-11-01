@@ -177,9 +177,29 @@ def _make_handler(
                 try:
                     revoked = owner.tokens.revoke(target)
                 except AuthRejectedError:
+                    try:
+                        owner.store.record_audit(
+                            installation_id=target,
+                            operation="device.revoke",
+                            decision="denied",
+                            request_id=None,
+                            actor_installation_id=grant.installation_id,
+                        )
+                    except Exception:
+                        pass
                     self._write(HTTPStatus.NOT_FOUND, {"error": "device_not_found"})
                     return
                 except Exception:
+                    try:
+                        owner.store.record_audit(
+                            installation_id=target,
+                            operation="device.revoke",
+                            decision="failed",
+                            request_id=None,
+                            actor_installation_id=grant.installation_id,
+                        )
+                    except Exception:
+                        pass
                     self._write(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "unavailable"})
                     return
                 try:

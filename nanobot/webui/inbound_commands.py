@@ -1092,11 +1092,7 @@ class WebUICommandRouter:
                         except Exception:
                             logger.exception("WebUI replay ledger could not mark uncertainty")
                     raise
-                if self._durable_replay is not None:
-                    try:
-                        self._durable_replay.complete(request_id, result)
-                    except Exception:
-                        logger.exception("WebUI replay ledger could not store the result")
+                self._record_replay_result(request_id, result)
                 return result
 
             operation_task = asyncio.create_task(execute_and_persist())
@@ -1307,6 +1303,22 @@ class WebUICommandRouter:
             workspace_scope=result.workspace_scope,
             workspace_permissions=result.workspace_permissions,
         )
+
+    def _record_replay_result(
+        self,
+        request_id: str,
+        result: WebUIRequestResult,
+    ) -> None:
+        """Persist a completed result, or uncertainty when the effect timed out."""
+        if self._durable_replay is None:
+            return
+        try:
+            if result.status == 504 or result.message == "timeout":
+                self._durable_replay.uncertain(request_id)
+            else:
+                self._durable_replay.complete(request_id, result)
+        except Exception:
+            logger.exception("WebUI replay ledger could not store the result")
 
     async def execute_webui_request(
         self,

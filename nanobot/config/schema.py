@@ -815,6 +815,7 @@ class RemoteAccessConfig(Base):
     enabled: StrictBool = False
     state_dir: str | None = None
     socket_path: str | None = None
+    listener_port: int | None = Field(default=None, ge=1024, le=65535)
     owner_timeout_seconds: float = Field(default=2.0, gt=0, le=10.0, allow_inf_nan=False)
     directory_browser: DirectoryBrowserConfig = Field(default_factory=DirectoryBrowserConfig)
 

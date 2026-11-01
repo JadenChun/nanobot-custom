@@ -68,7 +68,7 @@ def build_service_plan(
     digest = hashlib.sha256(str(socket_path).encode()).hexdigest()[:12]
     unit_name = f"{UNIT_PREFIX}{digest}.service"
     target_dir = unit_dir or (Path.home() / ".config" / "systemd" / "user")
-    command = (
+    command = [
         python_executable or sys.executable,
         "-m",
         "nanobot.remote.owner",
@@ -76,11 +76,13 @@ def build_service_plan(
         str(state_dir),
         "--socket",
         str(socket_path),
-    )
+    ]
+    if config.listener_port is not None:
+        command.extend(["--listener-port", str(config.listener_port)])
     return ServicePlan(
         unit_name=unit_name,
         unit_path=target_dir / unit_name,
-        command=command,
+        command=tuple(command),
         state_dir=state_dir,
         socket_path=socket_path,
         description=f"Nanobot remote-access owner ({digest})",

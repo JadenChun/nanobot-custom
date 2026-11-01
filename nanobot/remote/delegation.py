@@ -377,7 +377,22 @@ class OwnerDelegationService:
         *,
         actor_installation_id: str | None = None,
     ) -> dict[str, Any]:
-        device = self.store.revoke_device(installation_id)
+        self.store.record_audit(
+            installation_id=installation_id,
+            operation="device.revoke",
+            decision="attempted",
+            actor_installation_id=actor_installation_id,
+        )
+        try:
+            device = self.store.revoke_device(installation_id)
+        except Exception:
+            self.store.record_audit(
+                installation_id=installation_id,
+                operation="device.revoke",
+                decision="failed",
+                actor_installation_id=actor_installation_id,
+            )
+            raise
         self.store.record_audit(
             installation_id=device.installation_id,
             operation="device.revoke",

@@ -256,3 +256,42 @@ async def test_workspace_owner_action_calls_permission_adapter() -> None:
     assert calls
     assert calls[0]["action"] == "workspace.access.resolve"
     assert calls[0]["access_token"] == "access-token"
+
+
+@pytest.mark.asyncio
+async def test_owner_standard_mutation_records_failed_audit() -> None:
+    from websockets.datastructures import Headers
+
+    audits: list[dict[str, object]] = []
+
+    class _Audit:
+        def audit_event(self, **kwargs):
+            audits.append(kwargs)
+            return kwargs
+
+    async def dispatch(_connection, _request, _path):
+        raise RuntimeError("effect failed")
+
+    stub = SimpleNamespace(
+        owner_audit_client=_Audit(),
+        authorize_webui_mutation=lambda *_args: None,
+        _webui_mutation_path=GatewayHTTPHandler._webui_mutation_path,
+        _connection_headers=lambda _connection: Headers(),
+        _dispatch_resolved=dispatch,
+        _log=SimpleNamespace(exception=lambda *_args, **_kwargs: None, debug=lambda *_args, **_kwargs: None),
+    )
+    owner = AccessIdentity(
+        "install-owner",
+        ("chat.read", "chat.write", "owner"),
+        1e12,
+        1,
+    )
+    connection = SimpleNamespace(mobile_identity=owner)
+    response = await GatewayHTTPHandler.dispatch_webui_mutation(
+        stub,
+        connection,
+        "sidebar.update",
+        {"state": {}},
+    )
+    assert response.status_code == 500
+    assert [entry["decision"] for entry in audits] == ["attempted", "failed"]

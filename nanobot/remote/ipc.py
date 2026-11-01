@@ -366,13 +366,28 @@ class OwnerIPCServer:
             try:
                 device = self.store.revoke_device(installation_id)
             except StoreError as exc:
+                try:
+                    self.store.record_audit(
+                        installation_id=installation_id,
+                        operation="device.revoke",
+                        decision="denied",
+                        actor_installation_id=actor,
+                    )
+                except StoreError:
+                    pass
                 return {"ok": False, "error": {"code": "not_found", "message": str(exc)}}
-            self.store.record_audit(
-                installation_id=device.installation_id,
-                operation="device.revoke",
-                decision="applied",
-                actor_installation_id=actor,
-            )
+            try:
+                self.store.record_audit(
+                    installation_id=device.installation_id,
+                    operation="device.revoke",
+                    decision="applied",
+                    actor_installation_id=actor,
+                )
+            except StoreError as exc:
+                return {
+                    "ok": False,
+                    "error": {"code": "unavailable", "message": str(exc)},
+                }
             return {"ok": True, "result": {"installation_id": device.installation_id, "revoked": device.revoked}}
         if method == "audit_event":
             if role not in {"gateway", "admin"}:

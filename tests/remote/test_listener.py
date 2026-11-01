@@ -183,6 +183,26 @@ def test_staging_plan_is_read_only_and_strict() -> None:
     assert "Peers" not in json.dumps(plan.prior)
 
 
+def test_owner_process_serves_status_when_listener_port_is_configured(tmp_path) -> None:
+    owner = RemoteAccessOwner(tmp_path / "owner", listener_port=0)
+    owner.start()
+    owner.store.set_enabled(True)
+    pair = owner.tokens.issue("install-owner", ("chat.read", "chat.write", "owner"), "owner")
+    assert owner.listener is not None
+    port = owner.listener.bound_port
+    try:
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=3.0) as http:
+            response = http.get(
+                "/remote/v1/status",
+                headers={"Authorization": f"Bearer {pair.access_token}"},
+            )
+            assert response.status_code == 200
+            assert response.json()["installation_id"] == "install-owner"
+    finally:
+        owner.stop()
+    assert owner.listener is None
+
+
 def test_owner_control_routes_survive_without_gateway(tmp_path) -> None:
     owner = RemoteAccessOwner(tmp_path / "owner")
     owner.start()

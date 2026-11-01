@@ -660,8 +660,10 @@ class GatewayHTTPHandler:
         identity: Any,
         action: str,
         payload: dict[str, Any],
+        *,
+        access_token: str | None = None,
     ) -> tuple[int, dict[str, Any]]:
-        """Run one owner-allowlisted standard WebUI mutation for a mobile device."""
+        """Test helper: run an allowlisted mutation with an explicit owner token."""
         from nanobot.remote.operations import OperationRegistryError, load_registry
 
         try:
@@ -676,7 +678,10 @@ class GatewayHTTPHandler:
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             if len(encoded) > spec.max_request_bytes:
                 return 413, {"error": "request_too_large"}
-        connection = SimpleNamespace(mobile_identity=identity)
+        connection = SimpleNamespace(
+            mobile_identity=identity,
+            mobile_access_token=access_token,
+        )
         response = await self.dispatch_webui_mutation(connection, action, payload)
         body: Any
         try:
@@ -880,26 +885,58 @@ class GatewayHTTPHandler:
             except Exception:
                 self._log.exception("owner audit pre-effect write failed")
                 return _http_error(503, "audit_unavailable")
-        response = await self._dispatch_resolved(connection, request, path)
-        if isinstance(response, Response):
-            identity = getattr(connection, "mobile_identity", None)
-            installation = getattr(identity, "installation_id", None)
+        try:
+            response = await self._dispatch_resolved(connection, request, path)
+        except Exception:
             if (
                 getattr(self, "owner_audit_client", None) is not None
-                and isinstance(installation, str)
-                and installation
+                and isinstance(audit_installation, str)
+                and audit_installation
             ):
                 try:
                     await asyncio.to_thread(
                         getattr(self, "owner_audit_client").audit_event,
-                        installation_id=installation,
+                        installation_id=audit_installation,
+                        operation=action,
+                        decision="failed",
+                        actor_installation_id=audit_installation,
+                    )
+                except Exception:
+                    self._log.debug("owner audit failure write failed", exc_info=True)
+            self._log.exception("WebUI mutation failed")
+            return _http_error(500, "mutation_failed")
+        if isinstance(response, Response):
+            if (
+                getattr(self, "owner_audit_client", None) is not None
+                and isinstance(audit_installation, str)
+                and audit_installation
+            ):
+                try:
+                    await asyncio.to_thread(
+                        getattr(self, "owner_audit_client").audit_event,
+                        installation_id=audit_installation,
                         operation=action,
                         decision="applied" if 200 <= response.status_code < 300 else "denied",
-                        actor_installation_id=installation,
+                        actor_installation_id=audit_installation,
                     )
                 except Exception:
                     self._log.debug("owner audit write failed", exc_info=True)
             return response
+        if (
+            getattr(self, "owner_audit_client", None) is not None
+            and isinstance(audit_installation, str)
+            and audit_installation
+        ):
+            try:
+                await asyncio.to_thread(
+                    getattr(self, "owner_audit_client").audit_event,
+                    installation_id=audit_installation,
+                    operation=action,
+                    decision="denied",
+                    actor_installation_id=audit_installation,
+                )
+            except Exception:
+                self._log.debug("owner audit denial write failed", exc_info=True)
         return _http_error(404, "WebUI mutation action not found")
 
     def _is_webui_mutation_path(self, path: str) -> bool:

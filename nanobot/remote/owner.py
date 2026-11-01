@@ -15,13 +15,20 @@ from typing import Any
 
 from nanobot.remote.auth import TokenService
 from nanobot.remote.delegation import OwnerDelegationService
+from nanobot.remote.http import RemoteHTTPListener
 from nanobot.remote.ipc import OwnerIPCServer
 from nanobot.remote.pairing import PairingService
 from nanobot.remote.store import RemoteAccessStore
 
 
 class RemoteAccessOwner:
-    def __init__(self, state_dir: Path | str | None = None, socket_path: Path | str | None = None) -> None:
+    def __init__(
+        self,
+        state_dir: Path | str | None = None,
+        socket_path: Path | str | None = None,
+        *,
+        listener_port: int | None = None,
+    ) -> None:
         self.store = RemoteAccessStore(state_dir)
         self.tokens = TokenService(self.store)
         self.pairing = PairingService(self.store, self.tokens)
@@ -33,17 +40,31 @@ class RemoteAccessOwner:
             tokens=self.tokens,
             delegation=self.delegation,
         )
+        self.listener_port = listener_port
+        self.listener: RemoteHTTPListener | None = None
 
     def start(self) -> None:
         self.store.load_or_create()
         self.server.start()
+        if self.listener_port is not None:
+            self.listener = RemoteHTTPListener(
+                self.pairing,
+                owner=self,
+                host="127.0.0.1",
+                port=self.listener_port,
+            )
+            self.listener.start()
 
     def stop(self) -> None:
+        if self.listener is not None:
+            self.listener.stop()
+            self.listener = None
         self.server.stop()
 
     def status(self) -> dict[str, Any]:
         status = self.store.snapshot()
         status["ipc_running"] = self.server.running
+        status["listener_running"] = self.listener is not None
         return status
 
     @property
@@ -56,12 +77,17 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--state-dir", type=Path, default=None)
     parser.add_argument("--socket", type=Path, default=None)
     parser.add_argument("--ready-file", type=Path, default=None)
+    parser.add_argument("--listener-port", type=int, default=None)
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
-    owner = RemoteAccessOwner(args.state_dir, args.socket)
+    owner = RemoteAccessOwner(
+        args.state_dir,
+        args.socket,
+        listener_port=args.listener_port,
+    )
     owner.start()
     if args.ready_file:
         args.ready_file.write_text(str(owner.socket_path) + "\n", encoding="utf-8")

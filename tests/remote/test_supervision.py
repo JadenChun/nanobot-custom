@@ -26,7 +26,12 @@ class FakeRunner:
 
 def test_plan_is_exact_and_owned(tmp_path: Path) -> None:
     plan = build_service_plan(
-        RemoteAccessConfig(enabled=True, state_dir=str(tmp_path), socket_path=str(tmp_path / "owner.sock")),
+        RemoteAccessConfig(
+            enabled=True,
+            state_dir=str(tmp_path),
+            socket_path=str(tmp_path / "owner.sock"),
+            listener_port=18124,
+        ),
         python_executable="/usr/bin/python3",
         unit_dir=tmp_path / "units",
     )
@@ -34,6 +39,8 @@ def test_plan_is_exact_and_owned(tmp_path: Path) -> None:
     assert plan.unit_path.name == plan.unit_name
     assert "/usr/bin/python3" in plan.unit_text()
     assert "Restart=on-failure" in plan.unit_text()
+    assert "--listener-port" in plan.unit_text()
+    assert "18124" in plan.unit_text()
 
 
 def test_install_remove_are_dry_by_default_and_preserve_other_units(tmp_path: Path) -> None:
