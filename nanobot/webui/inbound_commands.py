@@ -153,9 +153,23 @@ class WebUICommandTransport(Protocol):
     ) -> None: ...
 
 
+def _typed_mobile_identity(connection: Any) -> Any | None:
+    """Return only a real mobile identity, never a loose test mock."""
+    identity = getattr(connection, "mobile_identity", None)
+    if identity is None:
+        return None
+    installation_id = getattr(identity, "installation_id", None)
+    scopes = getattr(identity, "scopes", None)
+    if not isinstance(installation_id, str) or not installation_id:
+        return None
+    if not isinstance(scopes, (tuple, list, set, frozenset)):
+        return None
+    return identity
+
+
 def _mobile_denial_message(connection: Any, action: str) -> str:
     """Name the documented local-only exception instead of a generic denial."""
-    if getattr(connection, "mobile_identity", None) is not None and (
+    if _typed_mobile_identity(connection) is not None and (
         action.startswith("settings.remote_access.")
         or action in {"settings.channel.configure", "settings.channel.connect.start",
                       "settings.channel.connect.poll", "settings.channel.connect.cancel"}
@@ -170,15 +184,10 @@ def _mobile_mutation_allowed(connection: Any, action: str) -> bool:
     The operation registry is the single allowlist for owner devices; a legacy
     chat-only device keeps the three shared-organization actions.
     """
-    identity = getattr(connection, "mobile_identity", None)
+    identity = _typed_mobile_identity(connection)
     if identity is None:
         return False
-    installation_id = getattr(identity, "installation_id", None)
-    scopes = getattr(identity, "scopes", None)
-    if not isinstance(installation_id, str) or not installation_id:
-        return False
-    if not isinstance(scopes, (tuple, list, set, frozenset)):
-        return False
+    scopes = identity.scopes
     if action in _MOBILE_MUTATION_ACTIONS:
         return True
     if "owner" not in scopes:
@@ -356,7 +365,7 @@ class WebUICommandRouter:
         envelope: dict[str, Any],
     ) -> None:
         """Execute one typed WebUI command."""
-        if getattr(connection, "mobile_identity", None) is not None:
+        if _typed_mobile_identity(connection) is not None:
             if not await self._transport.revalidate_mobile_connection(connection):
                 await self._transport.webui_send_event(
                     connection,

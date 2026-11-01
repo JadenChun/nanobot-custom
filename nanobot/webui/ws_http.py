@@ -249,6 +249,20 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
 })
 
 
+def _typed_owner_identity(connection: Any) -> Any | None:
+    """Return a real owner-scoped mobile identity, never a loose mock."""
+    identity = getattr(connection, "mobile_identity", None)
+    if identity is None:
+        return None
+    installation_id = getattr(identity, "installation_id", None)
+    scopes = getattr(identity, "scopes", None)
+    if not isinstance(installation_id, str) or not installation_id:
+        return None
+    if not isinstance(scopes, (tuple, list, set, frozenset)):
+        return None
+    return identity if "owner" in scopes else None
+
+
 _OWNER_DELEGATED_LOCAL_PATHS = frozenset({
     "/api/workspaces/grants/upsert",
     "/api/workspaces/access/prepare-full",
@@ -759,8 +773,7 @@ class GatewayHTTPHandler:
     ) -> WebUIMutationAuthorizationFailure | None:
         if path not in _LOCAL_ONLY_WEBUI_MUTATION_PATHS:
             return None
-        identity = getattr(connection, "mobile_identity", None)
-        if path in _OWNER_DELEGATED_LOCAL_PATHS and getattr(identity, "is_owner", False):
+        if path in _OWNER_DELEGATED_LOCAL_PATHS and _typed_owner_identity(connection):
             return None
         if (
             not _is_loopback_host(self.config.host)
@@ -2001,9 +2014,7 @@ class GatewayHTTPHandler:
             connection,
             request.headers,
         )
-        owner_authorized = bool(
-            getattr(getattr(connection, "mobile_identity", None), "is_owner", False)
-        )
+        owner_authorized = _typed_owner_identity(connection) is not None
         if not local_ui and not owner_authorized:
             return _http_error(403, "local_ui_required")
         try:
@@ -2185,8 +2196,8 @@ class GatewayHTTPHandler:
         if not isinstance(raw_payload, dict):
             return _http_error(400, "invalid management payload")
         payload = cast(dict[str, Any], raw_payload)
-        owner_identity = getattr(connection, "mobile_identity", None)
-        owner_authorized = bool(getattr(owner_identity, "is_owner", False))
+        owner_identity = _typed_owner_identity(connection)
+        owner_authorized = owner_identity is not None
         if path == "/api/workspaces/grants/upsert" and owner_authorized:
             try:
                 payload = self._owner_grant_payload(request, payload)
