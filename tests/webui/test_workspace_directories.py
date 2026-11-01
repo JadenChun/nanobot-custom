@@ -291,7 +291,7 @@ def test_owner_grant_commit_uses_resolved_canonical_path(tmp_path) -> None:
     payload = {
         "expected_revision": 1,
         "path": "alpha",
-        "file_access": "read",
+        "file_access": "read_only",
         "commands": False,
         "commit_token": resolved["commit_token"],
         "root": "projects",
@@ -301,7 +301,7 @@ def test_owner_grant_commit_uses_resolved_canonical_path(tmp_path) -> None:
     assert cleaned == {
         "expected_revision": 1,
         "path": str((root / "alpha").resolve()),
-        "file_access": "read",
+        "file_access": "read_only",
         "commands": False,
     }
 
@@ -314,4 +314,30 @@ def test_owner_grant_commit_uses_resolved_canonical_path(tmp_path) -> None:
             stub,
             request,
             {**payload, "is_local": True},
+        )
+
+    mismatch = service.resolve(
+        root_id="projects",
+        relative_path="alpha",
+        policy_revision=service.roots()["policy_revision"],
+        installation_id="install-owner",
+    )
+    with pytest.raises(ValueError):
+        GatewayHTTPHandler._owner_grant_payload(
+            stub,
+            request,
+            {**payload, "commit_token": mismatch["commit_token"], "extent": "read",
+             "file_access": "read_write"},
+        )
+    read_with_commands = service.resolve(
+        root_id="projects",
+        relative_path="alpha",
+        policy_revision=service.roots()["policy_revision"],
+        installation_id="install-owner",
+    )
+    with pytest.raises(ValueError):
+        GatewayHTTPHandler._owner_grant_payload(
+            stub,
+            request,
+            {**payload, "commit_token": read_with_commands["commit_token"], "commands": True},
         )

@@ -2043,10 +2043,21 @@ class GatewayHTTPHandler:
         root_id = payload.get("root")
         relative = payload.get("path")
         extent = payload.get("extent", "read")
+        file_access = payload.get("file_access")
+        commands = payload.get("commands")
         if not isinstance(token, str) or not isinstance(root_id, str):
             raise ValueError("grant commit is missing token/root")
         if not isinstance(relative, str) or not isinstance(extent, str):
             raise ValueError("grant commit is missing path/extent")
+        if file_access not in {"read_only", "read_write"}:
+            raise ValueError("grant commit has an invalid access extent")
+        expected_extent = "write" if file_access == "read_write" else "read"
+        if extent != expected_extent:
+            raise ValueError("grant commit extent does not match file access")
+        if not isinstance(commands, bool):
+            raise ValueError("grant commit commands must be boolean")
+        if extent == "read" and commands:
+            raise ValueError("a read grant cannot request commands")
         installation = self._directory_installation(request)
         resolved = self.directory_browser.consume_commit_token(
             token,
@@ -2058,8 +2069,8 @@ class GatewayHTTPHandler:
         cleaned = {
             "expected_revision": payload.get("expected_revision"),
             "path": resolved["canonical_path"],
-            "file_access": payload.get("file_access"),
-            "commands": payload.get("commands"),
+            "file_access": file_access,
+            "commands": commands,
         }
         return cleaned
 
