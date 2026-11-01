@@ -130,3 +130,47 @@ async def test_recovery_action_commits_before_publishing_and_returns_exact_resul
     assert response.status_code == 200
     assert json.loads(response.body) == result
     assert [kind for kind, _payload in events] == ["commit", "publish"]
+
+
+@pytest.mark.asyncio
+async def test_owner_remote_can_resolve_recovery_action() -> None:
+    from nanobot.remote.edge import AccessIdentity
+
+    result = {
+        "workspace_access_request": {"status": "ready"},
+        "workspace_scope": {"access_mode": "restricted"},
+    }
+
+    class RecoveryOwner:
+        calls = 0
+
+        def resolve(self, _payload):
+            self.calls += 1
+            return result
+
+        async def publish(self, *_args):
+            return None
+
+    owner = RecoveryOwner()
+    handler = object.__new__(GatewayHTTPHandler)
+    handler.config = SimpleNamespace(host="127.0.0.1")
+    handler.workspace_access_recovery = owner
+    handler.check_api_token = lambda _request: True
+    handler._log = SimpleNamespace(exception=lambda *_args: None)
+    request = Request(
+        "/api/workspaces/access/resolve",
+        Headers([("Host", "127.0.0.1:8765")]),
+    )
+    setattr(request, "_nanobot_webui_mutation_request", True)
+    setattr(request, "_nanobot_webui_mutation_payload", {"chat_id": "chat-a"})
+    connection = SimpleNamespace(
+        remote_address=("203.0.113.1", 1234),
+        mobile_identity=AccessIdentity(
+            "install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1
+        ),
+    )
+    response = await handler._handle_workspace_access_action(
+        connection, request, "/api/workspaces/access/resolve"
+    )
+    assert response.status_code == 200
+    assert owner.calls == 1

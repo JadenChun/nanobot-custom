@@ -20,6 +20,7 @@ from nanobot.remote.delegation import DelegatedAdminOperation, current_digest
 # Standard WebUI actions that require an owner delegation admission.
 ACTION_OPERATIONS: dict[str, DelegatedAdminOperation] = {
     "workspace.grant.upsert": DelegatedAdminOperation.GRANT_COMMIT,
+    "workspace.grant.revoke": DelegatedAdminOperation.GRANT_RELEASE,
     "workspace.access.prepare_full": DelegatedAdminOperation.FULL_PROPOSAL,
     "workspace.access.mode.set": DelegatedAdminOperation.FULL_COMMIT,
     "workspace.access.add_folder": DelegatedAdminOperation.GRANT_COMMIT,

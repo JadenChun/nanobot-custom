@@ -3,11 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from nanobot.remote.operations import (
     CONTRACT_PATH,
-    OperationRegistryError,
     load_registry,
     owner_operation,
 )
@@ -31,7 +28,7 @@ def test_registry_matches_m36_inventory() -> None:
     registry = load_registry()
     assert set(registry.operations) == expected
     assert len(registry.operations) == 109
-    assert sum(1 for spec in registry.operations.values() if spec.enabled) == 99
+    assert sum(1 for spec in registry.operations.values() if spec.enabled) == 109
 
 
 def test_enabled_mutations_match_websocket_source_routes() -> None:
@@ -64,15 +61,21 @@ def test_enabled_mutations_match_websocket_source_routes() -> None:
             assert source.get(action) == spec.path, action
 
 
-def test_planned_and_local_only_operations_are_not_enabled() -> None:
+def test_workspace_operations_are_enabled_and_local_only_actions_stay_excluded() -> None:
     registry = load_registry()
     for operation in (
         "workspace.grant.revoke",
         "workspace.repository.discover",
+        "workspace.repository.forget",
+        "workspace.repository.remember",
         "workspace.folder.edit",
+        "workspace.access.add_folder",
+        "workspace.access.allow_once",
+        "workspace.access.cancel",
+        "workspace.access.continue",
+        "workspace.access.resolve",
     ):
-        with pytest.raises(OperationRegistryError):
-            owner_operation(registry, operation)
+        assert owner_operation(registry, operation).enabled
     for operation in (
         "workspace.grant.upsert",
         "workspace.access.prepare_full",

@@ -268,8 +268,18 @@ def _typed_owner_identity(connection: Any) -> Any | None:
 
 _OWNER_DELEGATED_LOCAL_PATHS = frozenset({
     "/api/workspaces/grants/upsert",
+    "/api/workspaces/grants/revoke",
     "/api/workspaces/access/prepare-full",
     "/api/workspaces/access/mode",
+    "/api/workspaces/access/add-folder",
+    "/api/workspaces/access/resolve",
+    "/api/workspaces/access/continue",
+    "/api/workspaces/access/cancel",
+    "/api/workspaces/access/allow-once",
+    "/api/workspaces/folders/edit",
+    "/api/repositories/remember",
+    "/api/repositories/forget",
+    "/api/repositories/discover",
 })
 
 

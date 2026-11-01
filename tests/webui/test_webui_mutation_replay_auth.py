@@ -803,3 +803,38 @@ async def test_durable_replay_survives_router_restart(tmp_path: Path) -> None:
     assert len(second_frames) > before
     assert second_frames[before]["ok"] is True
     assert second_frames[before]["result"]["workspace_scope"]["project_path"] == "/private/project"
+
+
+def test_owner_delegated_workspace_paths_allow_owner_mobile() -> None:
+    from nanobot.remote.edge import AccessIdentity
+
+    handler = object.__new__(GatewayHTTPHandler)
+    handler.config = SimpleNamespace(host="127.0.0.1")
+    owner = _Connection("owner")
+    owner.mobile_identity = AccessIdentity(
+        "install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1
+    )
+    legacy = _Connection("legacy", peer="203.0.113.12", forwarded=True)
+    legacy.mobile_identity = AccessIdentity(
+        "install-legacy", ("chat.read", "chat.write"), 1e12, 1
+    )
+    for path in (
+        "/api/workspaces/grants/revoke",
+        "/api/workspaces/access/add-folder",
+        "/api/workspaces/access/resolve",
+        "/api/workspaces/access/continue",
+        "/api/workspaces/access/cancel",
+        "/api/workspaces/access/allow-once",
+        "/api/workspaces/folders/edit",
+        "/api/repositories/remember",
+        "/api/repositories/forget",
+        "/api/repositories/discover",
+    ):
+        assert handler._authorize_local_webui_path(
+            owner, owner.request.headers, path
+        ) is None
+        failure = handler._authorize_local_webui_path(
+            legacy, legacy.request.headers, path
+        )
+        assert failure is not None
+        assert failure.status == 403
