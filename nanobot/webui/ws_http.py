@@ -245,6 +245,11 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
 })
 
 
+_OWNER_DELEGATED_LOCAL_PATHS = frozenset({
+    "/api/workspaces/grants/upsert",
+})
+
+
 @dataclass(frozen=True)
 class WebUIMutationAuthorizationFailure:
     status: int
@@ -538,12 +543,17 @@ class GatewayHTTPHandler:
             "providers": providers,
         }
 
-    def mobile_workspaces_payload(self) -> dict[str, Any]:
-        """Return read-only workspace metadata for the mobile composer."""
+    def mobile_workspaces_payload(self, *, owner: bool = False) -> dict[str, Any]:
+        """Return workspace metadata; owner devices may manage server grants.
+
+        A legacy chat-only device keeps the read-only projection. The native
+        OS folder picker is never advertised to a remote owner; M37's server
+        directory browser is the selection surface.
+        """
         return self.workspaces.payload(
-            controls_available=False,
+            controls_available=owner,
             folder_picker_available=False,
-            management_available=False,
+            management_available=owner,
         )
 
     async def mobile_api_payload(self, path: str) -> tuple[int, dict[str, Any]]:
@@ -724,6 +734,9 @@ class GatewayHTTPHandler:
         path: str,
     ) -> WebUIMutationAuthorizationFailure | None:
         if path not in _LOCAL_ONLY_WEBUI_MUTATION_PATHS:
+            return None
+        identity = getattr(connection, "mobile_identity", None)
+        if path in _OWNER_DELEGATED_LOCAL_PATHS and getattr(identity, "is_owner", False):
             return None
         if (
             not _is_loopback_host(self.config.host)
@@ -1989,6 +2002,54 @@ class GatewayHTTPHandler:
             self._log.exception("workspace mode committed but event publication failed")
         return _http_json_response(dict(result))
 
+    def _owner_grant_payload(
+        self,
+        request: WsRequest,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Consume a fresh directory-browser token before an owner grant commit.
+
+        The standard grant handler still performs its own revision/authority
+        checks; this step replaces a caller-supplied path with the canonical
+        path bound to the resolve token so a listing or path swap is not
+        authority.
+        """
+        allowed = {
+            "expected_revision",
+            "path",
+            "file_access",
+            "commands",
+            "commit_token",
+            "root",
+            "extent",
+        }
+        unknown = set(payload) - allowed
+        if unknown:
+            raise ValueError("grant payload has unlisted fields")
+        token = payload.get("commit_token")
+        root_id = payload.get("root")
+        relative = payload.get("path")
+        extent = payload.get("extent", "read")
+        if not isinstance(token, str) or not isinstance(root_id, str):
+            raise ValueError("grant commit is missing token/root")
+        if not isinstance(relative, str) or not isinstance(extent, str):
+            raise ValueError("grant commit is missing path/extent")
+        installation = self._directory_installation(request)
+        resolved = self.directory_browser.consume_commit_token(
+            token,
+            installation_id=installation,
+            root_id=root_id,
+            relative_path=relative,
+            extent=extent,
+        )
+        cleaned = {
+            "expected_revision": payload.get("expected_revision"),
+            "path": resolved["canonical_path"],
+            "file_access": payload.get("file_access"),
+            "commands": payload.get("commands"),
+        }
+        return cleaned
+
     def _matches_expected_webui_source(
         self,
         request: WsRequest,
@@ -2065,6 +2126,17 @@ class GatewayHTTPHandler:
         if not isinstance(raw_payload, dict):
             return _http_error(400, "invalid management payload")
         payload = cast(dict[str, Any], raw_payload)
+        owner_identity = getattr(connection, "mobile_identity", None)
+        owner_authorized = bool(getattr(owner_identity, "is_owner", False))
+        if path == "/api/workspaces/grants/upsert" and owner_authorized:
+            try:
+                payload = self._owner_grant_payload(request, payload)
+            except Exception as exc:
+                from nanobot.webui.workspace_directories import DirectoryBrowserError
+
+                if isinstance(exc, DirectoryBrowserError):
+                    return _http_error(exc.status, exc.code)
+                return _http_error(400, "invalid_grant_commit")
         grant_receipt: WorkspaceGrantReceipt | None = None
         try:
             if path == "/api/workspaces/grants/upsert":

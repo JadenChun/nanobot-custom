@@ -4,14 +4,25 @@ import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ApiError, editFolderLocation, type FolderLocationEdit } from "@/lib/api";
+import {
+  ApiError,
+  editFolderLocation,
+  upsertWorkspaceGrant,
+  type FolderLocationEdit,
+  type WorkspaceGrantCommit,
+} from "@/lib/api";
 import { folderAccessErrorMessage } from "@/lib/folderAccess";
 import { folderLocationRows, folderOperationId, pathContains, type FolderLocationRow } from "@/lib/folderLocations";
+import { isMobileRuntimeActive, mobileOwnerCapability } from "@/lib/mobile-runtime";
 import { getRuntimeHost } from "@/lib/runtime";
 import type { RepositoryRecord, WorkspacesPayload } from "@/lib/types";
 import { isAbsoluteWorkspacePath, projectNameFromPath } from "@/lib/workspace";
 import { useClient } from "@/providers/ClientProvider";
 import { cn } from "@/lib/utils";
+import {
+  RemoteFolderBrowserDialog,
+  type ServerFolderSelection,
+} from "./RemoteFolderBrowserDialog";
 
 interface FolderForm {
   path: string;
@@ -41,7 +52,10 @@ export function FoldersProjectsManager({ workspaces, onRefreshWorkspaces, onPick
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [commit, setCommit] = useState<WorkspaceGrantCommit | null>(null);
   const retry = useRef<FolderLocationEdit | null>(null);
+  const remoteOwner = isMobileRuntimeActive() && mobileOwnerCapability();
   const management = workspaces?.management;
   const rows = useMemo(() => management ? folderLocationRows(management) : [], [management]);
   const canManage = workspaces?.controls.can_manage_folders && workspaces?.controls.can_manage_catalog;
@@ -79,10 +93,61 @@ export function FoldersProjectsManager({ workspaces, onRefreshWorkspaces, onPick
       setError(folderAccessErrorMessage(reason, t));
     } finally { setPending(false); }
   };
+  const selectServerFolder = (selection: ServerFolderSelection) => {
+    retry.current = null;
+    setError(null);
+    setNotice(null);
+    setCommit({
+      commit_token: selection.commit_token,
+      root: selection.root_id,
+      extent: "read",
+    });
+    setForm({
+      path: selection.display_path,
+      label: selection.display_path.split("/").filter(Boolean).pop() ?? "folder",
+      purpose: "",
+      agentMap: false,
+      access: "read_only",
+      original: null,
+      editing: false,
+      kind: "project",
+      links: "",
+      autoSync: false,
+      syncPaths: "",
+    });
+  };
   const save = async (event: FormEvent) => {
     event.preventDefault();
     if (!form || !management) return;
     const path = form.path.trim();
+    if (remoteOwner && commit) {
+      setPending(true); setError(null); setNotice(null);
+      const extent = form.access === "read_write" ? "write" : "read";
+      try {
+        await upsertWorkspaceGrant(
+          client,
+          {
+            path,
+            file_access: form.access === "read_write" ? "read_write" : "read_only",
+            commands: false,
+          },
+          management.grants_revision,
+          { ...commit, extent },
+        );
+        await onRefreshWorkspaces();
+        setCommit(null);
+        setForm(null);
+        setNotice(text("saved", "Folder saved. The map and Sandbox rules are up to date."));
+      } catch (reason) {
+        if (reason instanceof ApiError && reason.message === "grants_changed") {
+          await onRefreshWorkspaces();
+        }
+        setError(folderAccessErrorMessage(reason, t));
+      } finally {
+        setPending(false);
+      }
+      return;
+    }
     if (!isAbsoluteWorkspacePath(path)) {
       setError(t("workspace.dialog.absolutePathRequired")); return;
     }
@@ -135,7 +200,13 @@ export function FoldersProjectsManager({ workspaces, onRefreshWorkspaces, onPick
       </div>
       <div className="flex shrink-0 gap-2">
         <Button variant="outline" size="sm" disabled={pending} onClick={() => void onRefreshWorkspaces()} aria-label={text("refresh", "Refresh folders")}><RefreshCw className="size-3.5" /></Button>
-        <Button size="sm" disabled={!canManage || pending} onClick={() => openForm()}><FolderPlus className="mr-1.5 size-3.5" />{text("add", "Add folder")}</Button>
+        <Button
+          size="sm"
+          disabled={!canManage || pending}
+          onClick={() => remoteOwner ? setBrowserOpen(true) : openForm()}
+        >
+          <FolderPlus className="mr-1.5 size-3.5" />{text("add", "Add folder")}
+        </Button>
       </div>
     </div>
     <p className="text-xs text-muted-foreground">{text("policy", "Sandbox can read ordinary files and run commands. Writes stay within approved folders and private temporary/cache storage. Running commands keep their launch access until they finish.")}</p>
@@ -198,5 +269,10 @@ export function FoldersProjectsManager({ workspaces, onRefreshWorkspaces, onPick
         </div>;
       })}
     </div>
+    <RemoteFolderBrowserDialog
+      open={browserOpen}
+      onOpenChange={setBrowserOpen}
+      onSelected={selectServerFolder}
+    />
   </div>;
 }

@@ -2087,8 +2087,8 @@
       "action": "workspace.grant.upsert",
       "ws_type": "webui_request",
       "scope": "owner",
-      "enabled": false,
-      "planned_task": "M37",
+      "enabled": true,
+      "planned_task": null,
       "replay": "submit",
       "bounds": {
         "max_request_bytes": 262144,

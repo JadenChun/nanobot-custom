@@ -54,6 +54,8 @@ describe("RemoteAccessSettings", () => {
     render(<RemoteAccessSettings token="token" initialStatus={status} />);
     expect(screen.getByText("Phone")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    expect(screen.getByRole("alertdialog", { name: "Revoke Phone" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Confirm revoke" }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(
       "/api/settings/remote-access/revoke",
       expect.objectContaining({ method: "POST" }),
@@ -84,4 +86,16 @@ describe("RemoteAccessSettings", () => {
       expect.objectContaining({ method: "POST" }),
     ));
   });
+});
+
+
+it("hides local-only enable and pairing controls on a mobile owner", () => {
+  mockFetch();
+  render(
+    <RemoteAccessSettings token="token" initialStatus={status} localSetupAvailable={false} />,
+  );
+  expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Create pairing challenge" })).not.toBeInTheDocument();
+  expect(screen.getByText(/New-device pairing and remote on\/off stay/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
 });

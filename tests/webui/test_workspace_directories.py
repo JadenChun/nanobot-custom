@@ -263,3 +263,55 @@ def test_expired_and_replaced_resolve_deny(tmp_path) -> None:
             extent="read",
         )
     assert exc.value.code == "path_replaced"
+
+
+def test_owner_grant_commit_uses_resolved_canonical_path(tmp_path) -> None:
+    from types import SimpleNamespace
+
+    from websockets.datastructures import Headers
+    from websockets.http11 import Request as WsRequest
+
+    from nanobot.webui.ws_http import GatewayHTTPHandler
+
+    root = tmp_path / "projects"
+    root.mkdir()
+    (root / "alpha").mkdir()
+    service = browser(root)
+    resolved = service.resolve(
+        root_id="projects",
+        relative_path="alpha",
+        policy_revision=service.roots()["policy_revision"],
+        installation_id="install-owner",
+    )
+    stub = SimpleNamespace(
+        directory_browser=service,
+        _directory_installation=lambda _request: "install-owner",
+    )
+    request = WsRequest("/api/workspaces/grants/upsert", Headers())
+    payload = {
+        "expected_revision": 1,
+        "path": "alpha",
+        "file_access": "read",
+        "commands": False,
+        "commit_token": resolved["commit_token"],
+        "root": "projects",
+        "extent": "read",
+    }
+    cleaned = GatewayHTTPHandler._owner_grant_payload(stub, request, payload)
+    assert cleaned == {
+        "expected_revision": 1,
+        "path": str((root / "alpha").resolve()),
+        "file_access": "read",
+        "commands": False,
+    }
+
+    with pytest.raises(DirectoryBrowserError) as exc:
+        GatewayHTTPHandler._owner_grant_payload(stub, request, payload)
+    assert exc.value.code == "resolve_reused"
+
+    with pytest.raises(ValueError):
+        GatewayHTTPHandler._owner_grant_payload(
+            stub,
+            request,
+            {**payload, "is_local": True},
+        )

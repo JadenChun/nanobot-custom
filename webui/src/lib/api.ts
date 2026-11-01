@@ -1037,10 +1037,17 @@ export async function fetchWorkspaces(
   );
 }
 
+export interface WorkspaceGrantCommit {
+  commit_token: string;
+  root: string;
+  extent: "read" | "write";
+}
+
 export async function upsertWorkspaceGrant(
   transport: WebUIMutationTransport,
   grant: FolderGrantInput,
   expectedRevision: number,
+  commit?: WorkspaceGrantCommit,
 ): Promise<WorkspaceGrantUpsertPayload> {
   const payload = await mutation<WorkspacesPayload & { grant_receipt?: unknown }>(
     transport,
@@ -1050,6 +1057,7 @@ export async function upsertWorkspaceGrant(
     path: grant.path,
     file_access: grant.file_access,
     commands: grant.commands,
+    ...(commit ?? {}),
     },
   );
   return {

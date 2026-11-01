@@ -31,7 +31,7 @@ def test_registry_matches_m36_inventory() -> None:
     registry = load_registry()
     assert set(registry.operations) == expected
     assert len(registry.operations) == 109
-    assert sum(1 for spec in registry.operations.values() if spec.enabled) == 96
+    assert sum(1 for spec in registry.operations.values() if spec.enabled) == 97
 
 
 def test_enabled_mutations_match_websocket_source_routes() -> None:
@@ -67,12 +67,14 @@ def test_enabled_mutations_match_websocket_source_routes() -> None:
 def test_planned_and_local_only_operations_are_not_enabled() -> None:
     registry = load_registry()
     for operation in (
-        "workspace.grant.upsert",
         "workspace.access.prepare_full",
+        "workspace.grant.revoke",
+        "workspace.repository.discover",
     ):
         with pytest.raises(OperationRegistryError):
             owner_operation(registry, operation)
     for operation in (
+        "workspace.grant.upsert",
         "workspace.directories.roots",
         "workspace.directories.list",
         "workspace.directories.resolve",

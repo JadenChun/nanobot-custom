@@ -519,7 +519,7 @@ async def test_owner_ws_mutation_registry_and_legacy_ceiling(edge_setup) -> None
     planned = await edge.handle_ws_frame(
         AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1),
         7,
-        {"type": "mutation", "envelope": envelope("install-owner", "workspace.grant.upsert", "req-planned")},
+        {"type": "mutation", "envelope": envelope("install-owner", "workspace.grant.revoke", "req-planned")},
     )
     assert planned["ok"] is False
     assert planned["error"] == "operation_not_allowed"

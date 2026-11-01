@@ -405,6 +405,12 @@ class OwnerIPCServer:
                 )
             except (PairingError, ValueError) as exc:
                 return {"ok": False, "error": {"code": "pairing_rejected", "message": str(exc)}}
+            self.store.record_audit(
+                installation_id=approved.installation_id,
+                operation="pairing.approve",
+                decision="applied",
+                request_id=approved.pairing_id,
+            )
             return {"ok": True, "result": {"pairing_id": approved.pairing_id, "installation_id": approved.installation_id, "scopes": list(approved.scopes)}}
         if method == "pair_cancel":
             if self.pairing is None:

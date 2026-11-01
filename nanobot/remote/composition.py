@@ -91,8 +91,11 @@ def build_mobile_edge(
     async def model_settings_handler(_identity: Any) -> dict[str, Any]:
         return await asyncio.to_thread(http.mobile_model_settings_payload)
 
-    async def workspaces_handler(_identity: Any) -> dict[str, Any]:
-        return await asyncio.to_thread(http.mobile_workspaces_payload)
+    async def workspaces_handler(identity: Any) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            http.mobile_workspaces_payload,
+            owner=bool(getattr(identity, "is_owner", False)),
+        )
 
     async def thread_handler(
         _identity: Any,

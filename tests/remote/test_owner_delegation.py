@@ -297,3 +297,47 @@ def test_device_rename_and_revoke_are_owner_scoped(tmp_path) -> None:
     # The owner token remains valid after revoking another device.
     context = delegation.authenticate(owner_token)
     assert context.is_owner
+
+
+def test_audit_is_bounded_sanitized_and_distinguishes_devices(tmp_path) -> None:
+    store, _tokens, pairing, delegation = setup(tmp_path)
+    token, _refresh = pair(pairing, installation_id="install-owner", full_control=True)
+    _legacy_token, _refresh2 = pair(pairing, installation_id="install-legacy", full_control=False)
+
+    _context, admission, _payload = authorize(
+        delegation,
+        token,
+        installation_id="install-owner",
+        operation=DelegatedAdminOperation.DEVICE_LIST.value,
+        request_id="req-audit",
+    )
+    delegation.consume(
+        handle=admission.handle,
+        installation_id="install-owner",
+        operation=DelegatedAdminOperation.DEVICE_LIST.value,
+        digest=admission.digest,
+    )
+    delegation.rename_device("install-legacy", "tablet")
+    delegation.revoke_device("install-legacy")
+    early = store.snapshot()["audit"]
+    assert any(
+        entry["operation"] == "device.revoke" and entry["installation_id"] == "install-legacy"
+        for entry in early
+    )
+
+    for index in range(250):
+        store.record_audit(
+            installation_id="install-owner",
+            operation="device.list",
+            decision="authorized",
+            request_id=f"req-{index}",
+        )
+    snapshot = store.snapshot()
+    assert len(snapshot["audit"]) == 100
+    assert {device["installation_id"] for device in snapshot["devices"]} == {
+        "install-owner",
+        "install-legacy",
+    }
+    serialized = str(snapshot)
+    assert "refresh" not in serialized.lower()
+    assert "token" not in serialized.lower()

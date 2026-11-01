@@ -5594,13 +5594,14 @@
           },
           "status": {
             "desktop_implementation": "present",
-            "mobile_implementation": "absent",
+            "mobile_implementation": "partial",
             "evidence": [
-              "currently local-only list"
+              "nanobot/webui/workspace_directories.py",
+              "nanobot/webui/ws_http.py:_owner_grant_payload"
             ]
           },
           "exception": null,
-          "notes": ""
+          "notes": "Owner commits consume a fresh M37 resolve token; the standard grant handler keeps revision checks."
         },
         {
           "id": "workspace.grant.revoke",

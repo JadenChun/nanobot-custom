@@ -32,7 +32,8 @@ def test_owner_mobile_allows_enabled_registry_actions_only() -> None:
     assert _mobile_mutation_allowed(connection, "settings.provider.create")
     assert _mobile_mutation_allowed(connection, "automation.enable")
     assert _mobile_mutation_allowed(connection, "skill.install")
-    assert not _mobile_mutation_allowed(connection, "workspace.grant.upsert")
+    assert _mobile_mutation_allowed(connection, "workspace.grant.upsert")
+    assert not _mobile_mutation_allowed(connection, "workspace.grant.revoke")
     assert not _mobile_mutation_allowed(connection, "settings.remote_access.enable")
     assert not _mobile_mutation_allowed(connection, "unregistered.action")
 
@@ -53,7 +54,7 @@ async def test_mobile_mutation_payload_denies_non_owner_and_planned() -> None:
 
     owner = AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1)
     status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
-        stub, owner, "workspace.grant.upsert", {}
+        stub, owner, "workspace.grant.revoke", {}
     )
     assert status == 403
     assert payload["error"] == "operation_not_allowed"

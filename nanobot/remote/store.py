@@ -31,6 +31,7 @@ STATE_VERSION = 1
 MAX_STATE_BYTES = 1024 * 1024
 MAX_DEVICES = 256
 MAX_OWNED_ENTRIES = 64
+MAX_AUDIT_ENTRIES = 200
 
 
 class StoreError(RuntimeError):
@@ -72,6 +73,7 @@ class RemoteAccessState:
     enabled: bool = False
     devices: dict[str, RemoteDevice] = field(default_factory=dict)
     owned_entries: list[dict[str, Any]] = field(default_factory=list)
+    audit: list[dict[str, Any]] = field(default_factory=list)
     updated_at: float = field(default_factory=time.time)
 
 
@@ -356,6 +358,33 @@ class RemoteAccessStore:
             self._save_locked(state)
             return state
 
+    def record_audit(
+        self,
+        *,
+        installation_id: str,
+        operation: str,
+        decision: str,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist a bounded, sanitized device-operation audit record.
+
+        Never stores credentials, payloads or native references. Audit writes
+        do not change the authority revision, so they cannot invalidate an
+        already-issued admission.
+        """
+        with self._locked():
+            state = self._require_state()
+            entry = {
+                "at": self.clock(),
+                "installation_id": _bounded_text(installation_id, 128),
+                "operation": _bounded_text(operation, 64),
+                "decision": _bounded_text(decision, 32),
+                "request_id": _bounded_text(request_id, 128) if request_id else None,
+            }
+            state.audit = [*state.audit[-MAX_AUDIT_ENTRIES + 1 :], entry]
+            self._save_locked(state)
+            return entry
+
     def snapshot(self) -> dict[str, Any]:
         state = self.load_or_create()
         return {
@@ -375,6 +404,7 @@ class RemoteAccessStore:
                 for device in state.devices.values()
             ],
             "owned_entries": list(state.owned_entries),
+            "audit": list(state.audit[-100:]),
         }
 
     def _require_state(self) -> RemoteAccessState:
@@ -399,6 +429,7 @@ class RemoteAccessStore:
                 for installation_id, device in state.devices.items()
             },
             "owned_entries": list(state.owned_entries),
+            "audit": list(state.audit[-100:]),
         }
 
     @staticmethod
@@ -459,6 +490,30 @@ class RemoteAccessStore:
                     "added_at": float(entry.get("added_at", 0)),
                 }
             )
+        raw_audit = raw.get("audit", [])
+        if not isinstance(raw_audit, list):
+            raise StoreCorruptError("audit records are invalid")
+        audit: list[dict[str, Any]] = []
+        for item in cast(list[Any], raw_audit[-MAX_AUDIT_ENTRIES:]):
+            if not isinstance(item, dict):
+                continue
+            record = cast(dict[str, Any], item)
+            at = record.get("at")
+            if not isinstance(at, (int, float)):
+                continue
+            audit.append(
+                {
+                    "at": float(at),
+                    "installation_id": _bounded_text(record.get("installation_id"), 128),
+                    "operation": _bounded_text(record.get("operation"), 64),
+                    "decision": _bounded_text(record.get("decision"), 32),
+                    "request_id": (
+                        _bounded_text(record.get("request_id"), 128)
+                        if isinstance(record.get("request_id"), str)
+                        else None
+                    ),
+                }
+            )
         updated_at = raw.get("updated_at", time.time())
         return RemoteAccessState(
             version=STATE_VERSION,
@@ -467,6 +522,7 @@ class RemoteAccessStore:
             enabled=bool(raw.get("enabled", False)),
             devices=devices,
             owned_entries=entries,
+            audit=audit,
             updated_at=float(updated_at) if isinstance(updated_at, (int, float)) else time.time(),
         )
 
@@ -489,3 +545,9 @@ class _StoreLock:
             os.close(self.fd)
             self.fd = None
         self.store.thread_lock.release()
+
+
+def _bounded_text(value: object, limit: int) -> str:
+    text = str(value or "")
+    text = "".join(char for char in text if char.isprintable())
+    return text[:limit]

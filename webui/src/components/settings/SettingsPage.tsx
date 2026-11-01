@@ -1,6 +1,7 @@
 import { ChevronLeft, Loader2 } from "lucide-react";
 
 import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettings";
 import { ImageGenerationSettings } from "@/components/settings/capabilities/ImageGenerationSettings";
 import { AdvancedSettings } from "@/components/settings/capabilities/SecuritySettings";
@@ -525,7 +526,12 @@ export function SettingsPage({
           />
         );
       case "remote_access":
-        return <RemoteAccessSettings token={token} />;
+        return (
+          <RemoteAccessSettings
+            token={token}
+            localSetupAvailable={!isMobileRuntimeActive()}
+          />
+        );
       case "advanced":
         return (
           <AdvancedSettings

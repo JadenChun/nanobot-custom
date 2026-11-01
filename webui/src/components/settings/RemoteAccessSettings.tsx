@@ -14,9 +14,15 @@ import {
 interface RemoteAccessSettingsProps {
   token: string;
   initialStatus?: RemoteAccessStatus | null;
+  /** Initial enable/re-enable and new-device approval are server-local only. */
+  localSetupAvailable?: boolean;
 }
 
-export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAccessSettingsProps) {
+export function RemoteAccessSettings({
+  token,
+  initialStatus = null,
+  localSetupAvailable = true,
+}: RemoteAccessSettingsProps) {
   const [status, setStatus] = useState<RemoteAccessStatus | null>(initialStatus);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -30,6 +36,7 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
   const [pairingLink, setPairingLink] = useState("");
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [copied, setCopied] = useState(false);
+  const [revoking, setRevoking] = useState<{ installationId: string; label: string } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -98,16 +105,20 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
             {status?.enabled ? "Enabled for approved devices" : "Disabled"}
           </p>
         </div>
-        <button
-          type="button"
-          disabled={busy || !status}
-          onClick={() => void run(async () => {
-            await setRemoteAccessEnabled(token, !status?.enabled);
-          })}
-          className="rounded-md border px-3 py-1.5 text-sm"
-        >
-          {status?.enabled ? "Disable" : "Enable"}
-        </button>
+        {localSetupAvailable ? (
+          <button
+            type="button"
+            disabled={busy || !status}
+            onClick={() => void run(async () => {
+              await setRemoteAccessEnabled(token, !status?.enabled);
+            })}
+            className="rounded-md border px-3 py-1.5 text-sm"
+          >
+            {status?.enabled ? "Disable" : "Enable"}
+          </button>
+        ) : (
+          <span className="text-xs text-muted-foreground">Local server only</span>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -126,8 +137,9 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => void run(async () => {
-                      await revokeRemoteDevice(token, device.installation_id);
+                    onClick={() => setRevoking({
+                      installationId: device.installation_id,
+                      label: device.label,
                     })}
                     className="rounded-md border px-3 py-1 text-xs"
                   >
@@ -138,8 +150,46 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
             ))}
           </ul>
         ) : <p className="text-sm text-muted-foreground">No paired devices.</p>}
+        {revoking ? (
+          <div
+            role="alertdialog"
+            aria-label={`Revoke ${revoking.label}`}
+            className="rounded-xl border border-destructive/40 bg-destructive/5 p-3"
+          >
+            <p className="text-sm font-medium">Revoke {revoking.label}?</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              This device loses access immediately. It must be paired again locally.
+            </p>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                className="rounded-md border px-3 py-1 text-xs"
+                onClick={() => setRevoking(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-destructive/50 px-3 py-1 text-xs text-destructive"
+                disabled={busy}
+                onClick={() => void run(async () => {
+                  await revokeRemoteDevice(token, revoking.installationId);
+                  setRevoking(null);
+                })}
+              >
+                Confirm revoke
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
+      {!localSetupAvailable ? (
+        <p className="rounded-xl border p-3 text-sm text-muted-foreground">
+          New-device pairing and remote on/off stay on the server-local desktop or CLI.
+          Existing devices can still be reviewed and revoked here.
+        </p>
+      ) : (
       <div className="space-y-3">
         <h2 className="text-sm font-medium">Pair a phone</h2>
         <label className="block text-xs">
@@ -260,6 +310,7 @@ export function RemoteAccessSettings({ token, initialStatus = null }: RemoteAcce
           </div>
         ) : null}
       </div>
+      )}
     </section>
   );
 }

@@ -298,6 +298,12 @@ class OwnerDelegationService:
         with self._lock:
             self._purge_expired()
             self._admissions[admission.handle] = admission
+        self.store.record_audit(
+            installation_id=context.installation_id,
+            operation=op.value,
+            decision="authorized",
+            request_id=request_id,
+        )
         return context, admission, payload
 
     def consume(
@@ -322,6 +328,11 @@ class OwnerDelegationService:
         context = self.authenticate_device(admission.installation_id)
         if context.record_revision != admission.record_revision:
             raise DelegationError("authority_changed", "device authority changed", status=409)
+        self.store.record_audit(
+            installation_id=context.installation_id,
+            operation=admission.operation.value,
+            decision="consumed",
+        )
         return context
 
     def authenticate_device(self, installation_id: str) -> AuthenticatedDeviceContext:
@@ -339,10 +350,20 @@ class OwnerDelegationService:
 
     def rename_device(self, installation_id: str, label: str) -> dict[str, Any]:
         device = self.store.rename_device(installation_id, label)
+        self.store.record_audit(
+            installation_id=device.installation_id,
+            operation="device.rename",
+            decision="applied",
+        )
         return {"installation_id": device.installation_id, "label": device.label}
 
     def revoke_device(self, installation_id: str) -> dict[str, Any]:
         device = self.store.revoke_device(installation_id)
+        self.store.record_audit(
+            installation_id=device.installation_id,
+            operation="device.revoke",
+            decision="applied",
+        )
         return {"installation_id": device.installation_id, "revoked": device.revoked}
 
     def _purge_expired(self) -> None:
