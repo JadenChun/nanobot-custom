@@ -101,10 +101,37 @@ class OperationReplayCache:
                 record = self._records.get(key)
                 if record is not None:
                     return self._join(envelope, record)
+            async with self._lock:
+                self._expire_locked()
+                record = self._records.get(key)
+                if record is not None:
+                    return self._join(envelope, record)
+                if len(self._records) >= self.max_entries:
+                    self._evict_locked()
+                    if len(self._records) >= self.max_entries:
+                        return MutationOutcome(
+                            decision=MutationDecision.OUTCOME_UNKNOWN,
+                            request_id=envelope.request_id,
+                            effect_count=0,
+                            http_status=409,
+                        )
             try:
                 result = await effect(envelope)
             except Exception:
+                now = self.clock()
+                uncertain = ReplayRecord(
+                    key=key,
+                    principal=envelope.principal,
+                    action=envelope.action,
+                    digest=envelope.digest,
+                    result={"error": "uncertain"},
+                    effect_count=0,
+                    created_at=now,
+                    expires_at=now + max(self.ttl_seconds, 3600.0),
+                )
                 async with self._lock:
+                    self._evict_locked()
+                    self._records[key] = uncertain
                     self._key_locks.pop(key, None)
                 raise
             now = self.clock()
@@ -140,6 +167,13 @@ class OperationReplayCache:
             or record.digest != envelope.digest
         ):
             return _denied(envelope, 409)
+        if record.effect_count == 0:
+            return MutationOutcome(
+                decision=MutationDecision.OUTCOME_UNKNOWN,
+                request_id=envelope.request_id,
+                effect_count=0,
+                http_status=409,
+            )
         return MutationOutcome(
             decision=MutationDecision.REPLAYED,
             request_id=envelope.request_id,
@@ -155,9 +189,15 @@ class OperationReplayCache:
                 self._records.pop(key, None)
 
     def _evict_locked(self) -> None:
-        while len(self._records) >= self.max_entries:
-            oldest = min(self._records, key=lambda key: self._records[key].created_at)
+        completed = [
+            key for key, record in self._records.items() if record.effect_count > 0
+        ]
+        if not completed:
+            return
+        while len(self._records) >= self.max_entries and completed:
+            oldest = min(completed, key=lambda key: self._records[key].created_at)
             self._records.pop(oldest, None)
+            completed.remove(oldest)
 
 
 def _denied(envelope: MutationEnvelope, status: int) -> MutationOutcome:

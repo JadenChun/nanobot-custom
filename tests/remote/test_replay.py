@@ -232,3 +232,32 @@ def test_replay_contract_vectors_are_present() -> None:
     assert vectors["version"] == 1
     assert {case["mode"] for case in vectors["cases"]} == {"submit", "replay_only"}
     assert all("expected_effect_count" in case for case in vectors["cases"])
+
+
+@pytest.mark.asyncio
+async def test_failed_effect_is_uncertain_and_not_retried() -> None:
+    cache = OperationReplayCache()
+    counter = Counter()
+
+    async def failing_effect(_envelope: MutationEnvelope) -> dict:
+        counter.effects += 1
+        raise TimeoutError("effect timed out")
+
+    with pytest.raises(TimeoutError):
+        await cache.execute(
+            envelope(),
+            current_generation=2,
+            current_epoch=7,
+            authorize=lambda: asyncio.sleep(0, result=True),
+            effect=failing_effect,
+        )
+    retry = await cache.execute(
+        envelope(),
+        current_generation=2,
+        current_epoch=7,
+        authorize=lambda: asyncio.sleep(0, result=True),
+        effect=counter.effect,
+    )
+    assert retry.decision is MutationDecision.OUTCOME_UNKNOWN
+    assert retry.effect_count == 0
+    assert counter.effects == 1
