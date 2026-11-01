@@ -354,6 +354,11 @@ class OwnerIPCServer:
                 device = self.store.revoke_device(installation_id)
             except StoreError as exc:
                 return {"ok": False, "error": {"code": "not_found", "message": str(exc)}}
+            self.store.record_audit(
+                installation_id=device.installation_id,
+                operation="device.revoke",
+                decision="applied",
+            )
             return {"ok": True, "result": {"installation_id": device.installation_id, "revoked": device.revoked}}
         if method in {
             "delegate_authorize",
