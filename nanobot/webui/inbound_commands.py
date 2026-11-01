@@ -160,9 +160,15 @@ def _mobile_mutation_allowed(connection: Any, action: str) -> bool:
     identity = getattr(connection, "mobile_identity", None)
     if identity is None:
         return False
+    installation_id = getattr(identity, "installation_id", None)
+    scopes = getattr(identity, "scopes", None)
+    if not isinstance(installation_id, str) or not installation_id:
+        return False
+    if not isinstance(scopes, (tuple, list, set, frozenset)):
+        return False
     if action in _MOBILE_MUTATION_ACTIONS:
         return True
-    if not getattr(identity, "is_owner", False):
+    if "owner" not in scopes:
         return False
     try:
         from nanobot.remote.operations import load_registry
