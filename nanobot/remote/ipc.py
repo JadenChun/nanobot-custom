@@ -352,6 +352,18 @@ class OwnerIPCServer:
                 return {"ok": False, "error": {"code": "bad_request", "message": "installation_id is required"}}
             actor = _string_param(params, "actor_installation_id")
             try:
+                self.store.record_audit(
+                    installation_id=installation_id,
+                    operation="device.revoke",
+                    decision="attempted",
+                    actor_installation_id=actor,
+                )
+            except StoreError as exc:
+                return {
+                    "ok": False,
+                    "error": {"code": "unavailable", "message": str(exc)},
+                }
+            try:
                 device = self.store.revoke_device(installation_id)
             except StoreError as exc:
                 return {"ok": False, "error": {"code": "not_found", "message": str(exc)}}

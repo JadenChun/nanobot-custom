@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 from websockets.datastructures import Headers
@@ -151,26 +151,44 @@ async def test_owner_remote_can_resolve_recovery_action() -> None:
         async def publish(self, *_args):
             return None
 
+    class _Adapter:
+        calls = 0
+
+        def authorize(self, **_kwargs):
+            self.calls += 1
+            return True
+
     owner = RecoveryOwner()
+    adapter = _Adapter()
     handler = object.__new__(GatewayHTTPHandler)
     handler.config = SimpleNamespace(host="127.0.0.1")
     handler.workspace_access_recovery = owner
+    handler.owner_permission_adapter = adapter
     handler.check_api_token = lambda _request: True
     handler._log = SimpleNamespace(exception=lambda *_args: None)
-    request = Request(
-        "/api/workspaces/access/resolve",
-        Headers([("Host", "127.0.0.1:8765")]),
+    handler.authorize_webui_mutation = lambda *_args: None
+    handler._webui_mutation_path = GatewayHTTPHandler._webui_mutation_path
+    handler._connection_headers = lambda _connection: Headers(
+        [("Host", "127.0.0.1:8765")]
     )
-    setattr(request, "_nanobot_webui_mutation_request", True)
-    setattr(request, "_nanobot_webui_mutation_payload", {"chat_id": "chat-a"})
+
+    async def dispatch(self, connection, request, path):
+        return await self._handle_workspace_access_action(connection, request, path)
+
+    handler._dispatch_resolved = MethodType(dispatch, handler)
     connection = SimpleNamespace(
         remote_address=("203.0.113.1", 1234),
         mobile_identity=AccessIdentity(
             "install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1
         ),
+        mobile_access_token="access-token",
     )
-    response = await handler._handle_workspace_access_action(
-        connection, request, "/api/workspaces/access/resolve"
+    response = await GatewayHTTPHandler.dispatch_webui_mutation(
+        handler,
+        connection,
+        "workspace.access.resolve",
+        {"chat_id": "chat-a"},
     )
     assert response.status_code == 200
     assert owner.calls == 1
+    assert adapter.calls == 1

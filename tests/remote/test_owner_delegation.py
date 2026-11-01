@@ -325,7 +325,7 @@ def test_audit_is_bounded_sanitized_and_distinguishes_devices(tmp_path) -> None:
         for entry in early
     )
 
-    for index in range(250):
+    for index in range(600):
         store.record_audit(
             installation_id="install-owner",
             operation="device.list",
@@ -333,7 +333,7 @@ def test_audit_is_bounded_sanitized_and_distinguishes_devices(tmp_path) -> None:
             request_id=f"req-{index}",
         )
     snapshot = store.snapshot()
-    assert len(snapshot["audit"]) == 100
+    assert len(snapshot["audit"]) == 500
     assert {device["installation_id"] for device in snapshot["devices"]} == {
         "install-owner",
         "install-legacy",

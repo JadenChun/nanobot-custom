@@ -102,6 +102,14 @@ class DurableWebUIReplay:
             os.fsync(handle.fileno())
         os.chmod(temporary, 0o600)
         os.replace(temporary, self.path)
+        directory = os.open(
+            self.path.parent,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
     def lookup(
         self,
@@ -139,6 +147,10 @@ class DurableWebUIReplay:
                 return False
             if request_id in self._entries:
                 return False
+            if len(self._entries) >= self.max_entries:
+                self._prune_locked(make_room=True)
+                if len(self._entries) >= self.max_entries:
+                    return False
             self._entries[request_id] = {
                 "action": action,
                 "digest": digest,
@@ -171,7 +183,7 @@ class DurableWebUIReplay:
             self._prune_locked()
             self._save()
 
-    def _prune_locked(self) -> None:
+    def _prune_locked(self, *, make_room: bool = False) -> None:
         now = self.clock()
         for request_id, entry in list(self._entries.items()):
             if (
@@ -179,7 +191,7 @@ class DurableWebUIReplay:
                 and now - float(entry.get("updated_at", now)) > self.ttl_s
             ):
                 self._entries.pop(request_id, None)
-        overflow = len(self._entries) - self.max_entries
+        overflow = len(self._entries) - self.max_entries + (1 if make_room else 0)
         if overflow <= 0:
             return
         ordered = sorted(
@@ -189,6 +201,5 @@ class DurableWebUIReplay:
         completed = [
             request_id for request_id, entry in ordered if entry.get("state") == "completed"
         ]
-        removable = completed or [request_id for request_id, _ in ordered]
-        for request_id in removable[:overflow]:
+        for request_id in completed[:overflow]:
             self._entries.pop(request_id, None)

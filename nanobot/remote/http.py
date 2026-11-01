@@ -161,6 +161,20 @@ def _make_handler(
                 assert owner is not None
                 target = parts[1]
                 try:
+                    owner.store.record_audit(
+                        installation_id=target,
+                        operation="device.revoke",
+                        decision="attempted",
+                        request_id=None,
+                        actor_installation_id=grant.installation_id,
+                    )
+                except Exception:
+                    self._write(
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        {"error": "audit_unavailable"},
+                    )
+                    return
+                try:
                     revoked = owner.tokens.revoke(target)
                 except AuthRejectedError:
                     self._write(HTTPStatus.NOT_FOUND, {"error": "device_not_found"})

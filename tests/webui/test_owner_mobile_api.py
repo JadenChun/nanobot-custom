@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 
@@ -207,3 +207,52 @@ def test_workspace_owner_actions_have_delegation_receipts() -> None:
         "repository.remember",
     ):
         assert action in ACTION_OPERATIONS
+
+
+@pytest.mark.asyncio
+async def test_workspace_owner_action_calls_permission_adapter() -> None:
+    from websockets.datastructures import Headers
+
+    from nanobot.webui.http_utils import http_json_response
+
+    calls: list[dict[str, object]] = []
+
+    class _Adapter:
+        def authorize(self, **kwargs):
+            calls.append(kwargs)
+            return True
+
+    async def dispatch(_connection, _request, _path):
+        return http_json_response({"ok": True})
+
+    stub = SimpleNamespace(
+        owner_permission_adapter=_Adapter(),
+        authorize_webui_mutation=lambda *_args: None,
+        _webui_mutation_path=GatewayHTTPHandler._webui_mutation_path,
+        _connection_headers=lambda _connection: Headers(),
+        _dispatch_resolved=dispatch,
+        _log=SimpleNamespace(exception=lambda *_args, **_kwargs: None),
+    )
+    owner = AccessIdentity(
+        "install-owner",
+        ("chat.read", "chat.write", "owner"),
+        1e12,
+        1,
+    )
+    connection = SimpleNamespace(
+        mobile_identity=owner,
+        mobile_access_token="access-token",
+    )
+    stub._authorize_owner_permission = MethodType(
+        GatewayHTTPHandler._authorize_owner_permission, stub
+    )
+    response = await GatewayHTTPHandler.dispatch_webui_mutation(
+        stub,
+        connection,
+        "workspace.access.resolve",
+        {"chat_id": "chat-a"},
+    )
+    assert response.status_code == 200
+    assert calls
+    assert calls[0]["action"] == "workspace.access.resolve"
+    assert calls[0]["access_token"] == "access-token"

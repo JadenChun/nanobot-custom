@@ -58,3 +58,16 @@ def test_durable_replay_fails_closed_on_corrupt_ledger(tmp_path: Path) -> None:
     store = DurableWebUIReplay(path)
     assert store.lookup("req", "sidebar.update", "digest", None)[0] == "uncertain"
     assert store.begin("req", "sidebar.update", "digest", None) is False
+
+
+def test_in_progress_replays_are_never_evicted_at_capacity(tmp_path: Path) -> None:
+    path = tmp_path / "replay.json"
+    store = DurableWebUIReplay(path, max_entries=2)
+    assert store.begin("req-a", "sidebar.update", "digest", None)
+    assert store.begin("req-b", "sidebar.update", "digest", None)
+    assert store.begin("req-c", "sidebar.update", "digest", None) is False
+    restarted = DurableWebUIReplay(path, max_entries=2)
+    assert restarted.lookup("req-a", "sidebar.update", "digest", None)[0] == "uncertain"
+    assert restarted.lookup("req-b", "sidebar.update", "digest", None)[0] == "uncertain"
+    restarted.complete("req-a", _result({"ok": True}))
+    assert restarted.begin("req-c", "sidebar.update", "digest", None) is True

@@ -1317,40 +1317,48 @@ class WebUICommandRouter:
         source_binding: dict[str, object] | None = None,
         source_binding_captured: bool = False,
     ) -> WebUIRequestResult:
+        timeout_s = 30.0
         try:
             from nanobot.remote.operations import load_registry
 
             spec = load_registry().mutations.get(action)
-            if spec is not None and spec.max_request_bytes is not None:
-                encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-                if len(encoded) > spec.max_request_bytes:
-                    return WebUIRequestResult(status=413, message="request_too_large")
+            if spec is not None:
+                timeout_s = float(spec.timeout_s or 30.0)
+                if spec.max_request_bytes is not None:
+                    encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                    if len(encoded) > spec.max_request_bytes:
+                        return WebUIRequestResult(status=413, message="request_too_large")
         except Exception:
             pass
         try:
             lock = self.request_locks.setdefault(connection, asyncio.Lock())
             async with lock:
-                if action in _SOURCE_BOUND_PERMISSION_ACTIONS:
-                    response = await self._http_router.dispatch_webui_mutation(
+                async def dispatch() -> Any:
+                    if action in _SOURCE_BOUND_PERMISSION_ACTIONS:
+                        return await self._http_router.dispatch_webui_mutation(
+                            connection,
+                            action,
+                            payload,
+                            expected_source_binding=source_binding,
+                        )
+                    if action == _PREPARE_FULL_ACTION and source_binding_captured:
+                        return await self._http_router.dispatch_webui_mutation(
+                            connection,
+                            action,
+                            payload,
+                            expected_source_binding=source_binding,
+                            check_expected_source_binding=True,
+                        )
+                    return await self._http_router.dispatch_webui_mutation(
                         connection,
                         action,
                         payload,
-                        expected_source_binding=source_binding,
                     )
-                elif action == _PREPARE_FULL_ACTION and source_binding_captured:
-                    response = await self._http_router.dispatch_webui_mutation(
-                        connection,
-                        action,
-                        payload,
-                        expected_source_binding=source_binding,
-                        check_expected_source_binding=True,
-                    )
-                else:
-                    response = await self._http_router.dispatch_webui_mutation(
-                        connection,
-                        action,
-                        payload,
-                    )
+
+                try:
+                    response = await asyncio.wait_for(dispatch(), timeout=timeout_s)
+                except TimeoutError:
+                    return WebUIRequestResult(status=504, message="timeout")
                 status = response.status_code
                 body = bytes(response.body).decode("utf-8", errors="replace").strip()
                 if 200 <= status < 300:

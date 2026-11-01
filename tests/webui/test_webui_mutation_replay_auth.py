@@ -838,3 +838,28 @@ def test_owner_delegated_workspace_paths_allow_owner_mobile() -> None:
         )
         assert failure is not None
         assert failure.status == 403
+
+
+@pytest.mark.asyncio
+async def test_product_mutation_effect_timeout(monkeypatch) -> None:
+    from nanobot.remote import operations as operations_module
+
+    spec = SimpleNamespace(timeout_s=0.01, max_request_bytes=1024)
+    monkeypatch.setattr(
+        operations_module,
+        "load_registry",
+        lambda: SimpleNamespace(mutations={"workspace.access.resolve": spec}),
+    )
+
+    async def slow_dispatch(*_args, **_kwargs):
+        await asyncio.sleep(0.05)
+        return SimpleNamespace(status_code=200, body=b"{}")
+
+    router = object.__new__(WebUICommandRouter)
+    router.request_locks = {}
+    router._http_router = SimpleNamespace(dispatch_webui_mutation=slow_dispatch)
+    result = await router.execute_webui_request(
+        object(), "workspace.access.resolve", {}
+    )
+    assert result.status == 504
+    assert result.message == "timeout"

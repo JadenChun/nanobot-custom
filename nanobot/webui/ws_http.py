@@ -282,6 +282,12 @@ _OWNER_DELEGATED_LOCAL_PATHS = frozenset({
     "/api/repositories/discover",
 })
 
+_OWNER_PERMISSION_HANDLED_ACTIONS = frozenset({
+    "workspace.grant.upsert",
+    "workspace.access.prepare_full",
+    "workspace.access.mode.set",
+})
+
 
 @dataclass(frozen=True)
 class WebUIMutationAuthorizationFailure:
@@ -827,6 +833,17 @@ class GatewayHTTPHandler:
         path = self._webui_mutation_path(action, payload)
         if isinstance(path, Response):
             return path
+
+        from nanobot.remote.permissions import ACTION_OPERATIONS
+
+        if action in ACTION_OPERATIONS and action not in _OWNER_PERMISSION_HANDLED_ACTIONS:
+            permission_failure = await self._authorize_owner_permission(
+                connection,
+                action,
+                payload,
+            )
+            if permission_failure is not None:
+                return permission_failure
 
         headers = self._connection_headers(connection)
         request = WsRequest(path, headers)
