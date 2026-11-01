@@ -516,13 +516,14 @@ async def test_owner_ws_mutation_registry_and_legacy_ceiling(edge_setup) -> None
     assert legacy_settings["ok"] is False
     assert legacy_settings["error"] == "owner_required"
 
-    workspace_action = await edge.handle_ws_frame(
+    planned = await edge.handle_ws_frame(
         AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1),
         7,
-        {"type": "mutation", "envelope": envelope("install-owner", "workspace.grant.revoke", "req-workspace")},
+        {"type": "mutation", "envelope": envelope("install-owner", "workspace.grant.revoke", "req-planned")},
     )
-    assert workspace_action["ok"] is True
-    assert effects == ["sidebar.update", "workspace.grant.revoke"]
+    assert planned["ok"] is False
+    assert planned["error"] == "operation_not_allowed"
+    assert effects == ["sidebar.update"]
 
 
 class _RevalidatingValidator:

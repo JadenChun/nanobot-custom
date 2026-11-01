@@ -66,7 +66,7 @@ async def test_owner_feature_reads_follow_standard_handlers(gateway) -> None:
 
 
 @pytest.mark.asyncio
-async def test_owner_mutation_payload_denies_local_only_and_unregistered(gateway) -> None:
+async def test_owner_mutation_payload_denies_local_only_and_planned(gateway) -> None:
     owner = AccessIdentity(
         "install-owner",
         ("chat.read", "chat.write", "owner"),
@@ -80,7 +80,7 @@ async def test_owner_mutation_payload_denies_local_only_and_unregistered(gateway
     assert payload["error"] == "operation_not_allowed"
 
     status, payload = await gateway.http.mobile_mutation_payload(
-        owner, "workspace.pick_folder", {}
+        owner, "workspace.grant.revoke", {"path": "/tmp/x", "expected_revision": 0}
     )
     assert status == 403
     assert payload["error"] == "operation_not_allowed"
