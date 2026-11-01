@@ -151,6 +151,10 @@
     retry.type = "button";
     retry.hidden = true;
     actions.appendChild(retry);
+    var cancel = textElement("button", "mobile-pairing-button", "Cancel");
+    cancel.type = "button";
+    cancel.hidden = true;
+    actions.appendChild(cancel);
     card.appendChild(actions);
 
     var details = document.createElement("details");
@@ -177,10 +181,12 @@
       installation: installationValue,
       input: input,
       form: form,
+      scan: scan,
       code: code,
       codeBlock: codeBlock,
       login: login,
-      retry: retry
+      retry: retry,
+      cancel: cancel
     };
   }
 
