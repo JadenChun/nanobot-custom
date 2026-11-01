@@ -39,7 +39,7 @@ from nanobot.webui.http_utils import (
 
 _MEDIA_RE = re.compile(r"^/mobile/v1/media/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)$")
 _THREAD_RE = re.compile(r"^/mobile/v1/sessions/([^/]+)/thread$")
-_MOBILE_API_ROUTES = (
+_MOBILE_API_ROUTES: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = (
     (re.compile(r"^/api/commands$"), frozenset()),
     (re.compile(r"^/api/sessions/[^/]+/file-preview$"), frozenset({"path", "probe"})),
     (re.compile(r"^/api/sessions/[^/]+/automations$"), frozenset()),

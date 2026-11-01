@@ -382,11 +382,13 @@ def _filter_mobile_commands(payload: dict[str, Any]) -> dict[str, Any]:
     commands = payload.get("commands")
     if not isinstance(commands, list):
         return payload
-    filtered = [
-        command
-        for command in cast(list[Any], commands)
-        if isinstance(command, dict) and command.get("command") in _MOBILE_COMMAND_NAMES
-    ]
+    filtered: list[dict[str, Any]] = []
+    for command in cast(list[Any], commands):
+        if not isinstance(command, dict):
+            continue
+        typed = cast(dict[str, Any], command)
+        if typed.get("command") in _MOBILE_COMMAND_NAMES:
+            filtered.append(typed)
     return {**payload, "commands": filtered}
 
 
@@ -524,11 +526,12 @@ class GatewayHTTPHandler:
             for raw_provider in cast(list[Any], raw_providers):
                 if not isinstance(raw_provider, dict):
                     continue
+                provider = cast(dict[str, Any], raw_provider)
                 providers.append(
                     {
-                        "name": raw_provider.get("name"),
-                        "label": raw_provider.get("label"),
-                        "configured": bool(raw_provider.get("configured")),
+                        "name": provider.get("name"),
+                        "label": provider.get("label"),
+                        "configured": bool(provider.get("configured")),
                     }
                 )
         return {
@@ -563,6 +566,7 @@ class GatewayHTTPHandler:
         response = await self.dispatch(None, request, internal=True)
         if response is None:
             return 404, {"error": "not_found"}
+        body: Any
         try:
             body = json.loads(response.body) if response.body else {}
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -593,6 +597,7 @@ class GatewayHTTPHandler:
         response = await self.dispatch(None, request, internal=True)
         if response is None:
             return 404, {"error": "not_found"}
+        body: Any
         try:
             body = json.loads(response.body) if response.body else {}
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -620,6 +625,7 @@ class GatewayHTTPHandler:
             return 403, {"error": "owner_required"}
         connection = SimpleNamespace(mobile_identity=identity)
         response = await self.dispatch_webui_mutation(connection, action, payload)
+        body: Any
         try:
             body = json.loads(response.body) if response.body else {}
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -1822,12 +1828,19 @@ class GatewayHTTPHandler:
             payload = _mutation_payload(request)
             if not isinstance(payload, dict):
                 return _http_error(400, "invalid_directory_request")
+            root_id = payload.get("root")
+            relative_path = payload.get("path", "")
+            policy_revision = payload.get("policy_revision")
+            if not isinstance(root_id, str) or not isinstance(policy_revision, str):
+                return _http_error(400, "invalid_directory_request")
+            if not isinstance(relative_path, str):
+                return _http_error(400, "invalid_directory_request")
             try:
                 result = await asyncio.to_thread(
                     self.directory_browser.resolve,
-                    root_id=payload.get("root"),
-                    relative_path=payload.get("path") or "",
-                    policy_revision=payload.get("policy_revision"),
+                    root_id=root_id,
+                    relative_path=relative_path,
+                    policy_revision=policy_revision,
                     installation_id=self._directory_installation(request),
                 )
             except DirectoryBrowserError as exc:

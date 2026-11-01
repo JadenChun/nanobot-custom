@@ -519,6 +519,12 @@ class OwnerIPCServer:
                 return {"ok": False, "error": {"code": "bad_request", "message": "operation and request_id are required"}}
             try:
                 context = self.delegation.authenticate(access_token)
+                raw_arguments = params.get("arguments")
+                arguments = (
+                    cast(dict[str, Any], raw_arguments)
+                    if isinstance(raw_arguments, dict)
+                    else {}
+                )
                 payload = self.delegation.authorize(
                     access_token=access_token,
                     operation=operation,
@@ -526,10 +532,10 @@ class OwnerIPCServer:
                     digest=current_digest(
                         operation,
                         request_id,
-                        params.get("arguments") if isinstance(params.get("arguments"), dict) else {},
+                        arguments,
                         context.installation_id,
                     ),
-                    arguments=params.get("arguments"),
+                    arguments=arguments,
                 )[2]
                 result = self._execute_delegated(context, operation, payload)
             except DelegationError as exc:

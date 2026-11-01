@@ -102,7 +102,7 @@ class WorkspaceDirectoryBrowser:
         installation_id: str = "local",
     ) -> dict[str, Any]:
         started = self._clock()
-        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= MAX_LIMIT:
+        if isinstance(limit, bool) or not 1 <= limit <= MAX_LIMIT:
             raise DirectoryBrowserError(400, "invalid_limit")
         root, policy_revision = self._require_root(root_id)
         relative = self._normalize_relative(relative_path)
@@ -290,7 +290,7 @@ class WorkspaceDirectoryBrowser:
         return roots, digest
 
     def _require_root(self, root_id: str) -> tuple[_Root, str]:
-        if not isinstance(root_id, str) or not root_id:
+        if not root_id:
             raise DirectoryBrowserError(400, "invalid_root")
         roots, policy_revision = self._roots()
         for root in roots:

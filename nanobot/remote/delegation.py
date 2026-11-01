@@ -185,7 +185,7 @@ def validate_arguments(
         if len(settings_payload) > 8:
             raise DelegationError("invalid_arguments", "too many settings", status=400)
         for key, value in settings_payload.items():
-            if not isinstance(key, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key):
+            if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", key):
                 raise DelegationError("invalid_arguments", "invalid setting key", status=400)
             if not isinstance(value, (str, bool, int)):
                 raise DelegationError("invalid_arguments", "invalid setting value", status=400)
@@ -228,7 +228,7 @@ class OwnerDelegationService:
         self._admissions: dict[str, DelegationAdmission] = {}
 
     def authenticate(self, access_token: str) -> AuthenticatedDeviceContext:
-        if not isinstance(access_token, str) or not access_token:
+        if not access_token:
             raise DelegationError("missing_access", "access credential is required", status=401)
         try:
             grant = self.tokens.validate_access(access_token)
@@ -263,9 +263,9 @@ class OwnerDelegationService:
                 "operation is not an enumerated delegated action",
                 status=404,
             ) from exc
-        if not isinstance(request_id, str) or not _REQUEST_ID_RE.fullmatch(request_id):
+        if not _REQUEST_ID_RE.fullmatch(request_id):
             raise DelegationError("invalid_request_id", "request_id is invalid", status=400)
-        if not isinstance(digest, str) or not _DIGEST_RE.fullmatch(digest):
+        if not _DIGEST_RE.fullmatch(digest):
             raise DelegationError("invalid_digest", "digest must be a lowercase SHA-256", status=400)
         context = self.authenticate(access_token)
         if op in _OWNER_ONLY and not context.is_owner:

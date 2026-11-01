@@ -58,7 +58,7 @@ class OperationRegistry:
         return self.operations.get(operation)
 
     def match_read(self, raw_path: str) -> OperationSpec | None:
-        if not isinstance(raw_path, str) or not raw_path or len(raw_path.encode()) > MAX_PATH_BYTES:
+        if not raw_path or len(raw_path.encode()) > MAX_PATH_BYTES:
             return None
         if raw_path.startswith("//") or ".." in raw_path.split("/"):
             return None
@@ -146,7 +146,7 @@ def load_registry(path: str | None = None) -> OperationRegistry:
     operations: dict[str, OperationSpec] = {}
     reads: dict[str, OperationSpec] = {}
     mutations: dict[str, OperationSpec] = {}
-    ws_frames: dict[str, tuple[OperationSpec, ...]] = {}
+    ws_frames: dict[str, list[OperationSpec]] = {}
     attachments: list[OperationSpec] = []
     for item in cast(list[Any], raw_operations):
         if not isinstance(item, dict):
