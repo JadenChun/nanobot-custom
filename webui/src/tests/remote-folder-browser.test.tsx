@@ -100,3 +100,37 @@ describe("RemoteFolderBrowserDialog", () => {
     await waitFor(() => expect(screen.getByText(/No server folder roots/)).toBeInTheDocument());
   });
 });
+
+describe("owner grant commit payload", () => {
+  it("uses the token-bound relative path and keeps the commit fields typed", async () => {
+    const calls: Array<{ action: string; payload: Record<string, unknown> }> = [];
+    const transport = {
+      requestMutation: async (action: string, payload: Record<string, unknown>) => {
+        calls.push({ action, payload });
+        return {
+          schema_version: 2,
+          controls: { can_manage_folders: true },
+          management: { grants_revision: 2, grants: [], repositories: [], catalog_revision: 0 },
+        };
+      },
+    };
+    const { upsertWorkspaceGrant } = await import("@/lib/api");
+    await upsertWorkspaceGrant(
+      transport as never,
+      { path: "/srv/projects/alpha", file_access: "read_only", commands: false },
+      1,
+      { commit_token: "token", root: "projects", extent: "read", relative_path: "alpha" },
+    );
+    expect(calls[0].action).toBe("workspace.grant.upsert");
+    expect(calls[0].payload).toMatchObject({
+      expected_revision: 1,
+      path: "alpha",
+      file_access: "read_only",
+      commands: false,
+      commit_token: "token",
+      root: "projects",
+      extent: "read",
+    });
+    expect(calls[0].payload).not.toHaveProperty("relative_path");
+  });
+});

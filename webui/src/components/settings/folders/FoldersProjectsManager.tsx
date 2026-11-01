@@ -101,6 +101,7 @@ export function FoldersProjectsManager({ workspaces, onRefreshWorkspaces, onPick
       commit_token: selection.commit_token,
       root: selection.root_id,
       extent: "read",
+      relative_path: selection.relative_path,
     });
     setForm({
       path: selection.display_path,

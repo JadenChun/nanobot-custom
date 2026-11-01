@@ -1041,6 +1041,8 @@ export interface WorkspaceGrantCommit {
   commit_token: string;
   root: string;
   extent: "read" | "write";
+  /** Canonical-relative path bound by the resolve token. */
+  relative_path: string;
 }
 
 export async function upsertWorkspaceGrant(
@@ -1054,10 +1056,12 @@ export async function upsertWorkspaceGrant(
     "workspace.grant.upsert",
     {
     expected_revision: expectedRevision,
-    path: grant.path,
+    path: commit?.relative_path ?? grant.path,
     file_access: grant.file_access,
     commands: grant.commands,
-    ...(commit ?? {}),
+    ...(commit
+      ? { commit_token: commit.commit_token, root: commit.root, extent: commit.extent }
+      : {}),
     },
   );
   return {
