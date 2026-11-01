@@ -41,7 +41,10 @@ def main() -> int:
                 continue
             api = row["api"]
             kind = kind_for(api)
-            planned = row["id"].startswith(PLANNED_PREFIXES)
+            planned = (
+                row["id"].startswith(PLANNED_PREFIXES)
+                and row["id"] != "workspace.grant.upsert"
+            )
             bounds = native.get("bounds", {})
             operations.append(
                 {

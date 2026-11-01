@@ -7436,12 +7436,12 @@
       "reuse": "authority/projection present; requalify checks"
     },
     "M30": {
-      "state": "partial",
-      "reuse": "owner scope, typed delegation and owner admission implemented; permission grant/Full adapter pending M37 integration"
+      "state": "present",
+      "reuse": "owner scope/pairing consent, typed delegation, owner admission and audit implemented; Full/access-recovery adapter handoff remains"
     },
     "M31": {
-      "state": "partial",
-      "reuse": "operation registry, owner feature reads and owner mutation allowlist implemented; UI adaptation is M32"
+      "state": "present",
+      "reuse": "109-operation registry (97 enabled, 12 planned), owner feature reads/mutations, native feature route and capability-gated UI implemented"
     },
     "M37": {
       "state": "present",
@@ -7484,12 +7484,12 @@
       "reuse": "chat-scoped artifact only; owner build not signed"
     },
     "M32": {
-      "state": "absent",
-      "reuse": "full owner UI adaptation not implemented"
+      "state": "present",
+      "reuse": "owner settings/apps/skills/automations navigation, server folder browser, remote-access local-only gating implemented; physical QA pending"
     },
     "M33": {
-      "state": "partial",
-      "reuse": "some confirmation/audit primitives exist; full sweep absent"
+      "state": "present",
+      "reuse": "device revoke confirmation, bounded sanitized owner audit, redaction/TTL tests implemented"
     },
     "M34": {
       "state": "pending",
@@ -7515,14 +7515,11 @@
   "gate_notes": {
     "inventory_completeness": "Every desktop mutation/read/WS action inspected is represented; planned M37 rows marked implementation=planned.",
     "known_gaps": [
-      "M32 full owner settings/apps/skills/automation/workspace UI on phone width is absent.",
-      "M33 device audit/secret-safety sweep is incomplete.",
-      "M18 remote-access settings handlers are described as local-only but lack an explicit local check.",
-      "Provider OAuth/MCP OAuth callbacks require a remote-safe callback design in M31.",
-      "Remote package installs are default-denied by policy; owner UX must surface, not bypass, this.",
-      "M32 full owner settings/apps/skills/automation UI remains to be exercised on phone width.",
-      "M33 acting-device audit/secret-safety sweep remains incomplete.",
-      "Grant/Full owner delegation still needs to consume a fresh M37 resolve token inside the permission owner."
+      "M32/M33 phone-width and physical-device verification remains M21/M34.",
+      "Full-mode preparation and folder access-recovery owner commits remain disabled in the registry pending the permission adapter handoff.",
+      "M35 isolated desktop-equivalent instance qualification remains pending.",
+      "M20-M22 physical/signing/release evidence remains external/pending.",
+      "M39/M40 installed activation requires explicit external opt-in."
     ]
   }
 }

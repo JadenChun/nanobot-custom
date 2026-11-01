@@ -3,6 +3,15 @@
 Android-first mobile client for a Nanobot server. The selected server owns the Python agent,
 sessions, memory, tools, files and provider credentials; the phone is a scoped client.
 
+Current status (2026-11-01 owner tranche): owner-scoped full-control pairing consent, typed
+owner delegation/admission, the versioned 109-operation bounded registry, owner feature
+reads/mutations over the standard API, the bounded server folder browser, and owner
+settings/apps/skills/automations navigation are implemented. Legacy chat-only devices keep their
+negotiated ceiling; initial remote enable, new-device approval, scope upgrade, native folder
+picking and remote Start remain local-only or unsupported. The private mapped origin, real
+gateway/emulator M35 matrix, physical phone M21 qualification and signed M22 artifact remain
+pending. Historical claims below predate this tranche and are not fresh acceptance.
+
 Status: M01–M04 and M06–M13 are implemented and tested locally. M05 embedded tsnet login and
 the M09 owned Serve mapping were exercised live from the x86_64 emulator and then cleaned up;
 M05 media/deep-link and M15–M22 still require the remaining live backend/device work. M14 live
