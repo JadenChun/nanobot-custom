@@ -1,100 +1,118 @@
-# Android-first Nanobot mobile client implementation plan
+# Android-first Nanobot full-owner client implementation plan
 
-Planning baseline/revision: 2026-11-01 (owner-client revision). Status: accepted architecture; see the complete
-[OpenCode task backlog](mobile-client-tasks.md) and [implementation steps](mobile-client-implementation.md).
-The taskbook records the Android workflow to execute when the user invokes its OpenCode prompt.
-This planning task only prepares the handoff; production activation, service installation,
-network changes and publication retain their explicit setup/review gates.
-No mobile build, emulator, phone, VPS or model endpoint has been tested in this planning task.
-Planner: `development_planner_max`, GPT-6.1 Sol Max, for credential, transport and lifecycle boundaries.
+Planning revision: 2026-11-01. Accepted product direction; implementation acceptance remains pending.
+The [taskbook](mobile-client-tasks.md), [detailed tasks](mobile-client-implementation.md) and
+[development isolation rules](mobile-development.md) form one current workflow. This revision changes
+only those four documents, uses the accepted document review, and runs documentation/static checks.
+It does not inspect source/tests/APKs, test a product, start services, install or activate anything.
+Earlier implementation/test/device claims are historical and unverified here; existing code is neither
+accepted nor rejected. M36 begins fresh implementation inspection. Planner: `development_planner_max`,
+GPT-6.1 Sol Max, for interacting authority, compatibility, data retention and promotion boundaries.
 
 ## Delivery sequence and accepted direction
 
-1. Prove native transport and credential-custody behavior in the Android emulator; no phone prerequisite.
-2. Build scoped device identity and its server-side owner; qualify pairing against the real backend in the emulator.
-3. Deliver Android chat using the existing React UI; qualify physical Android behavior before release.
-4. Add explicit, separately granted gateway controls after lifecycle and recovery tests pass.
-5. Defer iOS, VPS deployment/migration and exact-target remote approvals to separate future work.
+1. M36 freezes the complete desktop feature/API inventory and actual implementation/evidence baseline.
+2. Retain M01–M13 foundation obligations, including emulator-first native transport, independent owner,
+   live identity/revocation, replay and task authority. Reuse existing work only after applicability checks.
+3. M30/M31 deliver one owner pairing, typed administrative delegation and the standard feature API.
+   M37 supplies the backend directory API before M32 consumes it. M14–M19 qualify native/shared/local setup.
+4. M32 full UI and M33 safeguards precede M35 integration on an isolated desktop-equivalent instance.
+   M20–M22 then qualify the current candidate, physical Android and signed artifact; M34 closes full parity.
+5. M38 independently reviews exact candidate versions. Only then may M39 perform a concretely opted-in
+   installed promotion; M40 proves phone and desktop share the actual activated instance and recovery.
+   No qualification or independent review depends on promotion.
+6. M23–M29 are separately scoped additions: new Start/service-manager control, legacy exact-target
+   approvals, iOS, actual VPS deployment, model linking and state migration.
 
-Use Capacitor with shared React/TypeScript UI and a native API/core portable to later adapters.
-Implement Android only initially. iOS builds/signing/device checks do not block Android work or release.
-Embed Tailscale in the app: daily use must not require the standalone Tailscale app.
-The selected Nanobot server owns the Python agent, provider credentials, tools, memory, sessions,
-cron and server files: the current computer now, potentially a Linux VPS later. Clients share its API,
-not a second agent. Model inference may run on that server, a hosted API or a separate private model host.
-Flutter/React Native are fallback design changes only after concrete spike evidence and an accepted revision.
-The wrapper shares UI; transport, secure storage, app suspension, signing and platform builds remain native work.
+Use Capacitor, shared React/TypeScript and one embedded userspace Tailscale node. Daily phone use must
+not require a standalone Tailscale app. Reconsider framework only if the retained native feasibility
+gate fails with measured evidence. The selected server owns the only Python agent, tools, files,
+sessions, memory, skills, automations and credentials. The phone is a host-neutral client: no second
+gateway/agent, phone model runtime or duplicated mobile feature implementation.
 
-The first chat-only release supported persistent chat, history, streaming, existing attachment limits and
-managed media previews without settings administration, shell commands or Full access. The current
-owner-client release (M30+) grants the paired phone the same WebUI surface as the desktop, including
-settings, tools and Full access. Phone disconnect must detach persistent chat without cancelling its
-work. Temporary chats remain connection-owned and are discarded on disconnect, but are available to
-owner clients. Non-goals: local phone inference, a second gateway, offline private history/write queues,
-push delivery, anonymous or non-owner administration, a desktop-shell rewrite and store publication.
-Actual VPS provisioning/state migration, model serving and remote home-tool workers are also out of scope.
+The current product matches the desktop WebUI feature surface and behavior. One pairing grants one
+owner capability after explicit full-control consent; there is no separate daily admin pairing.
+The old chat-only profile applies only to legacy devices until explicit re-pair/locally approved upgrade.
+Persistent chat detaches without cancelling server work; temporary chats are available to owners and
+remain connection-owned/discarded on disconnect. Settings/providers/models, Apps/MCP/CLI/API service,
+local/custom and installed skills, automations, session actions, workspace mode/grants/Full and existing
+supported lifecycle actions all belong to current scope. Initial setup and new-device approval remain
+server-local exceptions, recorded in the parity inventory.
 
-## Owner-client revision — 2026-11-01
+Non-goals: phone inference/tools, offline private transcript/write queues, push delivery, anonymous or
+legacy administration, a desktop-shell rewrite, store publication, public ingress, generic process/unit
+control, iOS implementation, actual VPS deployment/migration/model linking or home-tool workers.
+Profiles remain portable to a later VPS; those deployments and inference arrangements require separate scope.
 
-The product decision has changed: the paired phone is the **same owner client** as the
-desktop WebUI, not a restricted chat viewer. There is one pairing and one owner
-capability; there is no separate chat pairing and admin pairing.
+## Desktop parity and current baseline contract
 
-The server still runs the agent, tools, models, sessions and provider credentials. The
-phone is a full remote control of that server. A paired phone may read and write the
-same client surface the desktop WebUI exposes, including:
+M36 owns proposed `mobile/contracts/desktop-parity.json` and its immutable evidence manifest before
+feature dispatch. Record implementation commit/tree and source hashes, dependency/config/schema/registry
+versions, desktop build/feature flags and observed support. The inventory is derived from fresh source,
+UI and tests when implementation resumes, never guessed exact existing routes in this revision.
 
-- settings, providers, model presets, MCP, CLI apps and API service;
-- skills install/update/delete and marketplace;
-- automations management;
-- session delete and temporary chats;
-- workspace grants, a server-backed folder browser, workspace mode and Full access;
-- runtime restart/stop where the WebUI exposes it;
-- remote-access settings, with an explicit warning before disabling the entry.
+Each row has: stable feature/action ID; baseline/source owner; HTTP route **and method** or WS action
+(or control operation); shared UI entry; owner and legacy authorization; native operation ID, schemas,
+payload/result/time/media limits; mobile adaptation; dependency task; positive/negative checks;
+evidence links/hash/status; exception reason and explicit product acceptance if unsupported.
+Every reachable desktop action maps to a row and every required row maps to native transport and a
+test. A planned adaptation names its producing task; planned is not an accepted unsupported exception.
+M31 closes existing-handler authorization/native-registry work and typed fixtures for later adaptations;
+M37 owns directory-operation implementation/native positives, and M34 closes the whole inventory.
+Page loads, representative requests and full suites alone cannot prove parity. An unsupported
+operation is recorded and accepted before any qualified parity claim; no silent omitted categories.
 
-The native operating-system folder picker remains a server-desktop dialog and cannot be
-operated by a phone. The owner-client UI instead provides a server-backed directory browser:
-the phone lists directories through a bounded server API, navigates breadcrumbs, and submits
-the selected path to the existing folder-management APIs. It returns directory names and
-metadata only, never file contents, and confines browsing to configured server roots with
-canonical/symlink checks. This is a mobile implementation of the picker, not a retained
-security boundary.
+Seed all categories, then expand every action from the baseline:
 
-### Threat model and safeguards
+| Category | Actions and distinctions to inventory |
+| --- | --- |
+| Chat/history/media | Persistent/temporary create, send/stream/cancel/reconnect, history/search/navigation, existing session actions, attachments, previews, download/import/export where supported |
+| Settings/providers/models | All settings panels, provider configuration, transient new-key write, model discovery/presets/defaults and supported management/auth flows |
+| Apps/services | MCP and CLI apps install/configure/auth/run/remove/update as supported; API-service settings/control; external browser/callback flow and binary/import requirements |
+| Skills | Local/custom editing and installed/marketplace list/install/update/remove, supported files/imports/downloads |
+| Automations | List/create/edit/enable/run/delete and supported logs/history |
+| Workspace/permissions | Current project selection, grants/read-write extent, workspace mode, Full, server-directory picker adaptation and confirmation/receipt binding |
+| Devices/remote entry | Status/list/rename/revoke/self-revoke and owner entry management; explicit local-only initial setup, new-device comparison approval and scope-upgrade exceptions |
+| Runtime/client | Existing supported restart/stop, advertised unsupported Start, exact local recovery, themes/navigation/accessibility and platform adaptations |
 
-The phone is now a trusted owner device. Anyone with the unlocked phone or a stolen
-refresh token can administer Nanobot until the device is revoked. This is the accepted
-tradeoff for full client parity. Required safeguards:
+M01–M22 remain foundation/evidence tasks within this current release. The taskbook attributes historical
+PASS/APK reports without attesting them. M36 records applicability per task/row; changed source, protocol,
+authorization, dependency or artifact invalidates affected evidence and requires fresh qualification.
+There is no blanket assertion that the mobile project or protocol is absent.
 
-- Pairing consent explicitly states that the phone receives full control.
-- Destructive actions show a phone confirmation.
-- Mobile owner mutations are audit-logged with installation ID and action.
-- Device revocation invalidates owner access; self-revoke remains available.
-- Provider API keys remain write-only and are never returned to the phone.
-- Short access-token TTL and refresh rotation remain mandatory.
-- Optional step-up authentication can be added later without changing the owner scope.
+## One feature API, bounded native transport and secret handling
 
-For legacy devices paired before this revision, the old chat-only scope remains until
-the device is re-paired or explicitly upgraded. New pairings receive the owner scope.
-The “Paired phone: chat M1” deny rows below describe that legacy profile, not the new
-owner-client profile.
+Owner clients use the same standard `/api/*`, existing WS path/`webui_request` actions and media paths
+as the desktop, dispatched to existing feature handlers. Exact existing paths/methods are frozen at
+M36. There is no second mobile settings/session/skills/workspace API or generic `api?path=...` proxy.
 
-### API shape
+Proposed `/remote/v1/*` is the independent owner's narrow device-auth/status/device-control surface.
+New clients use its pairing, refresh, handshake/status and device/entry control operations; it owns no
+duplicate feature handlers. Legacy `/mobile/v1/*` auth aliases and chat-only feature shims are inventoried
+and version-negotiated. Keep required legacy routes for supported devices; remove a shim only with a
+tested negotiated migration or an explicitly accepted update-required cutoff. No silent break of the
+promised legacy chat-only profile, scope upgrade or exchange for broad bootstrap tokens.
 
-There is one feature API: the existing desktop `/api/*` HTTP routes and the existing
-`webui_request` WebSocket mutations. The mobile app must not grow a parallel set of
-feature routes. `/mobile/v1` remains the thin device-auth edge for pairing, refresh,
-handshake and device lifecycle; after an owner token is issued, the native transport
-uses the standard `/api/*` paths and the standard WebSocket path.
+The native registry in proposed `mobile/contracts/operations-v1.json` maps each inventory operation
+to fixed origin, method/path template or WS action, request/result schema, scope and finite limits.
+Include every required method, binary/media/upload/download and auth-flow action from the inventory;
+mutating HTTP is not restricted to GET or forced into an invented API. JS supplies typed arguments,
+not arbitrary URLs/ports/headers/paths. Validate substitutions and redirects at every hop. The broker
+injects app credentials and exposes approved projections/opaque media handles, never raw tokens.
 
-The owner token is injected by the native transport and validated at the gateway
-boundary. Standard HTTP/WS authorization marks the connection as an owner client so
-the existing settings, workspace, session and mutation handlers apply their normal
-logic without a second implementation. The old `/mobile/v1/model-settings`,
-`/mobile/v1/workspaces`, `/mobile/v1/sessions/*/thread` and `/mobile/v1/api?path=...`
-feature shims are transitional and should be removed once the owner path is qualified.
+Long-lived access/refresh/node/bootstrap credentials remain native. Existing provider secrets are
+write-only and never returned by read, WS, error, export, log or crash surfaces. A user may type a new
+provider key in the promised settings form; it exists transiently in input memory and is sent to the
+standard write endpoint, then cleared. Disable persistence, autofill caching where controllable,
+analytics, logging, replay storage and secret echoes for that input. This input exception is not
+credential export or durable JS custody. Apply redaction to backend errors and audit metadata.
 
-## Source and evidence baseline
+## Historical source and evidence baseline
+
+The following observations were reported by the original architecture review; source, runtime and
+artifacts were not reinspected in this documentation revision. They are dated context, not current
+implementation acceptance or a claim that no implementation now exists. M36 must inspect the current
+implementation and freeze a new baseline before any reuse or repair.
 
 Original architecture-review HEAD inspected: `7ad57f9aaf163bd0476c2241637925343b1eb928`.
 The current rebase and actual implementation-start manifest are tracked in
@@ -109,7 +127,7 @@ exception does not authorize mobile implementation in this shared checkout.
 
 | Inspected seam | Observed behavior and implementation consequence |
 | --- | --- |
-| `webui/package.json`, `vite.config.ts` | React 18, Vite 5, TypeScript; web build produces `nanobot/web/dist`. No Capacitor/mobile project exists. Keep browser/wheel output separate from packaged mobile assets. |
+| `webui/package.json`, `vite.config.ts` | React 18, Vite 5, TypeScript; web build produces `nanobot/web/dist`. No Capacitor/mobile project was observed at that review. Keep browser/wheel output separate from packaged mobile assets. |
 | `webui/src/lib/bootstrap.ts`, `http.ts`, `api.ts` | Bootstrap/reads use browser fetch; bootstrap secret can persist in localStorage. Mobile needs a separate credential and HTTP path. |
 | `webui/src/lib/runtime.ts`, `types.ts`, `App.tsx` | `RuntimeHost.socketFactory` is reusable; native detection currently implies desktop host functions. Add mobile surface semantics without granting desktop authority. |
 | `webui/src/lib/nanobot-client.ts` | One multiplexed socket, turn identity, canonical reconciliation and correlated mutation replay exist. Preserve them; do not substitute a second chat client. |
@@ -142,463 +160,383 @@ No real tailnet name, user identity or host address belongs in this document or 
 New supplied preflight: x86_64 host, `/dev/kvm` present and readable/writable by the current user.
 This proves preflight only. Java is present; SDK/adb/NDK, system images and native ABIs remain unqualified.
 
+
 ## Preferred architecture and protocol boundaries
 
 ```mermaid
 flowchart LR
-  UI[Packaged React clients: Android first] --> Bridge[Typed Capacitor bridge]
-  Bridge --> Native[Native transport broker + secure credential store]
+  UI[Packaged shared React UI] --> Bridge[Typed Capacitor operations]
+  Bridge --> Native[Native broker and secure custody]
   Native --> TS[One embedded userspace Tailscale node]
-  TS --> Serve[Private HTTPS Tailscale Serve]
-  Serve --> Data[Selected server: computer now / VPS later]
-  Data --> Gateway[Loopback gateway: mobile v1 routes]
-  Serve --> Remote[Loopback RemoteAccessOwner: remote v1 routes]
-  Gateway <-->|Private authenticated local IPC| Remote
-  Gateway --> Agent[Server agent, tools, files, sessions and memory]
-  Remote --> Adapter[Locally registered lifecycle owner, if supported]
-  Agent --> Provider[Server-side provider configuration]
-  Provider --> API[Hosted API or server-local model]
-  Provider -->|Separate private Tailscale connection| Model[Home/self-hosted model API]
+  TS --> Entry[One private HTTPS origin]
+  Entry -->|Standard API and WS and media routes| Gateway[Selected loopback gateway listeners]
+  Entry -->|Independent auth and status and device routes| Owner[Loopback RemoteAccessOwner]
+  Gateway <-->|Typed peer-authenticated IPC| Owner
+  Gateway --> Agent[Only server agent and canonical data]
+  Gateway --> Permissions[Existing server permission-owning process and receipts]
+  Gateway --> Lifecycle[Existing selected desktop lifecycle owner]
+  Agent --> Model[Server-configured inference]
 ```
 
-Prefer one small app-owned Go transport core using vendor `tsnet.Server.Dial` for HTTP TLS and WS,
-with a narrow C ABI and Kotlin/JNI adapter; leave iOS unimplemented. HTTP and WS use the same node
-without assuming WebView routing. Prove this design; no maintained Capacitor Tailscale SDK is assumed.
-[tsnet](https://tailscale.com/docs/features/tsnet) and its
-[Dial/HTTPClient API](https://tailscale.com/docs/reference/tsnet-server-api) establish the userspace seam.
-The vendor [libtailscale C ABI](https://github.com/tailscale/libtailscale/blob/main/tailscale.h) is the
-reference for native packaging/lifecycle. Do not create a second node by combining wrappers.
+Prefer one app-owned Go core using vendor `tsnet.Server.Dial` for HTTP TLS/WS, narrow C ABI and
+Kotlin/JNI adapter. [tsnet](https://tailscale.com/docs/features/tsnet),
+[Dial/HTTPClient](https://tailscale.com/docs/reference/tsnet-server-api) and
+[libtailscale C ABI](https://github.com/tailscale/libtailscale/blob/main/tailscale.h) are retained
+design references, not freshly verified support claims. Do not combine wrappers into two nodes.
+If measured Go-core feasibility fails, test libtailscale plus native Android HTTP/WS while retaining
+Capacitor. If neither passes, stop broad work for an accepted architecture revision; do not silently
+require a separate VPN or switch frameworks. iOS adapters are future work only.
 
-If the core fails qualification, retain Capacitor and test libtailscale with Android-native HTTP/WS.
-If neither passes, stop broad work and return evidence/options; changing framework or requiring a
-separate VPN needs an accepted revision. Future iOS may inspect
-[TailscaleKit](https://github.com/tailscale/libtailscale/blob/main/swift/README.md) and experimental
-[Aperture](https://github.com/tailscale/aperture-plus); neither proves support in this slice.
+The bridge exposes state, pairing, named feature/control operations, one socket, attachments and
+opaque session/installation-bound media handles. It exposes no raw tailnet dial, LocalAPI, shell,
+general filesystem or localhost proxy. Require normal TLS/hostname/SNI, exact confirmed origin and
+port, bounded schemas/queues, cancellation and explicit backpressure. Reject arbitrary schemes,
+cross-origin redirects and remote content with native plugin authority. Only packaged assets load
+privileged; CSP/navigation sandbox HTML/SVG/downloads. External auth/links use a separate validated
+system-browser flow with instance-bound callback state and no app bearer in URLs.
 
-The bridge exposes state, pairing, named HTTP operations, one socket, attachments and media handles.
-Operations map to versioned method/path/schema rules at the confirmed origin with bounded payloads;
-there is no arbitrary URL fetch, raw tailnet dialing, LocalAPI, shell or general filesystem bridge.
-Validate redirects at every hop; deny cross-origin redirects, arbitrary schemes, localhost targets
-and unapproved ports. Public sign-in URLs open in the system browser through a separate validated flow.
+Attachments preserve current WS envelope/ingress limits; no new upload endpoint is assumed. Where the
+desktop actually uses another standard upload/download operation, inventory and qualify that operation.
+Broker media/ranges require current device authorization plus existing signature checks. Tokens never
+appear in DOM URLs. Use app-origin resource handlers or bounded native previews if a MIME/range
+combination cannot work in the WebView. Temporary bytes are app-private, backup-excluded, finite,
+expiring and purged on startup/logout/revoke/target switch; prefer memory. No offline private history
+cache/write queue. Revocation cannot claw back bytes already displayed offline.
 
-| Traffic | Required native path |
-| --- | --- |
-| Pairing, bootstrap, refresh and compatibility | Native broker calls the fixed private HTTPS origin; credentials never enter JavaScript. |
-| Session/history reads and approved mutations | Typed HTTP reads plus the existing `NanobotClient` WS protocol; preserve IDs, timeouts and source binding. |
-| Attachments | Preserve current WS attachment envelope/ingress limits; native handles avoid unbounded base64 bridge copies. New upload endpoints are unnecessary for M1 and must pass the same gate if later introduced. |
-| Images, audio/video and file previews | Broker obtains authorized bytes, returns opaque session-bound resource handles; app-origin resource handler or bounded native preview supports MIME/ranges/cancellation. Never pass bearer tokens to DOM URLs. |
-| Deep links | Parse a versioned pairing payload or an instance-bound chat ID; reconnect and authorize before loading. No arbitrary URL navigation in the privileged WebView. |
+Mobile builds to `mobile/www`, disables mobile service workers/private caches and preserves browser
+PWA and `nanobot/web/dist` wheel behavior. Keep the existing multiplexed `NanobotClient` and canonical
+transcript/turn identities; do not build a second chat client.
 
-Qualify media ranges and inline playback on Android. If a WebView resource scheme cannot carry a
-required media type, use a bounded native preview backed by the same broker, and document that UX.
-Private previews are memory-only where possible; necessary temporary files are app-private,
-backup-excluded, bounded by ingress/media limits, expire and are purged on logout/revoke/startup.
-No persisted private transcript cache or offline write queue is included. Previously displayed bytes
-cannot be clawed back from an offline device; revocation stops future server access.
-Abort pending work on instance changes, close resource handles and bound all bridge/socket queues.
-Backpressure must reject explicitly or rehydrate canonical state, never silently drop effectful sends.
+Handshake negotiates `mobile_protocol=1` range, bridge/registry versions, mandatory feature capabilities,
+stable `installation_id`, ephemeral `gateway_generation`, current device principal/scopes/expiry,
+server WS epoch and frame/attachment/media limits. A package version alone proves no compatibility.
+Incompatible mandatory requirements disable mutations with update guidance. Legacy/owner profile and
+lifecycle capabilities are explicit. Compatible chat works on a host advertising lifecycle unsupported.
+A new generation invalidates old replay; an installation mismatch at the same hostname needs fresh pairing.
 
-Only packaged assets load with plugin authority. Restrictive CSP/navigation rules keep untrusted
-HTML/SVG/downloads sandboxed or outside the privileged WebView; external links use the system browser.
-Mobile disables service workers, preserves browser PWA behavior and builds to `mobile/www`, not wheel dist.
+## Host-neutral profiles and data locality
 
-Handshake `mobile_protocol=1` must negotiate supported protocol range, native bridge version,
-mandatory chat capabilities, stable `installation_id`, ephemeral `gateway_generation`, principal/scopes,
-expiry, attachment/frame limits and media behavior. Package version `0.3.0` is insufficient.
-Incompatible mandatory chat/protocol requirements disable sends and explain which side needs updating.
-Lifecycle is separately advertised and optional: unsupported lifecycle hides and denies start/stop
-controls while compatible chat remains available, including on a data-plane-only VPS backend.
-A gateway restart changes generation and invalidates pending replay assumptions without changing
-the durable server installation identity. A reset/new identity at the same hostname requires fresh pairing.
+A profile contains label, private HTTPS origin, stable installation ID, negotiated capabilities and
+native credentials, with one active target. It contains no interpreter, OS assumption or model key.
+Switching closes sockets, cancels pending operations, clears media and segregates credentials/state.
+Never auto-failover, merge chats, reuse credentials across origins or adopt a changed installation.
+A future multi-profile UI does not require live VPS work now.
 
-## Backend profiles, deployment topology and data locality
-
-The initial client contract is host-neutral: a backend profile contains a label, private HTTPS origin,
-stable installation ID, supported capabilities and native per-target credentials. It contains no OS,
-desktop path, interpreter or model keys. Permit future multiple saved profiles, with one active target
-per connection; M1 need not implement a multi-profile management UI. Switching targets closes sockets,
-clears pending operations/media and segregates credentials/history by installation. Never silently
-fail over, merge chats, reuse a credential at another origin or auto-adopt an installation mismatch.
-
-| Topology | Execution and inference location |
-| --- | --- |
-| Client(s) → private current-computer Nanobot → hosted/local model | Existing server owns tools/files/history; provider configuration selects inference. |
-| Client(s) → private VPS Nanobot → hosted or VPS-local model | Same client API; tools/files/context repos/skills/memory/sessions live on the VPS. |
-| Client(s) → private VPS Nanobot → private home/self-hosted model | Only inference runs on the model machine; agent tools/files/history stay on the VPS. |
-
-Only Nanobot contacts the model; clients get no provider keys and need no second model VPN.
-Server config owns `api_base`, API type (`auto`, `chat_completions` or `responses`), model/auth,
-timeout/headers and endpoint/protocol validation. A schematic endpoint is
-`https://model-host.<tailnet>.ts.net:<private-port>/v1`; `localhost` in VPS config means the VPS.
-For a remote private model, both VPS and model host need Tailscale and an intentionally served,
-authenticated private model listener/proxy plus least-privilege VPS-to-model port policy.
-[Tailscale connectivity](https://tailscale.com/docs/how-to/connect-to-devices) does not create a service
-or expose host-loopback automatically. Do not expose model load/unload/management/admin APIs or
-add a broad `100.64.0.0/10` web-tool SSRF exception; existing web-tool URL guards remain unchanged.
-Model unavailable is distinct from gateway offline. Home-host sleep/power, latency and streaming
-timeouts can interrupt inference; no availability guarantee. Cloud fallback requires explicit server
-configuration and consent, never an implicit reroute of private conversations.
-
-Network access to a home model does not mount home files or execute home shell/browser tools.
-A separately scoped worker/connector would be required and is outside this mobile slice.
-A fresh VPS is a new installation requiring pairing by default. Physical migration, identity/state
-transfer and cutover are separate work with one authoritative writer; never silently copy native
-permission authority, run competing session writers or switch clients behind an unchanged label.
+The current computer owns tools/files/history. A later VPS would own them there; an optional private
+home/self-hosted model provides inference only. Only the selected server contacts providers using its
+`api_base`, API type/model/auth/timeouts/headers. Localhost in a VPS config means that VPS. Tailscale
+connectivity alone exposes no loopback service or home files. Future model linking needs intentionally
+served authenticated data endpoints and narrow policy, never load/unload/admin APIs, a broad CGNAT
+SSRF exception or phone credentials. Model unavailable stays distinct from gateway offline; no implicit
+cloud fallback. New VPS identity/state transfer remains separately scoped with one authoritative writer.
 
 ## Device pairing, custody and live authorization
 
-`RemoteAccessOwner` is the single authority for new device records, pairing challenges, refresh
-rotation, access-token introspection, revocation and the Nanobot-owned remote-entry configuration.
-Implement it as a separate opt-in local process/service on the selected server, independent of the
-agent process. Current Fedora user-service behavior is one host adapter, not a client assumption.
-It owns no agent/session copy or competing gateway PID database. Its private Unix
-socket admits only the selected local OS user; local administrative methods require the admitted
-desktop/local-UI path, or authenticated server-side CLI/SSH on a headless host. The gateway uses
-typed IPC for principal validation and revoke events. Headless setup needs no Tauri GUI/folder picker.
-An absent/unreachable owner denies mobile operations and closes mobile sockets; local clients continue.
+`RemoteAccessOwner` independently owns installation/device records, challenges, credential rotation,
+introspection, revocations, audit and Nanobot-owned entry metadata. Proposed persistent layout:
+`<selected-instance-root>/remote-access/`, directory 0700/files 0600, explicit Pydantic config,
+instance resolver, bounded versioned parsing, locks and atomic fsync/replace/directory-fsync writes.
+Persist stable installation/device IDs, credential hashes/version, scope/status/revision and sanitized
+approval/revoke/audit metadata. Never persist bearer response caches or silently reset corrupt/unknown
+records, identity or revocations. It owns no agent/session copy or competing gateway PID database.
 
-Proposed persistent owner layout: `<selected-instance-root>/remote-access/` containing versioned
-identity/device records and remote-entry metadata; private directory mode 0700 and files 0600.
-Use explicit config schema entries, the instance resolver, bounded parsing, locks and atomic
-fsync/replace writes. Persist stable installation identity, device ID, credential version/hash,
-status, scope set, revision and sanitized approval/revoke metadata. Do not store bearer values in
-logs or durable token-response caches. Refresh/device secrets use high-entropy random generation.
-Corrupt/unknown record versions fail closed; do not reset silently or turn off existing revocations.
+Pairing remains server-local admission:
 
-Pairing sequence:
+1. Native code signs the embedded node in through a validated system-browser flow. No reusable tailnet
+   auth key is bundled or put in QR. Tailnet access and Nanobot authorization are separate.
+2. Admitted local UI/CLI (or authenticated server-side SSH operator) creates a challenge with protocol,
+   exact origin, installation, random nonce and proposed 120-second expiry, bounded attempts/rate limits.
+3. Phone request has a separate nonce/collector secret retained natively. Phone and local operator show
+   comparison code and explicit full-control/shared-history consent. Only local comparison approval may
+   approve that exact new-device request; an already paired phone cannot approve enrollment remotely.
+4. Atomic consume/collection permits one winner; another scanner/collector gets no credential.
+5. Issue one per-device rotating refresh and short-lived access credential. Persist native refresh before
+   acknowledgment; JS receives status only. New pairings grant owner; legacy records never widen silently.
 
-1. Native app creates its private local state and performs interactive Tailscale sign-in in the
-   system browser. Tailnet approval/policy and Nanobot pairing are separate checks; no reusable
-   Tailscale auth key is bundled, pasted into QR or supplied by the Nanobot gateway.
-2. An authenticated server-local operator UI or CLI (including an authenticated SSH session)
-   requests a pairing challenge from the owner. QR carries
-   protocol, exact private HTTPS origin, installation ID, random challenge and a short expiry.
-   Proposed limits: 120 seconds, one pending consumption, bounded attempts/rate limiting.
-3. Phone scans, verifies normal TLS/hostname and requests pairing with challenge, random request
-   nonce and a display label. Operator UI/terminal and client show the comparison code and chat scopes.
-4. Local confirmation approves that exact pending request; atomic consumption allows only one
-   winner. Approval alone must not let another scanner collect the first phone's credential.
-   Bind final collection to the phone request's separate secret, retained only by native code.
-5. Owner issues one per-device rotating refresh credential and short-lived scoped access credentials.
-   Native code stores refresh material before acknowledging success; JavaScript gets status only.
-   Rejected, expired, reused or instance-mismatched challenges issue nothing.
+Access maximum TTL is 10 minutes; refresh expires after proposed 30 days inactivity. Serialize atomic
+rotation; uncertain refresh may require re-pairing rather than reusable previous tokens. Scope addition
+needs explicit server-local consent. Reachable logout revokes; offline logout erases native secrets and
+reports server revocation pending. Self-revoke remains accessible to current owner and legacy devices.
 
-Prefer opaque access credentials validated by owner IPC, with 10-minute maximum lifetime; refresh
-credentials expire after a proposed 30 days without use. These are initial policy defaults to lock in
-the protocol tests, not existing gateway token behavior. Scope additions require a fresh local owner
-action. Do not exchange a phone credential for legacy broad bootstrap/API tokens.
-Refresh is serialized and atomically rotates credentials. Do not blindly retry an uncertain rotation;
-M1 may require pairing again after a lost response rather than maintain reusable previous credentials.
-Expired access can refresh; expired/revoked refresh cannot. Logout revokes while reachable and always
-removes native secrets; offline logout reports that server revocation still needs local management.
+Android uses Keystore encryption for app-private versioned per-target credentials and sensitive node
+state as supported by measured integration. Exclude credentials/node/private previews from backup.
+Test lock/key invalidation, partial writes, process death, update, restore and reinstall; reinstall needs
+fresh sign-in/pairing. Emulator custody proves API behavior only; physical security level is qualified later.
 
-Android uses app-private encrypted credential storage with an Android Keystore key; emulator tests
-prove API/functional behavior, not hardware-backed security. Exclude node state/credentials from backup;
-encrypt sensitive node-state persistence as supported by the measured integration. Lock-state access,
-process death, update, OS restore and reinstall are qualification cases. Reinstall requires fresh
-sign-in/pairing; the server can revoke stale records independently. Future iOS custody/Keychain
-retention and signing/device qualification belong to its deferred package, not an Android gate.
-No provider/model API keys, instance bootstrap secret, native permission references or LocalAPI
-credentials are exposed to JS, QR, analytics, clipboard, crash reports or URL query logs.
+Every HTTP read/mutation, WS frame, attachment, media/range and delegated control operation checks
+current principal/installation/scope/expiry before admission and result delivery. Owner unavailability
+fails mobile requests closed and retires mobile sockets within a tested bound (target at most two
+seconds), while local clients continue. Revoke acknowledgment follows denial of new admissions and
+retirement of active mobile sessions. Already admitted server tasks may continue; revoke is not global
+task cancellation. `client_id`, chat IDs, proxy headers and claimed scope/locality are never identity proof.
 
-Every HTTP read, bootstrap/refresh, WS command, upload/attachment, media/range request and controller
-operation resolves a current device/principal and scope. Check authorization before mutation-cache
-lookup/join and before result delivery. A mobile operation's immutable identity is
-`(installation_id, gateway_generation, request_id)`; its record binds the stable device principal,
-action and payload digest. Access-token versions and refresh-credential rotations are authorization
-state, **not** operation identity. Renewal/rotation for the same principal preserves the original
-in-flight task or completed result; another principal, action or digest is rejected before execution.
-For mobile v1, require explicit `submit` versus `replay_only` intent and the originating WS epoch.
-Only a first `submit` with the current socket's server-issued epoch may create a cache entry.
-On reconnect, `NanobotClient.handleOpen` must convert every previously attempted pending mutation
-to `replay_only`, retaining its original ID/generation/digest rather than resending a serialized submit.
-Server replay joins/reports the existing operation only; a cache miss/eviction returns
-`409 outcome_unknown` **without creating or executing anything**. A stale serialized submit with
-the old socket epoch is also rejected. A gateway-generation mismatch is rejected before cache lookup,
-even after cache loss/restart. Never regenerate an ID or change the epoch to retry an uncertain send;
-the UI reconciles authorized canonical state and requires an explicit new action if needed.
-These mobile fields are mandatory at the mobile edge; legacy browser/desktop wire behavior stays intact.
-`client_id` and chat ID are never identity proof. An uncertain refresh response may still require
-re-pairing as above; pending mutations cannot cross to the resulting different principal.
-Active WS sessions have expiry timers and owner-driven revocation; reconnect/refresh authenticates
-again. Revoke acknowledgment follows admission denial and closure/retirement of registered mobile
-sessions; loss of owner IPC fails closed within a tested bounded interval (target at most two seconds).
-Commands already admitted before revocation may continue as authorized server tasks. Device revoke
-or phone loss does not cancel global work; cancellation of an exact running task is a separate action.
+### Typed owner delegation and server-local permission authority
 
-## Remote route and task capability policy
+M07 provides the IPC transport/envelope; M30 explicitly owns proposed
+`nanobot/remote/{management,permissions}.py` and revisions to `owner.py`, `ipc.py`, `client.py`,
+`auth.py`, `devices.py`, `http.py`, `entry.py`, `protocol.py`, `store.py`, `pairing.py`,
+`nanobot/config/schema.py` and narrowly scoped `nanobot/security/desktop_permissions.py` integration.
+`nanobot/remote/permissions.py` is the gateway-side authorization adapter, not a new permission store
+inside the independent auth/controller process. M36 records the concrete selected process/adapter that
+already owns task authority; it keeps that authority throughout. Named handoff precedes writes.
+Gateway peer credentials identify the selected OS user/role, not remote
+owner authority. A gateway IPC caller may request only enumerated delegated operations.
 
-Proposed versioned remote namespaces are `/mobile/v1/*` on the existing gateway and `/remote/v1/*`
-on the owner. Map only declared operations to existing handlers; reject every unknown route/action.
-Serve exposes only the Nanobot-owned private path mappings; prove prefix/WS forwarding in the spike.
-The gateway independently denies nonlocal attempts to reach legacy broad bootstrap, settings,
-local/native or undocumented endpoints through this entry. Preserve local paths and local semantics.
-Refuse setup if a conflicting trusted-proxy configuration would bypass device checks; do not change
-`trustedProxyAuth` into a mobile security mechanism or trust nonempty identity headers as ownership.
-Tailscale headers may be sanitized diagnostic context, never Nanobot pairing/grant authority.
-On a headless server the authenticated local operator CLI supplies the equivalent setup/approval
-boundary; it grants no desktop-native authority or new filesystem scope. Unsupported actions are
-absent from advertised capabilities and denied server-side, independently of the client's OS.
+Proposed typed `DelegatedAdminOperation` enumerates device list/rename/revoke/self-revoke,
+entry status/update of already locally registered entry settings/disable, and grant/Full
+proposal/commit/release through the existing server permission owner. Device refresh/status are
+also callable directly on the owner listener. No generic method string, config/executable/PID/unit
+selector, OS permission reference, caller-supplied `is_local`/`is_native` or asserted scope is accepted.
+Initial enable/re-enable after entry-off, new challenge creation/approval and scope upgrades stay
+server-local; record these deliberate exceptions in M36. Owner disable is allowed after warning.
 
-| Capability | Authenticated local browser | Admitted local desktop | Paired phone: legacy chat | Anonymous / proxy assertion alone | Paired phone: owner client (current) |
-| --- | --- | --- | --- | --- | --- |
-| Pair approve, revoke devices, add scopes | Strict local UI checks | Local owner checks | Self logout only | Deny | Owner may manage devices and remote entry, including self-revoke |
-| Bootstrap and read sessions/history | Existing local auth | Existing local auth | Scoped mobile routes, explicit read consent | Deny | Same standard reads with owner token |
-| Persistent chat/send/attach/media | Existing policy | Existing policy | Allow within approved chat/task policy | Deny | Same standard chat surface |
-| Temporary chat, session delete, automation/skills install | Existing policy | Existing policy | Deny in M1 | Deny | Allow with owner confirmation and audit |
-| Provider/config/MCP/package management, user-shell ingress | Existing policy | Existing policy | Deny | Deny | Allow; provider keys remain write-only |
-| Folder picker/repository grants/Full | Existing local/native checks | Existing authority/receipts | Deny | Deny | Allow; native folder dialog unavailable to phone, use server-side path management; Full requires phone confirmation |
-| Runtime start/status/stop | Existing owner semantics | Existing handle admission | Status only, no lifecycle actions | Deny | Allow WebUI lifecycle actions; service-manager lifecycle remains separately scoped |
-| All remote entry on/off | Local explicit setup/toggle | Local explicit setup/toggle | Show status/disconnect phone | Deny | Allow with warning; self-disable recovery guidance |
+The gateway forwards the opaque device credential, operation enum, bounded arguments, immutable
+operation correlation and payload digest over peer-authenticated IPC. The owner itself validates the
+credential and builds typed `AuthenticatedDeviceContext` (installation ID, stable device/principal,
+current scope/record revision/expiry). It does not trust caller-provided identity fields. An internal
+authorization handle, if used, is owner-issued, short-lived, bound to that device/operation/digest and
+revalidated against current revocation/scope before effect and delivery; it never goes to the phone.
 
-Pairing consent explicitly grants full owner control of this Nanobot instance, including reading its
-persistent chat history/media and changing settings, tools and workspace access. The UI must not imply
-a device-private server history. Existing chats remain the same server chats. Owner clients may create
-and continue chats with the same scope choices as the desktop; legacy chat-only devices retain the
-restricted behavior until re-paired. Do not silently rewrite an existing chat's focus or grants.
+Owner scope authorizes delegation without falsifying network locality. Strict local checks still protect
+local-only setup/enrollment. For grant/Full, RemoteAccessOwner validates device authority and returns a
+typed, operation-bound delegation admission over IPC. The gateway adapter presents that admission to
+the existing selected server permission-owning process/adapter; it validates current source/session/
+task/revision, target/read-write extent, confirmation and expiry and mints/consumes its native receipts
+**inside that same owning process**. Current device revocation is revalidated with RemoteAccessOwner
+before commit and delivery. The separate auth/controller process never imports/copies gateway task
+authority or native objects. Neither native references nor native receipts cross owner IPC or reach the
+phone; only typed authorization/admission and safe status/projection/proposal IDs cross boundaries.
+No live desktop reference is inherited. Concurrent source/target/
+revision changes, another device, stale/reused receipt or revoke reject before effect. Owner authority
+does not bypass existing server filesystem/command policy. M30/M33 test authorized delegation separately
+from unauthorized gateway administration; a blanket deny of all gateway admin IPC is obsolete.
 
-At owner-phone ingress, authenticate the owner scope and then apply the same task, workspace and
-permission policy as the desktop WebUI. Owner clients may request Full or workspace changes; the server
-must still bind the request to the current source/task/revision and must never serialize native
-permission references to the phone. Legacy chat-only devices keep the restricted ceiling until
-re-paired. The backend owner must prove authorization at dispatch and media projection, including
-reconnect and concurrent edits. If existing seams cannot enforce the owner/legacy distinction, stop
-for a bounded security design revision; runner/provider edits are not an escape hatch.
-Normal agent work may have effects; Full access is explicit and confirmed on the phone. Unconfigured
-installations must establish a supported server-side permission boundary before sends are enabled.
-The phone cannot operate the server's native folder picker; folder management uses server-side path
-entry. Retain the selected server's filesystem policy.
+### Replay identity and current authorization
 
-A later exact-target permission package requires a fresh local grant of a remote-approver scope,
-server-owned target/session/task/source/revision binding, single-use receipt, expiry and explicit
-read/write extent. It invokes the existing permission owner locally, never serializes its opaque
-references. Replay, changed source, changed target, revoke, expired receipt and another device must
-all fail. This package does not enable global Full or general machine administration.
+Immutable identity is `(installation_id, gateway_generation, request_id)` bound to stable device
+principal, action and payload digest; credential versions are authorization state, not operation identity.
+Authorize before cache lookup/join and delivery. Only `submit` with the current socket's server-issued
+epoch creates an operation. After any attempted send, reconnect converts pending records to
+`replay_only` with unchanged identity/digest. Join/return an existing operation across access renewal or
+refresh rotation; effect count stays one. Miss/eviction returns `409 outcome_unknown` with no creation/
+execution. Reject old serialized submit epoch, generation mismatch, different principal/action/digest.
+Never mint a new ID/epoch to retry an uncertain action automatically; reconcile authorized canonical
+state and require a new explicit action. Browser/desktop wire behavior retains compatibility.
 
-## Setup and daily states
+## Remote route policy and independent control reachability
 
-Local setup records the selected existing instance, transport/protocol support, permission boundary,
-tailnet HTTPS/policy readiness and exact owned Serve mappings; remote access starts disabled.
-The native client UI distinguishes network sign-in, backend pairing and connection readiness.
+Use one private HTTPS origin with explicit path mappings to loopback destinations. M36 records actual
+standard gateway HTTP/WS/media paths and listeners; M09/M11 qualify each. Proposed `/remote/v1/*`
+maps directly to the independent owner listener for pairing/auth/refresh/status/device/entry control.
+It must not transit gateway routing. Separate Serve entries are expected where needed; one origin
+does not mean one mapping. Preserve path prefixes exactly as registered by each listener, match segment
+boundaries, test longest-prefix routing, trailing slash/query/encoded-path behavior and WS Upgrade.
+Do not strip/rewrite prefixes implicitly or expose private IPC/local management through a catch-all.
+If the installed Serve version cannot realize the frozen routing, fail the measured routing criterion
+for a bounded revision; do not silently add a raw forwarding proxy or rely on a running gateway.
 
-| State | User-visible behavior and allowed action |
-| --- | --- |
-| Not signed in / tailnet node expired | System-browser sign-in; no Nanobot credential prompt or model-key entry. |
-| Unpaired / pending local confirmation | Scan operator UI/CLI QR, show comparison code, expiry and requested access. Cancel/retry safely. |
-| Connecting / compatible and paired | Show selected backend identity and progress; retain the shared shell and bounded loading states. |
-| Access expired | Refresh once through native custody; uncertain/expired refresh offers local re-pairing. |
-| Revoked | Stop sends/streams, clear secrets/private previews and explain local pairing is required. |
-| Instance mismatch / protocol mismatch | Disable mutations; explicit re-pair/update path, never auto-adopt a hostname. |
-| Reconnect / send outcome uncertain | Refresh identity, attach exact active chat and hydrate canonical history before reconciling. Never automatically resend an uncertain effectful chat turn. |
-| Gateway stopped | Owner status remains reachable when remote access is on; M1 directs local start, later owner scope offers guarded Start. |
-| Phone suspended/killed / Wi-Fi-cellular change | No always-on socket promise. On resume reconnect, reauthenticate and reconcile; persistent server work continues. |
-| Server asleep/offline / entry unreachable | Show last-known state and current unreachability; do not assert “stopped” from a timeout. No wake/offline guarantee. |
-| Model unavailable while gateway connected | Keep connection state accurate; show inference failure/retry without inventing a cloud fallback. |
-| Remote access disabled | Phone cannot enable it through the disabled entry; show local recovery guidance. |
+M19's proposed `nanobot.remote.supervision` adapter supervises the selected-instance owner as its own
+opt-in local user-service resource with a fixed command/config/socket/listener. The existing selected
+desktop launcher/lifecycle owner continues to own the gateway. M35/M39 record exact launcher/service/
+environment/resource identities; the controller never creates a second gateway supervisor.
+Owner auth/status/refresh/device revoke remain reachable with gateway stopped, absent or failed.
+A healthy owner reports gateway absence honestly; timeout does not prove Stop. Whole-host sleep/offline,
+logout/pre-login availability and linger remain measured local-service facts, not guarantees.
 
-Keep theme, font size and local navigation preferences on the device. Session contents, titles,
-model selection and existing sidebar organization remain shared server state where those operations
-are permitted; do not turn shared mutations into hidden per-phone preferences.
-Use existing components for chat-first navigation, safe areas, keyboard/composer resizing, portrait/
-landscape and accessible status. Android Back closes the top viewer/sheet before navigation.
-Camera/library selection uses one attachment trigger and explicit source choices; cancellation,
-permission denial and interrupted native activity retain the correct chat identity.
-
-## Controller ownership and the meaning of off
-
-RemoteAccessOwner is independently supervised by an opt-in server-local service and holds the device
-authority even when the gateway is stopped. Its remote endpoints expose bounded status/refresh in M1;
-later lifecycle scope adds only selected-gateway start/stop and disable-remote-entry operations.
-No remote choice of executable, interpreter, config, workspace selector, PID, service name or command.
-Local setup pins those values; secrets and administrative IPC never cross to the phone.
-
-Lifecycle capability is explicit and server-advertised, never inferred from host label or native UI.
-For the current desktop owner, reuse `DesktopAdapter`/`GatewayRuntime.start_desktop`,
-`adopt_desktop_handle`, `desktop_identity` and `stop_desktop` with their existing locks, selector,
-command, port, birth-identity and gateway-generation checks. Handles stay local to the adapter.
-A foreground, service-owned, foreign, conflicting or unknown instance is not automatically adopted
-or stopped. Report the existing refusal and require a deliberate local owner transition; never start
-a competing gateway. The current runtime's Linux restriction is retained, not “ported” by renaming it.
-A future service-owned Linux/VPS gateway needs a fixed, locally registered service-manager adapter;
-initial VPS compatibility is data-plane only with lifecycle unsupported until that adapter is qualified.
-Never route a service PID through desktop admission or signal it beneath `Restart=always`.
-The later adapter must stop/start the exact registered unit through its manager, reconcile its desired
-and observed state, and prevent supervisor restart from undoing Stop. Controller and gateway are
-separate units; stopping the gateway must not stop its controller or create a second supervisor.
-The client supplies neither arbitrary unit names/systemctl commands nor process/config paths.
-
-| Control | Exact consequence and recovery |
-| --- | --- |
-| Disconnect this phone | Stop its embedded connection/clear local credentials as selected; server and other clients keep running. |
-| Stop gateway (later privileged phase) | Stop only the admitted runtime/unit through its advertised owner adapter. Controller and private entry remain for authenticated Start/status. Unsupported lifecycle is denied. |
-| Disable remote access | Owner client may disable it after an explicit warning; deny new admissions, retire connections, then remove owned data/control mappings. If the phone disables its only entry, show server-local recovery guidance. |
-| Re-enable remote access | Authenticated server-local setup restores validated owned mappings; a separately established SSH route can be used manually, but is neither provisioned nor assumed here. |
-| Quit Nanobot desktop | Preserve the current guarded desktop Quit/stop semantics; do not silently reinterpret Quit as “keep the agent running.” Controller alone does not auto-start the agent afterward. |
-
-Use [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) to loopback, with normal
-HTTPS validation and tailnet access policy. No Funnel, `0.0.0.0`, public WS override or TLS bypass.
-The controller records prior state and ownership, checks conflicts and reconciles observed state;
-it must not `serve reset`, disable global Tailscale or overwrite another app's mappings. Disable
-must verify removal and retain an honest “unconfirmed” state if its acknowledgment is lost.
-The [Serve CLI](https://tailscale.com/docs/reference/tailscale-cli/serve) documents per-entry off
-and background persistence; qualify the installed 1.104.2 behavior rather than assume latest syntax.
-Controller supervision after logout/reboot depends on the actual user-service configuration;
-sleep, power-off and pre-login availability are not guaranteed. Linger/system privileges need separate local setup.
-
-## Bounded work packages and one-writer ownership
-
-Paths below are proposed implementation boundaries, not files created by this planning task.
-Owners are responsibility labels assigned by the orchestrator, not invented recipients.
-Each package freezes its contract, adds a red test/deterministic pre-check, implements, refactors
-and reruns focused checks; preserve prior assertions.
-
-| Package / owner | Allowed components and output | Depends on | Binary acceptance / rollback |
+| Capability | Current owner phone | Legacy chat-only phone | Anonymous/proxy-only |
 | --- | --- | --- | --- |
-| P0 — Native transport owner: **first implementation** | New `mobile/` only: fixture UI, Capacitor shell, `native-network/`, Android adapter, emulator tests/toolchain evidence. Build/run x86_64; separately compile arm64-v8a without claiming execution. | Accepted plan, isolated staging fixture and emulator preflight | Android emulator passes the transport/custody gate below; otherwise no broad product/UI dispatch. No physical/iOS prerequisite. Remove prototype/revoke test enrollment. |
-| P1 — Identity/backend owner | New `nanobot/remote/` identity/store/IPC/auth, minimal loopback owner listener, staging local approval/entry setup-teardown modules and tests; explicit `config/schema.py` entries. Freeze the versioned route/replay contract. | P0 go; explicit local staging setup gate; security review before merge/production activation | Real owner starts independently of the gateway; validated private mappings reach its listener, and teardown restores prior state. Concurrent QR consume, rotation, reset and fail-closed IPC/revocation pass. Defaults disabled; no production service install. |
-| P2 — Identity/backend owner, sequential continuation | `nanobot/webui/{gateway_endpoint,gateway_tokens,ws_http,inbound_commands,gateway_services,workspaces,media_gateway,media_api}.py`, WebSocket edge and corresponding tests; any session-policy seam gets explicit ownership first. | P1 | All route/frame/media/replay checks use current principal; safe task ceiling and local regressions pass. Disable mobile ingress; retain revocations. |
-| P3 — Native transport owner | Product Android `mobile/` shell/secure storage/media/deep-link/build integration; exact dependency lockfiles. | P1 reachable staging owner/entry PASS + P2 backend PASS | Emulator pairs/refreshes/revokes against the real backend, including instance/profile mismatch and broker-route proof; debug/internal builds only. Revert app build/revoke device. |
-| P4 — WebUI transport/layout owner | `webui/src/lib/{runtime,types,http,bootstrap,api,nanobot-client}.ts`, `App.tsx`, `main.tsx`, required chat/media/components and tests; mobile Vite output wiring. | P2/P3 emulator gate | Shared chat works in Android emulator; no private-network fetch/DOM escapes, old SW or native authority inference. Browser/desktop regressions pass. Roll back mobile adapter without replacing browser bundle. |
-| P5a — Desktop settings/control owner | Product local pairing/remote settings UI and opt-in user-service supervision; adopt the P1 entry/setup modules only after explicit backend ownership transfer, plus minimal local desktop integration/tests. | P2, P3, P4; explicit file handoff; security review before merge/production activation | Chat release has local pairing/revoke/on-off setup and no runtime start/stop grant. Rollback removes owned mappings/service, not sessions or unrelated Serve config. |
-| P5b — Host lifecycle owner, later | Fixed lifecycle routes and minimal desktop integration; a later service-manager adapter only under an explicit named-file contract after P5a handoff. | P5a; separate lifecycle scope; owner-specific review before activation/merge | Desktop admission remains strict; service lifecycle stays unsupported until exact-unit supervision/race/recovery tests pass. Does not block Android release. |
-| P6a — Release/verification owner: physical Android checkpoint | Run the named real-device acceptance below on the arm64 package; corrections return to the owning mobile/backend package. | P0–P5a emulator PASS; actual test phone | Cellular/handover/OEM/Doze/hardware custody/camera/battery gates pass before distribution. Emulator success alone cannot close this checkpoint. |
-| P6 — Release/verification owner | Reproducible packaging, dependency/license evidence, Android signing and integrated acceptance report. | P6a, not P5b/P7/iOS/VPS deployment | Signed Android install/update/revoke and rollback pass. Revert artifact and disable/revoke remote access. |
-| P7 — Permission owner, deferred | Exact-target remote-approval adapter and closest authority/replay tests only, under a new accepted contract. | P5a + explicit local scope grant design | All negative authority tests pass; Full stays local. Revoke approver scope/receipts independently. |
-| P8 — iOS owner, deferred | Later `mobile/ios/` adapter, custody, media, signing/build/device qualification under a fresh bounded contract and shared-file handoff. | Explicit future scope; no edge into Android DAG | Actual iOS proof required before claiming iOS support; its absence/failure cannot block Android. Mac/iPhone availability is historical, not a current prerequisite. |
+| Initial remote enable/re-enable; new-device challenge/compare approval; scope upgrade | Server-local admission required | Server-local admission required | Deny |
+| Device list/rename/revoke, self-revoke, registered entry settings/disable | Typed owner delegation; confirm destructive effects | Self-revoke/status only | Deny |
+| Standard history/chat/media and current session actions | Same WebUI policy; shared history consent | Negotiated chat/read/media ceiling | Deny |
+| Temporary chat/delete/settings/providers/models/apps/skills/automations | Same standard surface with confirmation/audit | Deny administration | Deny |
+| Folder browser/workspace mode/grants/Full | Server API/permission receipts/current policy | Deny grants/Full/browser | Deny |
+| Existing desktop-supported restart/stop | Standard action and existing process-ownership checks | Status only | Deny |
+| Remote Start/new service-manager control | Unsupported unless separately qualified M23/M24 | Deny | Deny |
 
-P1/P2 are one backend writer. P3 adapter construction may overlap P2 against a frozen contract,
-but its real-backend gate waits for P2 PASS. P4 owns all shared WebUI/build files; the desktop owner must
-wait or receive an explicit file transfer. P5a/P5b cannot overlap P1/P2 in `nanobot/remote/` or shared
-configuration. P1 owns its staging listener/entry/approval modules through P3 qualification, then
-hands them to P5a; no concurrent edits. Before P3, a local operator explicitly opts in to the recorded
-staging instance, loopback listener, private Serve mappings and teardown. P1's local-only command
-starts the owner independently in a bounded staging process, verifies readiness/HTTPS/route reachability
-and supplies QR approval; it does not require P4/P5a UI or a production service installation.
-The order is P0 emulator → P1 staging setup → P2 → P3 emulator identity → P4 → P5a → P6a phone → P6.
-P5b/P7/P8, VPS deployment/migration and model serving are separate future work. P2 freezes host-neutral
-profile/provider/lifecycle-capability contracts using fixtures; no live VPS/model is required for Android.
-No package owns core runner/provider edits, cleanup or migration closure.
+Admitted local browser/desktop keep their existing authorization and native admission. Gateway owner
+auth is separate from trusted-proxy/locality checks. Reject unknown routes/actions, broad bootstrap-token
+exchange and proxy configuration that bypasses device checks. Tailscale headers are diagnostic only.
 
-### P0 contract: the first dispatch
+Existing WebUI restart/stop are current parity where supported, without requiring deferred M23/M24.
+Preserve existing locks, selector/command/port/generation, handle and PID birth proof and guarded Quit.
+Refuse foreign/foreground/service-owned/unknown process adoption. A service-owned backend without a
+qualified manager advertises lifecycle unsupported; never signal beneath `Restart=always`.
+Remote Start may remain unsupported. M35 freezes the exact tested **local** launcher/recovery command
+for the selected instance; the phone displays that instruction when gateway is stopped. Do not promise
+a remote Start button or infer one from owner scope. Quit never silently auto-starts the gateway.
 
-Build a tiny packaged page against an isolated **non-agent** staging echo/identity/media fixture,
-not a second Nanobot instance. It is useful proof, not a throwaway UI rewrite. Credentials are
-test-only, release actions disabled, production config untouched, private test exposure removed afterward.
-Before a live test, record the agreed staging endpoint and enrollment; neither is invented by this plan.
-Use the [Android emulator](https://developer.android.com/studio/run/emulator) for normal development
-across API levels/screens. Record AVD/system-image/API/WebView, x86_64 native execution, separate
-arm64-v8a build-only result, JDK/SDK/NDK/Go/C ABI and Capacitor/plugin pins, TLS trust and sizes.
-The supplied `/dev/kvm` permissions are promising; measure actual boot and
-[acceleration](https://developer.android.com/studio/run/emulator-acceleration) during later setup.
-[Capacitor Android](https://capacitorjs.com/docs/android) and
-[setup](https://capacitorjs.com/docs/getting-started/environment-setup) guide compatible version pins;
-SDK licenses receive normal authorized acceptance during setup, not automatic acceptance in planning.
-Audit library provenance/licenses/notices, transitive dependencies, reproducibility and OS floors.
+Entry off denies admissions, retires sockets and removes only owned **data and control** mappings;
+verify observed state or show unconfirmed. A phone disabling its only entry receives local recovery
+guidance first and cannot re-enable through the removed route. Disconnect affects that phone only.
+Controller lifetime, entry-off, gateway Stop and desktop Quit remain distinct.
 
-[10.0.2.2](https://developer.android.com/studio/run/emulator-networking-address) aliases the developer
-host's loopback, not the guest's. A clearly labeled debug-only direct-host fixture adapter can aid UI
-work; it must be absent/denied in release, with no production endpoint or release TLS/trust exception.
-It does not count as remote transport proof. The developer host already runs Tailscale: emulator
-reachability may inherit host routes. Prove the app's embedded tsnet path using app-node/peer identity
-plus backend network observation or a controlled, locally approved route/ACL fixture. Host routes
-or a client-supplied identity alone do not prove this. Do not disable host Tailscale globally or
-silently broaden policy. With embedded transport unavailable, private requests must fail without
-falling back to host/system transport. Keep a standalone guest VPN disabled/absent for this proof.
+Use [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) with normal TLS and tailnet
+policy, never Funnel/public bind/TLS bypass. Retain prior/desired/observed mapping ownership; no global
+`serve reset`, global Tailscale stop or overwrite of another app. Qualify installed CLI syntax rather
+than assuming the historical 1.104.2 version still applies. See retained
+[Serve CLI reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
 
-**P0 go requires:** emulator interactive embedded login and verified native HTTP/WSS/TLS path;
-bootstrap/refresh/read, attachment boundaries, image/audio/video ranges and deep links; normal TLS
-rejection; simulated network changes, suspend/resume and process death; secure-storage API behavior
-without secrets in JS/logs; denied arbitrary host/path/redirect/LocalAPI; bounded queues and reproducible
-x86_64 execution plus separately labeled arm64 builds. P3 repeats real-backend identity/replay cases
-in the emulator before P4. Neither P0 nor P3 requires a physical Android, iPhone or Xcode.
+## Server directory API and mobile workspace adaptation
 
-**P6a physical Android pre-release checkpoint:** execute arm64-v8a on actual supported hardware;
-test cellular NAT versus Wi-Fi handover, OEM background/Doze/process recovery, hardware-backed key
-custody, battery/thermal behavior, camera/library and permissions, upgrade/reinstall/revoke and media.
-Record phone/API/WebView facts and standalone Tailscale disabled. Emulator simulations do not prove
-real cellular routing, hardware security, power behavior or reliable background execution.
+M37 is the backend owner; M32 consumes its frozen contract and owns UI only. Proposed standard routes,
+subject to M36 collision/convention verification, are:
 
-## Validation and evidence requirements
+- `GET /api/workspace-directories/roots` → `{policy_revision, roots:[{root_id,label,display_path}]}`.
+- `GET /api/workspace-directories/list?root_id=…&path_id=…&cursor=…&limit=…` →
+  `{root_id,path_id,relative_path,breadcrumbs,policy_revision,directory_revision,entries,next_cursor}`.
+  Root listing omits `path_id`; entries have directory `name`, opaque `path_id`, `is_symlink` and
+  bounded accessibility metadata. No file contents, file listing, owner/secret metadata or recursive walk.
+- `POST /api/workspace-directories/resolve` with `{root_id,manual_path,policy_revision}` resolves manual
+  relative input or an absolute input explicitly within that selected configured root to the same path
+  descriptor. It lists/grants nothing by itself and is not a new feature-grant endpoint.
 
-Existing commands discovered from AGENTS, package scripts, CI and the checker help (not run here):
+Proposed config `remote_access.directory_browser.roots` (camelCase JSON aliases) is an explicit list of
+`{id,label,path}` with default `[]` and maximum 32 roots. No implicit `/`, home directory, first known
+project or copied native grant. Empty roots show configuration guidance. Owner settings may configure
+roots through the normal write path under server policy; initial setup remains local. Browsing is
+read-only visibility, never filesystem/tool authority or an implicit grant/Full ceiling.
+
+Canonicalize configured roots and every request through the existing resolver/equivalent capability
+containment. Path IDs/cursors are opaque browsing identifiers bound to installation/root/policy and
+canonical directory identity, with at most five-minute expiry; they are not native permission references.
+Reject traversal/NUL/oversized/malformed input, paths outside the selected root, symlink escape and
+changed root/directory identity. In-root symlinks may resolve to the contained canonical target.
+Manual entry follows the same rules. Never trust a previously listed path at grant commit.
+
+Finite defaults/maxima: requested page limit 1–100 directories, scan at most 1,000 directory entries per
+request, response at most 64 KiB, two-second work deadline, path at most 4,096 UTF-8 bytes/depth 64;
+no recursion. An opaque cursor permits bounded continuation and invalidates on policy/directory change.
+Errors: 400 malformed, 401 unauthenticated, 403 unauthorized/outside-root, 404 missing, 409 stale/raced,
+413 bound exceeded, 429 rate limit, 503 unavailable/deadline. Return sanitized codes, no stack/private paths
+outside authorized roots; inaccessible entries carry only bounded permission status or are omitted.
+
+When the existing grant mutation (frozen M36) commits, M37's adapter re-resolves target under current
+root policy, source/session/task/revision and permission owner, compares canonical target identity and
+confirmation, and obtains a fresh server receipt. Use handle/identity-based containment at issuance
+where supported; fail closed on replacement/symlink race or unverifiable identity. Test rename/replace/
+symlink changes between listing, confirmation and commit. Grant policy remains distinct: existing owner
+Full/manual grant actions follow server permission policy, while this browser stays within configured
+visibility roots. Never treat a listing result as authorization.
+
+M32 uses shared workspace controls with breadcrumbs, directory/error/loading states, manual entry and
+“Use this folder.” Select only an explicitly chosen project or the current session's verified project;
+no default to the first known project. Phone never opens the server-native folder dialog.
+
+## States, confirmation and audit
+
+Distinguish transport sign-in, local pairing/pending comparison, connecting, compatible ready, access
+expired/uncertain refresh, revoked, protocol/installation mismatch, reconnect/outcome unknown, entry
+off, gateway stopped/offline, whole server unreachable and model unavailable. Show selected instance;
+never auto-adopt a hostname. Resume reauthenticates and reconciles canonical state. Persistent work
+survives phone kill/handover; temporary chat disposal remains explicit and tested.
+
+Shared shell/pages retain theme/font/local navigation preferences on device and shared session/model/
+title mutations on server. Adapt safe areas, keyboard/composer, portrait/landscape, large fonts, Back
+(top viewer/sheet first), camera/library chooser, permission denial and interrupted activities without
+losing chat identity. Preserve baseline-supported auth/import/download flows with bounded native handling.
+
+M33 confirms destructive/sensitive actions, including session delete, install/remove/update where
+effectful, automation create/run/delete, grant/Full, device revoke, remote disable and supported runtime
+restart/stop. Confirmation binds device, action/target/digest, current source/task/revision where
+applicable, operation correlation and expiry; stale/replayed/another-device confirmation fails.
+Do not hide current authority controls to avoid implementing confirmation.
+
+Mutation audit contains stable installation ID, **acting device ID/principal**, immutable operation
+correlation, action, sanitized target, outcome and timestamp, with finite sanitized metadata. Two owner
+phones must be distinguishable; installation alone identifies only the server. Audit denial/failure and
+deduplicated replay outcomes without a second effect. Never log bearer/provider keys, raw payloads,
+native receipts/references, private contents or unbounded paths/errors. Retain durable audit/revocations
+on rollback. Short TTL/rotation/self-revoke remain required; optional future step-up is not a blocker.
+
+## Ownership, validation and finish lines
+
+The [guide ownership ledger](mobile-client-implementation.md#ownership) and task table are binding.
+M36 inventories before write dispatch. P0 owns `mobile/` foundation only. One backend writer owns
+M06–M13, M30/M31 and M37 serially; native registry changes in M31 require a recorded mobile-file handoff.
+M14/M15 own native product integration; M16/M17 own shared transport/layout. M18/M19 receive explicit
+backend/config/settings handoffs. M32 receives shared UI; M33 receives audit/permission/UI boundaries.
+M35/M20–M22/M34 verify and return code defects to owners. M38 is read-only independent review.
+M39/M40 alone cover reviewed installed promotion/verification after actual external opt-in.
+No concurrent writer touches a shared schema, config, registry, lockfile or generated output.
+
+For each bounded implementation task: freeze prerequisites/source/environment, capture a meaningful
+red behavior test (or deterministic before-check for setup/docs/device), implement minimally, refactor,
+then focused green checks and affected broader regressions. Retain failures and exact cwd/command/
+exit-code/hash evidence. Existing commands retained from prior docs/instructions, **not executed here**:
 
 ```bash
-# Focused Python protection and lifecycle regressions, after dependencies are frozen
 uv run --no-sync python -m pytest tests/webui/test_http_utils.py tests/webui/test_webui_mutation_replay_auth.py tests/webui/test_managed_media_access.py tests/webui/test_attachment_ingress.py tests/webui/test_permission_v2_api.py tests/security/test_native_admission.py tests/security/test_permission_v2_authority.py tests/desktop/test_adapter.py tests/gateway/test_runtime.py tests/gateway/test_gateway_service.py
 ruff check nanobot/
-# Run from webui/
+# In webui/
 bun run test -- src/tests/bootstrap.test.ts src/tests/runtime.test.ts src/tests/nanobot-client.test.ts src/tests/thread-shell.test.tsx src/tests/sw.test.ts src/tests/main-pwa-registration.test.tsx
 bun run lint
 bun run build
 bun run test
-# Full local Python qualification, from repository root; do not substitute CI exclusions
+# Repository root
 uv run --no-sync python -m pytest
 uv run --no-sync basedpyright --outputjson
 python scripts/check_type_regressions.py BEFORE.json AFTER.json --baseline-root BEFORE_SOURCE --current-root AFTER_SOURCE
 ```
 
-New proposed commands to implement/document in P0, **not existing repository scripts**:
-`mobile/scripts/qualify-emulator android`; `go test ./...` in `mobile/native-network`;
-Android Gradle native/emulator tests with project/AVD/API/ABI and acceleration recorded.
-P6a proposes separate `mobile/scripts/qualify-device android`; no iOS command is an Android gate.
-Add `tests/remote/` and mobile WebUI tests as packages land; report their actual names at handoff.
-P1 also proposes `python -m nanobot.remote.staging` for locally approved owner/entry setup, status,
-approval and teardown; its final CLI, selectors and reversible mapping diff must be recorded before use.
+Refresh actual focused names at M36/M10; no proposed script is claimed present. Guide-proposed
+`mobile/scripts/qualify-emulator`, `qualify-device`, Gradle/native/Go and `tests/remote` checks need
+fresh existence/command verification. M01–M05 prove emulator x86_64 execution and separately label
+arm64 compilation, app-node plus backend path, HTTP/WSS/TLS/media/ranges/deep links, denied raw
+host/redirect/LocalAPI, queue/backup/suspend/death and transport-off behavior despite host Tailscale.
+`10.0.2.2` is debug fixture only, never release fallback or embedded transport evidence.
+Pin SDK/NDK/JDK/Go/C ABI/Capacitor/Gradle/WebView/API/ABI/image/licenses/provenance/reproducibility and
+measure AVD acceleration. No physical/iOS prerequisite is attached to early backend/owner tasks.
 
-| Gate | Required deterministic evidence |
+| Gate | Binary evidence required on current candidate |
 | --- | --- |
-| Auth/identity | Missing/expired/revoked/wrong-instance/wrong-scope credentials fail on every allowed route, WS command and media range; spoofed Host/forwarding/proxy headers cannot turn remote into local. |
-| Pairing | Single concurrent winner; wrong collector secret/nonce, reused/expired QR, rate limits, rotation uncertainty, owner restart, corrupt records, OS restore and reinstall tested. |
-| Replay and effects | Lose a mutation response, separately renew access and rotate refresh, then reconnect/replay: test both in-flight join and completed-result return, same immutable operation/principal and effect-count **1**. Latest revoked/reduced-scope authorization denies join/delivery with no new effect. Replay-only cache miss/eviction, stale submit epoch and gateway restart must reject without execution; another principal/action/digest must fail. Instrument the harmless counter, including the existing mobile `handleOpen` resend path. |
-| Chat continuity | Stream text/tool states converge with canonical transcript; active chat/turn IDs survive reconnect and UI remount. Gateway restart drops unsafe replay. Slow consumer and frame limits are exercised. |
-| Task safety | Mobile cannot acquire local Full/target grants, trigger folder picker, change settings, bypass command policy or inherit live local references; concurrent desktop permission changes remain source-bound. |
-| Lifecycle | Desktop two-start/race/PID/stale-handle/foreign/foreground/service refusals remain. Advertised unsupported lifecycle denies control. Later exact-unit service adapter must defeat Restart=always resurrection after manager Stop and keep the independent controller reachable. No generic unit/PID authority. |
-| Emulator network | Native HTTP/WSS/TLS/SNI/Host/media/ranges, simulated network/suspend/death/offline/revoke pass with app-node plus backend path proof. Embedded transport unavailable fails closed despite host Tailscale; debug 10.0.2.2 path cannot appear in release. |
-| P6a physical Android | Actual cellular/Wi-Fi handover, OEM/Doze behavior, hardware-backed custody, arm64 execution, battery/thermal/camera/permissions and update/reinstall/revoke evidence; standalone phone VPN disabled. |
-| Staging dependency | P1 local opt-in, independent owner listener readiness, exact private mapping reachability and restoration/teardown pass before P3; no product settings UI or new agent instance is required. |
-| Host-neutral contract | Fixtures prove origin/installation/profile isolation, one active connection, no silent failover/merge and server-advertised capabilities. A chat-compatible backend advertising lifecycle unsupported must allow chat while hiding/denying start/stop controls. Simulated gateway-online/model-unavailable stays distinct; provider secrets stay server-side. No live VPS/model deployment is required. |
-| Regression/privacy | Browser/native desktop flows pass; owner probes receive the full client surface, legacy/chat-only probes keep local-only controls false. Both gateway binds stay loopback; no Funnel/public listener, bootstrap-secret copies, provider keys, private SW cache or privilege-bearing remote content. |
+| Inventory/API | Every baseline action maps to UI, standard operation/native registry, auth/limits and evidence; unsupported exceptions explicitly accepted before parity claim |
+| Identity/delegation | Missing/expired/revoked/wrong-instance/scope denied on every HTTP/WS/media/control route; authorized owner IPC succeeds; forged locality/native/OS role and local-only enrollment deny |
+| Pair/rotate/revoke | One QR/collector winner, deterministic races/clocks, corrupt/version/reset/restore denial, atomic rotation and bounded current revoke/owner-loss retirement |
+| Replay | In-flight/completed lost response across access renewal/refresh rotation effect count 1; unknown/evicted/old epoch/generation/different-device replay count 0; current auth before join/delivery |
+| Task/Full | Owner grant/Full positive and server receipt/source/task/revision/confirmation checks; legacy denied; no inherited/native references, concurrent desktop changes and media projections safe |
+| Folder API | Root/identifier/manual/symlink/permissions/pagination/time/byte bounds; no implicit grants; fresh commit rejects target/policy/source races and first-project fallback |
+| Lifecycle/control | Existing desktop admission/Quit/races/foreign/service refusals; advertised unsupported Start; owner auth/status/refresh/revoke work with gateway absent; exact local recovery |
+| Browser/desktop/privacy | Shared behavior preserved; mobile SW/debug paths/private caches absent; transient provider writes work, existing secrets and native/app credentials never echoed/persisted |
+| Physical/signing | Actual supported Android arm64, cellular/Wi-Fi/OEM/Doze, hardware security level, battery/thermal, camera/media/Back/accessibility, update/reinstall/revoke and exact signed artifact |
+| Installed finish | M38 exact manifest PASS before M39; reviewed package/WebUI installed, one writer, durable state retained and M40 actual desktop/phone same-instance evidence |
 
-Follow `docs/migration/p6-error-attribution.md`: freeze before/after full-source checker output under
-identical dependencies; retain source hashes, environment/commands and zero new diagnostic signatures
-across **all** files using the comparator. Do not refresh a baseline to absorb errors. The document's
-2026-10-13 strict-zero checkpoint is historical evidence, not a fresh check of this checkout.
-Measure current strict status. A bounded package PASS is not migration P6/stage completion; unchanged
-strict must exit zero and the required full local suite must pass before claiming full green.
-Do not use `ruff format`, add skips/suppressions, or treat a timeout/forced cleanup as a passing test.
+Follow `docs/migration/p6-error-attribution.md` as instructed: immutable before/after full-source reports
+under identical dependencies, source/environment hashes and zero newly introduced signatures across all
+files. Comparator output alone does not attest inputs. Never refresh baseline to absorb errors, add
+skips/suppressions, run `ruff format` or call timeout/forced cleanup PASS. Historical strict-zero/full-suite
+claims are not current qualification. Full green requires unchanged strict exit zero and the required
+full local suite; bounded repair PASS never closes migration P6.
 
-## Rollout, handoff and remaining gates
+## Rollout, durable rollback and genuine external gates
 
-All features default off. Begin with emulator fixture proof, backend tests and privately enrolled
-emulator pairing; then signed physical Android qualification before release. Preserve local desktop/browser
-entry throughout. No Play Store/App Store submission, production exposure, service installation,
-tailnet account/policy grant or approved spending is implied by plan acceptance. VPS deployment,
-state/identity cutover, remote model serving and iOS each need separate scope and qualification;
-none is a hidden dependency of Android development/release.
-Local opt-in to HTTPS/policy/Serve/service changes is a genuine later setup gate with concrete diffs
-and recovery instructions; identity/lifecycle changes need fresh independent security review before activation.
-The owner must retain durable revocation state on app/backend rollback. If an older backend cannot
-honor the device protocol, remove remote mappings/disable ingress first; never fall back to legacy
-broad credentials. Stop/remove only the opted-in controller and its owned mappings, not Tailscale
-globally; preserve sessions, device audit/revoke records and other services. App updates need tested
-protocol compatibility; unsupported old apps receive update-required state without mutation access.
+M35 proves an isolated desktop-equivalent topology; it does not install/promote this branch into normal
+staging. M34 freezes exact server commit/package, bundled WebUI SHA-256, app ID/version/APK SHA-256/
+certificate fingerprint, protocol/registry/config/data versions, selected isolated instance and
+launcher/environment. M38 independently reviews that tuple and the complete parity/negative matrix.
+Changes after review require affected requalification and refreshed review.
 
-Each handoff contains: accepted package/owned paths; base commit and complete source/dependency
-hash manifest; final diff and untouched-file check; exact red and green commands, outputs/exit codes;
-new route/scope/schema registry; emulator/API/ABI/acceleration and later device/signing facts; traces tied to
-chat/request IDs; negative-case matrix; install/revoke/rollback rehearsal; unresolved failures and risks.
-Reviewers receive raw evidence and record PASS/CORRECT/REJECT per criterion; planning acceptance
-means this specification is ready to dispatch.
+M39 first prepares a reviewable installed transition: actual current/desired build versions/hashes,
+target config/instance/data root and installation identity, environment/package/executable and launcher,
+owner supervisor/gateway lifecycle ownership, data/schema/protocol compatibility, backup/recovery and
+precise prior/desired owned mappings/services. Config/Serve changes cannot upgrade an old backend.
+With concrete local installation/service/network opt-in, disable ingress/quiesce and stop the old writer,
+install the exact reviewed server and bundled WebUI, transition the selected environment/launcher/config,
+start one compatible owner/gateway and only then enable reviewed mappings. Preserve local desktop
+entry. M40 verifies actual desktop/phone installation/history/workspace/capabilities, update/revoke and
+stopped-gateway control/recovery. No qualification/review step waits on installed promotion.
 
-Remaining development inputs are the pinned Android API/WebView/SDK/NDK/system image/ABI matrix,
-measured emulator acceleration, a locally selected staging fixture/test enrollment and the existing
-server's owner/permission capabilities. Physical Android model/API/signing are P6a release inputs,
-not development prerequisites. VPS/model endpoint credentials/topology and iOS versions/signing
-are deferred inputs only; do not request them for Android. If compatibility fails, return measured
-options before raising support floors. These are not reasons to seek permission to revise this plan.
-Independent review must assess the new persistent owner/IPC threat boundary, the native transport
-and media qualification, live revocation/replay linearization, safe task ceiling and lifecycle adoption.
-When the user invokes the OpenCode prompt, implement ready Android MVP tasks in the taskbook's dependency order,
-retaining P0 feasibility and all measured setup gates. No independent human approval is required after
-each task; review the integrated implementation before merge or production activation. Deferred packages
-remain separately scoped and are not dispatched by the Android MVP handoff.
+Rollback removes only owned mappings/services/app resources and explicitly disposable fixture state.
+Keep selected-instance stable identity, device/revocation/audit records, credentials' revoked status,
+sessions and new authorized writes. Disable ingress before an incompatible backend downgrade. Check
+previous backend's protocol/store compatibility before reopening; if incompatible, keep remote disabled
+and use local recovery. Never blindly restore old owner state, resurrect revoked credentials, copy
+native authority or fall back to broad bootstrap tokens. Backups preserve/reconcile newer revocations;
+one writer remains authoritative. App rollback also obeys negotiated compatibility/update-required denial.
+
+Real later inputs: pinned compatible Android/toolchain matrix and measured acceleration; selected isolated
+fixture/origin/enrollment and concrete mapping/service setup opt-ins; supported physical Android/signing
+custody; actual installed target/build/environment/launcher/config/service ownership and promotion opt-in.
+They are not permission requests to revise docs or ordinary isolated task-by-task gates. Missing live
+criteria stay PENDING while independent work continues. No credential, destination, service unit or
+deployment permission is invented. Merge/publication retain explicit authorization. iOS/VPS/model/migration
+inputs are deferred only, never Android prerequisites.

@@ -1,15 +1,19 @@
 # Mobile client: implementation steps for every task
 
 This is the detailed companion to [the complete backlog](mobile-client-tasks.md).
-Task IDs and anchors are stable. No commands below were run during planning; proposed files,
-scripts, routes and platform projects do not exist yet. The [accepted plan](mobile-client-plan.md)
+Task IDs M01–M35 and anchors are stable; M36–M40 add missing bounded work. This revision ran only
+documentation/static checks, not the product commands below. Proposed contracts/names must be verified
+at M36: some implementation and evidence were reported historically, but were not inspected here. The [accepted plan](mobile-client-plan.md)
 defines protocol/security behavior; this guide decomposes it without changing the architecture.
 Implementation starts when the user invokes the backlog's OpenCode prompt; this planning task prepares it only.
 
 ## Common execution and evidence contract
 
-Before each task, verify its prerequisites and current source, record owned paths and preserve others'
-edits. Capture a failing behavior test before implementation, implement minimally, refactor, then run
+M36 first inspects the actual implementation and freezes desktop parity and current source/evidence.
+Prior implementation/test/APK claims are attributed historical reports, not accepted or rejected by this
+revision. Retained M01–M22 work may be reused only after recorded applicability and affected requalification;
+it is not an alternative chat-only release. Before each task, verify prerequisites/current source, record
+owned paths and preserve others' edits. Capture a failing behavior test before implementation, implement minimally, refactor, then run
 green focused tests. For toolchain/device/network work use a frozen deterministic pre-check and
 post-check instead. Keep the failed output; a missing test dependency is not the intended red result.
 Do not weaken assertions, add suppressions/skips, silently refresh baselines or run `ruff format`.
@@ -24,8 +28,9 @@ artifact change invalidates affected checks and prior review: rerun them and pub
 
 ### Existing commands and their scope
 
-Run from this mobile worktree with its own environments. These commands exist in the inspected
-repository; test names must be refreshed at M10 if committed staging changes rename their seams.
+Run from this mobile worktree with its own environments. These commands are retained from repository
+instructions and earlier inspected documentation, not freshly executed/verified here. M36/M10 must verify
+current command/test names and record exact replacements if committed seams changed.
 
 ```bash
 # Read-only implementation-start preflight, repository root
@@ -68,7 +73,7 @@ does not close migration P6. P0 fixture-only tasks need their own checks, not un
 
 ### Proposed checks to implement and document
 
-The following are **proposed interfaces**, not working scripts today. M01/M02 create the fixture/toolchain
+The following are **proposed interfaces**, whose existence/current behavior must be checked at M36. M01/M02 create the fixture/toolchain
 commands; M05/M14 extend the emulator runner; M21 creates the device runner. Record the final real CLI
 and underlying commands if a compatible implementation chooses a different invocation.
 
@@ -98,33 +103,83 @@ tests never satisfy real network, OS custody, service or device criteria.
 <a id="ownership"></a>
 ## Ownership ledger and non-goals
 
-- M01–M05: one P0 writer, **new `mobile/` only**, including local lockfiles/ignore rules/scripts.
-  No `webui/`, `nanobot/`, root config/dependency files, installed app or staging runtime edits.
-- M06–M13: one backend writer for P1/P2, with M10 a serialized integration checkpoint.
-  M06's `mobile/contracts/` is handed over after P0; no concurrent mobile edits there.
-  P1 retains its listener/approval/entry modules through M15 real-backend qualification.
-- M14–M15: one native writer, only `mobile/`; coordinate shared contract changes with backend owner.
-  M16–M17: one shared WebUI/build writer. No implicit desktop/native capability inheritance.
-- M18–M19: explicit transfer of named remote/config/settings/shared files from backend and P4 owners;
-  old writers stop first. M20–M22 are verification/release owners; code defects return to their owner.
-- M23–M29: not dispatched. Their listed files are proposed future boundaries, admitted only by a
-  separately scoped task. Concurrent changes to the same module/lockfile/generated output are forbidden.
+- M36 is the early inventory/baseline owner: proposed `mobile/contracts/desktop-parity.json` and
+  sanitized manifests only; no product edits. Its contract/evidence handoff precedes M01 and M06.
+- M01–M05: one P0 writer under `mobile/` only. Review/requalify existing work rather than assuming absence.
+  No production/root dependency files, installed app or staging runtime changes.
+- M06–M13, M30/M31 and M37: one backend writer serially. M06 receives `mobile/contracts/` from P0;
+  M31 additionally receives `mobile/contracts/operations-v1.json`, `mobile/src/native-broker.ts` and
+  native registry files named in the M36 manifest. No overlapping native writer. Backend retains
+  listener/approval/entry modules through M15. M10 is a serialized committed-source checkpoint.
+- M14–M15: native product writer under `mobile/` after the registry handoff. M16–M17: shared WebUI/build
+  writer, with explicit `mobile/` build-wiring handoff. Native mobile never implies desktop authority.
+- M18–M19 receive exact remote/config/settings files from backend and shared UI writers. M32 receives
+  shared UI only and consumes M37; M33 receives named confirmation/audit/permission/settings files.
+  Record files/hashes and stop old writers before each transfer.
+- M35 is isolated qualification; M20–M22/M34 verify the current integrated candidate. Product defects
+  return to the owning task and invalidate affected evidence. No installed-instance mutation in these tasks.
+- M38 is independent read-only review. M39/M40 alone own the reviewed installed transition/checks, after
+  actual target selection and concrete install/config/service/network opt-in. These are not authorized now.
+- M23–M29 remain separately scoped. They do not block existing supported owner actions or Android release.
+  No concurrent changes to shared config, schema, registry, lockfiles or generated output.
 
-No task grants arbitrary URL/dial/LocalAPI/shell access from the bridge, privileged remote HTML,
-offline private history/write queues, temporary mobile chats, a second agent/runtime, phone model keys,
-automatic cloud fallback, global Full, new public ingress or home filesystem/tool access through a model.
-No task authorizes merge, production activation, store publication or an invented host/recipient/credential.
-SDK/version/support-floor choices are measured and recorded; no maintained Capacitor Tailscale SDK is assumed.
+The [taskbook](mobile-client-tasks.md#dependency-order-and-finish-lines) is the canonical DAG. The default
+order is M36, M01–M13, M30/M31/M37, M14–M19, M32/M33/M35, M20–M22, M34/M38, then M39/M40
+with their external gates. No early task requires a later phone bridge/physical qualification.
+
+No task grants raw URL/dial/LocalAPI/general shell/filesystem access from the native bridge, privileged
+remote HTML, offline private history/write queues, a second agent/runtime, exported provider/app
+credentials, automatic cloud fallback, public ingress or home tools through a model connection.
+Current owners **can** use temporary chats, settings, grants and Full through standard feature APIs and
+server-local permission receipts; obsolete prohibitions apply only to the legacy profile/M25.
+Newly entered provider keys may exist transiently in the settings form and standard write request;
+never persist/log/replay/cache them or return existing secrets. Long-lived app credentials stay native.
+No task authorizes merge/publication, installed activation without concrete opt-in, or invented
+hosts/recipients/credentials. Framework/support-floor choices remain measured.
+
+<a id="m36"></a>
+## M36 — Freeze desktop parity/API and actual implementation baseline
+
+**Objective/prerequisites:** none; perform the first fresh implementation inspection after this planning edit.
+**Allowed:** proposed `mobile/contracts/desktop-parity.json`, sanitized `mobile/evidence/<run-id>/M36/`
+and task applicability/evidence index; read source/tests/config schemas and historical reports only as
+authorized implementation discovery. **Forbidden:** product edits, dependency installation, runtime/network/
+installed-instance mutation, accepting historical tests/APKs by assertion or resetting checker baselines.
+
+1. Record clean HEAD/tree, source/dependency/config/schema/tool/environment hashes, current desktop build and
+   feature flags. Preserve unrelated edits. Inspect actual mobile/backend/shared implementation when work
+   resumes; identify which proposed paths already exist and their exact current owners.
+2. Enumerate every desktop feature/action, not only pages: chat/history/media/session/temporary behavior,
+   settings/providers/models, Apps/MCP/CLI/API service, local/custom/installed skills and marketplace,
+   automations, workspace/grants/modes/Full, device/entry management and existing supported lifecycle.
+   Include supported imports/downloads/binary/external-auth flows. Derive exact routes/methods/WS actions.
+3. For each inventory row record stable ID, feature/action, baseline/source owner, route+method or WS/control
+   action, UI entry, owner/legacy auth, native operation/schema/limits, adaptation, dependency task, positive/
+   negative checks, evidence/hash/status and explicit accepted exception. Record local-only initial setup,
+   new-device comparison approval/scope-upgrade and unsupported remote Start as deliberate exceptions.
+4. Map current source and historical M01–M22 evidence to each task/row: reusable only after applicability
+   review and affected fresh checks. Record gaps without blanket absent-code or PASS assertions. Freeze exact
+   file lists for later handler/UI/registry ownership; verify existing command/test names against instructions.
+5. Freeze the inventory and source manifest for dispatch. Any new/changed operation updates the inventory
+   and affected checks. An unsupported action needs explicit product acceptance before claiming full parity.
+
+**Checks:** deterministic baseline manifests and exhaustive action→API→native→UI→evidence cross-check;
+negative omitted category/action, missing method/scope/limit, unbound evidence or silent exception fails.
+**Gate/evidence:** a versioned inventory with no unclassified action, exact source/baseline hashes, explicit
+legacy/local-only exceptions and task applicability ledger. No implementation/test acceptance is inferred.
+**Rollback/inputs:** restore only owned inventory changes if rejected, retain raw manifests/historical reports.
+Actual implementation/desktop baseline access is required; no phone, pairing, enrollment or signing prerequisite.
 
 <a id="m01"></a>
 ## M01 — Isolated Android shell, toolchain and evidence harness (P0)
 
-**Objective/prerequisites:** start from the clean mobile worktree; establish reproducible development inputs.
+**Objective/prerequisites:** [M36](#m36); establish reproducible inputs in the clean mobile worktree.
 **Allowed:** proposed `mobile/{package.json,bun.lock,capacitor.config.ts,tsconfig.json,vite.config.ts,.gitignore,README.md}`,
 `mobile/src/fixture/`, generated `mobile/android/`, `mobile/scripts/`, `mobile/toolchain/` and ignored evidence.
 **Forbidden:** all production/root dependency files and the installed staging environment; retain P0-only ownership.
 
-1. Run preflight; record actual clean HEAD, baseline ancestry, source hashes and absence of a mobile project.
+1. Run preflight; record actual clean HEAD, baseline ancestry, source hashes and M36's existing-project inventory.
+   Reuse/requalify compatible scaffold/toolchain work; do not erase or duplicate existing implementation.
    Accept a later docs-only handoff commit. Stop on unrelated dirty files without stashing/resetting them.
 2. Choose and pin compatible Capacitor/React/Go/JDK/SDK/NDK/Gradle/plugin versions and provenance/licenses
    using the accepted official references. Record actual OS/API/WebView/ABI support, not guessed floors.
@@ -246,13 +301,15 @@ missing, retain PENDING while local tests continue. If both accepted transport a
 <a id="m06"></a>
 ## M06 — Versioned host-neutral protocol and profile contracts (P1)
 
-**Objective/prerequisites:** [M05](#m05); freeze inputs for independent backend/native owners while staging evolves.
+**Objective/prerequisites:** [M05](#m05) and [M36](#m36); freeze inputs for independent backend/native owners while staging evolves.
 **Allowed:** proposed `nanobot/remote/{__init__,protocol}.py`, `tests/remote/test_protocol.py`,
 `mobile/contracts/mobile-v1.json` and contract fixtures. **Forbidden:** permission/UI rewrites, live host provisioning.
 
-1. Enumerate method/path/action/schema/scope/limit/error rules under `/mobile/v1/*` and `/remote/v1/*`;
-   map only required chat/history/media, pairing/refresh/self-logout and status operations. Unknown actions deny.
-2. Specify `mobile_protocol=1`, supported range/bridge version, mandatory chat capabilities, installation ID,
+1. Freeze the M36 inventory's standard `/api/*`, existing WS/media method/action/schema/scope/limit/error
+   registry, plus independent `/remote/v1/*` auth/status/device-control operations. No duplicate feature API.
+   Inventory negotiated legacy `/mobile/v1/*` aliases/shims and retain supported chat-only compatibility;
+   removal needs a tested migration or explicit accepted update-required cutoff. Unknown operations deny.
+2. Specify `mobile_protocol=1`, supported range/bridge version, mandatory owner/legacy feature capabilities, installation ID,
    gateway generation, principal/scopes/expiry, server WS epoch, frame/attachment/media limits and optional lifecycle.
 3. Define immutable `(installation_id, gateway_generation, request_id)` plus stable principal/action/digest;
    distinguish `submit` and `replay_only`, current-epoch admission and `409 outcome_unknown` without execution.
@@ -280,14 +337,16 @@ minimal explicit entries in existing `nanobot/config/schema.py`. **Forbidden:** 
 2. Enforce directory 0700/files 0600, bounded parsing, high-entropy secrets, locks and atomic fsync/replace;
    corruption/unknown versions fail closed and never silently erase revocations or regenerate installation identity.
 3. Implement a separate owner process and private Unix-socket typed IPC with selected-OS-user peer checks;
-   distinguish gateway validation/revoke subscriptions from admitted local administrative methods.
+   distinguish gateway validation/revoke subscriptions, admitted local setup/enrollment and enumerated
+   owner-delegated administrative envelopes. M30 supplies delegated operations, not a blanket IPC admin bypass.
 4. Implement validation and revocation event contracts, restart recovery and bounded liveness detection;
    gateway loss of owner must deny mobile operations/close sessions while local clients remain available.
 5. Add concurrent writers/crash-boundary/permissions/corrupt-record/unknown-version and unauthorized-peer
    tests; exercise owner restart with gateway absent and guarantee no import starts an agent runtime.
 
 **Checks:** backend store/IPC tests plus focused config tests and full-source type comparison. Negative:
-wrong OS user/role, admin methods through gateway IPC, symlink/path escape and unavailable owner all deny.
+wrong OS user/role, unauthenticated/unlisted administration through gateway IPC, symlink/path escape
+and unavailable owner deny. M30 must separately prove authenticated allowed owner delegation succeeds.
 **Gate/evidence:** durable installation/revocations and role-bound IPC pass; record schema hashes, file modes,
 fault-injection results and owner-only startup/cleanup evidence. No live service installation is needed.
 **Rollback/inputs:** disable mobile ingress before reverting incompatible owner code; retain device/audit/revoke
@@ -302,12 +361,12 @@ records and never downgrade them silently. Existing permission/WebUI work can co
 
 1. Create local-operator challenges containing protocol/exact HTTPS origin/installation/random challenge/expiry;
    rate-limit attempts and bind each phone request to nonce, display label and native-only collector secret.
-2. Show comparison code and explicit shared history/media/chat consent; approve the exact pending request
+2. Show comparison code and explicit full-control/shared-history/media consent; approve the exact pending request
    through admitted local management. Atomically allow one challenge winner and one correct collector only.
 3. Issue hashed opaque per-device refresh/access material with M06 lifetimes/scopes; serialize atomic rotation.
    A lost rotation response may require fresh pairing; never cache reusable bearer responses or retry blindly.
 4. Enforce current status/scopes before introspection and revoke: deny new admissions, retire registered mobile
-   sessions, then acknowledge. Preserve already admitted server work; self-logout grants no device administration.
+   sessions, then acknowledge. Preserve already admitted server work; self-logout alone grants no administration; M30 binds the single owner capability for new pairings.
 5. Test access renewal, refresh expiry/uncertainty, scope reduction, owner restart, OS restore/reinstall and
    concurrent QR consume/collect/refresh/revoke races with deterministic clocks and barriers.
 
@@ -348,7 +407,7 @@ finish and M10 proceed. Only the operator's concrete opted-in resources may be c
 <a id="m10"></a>
 ## M10 — Clean committed staging-sync checkpoint
 
-**Objective/prerequisites:** [M01](#m01) and committed permission/WebUI fixes with their affected tests passing.
+**Objective/prerequisites:** [M01](#m01), [M36](#m36) and committed permission/WebUI fixes with their affected tests passing.
 **Allowed:** serialized integration of the mobile branch and its manifests/docs only; a deliberate rebase/update
 onto the recorded committed staging SHA. **Forbidden:** editing/staging/resetting the staging checkout or copying dirty files.
 
@@ -386,11 +445,12 @@ this checkout only. Awaiting committed fixes blocks shared integration; M02–M0
 **Allowed:** existing `nanobot/webui/{gateway_endpoint,gateway_tokens,ws_http,gateway_services,media_gateway,media_api,attachment_ingress}.py`,
 `nanobot/channels/websocket/runtime.py`, remote client and matching WebUI/remote tests. **Forbidden:** runner/provider edits.
 
-1. Wire typed owner IPC into gateway composition; register only M06 `/mobile/v1/*` operations and mandatory
-   handshake. Keep local/browser/desktop paths and tokens intact; phone credentials never mint broad tokens.
+1. Wire typed owner IPC into gateway composition; register only M06 standard feature operations, independent control integration and negotiated legacy
+   compatibility, with mandatory handshake. Keep local/browser/desktop paths and tokens intact; phone credentials never mint broad tokens.
 2. Authenticate current principal/installation/scopes/expiry for every HTTP read, bootstrap, WS open/frame,
    media/range and attachment; bind server-issued socket epoch/gateway generation and enforce advertised limits.
-3. Reject unknown routes/actions and nonlocal access to legacy bootstrap/settings/native endpoints, even through
+3. Reject unknown routes/actions, broad legacy bootstrap exchange and unauthorized access to settings or
+   local-only/native setup endpoints (M31 adds full owner feature authorization), even through
    an entry mapping mistake or spoofed proxy headers. Refuse conflicting trusted-proxy mobile setup.
 4. Enforce media authorization in addition to signed URL checks, including ranges, projection and cancellation;
    preserve attachment ingress envelope/limits. No new M1 upload endpoint or bearer DOM URL is needed.
@@ -452,6 +512,10 @@ channel edge and corresponding permission/native-admission tests. **Forbidden:**
 5. Test unconfigured/unmanaged installations: advertise sends/target actions unsupported until a qualified local
    boundary exists. If edge seams cannot enforce this, stop that criterion for a bounded security revision.
 
+Owner cases here use the M06 typed identity/admission fixtures to prove the existing task boundary;
+M30 supplies real owner delegation and M14 proves it end to end. This foundation gate does not require
+later live owner pairing or falsely claim completed grant/Full delegation.
+
 **Checks:** current permission API/authority/native-admission tests plus remote ceiling cases; test malicious
 scope/native fields, stale source/revision, concurrent desktop grants and unauthorized media/history projection.
 **Gate/evidence:** owner and legacy clients cannot escape the current policy/source binding; supported chat
@@ -463,13 +527,15 @@ authorized. Any required session/permission-owner file extension needs a named s
 <a id="m14"></a>
 ## M14 — Real-backend Android identity and reconnect qualification (P3)
 
-**Objective/prerequisites:** [M05](#m05), [M09](#m09) live setup and [M13](#m13); turn fixture-qualified transport into the product client.
+**Objective/prerequisites:** [M05](#m05), [M09](#m09), [M13](#m13) and [M31](#m31); qualify the
+current owner backend in the emulator with the recorded live isolated setup.
 **Allowed:** `mobile/` native profile/pair/auth/connection modules, minimal product harness, contract vectors and
 backend-phase emulator runner. **Forbidden:** shared WebUI, backend ownership or reuse of staging's installed data/environment.
 
 1. Implement the M06 per-target profile in native custody: exact HTTPS origin, stable installation/capabilities,
    label and credentials; one active connection. A hostname identity reset requires explicit fresh pairing.
-2. Pair through the real independent owner/local CLI, persist before acknowledgment and negotiate mandatory
+2. Pair once as owner through the real independent owner/local comparison-code CLI, persist before
+   acknowledgment and negotiate mandatory
    chat separately from optional lifecycle. Confirm compatible chat works when lifecycle is unsupported.
 3. Exercise real access expiry/refresh/rotation/revoke/owner IPC loss and offline logout; uncertain refresh leads
    to re-pair guidance, not reusable old credentials. Close sockets/handles/pending operations on explicit target switch.
@@ -539,10 +605,11 @@ SW remnants if any. M10 API/layout drift requires a fresh seam manifest, not edi
 <a id="m17"></a>
 ## M17 — Shared mobile chat layout and connection states (P4)
 
-**Objective/prerequisites:** [M16](#m16); deliver usable persistent chat without exposing unsupported management controls.
+**Objective/prerequisites:** [M16](#m16); adapt the shared chat shell and all connection states for current owner use.
 **Allowed:** `webui/src/App.tsx`, `globals.css`, `components/thread/`, `Sidebar.tsx`, `AttachmentTile.tsx`,
 `MessageBubble.tsx`, required media/rendering components, UI state/tests and mobile bridge presentation only.
-**Forbidden:** backend grant/schema changes, temporary chats or a second mobile chat/state implementation.
+**Forbidden:** backend grant/schema changes or a second mobile chat/state implementation. Temporary
+owner chats retain standard connection-owned disposal; M32 covers the complete management-page adaptation.
 
 1. Adapt existing chat-first shell/sidebar/composer for safe areas, small screens, keyboard resizing, portrait/
    landscape and accessible status. Android Back closes top viewer/sheet before navigating.
@@ -554,7 +621,8 @@ SW remnants if any. M10 API/layout drift requires a fresh seam manifest, not edi
 4. Keep theme/font/navigation preferences on-device; permitted titles/model/sidebar mutations remain shared
    server state. Existing ineligible chats show durable local-approval guidance without rewriting their authority.
 5. Reconnect/resume/remount during text/tool streaming and confirm active chat/turn IDs and canonical transcript
-   converge; detach a phone while server work continues and rejoin without duplicated sends.
+   converge; detach persistent chat while server work continues and rejoin without duplicated sends.
+   Separately disconnect a temporary owner chat and prove disposal rather than persistent rehydration.
 
 **Checks:** component/recovery tests, full WebUI checks and emulator screenshots/input traces; negative narrow
 viewport/large font/keyboard/Back/denied capabilities and history-media consent states must remain usable.
@@ -566,7 +634,7 @@ iOS, lifecycle adapter or new provider configuration is required for this emulat
 <a id="m18"></a>
 ## M18 — Local settings, device list, pairing/revoke and remote on/off (P5a)
 
-**Objective/prerequisites:** [M17](#m17) plus recorded P1/P2 and P4 named-file ownership transfer.
+**Objective/prerequisites:** [M17](#m17), [M31](#m31) plus recorded P1/P2 and P4 named-file ownership transfer.
 **Allowed:** transferred `nanobot/remote/` entry/approval/management modules and config entries;
 `nanobot/webui/settings_{routes,contracts,services,system}.py`, shared settings controller/contracts/page and
 proposed `RemoteAccessSettings.tsx`/tests; minimal product local CLI registration. **Forbidden:** a second device
@@ -575,8 +643,9 @@ identity store or a second pairing flow; owner-client grants are handled by M30.
 1. Record exact transferred files/current hashes and stop prior writers; reuse P1 setup/approval/entry code
    rather than implementing a second identity store or mapping controller. Keep module CLI usable headlessly.
 2. Add authenticated device list, QR/compare/expiry/history-media/full-control consent, approve/cancel/revoke
-   and sanitized audit/status. Local comparison-code approval remains mandatory; owner clients may manage
-   their own devices/settings through M30–M33.
+   and sanitized audit/status. Initial setup, challenge creation/comparison approval and scope upgrade remain server-local;
+   owner clients list/rename/revoke devices and manage already registered entry settings through M30 delegation.
+   Pair-approval denial and owner-management success must be separate tested rows.
 3. Add explicit selected-instance/private-entry setup showing exact mapping changes/recovery and initial off;
    enable only after local opt-in and current listener/permission/proxy readiness checks.
 4. Implement off ordering: deny admissions/retire sockets, remove only owned **data and control** mappings,
@@ -585,8 +654,8 @@ identity store or a second pairing flow; owner-client grants are handled by M30.
    disconnect-phone, entry-off and gateway-stop. Owner clients use the WebUI lifecycle surface; service-manager
    lifecycle remains M23/M24.
 
-**Checks:** local settings/remote-entry tests plus WebUI and existing settings-route tests; negative remote,
-CSRF/origin/proxy spoof, concurrent toggle/revoke, mapping conflict and lost-ack cases must deny or report honestly.
+**Checks:** local settings/remote-entry and WebUI/settings-route tests; positive current owner delegation,
+negative unauthorized/legacy management, remote local-only enrollment, CSRF/origin/proxy spoof, concurrent toggle/revoke, mapping conflict and lost-ack cases must deny or report honestly.
 **Gate/evidence:** local pairing/revoke/on-off/recovery and headless CLI parity pass; retain transfer ledger,
 local-vs-remote route matrix and prior/desired/observed mapping/cleanup evidence.
 **Rollback/inputs:** default off/remove owned entry, preserve device/audit/revoke records and other Serve config.
@@ -607,20 +676,24 @@ Live mapping changes need concrete local opt-in; code/fixture tests continue wit
    availability honestly. Do not assume linger/pre-login availability or grant system privileges implicitly.
 4. Stop/restart the gateway through existing local semantics and verify controller/status remains reachable;
    preserve desktop guarded Quit and ensure the controller does not auto-start the agent afterward.
+   Record the selected gateway lifecycle owner and exact tested local launcher/recovery command for M32;
+   unsupported remote Start stays explicit. M35 later verifies that command on the integrated candidate.
 5. Uninstall/disable only the opted-in controller and its owned entry; retain revocations, sessions and unrelated
    units/mappings. Reconcile partial install/start failure, stale unit state and lost setup acknowledgments.
 
 **Checks:** service-adapter fakes and existing desktop/gateway lifecycle tests, then opted-in local independent
 controller restart/cleanup rehearsal; wrong instance/unit/service-owned gateway must never be adopted.
 **Gate/evidence:** independent supervision and exact cleanup pass with actual service/command/config hashes;
-unqualified availability is PENDING, never an always-on guarantee. Lifecycle remains advertised unsupported.
+unqualified availability is PENDING, never an always-on guarantee. Additional remote Start/service-manager capability remains unsupported; retain existing supported
+WebUI restart/stop with their current process-ownership checks.
 **Rollback/inputs:** missing local service opt-in blocks only live criterion; code/tests and candidate evidence
 can proceed. Unit installation, linger or privileges are genuine setup choices, not inferred from plan acceptance.
 
 <a id="m20"></a>
 ## M20 — Automated regressions and integrated review-candidate evidence
 
-**Objective/prerequisites:** [M19](#m19); prepare a reproducible integrated candidate for device tests and final review.
+**Objective/prerequisites:** [M19](#m19) and [M35](#m35); qualify the current full-owner isolated
+candidate before device/signing checks and later independent review.
 **Allowed:** test/evidence/runbook updates within handed-off ownership; product fixes return to their task owner.
 **Forbidden:** new features, unrelated test/type-debt repair, merge/activation or an artificial human approval stop.
 
@@ -640,7 +713,8 @@ full output, timeout/forced cleanup and mock-only live results cannot count as p
 **Gate/evidence:** required automated regressions and zero-new-signature checks pass with a complete candidate
 bundle. Unresolved full-suite/strict failures remain release-blocking pending; no unrelated fixes or false “full green”.
 **Rollback/inputs:** disable test ingress/revoke devices and restore owned state. This is evidence preparation,
-not final acceptance: independent review gates merge/production activation after M22 and all subsequent fixes.
+not final acceptance: M34 completes parity/release evidence and M38 independently reviews it before
+M39 installed promotion or any separately authorized merge/production activation.
 
 <a id="m21"></a>
 ## M21 — Physical Android pre-release checkpoint (P6a)
@@ -652,6 +726,8 @@ no human approval checkpoint is inserted before ordinary isolated device tests.
 
 1. Record device/model/API/WebView/ABI/OS power settings, app/source hash and signing facts; execute arm64-v8a
    with standalone phone Tailscale disabled. Establish app-node/backend path evidence again on real networking.
+   Use the internally signed current candidate here; M22 supplies the final signing identity/artifact and
+   repeats affected physical rows on that exact release. This gate does not require a later release APK.
 2. Test cellular NAT versus Wi-Fi/handover, offline/sleep/Doze/OEM background/process recovery and long-running
    server chat detach/rejoin. No always-on socket/background execution promise is inferred from success.
 3. Verify actual Keystore hardware security level and lock/key-invalidated behavior; test upgrade/reinstall/
@@ -671,7 +747,8 @@ data safe. A changed APK or native fix requires affected device checks again bef
 <a id="m22"></a>
 ## M22 — Reproducible signed Android artifact and final review handoff (P6)
 
-**Objective/prerequisites:** [M21](#m21) and selected Android signing/application identity; finish the Android path.
+**Objective/prerequisites:** [M21](#m21) and selected Android signing/application identity; package the
+current owner candidate. This retained obligation is not the current product finish.
 **Allowed:** `mobile/` release/build/notices/lock/evidence files and release runbook; no private signing key in source/artifacts.
 **Forbidden:** store publication, merge/production activation, future-host work or provider/agent changes.
 
@@ -684,12 +761,13 @@ data safe. A changed APK or native fix requires affected device checks again bef
 4. Rehearse application/backend rollback: disable ingress before an incompatible protocol downgrade, retain durable
    revocations/sessions/audit and remove only owned entry/controller resources. Never fall back to broad legacy tokens.
 5. Assemble the backlog's full review handoff at the **actual final HEAD and APK hash after all fixes**;
-   record pending external criteria and obtain independent integrated review before merge/production activation.
+   record pending external criteria for M34 parity closure and M38 independent review before M39 promotion
+   or separately authorized merge/production activation. Do not stop at the historical M22 finish.
 
 **Checks:** clean reproducibility/Gradle release/signature/APK SHA-256 plus final full gates and affected device
 checks; altered source/artifact, missing signing input, unsupported protocol or missing cleanup evidence fails its row.
-**Gate/evidence:** complete signed artifact/install/revoke/rollback evidence and final independent acceptance;
-only then call the Android release candidate accepted. No task completion claim substitutes for raw review evidence.
+**Gate/evidence:** complete current signed artifact/install/revoke/rollback evidence for M34; M38 supplies
+later independent acceptance. M22 alone cannot close the full-owner release. No task completion claim substitutes for raw review evidence.
 **Rollback/inputs:** absent signing identity allows unsigned/debug build evidence only, with release PENDING.
 Any post-review fix invalidates affected results/review and needs a refreshed final head/artifact manifest and review.
 
@@ -705,7 +783,8 @@ matching lifecycle tests and UI capability controls after handoff. **Forbidden:*
    contract; advertise lifecycle only when supported. Phone supplies no executable/config/path/PID selector.
 2. Invoke existing `DesktopAdapter`/`GatewayRuntime` admission, handles and locks; retain local birth-identity,
    generation and ownership proof. Refuse unknown/foreign/conflicting/service-owned/foreground processes.
-3. Add separately granted current device scope and owner-side authorization/replay checks for controls;
+3. Use current owner authority plus a locally registered additional lifecycle capability and owner-side
+   authorization/replay checks; no separate daily admin pairing or silent legacy upgrade;
    controller stays reachable for Start/status when the admitted gateway stops.
 4. Test two-start/races/stale handles/PID reuse/generation changes, revoke and lost responses; preserve desktop
    Quit semantics and never auto-start a gateway after Quit or start a competitor after refusal.
@@ -749,7 +828,8 @@ state after opt-in. Host/manager/unit/privileges are future inputs, not invented
 
 **Objective/prerequisites:** [M18](#m18) plus fresh bounded permission design and explicit local remote-approver grant.
 **Allowed future boundary:** proposed remote permission adapter and closest current permission-owner/receipt tests
-under a named-file handoff. **Forbidden:** global Full, opaque local-reference serialization or broad permission rewrites.
+under a named-file handoff. **Forbidden within this legacy/external task:** global Full, opaque local-reference serialization or
+broad permission rewrites. This ceiling does not limit current owner Full through M30/M33.
 
 1. Freeze exact target/session/task/source/revision/read-write extent and expiry using the current local
    permission owner; define local scope grant/revoke and one pending target proposal, not machine administration.
@@ -767,7 +847,7 @@ type comparison; denial tests count effects, not merely hidden buttons or status
 **Gate/evidence:** every exact-binding/single-use/revoke negative passes; retain sanitized proposal/receipt
 correlation and local owner review. No opaque reference or native capability crosses the wire.
 **Rollback/inputs:** revoke approver scope/invalidate receipts and remove capability; keep normal chat and
-local grants intact. Fresh accepted permission contract is required later; it never blocks M20–M22.
+local grants intact. Fresh accepted permission contract is required later; it never blocks the current owner workflow through M34/M38–M40.
 
 <a id="m26"></a>
 ## M26 — iOS adapter, custody, media and device qualification (P8, deferred)
@@ -870,141 +950,399 @@ restore-tested backups and operator-visible profile change; no silent identity a
 Source/target, downtime/cutover choice, state paths and identity mode are future decisions, never Android prerequisites.
 
 <a id="m30"></a>
-## M30 — Owner scope on the existing pairing (owner-client revision)
+## M30 — Single owner pairing and typed controller delegation
 
-**Objective/prerequisites:** accepted 2026-11-01 owner-client revision and [M14](#m14).
-**Allowed boundary:** `nanobot/remote/{protocol,pairing,auth,store,management}.py`,
-remote pairing tests, and the existing local Remote Access settings UI. **Forbidden:** a second
-pairing flow or a separate admin credential.
+**Objective/prerequisites:** [M13](#m13) and [M08](#m08); implement owner semantics at the backend before
+later emulator/phone integration. No later bridge or physical phone is a prerequisite.
+**Allowed:** proposed/existing-at-M36 `nanobot/remote/{protocol,store,owner,ipc,client,pairing,auth,devices,http,entry,management,permissions}.py`,
+`nanobot/config/schema.py`, narrow `nanobot/security/desktop_permissions.py` authority integration,
+`tests/remote/test_{owner_delegation,owner_pairing,owner_permissions}.py` and existing affected authority tests.
+Receive exact transferred paths/hashes before writes. **Forbidden:** second pairing/credential/store,
+caller-supplied locality/native authority, generic IPC administration or runner/provider edits.
 
-1. Add the single `owner` scope to supported scopes and grant it with new pairings after the
-   comparison-code approval. Keep chat/media scopes for compatibility.
-2. Return `owner` in the handshake capabilities and expose it to the mobile runtime.
-3. Keep legacy chat-only devices working; add an explicit re-pair/upgrade path rather than
-   silently widening existing tokens.
-4. State in the pairing UI that the phone receives full Nanobot control.
-5. Test scope validation, approval, refresh/rotation, revoke, and legacy compatibility.
+1. Grant one `owner` capability on new comparison-code-approved pairing with full-control/shared-history
+   consent. Keep current legacy chat scopes valid without silent widening; re-pair or explicit server-local
+   upgrade reconsents. Extend handshake/rotation/revoke consistently; never mint broad bootstrap tokens.
+2. Define typed `DelegatedAdminOperation`: device list/rename/revoke/self-revoke, registered entry
+   status/settings/disable, and permission grant/Full proposal/commit/release. Initial enable/re-enable,
+   new pairing challenge/approval and scope addition remain admitted server-local operations. No generic
+   command/config/PID/unit selector. Local-only exceptions are inventory rows, not hidden feature omissions.
+3. Over selected-OS-user/role-authenticated IPC, forward the opaque device credential plus bounded operation/
+   arguments/correlation/digest. Authoritative owner validates it and constructs `AuthenticatedDeviceContext`
+   containing stable installation/device/principal, current scopes/record revision/expiry. Never accept
+   caller assertions of identity, locality, native capability or scope. Revalidate revocation/scope before
+   effect and result; internal owner handles bind device/action/digest/expiry and never reach the phone.
+4. Owner authority authorizes the enumerated operation without changing network-local tests. Keep local
+   setup/approval checks. RemoteAccessOwner returns typed device/operation-bound delegation admission;
+   proposed `nanobot/remote/permissions.py` is the gateway-side adapter, not a new controller permission
+   store. Invoke the existing selected server permission-owning process/adapter using that admission.
+   It validates current source/session/task/revision, canonical target/extent, confirmation and expiry,
+   and mints/consumes device-bound single-use native receipts **in that owning process**. Revalidate device
+   revocation with RemoteAccessOwner at commit/delivery. No native reference/receipt crosses owner IPC or
+   reaches the phone; the separate controller never inherits gateway/native task objects. Return safe
+   projections/proposal IDs only, with no bypass of server filesystem/command policy.
+5. Use deterministic barriers/clocks for delegated effects, revoke/scope changes, stale receipts and source/
+   target/revision races. Publish permission/delegation vectors and ownership contract for M31/M37/M33.
 
-**Checks:** owner scope reaches the phone; non-owner/legacy tokens stay chat-only; revoke denies
-owner and chat; pairing tests and token tests pass.
-**Gate/evidence:** a real phone pairs once, handshake reports owner, and the same token is accepted
-by the owner bridge; legacy denial tests remain green.
-**Rollback/inputs:** revoke owner devices and re-pair; legacy devices are unaffected. Pairing still
-requires local approval.
+**Checks:** backend/authority/native-admission tests: authorized owner IPC succeeds; missing/expired/revoked/
+wrong-instance/legacy devices, wrong OS peer/role, unlisted operation, forged context/local/native fields,
+remote setup/new-device approval and stale/reused/another-device receipt deny with effect count zero.
+Positive Full/grant stays source/task/revision bound; ordinary local desktop/browser checks remain intact.
+**Gate/evidence:** owner/legacy/local-only operation matrix, pairing/rotation/revoke vectors, permission
+receipt/effect/race traces, exact schema/IPC changes and frozen same-environment type/regression evidence.
+Backend fixtures suffice here; real current-owner emulator/phone checks belong to M14/M34.
+**Rollback/inputs:** disable owner admission before incompatible rollback; retain installation/devices/
+revocations/audit/sessions. Revoke only owned fixture identities, never silently downgrade or resurrect them.
+Inputs are M36's current permission seams and M08 store contracts, not physical hardware/admin pairing.
 
 <a id="m31"></a>
-## M31 — Full mobile WebUI read and mutation bridge
+## M31 — Standard feature API and complete bounded native operation registry
 
-**Objective/prerequisites:** [M30](#m30).
-**Allowed boundary:** `nanobot/remote/edge.py`, `composition.py`, `nanobot/webui/ws_http.py`,
-`inbound_commands.py`, mobile runtime HTTP/WS tests. **Forbidden:** a second session/agent owner,
-raw localhost proxy, or credential export.
+**Objective/prerequisites:** [M30](#m30); expose every inventory action through one shared feature surface.
+**Allowed:** `nanobot/remote/{edge,composition,protocol,client}.py`; existing
+`nanobot/webui/{gateway_endpoint,gateway_tokens,gateway_services,ws_http,inbound_commands,workspaces,session_projection,media_gateway,media_api,settings_routes}.py`
+and only additional route-handler files individually enumerated/frozen by M36 before dispatch;
+matching tests. Transferred `mobile/contracts/{mobile-v1,operations-v1}.json`,
+`mobile/src/native-broker.ts` and exact Go/Kotlin registry files recorded at M36. **Forbidden:** generic
+raw-URL/localhost proxy, duplicate feature API/agent/session owner, exported credentials or inferred locality.
 
-1. Use the standard WebUI feature API. `/mobile/v1` remains the thin device-auth edge for
-   pairing/refresh/handshake; mobile owner requests use the existing `/api/*` HTTP routes and
-   the standard WebSocket path. Do not add a second feature-route namespace. Keep media binary
-   routing in the same standard media route.
-2. Validate the owner device token at the standard HTTP/WS boundary and propagate the owner
-   identity so the existing `webui_request` mutation surface, settings handlers and local-only
-   checks apply the owner policy. Desktop browser/token behavior remains unchanged.
-3. Make workspace-control and Full-access authorization consult the owner scope instead of
-   loopback-only checks; preserve source/revision/receipt validation.
-4. Include private permission projections and session-update fields for owner mobile sockets.
-5. Keep non-owner/legacy sockets denied; add positive and negative tests for every new route/action.
+1. For every M36 row, map the existing standard HTTP route+method or `webui_request` action and media/
+   binary/import/download/auth flow. Device control stays on the independent owner listener. Add no parallel
+   mobile settings/session/skills API. Keep supported legacy shims through negotiated compatibility; remove
+   only with a tested migration or accepted update-required cutoff, never silent legacy breakage.
+   Separate existing-handler rows from planned adaptation rows with their producing task. Directory
+   contract/registry entries use typed fixture vectors here; M37 implements and positively qualifies them.
+2. Authenticate owner at standard HTTP/WS boundaries and attach verified device context. Existing feature
+   handlers apply owner policy, current task/workspace/permission checks and M30 delegation; do not set
+   `is_local`/`is_native` or manufacture native references. Local/browser auth stays unchanged.
+3. Implement bounded named native registry entries for **all** required HTTP methods/WS actions and binary/
+   auth flows: fixed origin/path templates, typed parameters, schemas, scope, time/byte/frame/media bounds,
+   redirects/callback validation and cancellation. Reject undeclared methods/paths/substitutions/ports/headers.
+   Use required provider-key transient write without returning existing secrets or persisting form payloads.
+   Planned directory entries remain declared contract fixtures, disabled against an unsupported backend
+   until M37 qualifies them; no release exception or live implementation PASS is inferred from fixtures.
+4. Preserve M12 immutable identity/replay/current-auth behavior on every mutation and result, current media/
+   range authorization, private permission/session projections and browser/desktop wire compatibility.
+5. Extend row-by-row positive/negative route/native tests for existing handlers; planned later adaptations
+   have typed contract evidence and explicit owners. Freeze registry/hash/version handoff before M14;
+   M37 extends native positives and M34 requires all planned rows to be resolved before release.
 
-**Checks:** representative GETs, settings mutations, skill/automation actions, session delete,
-workspace mode and Full access; unknown/oversized paths deny; legacy tokens remain denied.
-**Gate/evidence:** full WebUI read/mutation matrix passes from the phone; provider keys never appear
-in responses; owner and legacy authorization tests both pass.
-**Rollback/inputs:** disable owner scope admission and revoke owner devices; desktop/browser flows
-remain unchanged.
+**Checks:** backend, native registry and shared-client contract tests; owner positive for each inventory
+existing-handler operation; legacy/scope/revoke/unknown/oversized/redirect and forged local/native negatives.
+Planned directory operations require schema/registry fixture checks here and real backend positives in M37.
+Check standard
+settings/providers/models/apps/MCP/CLI/API/skills/automations/session/workspace actions and supported auth/
+imports/downloads. Existing provider keys never appear in HTTP/WS/errors/media; transient new-key write works.
+**Gate/evidence:** existing-handler owner/API/native positives and negatives pass; every planned later row
+has a producing task and typed contract/registry fixtures. Retain limits/compatibility vectors, effect
+counters and type/regression evidence. This gate does not require M37 directory implementation or final
+full-inventory closure; those gates are M37 and M34 respectively. Emulator proof follows at M14/M16;
+no real-phone requirement is smuggled into this backend prerequisite.
+**Rollback/inputs:** disable owner ingress/registry version before incompatible rollback, retain current
+device/revocation/audit state and legacy-compatible paths. Inputs are M36 exact actions/files and M30 IPC;
+unimplemented required actions remain failed or explicitly accepted exceptions before parity claims.
+
+<a id="m37"></a>
+## M37 — Backend directory API and fresh grant-commit validation
+
+**Objective/prerequisites:** [M31](#m31); deliver the server contract before its shared mobile UI consumer.
+**Allowed:** proposed `nanobot/webui/workspace_directories.py`, existing `nanobot/webui/{workspaces,gateway_endpoint}.py`,
+`nanobot/config/schema.py`, transferred `nanobot/remote/{permissions,protocol}.py`, narrow
+`nanobot/security/desktop_permissions.py` validation, `tests/webui/test_workspace_directories.py`,
+`tests/remote/test_directory_grants.py` and native registry/contract entries transferred from M31.
+**Forbidden:** UI ownership, file contents/generic filesystem API, implicit filesystem grants or first-project selection.
+
+1. Verify M36 route/convention collisions, then implement the plan's proposed standard API:
+   `GET /api/workspace-directories/roots`; bounded `GET /api/workspace-directories/list` with root/path/
+   cursor/limit; `POST /api/workspace-directories/resolve` with selected root/manual path/policy revision.
+   Responses contain root labels/display paths, canonical relative breadcrumbs, directory names/opaque IDs,
+   symlink/accessibility status, policy/directory revisions and next cursor only; no file content/listing.
+2. Declare proposed `remote_access.directory_browser.roots` (`{id,label,path}`, camelCase aliases),
+   default `[]`, maximum 32 roots. Empty config needs explicit setup; never infer `/`, home, native grants
+   or first known project. Owner root changes use standard config write/server policy. Browsing visibility
+   does not authorize filesystem/tools or constrain existing Full/manual-grant authority implicitly.
+3. Canonicalize roots and each request via existing resolver/equivalent capability containment. Opaque
+   browsing path IDs/cursors bind installation/root/policy/canonical directory identity and expire within
+   five minutes. Manual relative or explicitly contained absolute input uses the selected root. Reject
+   traversal/NUL/escape/out-of-root symlinks, stale IDs/root identity and unsupported identity proof.
+4. Enforce limit 1–100 directories, at most 1,000 scanned dirents/request, 64 KiB response, two-second
+   deadline, 4,096-byte path/depth 64 and no recursion. Cursor continuation remains bounded and rejects
+   changed directory/policy. Emit sanitized 400/401/403/404/409/413/429/503 errors as defined in the plan.
+5. Extend the existing M36-identified grant mutation, not a parallel grant API: re-resolve at commit under
+   current policy/source/session/task/revision, compare canonical identity/target/extent and confirmation,
+   and ask the existing permission-owning process for a fresh device/operation-bound receipt minted and
+   consumed there, not in RemoteAccessOwner or across its IPC. Use handle/identity
+   containment at issuance; reject rename/replace/symlink/policy races and never trust listing as authority.
+6. Freeze request/response/error/native vectors and give M32 exact API/UI dependency handoff.
+
+**Checks:** positive owner roots/list/manual/grant within configured policy; empty roots and permission-
+denied directories are usable explicit states. Negative legacy/anonymous/wrong-instance/revoked requests,
+manual traversal/symlink escapes, excessive entries/bytes/deadline, stale cursors/IDs and path replacement
+between browse/confirm/commit fail with no grant. Concurrent source/task/revision/revoke/receipt races deny.
+Existing desktop native picker/manual grants/Full and browser tests remain intact.
+**Gate/evidence:** documented standard schemas and config defaults, deterministic finite-limit and
+path-race/effect tests, native registry vectors, backend type/regression evidence and M32 handoff hashes.
+**Rollback/inputs:** remove/disable only the new browsing capability; do not revoke unrelated workspace/
+Full grants or erase sessions/identity. M36 permission-owner seam is required; no real server roots,
+installed config, phone or live filesystem credentials are invented for synthetic tests.
 
 <a id="m32"></a>
-## M32 — Full client UI, settings, workspace and Full access
+## M32 — Full shared owner UI and mobile workspace adaptation
 
-**Objective/prerequisites:** [M31](#m31).
-**Allowed boundary:** shared `webui/src` settings/sidebar/composer/workspace components and their
-tests. **Forbidden:** a mobile-only fork of settings or hidden authority paths.
+**Objective/prerequisites:** [M17](#m17), [M19](#m19), [M31](#m31) and [M37](#m37); consume the frozen
+backend/registry contract after explicit shared UI ownership transfer.
+**Allowed:** M36-enumerated existing `webui/src` settings/providers/models/apps/skills/automations/sidebar/
+composer/workspace components and tests, proposed `webui/src/components/ServerDirectoryBrowser.tsx`
+and `webui/src/lib/server-directories.ts`. Exact existing paths/hashes are task inputs.
+**Forbidden:** backend API/config/permission edits, mobile feature forks, native authority fabrication or raw fetch.
 
-1. Re-enable Settings, Apps, Skills, Automations, Manage models and the full settings surface on
-   mobile. Remove the model-only settings projection; use the full WebUI payload.
-2. Use full workspace controls for owner phones. Add an owner-only server directory-listing API
-   and a mobile folder browser (breadcrumbs, directory list, path entry, "Use this folder") that
-   submits the selected path to the existing folder-management APIs. Return directory names/metadata
-   only; canonicalize paths, reject symlink escapes and confine browsing to configured server roots.
-   The native desktop dialog is not involved.
-3. Allow workspace mode and Full access from the phone with the existing confirmation dialogs.
-4. Restore the full slash-command palette for owner clients, including restart/lifecycle commands
-   exposed by the WebUI.
-5. Keep the mobile composer layout responsive; settings pages must render at phone width.
+1. Use the shared Settings/Apps/Skills/Automations/provider/model/API-service pages and full payloads for
+   owner devices. Remove legacy-only owner gating/model-only projection. Preserve legacy hidden/denied
+   management and current server capabilities; no second mobile feature implementation.
+2. Consume M37 roots/list/resolve in a phone-friendly folder browser with breadcrumbs, directory/manual
+   entry, bounded loading/error/permission/stale states and “Use this folder.” Native desktop picker remains
+   desktop-only. Submit the verified target through the existing grant mutation and fresh confirmation.
+3. Require explicit project choice or the current session's verified project. Empty selection stays empty;
+   never choose the first known project. Preserve current workspace mode and Full access with source/task/
+   revision/receipt-aware server behavior. UI state never itself grants authority.
+4. Adapt every inventory action and supported auth/import/download flow at phone width. Restore full owner
+   slash palette and existing supported restart/stop; advertise unsupported Start/service controls with the
+   M19-recorded local recovery instruction (reverified at M35). Settings forms allow transient new
+   provider-key input and clear it.
+5. Preserve responsive composer/safe areas/Back/keyboard, temporary versus persistent disconnect semantics,
+   browser/desktop behavior and instance binding through reconnect. Record evidence per inventory row.
 
-**Checks:** settings pages load and save; the mobile folder browser lists/navigates server directories,
-rejects traversal/symlink escape, and grants the selected path; Full access can be enabled and returned;
-slash commands execute; phone-width UI tests pass.
-**Gate/evidence:** real-phone settings/apps/skills/automations/full-access checks plus screenshots.
-**Rollback/inputs:** hide the re-enabled surfaces and revoke owner access; server config remains
-authoritative.
+**Checks:** WebUI component/route/contract tests and backend-phase emulator runner; positive all inventory
+pages/actions, directory selection/grant/Full and key write. Negative legacy/admin visibility, stale/raced
+path confirmation, first-project fallback, rejected/empty roots, overflow/error/loading, disconnected
+temporary chat, unauthorized lifecycle and persisted/echoed provider input. Test browser/desktop regressions.
+**Gate/evidence:** full row coverage in emulator/shared UI, phone-width screenshots/input traces and API/
+registry/permission vectors. Real-phone acceptance follows M21/M34; it is not a prerequisite for this task.
+**Rollback/inputs:** revert owned UI/adapter only or disable owner mutations if needed; retain authoritative
+config/grants/history/devices. Inputs are M37 schemas and M36 exact page list; no installed runtime changes.
 
 <a id="m33"></a>
-## M33 — Owner-action safeguards
+## M33 — Owner confirmations, acting-device audit and secret safety
 
-**Objective/prerequisites:** [M31](#m31).
-**Allowed boundary:** shared confirmation UI, remote audit logging, owner mutation tests.
-**Forbidden:** silent destructive mutations or provider-secret exposure.
+**Objective/prerequisites:** [M32](#m32); all safeguards precede integrated qualification.
+**Allowed:** transferred shared confirmation/provider/device UI and tests; proposed `nanobot/remote/audit.py`,
+`nanobot/remote/{store,owner,management,permissions,auth,devices}.py`, M36-enumerated standard mutation
+audit hooks and `nanobot/webui/settings_{routes,contracts,services,system}.py` redaction; closest tests.
+**Forbidden:** silent destructive effects, provider-secret reads/logs/persistence, bearer/native authority export.
 
-1. Add explicit confirmation for session delete, skill/MCP/CLI install or removal, automation
-   creation/run, Full access, remote-entry disable and runtime restart.
-2. Audit owner mutations with installation ID, action, target and result; never log tokens or keys.
-3. Keep provider API keys write-only; redact secrets from settings reads and errors.
-4. Keep self-revoke available and ensure revoke invalidates owner access immediately.
-5. Preserve short access-token TTL and refresh rotation; add optional step-up auth as a follow-up.
+1. Confirm destructive/sensitive inventory actions: session delete, effectful skill/MCP/CLI install/update/
+   removal, automation create/run/delete, grant/Full, device revoke, remote disable and supported runtime
+   restart/stop. Bind confirmation to acting device/action/target/digest/correlation/expiry and current
+   source/task/revision where applicable. Reject stale/reused/cross-device receipts and changed targets.
+2. Write bounded sanitized audit records with stable installation ID **and acting device ID/principal**,
+   operation correlation, action, sanitized target, outcome and timestamp. Record denial/failure/replay
+   outcomes without a duplicate effect. Bound metadata sizes/retention policy without erasing revocation
+   history. Never log tokens/provider keys/private contents/raw payloads/native references or receipts.
+3. Existing provider secrets remain write-only across all HTTP/WS/error/export/log surfaces. A newly typed
+   key may pass transiently from the shared form to the standard write endpoint, then is cleared; exclude
+   storage/autosave/analytics/replay caches/echo and redact exceptions. Durable app credentials stay native.
+4. Keep self-revoke available. Revalidate current revocation/scope before all effects/results, retire active
+   sockets/handles within the bound, retain short TTL/atomic rotation and show local recovery before entry-off.
+   Optional later step-up does not block this accepted scope.
+5. Run two-device, revoke/confirm/dispatch/delivery races and audit tamper/failure-mode tests; fail closed
+   for mutations requiring durable audit if audit persistence fails. Publish safeguard matrix for M35.
 
-**Checks:** confirmation required; audit entry written; keys absent from all mobile responses;
-self-revoke and remote-entry-off recovery guidance pass.
-**Gate/evidence:** audit/redaction/confirmation tests and a live device revoke check.
-**Rollback/inputs:** disable owner mutations and revoke owner devices.
-
-<a id="m34"></a>
-## M34 — Owner-client qualification and release
-
-**Objective/prerequisites:** [M32](#m32), [M33](#m33).
-**Allowed boundary:** tests/evidence/release artifacts.
-**Forbidden:** claiming full parity without real-phone and full-suite evidence.
-
-1. Run the full Python, WebUI, Go and Android suites; repair regressions through the owning tasks.
-2. Re-pair the phone as an owner client and verify settings, skills, automations, workspace/Full,
-   session delete, restart and remote-access self-revoke.
-3. Verify update persistence (`adb install -r`) and one-time Tailscale re-auth behavior.
-4. Build the signed release, run install/update/different-key rejection, and record evidence.
-5. Update this taskbook, the mobile README and the final artifact hash; hand off for human acceptance.
-
-**Checks:** full automated matrix, owner-client device matrix, update/re-auth evidence, signed artifact.
-**Gate/evidence:** all gates green and final human acceptance. No owner-client parity claim before M34.
-**Rollback/inputs:** restore the prior signed release and revoke owner devices; preserve server state.
-
+**Checks:** backend/WebUI/native privacy/authority tests; two owner devices yield distinct acting principals
+under one installation and correlated outcomes. Missing/stale confirmations, revoked device, bad receipts,
+audit write failure and secret echoes deny; positive transient provider write, confirmed owner action and
+self-revoke pass. Current permissions, legacy denies, TTL/rotation and browser/desktop regressions remain.
+**Gate/evidence:** action-by-action confirmation/audit/redaction/current-auth matrix, sanitized two-device
+records, negative effect counts/race timing, full-source type comparison and exact safeguard hashes.
+Physical live revoke follows M21/M34, not an early prerequisite.
+**Rollback/inputs:** disable owner mutations/ingress rather than weaken safeguards; retain all durable
+audit/devices/revocations/sessions. Inputs are frozen action owners and M30 permission receipts; no new keys.
 
 <a id="m35"></a>
-## M35 — Desktop instance and owner-service integration
+## M35 — Isolated desktop-equivalent instance integration
 
-**Objective/prerequisites:** [M30](#m30)–[M33](#m33); identify the actual desktop Nanobot instance/config and
-its current gateway process. **Allowed:** the selected desktop config, remote-access owner/service wiring,
-Serve mapping scripts/runbook, pairing/device evidence. **Forbidden:** a second agent, a second gateway on the
-same instance, or leaving the temporary test gateway as the product target.
+**Objective/prerequisites:** [M19](#m19), [M32](#m32) and [M33](#m33); integrate current owner behavior
+on a separately selected isolated instance before full candidate/device/release qualification.
+**Allowed:** isolated install/launcher/config/service/mapping runbook, synthetic development instance and
+`mobile/evidence/<run-id>/M35/`; scripts/tests within recorded verification ownership. Fixes return to
+product owners. **Forbidden:** installed staging config/data/environment/credentials as fixtures, actual
+installed promotion, a second writer per instance or deleting durable selected-instance owner records.
 
-1. Select the desktop app's gateway config (for example `~/.nanobot-staging/config.json`) and record its
-   gateway/websocket ports, workspace, provider and current process. Do not reuse the temporary
-   `/tmp/opencode/full-gateway` config.
-2. Add remote-access state under the selected instance data and start exactly one independent owner for
-   that instance. The desktop app or a user service must own/restart the owner; it must not be a manual
-   process lost on logout/reboot.
-3. Map the owned private Serve prefix to the desktop gateway's WebSocket port (the mobile edge is served
-   there), verify TLS/tailnet routing and remove the test mapping.
-4. Pair the phone to the desktop instance, then verify the same model, tools, history, settings, workspace
-   and Full-access behavior used by the desktop WebUI. Confirm update persistence and owner restart.
-5. Retire the temporary gateway and test credentials. Document how the desktop app/owner is started and how
-   the phone recovers if the gateway is stopped; use M23/M24 only if remote start/stop is required.
+1. Freeze current candidate server package/commit, bundled WebUI hash, internal app/hash, registry/protocol/
+   schema and exact isolated environment/launcher/config/data/instance identity. Use synthetic provider/
+   workspace/history fixtures; no installed credentials/sessions copied. M22 later supplies the exact signed
+   artifact; repeat affected M35 rows after any candidate change and bind the final manifest at M34.
+2. Install/run that candidate only in the isolated environment, with one gateway, one independent owner and
+   one canonical data set per instance. Record owner user-service resource/command/config/socket/listener and
+   selected gateway lifecycle owner/launcher; do not adopt a foreign or service-owned process as desktop-owned.
+3. With concrete isolated service/network opt-in, map one private HTTPS origin's standard API/WS/media paths
+   to their actual loopback gateway listener(s), and `/remote/v1/*` auth/status/refresh/device-control directly
+   to the independent owner. Multiple owned mappings are valid. Preserve registered prefixes/segment
+   boundaries/longest match/query/encoded-path/WS Upgrade; no control route depends on a running gateway.
+4. Pair emulator once as owner through local comparison approval; prove desktop/browser and phone see the
+   same installation, canonical sessions/models/tools/settings/skills/automations/workspace/Full and every
+   inventory action/adaptation. Exercise legacy ceiling, device management/local-only enrollment exceptions,
+   transient key write, audit/revoke, temporary disposal versus persistent detach and owner restart.
+5. Stop/kill the isolated gateway through supported ownership semantics; prove owner auth/status/refresh/
+   device revoke independently reachable and no second gateway starts. Use a separate still-authorized fixture
+   device for refresh after revoking another. Advertise only existing supported restart/stop. Remote Start
+   stays unsupported unless separately scoped; record the exact tested local launcher/recovery command
+   and display it to the phone. Preserve guarded Quit and unsupported service-manager refusals.
+6. Freeze the topology/config/launcher/environment/route evidence for M20 and later M34/M38 review; rehearse
+   owned-resource teardown and retained-state restart. This task does not switch normal desktop installation.
 
-**Checks:** one desktop gateway, one owner, one Serve mapping; phone and desktop see the same instance;
-restart/update persistence; no test gateway or stale device records.
-**Gate/evidence:** real desktop gateway pairing plus settings/model/history/Full-access device evidence.
-**Rollback/inputs:** remove only the owned Serve mapping/owner state; preserve the desktop app and its data.
+**Checks:** backend-phase emulator/browser/desktop integration and isolated service/network rehearsal;
+positive full inventory/same-instance behavior; negative stopped-gateway route coupling, prefix mismatch,
+foreign/duplicate runtime, stale device/scope/native assertions, legacy administration and data-copy leakage.
+Record each listener/mapping separately; never require exactly one Serve mapping.
+**Gate/evidence:** isolated current full-owner instance matrix with exact component/config/launcher hashes,
+one-writer counts, gateway-absent auth/status/refresh/revoke traces and honest local recovery. No installed
+staging activation claim. Missing isolated network/service input leaves only its live criteria PENDING.
+**Rollback/inputs:** deny ingress, remove only owned test mappings/supervisor resources, stop recorded
+test processes and delete only explicitly disposable fixture data. Retain non-disposable installation/
+device/revocation/audit/session state. An incompatible downgrade keeps ingress disabled until protocol/
+store compatibility passes; never restore stale credentials. Actual isolated origin/service/launcher
+and fixture enrollment are real inputs; no installed production opt-in is consumed here.
+
+<a id="m34"></a>
+## M34 — Complete owner parity, physical qualification and release bundle
+
+**Objective/prerequisites:** [M22](#m22), [M32](#m32), [M33](#m33) and [M35](#m35); close all current
+owner release evidence after isolated integration and current candidate physical/signing checks.
+**Allowed:** inventory status/evidence/release runbook and verification scripts/tests in handed-off paths;
+product fixes return to their task owners. **Forbidden:** parity by representative checks, historical
+PASS reuse without applicability, installed activation or independent author self-acceptance.
+
+1. Check every M36 inventory row's owner/legacy auth, native transport/limits, shared UI, mobile adaptation
+   and positive/negative evidence on the exact candidate. Resolve unsupported rows by implementation or
+   explicit product acceptance before a parity claim; never hide a category or treat full suites as coverage.
+2. Link current M20 full Python/WebUI/native/build/lint/strict-regression evidence, M21 actual physical
+   networking/custody/power/media/accessibility and M22 signing/reproducibility/install/update/reinstall/
+   different-key rejection/revoke/rollback. Repeat affected rows on the exact final signed APK.
+3. Physically verify all inventory categories/actions, including settings/providers/models, Apps/MCP/CLI/
+   API service, local/custom/installed skills, automations, temporary/persistent/session actions, workspace
+   mode/grants/Full, owner device/entry management and supported lifecycle/auth/import/download flows.
+   Check one pairing, update persistence, sign-in/refresh uncertainty and local-only enrollment exceptions.
+4. Freeze final server package+commit, bundled WebUI SHA-256, APK/app version/certificate fingerprint,
+   protocol/native registry/config/data-schema versions, candidate config/environment/launcher and all
+   evidence hashes. No later source/artifact change may inherit this bundle's results automatically.
+5. Prepare a read-only promotion proposal for the actual operator-selected installed target when supplied:
+   prior/desired package/environment/executable/launcher/config/data identity/supervisor/mappings, compatible
+   data/protocol/backup/rollback and exact local recovery. Never use installed data as test fixtures or
+   mutate it here. Missing target leaves promotion-specific evidence PENDING while isolated qualification
+   remains usable; M38 must review the concrete proposal before M39 may change anything.
+
+**Checks:** deterministic complete row/evidence/hash cross-check plus final full gates and affected real-
+phone checks. Missing row/command output, stale source/signature, skipped required live criterion, uncovered
+local-only exception or inconsistent server/WebUI/APK/registry fails the corresponding gate.
+**Gate/evidence:** complete current isolated owner release bundle with binary row status and exact final
+versions/hashes, ready for independent M38 review. This is evidence completion, not installed activation
+or final human/independent acceptance.
+**Rollback/inputs:** preserve candidate/durable state; disable test ingress and revoke disposable identities
+only. Physical Android/signing/enrollment are real required release inputs; actual target selection is
+required for a reviewed promotion proposal, never guessed from an example staging config.
+
+<a id="m38"></a>
+## M38 — Independent integrated review before promotion
+
+**Objective/prerequisites:** [M34](#m34); independently review the actual current candidate and proposed
+installed transition after qualification, never after experimental installed activation.
+**Allowed:** read-only actual diff/source/artifact/evidence inspection by the assigned independent reviewer,
+sanitized review report and acceptance matrix. **Forbidden:** product edits, runtime/install/config/mapping
+changes, author self-review acceptance or waiving missing qualification.
+
+1. Verify final manifest hashes and inspect all M36 inventory rows, implementation/evidence, negative
+   authority/replay/transport/media/current-revoke paths and desktop/browser compatibility.
+2. Review owner IPC/delegation/local-only exceptions, permission receipts/races, acting-device audit,
+   credential/provider-input redaction, stopped-gateway control topology/supervisor and durable rollback.
+3. Check physical Android/signing/update/reproducibility and full required automated/type evidence.
+   Historical reports do not fill fresh gaps. Issue PASS/CORRECT/REJECT per criterion with concrete evidence.
+4. Independently review the concrete M34 promotion proposal when the actual target is supplied: exact
+   server/WebUI/mobile versions, config/data/environment/launcher/service/mappings, single-writer transition,
+   compatibility, retained revocations/new writes and rollback. This is read-only preparation before M39.
+   Missing target/proposal leaves **activation review PENDING**, not implicit permission.
+5. Return corrections to named owners, requalify affected rows and re-review exact revised hashes before
+   acceptance. Changes after PASS invalidate affected review; no review depends on M39 mutation.
+
+**Checks:** independent hash/coverage/negative-path/diff audit; stale/missing artifact, unsupported operation
+without accepted exception, unsafe promotion/rollback or unverified external criterion cannot receive PASS.
+**Gate/evidence:** isolated release review PASS bound to exact hashes. M39 additionally requires independent
+PASS for its concrete installed transition; until then activation is PENDING even if isolated release is accepted.
+**Rollback/inputs:** review rejection leaves installed state untouched and test ingress disabled as needed.
+Inputs are complete raw M34 evidence and a genuinely selected target for activation review. Actual promotion
+opt-in is separate; this task neither installs anything nor grants external permission.
+
+<a id="m39"></a>
+## M39 — Controlled reviewed installed promotion
+
+**Objective/prerequisites:** [M38](#m38); require PASS for both exact release and concrete installed
+transition, actual operator-selected target and concrete install/config/service/network opt-ins.
+**Allowed:** only the reviewed installation mechanism, target package/environment/launcher/config and
+owned supervisor/mapping resources enumerated in the M38-accepted transition; sanitized rollout evidence.
+**Forbidden:** experimental bundle copy, unreviewed versions/config drift, staging source edits, global
+Tailscale changes, competing gateway/owner writers or invented target/credentials/privileges.
+
+1. Before mutation, compare actual installed version/paths/config/data identity/services/mappings to reviewed
+   prior-state hashes. Present the exact desired transition, impact, backups, compatibility and rollback for
+   any missing real opt-in. A changed target/candidate returns to read-only proposal/review, not blind execution.
+2. Verify backup/recovery without treating installed state as fixtures. Preserve installation identity,
+   devices/revocations/audit/sessions and new writes. Disable ingress/quiesce, stop the old authoritative
+   gateway through its actual owner, and prevent old launcher/supervisor from restarting a second writer.
+3. Install the exact reviewed server package/commit and matching bundled WebUI into the selected environment
+   through its chosen local installer. Record actual artifact hashes/executable/version; config/Serve changes
+   alone are not an upgrade. Transition launcher/environment/config schema with explicit compatible data
+   handling and preserved server credential references, never leaking secrets in evidence.
+4. Start exactly one selected-instance owner under the reviewed independent supervisor and one gateway
+   under its existing lifecycle owner. Verify installation/protocol/store compatibility locally before
+   applying the reviewed data/control mappings and enabling device admission. Retain local desktop access.
+5. Record prior/desired/observed versions/config/environment/launcher/service/mappings and identity, then
+   hand off M40. Stop/retire only owned temporary test gateway/enrollment/entry resources; retain their
+   durable audit/revocation records unless the entire fixture was explicitly disposable.
+
+**Checks:** deterministic installed artifact/version/identity/ownership/readiness comparison; negative stale
+prior-state hash, incompatible store/protocol, duplicate runtime, wrong bundled WebUI or mapping conflict
+halts with ingress off. Do not call activation verified until M40 tests the actual installed target.
+**Gate/evidence:** exact reviewed build and transition installed with one runtime/owner, durable identity/
+revocations/sessions retained, compatible local readiness and precise observed mapping/service record.
+Missing external target/opt-in leaves promotion PENDING; isolated release acceptance remains valid.
+**Rollback/inputs:** disable ingress first; stop only the selected new runtime; restore the reviewed previous
+package/environment/launcher/config only if compatible with current durable data. Preserve/reconcile new
+writes and all revocations/audit; never blind-restore old owner records. If old backend cannot honor current
+protocol/store, keep remote ingress disabled and use the recorded local recovery. Remove only owned
+resources, never installed owner state. Actual installation target/mechanism/privileges and opt-in are inputs.
+
+<a id="m40"></a>
+## M40 — Postactivation actual same-instance verification
+
+**Objective/prerequisites:** [M39](#m39); verify the actual promoted target with the qualified signed
+phone and operator's non-destructive/carefully bounded check selection.
+**Allowed:** installed-target version/status and approved fixture-operation/device checks, sanitized evidence/
+recovery runbook; exact reversible operations listed in the reviewed transition. **Forbidden:** broad user-
+data mutation/deletion, new features/config changes, invented test credentials or retroactive promotion approval.
+
+1. Compare observed server package/WebUI/APK/protocol/registry/config/environment/launcher/supervisor hashes
+   to M38/M39. Verify desktop and phone show the same stable installation and canonical history/model/tools/
+   workspace policy; no temporary test server remains the phone's product target.
+2. Verify standard owner feature/API/auth/media and legacy ceiling on bounded synthetic/explicitly selected
+   data, including provider write redaction, grant/Full confirmation/audit and current device revocation.
+   Use the complete isolated matrix as qualification; record which live rows are non-destructive probes and
+   do not claim unexecuted installed mutations as PASS.
+3. Rehearse supported restart/stop only within the concrete opted-in window and existing owner semantics.
+   With gateway absent, prove owner status/auth/refresh/device control remain independently reachable;
+   remote Start stays honestly unsupported and the exact local recovery command works. Restore intended
+   gateway state through that local owner without a second writer; keep guarded Quit behavior.
+4. Verify phone update/reconnect, installation/device persistence and self-revoke/re-pair through server-local
+   comparison approval using designated test device records. Verify entry-off warning/recovery only when
+   explicitly included in the transition; pending live criteria stay PENDING rather than fabricated.
+5. Confirm owned temporary mappings/processes/enrollments removed, durable installation/device/revoke/audit/
+   sessions retained and final observed versions/routes/services documented. Trigger reviewed rollback on
+   failed safety/compatibility checks rather than continuing remote admission.
+
+**Checks:** same-instance identity/history/policy comparisons, approved live operation/effect/audit and
+gateway-absent control probes; wrong instance/stale build, resurrected device, local-only remote approval,
+duplicate writer or control-route coupling fails. Do not broaden live tests into unapproved destructive work.
+**Gate/evidence:** actual installed same-instance and recovery matrix PASS on exact reviewed versions with
+honest pending external/live rows. Only complete required live rows close the installed-owner finish;
+signed/isolated acceptance alone is not this result.
+**Rollback/inputs:** invoke M39's reviewed ingress-first compatible rollback, preserve all durable records/
+new writes and report actual observed state. Inputs are the qualified physical Android/signing identity,
+actual installed target, designated test device/data and concrete live-check window/opt-in.
