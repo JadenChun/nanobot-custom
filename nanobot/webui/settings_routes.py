@@ -70,6 +70,11 @@ _WEBUI_MUTATION_REQUEST_ATTR = "_nanobot_webui_mutation_request"
 _CHANNEL_CONNECT_ACTIONS = frozenset({"start", "poll", "cancel"})
 _MCP_OAUTH_CALLBACK_URL_MAX_BYTES = 8 * 1024
 _MCP_RELOAD_TIMEOUT_SECONDS = 15.0
+_REMOTE_ACCESS_LOCAL_ONLY_PATHS = frozenset({
+    "/api/settings/remote-access/enable",
+    "/api/settings/remote-access/pairing/start",
+    "/api/settings/remote-access/pairing/approve",
+})
 _query_first = contracts.query_first
 
 
@@ -304,6 +309,18 @@ class WebUISettingsRouter:
         if domain == "remote":
             from nanobot.webui.settings_remote import handle_remote_access
 
+            if (
+                path in _REMOTE_ACCESS_LOCAL_ONLY_PATHS
+                and not _is_local_browser_request(connection, request.headers)
+            ):
+                return self._error_response(403, "local_ui_required")
+            identity = getattr(connection, "mobile_identity", None)
+            if identity is not None:
+                setattr(
+                    request,
+                    "_nanobot_owner_installation",
+                    getattr(identity, "installation_id", None),
+                )
             return await asyncio.to_thread(
                 handle_remote_access, self.settings.config, request, path
             )
@@ -319,6 +336,9 @@ class WebUISettingsRouter:
                     "cli-install",
                     "cli-update",
                     "cli-uninstall",
+                    "settings.remote_access.enable",
+                    "settings.remote_access.pairing.start",
+                    "settings.remote_access.pairing.approve",
                 }
             ),
         )

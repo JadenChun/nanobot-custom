@@ -246,6 +246,9 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
     "/api/repositories/remember",
     "/api/repositories/forget",
     "/api/repositories/discover",
+    "/api/settings/remote-access/enable",
+    "/api/settings/remote-access/pairing/start",
+    "/api/settings/remote-access/pairing/approve",
 })
 
 

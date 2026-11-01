@@ -698,3 +698,24 @@ def test_mobile_mutation_allowlist_is_sidebar_only() -> None:
     assert _mobile_mutation_allowed(mobile, "session.delete") is False
     assert _mobile_mutation_allowed(mobile, "settings.agent.update") is False
     assert _mobile_mutation_allowed(SimpleNamespace(), "sidebar.update") is False
+
+
+def test_remote_access_setup_paths_require_local_browser() -> None:
+    handler = object.__new__(GatewayHTTPHandler)
+    handler.config = SimpleNamespace(host="127.0.0.1")
+    local = _Connection("local")
+    remote = _Connection("remote", peer="203.0.113.12", forwarded=True)
+    for path in (
+        "/api/settings/remote-access/enable",
+        "/api/settings/remote-access/pairing/start",
+        "/api/settings/remote-access/pairing/approve",
+    ):
+        assert handler._authorize_local_webui_path(
+            local, local.request.headers, path
+        ) is None
+        failure = handler._authorize_local_webui_path(
+            remote, remote.request.headers, path
+        )
+        assert failure is not None
+        assert failure.status == 403
+        assert failure.message == "local_ui_required"

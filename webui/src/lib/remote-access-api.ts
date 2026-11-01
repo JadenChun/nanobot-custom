@@ -54,7 +54,7 @@ async function request<T>(
     credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
-      "X-Nanobot-Auth": token,
+      "Authorization": `Bearer ${token}`,
       ...(init.headers ?? {}),
     },
   });

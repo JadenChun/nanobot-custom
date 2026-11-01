@@ -97,6 +97,20 @@ describe("RemoteAccessSettings", () => {
     ));
   });
 
+  it("fetches status with bearer authorization", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => status,
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<RemoteAccessSettings token="api-token" mutate={mutationTransport()} />);
+    expect(await screen.findByText("Phone")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer api-token");
+  });
+
   it("hides local-only enable and pairing controls on a mobile owner", () => {
     const mutate = mutationTransport();
     render(
