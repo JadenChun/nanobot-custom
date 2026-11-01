@@ -316,6 +316,9 @@ class WebUISettingsRouter:
                     "features-enable",
                     "channel-configure",
                     "channel-connect",
+                    "cli-install",
+                    "cli-update",
+                    "cli-uninstall",
                 }
             ),
         )
