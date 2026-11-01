@@ -181,3 +181,62 @@ def test_staging_plan_is_read_only_and_strict() -> None:
     assert plan.ready is False
     assert plan.conflicts
     assert "Peers" not in json.dumps(plan.prior)
+
+
+def test_owner_control_routes_survive_without_gateway(tmp_path) -> None:
+    owner = RemoteAccessOwner(tmp_path / "owner")
+    owner.start()
+    owner.store.set_enabled(True)
+    owner_pair = owner.tokens.issue(
+        "install-owner", ("chat.read", "chat.write", "owner"), "owner-phone"
+    )
+    chat_pair = owner.tokens.issue("install-chat", ("chat.read",), "chat-phone")
+    victim_pair = owner.tokens.issue("install-victim", ("chat.read",), "victim-phone")
+    listener = RemoteHTTPListener(owner.pairing, owner=owner, port=0)
+    port = listener.start()
+    owner_headers = {"Authorization": f"Bearer {owner_pair.access_token}"}
+    chat_headers = {"Authorization": f"Bearer {chat_pair.access_token}"}
+    try:
+        with httpx.Client(base_url=f"http://127.0.0.1:{port}", timeout=3.0) as http:
+            status = http.get("/remote/v1/status", headers=owner_headers)
+            assert status.status_code == 200
+            assert status.json()["installation_id"] == "install-owner"
+            assert "owner" in status.json()["scopes"]
+            assert http.get("/remote/v1/status").status_code == 401
+
+            devices = http.get("/remote/v1/devices", headers=owner_headers)
+            assert devices.status_code == 200
+            assert {
+                device["installation_id"] for device in devices.json()["devices"]
+            } == {"install-owner", "install-chat", "install-victim"}
+            assert http.get(
+                "/remote/v1/devices", headers=chat_headers
+            ).status_code == 403
+
+            refreshed = http.post(
+                "/remote/v1/refresh",
+                json={
+                    "installation_id": "install-victim",
+                    "refresh_token": victim_pair.refresh_token,
+                },
+            )
+            assert refreshed.status_code == 200
+            victim_access = refreshed.json()["access_token"]
+            assert http.get(
+                "/remote/v1/status",
+                headers={"Authorization": f"Bearer {victim_access}"},
+            ).status_code == 200
+
+            revoked = http.post(
+                "/remote/v1/devices/install-victim/revoke",
+                headers=owner_headers,
+            )
+            assert revoked.status_code == 200
+            assert revoked.json()["revoked"] is True
+            assert http.get(
+                "/remote/v1/status",
+                headers={"Authorization": f"Bearer {victim_access}"},
+            ).status_code == 401
+    finally:
+        listener.stop()
+        owner.stop()

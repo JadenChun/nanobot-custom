@@ -149,7 +149,12 @@ def start_owner_and_listener(
 ) -> tuple[RemoteAccessOwner, RemoteHTTPListener]:
     owner = RemoteAccessOwner(state_dir, socket_path)
     owner.start()
-    listener = RemoteHTTPListener(owner.pairing, host="127.0.0.1", port=listener_port)
+    listener = RemoteHTTPListener(
+        owner.pairing,
+        owner=owner,
+        host="127.0.0.1",
+        port=listener_port,
+    )
     listener.start()
     return owner, listener
 
