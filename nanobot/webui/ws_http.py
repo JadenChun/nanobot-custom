@@ -836,8 +836,7 @@ class GatewayHTTPHandler:
             identity = getattr(connection, "mobile_identity", None)
             installation = getattr(identity, "installation_id", None)
             if (
-                200 <= response.status_code < 300
-                and getattr(self, "owner_audit_client", None) is not None
+                getattr(self, "owner_audit_client", None) is not None
                 and isinstance(installation, str)
                 and installation
             ):
@@ -846,7 +845,7 @@ class GatewayHTTPHandler:
                         getattr(self, "owner_audit_client").audit_event,
                         installation_id=installation,
                         operation=action,
-                        decision="applied",
+                        decision="applied" if 200 <= response.status_code < 300 else "denied",
                         actor_installation_id=installation,
                     )
                 except Exception:
