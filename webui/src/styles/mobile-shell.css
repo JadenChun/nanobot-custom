@@ -259,3 +259,29 @@ html.mobile-runtime body {
   font-size: 0.7rem;
   overflow-wrap: anywhere;
 }
+
+/* Progressive disclosure: only the current pairing step is visible. */
+.mobile-pairing:not([data-state="idle"]) .mobile-pairing-form,
+.mobile-pairing:not([data-state="idle"]) .mobile-pairing-divider,
+.mobile-pairing:not([data-state="idle"]) .mobile-pairing-scan,
+.mobile-pairing:not([data-state="idle"]) .mobile-pairing-details {
+  display: none;
+}
+
+.mobile-pairing[data-state="waiting"] .mobile-pairing-code-block {
+  display: flex;
+}
+
+.mobile-pairing[data-state="idle"] .mobile-pairing-code-block {
+  display: none;
+}
+
+.mobile-pairing[data-state="connecting"] .mobile-pairing-pill.is-warn,
+.mobile-pairing[data-state="login"] .mobile-pairing-pill.is-warn {
+  animation: mobile-pairing-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes mobile-pairing-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}

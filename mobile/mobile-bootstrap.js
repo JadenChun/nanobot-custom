@@ -197,6 +197,7 @@
     var stopped = false;
     var lastLink = null;
     var identityRef = null;
+    var state = "idle";
 
     function hostLabel(origin) {
       try {
@@ -257,12 +258,39 @@
       resolveReady();
     }
 
+    function setState(next) {
+      state = next;
+      ui.panel.dataset.state = next;
+      ui.codeBlock.hidden = next !== "waiting";
+      ui.login.hidden = next !== "login";
+      ui.retry.hidden = next !== "error" && next !== "login";
+      ui.cancel.hidden = next === "idle";
+      ui.cancel.textContent = next === "waiting" ? "Cancel" : "Use a different link";
+      if (next === "idle") {
+        ui.form.reset();
+        ui.code.textContent = "------";
+        setPill(ui.node, "Connects when pairing");
+        setPill(ui.server, identityRef && identityRef.origin ? hostLabel(identityRef.origin) : "Not selected", identityRef && identityRef.origin ? "is-ok" : null);
+        ui.status.textContent = "Scan the QR code on the desktop or paste its pairing link.";
+        ui.status.classList.remove("is-error");
+      }
+    }
+
     function fail(message) {
       if (stopped) return;
       stopTimers();
+      setState("error");
+      setPill(ui.node, "Not connected", "is-warn");
       ui.status.textContent = message;
       ui.status.classList.add("is-error");
-      ui.retry.hidden = false;
+    }
+
+    function needLogin() {
+      stopTimers();
+      setState("login");
+      setPill(ui.node, "Sign in required", "is-warn");
+      ui.status.textContent = "Sign in to Tailscale, then retry.";
+      ui.status.classList.remove("is-error");
     }
 
     async function poll(pairingId) {
@@ -275,19 +303,14 @@
           finish();
           return;
         }
-        if (result && result.comparison_code) {
-          ui.code.textContent = result.comparison_code;
-        }
+        if (result && result.comparison_code) ui.code.textContent = result.comparison_code;
         ui.status.textContent = "Waiting for approval on the desktop.";
         ui.status.classList.remove("is-error");
         pollTimer = setTimeout(function () { void poll(pairingId); }, 2000);
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
-          setPill(ui.node, "Login required", "is-warn");
-          ui.status.textContent = "Sign in to Tailscale, then retry.";
-          ui.login.hidden = false;
-          ui.retry.hidden = false;
+          needLogin();
           return;
         }
         fail(message);
@@ -297,16 +320,13 @@
     async function begin(link) {
       stopTimers();
       lastLink = link;
-      ui.retry.hidden = true;
-      ui.login.hidden = true;
-      ui.status.classList.remove("is-error");
+      setState("connecting");
       setPill(ui.server, hostLabel(link.origin), "is-ok");
       ui.server.title = link.origin || "";
-      setPill(ui.node, "Connecting", "is-warn");
+      setPill(ui.node, "Starting", "is-warn");
       ui.installation.textContent = link.installationId || "unknown";
-      ui.codeBlock.hidden = false;
-      ui.code.textContent = "------";
       ui.status.textContent = "Connecting to the server...";
+      ui.status.classList.remove("is-error");
       try {
         var collected = await plugin.pairStart({
           origin: link.origin,
@@ -316,16 +336,14 @@
         });
         ui.installation.textContent = collected.installationId || link.installationId;
         ui.code.textContent = collected.comparison_code || "------";
+        setState("waiting");
         setPill(ui.node, "Connected", "is-ok");
         ui.status.textContent = "Confirm the code on the desktop, then approve.";
         void poll(collected.pairing_id);
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
-          setPill(ui.node, "Login required", "is-warn");
-          ui.status.textContent = "Sign in to Tailscale, then retry.";
-          ui.login.hidden = false;
-          ui.retry.hidden = false;
+          needLogin();
           return;
         }
         fail(message);
@@ -333,56 +351,76 @@
     }
 
     function watchForLink() {
+      if (pairingLinkTimer) return;
       pairingLinkTimer = setInterval(async function () {
+        if (stopped || state !== "idle") return;
         try {
           var link = await plugin.pendingPairingLink();
           if (!link || !link.origin) return;
-          if (pairingLinkTimer) clearInterval(pairingLinkTimer);
-          pairingLinkTimer = null;
           await begin(link);
         } catch (_) {
-          /* A malformed pending link is handled by pairStart when retried. */
+          /* A malformed pending link is ignored until the user retries. */
         }
       }, 1000);
     }
 
     ui.form.addEventListener("submit", function (event) {
       event.preventDefault();
-      var link = linkFromInput(ui.input.value);
-      var parsed = link ? parseLink(link) : null;
+      var raw = linkFromInput(ui.input.value);
+      var parsed = raw ? parseLink(raw) : null;
       if (!parsed) {
-        ui.status.textContent = "Paste the full pairing link shown on the desktop, or scan its QR code.";
+        ui.status.textContent = "That pairing link is not valid. Paste the full link from the desktop.";
         ui.status.classList.add("is-error");
         return;
       }
       void begin(parsed);
     });
 
-    ui.retry.addEventListener("click", function () {
-      ui.retry.hidden = true;
-      ui.login.hidden = true;
-      ui.status.classList.remove("is-error");
-      setPill(ui.node, "Connecting", "is-warn");
-      if (lastLink) {
-        void begin(lastLink);
-      } else {
-        ui.status.textContent = "Enter the pairing link or scan the QR code.";
-        watchForLink();
+    ui.scan.addEventListener("click", function () {
+      if (typeof plugin.scanPairingQr !== "function") {
+        ui.status.textContent = "QR scanning is unavailable in this build.";
+        return;
       }
+      ui.status.textContent = "Opening QR scanner...";
+      ui.status.classList.remove("is-error");
+      void plugin.scanPairingQr().catch(function (error) {
+        ui.status.textContent = String(error && error.message ? error.message : error);
+      });
     });
 
     ui.login.addEventListener("click", function () {
+      ui.status.textContent = "Complete the Tailscale sign-in, then retry.";
       void plugin.openLogin().catch(function (error) {
         ui.status.textContent = String(error && error.message ? error.message : error);
       });
     });
 
+    ui.retry.addEventListener("click", function () {
+      if (lastLink) {
+        void begin(lastLink);
+      } else {
+        setState("idle");
+        watchForLink();
+      }
+    });
+
+    ui.cancel.addEventListener("click", function () {
+      stopTimers();
+      lastLink = null;
+      setState("idle");
+      watchForLink();
+    });
+
+    setState("idle");
     void (async function () {
       try {
         var identity = await plugin.pairingIdentity();
         identityRef = identity;
         ui.installation.textContent = identity.installationId;
-        if (identity.origin) setPill(ui.server, hostLabel(identity.origin), "is-ok");
+        if (identity.origin) {
+          setPill(ui.server, hostLabel(identity.origin), "is-ok");
+          ui.server.title = identity.origin;
+        }
         console.log("NANOBOT_MOBILE_PAIRING_ID " + identity.installationId);
         console.log("NANOBOT_PAIRING_PANELS " + document.querySelectorAll(".mobile-pairing").length);
       } catch (error) {
