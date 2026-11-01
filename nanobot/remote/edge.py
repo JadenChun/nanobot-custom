@@ -39,6 +39,8 @@ from nanobot.webui.http_utils import (
 )
 
 _MEDIA_RE = re.compile(r"^/mobile/v1/media/([A-Za-z0-9_-]+)/([A-Za-z0-9_-]+)$")
+MOBILE_API_TIMEOUT_S = 30.0
+MOBILE_API_MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _THREAD_RE = re.compile(r"^/mobile/v1/sessions/([^/]+)/thread$")
 _MOBILE_API_ROUTES: tuple[tuple[re.Pattern[str], frozenset[str]], ...] = (
     (re.compile(r"^/api/commands$"), frozenset()),
@@ -336,7 +338,16 @@ class MobileGatewayEdge:
             allowed_path = _allowed_mobile_api_path(raw_path)
             if allowed_path is None:
                 return http_json_response({"error": "path_not_allowed"}, status=400)
-            status, payload = await self.api_handler(identity, allowed_path)
+            try:
+                status, payload = await asyncio.wait_for(
+                    self.api_handler(identity, allowed_path),
+                    timeout=MOBILE_API_TIMEOUT_S,
+                )
+            except TimeoutError:
+                return http_json_response({"error": "api_timeout"}, status=504)
+            encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            if len(encoded) > MOBILE_API_MAX_RESPONSE_BYTES:
+                return http_json_response({"error": "response_too_large"}, status=413)
             return http_json_response(payload, status=status)
 
         thread_match = _THREAD_RE.match(path)
@@ -522,15 +533,24 @@ class MobileGatewayEdge:
                     return await self.authorize_operation(identity)
                 return identity.allows("chat.write")
 
-            outcome: MutationOutcome = await self.replay_cache.execute(
-                envelope,
-                current_generation=self.generation_provider(),
-                current_epoch=epoch,
-                authorize=authorize,
-                effect=lambda item: self.mutation_handler(identity, item)
-                if self.mutation_handler is not None
-                else _empty_effect(item),
-            )
+            async def apply_effect(item: MutationEnvelope) -> dict[str, Any]:
+                if self.mutation_handler is None:
+                    return _empty_effect(item)
+                return await asyncio.wait_for(
+                    self.mutation_handler(identity, item),
+                    timeout=float(spec.timeout_s or 30),
+                )
+
+            try:
+                outcome: MutationOutcome = await self.replay_cache.execute(
+                    envelope,
+                    current_generation=self.generation_provider(),
+                    current_epoch=epoch,
+                    authorize=authorize,
+                    effect=apply_effect,
+                )
+            except TimeoutError:
+                return {"ok": False, "error": "timeout"}
             return {"ok": True, "result": outcome.model_dump(mode="json")}
         if frame_type == "logout":
             self.authorize_ws_frame(identity, epoch, "device.self.logout")

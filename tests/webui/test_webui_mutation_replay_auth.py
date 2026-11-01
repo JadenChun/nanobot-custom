@@ -15,6 +15,7 @@ from nanobot.security.workspace_access import default_workspace_scope
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.runtime_authority import DurableSessionAuthority, SessionAuthorityLease
 from nanobot.webui.inbound_commands import WebUICommandRouter, _mobile_mutation_allowed
+from nanobot.webui.replay_store import DurableWebUIReplay
 from nanobot.webui.workspaces import (
     WebUIWorkspaceController,
     WorkspacePermissionActionError,
@@ -719,3 +720,86 @@ def test_remote_access_setup_paths_require_local_browser() -> None:
         assert failure is not None
         assert failure.status == 403
         assert failure.message == "local_ui_required"
+
+
+@pytest.mark.asyncio
+async def test_durable_replay_survives_router_restart(tmp_path: Path) -> None:
+    class RecoveryOwner:
+        calls = 0
+
+        async def continue_request(self, _payload):
+            self.calls += 1
+            return {
+                "workspace_access_request": {
+                    "status": "continued",
+                    "target": {"path": "/private/project"},
+                },
+                "workspace_scope": {"project_path": "/private/project"},
+            }
+
+        async def publish(self, *_args):
+            return None
+
+    handler = object.__new__(GatewayHTTPHandler)
+    handler.config = SimpleNamespace(host="127.0.0.1")
+    handler.workspace_access_recovery = RecoveryOwner()
+    handler.check_api_token = lambda _request: True
+    handler._log = SimpleNamespace(exception=lambda *_args: None)
+
+    async def resolved(self, connection, request, path):
+        return await self._handle_workspace_access_action(connection, request, path)
+
+    handler._dispatch_resolved = MethodType(resolved, handler)
+    connection = _Connection("local")
+    gateway = SimpleNamespace(
+        http=handler,
+        endpoint=SimpleNamespace(webui_connections={connection}),
+        media=None,
+        ingress=None,
+        transcripts=None,
+        workspaces=None,
+        temporary_chats=None,
+        session_projection=None,
+        session_manager=None,
+    )
+    first_frames: list[dict[str, object]] = []
+    second_frames: list[dict[str, object]] = []
+
+    async def send_first(target, event, **payload):
+        first_frames.append({"connection": target.name, "event": event, **payload})
+
+    async def send_second(target, event, **payload):
+        second_frames.append({"connection": target.name, "event": event, **payload})
+
+    store_path = tmp_path / "replay.json"
+    envelope = {
+        "request_id": "durable-restart-1",
+        "action": "workspace.access.continue",
+        "payload": {
+            "chat_id": "chat-a",
+            "access_request_id": "0" * 32,
+            "expected_revision": 2,
+        },
+    }
+    router1 = WebUICommandRouter(
+        SimpleNamespace(webui_send_event=send_first),
+        gateway,
+        replay_store=DurableWebUIReplay(store_path),
+    )
+    await router1.start_webui_request(connection, envelope)
+    await asyncio.gather(*router1.request_tasks.values())
+    assert handler.workspace_access_recovery.calls == 1
+    assert first_frames[-1]["event"] == "webui_response"
+
+    router2 = WebUICommandRouter(
+        SimpleNamespace(webui_send_event=send_second),
+        gateway,
+        replay_store=DurableWebUIReplay(store_path),
+    )
+    before = len(second_frames)
+    await router2.start_webui_request(connection, envelope)
+    await asyncio.gather(*router2.request_tasks.values())
+    assert handler.workspace_access_recovery.calls == 1
+    assert len(second_frames) > before
+    assert second_frames[before]["ok"] is True
+    assert second_frames[before]["result"]["workspace_scope"]["project_path"] == "/private/project"

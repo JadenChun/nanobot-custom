@@ -31,7 +31,7 @@ STATE_VERSION = 1
 MAX_STATE_BYTES = 1024 * 1024
 MAX_DEVICES = 256
 MAX_OWNED_ENTRIES = 64
-MAX_AUDIT_ENTRIES = 200
+MAX_AUDIT_ENTRIES = 1000
 
 
 class StoreError(RuntimeError):
@@ -408,7 +408,7 @@ class RemoteAccessStore:
                 for device in state.devices.values()
             ],
             "owned_entries": list(state.owned_entries),
-            "audit": list(state.audit[-100:]),
+            "audit": list(state.audit[-500:]),
         }
 
     def _require_state(self) -> RemoteAccessState:
@@ -433,7 +433,7 @@ class RemoteAccessStore:
                 for installation_id, device in state.devices.items()
             },
             "owned_entries": list(state.owned_entries),
-            "audit": list(state.audit[-100:]),
+            "audit": list(state.audit[-500:]),
         }
 
     @staticmethod

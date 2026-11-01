@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
 
@@ -11,6 +13,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Request as WsRequest
 from websockets.http11 import Response
 
+from nanobot.remote import edge as edge_module
 from nanobot.remote.client import RemoteAccessClient
 from nanobot.remote.edge import (
     AccessIdentity,
@@ -582,3 +585,91 @@ async def test_revoked_owner_socket_revalidation_denies(edge_setup) -> None:
     owner.tokens.revoke("install-owner")
     with pytest.raises(EdgeAuthError):
         await connected.revalidate_mobile_access(identity, connection.mobile_access_token)
+
+
+@pytest.mark.asyncio
+async def test_edge_api_timeout_and_response_bound(edge_setup, monkeypatch) -> None:
+    _owner, edge, pair = edge_setup
+    encoded = quote("/api/commands", safe="")
+
+    async def slow_api(identity: AccessIdentity, path: str):
+        await asyncio.sleep(0.05)
+        return 200, {"path": path}
+
+    slow_edge = MobileGatewayEdge(
+        edge.validator,
+        generation_provider=lambda: 1,
+        socket_epoch=7,
+        api_handler=slow_api,
+    )
+    monkeypatch.setattr(edge_module, "MOBILE_API_TIMEOUT_S", 0.01)
+    response = await slow_edge.handle(
+        None, request(f"/mobile/v1/api?path={encoded}", pair.access_token)
+    )
+    assert response is not None and response.status_code == 504
+
+    async def large_api(identity: AccessIdentity, path: str):
+        return 200, {"blob": "x" * 100}
+
+    large_edge = MobileGatewayEdge(
+        edge.validator,
+        generation_provider=lambda: 1,
+        socket_epoch=7,
+        api_handler=large_api,
+    )
+    monkeypatch.setattr(edge_module, "MOBILE_API_MAX_RESPONSE_BYTES", 16)
+    response = await large_edge.handle(
+        None, request(f"/mobile/v1/api?path={encoded}", pair.access_token)
+    )
+    assert response is not None and response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_edge_mutation_effect_timeout(edge_setup, monkeypatch) -> None:
+    owner, edge, _pair = edge_setup
+    spec = SimpleNamespace(
+        enabled=True,
+        timeout_s=0.01,
+        max_request_bytes=1024,
+        max_response_bytes=1024,
+        scope="owner",
+        kind="mutation",
+        replay="submit",
+    )
+    monkeypatch.setattr(
+        edge_module,
+        "load_registry",
+        lambda: SimpleNamespace(mutations={"sidebar.update": spec}),
+    )
+
+    async def slow_mutation(identity: AccessIdentity, item: MutationEnvelope):
+        await asyncio.sleep(0.05)
+        return {"action": item.action}
+
+    timed_edge = MobileGatewayEdge(
+        edge.validator,
+        generation_provider=lambda: int(owner.store.snapshot()["revision"]),
+        socket_epoch=7,
+        replay_cache=OperationReplayCache(),
+        mutation_handler=slow_mutation,
+    )
+    identity = AccessIdentity("install-0001", ("chat.read", "chat.write"), 1e12, 1)
+    digest = stable_operation_digest("install-0001", "sidebar.update", {"state": {}})
+    envelope = MutationEnvelope.model_validate(
+        {
+            "request_id": "req-timeout-1",
+            "installation_id": "install-0001",
+            "principal": "device-0001",
+            "action": "sidebar.update",
+            "digest": digest,
+            "gateway_generation": int(owner.store.snapshot()["revision"]),
+            "epoch": 7,
+            "mode": "submit",
+            "payload": {"state": {}},
+        }
+    )
+    response = await timed_edge.handle_ws_frame(
+        identity, 7, {"type": "mutation", "envelope": envelope.model_dump(mode="json")}
+    )
+    assert response["ok"] is False
+    assert response["error"] == "timeout"

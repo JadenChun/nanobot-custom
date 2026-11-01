@@ -138,7 +138,54 @@ async def test_owner_standard_mutation_writes_actor_audit() -> None:
         {
             "installation_id": "install-owner",
             "operation": "sidebar.update",
+            "decision": "attempted",
+            "actor_installation_id": "install-owner",
+        },
+        {
+            "installation_id": "install-owner",
+            "operation": "sidebar.update",
             "decision": "applied",
             "actor_installation_id": "install-owner",
-        }
+        },
     ]
+
+
+@pytest.mark.asyncio
+async def test_owner_standard_mutation_fails_closed_when_audit_unavailable() -> None:
+    from websockets.datastructures import Headers
+
+    from nanobot.webui.http_utils import http_json_response
+
+    class _Audit:
+        def audit_event(self, **_kwargs):
+            raise RuntimeError("audit unavailable")
+
+    dispatched: list[bool] = []
+
+    async def dispatch(_connection, _request, _path):
+        dispatched.append(True)
+        return http_json_response({"ok": True})
+
+    stub = SimpleNamespace(
+        owner_audit_client=_Audit(),
+        authorize_webui_mutation=lambda *_args: None,
+        _webui_mutation_path=GatewayHTTPHandler._webui_mutation_path,
+        _connection_headers=lambda _connection: Headers(),
+        _dispatch_resolved=dispatch,
+        _log=SimpleNamespace(exception=lambda *_args, **_kwargs: None),
+    )
+    owner = AccessIdentity(
+        "install-owner",
+        ("chat.read", "chat.write", "owner"),
+        1e12,
+        1,
+    )
+    connection = SimpleNamespace(mobile_identity=owner)
+    response = await GatewayHTTPHandler.dispatch_webui_mutation(
+        stub,
+        connection,
+        "sidebar.update",
+        {"state": {}},
+    )
+    assert response.status_code == 503
+    assert dispatched == []

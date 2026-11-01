@@ -834,6 +834,25 @@ class GatewayHTTPHandler:
                 else None
             )
             setattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR, expected_binding)
+        audit_client = getattr(self, "owner_audit_client", None)
+        audit_identity = getattr(connection, "mobile_identity", None)
+        audit_installation = getattr(audit_identity, "installation_id", None)
+        if (
+            audit_client is not None
+            and isinstance(audit_installation, str)
+            and audit_installation
+        ):
+            try:
+                await asyncio.to_thread(
+                    audit_client.audit_event,
+                    installation_id=audit_installation,
+                    operation=action,
+                    decision="attempted",
+                    actor_installation_id=audit_installation,
+                )
+            except Exception:
+                self._log.exception("owner audit pre-effect write failed")
+                return _http_error(503, "audit_unavailable")
         response = await self._dispatch_resolved(connection, request, path)
         if isinstance(response, Response):
             identity = getattr(connection, "mobile_identity", None)

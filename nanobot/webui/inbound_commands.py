@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger
@@ -41,6 +42,7 @@ from nanobot.webui.forking import handle_webui_fork_chat
 from nanobot.webui.gateway_services import GatewayServices
 from nanobot.webui.mcp_presets_api import normalize_mcp_preset_mentions
 from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from nanobot.webui.replay_store import DurableWebUIReplay
 from nanobot.webui.session_access import (
     SessionMention,
     WebuiSessionAccess,
@@ -205,7 +207,13 @@ def _mobile_mutation_allowed(connection: Any, action: str) -> bool:
 class WebUICommandRouter:
     """Own WebUI command semantics while a transport host owns raw connections."""
 
-    def __init__(self, transport: WebUICommandTransport, gateway: GatewayServices) -> None:
+    def __init__(
+        self,
+        transport: WebUICommandTransport,
+        gateway: GatewayServices,
+        *,
+        replay_store: DurableWebUIReplay | None = None,
+    ) -> None:
         self._transport = transport
         self.gateway = gateway
         self._http_router = gateway.http
@@ -227,6 +235,15 @@ class WebUICommandRouter:
         ] = {}
         self.request_operations: dict[str, WebUIRequestOperation] = {}
         self.request_locks: dict[ServerConnection, asyncio.Lock] = {}
+        if replay_store is None:
+            settings = getattr(gateway, "settings", None)
+            config = getattr(settings, "config", None)
+            config_path = getattr(config, "path", None)
+            if config_path is not None:
+                replay_store = DurableWebUIReplay(
+                    Path(config_path).parent / "webui" / "mutation-replay-v1.json"
+                )
+        self._durable_replay = replay_store
 
     def workspace_controls_available(self, connection: ServerConnection) -> bool:
         return (
@@ -957,16 +974,129 @@ class WebUICommandRouter:
         ):
             await self.send_webui_response(connection, request_id, status=409, message="source_changed")
             return
-        if operation is None:
-            operation_task = asyncio.create_task(
-                self.execute_webui_request(
-                    connection,
+        if operation is None and self._durable_replay is not None:
+            try:
+                durable_state, durable_entry = self._durable_replay.lookup(
+                    request_id,
                     action,
-                    typed_payload,
-                    source_binding=source_binding,
-                    source_binding_captured=source_binding_captured,
+                    payload_digest.hex(),
+                    source_binding,
                 )
-            )
+            except Exception:
+                logger.exception("WebUI replay ledger lookup failed")
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=503,
+                    message="replay_store_unavailable",
+                )
+                return
+            if durable_state == "mismatch":
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=409,
+                    message="request_id was already used for a different WebUI mutation",
+                )
+                return
+            if durable_state == "uncertain":
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=409,
+                    message="replay_uncertain",
+                )
+                return
+            if durable_state == "completed":
+                stored = durable_entry.get("result") if durable_entry else None
+                if not isinstance(stored, dict):
+                    stored = {}
+                cached = WebUIRequestResult(
+                    status=stored.get("status"),
+                    message=stored.get("message"),
+                    result=stored.get("result"),
+                    workspace_scope=stored.get("workspace_scope"),
+                    workspace_permissions=stored.get("workspace_permissions"),
+                )
+
+                async def _cached_result() -> WebUIRequestResult:
+                    return cached
+
+                cached_task = asyncio.create_task(_cached_result())
+                key = (connection, request_id)
+                if key in self.request_tasks:
+                    return
+                delivery_task = asyncio.create_task(
+                    self.deliver_webui_request(
+                        connection,
+                        request_id,
+                        cached_task,
+                        action=action,
+                        payload=typed_payload,
+                        sequence=True,
+                        source_binding=source_binding,
+                    )
+                )
+                self.request_tasks[key] = delivery_task
+                return
+        if operation is None:
+            if self._durable_replay is not None:
+                try:
+                    started = self._durable_replay.begin(
+                        request_id,
+                        action,
+                        payload_digest.hex(),
+                        source_binding,
+                    )
+                except Exception:
+                    logger.exception("WebUI replay ledger admission failed")
+                    await self.send_webui_response(
+                        connection,
+                        request_id,
+                        status=503,
+                        message="replay_store_unavailable",
+                    )
+                    return
+                if not started:
+                    await self.send_webui_response(
+                        connection,
+                        request_id,
+                        status=409,
+                        message="replay_uncertain",
+                    )
+                    return
+
+            async def execute_and_persist() -> WebUIRequestResult:
+                try:
+                    result = await self.execute_webui_request(
+                        connection,
+                        action,
+                        typed_payload,
+                        source_binding=source_binding,
+                        source_binding_captured=source_binding_captured,
+                    )
+                except asyncio.CancelledError:
+                    if self._durable_replay is not None:
+                        try:
+                            self._durable_replay.uncertain(request_id)
+                        except Exception:
+                            logger.exception("WebUI replay ledger could not mark uncertainty")
+                    raise
+                except Exception:
+                    if self._durable_replay is not None:
+                        try:
+                            self._durable_replay.uncertain(request_id)
+                        except Exception:
+                            logger.exception("WebUI replay ledger could not mark uncertainty")
+                    raise
+                if self._durable_replay is not None:
+                    try:
+                        self._durable_replay.complete(request_id, result)
+                    except Exception:
+                        logger.exception("WebUI replay ledger could not store the result")
+                return result
+
+            operation_task = asyncio.create_task(execute_and_persist())
             new_operation = WebUIRequestOperation(
                 action=action,
                 payload_digest=payload_digest,
