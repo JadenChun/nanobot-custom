@@ -54,6 +54,7 @@ export function FoldersProjectsManager({ workspaces, onRefreshWorkspaces, onPick
   const [notice, setNotice] = useState<string | null>(null);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [commit, setCommit] = useState<WorkspaceGrantCommit | null>(null);
+  const [commitDisplayPath, setCommitDisplayPath] = useState("");
   const retry = useRef<FolderLocationEdit | null>(null);
   const remoteOwner = isMobileRuntimeActive() && mobileOwnerCapability();
   const management = workspaces?.management;
@@ -103,6 +104,7 @@ export function FoldersProjectsManager({ workspaces, onRefreshWorkspaces, onPick
       extent: "read",
       relative_path: selection.relative_path,
     });
+    setCommitDisplayPath(selection.display_path);
     setForm({
       path: selection.display_path,
       label: selection.display_path.split("/").filter(Boolean).pop() ?? "folder",
@@ -122,6 +124,12 @@ export function FoldersProjectsManager({ workspaces, onRefreshWorkspaces, onPick
     if (!form || !management) return;
     const path = form.path.trim();
     if (remoteOwner && commit) {
+      if (path !== commitDisplayPath) {
+        setError(t("workspace.remoteBrowser.reselect", {
+          defaultValue: "Re-select the folder in the server browser before saving.",
+        }));
+        return;
+      }
       setPending(true); setError(null); setNotice(null);
       const extent = form.access === "read_write" ? "write" : "read";
       try {
@@ -137,6 +145,7 @@ export function FoldersProjectsManager({ workspaces, onRefreshWorkspaces, onPick
         );
         await onRefreshWorkspaces();
         setCommit(null);
+        setCommitDisplayPath("");
         setForm(null);
         setNotice(text("saved", "Folder saved. The map and Sandbox rules are up to date."));
       } catch (reason) {

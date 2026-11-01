@@ -100,16 +100,22 @@ def test_pagination_cursor_is_bound_to_root_and_path(tmp_path) -> None:
 def test_traversal_and_outside_symlinks_deny(tmp_path) -> None:
     root = tmp_path / "projects"
     root.mkdir()
+    (root / "alpha").mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "secret").mkdir()
     os.symlink(outside, root / "escape")
     service = browser(root)
 
-    for bad in ("../outside", "a/../../outside", "/etc", "a\\b", "a\x00b"):
+    for bad in ("../outside", "a/../../outside", "a\\b", "a\x00b"):
         with pytest.raises(DirectoryBrowserError) as exc:
             service.list(root_id="projects", relative_path=bad)
         assert exc.value.code in {"invalid_path"}
+    with pytest.raises(DirectoryBrowserError) as exc:
+        service.list(root_id="projects", relative_path="/etc")
+    assert exc.value.code == "outside_root"
+    absolute_inside = service.list(root_id="projects", relative_path=str(root / "alpha"))
+    assert absolute_inside["relative_path"] == "alpha"
     with pytest.raises(DirectoryBrowserError) as exc:
         service.list(root_id="projects", relative_path="escape/secret")
     assert exc.value.code == "outside_root"
@@ -341,3 +347,44 @@ def test_owner_grant_commit_uses_resolved_canonical_path(tmp_path) -> None:
             request,
             {**payload, "commit_token": read_with_commands["commit_token"], "commands": True},
         )
+
+
+def test_cursor_rejects_changed_directory_contents(tmp_path) -> None:
+    root = tmp_path / "projects"
+    root.mkdir()
+    for name in ("a", "b", "c"):
+        (root / name).mkdir()
+    service = browser(root)
+    first = service.list(root_id="projects", limit=1)
+    assert first["next_cursor"]
+    (root / "0-new").mkdir()
+    with pytest.raises(DirectoryBrowserError) as exc:
+        service.list(root_id="projects", limit=1, cursor=first["next_cursor"])
+    assert exc.value.code == "cursor_mismatch"
+
+
+def test_resolve_and_cursor_stores_are_bounded(tmp_path) -> None:
+    root = tmp_path / "projects"
+    root.mkdir()
+    (root / "alpha").mkdir()
+    service = browser(root)
+    policy = service.roots()["policy_revision"]
+    for index in range(400):
+        service.resolve(
+            root_id="projects",
+            relative_path="alpha",
+            policy_revision=policy,
+            installation_id=f"install-{index}",
+        )
+    assert len(service._resolves) <= 256
+    for index in range(400):
+        (root / f"dir-{index}").mkdir(exist_ok=True)
+        service._mint_cursor(
+            installation_id="install-owner",
+            root_id="projects",
+            relative_path="",
+            policy_revision=policy,
+            offset=index,
+            directory_snapshot="snapshot",
+        )
+    assert len(service._cursors) <= 256

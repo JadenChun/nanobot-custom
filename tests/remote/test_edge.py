@@ -524,3 +524,61 @@ async def test_owner_ws_mutation_registry_and_legacy_ceiling(edge_setup) -> None
     assert planned["ok"] is False
     assert planned["error"] == "operation_not_allowed"
     assert effects == ["sidebar.update"]
+
+
+class _RevalidatingValidator:
+    def __init__(self, identity: AccessIdentity | Exception) -> None:
+        self.identity = identity
+        self.calls = 0
+
+    async def validate(self, _token: str) -> AccessIdentity:
+        self.calls += 1
+        if isinstance(self.identity, Exception):
+            raise self.identity
+        return self.identity
+
+
+@pytest.mark.asyncio
+async def test_established_mobile_socket_revalidates_expiry_and_identity() -> None:
+    import time
+
+    current = AccessIdentity("install-owner", ("chat.read", "owner"), time.time() + 60, 1)
+    validator = _RevalidatingValidator(current)
+    edge = MobileGatewayEdge(validator, generation_provider=lambda: 1)
+    refreshed = await edge.revalidate_mobile_access(current, "token")
+    assert refreshed.installation_id == "install-owner"
+    assert validator.calls == 1
+
+    expired = AccessIdentity("install-owner", ("chat.read", "owner"), time.time() - 1, 1)
+    with pytest.raises(EdgeAuthError) as exc:
+        await edge.revalidate_mobile_access(expired, "token")
+    assert exc.value.code == "access_expired"
+
+    other = AccessIdentity("install-other", ("chat.read", "owner"), time.time() + 60, 1)
+    validator.identity = other
+    with pytest.raises(EdgeAuthError) as exc:
+        await edge.revalidate_mobile_access(current, "token")
+    assert exc.value.code == "installation_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_revoked_owner_socket_revalidation_denies(edge_setup) -> None:
+    owner, edge, _pair = edge_setup
+    owner_pair = owner.tokens.issue("install-owner", ("chat.read", "chat.write", "owner"))
+    from nanobot.remote.edge import OwnerAccessValidator
+
+    validator = OwnerAccessValidator(
+        RemoteAccessClient(owner.socket_path, timeout=2.0),
+        cache_ttl=0.0,
+    )
+    connected = MobileGatewayEdge(validator, generation_provider=lambda: 1)
+    connection = type("Connection", (), {})()
+    assert await connected.authorize_websocket(
+        connection, request("/mobile/v1/ws", owner_pair.access_token)
+    ) is None
+    assert connection.mobile_access_token == owner_pair.access_token
+    identity = connection.mobile_identity
+
+    owner.tokens.revoke("install-owner")
+    with pytest.raises(EdgeAuthError):
+        await connected.revalidate_mobile_access(identity, connection.mobile_access_token)

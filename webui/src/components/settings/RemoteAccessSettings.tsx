@@ -8,12 +8,15 @@ import {
   revokeRemoteDevice,
   setRemoteAccessEnabled,
   startRemotePairing,
+  type RemoteAccessMutationTransport,
   type RemoteAccessStatus,
 } from "@/lib/remote-access-api";
 
 interface RemoteAccessSettingsProps {
   token: string;
   initialStatus?: RemoteAccessStatus | null;
+  /** WebSocket mutation transport; settings mutations are never plain HTTP. */
+  mutate: RemoteAccessMutationTransport;
   /** Initial enable/re-enable and new-device approval are server-local only. */
   localSetupAvailable?: boolean;
 }
@@ -21,6 +24,7 @@ interface RemoteAccessSettingsProps {
 export function RemoteAccessSettings({
   token,
   initialStatus = null,
+  mutate,
   localSetupAvailable = true,
 }: RemoteAccessSettingsProps) {
   const [status, setStatus] = useState<RemoteAccessStatus | null>(initialStatus);
@@ -33,6 +37,7 @@ export function RemoteAccessSettings({
   const [code, setCode] = useState("");
   const [approvalCode, setApprovalCode] = useState("");
   const [mediaConsent, setMediaConsent] = useState(false);
+  const [fullControlConsent, setFullControlConsent] = useState(false);
   const [pairingLink, setPairingLink] = useState("");
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [copied, setCopied] = useState(false);
@@ -110,7 +115,7 @@ export function RemoteAccessSettings({
             type="button"
             disabled={busy || !status}
             onClick={() => void run(async () => {
-              await setRemoteAccessEnabled(token, !status?.enabled);
+              await setRemoteAccessEnabled(mutate, !status?.enabled);
             })}
             className="rounded-md border px-3 py-1.5 text-sm"
           >
@@ -173,7 +178,7 @@ export function RemoteAccessSettings({
                 className="rounded-md border border-destructive/50 px-3 py-1 text-xs text-destructive"
                 disabled={busy}
                 onClick={() => void run(async () => {
-                  await revokeRemoteDevice(token, revoking.installationId);
+                  await revokeRemoteDevice(mutate, revoking.installationId);
                   setRevoking(null);
                 })}
               >
@@ -229,15 +234,30 @@ export function RemoteAccessSettings({
           />
           Allow chat media and attachments
         </label>
+        <label className="flex items-start gap-2 text-xs">
+          <input
+            type="checkbox"
+            aria-label="Grant full owner control and shared history"
+            checked={fullControlConsent}
+            onChange={(event) => setFullControlConsent(event.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            Grant full owner control and shared history. This device can use the same settings,
+            apps, skills, automations and workspace actions as the desktop WebUI.
+          </span>
+        </label>
         <button
           type="button"
           disabled={busy || !origin.trim()}
           onClick={() => void run(async () => {
-            const offer = await startRemotePairing(token, {
+            const offer = await startRemotePairing(mutate, {
               origin: origin.trim(),
               label,
               chatConsent: true,
               mediaConsent,
+              fullControlConsent,
+              sharedHistoryConsent: fullControlConsent,
             });
             const targetInstallation = installationId.trim() || crypto.randomUUID();
             setInstallationId(targetInstallation);
@@ -299,7 +319,7 @@ export function RemoteAccessSettings({
               type="button"
               disabled={busy || !approvalCode.trim()}
               onClick={() => void run(async () => {
-                await approveRemotePairing(token, { pairingId, comparisonCode: approvalCode });
+                await approveRemotePairing(mutate, { pairingId, comparisonCode: approvalCode });
                 setPairingId("");
                 setPairingLink("");
               })}

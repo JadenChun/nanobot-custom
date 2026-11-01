@@ -96,6 +96,7 @@ export function RemoteFolderBrowserDialog({
   const [rootId, setRootId] = useState<string>("");
   const [path, setPath] = useState("");
   const [listing, setListing] = useState<ListingPayload | null>(null);
+  const [manualPath, setManualPath] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +147,33 @@ export function RemoteFolderBrowserDialog({
       if (!parsed) throw new Error("invalid listing response");
       setListing(parsed);
       setPath(parsed.relative_path);
+      setManualPath(parsed.relative_path);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadMore = async () => {
+    if (!listing?.next_cursor) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const query = new URLSearchParams({
+        root: rootId,
+        path: listing.relative_path,
+        limit: "100",
+        cursor: listing.next_cursor,
+      });
+      const response = await fetchWithTimeout(`/api/workspace-directories/list?${query.toString()}`);
+      if (!response.ok) throw new Error(`list failed: HTTP ${response.status}`);
+      const parsed = parseListing(await response.json());
+      if (!parsed) throw new Error("invalid listing response");
+      setListing({
+        ...parsed,
+        entries: [...listing.entries, ...parsed.entries],
+      });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -235,6 +263,23 @@ export function RemoteFolderBrowserDialog({
 
         {listing ? (
           <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                aria-label="Relative folder path"
+                value={manualPath}
+                onChange={(event) => setManualPath(event.target.value)}
+                className="min-w-0 flex-1 rounded-md border bg-transparent px-2 py-1.5 text-xs"
+                placeholder="relative/path"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={loading}
+                onClick={() => void load(rootId, manualPath.replace(/^\/+|\/+$/g, ""))}
+              >
+                {t("workspace.remoteBrowser.open", { defaultValue: "Open" })}
+              </Button>
+            </div>
             <div className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
               <button type="button" className="underline-offset-2 hover:underline" onClick={() => selectRoot(rootId)}>
                 {roots?.roots.find((root) => root.id === rootId)?.label ?? rootId}
@@ -275,14 +320,26 @@ export function RemoteFolderBrowserDialog({
               ) : null}
             </ul>
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={loading}
-                onClick={() => void load(rootId, path)}
-              >
-                {t("workspace.remoteBrowser.refresh", { defaultValue: "Refresh" })}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={loading}
+                  onClick={() => void load(rootId, path)}
+                >
+                  {t("workspace.remoteBrowser.refresh", { defaultValue: "Refresh" })}
+                </Button>
+                {listing.next_cursor ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={loading}
+                    onClick={() => void loadMore()}
+                  >
+                    {t("workspace.remoteBrowser.more", { defaultValue: "Load more" })}
+                  </Button>
+                ) : null}
+              </div>
               <Button type="button" disabled={busy} onClick={() => void selectFolder()}>
                 {busy ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : null}
                 {t("workspace.remoteBrowser.select", { defaultValue: "Use this folder" })}

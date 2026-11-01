@@ -104,8 +104,11 @@ def build_mobile_edge(
     ) -> tuple[int, dict[str, Any]]:
         return await asyncio.to_thread(http.mobile_thread_payload, key, query)
 
-    async def api_handler(_identity: Any, path: str) -> tuple[int, dict[str, Any]]:
-        return await http.mobile_api_payload(path)
+    async def api_handler(identity: Any, path: str) -> tuple[int, dict[str, Any]]:
+        return await http.mobile_api_payload(
+            path,
+            owner=bool(getattr(identity, "is_owner", False)),
+        )
 
     async def feature_handler(identity: Any, path: str) -> tuple[int, dict[str, Any]]:
         return await http.mobile_feature_payload(path, identity)

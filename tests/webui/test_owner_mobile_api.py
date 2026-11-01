@@ -64,3 +64,32 @@ async def test_mobile_mutation_payload_denies_non_owner_and_planned() -> None:
     )
     assert status == 403
     assert payload["error"] == "operation_not_allowed"
+
+
+@pytest.mark.asyncio
+async def test_owner_mutation_payload_enforces_request_bound() -> None:
+    stub = SimpleNamespace()
+    owner = AccessIdentity("install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1)
+    status, payload = await GatewayHTTPHandler.mobile_mutation_payload(
+        stub,
+        owner,
+        "settings.agent.update",
+        {"blob": "x" * (1024 * 1024 + 1)},
+    )
+    assert status == 413
+    assert payload["error"] == "request_too_large"
+
+
+def test_remote_access_settings_actions_map_to_mutation_paths() -> None:
+    assert GatewayHTTPHandler._webui_mutation_path(
+        "settings.remote_access.revoke", {}
+    ) == "/api/settings/remote-access/revoke"
+    assert GatewayHTTPHandler._webui_mutation_path(
+        "settings.remote_access.enable", {}
+    ) == "/api/settings/remote-access/enable"
+    assert GatewayHTTPHandler._webui_mutation_path(
+        "settings.remote_access.pairing.start", {}
+    ) == "/api/settings/remote-access/pairing/start"
+    assert GatewayHTTPHandler._webui_mutation_path(
+        "settings.remote_access.pairing.approve", {}
+    ) == "/api/settings/remote-access/pairing/approve"

@@ -365,6 +365,7 @@ class RemoteAccessStore:
         operation: str,
         decision: str,
         request_id: str | None = None,
+        actor_installation_id: str | None = None,
     ) -> dict[str, Any]:
         """Persist a bounded, sanitized device-operation audit record.
 
@@ -380,6 +381,9 @@ class RemoteAccessStore:
                 "operation": _bounded_text(operation, 64),
                 "decision": _bounded_text(decision, 32),
                 "request_id": _bounded_text(request_id, 128) if request_id else None,
+                "actor_installation_id": (
+                    _bounded_text(actor_installation_id, 128) if actor_installation_id else None
+                ),
             }
             state.audit = [*state.audit[-MAX_AUDIT_ENTRIES + 1 :], entry]
             self._save_locked(state)
@@ -510,6 +514,11 @@ class RemoteAccessStore:
                     "request_id": (
                         _bounded_text(record.get("request_id"), 128)
                         if isinstance(record.get("request_id"), str)
+                        else None
+                    ),
+                    "actor_installation_id": (
+                        _bounded_text(record.get("actor_installation_id"), 128)
+                        if isinstance(record.get("actor_installation_id"), str)
                         else None
                     ),
                 }

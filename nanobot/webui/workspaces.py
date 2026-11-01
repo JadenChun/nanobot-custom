@@ -673,9 +673,10 @@ class WebUIWorkspaceController:
         raw_payload: object,
         *,
         local_ui: bool,
+        owner_authorized: bool = False,
     ) -> WorkspaceModeActionResult:
         """Persist an explicitly requested empty chat so Full can be enabled before its first turn."""
-        if not local_ui:
+        if not local_ui and not owner_authorized:
             raise WorkspacePermissionActionError(403, "local_ui_required")
         if type(raw_payload) is not dict:
             raise WorkspacePermissionActionError(400, "invalid_permission_request")
@@ -796,9 +797,10 @@ class WebUIWorkspaceController:
         raw_payload: object,
         *,
         local_ui: bool,
+        owner_authorized: bool = False,
     ) -> WorkspaceModeActionResult | WorkspaceModeConflict:
-        """Apply explicit chat-scoped Full/Restricted authority for a local UI."""
-        if not local_ui:
+        """Apply explicit chat-scoped Full/Restricted authority for a local UI or owner."""
+        if not local_ui and not owner_authorized:
             raise WorkspacePermissionActionError(403, "local_ui_required")
         if type(raw_payload) is not dict:
             raise WorkspacePermissionActionError(400, "invalid_permission_request")

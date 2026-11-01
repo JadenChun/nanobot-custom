@@ -382,14 +382,25 @@ class OwnerIPCServer:
             label = _string_param(params, "label")
             chat_consent = _bool_param(params, "chat_consent")
             media_consent = _bool_param(params, "media_consent", default=False)
-            if origin is None or label is None or chat_consent is None or media_consent is None:
-                return {"ok": False, "error": {"code": "bad_request", "message": "origin, label, chat_consent and media_consent are required"}}
+            full_control_consent = _bool_param(params, "full_control_consent", default=False)
+            shared_history_consent = _bool_param(params, "shared_history_consent", default=False)
+            if (
+                origin is None
+                or label is None
+                or chat_consent is None
+                or media_consent is None
+                or full_control_consent is None
+                or shared_history_consent is None
+            ):
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing consent fields are required"}}
             try:
                 offer = self.pairing.create_challenge(
                     origin=origin,
                     label=label,
                     chat_consent=chat_consent,
                     media_consent=media_consent,
+                    full_control_consent=full_control_consent,
+                    shared_history_consent=shared_history_consent,
                 )
             except (PairingError, ValueError) as exc:
                 return {"ok": False, "error": {"code": "pairing_rejected", "message": str(exc)}}
@@ -564,7 +575,14 @@ class OwnerIPCServer:
             try:
                 result = self._require_owner_operation(context, DelegatedAdminOperation.DEVICE_RENAME)
                 del result
-                return {"ok": True, "result": self.delegation.rename_device(target, label)}
+                return {
+                    "ok": True,
+                    "result": self.delegation.rename_device(
+                        target,
+                        label,
+                        actor_installation_id=context.installation_id,
+                    ),
+                }
             except DelegationError as exc:
                 return {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
         if method == "device_revoke":
@@ -573,7 +591,13 @@ class OwnerIPCServer:
                 return {"ok": False, "error": {"code": "bad_request", "message": "target is required"}}
             try:
                 self._require_owner_operation(context, DelegatedAdminOperation.DEVICE_REVOKE)
-                return {"ok": True, "result": self.delegation.revoke_device(target)}
+                return {
+                    "ok": True,
+                    "result": self.delegation.revoke_device(
+                        target,
+                        actor_installation_id=context.installation_id,
+                    ),
+                }
             except DelegationError as exc:
                 return {"ok": False, "error": {"code": exc.code, "message": str(exc)}}
         if method == "device_self_revoke":
@@ -607,12 +631,22 @@ class OwnerIPCServer:
             return {"devices": _safe_devices(self.store.snapshot()["devices"])}
         if operation == DelegatedAdminOperation.DEVICE_RENAME.value:
             self._require_owner_operation(context, DelegatedAdminOperation.DEVICE_RENAME)
-            return self.delegation.rename_device(payload["target_installation_id"], payload["label"]) if self.delegation else {}
+            return self.delegation.rename_device(
+                payload["target_installation_id"],
+                payload["label"],
+                actor_installation_id=context.installation_id,
+            ) if self.delegation else {}
         if operation == DelegatedAdminOperation.DEVICE_REVOKE.value:
             self._require_owner_operation(context, DelegatedAdminOperation.DEVICE_REVOKE)
-            return self.delegation.revoke_device(payload["target_installation_id"]) if self.delegation else {}
+            return self.delegation.revoke_device(
+                payload["target_installation_id"],
+                actor_installation_id=context.installation_id,
+            ) if self.delegation else {}
         if operation == DelegatedAdminOperation.DEVICE_SELF_REVOKE.value:
-            return self.delegation.revoke_device(context.installation_id) if self.delegation else {}
+            return self.delegation.revoke_device(
+                context.installation_id,
+                actor_installation_id=context.installation_id,
+            ) if self.delegation else {}
         if operation == DelegatedAdminOperation.ENTRY_STATUS.value:
             if not context.is_owner:
                 raise DelegationError("owner_required", "owner capability is required")

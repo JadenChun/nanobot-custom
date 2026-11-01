@@ -96,6 +96,8 @@ class WebUICommandTransport(Protocol):
 
     def is_allowed(self, sender_id: str) -> bool: ...
 
+    async def revalidate_mobile_connection(self, connection: Any) -> bool: ...
+
     def webui_subscribers(self, chat_id: str) -> tuple[ServerConnection, ...]: ...
 
     def webui_connection_chats(self, connection: ServerConnection) -> tuple[str, ...]: ...
@@ -149,6 +151,17 @@ class WebUICommandTransport(Protocol):
         workspace_access_request: FolderAccessRequest | None = None,
         workspace_permissions: WorkspacePermissionProjection | None = None,
     ) -> None: ...
+
+
+def _mobile_denial_message(connection: Any, action: str) -> str:
+    """Name the documented local-only exception instead of a generic denial."""
+    if getattr(connection, "mobile_identity", None) is not None and (
+        action.startswith("settings.remote_access.")
+        or action in {"settings.channel.configure", "settings.channel.connect.start",
+                      "settings.channel.connect.poll", "settings.channel.connect.cancel"}
+    ):
+        return "local_ui_required"
+    return "access_denied"
 
 
 def _mobile_mutation_allowed(connection: Any, action: str) -> bool:
@@ -343,6 +356,18 @@ class WebUICommandRouter:
         envelope: dict[str, Any],
     ) -> None:
         """Execute one typed WebUI command."""
+        if getattr(connection, "mobile_identity", None) is not None:
+            if not await self._transport.revalidate_mobile_connection(connection):
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="access_expired",
+                )
+                try:
+                    await connection.close(1008, "access expired")
+                except Exception:
+                    pass
+                return
         command_type = envelope.get("type")
         if command_type == "webui_request":
             await self.start_webui_request(connection, envelope)
@@ -848,7 +873,7 @@ class WebUICommandRouter:
                 connection,
                 request_id,
                 status=403,
-                message="access_denied",
+                message=_mobile_denial_message(connection, action),
             )
             return
 
@@ -1089,7 +1114,7 @@ class WebUICommandRouter:
                 connection,
                 request_id,
                 status=403,
-                message="access_denied",
+                message=_mobile_denial_message(connection, action),
             )
             return
         if (
@@ -1149,6 +1174,16 @@ class WebUICommandRouter:
         source_binding: dict[str, object] | None = None,
         source_binding_captured: bool = False,
     ) -> WebUIRequestResult:
+        try:
+            from nanobot.remote.operations import load_registry
+
+            spec = load_registry().mutations.get(action)
+            if spec is not None and spec.max_request_bytes is not None:
+                encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                if len(encoded) > spec.max_request_bytes:
+                    return WebUIRequestResult(status=413, message="request_too_large")
+        except Exception:
+            pass
         try:
             lock = self.request_locks.setdefault(connection, asyncio.Lock())
             async with lock:

@@ -43,7 +43,11 @@ def main() -> int:
             kind = kind_for(api)
             planned = (
                 row["id"].startswith(PLANNED_PREFIXES)
-                and row["id"] != "workspace.grant.upsert"
+                and row["id"] not in {
+                    "workspace.grant.upsert",
+                    "workspace.access.prepare_full",
+                    "workspace.access.mode.set",
+                }
             )
             bounds = native.get("bounds", {})
             operations.append(

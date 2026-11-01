@@ -444,6 +444,8 @@ class SystemSettingsHandler:
         action: str,
         operations: SystemSettingsOperations,
     ) -> SettingsRouteResult:
+        if action in {"install", "update", "uninstall"} and not self.allow_feature_package_install(request):
+            return SettingsRouteResult.failure(403, "remote_package_install_denied")
         try:
             payload = await asyncio.to_thread(
                 operations.cli_apps_action,

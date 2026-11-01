@@ -431,6 +431,9 @@ class WebSocketChannel(BaseChannel):
     async def webui_hydrate(self, chat_id: str) -> None:
         await self._hydrate_after_subscribe(chat_id)
 
+    async def revalidate_mobile_connection(self, connection: ServerConnection) -> bool:
+        return await self.gateway.endpoint.revalidate_mobile_connection(connection)
+
     async def webui_send_event(
         self,
         connection: ServerConnection,

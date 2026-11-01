@@ -348,21 +348,34 @@ class OwnerDelegationService:
             expires_at=self.clock(),
         )
 
-    def rename_device(self, installation_id: str, label: str) -> dict[str, Any]:
+    def rename_device(
+        self,
+        installation_id: str,
+        label: str,
+        *,
+        actor_installation_id: str | None = None,
+    ) -> dict[str, Any]:
         device = self.store.rename_device(installation_id, label)
         self.store.record_audit(
             installation_id=device.installation_id,
             operation="device.rename",
             decision="applied",
+            actor_installation_id=actor_installation_id,
         )
         return {"installation_id": device.installation_id, "label": device.label}
 
-    def revoke_device(self, installation_id: str) -> dict[str, Any]:
+    def revoke_device(
+        self,
+        installation_id: str,
+        *,
+        actor_installation_id: str | None = None,
+    ) -> dict[str, Any]:
         device = self.store.revoke_device(installation_id)
         self.store.record_audit(
             installation_id=device.installation_id,
             operation="device.revoke",
             decision="applied",
+            actor_installation_id=actor_installation_id,
         )
         return {"installation_id": device.installation_id, "revoked": device.revoked}
 

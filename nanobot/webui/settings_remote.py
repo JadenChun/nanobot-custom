@@ -90,6 +90,8 @@ def handle_remote_access(
                     label=str(label),
                     chat_consent=True,
                     media_consent=bool(body.get("mediaConsent", False)),
+                    full_control_consent=bool(body.get("fullControlConsent", False)),
+                    shared_history_consent=bool(body.get("sharedHistoryConsent", False)),
                 )
             )
         if path == f"{_PREFIX}/pairing/approve":

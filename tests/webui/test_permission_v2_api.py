@@ -69,8 +69,11 @@ def test_prepare_full_fails_closed_for_unknown_or_unmanaged_draft(
     assert local_only.value.status == 403
 
     with pytest.raises(WorkspacePermissionActionError) as unknown:
-        controller.prepare_full({"chat_id": chat}, local_ui=True)
+        controller.prepare_full({"chat_id": chat}, local_ui=False, owner_authorized=True)
     assert unknown.value.status == 404
+    with pytest.raises(WorkspacePermissionActionError) as local_unknown:
+        controller.prepare_full({"chat_id": chat}, local_ui=True)
+    assert local_unknown.value.status == 404
 
     controller.stage_scope(chat, default_workspace_scope(project, True))
     with pytest.raises(WorkspacePermissionActionError) as unmanaged:

@@ -1,5 +1,9 @@
 import { fetchWithTimeout } from "./http";
 
+export interface RemoteAccessMutationTransport {
+  requestMutation<T>(action: string, payload: Record<string, unknown>): Promise<T>;
+}
+
 export interface RemoteAccessDevice {
   installation_id: string;
   label: string;
@@ -64,37 +68,46 @@ export async function fetchRemoteAccessStatus(token: string): Promise<RemoteAcce
   return request<RemoteAccessStatus>(token, "/api/settings/remote-access");
 }
 
-export async function setRemoteAccessEnabled(token: string, enabled: boolean): Promise<boolean> {
-  const result = await request<{ enabled: boolean }>(token, "/api/settings/remote-access/enable", {
-    method: "POST",
-    body: JSON.stringify({ enabled }),
-  });
+export async function setRemoteAccessEnabled(
+  transport: RemoteAccessMutationTransport,
+  enabled: boolean,
+): Promise<boolean> {
+  const result = await transport.requestMutation<{ enabled: boolean }>(
+    "settings.remote_access.enable",
+    { enabled },
+  );
   return result.enabled;
 }
 
-export async function revokeRemoteDevice(token: string, installationId: string): Promise<void> {
-  await request(token, "/api/settings/remote-access/revoke", {
-    method: "POST",
-    body: JSON.stringify({ installation_id: installationId }),
+export async function revokeRemoteDevice(
+  transport: RemoteAccessMutationTransport,
+  installationId: string,
+): Promise<void> {
+  await transport.requestMutation("settings.remote_access.revoke", {
+    installation_id: installationId,
   });
 }
 
 export async function startRemotePairing(
-  token: string,
-  input: { origin: string; label: string; chatConsent: boolean; mediaConsent: boolean },
+  transport: RemoteAccessMutationTransport,
+  input: {
+    origin: string;
+    label: string;
+    chatConsent: boolean;
+    mediaConsent: boolean;
+    fullControlConsent: boolean;
+    sharedHistoryConsent: boolean;
+  },
 ): Promise<RemotePairingOffer> {
-  return request<RemotePairingOffer>(token, "/api/settings/remote-access/pairing/start", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  return transport.requestMutation<RemotePairingOffer>(
+    "settings.remote_access.pairing.start",
+    input,
+  );
 }
 
 export async function approveRemotePairing(
-  token: string,
+  transport: RemoteAccessMutationTransport,
   input: { pairingId: string; comparisonCode: string },
 ): Promise<void> {
-  await request(token, "/api/settings/remote-access/pairing/approve", {
-    method: "POST",
-    body: JSON.stringify(input),
-  });
+  await transport.requestMutation("settings.remote_access.pairing.approve", input);
 }

@@ -213,6 +213,10 @@ WEBSOCKET_MUTATION_ROUTES = {
     "settings.channel.configure": "/api/settings/channels/configure",
     "settings.pairing.approve": "/api/settings/pairing/approve",
     "settings.pairing.deny": "/api/settings/pairing/deny",
+    "settings.remote_access.enable": "/api/settings/remote-access/enable",
+    "settings.remote_access.revoke": "/api/settings/remote-access/revoke",
+    "settings.remote_access.pairing.start": "/api/settings/remote-access/pairing/start",
+    "settings.remote_access.pairing.approve": "/api/settings/remote-access/pairing/approve",
     "settings.mcp.enable": "/api/settings/mcp-presets/enable",
     "settings.mcp.disable": "/api/settings/mcp-presets/disable",
     "settings.mcp.remove": "/api/settings/mcp-presets/remove",
@@ -247,6 +251,8 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
 
 _OWNER_DELEGATED_LOCAL_PATHS = frozenset({
     "/api/workspaces/grants/upsert",
+    "/api/workspaces/access/prepare-full",
+    "/api/workspaces/access/mode",
 })
 
 
@@ -559,8 +565,16 @@ class GatewayHTTPHandler:
             management_available=owner,
         )
 
-    async def mobile_api_payload(self, path: str) -> tuple[int, dict[str, Any]]:
-        """Dispatch one allowlisted mobile chat read through the local handler."""
+    async def mobile_api_payload(
+        self,
+        path: str,
+        *,
+        owner: bool = False,
+    ) -> tuple[int, dict[str, Any]]:
+        """Dispatch one allowlisted mobile chat read through the local handler.
+
+        A legacy chat-only device keeps the filtered slash palette; owners see all.
+        """
         request = WsRequest(path, Headers())
         setattr(request, "_nanobot_trusted_proxy_authenticated", True)
         response = await self.dispatch(None, request, internal=True)
@@ -574,7 +588,7 @@ class GatewayHTTPHandler:
         if not isinstance(body, dict):
             return 502, {"error": "invalid_response"}
         payload = cast(dict[str, Any], body)
-        if path == "/api/commands":
+        if path == "/api/commands" and not owner:
             payload = _filter_mobile_commands(payload)
         return response.status_code, payload
 
@@ -623,6 +637,10 @@ class GatewayHTTPHandler:
             return 403, {"error": "operation_not_allowed"}
         if not getattr(identity, "is_owner", False):
             return 403, {"error": "owner_required"}
+        if spec.max_request_bytes is not None:
+            encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            if len(encoded) > spec.max_request_bytes:
+                return 413, {"error": "request_too_large"}
         connection = SimpleNamespace(mobile_identity=identity)
         response = await self.dispatch_webui_mutation(connection, action, payload)
         body: Any
@@ -1979,11 +1997,28 @@ class GatewayHTTPHandler:
             return _http_error(400, "invalid_permission_request")
         if not self._matches_expected_webui_source(request, payload):
             return _http_error(409, "source_changed")
+        local_ui = _is_loopback_host(self.config.host) and _is_local_browser_request(
+            connection,
+            request.headers,
+        )
+        owner_authorized = bool(
+            getattr(getattr(connection, "mobile_identity", None), "is_owner", False)
+        )
+        if not local_ui and not owner_authorized:
+            return _http_error(403, "local_ui_required")
         try:
             if path == "/api/workspaces/access/prepare-full":
-                result = self.workspaces.prepare_full(payload, local_ui=True)
+                result = self.workspaces.prepare_full(
+                    payload,
+                    local_ui=local_ui,
+                    owner_authorized=owner_authorized,
+                )
             else:
-                result = self.workspaces.set_permission_mode(payload, local_ui=True)
+                result = self.workspaces.set_permission_mode(
+                    payload,
+                    local_ui=local_ui,
+                    owner_authorized=owner_authorized,
+                )
         except WorkspacePermissionActionError as exc:
             return _http_error(exc.status, exc.message)
         except Exception:

@@ -134,6 +134,8 @@ class RemoteAccessClient:
         label: str,
         chat_consent: bool,
         media_consent: bool = False,
+        full_control_consent: bool = False,
+        shared_history_consent: bool = False,
     ) -> dict[str, Any]:
         return self._call(
             "pair_create",
@@ -142,6 +144,8 @@ class RemoteAccessClient:
                 "label": label,
                 "chat_consent": chat_consent,
                 "media_consent": media_consent,
+                "full_control_consent": full_control_consent,
+                "shared_history_consent": shared_history_consent,
             },
             role="admin",
             require_admin=True,

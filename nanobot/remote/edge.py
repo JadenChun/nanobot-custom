@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -229,7 +230,23 @@ class MobileGatewayEdge:
         except EdgeAuthError as exc:
             return http_json_response({"error": exc.code}, status=exc.status)
         setattr(connection, "mobile_identity", identity)
+        setattr(connection, "mobile_access_token", token)
         return None
+
+    async def revalidate_mobile_access(
+        self,
+        identity: AccessIdentity,
+        access_token: str,
+    ) -> AccessIdentity:
+        """Revalidate current expiry/revocation for an established socket."""
+        if time.time() >= identity.expires_at:
+            raise EdgeAuthError(401, "access_expired")
+        if not access_token:
+            raise EdgeAuthError(401, "missing_access")
+        fresh = await self.validator.validate(access_token)
+        if fresh.installation_id != identity.installation_id:
+            raise EdgeAuthError(403, "installation_mismatch")
+        return fresh
 
     async def handle(self, _connection: Any, request: WsRequest) -> Response | None:
         path, query = parse_request_path(request.path)
@@ -289,6 +306,10 @@ class MobileGatewayEdge:
             if spec is None or not spec.enabled:
                 return http_json_response({"error": "path_not_allowed"}, status=400)
             status, payload = await self.feature_handler(identity, raw_path)
+            if spec.max_response_bytes is not None:
+                encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                if len(encoded) > spec.max_response_bytes:
+                    return http_json_response({"error": "response_too_large"}, status=413)
             return http_json_response(payload, status=status)
 
         if path == "/mobile/v1/api":

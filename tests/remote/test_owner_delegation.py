@@ -341,3 +341,77 @@ def test_audit_is_bounded_sanitized_and_distinguishes_devices(tmp_path) -> None:
     serialized = str(snapshot)
     assert "refresh" not in serialized.lower()
     assert "token" not in serialized.lower()
+
+
+def test_product_pairing_path_grants_owner_via_ipc(tmp_path) -> None:
+    from nanobot.remote.client import RemoteAccessClient
+    from nanobot.remote.owner import RemoteAccessOwner
+
+    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner.start()
+    owner.store.set_enabled(True)
+    try:
+        client = RemoteAccessClient(owner.socket_path, admin_token=owner.store.admin_token())
+        offer = client.create_pairing(
+            origin="https://fixture.example:8443",
+            label="phone",
+            chat_consent=True,
+            media_consent=True,
+            full_control_consent=True,
+            shared_history_consent=True,
+        )
+        assert "owner" in offer["scopes"]
+        pending = client.collect_pairing(
+            pairing_id=offer["pairing_id"],
+            nonce=offer["nonce"],
+            collector_secret=offer["collector_secret"],
+            installation_id="install-product-owner",
+            label="phone",
+        )
+        assert pending["comparison_code"] == offer["comparison_code"]
+        client.approve_pairing(
+            pairing_id=offer["pairing_id"],
+            comparison_code=offer["comparison_code"],
+        )
+        result = client.poll_pairing(
+            pairing_id=offer["pairing_id"],
+            nonce=offer["nonce"],
+            collector_secret=offer["collector_secret"],
+        )
+        assert result["status"] == "approved"
+        assert "owner" in result["scopes"]
+        assert owner.store.get_device("install-product-owner").scopes.count("owner") == 1  # type: ignore[union-attr]
+    finally:
+        owner.stop()
+
+
+def test_product_pairing_without_consent_stays_legacy(tmp_path) -> None:
+    from nanobot.remote.client import RemoteAccessClient
+    from nanobot.remote.owner import RemoteAccessOwner
+
+    owner = RemoteAccessOwner(tmp_path / "remote-access")
+    owner.start()
+    owner.store.set_enabled(True)
+    try:
+        client = RemoteAccessClient(owner.socket_path, admin_token=owner.store.admin_token())
+        offer = client.create_pairing(
+            origin="https://fixture.example:8443",
+            label="phone",
+            chat_consent=True,
+            media_consent=False,
+        )
+        assert "owner" not in offer["scopes"]
+        assert "chat.read" in offer["scopes"]
+    finally:
+        owner.stop()
+
+
+def test_audit_records_acting_owner_for_device_revoke(tmp_path) -> None:
+    store, _tokens, pairing, delegation = setup(tmp_path)
+    pair(pairing, installation_id="install-owner", full_control=True)
+    pair(pairing, installation_id="install-legacy", full_control=False)
+    delegation.revoke_device("install-legacy", actor_installation_id="install-owner")
+    entry = store.snapshot()["audit"][-1]
+    assert entry["installation_id"] == "install-legacy"
+    assert entry["actor_installation_id"] == "install-owner"
+    assert entry["operation"] == "device.revoke"

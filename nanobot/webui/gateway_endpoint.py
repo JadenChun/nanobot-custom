@@ -124,6 +124,21 @@ class WebUIGatewayEndpoint:
     def is_webui_connection(self, connection: ServerConnection) -> bool:
         return connection in self.webui_connections
 
+    async def revalidate_mobile_connection(self, connection: ServerConnection) -> bool:
+        """Revalidate current owner authority for one established mobile socket."""
+        identity = getattr(connection, "mobile_identity", None)
+        if identity is None:
+            return True
+        token = getattr(connection, "mobile_access_token", None)
+        if self._mobile_edge is None or not isinstance(token, str) or not token:
+            return False
+        try:
+            fresh = await self._mobile_edge.revalidate_mobile_access(identity, token)
+        except Exception:
+            return False
+        setattr(connection, "mobile_identity", fresh)
+        return True
+
     def discard_connection(self, connection: ServerConnection) -> None:
         self.webui_connections.discard(connection)
 
