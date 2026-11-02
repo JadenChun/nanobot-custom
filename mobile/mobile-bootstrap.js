@@ -330,17 +330,20 @@
       setPill(ui.server, hostLabel(link.origin), "is-ok");
       ui.server.title = link.origin || "";
       setPill(ui.node, "Starting", "is-warn");
-      ui.installation.textContent = link.installationId || "unknown";
+      var localInstallation = identityRef && identityRef.installationId
+        ? identityRef.installationId
+        : link.installationId;
+      ui.installation.textContent = localInstallation || "unknown";
       ui.status.textContent = "Connecting to the server...";
       ui.status.classList.remove("is-error");
       try {
         var collected = await plugin.pairStart({
           origin: link.origin,
-          installationId: link.installationId,
+          installationId: localInstallation,
           challenge: link.challenge,
           label: "android"
         });
-        ui.installation.textContent = collected.installationId || link.installationId;
+        ui.installation.textContent = collected.installationId || localInstallation;
         ui.code.textContent = collected.comparison_code || "------";
         setState("waiting");
         setPill(ui.node, "Connected", "is-ok");
