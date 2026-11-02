@@ -36,7 +36,7 @@
     "resources": ["resources/backend-compat.json", "resources/THIRD_PARTY_NOTICES.md", "resources/LICENSE"],
     "linux": {
       "rpm": {
-        "release": "5",
+        "release": "6",
         "epoch": 0,
         "desktopTemplate": "nanobot.desktop",
         "files": {

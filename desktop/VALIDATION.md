@@ -57,6 +57,22 @@ The release-window observation is recorded in
 
 ## Build and validation
 
+RPM 0.3.0-6 uses WebKitGTK's current default renderer without overriding
+`WEBKIT_DISABLE_DMABUF_RENDERER`. If a particular installation shows black
+content, launch it with `WEBKIT_DISABLE_DMABUF_RENDERER=1 nanobot-desktop` to
+try the legacy software path; this can reduce scrolling performance. In a
+controlled local WebKit fixture at DPR 2, the legacy path measured 7.2–8.9 FPS
+and the default path 59.2–59.9 FPS, with pixel-identical screenshots. This is
+fixture evidence only. On the validated Fedora 44 Wayland machine, RPM
+0.3.0-6 passed `rpm -V`, and the installed executable digest matched its RPM
+payload. Native scrolling at 1490x794 and DPR 2 measured 16.2 FPS before and
+61.0 FPS after the update. Wayland screenshots showed visible UI without black
+content; resize, native close-to-hide, and tray restore checks succeeded with
+the desktop host and gateway retained. Config and preferences hashes and run
+status counts stayed unchanged. These are local measurements and checks, not a
+general performance guarantee. Evidence is in
+`.assets/validation/fedora-renderer-2026-11-01/`.
+
 Build from `desktop/src-tauri` on Fedora with the dependencies above and Tauri
 CLI 2.10.1 available on `PATH`:
 

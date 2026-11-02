@@ -178,11 +178,6 @@ fn main() {
         }
         _ => {}
     }
-    if env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
-        // Fedora 44 KDE/Wayland's default WebKit DMA-BUF renderer produced a
-        // black WebView in the release-mode qualification run.
-        env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    }
     run();
 }
 
