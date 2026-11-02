@@ -291,7 +291,8 @@
       ui.status.classList.add("is-error");
     }
 
-    function needLogin() {
+    function needLogin(run) {
+      if (stopped || (run !== undefined && run !== generation)) return;
       stopTimers();
       setState("login");
       setPill(ui.node, "Sign in required", "is-warn");
@@ -315,9 +316,10 @@
         ui.status.classList.remove("is-error");
         pollTimer = setTimeout(function () { void poll(pairingId, run); }, 2000);
       } catch (error) {
+        if (stopped || run !== generation || state !== "waiting") return;
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
-          needLogin();
+          needLogin(run);
           return;
         }
         fail(message);
@@ -332,11 +334,6 @@
           throw new Error("pairing identity is unavailable");
         }
         identityRef = identity;
-        ui.installation.textContent = identity.installationId;
-        if (identity.origin) {
-          setPill(ui.server, hostLabel(identity.origin), "is-ok");
-          ui.server.title = identity.origin;
-        }
         console.log("NANOBOT_MOBILE_PAIRING_ID " + identity.installationId);
         console.log("NANOBOT_PAIRING_PANELS " + document.querySelectorAll(".mobile-pairing").length);
         return identity;
@@ -359,6 +356,7 @@
       try {
         identity = await loadIdentity();
       } catch (error) {
+        if (run !== generation || lastLink !== link || state !== "connecting") return;
         fail(String(error && error.message ? error.message : error));
         return;
       }
@@ -382,9 +380,10 @@
         ui.status.textContent = "Confirm the code matches the desktop, then approve the phone there.";
         void poll(collected.pairing_id, run);
       } catch (error) {
+        if (run !== generation || lastLink !== link || state !== "connecting") return;
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
-          needLogin();
+          needLogin(run);
           return;
         }
         fail(message);
@@ -455,11 +454,17 @@
 
     setState("idle");
     void (async function () {
+      var identity;
       try {
-        await loadIdentity();
+        identity = await loadIdentity();
       } catch (error) {
         fail(String(error && error.message ? error.message : error));
         return;
+      }
+      ui.installation.textContent = identity.installationId;
+      if (identity.origin) {
+        setPill(ui.server, hostLabel(identity.origin), "is-ok");
+        ui.server.title = identity.origin;
       }
       watchForLink();
     })();
@@ -477,6 +482,7 @@
       for (var i = 0; i < 180; i += 1) {
         var status = await plugin.status();
         if (status && status.state === "ready") return;
+        if (status && status.state === "needs_login") throw new Error("tailnet login required");
         if (status && status.state === "error") throw new Error("native transport failed");
         await new Promise(function (resolve) { setTimeout(resolve, 500); });
       }

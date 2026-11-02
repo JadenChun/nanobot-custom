@@ -34,9 +34,9 @@ function mutationTransport() {
       if (action === "settings.remote_access.enable") return { enabled: false };
       if (action === "settings.remote_access.revoke") return { revoked: true };
       if (action === "settings.remote_access.pairing.start") {
-        approvalScopes = payload.fullControlConsent === true
-          ? ["chat.read", "chat.write", "media.read", "attachment.write", "owner"]
-          : ["chat.read", "chat.write", "media.read", "attachment.write"];
+        approvalScopes = ["chat.read", "chat.write", "attachment.write"];
+        if (payload.mediaConsent === true) approvalScopes.push("media.read");
+        if (payload.fullControlConsent === true) approvalScopes.push("owner");
         return {
           pairing_id: "pair-1",
           comparison_code: "123456",
@@ -111,7 +111,7 @@ describe("RemoteAccessSettings", () => {
     await userEvent.click(screen.getByRole("button", { name: "Set up remote access" }));
     await userEvent.type(screen.getByLabelText("Server address"), "https://fixture.example");
     await userEvent.click(screen.getByLabelText("Allow full owner control"));
-    expect(screen.getByText(/Full owner control is off/)).toBeInTheDocument();
+    expect(screen.getByText(/Full owner control, shared history/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Get started" }));
     await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
       "settings.remote_access.pairing.start",
@@ -125,6 +125,26 @@ describe("RemoteAccessSettings", () => {
     await userEvent.click(screen.getByRole("button", { name: "Approve phone" }));
     expect(await screen.findByText(/paired for chats and media only/)).toBeInTheDocument();
     expect(screen.queryByText(/paired with full owner control/)).not.toBeInTheDocument();
+  });
+
+  it("withholds media and shared history when those consents are unchecked", async () => {
+    const mutate = mutationTransport();
+    render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
+    await userEvent.click(screen.getByRole("button", { name: "Set up remote access" }));
+    await userEvent.type(screen.getByLabelText("Server address"), "https://fixture.example");
+    await userEvent.click(screen.getByLabelText("Share chat history"));
+    await userEvent.click(screen.getByLabelText("Allow media transfer"));
+    await userEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
+      "settings.remote_access.pairing.start",
+      expect.objectContaining({
+        fullControlConsent: true,
+        sharedHistoryConsent: false,
+        mediaConsent: false,
+      }),
+    ));
+    await userEvent.click(screen.getByRole("button", { name: "Approve phone" }));
+    expect(await screen.findByText(/Photo and file transfer are off; shared chat history is off/)).toBeInTheDocument();
   });
 
   it("fetches status with bearer authorization", async () => {

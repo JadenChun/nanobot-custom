@@ -47,7 +47,13 @@ afterEach(() => {
 });
 
 function installPairedPlugin(
-  mode: "revoked" | "unreachable" | "server_error" | "transport_error" = "revoked",
+  mode:
+    | "revoked"
+    | "unreachable"
+    | "server_error"
+    | "transport_error"
+    | "start_error"
+    | "needs_login" = "revoked",
 ) {
   let emit: ((event: Record<string, unknown>) => void) | null = null;
   const refresh = vi.fn(async () => {
@@ -60,8 +66,17 @@ function installPairedPlugin(
       installationId: "phone-local-id",
       hasAccess: true,
     })),
-    start: vi.fn(async () => ({})),
-    status: vi.fn(async () => ({ state: mode === "transport_error" ? "error" : "ready" })),
+    start: vi.fn(async () => {
+      if (mode === "start_error") throw new Error("native start failed");
+      return {};
+    }),
+    status: vi.fn(async () => ({
+      state: mode === "transport_error"
+        ? "error"
+        : mode === "needs_login"
+          ? "needs_login"
+          : "ready",
+    })),
     addListener: vi.fn(async (_name: string, listener: (event: Record<string, unknown>) => void) => {
       emit = listener;
       return { remove: vi.fn(async () => {}) };
@@ -73,7 +88,7 @@ function installPairedPlugin(
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
     Plugins: { NativeNetwork: plugin },
   };
-  if (mode !== "transport_error") {
+  if (mode === "revoked" || mode === "unreachable" || mode === "server_error") {
     setTimeout(() => {
       emit?.(
         mode === "unreachable"
@@ -107,6 +122,48 @@ function installCancelPlugin() {
     Plugins: { NativeNetwork: plugin },
   };
   return { pairStart, pairPoll, resolvePairStart: (value: Record<string, unknown>) => resolvePairStart(value) };
+}
+
+function installRejectedPairStartPlugin() {
+  let rejectPairStart: (error: Error) => void = () => {};
+  const pairStart = vi.fn(() => new Promise<Record<string, unknown>>((_resolve, reject) => {
+    rejectPairStart = reject;
+  }));
+  const pairPoll = vi.fn(async () => ({ status: "waiting" }));
+  const plugin = {
+    target: vi.fn(async () => ({ hasAccess: false })),
+    pairingIdentity: vi.fn(async () => ({ installationId: "phone-local-id" })),
+    pairStart,
+    pairPoll,
+    pendingPairingLink: vi.fn(async () => null),
+  };
+  (window as unknown as { Capacitor?: unknown }).Capacitor = {
+    Plugins: { NativeNetwork: plugin },
+  };
+  return { pairStart, pairPoll, rejectPairStart: (error: Error) => rejectPairStart(error) };
+}
+
+function installRejectedPollPlugin() {
+  let rejectPoll: (error: Error) => void = () => {};
+  const pairStart = vi.fn(async () => ({
+    pairing_id: "pairing-1",
+    comparison_code: "123456",
+    installationId: "phone-local-id",
+  }));
+  const pairPoll = vi.fn(() => new Promise<Record<string, unknown>>((_resolve, reject) => {
+    rejectPoll = reject;
+  }));
+  const plugin = {
+    target: vi.fn(async () => ({ hasAccess: false })),
+    pairingIdentity: vi.fn(async () => ({ installationId: "phone-local-id" })),
+    pairStart,
+    pairPoll,
+    pendingPairingLink: vi.fn(async () => null),
+  };
+  (window as unknown as { Capacitor?: unknown }).Capacitor = {
+    Plugins: { NativeNetwork: plugin },
+  };
+  return { pairPoll, rejectPoll: (error: Error) => rejectPoll(error) };
 }
 
 describe("mobile pairing identity", () => {
@@ -172,6 +229,62 @@ describe("mobile pairing identity", () => {
     expect(pairPoll).not.toHaveBeenCalled();
   });
 
+  it("ignores a pairStart rejection that arrives after cancel", async () => {
+    const { pairStart, rejectPairStart } = installRejectedPairStartPlugin();
+    window.eval(bootstrapSource);
+
+    const form = await vi.waitFor(() => {
+      const element = document.querySelector<HTMLFormElement>(".mobile-pairing-form");
+      expect(element).not.toBeNull();
+      return element as HTMLFormElement;
+    });
+    const input = document.querySelector<HTMLInputElement>(".mobile-pairing-input");
+    input!.value = [
+      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "installation=desktop-generated-id",
+      "challenge=pairing-1.nonce.secret",
+    ].join("&");
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(pairStart).toHaveBeenCalledTimes(1));
+
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((button) => button.textContent === "Use a different link");
+    cancel?.click();
+    rejectPairStart(new Error("late pairing failure"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+    expect(document.body.textContent).not.toContain("late pairing failure");
+  });
+
+  it("ignores a pairPoll rejection that arrives after cancel", async () => {
+    const { rejectPoll } = installRejectedPollPlugin();
+    window.eval(bootstrapSource);
+
+    const form = await vi.waitFor(() => {
+      const element = document.querySelector<HTMLFormElement>(".mobile-pairing-form");
+      expect(element).not.toBeNull();
+      return element as HTMLFormElement;
+    });
+    const input = document.querySelector<HTMLInputElement>(".mobile-pairing-input");
+    input!.value = [
+      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "installation=desktop-generated-id",
+      "challenge=pairing-1.nonce.secret",
+    ].join("&");
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("waiting");
+    });
+
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((button) => button.textContent === "Cancel");
+    cancel?.click();
+    rejectPoll(new Error("late poll failure"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+    expect(document.body.textContent).not.toContain("late poll failure");
+  });
+
   it("clears a revoked pairing before the app shell opens", async () => {
     const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {});
     const { refresh, logout } = installPairedPlugin();
@@ -212,5 +325,25 @@ describe("mobile pairing identity", () => {
       expect(document.querySelector(".mobile-reauth")).not.toBeNull();
     });
     expect(document.body.textContent).toContain("Can't reach this desktop right now");
+  });
+
+  it("shows reconnect immediately when Tailscale needs a fresh login", async () => {
+    installPairedPlugin("needs_login");
+    window.eval(bootstrapSource);
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".mobile-reauth")).not.toBeNull();
+    });
+    expect(document.body.textContent).toContain("tailnet login required");
+  });
+
+  it("shows reconnect when native transport start rejects", async () => {
+    installPairedPlugin("start_error");
+    window.eval(bootstrapSource);
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".mobile-reauth")).not.toBeNull();
+    });
+    expect(document.body.textContent).toContain("native start failed");
   });
 });
