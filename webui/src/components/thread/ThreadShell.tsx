@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { FilePreviewAvailabilityProvider } from "@/components/FilePreviewAvailabilityContext";
 import { FilePreviewPanel } from "@/components/FilePreviewPanel";
+import { ApprovalRequestCard } from "@/components/thread/ApprovalRequestCard";
 import {
   FolderAccessRequestCard,
   type CorrelatedFolderAccessResult,
@@ -48,6 +49,7 @@ import {
 } from "@/lib/mcp-preset-events";
 import type { CanonicalRunSnapshot, StreamError } from "@/lib/nanobot-client";
 import { inferProviderFromModelName, providerDisplayLabel } from "@/lib/provider-brand";
+import { parseRiskyApprovalPrompt } from "@/lib/risky-approval";
 import type {
   ChatSummary,
   FolderAccessRequest,
@@ -1313,6 +1315,17 @@ export function ThreadShell({
   const turnActive = messagesReady
     && !recoveryNeedsDecision
     && (isStreaming || currentRunStartedAt !== null);
+  const riskyApproval = useMemo(() => {
+    if (turnActive || booting) return null;
+    for (let index = displayMessages.length - 1; index >= 0; index -= 1) {
+      const message = displayMessages[index];
+      if (message.role === "user") return null;
+      if (message.role === "assistant" && message.kind !== "trace") {
+        return parseRiskyApprovalPrompt(message.content);
+      }
+    }
+    return null;
+  }, [booting, displayMessages, turnActive]);
   const restoredViewportTurnId = useMemo(
     () => turnActive ? latestActiveTurnId(displayMessages, currentRunStartedAt) : null,
     [currentRunStartedAt, displayMessages, turnActive],
@@ -2297,6 +2310,14 @@ export function ThreadShell({
       ) : null}
       {session ? (
         <>
+        {riskyApproval ? (
+          <ApprovalRequestCard
+            summary={riskyApproval.summary}
+            busy={turnActive || booting || preparingFull}
+            onApprove={() => handleThreadSend("yes")}
+            onCancel={() => handleThreadSend("no")}
+          />
+        ) : null}
         {!temporary && workspaceAccessRequest ? (
           <FolderAccessRequestCard
             chatId={chatId}
