@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import pytest
 
@@ -6,6 +7,13 @@ from nanobot.agent.tools.context import RequestContext, request_context
 from nanobot.agent.tools.message import MessageTool
 from nanobot.bus.events import OutboundMessage
 from nanobot.config.paths import get_workspace_path
+from nanobot.context_repo.policy import ResourceAccessPolicy
+from nanobot.security.folder_grants import FolderGrantStore
+from nanobot.security.workspace_access import (
+    bind_workspace_scope,
+    build_workspace_scope,
+    reset_workspace_scope,
+)
 
 
 @pytest.mark.asyncio
@@ -234,6 +242,96 @@ async def test_message_tool_allows_workspace_absolute_media_when_restricted(tmp_
 
     assert result == "Message sent to telegram:1 with 1 attachments"
     assert sent[0].media == [str(image.resolve())]
+
+
+def _folder_grant_setup(tmp_path: Path) -> tuple[Path, Path, Path, FolderGrantStore, ResourceAccessPolicy]:
+    home = tmp_path / "home"
+    granted = tmp_path / "granted"
+    image = granted / "photo.png"
+    home.mkdir()
+    granted.mkdir()
+    image.write_bytes(b"png")
+    store = FolderGrantStore(
+        agent_home=home,
+        instance_root=tmp_path / "instance",
+        path=tmp_path / "instance" / "webui" / "folder-grants.json",
+    )
+    store.upsert(
+        {"path": str(granted), "file_access": "read_write", "commands": True},
+        expected_revision=0,
+    )
+    policy = ResourceAccessPolicy(workspace=home, folder_grants=store.view)
+    return home, granted, image, store, policy
+
+
+@pytest.mark.asyncio
+async def test_message_tool_allows_folder_granted_media_in_managed_mode(tmp_path: Path) -> None:
+    sent: list[OutboundMessage] = []
+
+    async def _send(msg: OutboundMessage) -> None:
+        sent.append(msg)
+
+    home, _granted, image, _store, policy = _folder_grant_setup(tmp_path)
+    tool = MessageTool(
+        send_callback=_send,
+        workspace=home,
+        restrict_to_workspace=True,
+        resource_policy=policy,
+    )
+    token = bind_workspace_scope(
+        build_workspace_scope(home, "restricted", source_channel="websocket")
+    )
+    try:
+        result = await tool.execute(
+            content="see attached",
+            channel="websocket",
+            chat_id="granted",
+            media=[str(image)],
+        )
+    finally:
+        reset_workspace_scope(token)
+
+    assert result == "Message sent to websocket:granted with 1 attachments"
+    assert len(sent) == 1
+    assert len(sent[0].media) == 1
+    assert Path(sent[0].media[0]).samefile(image)
+
+
+@pytest.mark.asyncio
+async def test_message_tool_fails_closed_when_folder_grants_are_damaged(
+    tmp_path: Path,
+) -> None:
+    sent: list[OutboundMessage] = []
+
+    async def _send(msg: OutboundMessage) -> None:
+        sent.append(msg)
+
+    home, _granted, image, store, policy = _folder_grant_setup(tmp_path)
+    store.path.write_text(
+        '{"version": 1, "enabled": true, "revision": 99, "grants": []}',
+        encoding="utf-8",
+    )
+    tool = MessageTool(
+        send_callback=_send,
+        workspace=home,
+        restrict_to_workspace=True,
+        resource_policy=policy,
+    )
+    token = bind_workspace_scope(
+        build_workspace_scope(home, "restricted", source_channel="websocket")
+    )
+    try:
+        result = await tool.execute(
+            content="see attached",
+            channel="websocket",
+            chat_id="damaged",
+            media=[str(image)],
+        )
+    finally:
+        reset_workspace_scope(token)
+
+    assert result.startswith("Error: media path is not allowed:")
+    assert sent == []
 
 
 @pytest.mark.asyncio
