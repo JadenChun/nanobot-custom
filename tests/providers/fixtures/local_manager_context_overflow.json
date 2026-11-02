@@ -1,0 +1,24 @@
+{
+  "fixture_schema": "nanobot.local_manager_context_overflow.v1",
+  "status_code": 400,
+  "body": {
+    "code": 400,
+    "type": "exceed_context_size_error",
+    "message": "request (227502 tokens) exceeds the available context size (165888 tokens), try increasing it",
+    "n_prompt_tokens": 227502,
+    "n_ctx": 165888
+  },
+  "provenance": {
+    "runtime_id": "llama-cpp-build-r170-rocm",
+    "active_executable": "/home/jaden/ai/llama-rdna-r170/llama.cpp/build-r170/bin/llama-server",
+    "source_commit": "b79c2179eecf560df7cd16473731d0f002aeb570",
+    "compiled_commit": "b79c2179e",
+    "compiled_build": 11902,
+    "source_sha256": {
+      "server-common.cpp": "c673b0616dc9d977819cb860f74de5c514b32c2693d86ef0ce452730eb0d18a4",
+      "server-task.cpp": "c5fff31444f0b9f163de8d1ec6ad582aef61ce2e63d86b0c56e243aa71a1870a",
+      "server-context.cpp": "a5f765314fcc631b4cda880fe193045834c100d4cfae1ac617f0aff5c78407aa"
+    },
+    "values_are_historical_actuals": true
+  }
+}

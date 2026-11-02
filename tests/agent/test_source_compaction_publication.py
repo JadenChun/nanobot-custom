@@ -180,6 +180,50 @@ async def test_checkpoint_write_failure_keeps_old_memory_and_source(store, monke
         assert state.source_compaction.raw_messages == raw
 
 
+async def test_publication_requires_contiguous_disjoint_summary_proof(store):
+    from nanobot.session.checkpoint_dependencies import (
+        ConsumedSummaryChunk,
+        SummaryDependencyProof,
+    )
+
+    governor = ContextGovernor()
+    async with acquire_execution(store, 'test:compact', run_id='run') as owner:
+        writer = SourceTurnWriter(store.source, owner, run_id='run')
+        state = state_for(writer)
+        attempt = capture(governor, state)
+        candidate = attempt.candidate
+        first = candidate.summary_evidence(1)
+        second = candidate.summary_evidence(2, after=1)
+        overlapping = candidate.summary_evidence(2, after=0)
+        bad_proof = SummaryDependencyProof(candidate, (
+            ConsumedSummaryChunk(first, None, 'first fold'),
+            ConsumedSummaryChunk(overlapping, 'first fold', 'retained facts'),
+        ))
+        before = owner.read_snapshot()
+
+        with pytest.raises(SourceValidationError, match='contiguous'):
+            governor.publish_source_compaction(
+                state, attempt, boundary=2, summary='retained facts',
+                auxiliary_usage=None, proof=bad_proof,
+            )
+
+        assert owner.read_snapshot() == before
+        assert state.source.transcript == candidate.transcript
+        proof = SummaryDependencyProof(candidate, (
+            ConsumedSummaryChunk(first, None, 'first fold'),
+            ConsumedSummaryChunk(second, 'first fold', 'retained facts'),
+        ))
+        view = governor.publish_source_compaction(
+            state, attempt, boundary=2, summary='retained facts',
+            auxiliary_usage=None, proof=proof,
+        )
+        after = owner.read_snapshot()
+        assert after.checkpoint['summary'] == 'retained facts'
+        assert after.checkpoint['boundary'] == 2
+        assert state.source_view == view
+        assert state.source.transcript.nodes[1].summary == 'retained facts'
+
+
 async def test_local_scoped_append_rejects_candidate_even_without_ledger_update(store):
     governor = ContextGovernor()
     async with acquire_execution(store, 'test:compact', run_id='run') as owner:

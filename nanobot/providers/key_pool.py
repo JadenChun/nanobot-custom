@@ -58,7 +58,7 @@ class KeyPoolCoordinator:
                 if len(self._admitted) < self._rate_limit:
                     self._admitted.append(now)
                     return
-                delay = self._admitted[0] + 61.0 - now
+                delay = round(self._admitted[0] + 61.0 - now, 9)
             # No lock is held across waiting or a provider request. Cancelled
             # waiters have not reserved a slot and cannot consume capacity.
             await self._sleep(max(0.0, delay))

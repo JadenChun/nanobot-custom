@@ -13,6 +13,7 @@ from nanobot.providers.base import (
     LLMCallObserver,
     LLMProvider,
     LLMResponse,
+    PreparedRequestBudgetPreview,
     ProviderCallContext,
     ProviderConversationState,
     RetryEventCallback,
@@ -135,7 +136,9 @@ class PooledProvider(LLMProvider):
                     transport_receipt=None,
                     continuation_metadata_present=False,
                 )
-        return replace(response, **states) if states else response
+        if not states and response.local_usage_receipt is None:
+            return response
+        return replace(response, **states, local_usage_receipt=None)
 
     async def _attempt(self, kwargs: dict[str, Any], *, stream: bool, observed: bool,
                        stopped: list[bool | Literal['exhausted']],
@@ -162,6 +165,7 @@ class PooledProvider(LLMProvider):
                 local['provider_context'] = replace(
                     context, conversation_state=self._leaf_state(slot, context.conversation_state, local.get('model')),
                     context_window_tokens=context.context_window_tokens if leaf.supports_native_compaction(local.get('model')) else None,
+                    local_usage_anchor=None,
                 )
             await self._pool.admit()
             if attempts is not None:
@@ -193,8 +197,20 @@ class PooledProvider(LLMProvider):
     async def chat_once(self, **kwargs: Any) -> LLMResponse:
         """One paced credential attempt; do not rotate and repeat a summary."""
         slot = self._pool.request_order()[0]
+        local = dict(kwargs)
+        context = local.get("provider_context")
+        if isinstance(context, ProviderCallContext):
+            local["provider_context"] = replace(
+                context,
+                local_usage_anchor=None,
+                conversation_state=self._leaf_state(
+                    slot,
+                    context.conversation_state,
+                    local.get("model"),
+                ),
+            )
         await self._pool.admit()
-        response = await self._leaves[slot].chat_once(**kwargs)
+        response = await self._leaves[slot].chat_once(**local)
         if response.finish_reason != 'error':
             self._pool.succeeded(slot)
         else:
@@ -202,6 +218,70 @@ class PooledProvider(LLMProvider):
             if cooldown is not None:
                 self._pool.failed(slot, cooldown)
         return self._tag_response(slot, response)
+
+    async def chat_stream_once(self, **kwargs: Any) -> LLMResponse:
+        """Pace and call one selected pool leaf without rotation or retry."""
+        slot = self._pool.request_order()[0]
+        local = dict(kwargs)
+        context = local.get("provider_context")
+        if isinstance(context, ProviderCallContext):
+            local["provider_context"] = replace(
+                context,
+                conversation_state=self._leaf_state(
+                    slot,
+                    context.conversation_state,
+                    local.get("model"),
+                ),
+                context_window_tokens=(
+                    context.context_window_tokens
+                    if self._leaves[slot].supports_native_compaction(local.get("model"))
+                    else None
+                ),
+                    local_usage_anchor=None,
+            )
+        await self._pool.admit()
+        response = await self._leaves[slot].chat_stream_once(**local)
+        if response.finish_reason != "error":
+            self._pool.succeeded(slot)
+        else:
+            cooldown = _rotation_cooldown(response)
+            if cooldown is not None:
+                self._pool.failed(slot, cooldown)
+        return self._tag_response(slot, response)
+
+    def preview_request_budget(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str | None,
+        generation: GenerationSettings,
+        provider_context: ProviderCallContext,
+        stream: bool,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> PreparedRequestBudgetPreview | None:
+        previews: list[PreparedRequestBudgetPreview] = []
+        for leaf in self._leaves:
+            preview = leaf.preview_request_budget(
+                messages=messages,
+                tools=tools,
+                model=model,
+                generation=generation,
+                provider_context=replace(provider_context, local_usage_anchor=None),
+                stream=stream,
+                tool_choice=tool_choice,
+            )
+            if preview is None:
+                return None
+            previews.append(preview)
+        first = previews[0]
+        if any(
+            preview.measurement != first.measurement
+            or preview.effective_body != first.effective_body
+            for preview in previews[1:]
+        ):
+            return None
+        return first
 
     @staticmethod
     def _bind_positional_args(
@@ -239,6 +319,11 @@ class PooledProvider(LLMProvider):
 
     async def chat_stream_with_context(self, *, provider_context: ProviderCallContext,
                                        **kwargs: Any) -> LLMResponse:
+        if provider_context.single_attempt:
+            return await self.chat_stream_once(
+                provider_context=provider_context,
+                **kwargs,
+            )
         return await self.chat_stream(provider_context=provider_context, **kwargs)
 
     async def _run_chat_with_retry(self, kw: dict[str, Any], original_messages: list[dict[str, Any]],

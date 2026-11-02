@@ -8,12 +8,13 @@ against the captured state before publishing a replacement ledger projection.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from nanobot.session.source import SourceValidationError
 from nanobot.session.source_projection import (
     CheckpointNode,
+    RuntimeNode,
     SourceNode,
     eligible_boundaries,
     source_nodes,
@@ -23,6 +24,16 @@ from nanobot.session.source_store import SourceSnapshot
 
 if TYPE_CHECKING:
     from nanobot.session.checkpoint_dependencies import SummaryEvidence
+
+
+@dataclass(frozen=True)
+class SourceSummaryPrefixSelection:
+    """A verified, closed historical prefix or a reason to use canonical mode."""
+
+    boundary: int | None
+    transcript: SourceTranscript | None = field(repr=False)
+    source_node_count: int
+    fallback_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -90,6 +101,98 @@ class SourceCompactionCandidate:
         return self.snapshot.events if self.stream_id is None else [
             event for event in self.snapshot.events if event.get('_stream_id') == self.stream_id
         ]
+
+    def select_historical_prefix(self, max_boundary: int) -> SourceSummaryPrefixSelection:
+        """Select the largest verified closed historical prefix at or below a cap.
+
+        The selected transcript is rebuilt from the actual leading system head,
+        captured checkpoint, and source nodes that exactly match summary evidence.
+        Request-only expansions stop the scan; evidence validation failures remain
+        errors and are never converted into a canonical fallback.
+        """
+
+        def fallback(reason: str) -> SourceSummaryPrefixSelection:
+            return SourceSummaryPrefixSelection(None, None, 0, reason)
+
+        events = self._events()
+        if (type(max_boundary) is not int or max_boundary < 0
+                or max_boundary > len(events)):
+            return fallback('invalid_requested_boundary')
+
+        legal = tuple(boundary for boundary in self.boundaries if boundary <= max_boundary)
+        if not legal:
+            return fallback('no_substantive_historical_group')
+
+        request_nodes = self.transcript.nodes
+        head_end = 0
+        while head_end < len(request_nodes):
+            node = request_nodes[head_end]
+            if not isinstance(node, RuntimeNode) or node.message.get('role') != 'system':
+                break
+            head_end += 1
+        system_head = request_nodes[:head_end]
+
+        if self.previous_checkpoint is None:
+            if any(isinstance(node, CheckpointNode) for node in request_nodes):
+                return fallback('previous_checkpoint_mismatch')
+            source_start = head_end
+            checkpoint_nodes: tuple[RequestNode, ...] = ()
+        else:
+            if (head_end >= len(request_nodes)
+                    or request_nodes[head_end] != self.previous_checkpoint):
+                return fallback('previous_checkpoint_mismatch')
+            if any(isinstance(node, CheckpointNode) for node in request_nodes[head_end + 1:]):
+                return fallback('previous_checkpoint_mismatch')
+            source_start = head_end + 1
+            checkpoint_nodes = (request_nodes[head_end],)
+
+        if (self.previous_checkpoint is not None and self.pinned_event_id is not None
+                and any(event.get('_event_id') == self.pinned_event_id
+                        for event in events[:self.previous_boundary])):
+            return fallback('covered_pinned_user')
+
+        best: tuple[int, tuple[SourceNode, ...]] | None = None
+        stop_reason: str | None = None
+        for boundary in legal:
+            evidence = self.summary_evidence(boundary)
+            if not evidence.nodes:
+                continue
+
+            cursor = source_start
+            matched: list[SourceNode] = []
+            for expected in evidence.nodes:
+                if cursor >= len(request_nodes):
+                    stop_reason = 'source_representation_mismatch'
+                    break
+                actual = request_nodes[cursor]
+                if isinstance(actual, RuntimeNode):
+                    stop_reason = 'nonleading_runtime_node'
+                    break
+                if not isinstance(actual, SourceNode) or actual != expected:
+                    stop_reason = 'source_representation_mismatch'
+                    break
+                matched.append(actual)
+                cursor += 1
+            if stop_reason is not None:
+                break
+
+            # A closed boundary containing only the current user is not useful
+            # historical summary input. A later assistant/tool result can make
+            # the larger closed group substantive.
+            if not any(
+                node.message.get('role') in {'assistant', 'tool'}
+                and _has_substantive_content(node.message.get('content'))
+                for node in matched
+            ):
+                continue
+            best = (boundary, tuple(matched))
+
+        if best is None:
+            return fallback(stop_reason or 'no_substantive_historical_group')
+
+        boundary, source_prefix = best
+        transcript = SourceTranscript(deepcopy((*system_head, *checkpoint_nodes, *source_prefix)))
+        return SourceSummaryPrefixSelection(boundary, transcript, len(source_prefix), None)
 
     def evidence(self, boundary: int, *, after: int | None = None) -> tuple[SourceNode, ...]:
         """Return canonical disjoint evidence; never use expanded request text."""
@@ -190,3 +293,13 @@ class SourceCompactionCandidate:
         if not inserted:
             raise SourceValidationError('Compaction boundary covers no represented evidence')
         return SourceTranscript(tuple(rebuilt))
+
+
+def _has_substantive_content(content: object) -> bool:
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        return content != []
+    if isinstance(content, dict):
+        return content != {}
+    return content is not None

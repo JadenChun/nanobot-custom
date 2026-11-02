@@ -24,6 +24,7 @@ from nanobot.providers.openai_codex_provider import OpenAICodexProvider
 from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.openai_responses import build_responses_state
 from nanobot.providers.pooled_provider import PooledProvider
+from nanobot.providers.registry import find_by_name
 from nanobot.providers.request_budget import (
     FinalizedRequestBudgetExceeded,
     ProviderRequestLimits,
@@ -101,7 +102,16 @@ class _Leaf(LLMProvider):
 
 def _exact_context(provider: OpenAICompatProvider, *, messages: list[dict[str, object]],
                    tools: list[dict[str, object]] | None = None) -> ProviderCallContext:
-    body = provider._build_kwargs(messages, tools, None, 1, 0.0, "high", None)
+    _sdk_kwargs, body = provider._prepare_chat_request(
+        messages,
+        tools,
+        None,
+        1,
+        0.0,
+        "high",
+        None,
+        stream=False,
+    )
     measured = measure_finalized_request(
         TransportIdentity(provider.provider_name, "openai_chat_completions", body["model"]),
         body,
@@ -224,6 +234,40 @@ def test_local_165k_window_accepts_long_text_with_parallel_images() -> None:
     assert 80_000 < measurement.input_tokens < 90_000
     assert measurement.source.startswith("canonical_json_utf8_bytes")
     assert "+inline_image" in measurement.source
+
+
+@pytest.mark.asyncio
+async def test_local_manager_unicode_request_uses_compat_estimate_not_utf8_ceiling() -> None:
+    """A measured local request can fit even when UTF-8 bytes exceed its token budget."""
+    model = "Qwen3.8-27B-UD-Q6_K_XL"
+    create = AsyncMock(return_value=SimpleNamespace(
+        choices=[SimpleNamespace(
+            message=SimpleNamespace(content="ok", tool_calls=None),
+            finish_reason="stop",
+        )],
+        usage=None,
+    ))
+    provider = OpenAICompatProvider(
+        api_key="fixture",
+        default_model=model,
+        provider_name="local_manager",
+        spec=find_by_name("local_manager"),
+    )
+    provider._ensure_client = AsyncMock(return_value=SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+    ))
+
+    await provider.chat_with_context(
+        provider_context=ProviderCallContext(request_limits=ProviderRequestLimits(
+            total_tokens=5_000,
+            completion_reserve_tokens=1,
+            safety_buffer_tokens=0,
+        )),
+        messages=[{"role": "user", "content": "界" * 2_000}],
+        max_tokens=1,
+    )
+
+    create.assert_awaited_once()
 
 
 def test_known_openai_model_uses_its_selected_tiktoken_encoding() -> None:

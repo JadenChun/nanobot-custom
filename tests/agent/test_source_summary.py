@@ -3,7 +3,9 @@
 import asyncio
 from unittest.mock import Mock
 
+import httpx
 import pytest
+from openai import AsyncOpenAI
 
 from nanobot.agent.memory import Consolidator
 from nanobot.providers.base import (
@@ -13,6 +15,9 @@ from nanobot.providers.base import (
     LLMUsage,
     ToolCallRequest,
 )
+from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+from nanobot.providers.pooled_provider import PooledProvider
+from nanobot.providers.registry import find_by_name
 from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
 from nanobot.utils.llm_runtime import LLMRuntime
 
@@ -39,6 +44,18 @@ class SummaryProvider(LLMProvider):
         self.contexts.append(provider_context)
         return await self.chat(**kwargs)
 
+    async def chat_stream(self, messages, **kwargs):
+        self.calls.append((messages, kwargs))
+        if isinstance(self.response, BaseException):
+            raise self.response
+        if self.response == 'wait':
+            await asyncio.Event().wait()
+        return self.response
+
+    async def chat_stream_with_context(self, *, provider_context, **kwargs):
+        self.contexts.append(provider_context)
+        return await self.chat_stream(**kwargs)
+
 
 def runtime(provider, window=8192):
     return LLMRuntime(provider, 'fixture', GenerationSettings(max_tokens=256), window)
@@ -59,6 +76,10 @@ async def test_summary_is_observed_once_and_has_no_store_dependency():
     assert provider.contexts[0].conversation_state is None
     assert provider.contexts[0].request_limits.total_tokens == 8192
     assert provider.contexts[0].request_limits.completion_reserve_tokens == 2048
+    assert provider.contexts[0].stream_idle_timeout_seconds is None
+    assert provider.contexts[0].request_deadline_monotonic is None
+    assert provider.contexts[0].single_attempt is False
+    assert provider.contexts[0].source_summary_mode is None
     assert 'prior facts' in messages[1]['content'] and 'objective' in messages[1]['content']
     assert source == [{'role': 'user', 'content': 'objective'}]
     observer.assert_called_once()
@@ -127,6 +148,82 @@ async def test_cancellation_propagates_without_candidate():
         await Consolidator.summarize_source_chunk([{'role': 'user', 'content': 'input'}],
             None, runtime=runtime(provider))
     assert len(provider.calls) == 1
+
+
+async def test_foreground_summary_uses_once_stream_and_absolute_deadline():
+    class StreamingSummaryProvider(SummaryProvider):
+        async def chat_stream(self, messages, **kwargs):
+            self.calls.append((messages, kwargs))
+            return self.response
+
+        async def chat_stream_with_context(self, *, provider_context, **kwargs):
+            self.contexts.append(provider_context)
+            return await self.chat_stream(**kwargs)
+
+    provider = StreamingSummaryProvider(LLMResponse(content="bounded facts."))
+    deadline = asyncio.get_running_loop().time() + 900.0
+    result = await Consolidator.summarize_prepared_source_chunk(
+        [{"role": "user", "content": "preflighted"}],
+        runtime=runtime(provider),
+        max_output_tokens=32,
+        request_deadline_monotonic=deadline,
+        stream_idle_timeout_seconds=300.0,
+        source_summary_mode="canonical",
+    )
+
+    assert result.status == "complete" and result.summary == "bounded facts."
+    assert result.calls == 1 and len(provider.calls) == 1
+    context = provider.contexts[0]
+    assert context.single_attempt is True
+    assert context.request_deadline_monotonic == deadline
+    assert context.stream_idle_timeout_seconds == 300.0
+    assert context.source_summary_mode == "canonical"
+    assert context.conversation_state is None
+    assert "on_content_delta" not in provider.calls[0][1]
+
+
+async def test_foreground_pooled_pacing_timeout_reports_zero_physical_calls():
+    requests: list[httpx.Request] = []
+    leaf = OpenAICompatProvider(
+        api_key="fixture",
+        default_model="Qwen3.8-27B-UD-Q6_K_XL",
+        provider_name="local_manager",
+        spec=find_by_name("local_manager"),
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"choices": []}, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        leaf._client = AsyncOpenAI(
+            api_key="fixture",
+            base_url="http://manager.test/v1",
+            http_client=http_client,
+            max_retries=0,
+        )
+        pooled = PooledProvider([leaf], ["fixture"], rate_limit=1)
+        await pooled._pool.admit()
+        source_runtime = LLMRuntime(
+            pooled,
+            "Qwen3.8-27B-UD-Q6_K_XL",
+            GenerationSettings(max_tokens=128),
+            8_192,
+        )
+        deadline = asyncio.get_running_loop().time() + 0.03
+        result = await Consolidator.summarize_prepared_source_chunk(
+            [{"role": "user", "content": "source evidence"}],
+            runtime=source_runtime,
+            max_output_tokens=32,
+            request_deadline_monotonic=deadline,
+            stream_idle_timeout_seconds=1.0,
+            source_summary_mode="canonical",
+        )
+
+    assert result.status == "timeout"
+    assert result.failure_reason == "summary_overall_timeout"
+    assert result.calls == 0
+    assert requests == []
 
 
 async def test_runtime_system_messages_cannot_enter_summary_evidence():

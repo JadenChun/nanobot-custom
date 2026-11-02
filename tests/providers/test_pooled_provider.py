@@ -266,7 +266,14 @@ async def test_compat_responses_error_after_delivery_does_not_switch_transport(d
         chat=SimpleNamespace(completions=SimpleNamespace(create=chat_create))))
     provider._should_use_responses_api = lambda *args: True
     provider._build_responses_body = lambda *args: {'model': 'fixture'}
-    provider._create_response_with_compaction_fallback = AsyncMock(return_value=object())
+
+    async def empty_responses_stream():
+        if False:
+            yield None
+
+    provider._create_response_with_compaction_fallback = AsyncMock(
+        return_value=empty_responses_stream()
+    )
     provider._should_fallback_from_responses_error = lambda exc: True
     callback = AsyncMock()
 

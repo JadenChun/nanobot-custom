@@ -165,3 +165,231 @@ def test_covered_non_pin_cannot_reappear_beside_checkpoint():
         capture(events, nodes=(old, *source_nodes(events)), checkpoint={
             'checkpoint_id': 'old', 'summary': 'facts', 'boundary': 2,
             'projection_scope': 'root', 'projection_version': 1})
+
+
+def test_selects_historical_parallel_tool_batches_before_expanded_current_user():
+    first_batch = [
+        {'id': 'image-a', 'type': 'function',
+         'function': {'name': 'read_image', 'arguments': '{"path":"a.png"}'}},
+        {'id': 'image-b', 'type': 'function',
+         'function': {'name': 'read_image', 'arguments': '{"path":"b.png"}'}},
+    ]
+    second_batch = [
+        {'id': 'image-c', 'type': 'function',
+         'function': {'name': 'read_image', 'arguments': '{"path":"c.png"}'}},
+        {'id': 'image-d', 'type': 'function',
+         'function': {'name': 'read_image', 'arguments': '{"path":"d.png"}'}},
+    ]
+    events = [
+        event('user', 'Compare these images.'),
+        event('assistant', '', tool_calls=first_batch,
+              _execution_ids=['image-exec-a', 'image-exec-b'],
+              reasoning_content='private reasoning from the first image batch'),
+        event('tool', 'Image A contains a blue car.', tool_call_id='image-a',
+              name='read_image', _execution_id='image-exec-a'),
+        event('tool', 'Image B contains a red car.', tool_call_id='image-b',
+              name='read_image', _execution_id='image-exec-b'),
+        event('assistant', '', tool_calls=second_batch,
+              _execution_ids=['image-exec-c', 'image-exec-d'],
+              reasoning_content='private reasoning from the second image batch'),
+        event('tool', 'Image C is a street scene.', tool_call_id='image-c',
+              name='read_image', _execution_id='image-exec-c'),
+        event('tool', 'Image D is a parking lot.', tool_call_id='image-d',
+              name='read_image', _execution_id='image-exec-d'),
+        event('assistant', 'The images show different settings.',
+              reasoning_content='private final reasoning'),
+        event('user', 'What changed?', media=['/current/private.png']),
+        event('assistant', 'pending latest response'),
+    ]
+    active = list(source_nodes(events))
+    current_index = 8
+    active[current_index] = SourceNode(
+        active[current_index].event_id,
+        {'role': 'user', 'content': 'What changed? EXPANDED_CURRENT_IMAGE_SECRET'},
+    )
+    system = RuntimeNode('actual-system-head', {'role': 'system', 'content': 'System policy.'})
+    candidate = capture(
+        events, nodes=(system, *active),
+        eligible=[row['_event_id'] for row in events[:8]],
+    )
+
+    selection = candidate.select_historical_prefix(max_boundary=current_index)
+
+    assert selection.boundary == 8
+    assert selection.source_node_count == 8
+    assert selection.fallback_reason is None
+    assert selection.transcript is not None
+    assert selection.transcript.nodes == (system, *active[:8])
+    assert 'System policy.' not in repr(selection)
+    assert tuple(node.event_id for node in selection.transcript.nodes if isinstance(node, SourceNode)) == tuple(
+        node.event_id for node in source_nodes(events[:8])
+    )
+    evidence = candidate.summary_evidence(selection.boundary)
+    assert tuple(node.event_id for node in evidence.nodes) == tuple(
+        node.event_id for node in source_nodes(events[:8])
+    )
+    rendered_evidence = repr(evidence)
+    assert 'EXPANDED_CURRENT_IMAGE_SECRET' not in rendered_evidence
+    assert 'private reasoning' not in rendered_evidence
+
+
+def test_select_historical_prefix_returns_safe_fallback_without_a_closed_group():
+    events = [event('user', 'current request')]
+    candidate = capture(events, eligible=[events[0]['_event_id']])
+
+    selection = candidate.select_historical_prefix(max_boundary=1)
+
+    assert selection.boundary is None
+    assert selection.transcript is None
+    assert selection.source_node_count == 0
+    assert selection.fallback_reason == 'no_substantive_historical_group'
+
+
+def test_select_historical_prefix_cuts_at_intermediate_runtime_node():
+    events = [event('user', 'old question'), event('assistant', 'old answer'),
+              event('user', 'later question'), event('assistant', 'later response')]
+    source = source_nodes(events)
+    system = RuntimeNode('system', {'role': 'system', 'content': 'System policy.'})
+    note = RuntimeNode('request-note', {'role': 'user', 'content': 'current instruction'})
+    candidate = capture(events, nodes=(system, source[0], source[1], note, source[2], source[3]))
+
+    selection = candidate.select_historical_prefix(max_boundary=4)
+
+    assert selection.boundary == 2
+    assert selection.source_node_count == 2
+    assert selection.fallback_reason is None
+    assert selection.transcript is not None
+    assert selection.transcript.nodes == (system, source[0], source[1])
+
+
+def test_select_historical_prefix_rounds_down_before_first_representation_mismatch():
+    events = [event('user', 'old question'), event('assistant', 'old answer'),
+              event('assistant', 'later answer'), event('assistant', 'latest response')]
+    source = list(source_nodes(events))
+    source[3] = SourceNode(source[3].event_id,
+                           {'role': 'assistant', 'content': 'expanded latest response'})
+    candidate = capture(events, nodes=source)
+
+    selection = candidate.select_historical_prefix(max_boundary=4)
+
+    assert selection.boundary == 3
+    assert selection.source_node_count == 3
+    assert selection.fallback_reason is None
+    assert selection.transcript is not None
+    assert selection.transcript.nodes == tuple(source[:3])
+
+
+def test_select_historical_prefix_rejects_an_expanded_covered_pin_after_checkpoint():
+    events = [event('user', 'covered user'), event('assistant', 'new historical answer')]
+    old = CheckpointNode('prior', 'prior summary')
+    source = list(source_nodes(events))
+    source[0] = SourceNode(source[0].event_id,
+                           {'role': 'user', 'content': 'covered user plus raw expansion'})
+    candidate = capture(events, nodes=(old, *source), checkpoint={
+        'checkpoint_id': old.checkpoint_id, 'summary': old.summary, 'boundary': 1,
+        'projection_scope': 'root', 'projection_version': 1,
+    })
+
+    selection = candidate.select_historical_prefix(max_boundary=2)
+
+    assert selection.boundary is None
+    assert selection.transcript is None
+    assert selection.source_node_count == 0
+    assert selection.fallback_reason == 'covered_pinned_user'
+
+
+def test_select_historical_prefix_retains_exact_previous_checkpoint():
+    events = [event('assistant', 'already summarized'), event('assistant', 'new facts'),
+              event('assistant', 'more new facts')]
+    old = CheckpointNode('prior', 'prior summary')
+    checkpoint = {'checkpoint_id': old.checkpoint_id, 'summary': old.summary, 'boundary': 1,
+                  'projection_scope': 'root', 'projection_version': 1}
+    source = source_nodes(events)
+    system = RuntimeNode('system', {'role': 'system', 'content': 'System policy.'})
+    candidate = capture(events, nodes=(system, old, *source[1:]), checkpoint=checkpoint)
+
+    selection = candidate.select_historical_prefix(max_boundary=3)
+
+    assert selection.boundary == 3
+    assert selection.source_node_count == 2
+    assert selection.fallback_reason is None
+    assert selection.transcript is not None
+    assert selection.transcript.nodes == (system, old, *source[1:])
+
+
+def test_capture_rejects_nonexact_previous_checkpoint_for_prefix_selection():
+    events = [event('assistant', 'already summarized'), event('assistant', 'new facts')]
+    actual = CheckpointNode('prior', 'prior summary')
+    wrong = CheckpointNode('prior', 'edited summary')
+    with pytest.raises(SourceValidationError, match='captured checkpoint'):
+        capture(events, nodes=(wrong, *source_nodes(events)[1:]), checkpoint={
+            'checkpoint_id': actual.checkpoint_id, 'summary': actual.summary, 'boundary': 1,
+            'projection_scope': 'root', 'projection_version': 1,
+        })
+
+
+@pytest.mark.parametrize('max_boundary', [True, -1, 3, '2'])
+def test_select_historical_prefix_reports_invalid_requested_boundary(max_boundary):
+    events = [event('user', 'old'), event('assistant', 'answer')]
+    candidate = capture(events)
+
+    selection = candidate.select_historical_prefix(max_boundary=max_boundary)
+
+    assert selection.boundary is None
+    assert selection.transcript is None
+    assert selection.source_node_count == 0
+    assert selection.fallback_reason == 'invalid_requested_boundary'
+
+
+def test_select_historical_prefix_propagates_malformed_dependency_evidence():
+    call = {'id': 'artifact-read', 'type': 'function',
+            'function': {'name': 'read_artifact', 'arguments': '{}'}}
+    events = [
+        event('assistant', '', tool_calls=[call], _execution_ids=['artifact-execution']),
+        event('tool', 'malformed retrieval result', tool_call_id='artifact-read',
+              name='read_artifact', _execution_id='artifact-execution',
+              _artifact_read={'forged': True}),
+        event('assistant', 'follow-up answer'),
+    ]
+    candidate = capture(events)
+
+    with pytest.raises(SourceValidationError, match='artifact retrieval receipt'):
+        candidate.select_historical_prefix(max_boundary=len(events))
+
+
+async def test_select_historical_prefix_accepts_only_verified_artifact_projection(tmp_path):
+    from nanobot.session.artifact import ArtifactValidationError
+    from nanobot.session.artifact_projection import ArtifactProjector
+    from nanobot.session.artifact_reader import ArtifactReader
+    from tests.session.test_artifact_reader import setup_read
+
+    async with setup_read(tmp_path, 'evidence' * 6_000) as (writer, tool, store, _, _):
+        snapshot = writer.owner.read_snapshot()
+        projector = ArtifactProjector(ArtifactReader(writer, 'root_history', store, tool))
+        projected = projector.prepare(SourceTranscript(source_nodes(snapshot.events)), enabled=True)
+        eligible = frozenset(node.event_id for node in source_nodes(snapshot.events))
+        candidate = SourceCompactionCandidate.capture(
+            snapshot, projected, eligible_ids=eligible,
+        )
+
+        selection = candidate.select_historical_prefix(max_boundary=len(snapshot.events))
+
+        assert selection.boundary == len(snapshot.events)
+        assert selection.transcript is not None
+        evidence = candidate.summary_evidence(selection.boundary)
+        assert len(evidence.projections) == 1
+        assert evidence.nodes[-1].artifact is not None
+        assert len(evidence.nodes[-1].message['content']) < 1_600
+        tampered_nodes = list(projected.nodes)
+        projected_tool = tampered_nodes[-1]
+        assert isinstance(projected_tool, SourceNode)
+        tampered_nodes[-1] = SourceNode(
+            projected_tool.event_id,
+            {**projected_tool.message, 'content': projected_tool.message['content'] + ' forged'},
+            projected_tool.artifact,
+        )
+        tampered = SourceCompactionCandidate.capture(
+            snapshot, SourceTranscript(tuple(tampered_nodes)), eligible_ids=eligible,
+        )
+        with pytest.raises(ArtifactValidationError):
+            tampered.select_historical_prefix(max_boundary=len(snapshot.events))

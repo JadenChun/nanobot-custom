@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib.util
+import inspect
 import json
 import math
 import os
@@ -16,7 +17,9 @@ import string
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from copy import deepcopy
+from dataclasses import replace
 from ipaddress import ip_address
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse, urlsplit
@@ -25,10 +28,11 @@ from loguru import logger
 from pydantic.alias_generators import to_snake
 
 from nanobot.providers.base import (
-    FinalizedRequestBudgetExceeded,
+    GenerationSettings,
     LLMProvider,
     LLMResponse,
     LLMUsage,
+    PreparedRequestBudgetPreview,
     ProviderCallContext,
     ProviderConversationState,
     ProviderConversationTransportReceipt,
@@ -50,6 +54,21 @@ from nanobot.providers.openai_responses import (
     prepare_responses_input,
     resolve_compact_threshold,
     responses_state_matches,
+)
+from nanobot.providers.request_budget import (
+    LOCAL_MANAGER_POLICY,
+    BackendContextOverflow,
+    FinalizedRequestBudgetExceeded,
+    GovernedRequestConflictError,
+    LocalRequestUsageReceipt,
+    LocalUsageAnchor,
+    ProviderRequestLimits,
+    ProviderRequestRejected,
+    RequestBudgetPolicy,
+    RequestPayloadBytesExceeded,
+    TransportIdentity,
+    TransportMeasurement,
+    measure_finalized_request,
 )
 
 if TYPE_CHECKING:
@@ -579,7 +598,12 @@ class OpenAICompatProvider(LLMProvider):
         self.default_model = default_model
         self.extra_headers = dict(extra_headers) if extra_headers is not None else {}
         self._spec = spec
-        self._extra_body = dict(extra_body or {})
+        self._extra_body: dict[str, Any] = dict(extra_body or {})
+        self._request_budget_policy: RequestBudgetPolicy = (
+            LOCAL_MANAGER_POLICY
+            if spec is not None and spec.name == provider_name == "local_manager"
+            else "strict"
+        )
         self._api_type = api_type if spec and spec.name == "openai" else "auto"
         self._extra_query = dict(extra_query) if extra_query is not None else {}
         self._proxy = proxy or None
@@ -620,6 +644,16 @@ class OpenAICompatProvider(LLMProvider):
         # probe again after _RESPONSES_PROBE_INTERVAL_S seconds.
         self._responses_failures: dict[str, int] = {}
         self._responses_tripped_at: dict[str, float] = {}
+
+    @property
+    def is_known_local_manager(self) -> bool:
+        """Whether this constructed provider owns the explicit local policy."""
+        return (
+            self.provider_name == "local_manager"
+            and self._request_budget_policy == LOCAL_MANAGER_POLICY
+            and self._spec is not None
+            and self._spec.name == "local_manager"
+        )
 
     def _build_client(self) -> None:
         """Create the OpenAI client using the current module-level AsyncOpenAI."""
@@ -758,6 +792,8 @@ class OpenAICompatProvider(LLMProvider):
         self,
         messages: list[dict[str, Any]],
         model: str | None = None,
+        *,
+        preserve_role_alternation: bool = False,
     ) -> list[dict[str, Any]]:
         """Strip non-standard keys, normalize tool_call IDs."""
         sanitized = LLMProvider._sanitize_request_messages(messages, _ALLOWED_MSG_KEYS)
@@ -859,7 +895,11 @@ class OpenAICompatProvider(LLMProvider):
                 and not (clean.get("role") == "assistant" and clean.get("tool_calls"))
             ):
                 clean["content"] = self._coerce_content_to_string(clean.get("content"))
-        return self._enforce_role_alternation(sanitized)
+        return (
+            sanitized
+            if preserve_role_alternation
+            else self._enforce_role_alternation(sanitized)
+        )
 
     @staticmethod
     def _gemini_thought_signature(tool_call: dict[str, Any]) -> str | None:
@@ -987,6 +1027,8 @@ class OpenAICompatProvider(LLMProvider):
         temperature: float,
         reasoning_effort: str | None,
         tool_choice: str | dict[str, Any] | None,
+        *,
+        preserve_message_roles: bool = False,
     ) -> dict[str, Any]:
         model_name = model or self.default_model
         spec = self._spec
@@ -1013,6 +1055,7 @@ class OpenAICompatProvider(LLMProvider):
             "messages": self._sanitize_messages(
                 self._sanitize_empty_content(messages),
                 model_name,
+                preserve_role_alternation=preserve_message_roles,
             ),
         }
 
@@ -1165,6 +1208,766 @@ class OpenAICompatProvider(LLMProvider):
 
         return kwargs
 
+    @staticmethod
+    def json_values_equal(left: object, right: object) -> bool:
+        try:
+            return json.dumps(
+                left,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ) == json.dumps(
+                right,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (TypeError, ValueError, UnicodeError):
+            return False
+
+    def _prepare_chat_request(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str | None,
+        max_tokens: int,
+        temperature: float,
+        reasoning_effort: str | None,
+        tool_choice: str | dict[str, Any] | None,
+        *,
+        stream: bool,
+        provider_context: ProviderCallContext | None = None,
+        timeout: float | None = None,
+    ) -> tuple[dict[str, Any], dict[str, object]]:
+        """Return detached SDK arguments and the JSON body the SDK actually sends."""
+        kwargs = self._build_kwargs(
+            messages,
+            tools,
+            model,
+            max_tokens,
+            temperature,
+            reasoning_effort,
+            tool_choice,
+            preserve_message_roles=(
+                provider_context is not None
+                and provider_context.source_summary_mode == "prefix"
+            ),
+        )
+        canonical_summary = (
+            provider_context is not None
+            and provider_context.source_summary_mode == "canonical"
+        )
+        if canonical_summary:
+            kwargs.pop("tools", None)
+            kwargs.pop("tool_choice", None)
+        if stream and self._spec and self._spec.name == "zhipu" and tools:
+            kwargs.setdefault("extra_body", {})["tool_stream"] = True
+        if stream:
+            kwargs["stream"] = True
+            kwargs["stream_options"] = {"include_usage": True}
+
+        raw_extra_body = kwargs.get("extra_body")
+        extra_body: dict[str, Any] | None
+        if raw_extra_body is None:
+            extra_body = None
+        elif isinstance(raw_extra_body, dict):
+            if any(
+                not isinstance(key, str)
+                for key in cast(dict[object, object], raw_extra_body)
+            ):
+                raise ProviderRequestRejected(reason="invalid_request_envelope")
+            extra_body = cast(dict[str, Any], raw_extra_body)
+        else:
+            raise ProviderRequestRejected(reason="invalid_request_envelope")
+        if canonical_summary and extra_body is not None:
+            extra_body = deepcopy(extra_body)
+            for field_name in ("tools", "tool_choice", "functions", "function_call"):
+                extra_body.pop(field_name, None)
+            kwargs["extra_body"] = extra_body
+        if (
+            self._request_budget_policy == LOCAL_MANAGER_POLICY
+            and provider_context is not None
+            and (
+                provider_context.request_limits is not None
+                or provider_context.source_summary_mode is not None
+            )
+            and extra_body is not None
+        ):
+            for field_name in ("model", "messages"):
+                if field_name in extra_body and not self.json_values_equal(
+                    extra_body[field_name], kwargs.get(field_name),
+                ):
+                    raise GovernedRequestConflictError(field_name)
+
+        try:
+            sdk_kwargs = deepcopy(kwargs)
+            effective_body: dict[str, object] = {
+                key: deepcopy(value)
+                for key, value in kwargs.items()
+                if key not in {"timeout", "extra_headers", "extra_query", "extra_body"}
+            }
+            if extra_body is not None:
+                effective_body.update(deepcopy(extra_body))
+            if timeout is not None:
+                sdk_kwargs["timeout"] = timeout
+        except Exception as exc:
+            raise ProviderRequestRejected(reason="invalid_request_envelope") from exc
+        return sdk_kwargs, effective_body
+
+    @staticmethod
+    def _mapping_digest(value: object) -> str:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _local_scope_binding(self) -> str:
+        client = self._client
+        client_headers = getattr(client, "default_headers", None) if client is not None else None
+        client_query = getattr(client, "_custom_query", None) if client is not None else None
+        timeout = getattr(client, "timeout", None) if client is not None else None
+        http_client = getattr(client, "_client", None) if client is not None else None
+        header_values: list[tuple[str, str]] = []
+        if isinstance(client_headers, Mapping):
+            for key, value in cast(Mapping[object, object], client_headers).items():
+                if not isinstance(key, str):
+                    continue
+                value_type = type(value)
+                # The SDK builds a new Omit sentinel on each default_headers read;
+                # its repr contains an address and is not part of the wire scope.
+                rendered = (
+                    "<sdk-omitted>"
+                    if value_type.__name__ == "Omit"
+                    and value_type.__module__.startswith("openai")
+                    else str(value)
+                )
+                header_values.append((key.lower(), rendered))
+
+        query_scope: dict[str, object] = {}
+        if isinstance(client_query, Mapping):
+            for key, value in cast(Mapping[object, object], client_query).items():
+                if isinstance(key, str):
+                    query_scope[key] = self._scope_value(value)
+
+        timeout_values: dict[str, object] = {}
+        for name in ("connect", "read", "write", "pool"):
+            value = getattr(timeout, name, None)
+            if value is None or isinstance(value, (str, int, float, bool)):
+                timeout_values[name] = value
+            else:
+                timeout_values[name] = {
+                    "type": f"{type(value).__module__}.{type(value).__qualname__}",
+                    "identity": id(value),
+                }
+
+        client_api_key = getattr(client, "api_key", None) if client is not None else None
+        client_base_url = getattr(client, "base_url", None) if client is not None else None
+        client_max_retries = (
+            getattr(client, "max_retries", None) if client is not None else None
+        )
+        return self._mapping_digest({
+            "provider": self.provider_name,
+            "endpoint": self._effective_base,
+            "credential": self._api_key_for_client,
+            "headers": self._default_headers,
+            "query": self._extra_query,
+            "policy": self._request_budget_policy,
+            "sdk_client": {
+                "instance": id(client) if client is not None else None,
+                "http_instance": id(http_client) if http_client is not None else None,
+                "api_key": str(client_api_key) if client_api_key is not None else None,
+                "base_url": str(client_base_url) if client_base_url is not None else "",
+                "headers": sorted(header_values),
+                "query": query_scope,
+                "timeout": timeout_values,
+                "max_retries": (
+                    client_max_retries
+                    if client_max_retries is None
+                    or isinstance(client_max_retries, (str, int, float, bool))
+                    else str(client_max_retries)
+                ),
+            },
+        })
+
+    @classmethod
+    def _scope_value(cls, value: object) -> object:
+        """Normalize SDK query data into a private, hashable scope value."""
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        value_type = type(value)
+        value_identity = id(value)
+        value_repr = repr(value)
+        if isinstance(value, Mapping):
+            result: dict[str, object] = {}
+            mapping = cast(Mapping[object, object], value)
+            for key, item in mapping.items():
+                if not isinstance(key, str):
+                    return {
+                        "opaque_mapping": f"{value_type.__module__}.{value_type.__qualname__}",
+                        "identity": value_identity,
+                        "repr": value_repr,
+                    }
+                result[key] = cls._scope_value(item)
+            return result
+        if isinstance(value, (list, tuple)):
+            items = cast(Iterable[object], value)
+            return [cls._scope_value(item) for item in items]
+        return {
+            "opaque_value": f"{value_type.__module__}.{value_type.__qualname__}",
+            "identity": value_identity,
+            "repr": value_repr,
+        }
+
+    @staticmethod
+    def _limits_binding(limits: ProviderRequestLimits | None) -> str:
+        return OpenAICompatProvider._mapping_digest(
+            None if limits is None else {
+                "total": limits.total_tokens,
+                "reserve": limits.completion_reserve_tokens,
+                "safety": limits.safety_buffer_tokens,
+                "model_window": limits.model_context_window_tokens,
+            },
+        )
+
+    def _local_envelope_binding(
+        self,
+        body: dict[str, object],
+        limits: ProviderRequestLimits | None,
+    ) -> str:
+        envelope = {key: value for key, value in body.items() if key != "messages"}
+        limits_view = None if limits is None else {
+            "total": limits.total_tokens,
+            "reserve": limits.completion_reserve_tokens,
+            "safety": limits.safety_buffer_tokens,
+            "model_window": limits.model_context_window_tokens,
+        }
+        return self._mapping_digest({
+            "endpoint": self._effective_base,
+            "provider": self.provider_name,
+            "policy": self._request_budget_policy,
+            "limits": limits_view,
+            "body": envelope,
+        })
+
+    def _apply_local_usage_anchor(
+        self,
+        measurement: TransportMeasurement,
+        body: dict[str, object],
+        provider_context: ProviderCallContext | None,
+        *,
+        identity: TransportIdentity,
+    ) -> TransportMeasurement:
+        if (
+            self._request_budget_policy != LOCAL_MANAGER_POLICY
+            or provider_context is None
+            or type(provider_context.local_usage_anchor) is not LocalUsageAnchor
+        ):
+            return measurement
+        anchor = provider_context.local_usage_anchor
+        receipt = anchor.receipt
+        limits = provider_context.request_limits
+        if (
+            type(receipt) is not LocalRequestUsageReceipt
+            or type(measurement) is not TransportMeasurement
+            or type(anchor.prompt_tokens) is not int
+            or anchor.prompt_tokens <= 0
+            or receipt.provider_scope != self._local_scope_binding()
+            or receipt.model != identity.model
+            or receipt.envelope_binding != self._local_envelope_binding(body, limits)
+            or receipt.limits_binding != self._limits_binding(limits)
+        ):
+            return measurement
+        raw_messages = body.get("messages")
+        if not isinstance(raw_messages, list):
+            return measurement
+        current = cast(list[object], raw_messages)
+        if any(
+            not isinstance(row, dict)
+            or any(not isinstance(key, str) for key in cast(dict[object, object], row))
+            for row in current
+        ):
+            return measurement
+        message_rows = cast(list[dict[str, object]], current)
+        if len(message_rows) < len(receipt.messages):
+            return measurement
+        if message_rows[:len(receipt.messages)] != list(receipt.messages):
+            return measurement
+        prior_instructions = [
+            row for row in receipt.messages if row.get("role") in {"system", "developer"}
+        ]
+        current_instructions = [
+            row for row in message_rows if row.get("role") in {"system", "developer"}
+        ]
+        if current_instructions != prior_instructions:
+            return measurement
+        appended: list[dict[str, object]] = message_rows[len(receipt.messages):]
+        if not appended:
+            return measurement
+        try:
+            delta = measure_finalized_request(
+                identity,
+                {"model": identity.model, "messages": deepcopy(appended)},
+                ProviderRequestLimits(total_tokens=2_147_483_647, safety_buffer_tokens=0),
+                completion_reserve_tokens=0,
+                policy=LOCAL_MANAGER_POLICY,
+            )
+        except (TypeError, ValueError, UnicodeError):
+            return measurement
+        floor = anchor.prompt_tokens + delta.input_tokens
+        if floor <= measurement.input_tokens:
+            return measurement
+        return replace(
+            measurement,
+            input_tokens=floor,
+            source="reported_anchor_plus_estimated_delta",
+        )
+
+    def _measure_local_body(
+        self,
+        body: dict[str, object],
+        *,
+        transport: str,
+        model: str | None,
+        provider_context: ProviderCallContext | None,
+        completion_reserve_tokens: int | None = None,
+    ) -> TransportMeasurement:
+        selected_model = model or self.get_default_model()
+        limits = provider_context.request_limits if provider_context is not None else None
+        try:
+            from nanobot.providers.registry import find_by_name
+
+            spec = find_by_name(self.provider_name)
+            if spec is not None and limits is not None:
+                candidate = next((
+                    item.context_window for item in spec.builtin_models
+                    if item.context_window is not None
+                    and (item.id == selected_model or selected_model.endswith(f"/{item.id}"))
+                ), None)
+                if candidate is not None:
+                    limits = limits.for_model_window(candidate)
+        except Exception:
+            pass
+        identity = TransportIdentity(self.provider_name, transport, selected_model)
+        try:
+            measurement = measure_finalized_request(
+                identity,
+                body,
+                limits,
+                completion_reserve_tokens=completion_reserve_tokens,
+                policy=LOCAL_MANAGER_POLICY,
+            )
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise ProviderRequestRejected(reason="invalid_request_envelope") from exc
+        measurement = self._apply_local_usage_anchor(
+            measurement,
+            body,
+            provider_context,
+            identity=identity,
+        )
+        if measurement.measured_bytes is not None and (
+            measurement.measured_bytes
+            > self._local_request_byte_limit()
+        ):
+            raise RequestPayloadBytesExceeded(
+                measurement.measured_bytes,
+                self._local_request_byte_limit(),
+            )
+        if (
+            provider_context is not None
+            and provider_context.source_summary_mode is not None
+            and measurement.completion_reserve_tokens > 2048
+        ):
+            raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
+        return measurement
+
+    @staticmethod
+    def _local_request_byte_limit() -> int:
+        from nanobot.providers import request_budget
+
+        return request_budget.LOCAL_MANAGER_MAX_REQUEST_BYTES
+
+    @staticmethod
+    def _validate_auxiliary_output_cap(
+        body: dict[str, Any],
+        provider_context: ProviderCallContext | None,
+        completion_reserve_tokens: int | None,
+    ) -> None:
+        if provider_context is None or provider_context.source_summary_mode is None:
+            return
+        allowed_caps = [2048]
+        for bound in (
+            completion_reserve_tokens,
+            (
+                provider_context.request_limits.completion_reserve_tokens
+                if provider_context.request_limits is not None
+                else None
+            ),
+        ):
+            if bound is None:
+                continue
+            if type(bound) is not int or bound < 0:
+                raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
+            allowed_caps.append(bound)
+        effective_caps: list[int] = []
+        for name in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
+            if name not in body:
+                continue
+            value = body[name]
+            if type(value) is not int or value < 0:
+                raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
+            effective_caps.append(value)
+        inference_value = body.get("inferenceConfig")
+        if isinstance(inference_value, dict):
+            inference = cast(dict[str, Any], inference_value)
+        else:
+            inference = None
+        if inference is not None and "maxTokens" in inference:
+            value = inference["maxTokens"]
+            if type(value) is not int or value < 0:
+                raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
+            effective_caps.append(value)
+        output_value = body.get("output")
+        if isinstance(output_value, dict):
+            output = cast(dict[str, Any], output_value)
+        else:
+            output = None
+        if output is not None and "max_tokens" in output:
+            value = output["max_tokens"]
+            if type(value) is not int or value < 0:
+                raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
+            effective_caps.append(value)
+        if not effective_caps or max(effective_caps) > min(allowed_caps):
+            raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
+
+    def validate_finalized_request(
+        self,
+        body: dict[str, Any],
+        *,
+        transport: str,
+        model: str | None,
+        provider_context: ProviderCallContext | None = None,
+        completion_reserve_tokens: int | None = None,
+        policy: RequestBudgetPolicy = "strict",
+    ) -> TransportMeasurement | None:
+        self._validate_auxiliary_output_cap(
+            body,
+            provider_context,
+            completion_reserve_tokens,
+        )
+        if self._request_budget_policy != LOCAL_MANAGER_POLICY or policy != LOCAL_MANAGER_POLICY:
+            return super().validate_finalized_request(
+                body,
+                transport=transport,
+                model=model,
+                provider_context=provider_context,
+                completion_reserve_tokens=completion_reserve_tokens,
+                policy=policy,
+            )
+        try:
+            measurement = self._measure_local_body(
+                cast(dict[str, object], body),
+                transport=transport,
+                model=model,
+                provider_context=provider_context,
+                completion_reserve_tokens=completion_reserve_tokens,
+            )
+        except ValueError as exc:
+            raise ProviderRequestRejected(reason="invalid_request_envelope") from exc
+        if not measurement.fits:
+            raise FinalizedRequestBudgetExceeded(
+                measurement,
+                reason="local_estimated_admission",
+            )
+        return measurement
+
+    @staticmethod
+    def _backend_context_overflow(exc: Exception) -> BackendContextOverflow | None:
+        response = getattr(exc, "response", None)
+        raw_status = getattr(exc, "status_code", None)
+        if raw_status is None and response is not None:
+            raw_status = getattr(response, "status_code", None)
+        if isinstance(raw_status, bool) or raw_status != 400:
+            return None
+
+        payload: object = getattr(exc, "body", None)
+        if payload is None:
+            payload = getattr(exc, "doc", None)
+        if payload is None and response is not None:
+            response_json = getattr(response, "json", None)
+            if callable(response_json):
+                try:
+                    payload = response_json()
+                except Exception:
+                    payload = getattr(response, "text", None)
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except (TypeError, ValueError):
+                return None
+        if not isinstance(payload, dict):
+            return None
+
+        outer = cast(dict[object, object], payload)
+        data: dict[object, object] = outer
+        nested = outer.get("error")
+        if isinstance(nested, dict):
+            data = cast(dict[object, object], nested)
+            for key in ("code", "type", "n_prompt_tokens", "n_ctx"):
+                if key in outer and key in data and outer[key] != data[key]:
+                    return None
+
+        code = data.get("code")
+        error_type = data.get("type")
+        prompt_tokens = data.get("n_prompt_tokens")
+        context_tokens = data.get("n_ctx")
+        if (
+            isinstance(code, bool)
+            or not isinstance(code, int)
+            or code != 400
+            or error_type != "exceed_context_size_error"
+            or isinstance(prompt_tokens, bool)
+            or not isinstance(prompt_tokens, int)
+            or prompt_tokens <= 0
+            or isinstance(context_tokens, bool)
+            or not isinstance(context_tokens, int)
+            or context_tokens <= 0
+            or prompt_tokens < context_tokens
+        ):
+            return None
+        return BackendContextOverflow(
+            status_code=400,
+            code=400,
+            n_prompt_tokens=prompt_tokens,
+            n_ctx=context_tokens,
+        )
+
+    @staticmethod
+    def _record_transport_attempt(
+        provider_context: ProviderCallContext | None,
+    ) -> None:
+        if provider_context is None or provider_context.on_transport_attempt is None:
+            return
+        kind = "auxiliary" if provider_context.source_summary_mode is not None else "main"
+        try:
+            provider_context.on_transport_attempt(kind)
+        except Exception:
+            logger.warning("Provider transport attempt observer failed")
+
+    @staticmethod
+    def _stream_timeout_budget(
+        provider_context: ProviderCallContext | None,
+        default_idle_timeout: float,
+        *,
+        idle_deadline_monotonic: float | None = None,
+    ) -> tuple[float, str]:
+        """Bound one header/chunk wait by idle policy and the shared deadline."""
+        idle_timeout = default_idle_timeout
+        has_summary_policy = (
+            provider_context is not None
+            and provider_context.source_summary_mode is not None
+        )
+        if provider_context is not None:
+            configured_idle = provider_context.stream_idle_timeout_seconds
+            if (
+                isinstance(configured_idle, (int, float))
+                and not isinstance(configured_idle, bool)
+                and math.isfinite(configured_idle)
+                and configured_idle > 0
+            ):
+                idle_timeout = float(configured_idle)
+        idle_reason = "summary_idle_timeout" if has_summary_policy else "timeout"
+        operation_deadline = (
+            provider_context.request_deadline_monotonic
+            if provider_context is not None
+            else None
+        )
+        if idle_deadline_monotonic is not None:
+            now = time.monotonic()
+            idle_remaining = max(0.0, idle_deadline_monotonic - now)
+            if operation_deadline is None:
+                return idle_remaining, idle_reason
+            operation_remaining = max(0.0, operation_deadline - now)
+            if operation_deadline <= idle_deadline_monotonic:
+                return operation_remaining, (
+                    "summary_overall_timeout" if has_summary_policy else "timeout"
+                )
+            return idle_remaining, idle_reason
+        if operation_deadline is None:
+            return idle_timeout, idle_reason
+        remaining = operation_deadline - time.monotonic()
+        if remaining <= 0:
+            return 0.0, "summary_overall_timeout" if has_summary_policy else "timeout"
+        if remaining <= idle_timeout:
+            return remaining, "summary_overall_timeout" if has_summary_policy else "timeout"
+        return idle_timeout, idle_reason
+
+    @staticmethod
+    async def _close_sdk_stream(
+        stream_iter: AsyncIterator[Any] | None,
+        response: object | None,
+        *,
+        additional_iterators: tuple[AsyncIterator[Any], ...] = (),
+        preserve_active_error: bool,
+        deadline_monotonic: float | None,
+    ) -> None:
+        """Close iterator and response once without masking the active outcome."""
+        closed: set[int] = set()
+        targets: list[object] = [*additional_iterators]
+        if stream_iter is not None:
+            targets.insert(0, stream_iter)
+        if response is not None:
+            targets.append(response)
+        for target in targets:
+            if target is None or id(target) in closed:
+                continue
+            closed.add(id(target))
+            close = getattr(target, "aclose", None) or getattr(target, "close", None)
+            if not callable(close):
+                continue
+            try:
+                result = close()
+                if inspect.isawaitable(result):
+                    task = asyncio.ensure_future(result)
+                    grace_seconds = 0.25
+                    if deadline_monotonic is not None:
+                        grace_seconds = min(
+                            grace_seconds,
+                            max(0.0, deadline_monotonic - time.monotonic()),
+                        )
+                    try:
+                        done, _pending = await asyncio.wait(
+                            {task},
+                            timeout=grace_seconds,
+                        )
+                    except asyncio.CancelledError:
+                        task.cancel()
+                        task.add_done_callback(OpenAICompatProvider._consume_close_task)
+                        if preserve_active_error:
+                            continue
+                        raise
+                    if task not in done:
+                        task.cancel()
+                        task.add_done_callback(OpenAICompatProvider._consume_close_task)
+                    else:
+                        OpenAICompatProvider._consume_close_task(task)
+            except asyncio.CancelledError:
+                if preserve_active_error:
+                    continue
+                raise
+            except BaseException:
+                # Close errors never replace the provider result.
+                continue
+
+    @staticmethod
+    def _consume_close_task(task: asyncio.Future[object]) -> None:
+        try:
+            task.exception()
+        except BaseException:
+            return
+
+    def _make_local_usage_receipt(
+        self,
+        body: dict[str, object],
+        provider_context: ProviderCallContext | None,
+    ) -> LocalRequestUsageReceipt | None:
+        if self._request_budget_policy != LOCAL_MANAGER_POLICY:
+            return None
+        messages = body.get("messages")
+        model = body.get("model")
+        if (
+            not isinstance(messages, list)
+            or any(
+                not isinstance(item, dict)
+                or any(not isinstance(key, str) for key in cast(dict[object, object], item))
+                for item in cast(list[object], messages)
+            )
+            or not isinstance(model, str)
+        ):
+            return None
+        try:
+            return LocalRequestUsageReceipt(
+                provider_scope=self._local_scope_binding(),
+                envelope_binding=self._local_envelope_binding(
+                    body,
+                    provider_context.request_limits if provider_context is not None else None,
+                ),
+                model=model,
+                limits_binding=self._limits_binding(
+                    provider_context.request_limits if provider_context is not None else None,
+                ),
+                messages=tuple(deepcopy(cast(list[dict[str, object]], messages))),
+            )
+        except (TypeError, ValueError, UnicodeError):
+            return None
+
+    def preview_request_budget(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str | None,
+        generation: GenerationSettings,
+        provider_context: ProviderCallContext,
+        stream: bool,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> PreparedRequestBudgetPreview | None:
+        if self._request_budget_policy != LOCAL_MANAGER_POLICY:
+            return None
+        if self._should_use_responses_api(model, generation.reasoning_effort):
+            return None
+        sdk_kwargs, body = self._prepare_chat_request(
+            messages,
+            tools,
+            model,
+            generation.max_tokens,
+            generation.temperature,
+            generation.reasoning_effort,
+            tool_choice,
+            stream=stream,
+            provider_context=provider_context,
+        )
+        transport = (
+            "openai_chat_completions_stream" if stream else "openai_chat_completions"
+        )
+        measurement = self._measure_local_body(
+            body,
+            transport=transport,
+            model=str(body.get("model") or ""),
+            provider_context=provider_context,
+        )
+        raw_messages = body.get("messages")
+        raw_tools = body.get("tools")
+        if not isinstance(raw_messages, list) or any(
+            not isinstance(item, dict) for item in cast(list[object], raw_messages)
+        ):
+            raise ProviderRequestRejected(reason="invalid_request_envelope")
+        if raw_tools is not None and (
+            not isinstance(raw_tools, list)
+            or any(not isinstance(item, dict) for item in cast(list[object], raw_tools))
+        ):
+            raise ProviderRequestRejected(reason="invalid_request_envelope")
+        return PreparedRequestBudgetPreview(
+            measurement=measurement,
+            envelope_binding=self._local_envelope_binding(
+                body,
+                provider_context.request_limits,
+            ),
+            converted_messages=tuple(deepcopy(cast(list[dict[str, object]], raw_messages))),
+            converted_tools=(
+                tuple(deepcopy(cast(list[dict[str, object]], raw_tools)))
+                if isinstance(raw_tools, list)
+                else None
+            ),
+            effective_body=deepcopy(body),
+            sdk_kwargs=cast(dict[str, object], sdk_kwargs),
+        )
+
     def _should_use_responses_api(
         self,
         model: str | None,
@@ -1260,7 +2063,7 @@ class OpenAICompatProvider(LLMProvider):
             == self._bound_state_endpoint
             and self._default_headers == self._bound_state_wire_headers
             and self._extra_query == self._bound_state_wire_query
-            and not self._extra_body
+            and not getattr(self, "_extra_body", {})
         )
 
     def conversation_state_transport_receipt(
@@ -1384,6 +2187,10 @@ class OpenAICompatProvider(LLMProvider):
             )
         is_deepseek = bool(self._spec and self._spec.name == "deepseek")
         preserve_reasoning = is_deepseek
+        canonical_summary = (
+            provider_context is not None
+            and provider_context.source_summary_mode == "canonical"
+        )
         instructions, input_items, replayed = prepare_responses_input(
             sanitized_messages,
             state=sanitized_state,
@@ -1436,7 +2243,25 @@ class OpenAICompatProvider(LLMProvider):
             body["tool_choice"] = "none"
 
         extra_body = getattr(self, "_extra_body", {})
-        default_tools = getattr(self._spec, "responses_default_tools", ())
+        default_tools = (
+            getattr(self._spec, "responses_default_tools", ())
+            if self._spec is not None
+            else ()
+        )
+        extra_tools = extra_body.get("tools")
+        configured_hosted_tools = bool(default_tools) or (
+            isinstance(extra_tools, list)
+            and any(
+                _is_hosted_web_search_tool(tool)
+                or not isinstance(tool, dict)
+                or cast(dict[str, Any], tool).get("type") != "function"
+                for tool in cast(list[object], extra_tools)
+            )
+        )
+        if canonical_summary and (
+            configured_hosted_tools or self._hosted_web_search_enabled()
+        ):
+            raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
         if "tools" not in extra_body and default_tools:
             body["tools"] = [
                 *cast(list[object], body.get("tools", [])),
@@ -1445,7 +2270,10 @@ class OpenAICompatProvider(LLMProvider):
         if extra_body:
             body = _merge_responses_extra_body(body, extra_body)
 
-        if self._hosted_web_search_enabled():
+        if canonical_summary:
+            body.pop("tools", None)
+            body.pop("tool_choice", None)
+        elif self._hosted_web_search_enabled():
             configured_tools = body.get("tools")
             if isinstance(configured_tools, list):
                 managed_tools: list[object] = []
@@ -1475,16 +2303,22 @@ class OpenAICompatProvider(LLMProvider):
         client: Any,
         body: dict[str, Any],
         provider_context: ProviderCallContext | None = None,
+        *,
+        completion_reserve_tokens: int | None = None,
     ) -> Any:
         """Retry Responses once without server compaction on compatibility errors."""
         try:
             self.validate_finalized_request(
                 body, transport="openai_responses", model=str(body.get("model") or ""),
                 provider_context=provider_context,
+                completion_reserve_tokens=completion_reserve_tokens,
             )
+            self._record_transport_attempt(provider_context)
             return await client.responses.create(**body)
         except Exception as exc:
             if (
+                (provider_context is not None and provider_context.single_attempt)
+                or
                 "context_management" not in body
                 or not is_compaction_compatibility_error(exc)
             ):
@@ -1499,6 +2333,7 @@ class OpenAICompatProvider(LLMProvider):
             self.validate_finalized_request(
                 body, transport="openai_responses", model=str(body.get("model") or ""),
                 provider_context=provider_context,
+                completion_reserve_tokens=completion_reserve_tokens,
             )
             return await client.responses.create(**body)
 
@@ -2087,6 +2922,7 @@ class OpenAICompatProvider(LLMProvider):
                         client,
                         body,
                         provider_context,
+                        completion_reserve_tokens=max_tokens,
                     )
                     result = parse_response_output(
                         responses_raw,
@@ -2099,9 +2935,11 @@ class OpenAICompatProvider(LLMProvider):
                     )
                     self._record_responses_success(model, reasoning_effort)
                     return result
-                except FinalizedRequestBudgetExceeded:
+                except ProviderRequestRejected:
                     raise
                 except Exception as responses_error:
+                    if provider_context is not None and provider_context.single_attempt:
+                        raise
                     if self._spec and self._spec.name == "github_copilot":
                         # Copilot gateway exposes GPT-5/o-series only via /responses;
                         # falling back to /chat/completions cannot succeed and would
@@ -2113,23 +2951,217 @@ class OpenAICompatProvider(LLMProvider):
                         raise
                     self._record_responses_failure(model, reasoning_effort)
 
-            kwargs = self._build_kwargs(
-                messages, tools, model, max_tokens, temperature,
-                reasoning_effort, tool_choice,
+            kwargs, body = self._prepare_chat_request(
+                messages,
+                tools,
+                model,
+                max_tokens,
+                temperature,
+                reasoning_effort,
+                tool_choice,
+                stream=False,
+                provider_context=provider_context,
             )
             self.validate_finalized_request(
-                kwargs, transport="openai_chat_completions",
-                model=str(kwargs.get("model") or ""), provider_context=provider_context,
+                body,
+                transport="openai_chat_completions",
+                model=str(body.get("model") or ""),
+                provider_context=provider_context,
+                completion_reserve_tokens=max_tokens,
+                policy=self._request_budget_policy,
             )
+            self._record_transport_attempt(provider_context)
             chat_raw = cast(
                 Any,
                 await client.chat.completions.create(**kwargs),
             )
-            return self._parse(chat_raw)
-        except FinalizedRequestBudgetExceeded:
+            result = self._parse(chat_raw)
+            if result.finish_reason != "error":
+                result.local_usage_receipt = self._make_local_usage_receipt(
+                    body,
+                    provider_context,
+                )
+            return result
+        except ProviderRequestRejected:
             raise
         except Exception as e:
+            overflow = (
+                self._backend_context_overflow(e)
+                if self._request_budget_policy == LOCAL_MANAGER_POLICY
+                else None
+            )
+            if overflow is not None:
+                raise overflow from e
             return self._handle_error(e, spec=self._spec, api_base=self.api_base)
+
+    async def _chat_stream_responses(
+        self,
+        client: Any,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str | None,
+        max_tokens: int,
+        temperature: float,
+        reasoning_effort: str | None,
+        tool_choice: str | dict[str, Any] | None,
+        provider_context: ProviderCallContext | None,
+        idle_timeout_s: float,
+        timeout_reason: list[str],
+        callbacks: dict[str, Callable[..., Awaitable[None]] | None],
+    ) -> LLMResponse:
+        """Stream one Responses request and close its actual SDK objects."""
+        responses_stream: object | None = None
+        responses_iter: AsyncIterator[Any] | None = None
+        timed_iterator: AsyncIterator[Any] | None = None
+        preserve_cleanup_outcome = False
+        try:
+            has_foreground_timeout = provider_context is not None and (
+                provider_context.stream_idle_timeout_seconds is not None
+                or provider_context.request_deadline_monotonic is not None
+            )
+            first_sdk_chunk_deadline: float | None = (
+                time.monotonic() + idle_timeout_s if has_foreground_timeout else None
+            )
+            responses_client = client
+            body = self._build_responses_body(
+                messages,
+                tools,
+                model,
+                max_tokens,
+                temperature,
+                reasoning_effort,
+                tool_choice,
+                provider_context,
+            )
+            body["stream"] = True
+            if has_foreground_timeout:
+                request_timeout, timeout_reason[0] = self._stream_timeout_budget(
+                    provider_context,
+                    idle_timeout_s,
+                    idle_deadline_monotonic=first_sdk_chunk_deadline,
+                )
+                if request_timeout <= 0:
+                    raise asyncio.TimeoutError
+                with_options = getattr(client, "with_options", None)
+                if callable(with_options):
+                    responses_client = with_options(timeout=request_timeout)
+                create_stream = self._create_response_with_compaction_fallback(
+                    responses_client,
+                    body,
+                    provider_context,
+                    completion_reserve_tokens=max_tokens,
+                )
+                responses_stream = await asyncio.wait_for(
+                    create_stream,
+                    timeout=request_timeout,
+                )
+            else:
+                responses_stream = await self._create_response_with_compaction_fallback(
+                    responses_client,
+                    body,
+                    provider_context,
+                    completion_reserve_tokens=max_tokens,
+                )
+
+            iterator_factory = getattr(responses_stream, "__aiter__", None)
+            if not callable(iterator_factory):
+                raise TypeError("SDK Responses stream is not asynchronously iterable")
+            responses_iterator: object = iterator_factory()
+            if not callable(getattr(responses_iterator, "__anext__", None)):
+                raise TypeError("SDK Responses stream iterator has no async next method")
+            responses_iter = cast(AsyncIterator[Any], responses_iterator)
+
+            async def _timed_stream() -> AsyncIterator[Any]:
+                nonlocal first_sdk_chunk_deadline
+                while True:
+                    try:
+                        wait_timeout = idle_timeout_s
+                        if has_foreground_timeout:
+                            wait_timeout, timeout_reason[0] = self._stream_timeout_budget(
+                                provider_context,
+                                idle_timeout_s,
+                                idle_deadline_monotonic=first_sdk_chunk_deadline,
+                            )
+                        yield await asyncio.wait_for(
+                            responses_iter.__anext__(),
+                            timeout=wait_timeout,
+                        )
+                    except StopAsyncIteration:
+                        break
+                    first_sdk_chunk_deadline = time.monotonic() + idle_timeout_s
+
+            timed_iterator = _timed_stream()
+            capture = ResponsesStreamCapture()
+            content, tool_calls, finish_reason, usage, reasoning_content = (
+                await consume_sdk_stream(
+                    timed_iterator,
+                    callbacks["on_content_delta"],
+                    on_tool_call_delta=callbacks["on_tool_call_delta"],
+                    on_reasoning_delta=callbacks["on_thinking_delta"],
+                    capture=capture,
+                )
+            )
+            incomplete_auxiliary = (
+                provider_context is not None
+                and provider_context.source_summary_mode is not None
+                and not capture.succeeded
+            )
+            if incomplete_auxiliary:
+                finish_reason = "error"
+            self._record_responses_success(model, reasoning_effort)
+            result = LLMResponse(
+                content=content or None,
+                tool_calls=tool_calls,
+                finish_reason=finish_reason,
+                usage=usage,
+                reasoning_content=reasoning_content,
+                error_kind="summary_incomplete_stream" if incomplete_auxiliary else None,
+            )
+            if capture.completed and is_replayable_finish_reason(finish_reason):
+                transport_receipt = self.conversation_state_transport_receipt(
+                    str(body["model"])
+                )
+                result.provider_state = build_responses_state(
+                    provider=self._responses_state_provider(),
+                    model=str(body["model"]),
+                    input_items=cast(list[dict[str, Any]], body["input"]),
+                    output_items=capture.output_items,
+                    usage=usage,
+                    transport_receipt=transport_receipt,
+                )
+                result.provider_compaction_state = build_responses_compaction_state(
+                    provider=self._responses_state_provider(),
+                    model=str(body["model"]),
+                    output_items=capture.output_items,
+                    transport_receipt=transport_receipt,
+                )
+                result.provider_compaction_applied = (
+                    result.provider_compaction_state is not None
+                )
+                if result.provider_compaction_applied:
+                    result.provider_compaction_scope = "current_request"
+            return result
+        except asyncio.CancelledError:
+            preserve_cleanup_outcome = True
+            raise
+        except ProviderRequestRejected:
+            preserve_cleanup_outcome = True
+            raise
+        except BaseException:
+            preserve_cleanup_outcome = True
+            raise
+        finally:
+            await self._close_sdk_stream(
+                timed_iterator,
+                responses_stream,
+                additional_iterators=(responses_iter,) if responses_iter is not None else (),
+                preserve_active_error=preserve_cleanup_outcome,
+                deadline_monotonic=(
+                    provider_context.request_deadline_monotonic
+                    if provider_context is not None
+                    else None
+                ),
+            )
 
     async def chat_stream(
         self,
@@ -2145,93 +3177,54 @@ class OpenAICompatProvider(LLMProvider):
         on_tool_call_delta: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         provider_context: ProviderCallContext | None = None,
     ) -> LLMResponse:
+        chat_stream: object | None = None
+        stream_iter: AsyncIterator[Any] | None = None
+        preserve_cleanup_outcome = False
         delivered = [False]
-        callbacks: dict[str, Callable[..., Awaitable[None]] | None] = dict(on_content_delta=on_content_delta, on_thinking_delta=on_thinking_delta,
-                         on_tool_call_delta=on_tool_call_delta)
+        callbacks: dict[str, Callable[..., Awaitable[None]] | None] = {
+            "on_content_delta": on_content_delta,
+            "on_thinking_delta": on_thinking_delta,
+            "on_tool_call_delta": on_tool_call_delta,
+        }
         track_stream_delivery(callbacks, delivered)
-        on_content_delta = callbacks['on_content_delta']
-        on_thinking_delta = callbacks['on_thinking_delta']
-        on_tool_call_delta = callbacks['on_tool_call_delta']
+        on_content_delta = callbacks["on_content_delta"]
+        on_thinking_delta = callbacks["on_thinking_delta"]
+        on_tool_call_delta = callbacks["on_tool_call_delta"]
         client = await self._ensure_client()
-        idle_timeout_s = self._configured_timeout if self._configured_timeout is not None else resolve_stream_idle_timeout_s()
+        idle_timeout_s = (
+            self._configured_timeout
+            if self._configured_timeout is not None
+            else resolve_stream_idle_timeout_s()
+        )
+        if (
+            provider_context is not None
+            and provider_context.stream_idle_timeout_seconds is not None
+        ):
+            idle_timeout_s = provider_context.stream_idle_timeout_seconds
+        timeout_reason = ["summary_idle_timeout"]
         try:
             if self._should_use_responses_api(model, reasoning_effort):
                 try:
-                    body = self._build_responses_body(
-                        messages, tools, model, max_tokens, temperature,
-                        reasoning_effort, tool_choice,
-                        provider_context,
-                    )
-                    body["stream"] = True
-                    responses_stream = await self._create_response_with_compaction_fallback(
+                    return await self._chat_stream_responses(
                         client,
-                        body,
+                        messages,
+                        tools,
+                        model,
+                        max_tokens,
+                        temperature,
+                        reasoning_effort,
+                        tool_choice,
                         provider_context,
+                        idle_timeout_s,
+                        timeout_reason,
+                        callbacks,
                     )
-
-                    async def _timed_stream() -> AsyncIterator[Any]:
-                        stream_iter: AsyncIterator[Any] = responses_stream.__aiter__()
-                        while True:
-                            try:
-                                yield await asyncio.wait_for(
-                                    stream_iter.__anext__(),
-                                    timeout=idle_timeout_s,
-                                )
-                            except StopAsyncIteration:
-                                break
-
-                    capture = ResponsesStreamCapture()
-                    (
-                        content,
-                        tool_calls,
-                        finish_reason,
-                        usage,
-                        reasoning_content,
-                    ) = await consume_sdk_stream(
-                        _timed_stream(),
-                        on_content_delta,
-                        on_tool_call_delta=on_tool_call_delta,
-                        on_reasoning_delta=on_thinking_delta,
-                        capture=capture,
-                    )
-                    self._record_responses_success(model, reasoning_effort)
-                    result = LLMResponse(
-                        content=content or None,
-                        tool_calls=tool_calls,
-                        finish_reason=finish_reason,
-                        usage=usage,
-                        reasoning_content=reasoning_content,
-                    )
-                    if capture.completed and is_replayable_finish_reason(finish_reason):
-                        transport_receipt = self.conversation_state_transport_receipt(
-                            str(body["model"])
-                        )
-                        result.provider_state = build_responses_state(
-                            provider=self._responses_state_provider(),
-                            model=str(body["model"]),
-                            input_items=cast(list[dict[str, Any]], body["input"]),
-                            output_items=capture.output_items,
-                            usage=usage,
-                            transport_receipt=transport_receipt,
-                        )
-                        result.provider_compaction_state = (
-                            build_responses_compaction_state(
-                                provider=self._responses_state_provider(),
-                                model=str(body["model"]),
-                                output_items=capture.output_items,
-                                transport_receipt=transport_receipt,
-                            )
-                        )
-                        result.provider_compaction_applied = (
-                            result.provider_compaction_state is not None
-                        )
-                        if result.provider_compaction_applied:
-                            result.provider_compaction_scope = "current_request"
-                    return result
-                except FinalizedRequestBudgetExceeded:
+                except ProviderRequestRejected:
                     raise
                 except Exception as responses_error:
                     if delivered[0]:
+                        raise
+                    if provider_context is not None and provider_context.single_attempt:
                         raise
                     if self._spec and self._spec.name == "github_copilot":
                         # Copilot gateway exposes GPT-5/o-series only via /responses;
@@ -2244,43 +3237,95 @@ class OpenAICompatProvider(LLMProvider):
                         raise
                     self._record_responses_failure(model, reasoning_effort)
 
-            kwargs = self._build_kwargs(
-                messages, tools, model, max_tokens, temperature,
-                reasoning_effort, tool_choice,
+            request_timeout, timeout_reason[0] = self._stream_timeout_budget(
+                provider_context,
+                idle_timeout_s,
             )
-            if self._spec and self._spec.name == "zhipu" and tools and on_tool_call_delta:
-                # Z.AI/GLM keeps streaming tool-call arguments behind an
-                # explicit provider flag.  Pass it through the OpenAI SDK's
-                # extra_body escape hatch so the usual delta.tool_calls path
-                # can surface live file-edit progress.
-                kwargs.setdefault("extra_body", {})["tool_stream"] = True
-            kwargs["stream"] = True
-            kwargs["stream_options"] = {"include_usage": True}
+            has_foreground_timeout = provider_context is not None and (
+                provider_context.stream_idle_timeout_seconds is not None
+                or provider_context.request_deadline_monotonic is not None
+            )
+            kwargs, body = self._prepare_chat_request(
+                messages,
+                tools,
+                model,
+                max_tokens,
+                temperature,
+                reasoning_effort,
+                tool_choice,
+                stream=True,
+                provider_context=provider_context,
+                timeout=request_timeout if has_foreground_timeout else None,
+            )
             self.validate_finalized_request(
-                kwargs, transport="openai_chat_completions_stream",
-                model=str(kwargs.get("model") or ""), provider_context=provider_context,
+                body,
+                transport="openai_chat_completions_stream",
+                model=str(body.get("model") or ""),
+                provider_context=provider_context,
+                completion_reserve_tokens=max_tokens,
+                policy=self._request_budget_policy,
             )
-            chat_stream = cast(
-                Any,
-                await client.chat.completions.create(**kwargs),
+            request_timeout, timeout_reason[0] = self._stream_timeout_budget(
+                provider_context,
+                idle_timeout_s,
             )
+            if has_foreground_timeout and request_timeout <= 0:
+                raise asyncio.TimeoutError
+            if has_foreground_timeout:
+                kwargs["timeout"] = request_timeout
+            first_sdk_chunk_deadline: float | None = (
+                time.monotonic() + idle_timeout_s
+            )
+            self._record_transport_attempt(provider_context)
+            create_result: object = cast(
+                object,
+                client.chat.completions.create(**kwargs),
+            )
+            if not inspect.isawaitable(create_result):
+                raise TypeError("SDK stream creation did not return an awaitable")
+            create_call = cast(Awaitable[object], create_result)
+            if has_foreground_timeout:
+                chat_stream = await asyncio.wait_for(create_call, timeout=request_timeout)
+            else:
+                chat_stream = await create_call
             chunks: list[Any] = []
+            observed_terminal_chunk = False
             # Withhold only a leading protocol envelope (including split tags).
             # Ordinary answers resume streaming as soon as the prefix differs.
             content_prefix = ""
             content_is_text = False
-            stream_iter: AsyncIterator[Any] = chat_stream.__aiter__()
+            iterator_factory = getattr(chat_stream, "__aiter__", None)
+            if not callable(iterator_factory):
+                raise TypeError("SDK stream response is not asynchronously iterable")
+            iterator: object = iterator_factory()
+            if not callable(getattr(iterator, "__anext__", None)):
+                raise TypeError("SDK stream iterator has no async next method")
+            stream_iter = cast(AsyncIterator[Any], iterator)
             while True:
                 try:
+                    wait_timeout, timeout_reason[0] = self._stream_timeout_budget(
+                        provider_context,
+                        idle_timeout_s,
+                        idle_deadline_monotonic=first_sdk_chunk_deadline,
+                    )
                     chunk: Any = await asyncio.wait_for(
                         stream_iter.__anext__(),
-                        timeout=idle_timeout_s,
+                        timeout=wait_timeout,
                     )
                 except StopAsyncIteration:
                     break
+                first_sdk_chunk_deadline = None
                 chunks.append(chunk)
                 if chunk.choices:
                     delta_obj = chunk.choices[0].delta
+                    finish_reason_value = getattr(
+                        chunk.choices[0], "finish_reason", None
+                    )
+                    if (
+                        isinstance(finish_reason_value, str)
+                        and finish_reason_value.strip()
+                    ):
+                        observed_terminal_chunk = True
                     raw_delta_content = getattr(delta_obj, "content", None)
                     if on_content_delta:
                         # Mistral streams content as a list of {"type":"thinking",
@@ -2335,6 +3380,14 @@ class OpenAICompatProvider(LLMProvider):
                                 "arguments_delta": str(_get(function_call, "arguments") or ""),
                             })
             result = self._parse_chunks(chunks)
+            incomplete_auxiliary = (
+                provider_context is not None
+                and provider_context.source_summary_mode is not None
+                and not observed_terminal_chunk
+            )
+            if incomplete_auxiliary:
+                result.finish_reason = "error"
+                result.error_kind = "summary_incomplete_stream"
             if (
                 on_content_delta
                 and content_prefix
@@ -2345,20 +3398,57 @@ class OpenAICompatProvider(LLMProvider):
                 # Flush an ambiguous literal prefix (e.g. '<') or visible text
                 # remaining after a successfully normalized JSON tool block.
                 await on_content_delta(result.content)
+            if result.finish_reason != "error":
+                result.local_usage_receipt = self._make_local_usage_receipt(
+                    body,
+                    provider_context,
+                )
             return result
+        except asyncio.CancelledError:
+            preserve_cleanup_outcome = True
+            raise
         except asyncio.TimeoutError:
-            return LLMResponse(
-                content=(
+            has_summary_policy = (
+                provider_context is not None
+                and provider_context.source_summary_mode is not None
+            )
+            if has_summary_policy:
+                reason = timeout_reason[0]
+                message = f"Error calling LLM: {reason}"
+            else:
+                reason = "timeout"
+                message = (
                     f"Error calling LLM: stream stalled for more than "
                     f"{idle_timeout_s:g} seconds"
-                ),
+                )
+            return LLMResponse(
+                content=message,
                 finish_reason="error",
-                error_kind="timeout",
+                error_kind=reason,
             )
-        except FinalizedRequestBudgetExceeded:
+        except ProviderRequestRejected:
+            preserve_cleanup_outcome = True
             raise
         except Exception as e:
+            overflow = (
+                self._backend_context_overflow(e)
+                if self._request_budget_policy == LOCAL_MANAGER_POLICY
+                else None
+            )
+            if overflow is not None:
+                raise overflow from e
             return self._handle_error(e, spec=self._spec, api_base=self.api_base)
+        finally:
+            await self._close_sdk_stream(
+                stream_iter,
+                chat_stream,
+                preserve_active_error=preserve_cleanup_outcome,
+                deadline_monotonic=(
+                    provider_context.request_deadline_monotonic
+                    if provider_context is not None
+                    else None
+                ),
+            )
 
     def get_default_model(self) -> str:
         return self.default_model

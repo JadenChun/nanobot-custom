@@ -12,9 +12,9 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date
-from typing import cast
+from typing import Literal, cast
 
 import tiktoken
 from tiktoken.model import MODEL_TO_ENCODING
@@ -27,6 +27,9 @@ from nanobot.utils.media_tokens import (
 
 DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER = 1024
 TOKEN_ESTIMATE_SAFETY_RATIO = 1.15
+LOCAL_MANAGER_POLICY = "local_manager_compat_cl100k_estimate"
+LOCAL_MANAGER_MAX_REQUEST_BYTES = 64 * 1024 * 1024
+RequestBudgetPolicy = Literal["strict", "local_manager_compat_cl100k_estimate"]
 _BEDROCK_BINARY_FRAMING_BYTES = 64
 _MODEL_ENCODING_BASES: dict[str, str] = {
     "gpt-4-turbo": "cl100k_base",
@@ -138,27 +141,109 @@ class TransportMeasurement:
     input_tokens: int
     completion_reserve_tokens: int
     safety_buffer_tokens: int
-    total_limit_tokens: int
-    input_limit_tokens: int
+    total_limit_tokens: int | None
+    input_limit_tokens: int | None
     source: str
+    measured_bytes: int | None = None
+    limit_bytes: int | None = None
+    policy: str = "strict"
 
     @property
     def fits(self) -> bool:
-        return self.input_tokens <= self.input_limit_tokens
+        return self.input_limit_tokens is None or self.input_tokens <= self.input_limit_tokens
 
     @property
     def over_by(self) -> int:
+        if self.input_limit_tokens is None:
+            return 0
         return max(0, self.input_tokens - self.input_limit_tokens)
 
 
-class FinalizedRequestBudgetExceeded(Exception):  # noqa: N818 - public contract name
+@dataclass(frozen=True, slots=True)
+class PreparedRequestBudgetPreview:
+    """Private converted request view used to align local pressure with dispatch."""
+
+    measurement: TransportMeasurement
+    envelope_binding: str
+    converted_messages: tuple[dict[str, object], ...] = field(repr=False)
+    converted_tools: tuple[dict[str, object], ...] | None = field(repr=False)
+    effective_body: dict[str, object] = field(repr=False)
+    sdk_kwargs: dict[str, object] = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class LocalRequestUsageReceipt:
+    """Invocation-only binding for one successful direct local-manager request."""
+
+    provider_scope: str
+    envelope_binding: str
+    model: str
+    limits_binding: str
+    messages: tuple[dict[str, object], ...] = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class LocalUsageAnchor:
+    """A validated reported prompt count paired with its private request receipt."""
+
+    receipt: LocalRequestUsageReceipt = field(repr=False)
+    prompt_tokens: int
+    projection_epoch: int | None = None
+
+
+class ProviderRequestRejected(Exception):  # noqa: N818 - stable contract name
+    """Content-free, non-retryable rejection before or at provider transport."""
+
+    DEFAULT_MESSAGE = "Provider request was rejected."
+
+    def __init__(self, *, reason: str = "invalid_request_envelope") -> None:
+        self.reason = reason
+        super().__init__(self.DEFAULT_MESSAGE)
+
+
+class FinalizedRequestBudgetExceeded(ProviderRequestRejected):  # noqa: N818
     """A local, non-retryable rejection before provider transport dispatch."""
 
     DEFAULT_MESSAGE = "Finalized provider request exceeds its context budget."
 
-    def __init__(self, measurement: TransportMeasurement | None = None) -> None:
+    def __init__(
+        self,
+        measurement: TransportMeasurement | None = None,
+        *,
+        reason: str = "estimated_admission",
+    ) -> None:
         self.measurement = measurement
-        super().__init__(self.DEFAULT_MESSAGE)
+        ProviderRequestRejected.__init__(self, reason=reason)
+        self.args = (self.DEFAULT_MESSAGE,)
+
+
+class RequestPayloadBytesExceeded(ProviderRequestRejected):
+    """The complete JSON request exceeds its independent byte ceiling."""
+
+    def __init__(self, measured_bytes: int, limit_bytes: int) -> None:
+        self.measured_bytes = measured_bytes
+        self.limit_bytes = limit_bytes
+        super().__init__(reason="payload_bytes")
+
+
+class GovernedRequestConflictError(ProviderRequestRejected):
+    """An extra body would change a source-governed model or message history."""
+
+    def __init__(self, field_name: str) -> None:
+        self.field_name = field_name
+        super().__init__(reason="invalid_request_envelope")
+
+
+class BackendContextOverflow(ProviderRequestRejected):
+    """A local backend returned its pinned structured context overflow result."""
+
+    def __init__(self, *, status_code: int, code: int, n_prompt_tokens: int, n_ctx: int) -> None:
+        self.status_code = status_code
+        self.code = code
+        self.error_type = "exceed_context_size_error"
+        self.n_prompt_tokens = n_prompt_tokens
+        self.n_ctx = n_ctx
+        super().__init__(reason="backend_context_overflow")
 
 
 def _completion_reserve(body: Mapping[str, object]) -> int:
@@ -714,6 +799,7 @@ def _canonicalize_finalized_value(
 def _text_token_measurement(
     encoded: bytes,
     identity: TransportIdentity,
+    policy: RequestBudgetPolicy,
 ) -> tuple[int, str]:
     """Estimate text tokens, failing closed to the older byte ceiling.
 
@@ -721,6 +807,17 @@ def _text_token_measurement(
     conservative ceiling that cannot assign a nearby model's vocabulary to an
     arbitrary alias.
     """
+    if policy == LOCAL_MANAGER_POLICY:
+        try:
+            encoding = tiktoken.get_encoding("cl100k_base")
+            tokens = len(encoding.encode(encoded.decode("utf-8"), disallowed_special=()))
+            return max(1, math.ceil(tokens * TOKEN_ESTIMATE_SAFETY_RATIO)), (
+                LOCAL_MANAGER_POLICY
+            )
+        except Exception:
+            return max(1, len(encoded)), (
+                "local_manager_compat_cl100k_unavailable_utf8_byte_ceiling"
+            )
     try:
         encoding_name = known_tiktoken_encoding(identity.provider, identity.model)
         if encoding_name is None:
@@ -737,7 +834,8 @@ def _text_token_measurement(
 def _serialized_input_measurement(
     identity: TransportIdentity,
     body: Mapping[str, object],
-) -> tuple[int, str]:
+    policy: RequestBudgetPolicy,
+) -> tuple[int, str, int | None]:
     """Count a content-free canonical body with conservative token units.
 
     Text is measured with a tokenizer and a safety ratio. Inline and
@@ -751,6 +849,16 @@ def _serialized_input_measurement(
         canonical, supplemental_units, measurement_kinds = _canonicalize_finalized_value(
             body, identity,
         )
+        request_json = (
+            json.dumps(
+                body,
+                ensure_ascii=False,
+                allow_nan=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            if policy == LOCAL_MANAGER_POLICY
+            else b""
+        )
         encoded = json.dumps(
             canonical,
             ensure_ascii=False,
@@ -760,26 +868,42 @@ def _serialized_input_measurement(
         ).encode("utf-8")
     except (TypeError, ValueError, UnicodeError) as exc:
         raise ValueError("finalized provider request cannot be measured") from exc
-    text_units, source = _text_token_measurement(encoded, identity)
+    text_units, source = _text_token_measurement(encoded, identity, policy)
     for kind in sorted(measurement_kinds):
         source += f"+{kind}"
-    return max(1, text_units + supplemental_units), source
+    return (
+        max(1, text_units + supplemental_units),
+        source,
+        len(request_json) if policy == LOCAL_MANAGER_POLICY else None,
+    )
 
 
 def measure_finalized_request(
     identity: TransportIdentity,
     body: Mapping[str, object],
-    limits: ProviderRequestLimits,
+    limits: ProviderRequestLimits | None,
     *,
     completion_reserve_tokens: int | None = None,
+    policy: RequestBudgetPolicy = "strict",
 ) -> TransportMeasurement:
     """Measure a detached finalized body against the selected transport limit."""
     if not isinstance(cast(object, identity), TransportIdentity):
         raise ValueError("transport identity is invalid")
     if not isinstance(cast(object, body), Mapping):
         raise ValueError("finalized provider request is invalid")
-    if not isinstance(cast(object, limits), ProviderRequestLimits):
+    if limits is not None and not isinstance(cast(object, limits), ProviderRequestLimits):
         raise ValueError("provider request limits are invalid")
+    if policy not in {"strict", LOCAL_MANAGER_POLICY}:
+        raise ValueError("provider request measurement policy is invalid")
+    if policy == "strict" and limits is None:
+        raise ValueError("provider request limits are invalid")
+    if policy == LOCAL_MANAGER_POLICY and (
+        identity.provider != "local_manager"
+        or identity.transport not in {
+            "openai_chat_completions", "openai_chat_completions_stream",
+        }
+    ):
+        raise ValueError("local manager estimate is unsupported for this transport")
     if completion_reserve_tokens is not None and (
         isinstance(completion_reserve_tokens, bool)
         or not isinstance(cast(object, completion_reserve_tokens), int)
@@ -787,35 +911,59 @@ def measure_finalized_request(
     ):
         raise ValueError("finalized completion reserve is invalid")
     concrete_reserve = max(_completion_reserve(body), completion_reserve_tokens or 0)
-    reserve = max(concrete_reserve, limits.completion_reserve_tokens or 0)
-    total = limits.effective_total_tokens
-    input_limit = total - reserve - limits.safety_buffer_tokens
-    input_tokens, source = _serialized_input_measurement(identity, body)
+    configured_reserve = limits.completion_reserve_tokens if limits is not None else 0
+    reserve = max(concrete_reserve, completion_reserve_tokens or 0, configured_reserve or 0)
+    total = limits.effective_total_tokens if limits is not None else None
+    safety = limits.safety_buffer_tokens if limits is not None else 0
+    input_limit = total - reserve - safety if total is not None else None
+    input_tokens, source, measured_bytes = _serialized_input_measurement(identity, body, policy)
     return TransportMeasurement(
         identity=identity,
         input_tokens=input_tokens,
         completion_reserve_tokens=reserve,
-        safety_buffer_tokens=limits.safety_buffer_tokens,
+        safety_buffer_tokens=safety,
         total_limit_tokens=total,
         input_limit_tokens=input_limit,
         source=source,
+        measured_bytes=measured_bytes,
+        limit_bytes=LOCAL_MANAGER_MAX_REQUEST_BYTES if policy == LOCAL_MANAGER_POLICY else None,
+        policy=policy,
     )
 
 
 def validate_finalized_request(
     identity: TransportIdentity,
     body: Mapping[str, object],
-    limits: ProviderRequestLimits,
+    limits: ProviderRequestLimits | None,
     *,
     completion_reserve_tokens: int | None = None,
+    policy: RequestBudgetPolicy = "strict",
 ) -> TransportMeasurement:
     """Return a valid measurement or raise without exposing request content."""
     try:
         measurement = measure_finalized_request(
-            identity, body, limits, completion_reserve_tokens=completion_reserve_tokens,
+            identity,
+            body,
+            limits,
+            completion_reserve_tokens=completion_reserve_tokens,
+            policy=policy,
         )
     except ValueError as exc:
+        if policy == LOCAL_MANAGER_POLICY:
+            raise ProviderRequestRejected(reason="invalid_request_envelope") from exc
         raise FinalizedRequestBudgetExceeded() from exc
+    if (
+        policy == LOCAL_MANAGER_POLICY
+        and measurement.measured_bytes is not None
+        and measurement.measured_bytes > LOCAL_MANAGER_MAX_REQUEST_BYTES
+    ):
+        raise RequestPayloadBytesExceeded(
+            measurement.measured_bytes,
+            LOCAL_MANAGER_MAX_REQUEST_BYTES,
+        )
     if not measurement.fits:
-        raise FinalizedRequestBudgetExceeded(measurement)
+        reason = "local_estimated_admission" if policy == LOCAL_MANAGER_POLICY else (
+            "estimated_admission"
+        )
+        raise FinalizedRequestBudgetExceeded(measurement, reason=reason)
     return measurement

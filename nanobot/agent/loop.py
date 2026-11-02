@@ -568,6 +568,8 @@ class AgentLoop:
         restart_mode: str = "auto",
         local_trigger_store: LocalTriggerStore | None = None,
         idle_compact_check_interval_seconds: int = 0,
+        source_compaction_idle_timeout_seconds: float = 300.0,
+        source_compaction_overall_timeout_seconds: float = 900.0,
         recovery_admission: RecoveryAdmission | None = None,
         fork_dependencies: ForkToolDependencies | None = None,
         _owns_fork_dependencies: bool = False,
@@ -789,6 +791,8 @@ class AgentLoop:
             else None
         )
         self._idle_compact_check_interval_s = idle_compact_check_interval_seconds
+        self._source_compaction_idle_timeout_seconds = source_compaction_idle_timeout_seconds
+        self._source_compaction_overall_timeout_seconds = source_compaction_overall_timeout_seconds
         self._next_idle_compact_check_at = time.monotonic()
         if model_preset:
             self.set_model_preset(model_preset, publish_update=False)
@@ -939,6 +943,12 @@ class AgentLoop:
             disabled_skills=defaults.disabled_skills,
             session_ttl_minutes=defaults.session_ttl_minutes,
             idle_compact_check_interval_seconds=defaults.idle_compact_check_interval_seconds,
+            source_compaction_idle_timeout_seconds=(
+                defaults.source_compaction.idle_timeout_seconds
+            ),
+            source_compaction_overall_timeout_seconds=(
+                defaults.source_compaction.overall_timeout_seconds
+            ),
             tools_config=config.tools,
             model_presets=preset_helpers.configured_model_presets(config),
             model_preset=defaults.model_preset,
@@ -2534,6 +2544,12 @@ class AgentLoop:
                 provider_retry_mode=self.provider_retry_mode,
                 checkpoint_callback=_checkpoint,
                 source_writer=source_writer,
+                source_compaction_idle_timeout_seconds=(
+                    getattr(self, "_source_compaction_idle_timeout_seconds", 300.0)
+                ),
+                source_compaction_overall_timeout_seconds=(
+                    getattr(self, "_source_compaction_overall_timeout_seconds", 900.0)
+                ),
                 consolidate_history=(
                     partial(
                         self.consolidator.summarize_transcript,

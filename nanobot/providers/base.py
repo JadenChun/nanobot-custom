@@ -21,9 +21,20 @@ from loguru import logger
 
 from nanobot.events import NO_EVENTS, EventSink, RetryStatusEvent, RetryWaitEvent
 from nanobot.providers.image_history import recent_image_messages
+from nanobot.providers.request_budget import BackendContextOverflow as BackendContextOverflow
 from nanobot.providers.request_budget import (
-    FinalizedRequestBudgetExceeded,
+    FinalizedRequestBudgetExceeded as FinalizedRequestBudgetExceeded,
+)
+from nanobot.providers.request_budget import (
+    GovernedRequestConflictError as GovernedRequestConflictError,
+)
+from nanobot.providers.request_budget import (
+    LocalRequestUsageReceipt,
+    LocalUsageAnchor,
+    PreparedRequestBudgetPreview,
     ProviderRequestLimits,
+    ProviderRequestRejected,
+    RequestBudgetPolicy,
     TransportIdentity,
     TransportMeasurement,
     validate_finalized_request,
@@ -391,6 +402,14 @@ class ProviderCallContext:
     context_window_tokens: int | None = None
     session_id: str | None = field(default=None, repr=False)
     events: EventSink = field(default=NO_EVENTS, repr=False, compare=False)
+    stream_idle_timeout_seconds: float | None = None
+    request_deadline_monotonic: float | None = None
+    single_attempt: bool = False
+    source_summary_mode: Literal["prefix", "canonical"] | None = None
+    local_usage_anchor: LocalUsageAnchor | None = field(default=None, repr=False)
+    on_transport_attempt: Callable[[str], None] | None = field(
+        default=None, repr=False, compare=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -721,6 +740,7 @@ class LLMResponse:
     error_code: str | None = None  # Provider/code semantic, e.g. rate_limit_exceeded.
     error_retry_after_s: float | None = None
     error_should_retry: bool | None = None
+    local_usage_receipt: LocalRequestUsageReceipt | None = field(default=None, repr=False)
 
     @property
     def has_tool_calls(self) -> bool:
@@ -978,6 +998,7 @@ class LLMProvider(ABC):
         model: str | None,
         provider_context: ProviderCallContext | None = None,
         completion_reserve_tokens: int | None = None,
+        policy: RequestBudgetPolicy = "strict",
     ) -> TransportMeasurement | None:
         """Validate one concrete SDK/HTTP body immediately before dispatch.
 
@@ -985,10 +1006,12 @@ class LLMProvider(ABC):
         limit rejects an unknown/opaque body rather than allowing a transport
         whose size cannot be established locally.
         """
-        if provider_context is None or provider_context.request_limits is None:
+        if (
+            provider_context is None or provider_context.request_limits is None
+        ) and policy == "strict":
             return None
         selected_model = model or self.get_default_model()
-        limits = provider_context.request_limits
+        limits = provider_context.request_limits if provider_context is not None else None
         # Registry metadata is optional and deliberately only narrows a
         # caller-supplied hard budget. Unknown/dynamic models retain the
         # configured bound rather than receiving an invented capacity.
@@ -1002,7 +1025,7 @@ class LLMProvider(ABC):
                     if item.context_window is not None
                     and (item.id == selected_model or selected_model.endswith(f"/{item.id}"))
                 ), None)
-                if candidate is not None:
+                if candidate is not None and limits is not None:
                     limits = limits.for_model_window(candidate)
         except Exception:
             # A registry lookup must never loosen or disable a supplied limit.
@@ -1012,7 +1035,23 @@ class LLMProvider(ABC):
             body,
             limits,
             completion_reserve_tokens=completion_reserve_tokens,
+            policy=policy,
         )
+
+    def preview_request_budget(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str | None,
+        generation: GenerationSettings,
+        provider_context: ProviderCallContext,
+        stream: bool,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> PreparedRequestBudgetPreview | None:
+        """Prepare a provider-owned budget view when the selected route is known."""
+        _ = messages, tools, model, generation, provider_context, stream, tool_choice
+        return None
 
     @staticmethod
     def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1472,21 +1511,51 @@ class LLMProvider(ABC):
         The caller owns timeout and budget validation. Provider transports may
         have their own retry policy; this method never repeats the request.
         """
+        provider_context = kwargs.pop("provider_context", None)
+        if not isinstance(provider_context, ProviderCallContext):
+            provider_context = ProviderCallContext(single_attempt=True)
+        kwargs["provider_context"] = provider_context
         return await self._safe_chat(**kwargs)
+
+    async def chat_stream_once(self, **kwargs: Any) -> LLMResponse:
+        """Make one observed stream call without framework retry or route rotation."""
+        provider_context = kwargs.pop("provider_context", None)
+        if isinstance(provider_context, ProviderCallContext):
+            provider_context = replace(provider_context, single_attempt=True)
+        else:
+            provider_context = ProviderCallContext(single_attempt=True)
+        kwargs["provider_context"] = provider_context
+        return await self._safe_chat_stream(**kwargs)
 
     async def _safe_chat(self, **kwargs: Any) -> LLMResponse:
         """Call chat() and convert unexpected exceptions to error responses."""
         started_at_ms = time.time_ns() // 1_000_000
         started_at_ns = time.monotonic_ns()
+        transport_attempts = [0]
+        supplied_context = kwargs.pop("provider_context", None)
+        base_context = (
+            supplied_context
+            if isinstance(supplied_context, ProviderCallContext)
+            else ProviderCallContext()
+        )
+        provider_context = base_context
+        if self._llm_call_observer is not None:
+            prior_attempt_observer = base_context.on_transport_attempt
+
+            def record_transport_attempt(kind: str) -> None:
+                transport_attempts[0] += 1
+                if prior_attempt_observer is not None:
+                    prior_attempt_observer(kind)
+
+            provider_context = replace(
+                base_context,
+                on_transport_attempt=record_transport_attempt,
+            )
         try:
-            provider_context = kwargs.pop("provider_context", None)
-            if isinstance(provider_context, ProviderCallContext):
-                response = await self.chat_with_context(
-                    provider_context=provider_context,
-                    **kwargs,
-                )
-            else:
-                response = await self.chat(**kwargs)
+            response = await self.chat_with_context(
+                provider_context=provider_context,
+                **kwargs,
+            )
         except asyncio.CancelledError:
             self._observe_llm_call(
                 LLMResponse(
@@ -1500,7 +1569,25 @@ class LLMProvider(ABC):
                 stream=False,
             )
             raise
-        except FinalizedRequestBudgetExceeded:
+        except BackendContextOverflow as exc:
+            if transport_attempts[0] > 0:
+                self._observe_llm_call(
+                    LLMResponse(
+                        content=None,
+                        finish_reason="error",
+                        error_status_code=exc.status_code,
+                        error_kind=exc.reason,
+                        error_type=exc.error_type,
+                        error_code=str(exc.code),
+                        error_should_retry=False,
+                    ),
+                    kwargs,
+                    started_at_ms=started_at_ms,
+                    started_at_ns=started_at_ns,
+                    stream=False,
+                )
+            raise
+        except ProviderRequestRejected:
             raise
         except Exception as exc:
             response = self._error_response_from_exception(exc)
@@ -1576,6 +1663,26 @@ class LLMProvider(ABC):
         started_at_ms = time.time_ns() // 1_000_000
         started_at_ns = time.monotonic_ns()
         first_output_at_ns: int | None = None
+        transport_attempts = [0]
+        supplied_context = kwargs.pop("provider_context", None)
+        base_context = (
+            supplied_context
+            if isinstance(supplied_context, ProviderCallContext)
+            else ProviderCallContext()
+        )
+        provider_context = base_context
+        if self._llm_call_observer is not None:
+            prior_attempt_observer = base_context.on_transport_attempt
+
+            def record_transport_attempt(kind: str) -> None:
+                transport_attempts[0] += 1
+                if prior_attempt_observer is not None:
+                    prior_attempt_observer(kind)
+
+            provider_context = replace(
+                base_context,
+                on_transport_attempt=record_transport_attempt,
+            )
 
         def _mark_output(delta: str) -> None:
             nonlocal first_output_at_ns
@@ -1623,14 +1730,10 @@ class LLMProvider(ABC):
             return response
 
         try:
-            provider_context = kwargs.pop("provider_context", None)
-            if isinstance(provider_context, ProviderCallContext):
-                response = await self.chat_stream_with_context(
-                    provider_context=provider_context,
-                    **kwargs,
-                )
-            else:
-                response = await self.chat_stream(**kwargs)
+            response = await self.chat_stream_with_context(
+                provider_context=provider_context,
+                **kwargs,
+            )
         except asyncio.CancelledError:
             self._observe_llm_call(
                 LLMResponse(
@@ -1644,7 +1747,25 @@ class LLMProvider(ABC):
                 stream=True,
             )
             raise
-        except FinalizedRequestBudgetExceeded:
+        except BackendContextOverflow as exc:
+            if transport_attempts[0] > 0:
+                self._observe_llm_call(
+                    LLMResponse(
+                        content=None,
+                        finish_reason="error",
+                        error_status_code=exc.status_code,
+                        error_kind=exc.reason,
+                        error_type=exc.error_type,
+                        error_code=str(exc.code),
+                        error_should_retry=False,
+                    ),
+                    kwargs,
+                    started_at_ms=started_at_ms,
+                    started_at_ns=started_at_ns,
+                    stream=True,
+                )
+            raise
+        except ProviderRequestRejected:
             raise
         except Exception as exc:
             response = self._error_response_from_exception(exc)
@@ -1664,7 +1785,11 @@ class LLMProvider(ABC):
         if prepared != messages and context is not None:
             # A native prefix may still contain the superseded images.
             # Rebuild portable input while retaining limits and routing.
-            context = replace(context, conversation_state=None)
+            context = replace(
+                context,
+                conversation_state=None,
+                local_usage_anchor=None,
+            )
         return prepared, context
 
     async def chat_stream_with_retry(
