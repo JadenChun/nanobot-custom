@@ -1708,6 +1708,21 @@ nanobot uses a shared SSRF guard for built-in web fetches and HTTP/SSE MCP conne
 
 Keep whitelist entries as narrow as possible, such as a single host CIDR (`192.168.1.50/32`). The whitelist is global for the shared SSRF guard; it is not limited to one tool or one MCP server.
 
+A shell command containing a private or internal URL is rejected before the
+command starts. In a normal foreground chat, one such pre-launch denial may be
+followed by a fresh model turn so unrelated permitted work can continue. The
+denied command and other calls queued in the same batch are never replayed. A
+second denial ends the run. The private target remains blocked; recovery is not
+a network exception. Whitelist only an exact trusted service when that access is
+intended.
+
+Configured MCP servers are trusted integrations. Their registered tools are
+available as ordinary model tools in managed WebUI chats, just as in DSH; use
+`enabledTools` to limit what a server contributes. The MCP server runs outside
+the Sandbox filesystem boundary, so review its command and configuration before
+enabling it. Folder grants control Nanobot's file and shell tools, not the
+external MCP server's own host access.
+
 HTTP/SSE MCP connections use the same process-wide proxy environment behavior as `web_fetch`: proxied targets use the configured proxy, and URLs excluded by `NO_PROXY` remain DNS-pinned direct connections.
 
 > [!TIP]

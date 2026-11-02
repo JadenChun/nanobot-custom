@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Collection, Iterable
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Generator, cast
 
 from nanobot.agent.tools.base import (
     Tool,
+    ToolDenialKind,
     ToolPreparationError,
     ToolPreparationErrorKind,
     ToolResult,
@@ -29,25 +31,62 @@ MANAGED_WEBUI_TOOL_NAMES = frozenset({
     "request_folder_access", "review_work", "explore",
 })
 
+_MANAGED_CAPABILITY_DENIAL = (
+    "Tool '{name}' is unavailable with managed folder access. This unconfined "
+    "host capability is not part of the configured managed tool set. Do not "
+    "retry the denied tool or reach the same external capability through another tool."
+)
+
+
+def managed_webui_tool_names(tools: Iterable[Tool]) -> frozenset[str]:
+    """Return built-in managed tools plus the user's configured MCP capabilities.
+
+    MCP servers are opt-in configuration, not ambient host work. The MCP
+    connection owns the server lifetime; each call is a configured capability
+    rather than a new unconfined process launch.
+    """
+    names = set(MANAGED_WEBUI_TOOL_NAMES)
+    from nanobot.agent.tools.mcp import (
+        MCPPromptWrapper,
+        MCPResourceWrapper,
+        MCPToolWrapper,
+    )
+
+    managed_mcp_types = {MCPToolWrapper, MCPResourceWrapper, MCPPromptWrapper}
+    for tool in tools:
+        if type(tool) in managed_mcp_types:
+            names.add(tool.name)
+    return frozenset(names)
+
 
 class ManagedToolDispatchGuard:
     """Deny stale unconfined WebUI tools and serialize their legacy admission."""
 
-    def __init__(self, grants: FolderGrantView | None) -> None:
+    def __init__(
+        self,
+        grants: FolderGrantView | None,
+        *,
+        allowed_names: Collection[str] | None = None,
+    ) -> None:
         self._grants = grants
+        self._allowed_names = frozenset(
+            MANAGED_WEBUI_TOOL_NAMES if allowed_names is None else allowed_names
+        )
 
-    def error(self, name: str) -> str | None:
+    def _managed_context(self) -> bool:
         request = current_request_context()
         grants = self._grants
-        if (
-            request is None
-            or request.channel != "websocket"
-            or grants is None
-            or not grants.is_managed
-            or name in MANAGED_WEBUI_TOOL_NAMES
-        ):
+        return bool(
+            request is not None
+            and request.channel == "websocket"
+            and grants is not None
+            and grants.is_managed
+        )
+
+    def error(self, name: str) -> str | None:
+        if not self._managed_context() or name in self._allowed_names:
             return None
-        return f"Tool '{name}' is unavailable with managed folder access"
+        return _MANAGED_CAPABILITY_DENIAL.format(name=name)
 
     @contextmanager
     def admit(self, name: str) -> Generator[str | None, None, None]:
@@ -57,13 +96,18 @@ class ManagedToolDispatchGuard:
             request is None
             or request.channel != "websocket"
             or grants is None
-            or name in MANAGED_WEBUI_TOOL_NAMES
+            or name in self._allowed_names
         ):
             yield None
             return
+        if self._managed_context():
+            yield self.error(name) or _MANAGED_CAPABILITY_DENIAL.format(name=name)
+            return
+        # Reserve before first activation even when the store is not managed
+        # yet; the grant change may activate confinement while this call runs.
         reservation = grants.try_begin_native_process()
         if reservation is None:
-            yield self.error(name) or f"Tool '{name}' is unavailable with managed folder access"
+            yield _MANAGED_CAPABILITY_DENIAL.format(name=name)
             return
         try:
             yield None
@@ -205,13 +249,16 @@ class ToolRegistry:
         params: Any,
     ) -> tuple[Tool | None, Any, str | None]:
         """Resolve, cast, and validate one tool call."""
-        dispatch_error = self.dispatch_error(name)
-        if dispatch_error is not None:
-            return None, params, ToolResult.error(dispatch_error)
         tool = self.get(name)
+        dispatch_error = self.dispatch_error(name)
         if not tool:
             suggestion = self._suggest_name(str(name))
             hint = f" Did you mean '{suggestion}'? Tool names must match exactly." if suggestion else ""
+            if name in self._withheld_names and dispatch_error is not None:
+                return None, params, ToolPreparationError(
+                    dispatch_error,
+                    kind=ToolPreparationErrorKind.MANAGED_UNAVAILABLE,
+                )
             kind = (
                 ToolPreparationErrorKind.WITHHELD_TOOL
                 if name in self._withheld_names
@@ -220,6 +267,11 @@ class ToolRegistry:
             return None, params, ToolPreparationError(
                 f"Error: Tool '{name}' not found.{hint} Available: {', '.join(self.tool_names)}",
                 kind=kind,
+            )
+        if dispatch_error is not None:
+            return None, params, ToolPreparationError(
+                dispatch_error,
+                kind=ToolPreparationErrorKind.MANAGED_UNAVAILABLE,
             )
         # Compatibility for external tools that still implement the legacy
         # setter protocol. Built-ins read the authoritative ContextVar
@@ -291,6 +343,10 @@ class ToolRegistry:
         result = (await tool.execute_with_context(context, **params)
                   if context is not None else await tool.execute(**params))
         outcome = result if isinstance(result, ToolOutcome) else ToolOutcome(content=result)
+        if outcome.recovery_kind is not None:
+            # Recovery classification is owned by the registry/executor, never
+            # by a tool's returned envelope.
+            outcome = replace(outcome, recovery_kind=None)
         if outcome.producer_receipt is not None:
             if not accepted_producer_receipt(tool, outcome.content, outcome.producer_receipt):
                 # Strip only untrusted producer authority.  Other independently
@@ -304,8 +360,12 @@ class ToolRegistry:
             receipt = outcome.retrieval_receipt
             if (type(tool) is not ReadArtifactTool or type(receipt) is not ArtifactRetrievalReceipt
                     or not receipt.matches(outcome.content)):
-                outcome = ToolOutcome(outcome.content, outcome.stop_reason, outcome.policy_metadata,
-                                      producer_receipt=outcome.producer_receipt)
+                outcome = ToolOutcome(
+                    outcome.content,
+                    outcome.stop_reason,
+                    outcome.policy_metadata,
+                    producer_receipt=outcome.producer_receipt,
+                )
         if outcome.handoff_receipt is not None:
             receipt = outcome.handoff_receipt
             if not ToolRegistry._accepts_handoff_receipt(tool, receipt, context):
@@ -321,8 +381,11 @@ class ToolRegistry:
         # structured result marker (or an explicit ToolOutcome stop state
         # supplied by the tool) establishes terminal semantics.
         if is_tool_error_result(outcome.content):
-            return ToolOutcome(content=outcome.content, stop_reason=outcome.stop_reason or "tool_error",
-                               policy_metadata=outcome.policy_metadata)
+            return ToolOutcome(
+                content=outcome.content,
+                stop_reason=outcome.stop_reason or "tool_error",
+                policy_metadata=outcome.policy_metadata,
+            )
         return outcome
 
     @staticmethod
@@ -359,7 +422,17 @@ class ToolRegistry:
         try:
             tool, params, error = self.prepare_call(name, params)
             if error:
-                outcome = ToolOutcome(content=ToolResult.error(str(error) + hint), stop_reason="tool_error")
+                recovery_kind = (
+                    ToolDenialKind.MANAGED_UNAVAILABLE
+                    if isinstance(error, ToolPreparationError)
+                    and error.kind is ToolPreparationErrorKind.MANAGED_UNAVAILABLE
+                    else None
+                )
+                outcome = ToolOutcome(
+                    content=ToolResult.error(str(error) + hint),
+                    stop_reason="tool_error",
+                    recovery_kind=recovery_kind,
+                )
             else:
                 assert tool is not None
                 with self.dispatch_admission(name) as dispatch_error:
@@ -367,6 +440,7 @@ class ToolRegistry:
                         outcome = ToolOutcome(
                             content=ToolResult.error(dispatch_error + hint),
                             stop_reason="tool_error",
+                            recovery_kind=ToolDenialKind.MANAGED_UNAVAILABLE,
                         )
                     else:
                         outcome = await self.execute_prepared(tool, params, context)

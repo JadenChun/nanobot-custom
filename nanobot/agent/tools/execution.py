@@ -12,7 +12,14 @@ from loguru import logger
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.agent.policy import ToolPolicy
-from nanobot.agent.tools.base import ToolPreparationError
+from nanobot.agent.tools.base import (
+    PRIVATE_NETWORK_DENIAL_NOTE,
+    Tool,
+    ToolDenialKind,
+    ToolDenialResult,
+    ToolPreparationError,
+    ToolPreparationErrorKind,
+)
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.agent.turn import ToolOutcome, TurnContext
 from nanobot.providers.base import ToolCallRequest
@@ -78,14 +85,6 @@ _SSRF_MARKERS: tuple[str, ...] = (
     "internal/private url detected",
     "private/internal address",
     "private address",
-)
-_SSRF_BOUNDARY_NOTE = (
-    "This is a non-bypassable security boundary. Stop trying to access "
-    "private/internal URLs. Do not retry with curl, wget, encoded IPs, "
-    "alternate DNS, redirects, proxies, or another tool. Ask the user for "
-    "local files, logs, screenshots, or an explicit safe public URL instead. "
-    "If the user explicitly trusts this private URL, ask them to whitelist "
-    "the exact IP/CIDR via tools.ssrfWhitelist."
 )
 # Non-SSRF boundary markers returned to the model as recoverable tool errors.
 _WORKSPACE_VIOLATION_MARKERS: tuple[str, ...] = (
@@ -296,6 +295,15 @@ async def _execute_tool_call(
         )
         if handled is not None:
             payload, event = handled
+        if preparation_error_kind == ToolPreparationErrorKind.MANAGED_UNAVAILABLE.value:
+            classified = ToolOutcome(
+                payload,
+                "tool_error",
+                recovery_kind=ToolDenialKind.MANAGED_UNAVAILABLE,
+            )
+            await _record_result(tool_result_callback, ordinal, tool_call, prep_error,
+                                 classified, event, dispatched=False)
+            return classified, event
         await _record_result(tool_result_callback, ordinal, tool_call, prep_error,
                              payload, event, dispatched=False)
         return payload, event
@@ -309,9 +317,14 @@ async def _execute_tool_call(
                 "status": "error",
                 "detail": dispatch_error[:120],
             }
+            classified = ToolOutcome(
+                payload,
+                "tool_error",
+                recovery_kind=ToolDenialKind.MANAGED_UNAVAILABLE,
+            )
             await _record_result(tool_result_callback, ordinal, tool_call, dispatch_error,
-                                 payload, event, dispatched=False)
-            return payload, event
+                                 classified, event, dispatched=False)
+            return classified, event
         if turn_context is not None and turn_context.busy_turn is not None:
             turn_context.busy_turn.check_stop()
         if turn_context is not None and turn_context.execution_owner is not None:
@@ -357,6 +370,7 @@ async def _execute_tool_call(
             return outcome, event
 
     if is_tool_error_result(result) or (outcome is not None and outcome.stop_reason == "tool_error"):
+        recovery_kind = _trusted_exec_denial_kind(tool, result)
         result = str(result)
         payload = _with_retry_hint(result)
         event = {
@@ -373,7 +387,12 @@ async def _execute_tool_call(
         )
         if handled is not None:
             payload, event = handled
-        classified = ToolOutcome(payload, "tool_error", outcome.policy_metadata if outcome else {})
+        classified = ToolOutcome(
+            payload,
+            "tool_error",
+            outcome.policy_metadata if outcome else {},
+            recovery_kind=recovery_kind,
+        )
         await _record_result(tool_result_callback, ordinal, tool_call, raw_result,
                              classified, event, dispatched=True)
         await hook.on_execute_tool_error(context, tool_call, tool, params, result)
@@ -393,6 +412,19 @@ async def _execute_tool_call(
                          handoff_receipt=outcome.handoff_receipt if outcome else None)
     await hook.after_execute_tool(context, tool_call, tool, params, result)
     return result, event
+
+
+def _trusted_exec_denial_kind(tool: Tool | None, result: Any) -> ToolDenialKind | None:
+    """Return a recovery kind only for the concrete shell guard's typed denial."""
+    if (
+        tool is None
+        or not isinstance(result, ToolDenialResult)
+        or result.kind is not ToolDenialKind.PRIVATE_NETWORK
+    ):
+        return None
+    from nanobot.agent.tools.shell import ExecTool
+
+    return result.kind if type(tool) is ExecTool else None
 
 
 def is_ssrf_violation(text: str) -> bool:
@@ -454,7 +486,9 @@ def _classify_violation(
 
 def _ssrf_soft_payload(raw_text: str) -> str:
     text = raw_text.strip() or "Error: request blocked by SSRF guard"
-    return f"{text}\n\n{_SSRF_BOUNDARY_NOTE}"
+    if PRIVATE_NETWORK_DENIAL_NOTE in text:
+        return text
+    return f"{text}\n\n{PRIVATE_NETWORK_DENIAL_NOTE}"
 
 
 def _event_detail(prefix: str, text: str, limit: int = 160) -> str:

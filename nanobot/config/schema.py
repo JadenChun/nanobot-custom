@@ -874,7 +874,7 @@ class ToolsConfig(Base):
             "allowLocalPreviewAccess",
             "allow_local_preview_access",
         ),
-    )  # allow WebUI Full Access shell checks against localhost services; legacy allowLocalPreviewAccess still reads
+    )  # allow channel setup validation to reach localhost services; legacy allowLocalPreviewAccess still reads
     webui_allow_remote_package_install: bool = Field(
         default=False,
         validation_alias=AliasChoices(

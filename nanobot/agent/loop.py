@@ -65,9 +65,9 @@ from nanobot.agent.tools.exec_session import ExecCompletionSink, ExecSessionMana
 from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from nanobot.agent.tools.message import capture_message_deliveries
 from nanobot.agent.tools.registry import (
-    MANAGED_WEBUI_TOOL_NAMES,
     ManagedToolDispatchGuard,
     ToolRegistry,
+    managed_webui_tool_names,
 )
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.agent.trace import sanitize_trace
@@ -2204,6 +2204,7 @@ class AgentLoop:
         request_context: RequestContext | None = None,
         provider_state: ProviderConversationState | None = None,
         run_context: RunTurnContext | None = None,
+        allow_pre_dispatch_recovery: bool = False,
     ) -> AgentRunResult:
         """Run the agent iteration loop.
 
@@ -2532,6 +2533,7 @@ class AgentLoop:
                 tool_policy=tool_policy,
                 turn_context=run_context,
                 fail_on_tool_error=True,
+                allow_pre_dispatch_recovery=allow_pre_dispatch_recovery,
                 runtime=runtime,
                 max_iterations=self.max_iterations,
                 max_tool_result_chars=self.max_tool_result_chars,
@@ -4173,6 +4175,7 @@ class AgentLoop:
         if not session.policy.persist:
             disabled_tools.update({"repository_catalog", "save_knowledge"})
         grants = self._fork_dependencies.resource_policy.folder_grants
+        managed_tool_names = managed_webui_tool_names(tools.iter_tools())
         run_context = ctx.run_context
         local_private_workspace_authority = False
         if (
@@ -4220,7 +4223,7 @@ class AgentLoop:
         ):
             managed_registry = tools.filtered([
                 name for name in tools.tool_names
-                if name in MANAGED_WEBUI_TOOL_NAMES
+                if name in managed_tool_names
                 and (name != "select_workspace" or ctx.kind is TurnKind.USER)
             ])
             if self.tools_config.file.enable and ctx.kind is TurnKind.USER:
@@ -4258,7 +4261,10 @@ class AgentLoop:
                     )
                 tools = restricted
         tools.set_dispatch_guard(
-            ManagedToolDispatchGuard(self._fork_dependencies.resource_policy.folder_grants)
+            ManagedToolDispatchGuard(
+                self._fork_dependencies.resource_policy.folder_grants,
+                allowed_names=managed_tool_names,
+            )
         )
         ctx.tools = tools
 
@@ -4598,6 +4604,15 @@ class AgentLoop:
                 provider_state=ctx.provider_state,
                 run_context=ctx.run_context,
                 events=ctx.events,
+                allow_pre_dispatch_recovery=bool(
+                    self._trusted_foreground_inbound(ctx.msg)
+                    and ctx.run_context is not None
+                    and ctx.run_context.request is not None
+                    and ctx.run_context.request.source in {
+                        TurnSource.DIRECT,
+                        TurnSource.GATEWAY,
+                    }
+                ),
             )
         ctx.run_result = result
         ctx.provider_state_settlement = result.provider_state_settlement

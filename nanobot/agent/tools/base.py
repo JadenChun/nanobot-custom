@@ -158,11 +158,54 @@ class ToolResult(str):
         return cls(content, is_error=True)
 
 
+class ToolDenialKind(StrEnum):
+    """Typed pre-dispatch denial that the owning tool can prove."""
+
+    PRIVATE_NETWORK = "private_network"
+    MANAGED_UNAVAILABLE = "managed_unavailable"
+
+
+PRIVATE_NETWORK_DENIAL_NOTE = (
+    "This is a non-bypassable security boundary for the denied target. "
+    "Do not retry that access with curl, wget, encoded IPs, alternate DNS, "
+    "redirects, proxies, or another tool. Unrelated permitted work may "
+    "continue without touching the denied target. If the user explicitly "
+    "trusts this private service, ask them to whitelist its exact IP/CIDR "
+    "via tools.ssrfWhitelist."
+)
+
+
+class ToolDenialResult(ToolResult):
+    """Structured denial for a tool call rejected before its side effect.
+
+    Only first-party guard code may construct this subtype.  Message text is
+    never sufficient evidence for recovery.
+    """
+
+    kind: ToolDenialKind
+
+    def __new__(cls, content: str, *, kind: ToolDenialKind) -> ToolDenialResult:
+        obj = cast(ToolDenialResult, super().__new__(cls, content, is_error=True))
+        obj.kind = kind
+        return obj
+
+    def __reduce__(self) -> tuple[Callable[..., ToolDenialResult], tuple[str, ToolDenialKind]]:
+        return _restore_tool_denial_result, (str(self), self.kind)
+
+
+def _restore_tool_denial_result(
+    content: str,
+    kind: ToolDenialKind,
+) -> ToolDenialResult:
+    return ToolDenialResult(content, kind=kind)
+
+
 class ToolPreparationErrorKind(StrEnum):
     """Typed reason why the registry rejected a tool call before dispatch."""
 
     UNKNOWN_TOOL = "unknown_tool"
     WITHHELD_TOOL = "withheld_tool"
+    MANAGED_UNAVAILABLE = "managed_unavailable"
 
 
 class ToolPreparationError(ToolResult):

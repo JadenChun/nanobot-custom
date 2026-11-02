@@ -225,7 +225,7 @@ describe("Settings capabilities", () => {
 
     expect(await screen.findByText("App safety")).toBeInTheDocument();
     expect(screen.queryByText("Web safety")).not.toBeInTheDocument();
-    expect(screen.getByText("Allow Full Access shell commands to reach services on this Mac.")).toBeInTheDocument();
+    expect(screen.getByText("Allow channel setup checks to reach services on this Mac.")).toBeInTheDocument();
   });
 
   it("refreshes settings with a fresh token after native engine restart", async () => {

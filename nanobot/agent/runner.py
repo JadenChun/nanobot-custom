@@ -28,6 +28,7 @@ from nanobot.agent.context_governance import (
 )
 from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from nanobot.agent.policy import ToolPolicy
+from nanobot.agent.tools.base import ToolDenialKind
 from nanobot.agent.tools.execution import KnownToolResult, ToolResultCallback, execute_tool_calls
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ToolOutcome, TurnContext
@@ -109,6 +110,19 @@ _ARREARAGE_ERROR_MESSAGE = (
     "account is in arrears. Please top up / check the billing status of your API key and try again."
 )
 _PERSISTED_MODEL_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model error.]"
+_PRIVATE_NETWORK_RECOVERY_NOTE = (
+    "A tool call was rejected before it ran because it targeted a private/internal "
+    "address. No command was launched. Do not repeat that access or bypass it through "
+    "another tool, redirect, proxy, encoding, or alternate DNS. The denied command and "
+    "any calls queued after it were not run. Continue with independently permitted work "
+    "that does not touch the denied target, or explain the limitation to the user."
+)
+_MANAGED_CAPABILITY_RECOVERY_NOTE = (
+    "A tool call was denied before it ran because that unconfined host capability is "
+    "unavailable in this managed chat. Do not retry the denied tool or reach the same "
+    "external capability through another tool. Continue with a permitted tool or "
+    "explain the limitation to the user."
+)
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
@@ -206,6 +220,7 @@ class AgentRunSpec:
     ] | None = field(default=None, repr=False)
     artifact_handoff_collector: object | None = field(default=None, repr=False)
     busy_steering: BusySteering | None = field(default=None, repr=False)
+    allow_pre_dispatch_recovery: bool = False
 
 
 @dataclass(slots=True)
@@ -728,6 +743,7 @@ class AgentRunner:
         empty_content_retries = 0
         missing_skill_recovery_attempted = False
         context_repo_exec_recovery_attempted = False
+        pre_dispatch_denial_recovery_attempted = False
         # Segments from one uninterrupted length-recovery chain. Tool work or
         # injected user input starts a new logical answer and clears the chain.
         length_recovery_parts: list[str] = []
@@ -891,6 +907,18 @@ class AgentRunner:
                     and iteration + 1 < spec.max_iterations
                     and self._is_context_repo_exec_denial(spec.tools, response.tool_calls, results, terminal)
                 )
+                recoverable_pre_dispatch_denial = (
+                    terminal is not None
+                    and spec.allow_pre_dispatch_recovery
+                    and spec.fail_on_tool_error
+                    and terminal.stop_reason == "tool_error"
+                    and terminal.recovery_kind in {
+                        ToolDenialKind.PRIVATE_NETWORK,
+                        ToolDenialKind.MANAGED_UNAVAILABLE,
+                    }
+                    and not pre_dispatch_denial_recovery_attempted
+                    and iteration + 1 < spec.max_iterations
+                )
                 results = [r.content if isinstance(r, ToolOutcome) else r for r in results]
                 public_events = [
                     {key: value for key, value in event.items() if not key.startswith("_")}
@@ -972,6 +1000,19 @@ class AgentRunner:
                             "and do not change its permissions. Use read_file or list_dir "
                             "for permitted file inspection. If no permitted tool can "
                             "complete the task, explain the limitation to the user."
+                        ),
+                    }, request_state.source)
+                if recoverable_pre_dispatch_denial:
+                    assert terminal is not None
+                    pre_dispatch_denial_recovery_attempted = True
+                    recovery_kind = terminal.recovery_kind
+                    terminal = None
+                    self._append_bound_message(messages, {
+                        "role": "system",
+                        "content": (
+                            _MANAGED_CAPABILITY_RECOVERY_NOTE
+                            if recovery_kind is ToolDenialKind.MANAGED_UNAVAILABLE
+                            else _PRIVATE_NETWORK_RECOVERY_NOTE
                         ),
                     }, request_state.source)
                 if terminal is not None:
