@@ -19,10 +19,17 @@ from typing import Literal, cast
 import tiktoken
 from tiktoken.model import MODEL_TO_ENCODING
 
+from nanobot.providers.capabilities import (
+    ModelCapabilities,
+    default_model_capabilities,
+)
+from nanobot.providers.image_pricing import ImageOccurrence
 from nanobot.utils.media_tokens import (
+    MAX_IMAGE_TOKENS,
+    estimate_image_tokens,
     image_dimensions,
     inline_media_details,
-    model_image_tokens,
+    unknown_image_tokens,
 )
 
 DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER = 1024
@@ -603,26 +610,69 @@ def _media_mime_hint(mapping: Mapping[str, object]) -> str | None:
 
 def _measured_image_string(
     value: str,
-    identity: TransportIdentity,
     detail: str | None,
     mime_hint: str | None = None,
-) -> tuple[int, str]:
-    """Measure one known image payload under the selected model policy."""
+) -> tuple[ImageOccurrence, str]:
+    """Return one image occurrence and its measurement source."""
     candidate = value if mime_hint is None else f"data:{mime_hint};base64,{value}"
     parsed = inline_media_details(candidate)
     if parsed is not None:
-        family, dimensions, _encoded_bytes = parsed
+        family, dimensions, encoded_bytes = parsed
         if family != "image":
             raise ValueError("unsupported finalized request media family")
-        return model_image_tokens(
-            identity.provider, identity.model, dimensions, detail,
-        ), "inline_image"
+        return (
+            ImageOccurrence(
+                width=dimensions[0] if dimensions is not None else None,
+                height=dimensions[1] if dimensions is not None else None,
+                detail=detail,
+                remote=False,
+                encoded_bytes=encoded_bytes,
+            ),
+            "inline_image",
+        )
     lowered = value.strip().lower()
     if lowered.startswith(("http://", "https://")):
-        return model_image_tokens(identity.provider, identity.model, None, detail, remote=True), (
-            "remote_image"
+        return (
+            ImageOccurrence(
+                width=None,
+                height=None,
+                detail=detail,
+                remote=True,
+                encoded_bytes=0,
+            ),
+            "remote_image",
         )
     raise ValueError("unsupported finalized request image value")
+
+
+def _price_image_occurrences(
+    images: list[tuple[ImageOccurrence, str]],
+    capabilities: ModelCapabilities | None,
+) -> tuple[int, frozenset[str]]:
+    if not images:
+        return 0, frozenset()
+    occurrences = [occurrence for occurrence, _source in images]
+    kinds = frozenset(source for _occurrence, source in images)
+    pricing = capabilities.image_pricing if capabilities is not None else None
+    if pricing is not None:
+        prices = pricing.price(occurrences)
+        if len(prices) != len(occurrences):
+            raise ValueError("image pricing returned an invalid occurrence count")
+        if any(price.visual_tokens < 0 for price in prices):
+            raise ValueError("image pricing returned a negative allowance")
+        return sum(price.visual_tokens for price in prices), kinds
+    units = 0
+    for occurrence in occurrences:
+        if occurrence.remote:
+            units += MAX_IMAGE_TOKENS
+        elif occurrence.width is not None and occurrence.height is not None:
+            if occurrence.width > 0 and occurrence.height > 0:
+                units += estimate_image_tokens(occurrence.width, occurrence.height)
+            else:
+                units += unknown_image_tokens(occurrence.encoded_bytes)
+        else:
+            units += unknown_image_tokens(occurrence.encoded_bytes)
+    return units, kinds
 
 
 def _bedrock_binary_kind(
@@ -668,12 +718,28 @@ def _bedrock_binary_kind(
     return None
 
 
+def _finish_image_batch(
+    canonical: object,
+    units: int,
+    kinds: frozenset[str],
+    images: list[tuple[ImageOccurrence, str]],
+    capabilities: ModelCapabilities,
+    root: bool,
+) -> tuple[object, int, frozenset[str]]:
+    if not root:
+        return canonical, units, kinds
+    image_units, image_kinds = _price_image_occurrences(images, capabilities)
+    return canonical, units + image_units, kinds | image_kinds
+
+
 def _canonicalize_finalized_value(
     value: object,
     identity: TransportIdentity,
     path: tuple[str, ...] = (),
     media_context: str | None = None,
     media_detail: str | None = None,
+    capabilities: ModelCapabilities | None = None,
+    images: list[tuple[ImageOccurrence, str]] | None = None,
 ) -> tuple[object, int, frozenset[str]]:
     """Return canonical JSON data and supplemental token/byte units.
 
@@ -686,18 +752,38 @@ def _canonicalize_finalized_value(
     allowance rather than its base64 wire length, which is not a text-token
     measurement. Text is measured separately with a tokenizer.
     """
+    if capabilities is None:
+        capabilities = default_model_capabilities(
+            identity.provider,
+            identity.model,
+            context_window_tokens=0,
+        )
+    root = images is None
+    if images is None:
+        images = []
     if isinstance(value, bytes):
         kind = _bedrock_binary_kind(identity, path, media_context)
         if kind is None:
             raise ValueError("unsupported binary finalized request value")
         if kind == "bedrock_binary_image":
-            units = model_image_tokens(
-                identity.provider, identity.model, image_dimensions(value), media_detail,
-            )
-            return (
+            dimensions = image_dimensions(value)
+            images.append((
+                ImageOccurrence(
+                    width=dimensions[0] if dimensions is not None else None,
+                    height=dimensions[1] if dimensions is not None else None,
+                    detail=media_detail,
+                    remote=False,
+                    encoded_bytes=len(value),
+                ),
+                "bedrock_binary_media",
+            ))
+            return _finish_image_batch(
                 {"__nanobot_bedrock_binary_bytes__": len(value)},
-                units,
+                0,
                 frozenset({"bedrock_binary_media"}),
+                images,
+                capabilities,
+                root,
             )
         # Redacted reasoning is opaque token content, not decodable media.
         transport_bytes = 4 * ((len(value) + 2) // 3) + _BEDROCK_BINARY_FRAMING_BYTES
@@ -716,7 +802,7 @@ def _canonicalize_finalized_value(
             if not isinstance(raw_key, str):
                 raise ValueError("finalized provider request keys must be strings")
             key = raw_key
-            measured_image: tuple[int, str] | None = None
+            measured_image: tuple[ImageOccurrence, str] | None = None
             if block_kind in {"openai_chat_image", "responses_image"}:
                 if key == "image_url" and isinstance(item, str):
                     detail = (
@@ -724,14 +810,15 @@ def _canonicalize_finalized_value(
                         if block_kind == "openai_chat_image"
                         else _image_detail(mapping, item)
                     )
-                    measured_image = _measured_image_string(
-                        item, identity, detail,
-                    )
+                    measured_image = _measured_image_string(item, detail)
                 elif block_kind == "responses_image" and key == "file_id" and isinstance(item, str):
                     measured_image = (
-                        model_image_tokens(
-                            identity.provider, identity.model, None, _image_detail(mapping, item),
+                        ImageOccurrence(
+                            width=None,
+                            height=None,
+                            detail=_image_detail(mapping, item),
                             remote=True,
+                            encoded_bytes=0,
                         ),
                         "remote_image",
                     )
@@ -742,22 +829,18 @@ def _canonicalize_finalized_value(
                     else _context_detail(media_context, mapping)
                 )
                 if key == "url" and isinstance(item, str):
-                    measured_image = _measured_image_string(
-                        item, identity, selected_detail,
-                    )
+                    measured_image = _measured_image_string(item, selected_detail)
             elif media_context == "anthropic_image_source":
                 source_type = mapping.get("type")
                 if source_type == "url" and key == "url" and isinstance(item, str):
-                    measured_image = _measured_image_string(item, identity, None)
+                    measured_image = _measured_image_string(item, None)
                 elif source_type == "base64" and key == "data" and isinstance(item, str):
                     measured_image = _measured_image_string(
-                        item, identity, None, _media_mime_hint(mapping),
+                        item, None, _media_mime_hint(mapping),
                     )
             if measured_image is not None:
-                tokens, source_suffix = measured_image
+                images.append(measured_image)
                 canonical[key] = {"__nanobot_inline_media__": "image"}
-                supplemental_units += tokens
-                measurement_kinds.add(source_suffix)
                 continue
 
             child_context, child_detail = _child_media_context(
@@ -769,11 +852,20 @@ def _canonicalize_finalized_value(
                 (*path, key),
                 child_context,
                 child_detail,
+                capabilities,
+                images,
             )
             canonical[key] = converted
             supplemental_units += item_units
             measurement_kinds.update(item_kinds)
-        return canonical, supplemental_units, frozenset(measurement_kinds)
+        return _finish_image_batch(
+            canonical,
+            supplemental_units,
+            frozenset(measurement_kinds),
+            images,
+            capabilities,
+            root,
+        )
     if isinstance(value, (list, tuple)):
         canonical_list: list[object] = []
         supplemental_units = 0
@@ -786,13 +878,29 @@ def _canonicalize_finalized_value(
                 (*path, str(index)),
                 list_media_context,
                 media_detail if list_media_context is not None else None,
+                capabilities,
+                images,
             )
             canonical_list.append(converted)
             supplemental_units += item_units
             measurement_kinds.update(item_kinds)
-        return canonical_list, supplemental_units, frozenset(measurement_kinds)
+        return _finish_image_batch(
+            canonical_list,
+            supplemental_units,
+            frozenset(measurement_kinds),
+            images,
+            capabilities,
+            root,
+        )
     if value is None or isinstance(value, str | int | float | bool):
-        return value, 0, frozenset()
+        return _finish_image_batch(
+            value,
+            0,
+            frozenset(),
+            images,
+            capabilities,
+            root,
+        )
     raise ValueError("unsupported finalized provider request value")
 
 
@@ -835,6 +943,7 @@ def _serialized_input_measurement(
     identity: TransportIdentity,
     body: Mapping[str, object],
     policy: RequestBudgetPolicy,
+    capabilities: ModelCapabilities | None = None,
 ) -> tuple[int, str, int | None]:
     """Count a content-free canonical body with conservative token units.
 
@@ -847,7 +956,7 @@ def _serialized_input_measurement(
         raise ValueError("finalized provider request is not a JSON object")
     try:
         canonical, supplemental_units, measurement_kinds = _canonicalize_finalized_value(
-            body, identity,
+            body, identity, capabilities=capabilities,
         )
         request_json = (
             json.dumps(
@@ -885,6 +994,7 @@ def measure_finalized_request(
     *,
     completion_reserve_tokens: int | None = None,
     policy: RequestBudgetPolicy = "strict",
+    capabilities: ModelCapabilities | None = None,
 ) -> TransportMeasurement:
     """Measure a detached finalized body against the selected transport limit."""
     if not isinstance(cast(object, identity), TransportIdentity):
@@ -916,7 +1026,16 @@ def measure_finalized_request(
     total = limits.effective_total_tokens if limits is not None else None
     safety = limits.safety_buffer_tokens if limits is not None else 0
     input_limit = total - reserve - safety if total is not None else None
-    input_tokens, source, measured_bytes = _serialized_input_measurement(identity, body, policy)
+    if capabilities is None:
+        capabilities = default_model_capabilities(
+            identity.provider,
+            identity.model,
+            context_window_tokens=total or 0,
+            max_output_tokens=reserve,
+        )
+    input_tokens, source, measured_bytes = _serialized_input_measurement(
+        identity, body, policy, capabilities,
+    )
     return TransportMeasurement(
         identity=identity,
         input_tokens=input_tokens,
@@ -938,6 +1057,7 @@ def validate_finalized_request(
     *,
     completion_reserve_tokens: int | None = None,
     policy: RequestBudgetPolicy = "strict",
+    capabilities: ModelCapabilities | None = None,
 ) -> TransportMeasurement:
     """Return a valid measurement or raise without exposing request content."""
     try:
@@ -947,6 +1067,7 @@ def validate_finalized_request(
             limits,
             completion_reserve_tokens=completion_reserve_tokens,
             policy=policy,
+            capabilities=capabilities,
         )
     except ValueError as exc:
         if policy == LOCAL_MANAGER_POLICY:

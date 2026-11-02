@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 from nanobot.providers.base import GenerationSettings, LLMProvider
+from nanobot.providers.capabilities import ModelCapabilities, default_model_capabilities
 
 if TYPE_CHECKING:
     from nanobot.providers.factory import ProviderSnapshot
@@ -26,6 +27,7 @@ class LLMRuntime:
     context_window_tokens: int
     model_preset: str | None = None
     snapshot_signature: tuple[object, ...] | None = None
+    capabilities: ModelCapabilities | None = None
 
     @classmethod
     def capture(
@@ -36,16 +38,18 @@ class LLMRuntime:
         context_window_tokens: int,
         model_preset: str | None = None,
         snapshot_signature: tuple[object, ...] | None = None,
+        capabilities: ModelCapabilities | None = None,
     ) -> LLMRuntime:
         """Capture provider defaults without retaining mutable generation state."""
         defaults = GenerationSettings()
         generation = getattr(provider, "generation", defaults)
+        max_tokens = getattr(generation, "max_tokens", defaults.max_tokens)
         return cls(
             provider=provider,
             model=model,
             generation=GenerationSettings(
                 temperature=getattr(generation, "temperature", defaults.temperature),
-                max_tokens=getattr(generation, "max_tokens", defaults.max_tokens),
+                max_tokens=max_tokens,
                 reasoning_effort=getattr(
                     generation,
                     "reasoning_effort",
@@ -55,6 +59,28 @@ class LLMRuntime:
             context_window_tokens=context_window_tokens,
             model_preset=model_preset,
             snapshot_signature=snapshot_signature,
+            capabilities=(
+                capabilities
+                if capabilities is not None
+                else _resolve_provider_capabilities(
+                    provider,
+                    model,
+                    context_window_tokens=context_window_tokens,
+                    max_output_tokens=max_tokens,
+                )
+            ),
+        )
+
+    @property
+    def resolved_capabilities(self) -> ModelCapabilities:
+        """Return the immutable capability snapshot for this run."""
+        if self.capabilities is not None:
+            return self.capabilities
+        return _resolve_provider_capabilities(
+            self.provider,
+            self.model,
+            context_window_tokens=self.context_window_tokens,
+            max_output_tokens=self.generation.max_tokens,
         )
 
     def with_generation_overrides(
@@ -82,6 +108,33 @@ class LLMRuntime:
         )
 
 
+def _resolve_provider_capabilities(
+    provider: LLMProvider,
+    model: str,
+    *,
+    context_window_tokens: int,
+    max_output_tokens: int | None,
+) -> ModelCapabilities:
+    resolver = getattr(provider, "model_capabilities", None)
+    if callable(resolver):
+        try:
+            candidate = resolver(
+                model,
+                context_window_tokens=context_window_tokens,
+                max_output_tokens=max_output_tokens,
+            )
+        except Exception:
+            candidate = None
+        if isinstance(candidate, ModelCapabilities):
+            return candidate
+    return default_model_capabilities(
+        getattr(provider, "provider_name", "unknown"),
+        model,
+        context_window_tokens=context_window_tokens,
+        max_output_tokens=max_output_tokens,
+    )
+
+
 def runtime_from_provider_snapshot(
     snapshot: ProviderSnapshot,
 ) -> LLMRuntime:
@@ -94,6 +147,7 @@ def runtime_from_provider_snapshot(
             context_window_tokens=snapshot.context_window_tokens,
             model_preset=snapshot.model_preset,
             snapshot_signature=snapshot.signature,
+            capabilities=snapshot.capabilities,
         )
     return LLMRuntime.capture(
         snapshot.provider,
@@ -101,4 +155,5 @@ def runtime_from_provider_snapshot(
         context_window_tokens=snapshot.context_window_tokens,
         model_preset=snapshot.model_preset,
         snapshot_signature=snapshot.signature,
+        capabilities=snapshot.capabilities,
     )

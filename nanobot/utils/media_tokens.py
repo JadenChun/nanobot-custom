@@ -14,7 +14,6 @@ import base64
 import math
 import struct
 from collections.abc import Mapping
-from datetime import date
 from typing import cast
 
 # These generic values are retained for logical estimates that do not have a
@@ -144,191 +143,6 @@ def estimate_image_tokens(width: int, height: int) -> int:
         MAX_IMAGE_TOKENS,
         max(_MIN_IMAGE_TOKENS, patches, area) + _IMAGE_FRAMING_TOKENS,
     )
-
-
-def _valid_dated_model(model: str, bases: tuple[str, ...]) -> str | None:
-    """Return a canonical base only for a complete supported dated name."""
-    for base in bases:
-        prefix = f"{base}-"
-        if not model.startswith(prefix):
-            continue
-        suffix = model[len(prefix):]
-        try:
-            date.fromisoformat(suffix)
-        except ValueError:
-            continue
-        if len(suffix) == 10:
-            return base
-    return None
-
-
-def _selected_model(provider: str, model: str) -> str:
-    """Strip only routing prefixes owned by the selected provider."""
-    lowered = model.strip().lower()
-    prefixes: tuple[str, ...] = ()
-    if provider == "openai_codex":
-        prefixes = ("openai-codex/", "openai_codex/")
-    elif provider == "github_copilot":
-        prefixes = ("github-copilot/",)
-    elif provider == "bedrock":
-        prefixes = (
-            "global.anthropic.", "anthropic.", "us.anthropic.", "eu.anthropic.",
-            "apac.anthropic.",
-        )
-    for prefix in prefixes:
-        if lowered.startswith(prefix):
-            return lowered[len(prefix):]
-    return lowered
-
-
-def _openai_image_model(provider: str, model: str) -> str | None:
-    selected = _selected_model(provider, model)
-    openai_models = (
-        "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4.1",
-        "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4-mini",
-        "gpt-5.4",
-    )
-    if selected in openai_models:
-        return selected
-    return _valid_dated_model(selected, openai_models)
-
-
-def _claude_image_model(provider: str, model: str) -> str | None:
-    selected = _selected_model(provider, model)
-    claude_bases = tuple(
-        f"claude-{family}-4-{version}"
-        for version in ("5", "6")
-        for family in ("haiku", "sonnet", "opus")
-    ) + ("claude-opus-4-7",)
-    if selected in claude_bases:
-        return selected
-    for base in claude_bases:
-        suffix = selected[len(base):] if selected.startswith(f"{base}-") else ""
-        if not suffix:
-            continue
-        dated = suffix.removeprefix("-").removesuffix("-v1:0")
-        if len(dated) == 8 and dated.isdigit():
-            try:
-                date.fromisoformat(f"{dated[:4]}-{dated[4:6]}-{dated[6:8]}")
-            except ValueError:
-                continue
-            return base
-        if suffix == "-v1:0":
-            return base
-    return None
-
-
-def model_image_tokens(
-    provider: str,
-    model: str,
-    dimensions: tuple[int, int] | None,
-    detail: str | None,
-    *,
-    remote: bool = False,
-) -> int:
-    """Return a bounded image allowance for one selected provider/model.
-
-    A missing dimension pair means the image is remote, opaque, or a file
-    reference. Policies either provide a documented upper bound or reject it.
-    """
-    effective_detail = "auto" if detail is None else detail.strip().lower()
-    if detail is not None and effective_detail not in {"low", "high", "auto", "original"}:
-        raise ValueError("unsupported image detail")
-
-    if provider == "local_manager":
-        # Local Manager can serve several model families. The request budget
-        # must still be measurable before dispatch, so use the conservative
-        # shared image allowance and let the selected backend remain
-        # authoritative if it cannot accept images.
-        if effective_detail not in {"low", "high", "auto"}:
-            raise ValueError("unsupported local image detail")
-        if dimensions is None:
-            raise ValueError("local image dimensions are unavailable")
-        width, height = dimensions
-        if width <= 0 or height <= 0:
-            raise ValueError("local image dimensions are invalid")
-        return estimate_image_tokens(width, height)
-
-    openai_model = _openai_image_model(provider, model)
-    if openai_model is not None:
-        if openai_model in {"gpt-4o", "gpt-4o-mini"}:
-            base, tile = (85, 170) if openai_model == "gpt-4o" else (2_833, 5_667)
-            if effective_detail == "low":
-                return base
-            if effective_detail not in {"high", "auto"}:
-                raise ValueError("unsupported image detail for selected model")
-            if dimensions is None or remote:
-                return base + 8 * tile
-            width, height = dimensions
-            if width <= 0 or height <= 0:
-                raise ValueError("image dimensions are invalid")
-            scale = min(1.0, 2_048 / max(width, height))
-            scaled_width = max(1, math.ceil(width * scale))
-            scaled_height = max(1, math.ceil(height * scale))
-            short_edge = min(scaled_width, scaled_height)
-            scale = min(1.0, 768 / short_edge)
-            scaled_width = max(1, math.ceil(scaled_width * scale))
-            scaled_height = max(1, math.ceil(scaled_height * scale))
-            tile_count = math.ceil(scaled_width / 512) * math.ceil(scaled_height / 512)
-            return base + tile_count * tile
-
-        if openai_model.startswith(("gpt-5.6-", "gpt-5.5")):
-            if effective_detail == "low":
-                return 308
-            if effective_detail == "high":
-                return 3_000
-            if effective_detail in {"auto", "original"}:
-                return 36_000 if openai_model.startswith("gpt-5.6-") else 12_000
-            raise ValueError("unsupported image detail for selected model")
-        if openai_model in {"gpt-5.4", "gpt-5.4-mini"}:
-            if effective_detail == "low":
-                return 7_373
-            if effective_detail in {"high", "auto"}:
-                return 3_000
-            if effective_detail == "original":
-                return 12_000
-            raise ValueError("unsupported image detail for selected model")
-        if openai_model == "gpt-4.1-mini":
-            if effective_detail in {"low", "high", "auto"}:
-                return 9_954
-            raise ValueError("unsupported image detail for selected model")
-        if openai_model == "gpt-4.1-nano":
-            if effective_detail in {"low", "high", "auto"}:
-                return 73_800
-            raise ValueError("unsupported image detail for selected model")
-        if openai_model == "gpt-4.1":
-            # The base model follows the documented 4o high-resolution tile rule.
-            base, tile = 85, 170
-            if effective_detail == "low":
-                return base
-            if effective_detail not in {"high", "auto"}:
-                raise ValueError("unsupported image detail for selected model")
-            if dimensions is None or remote:
-                return base + 8 * tile
-            width, height = dimensions
-            if width <= 0 or height <= 0:
-                raise ValueError("image dimensions are invalid")
-            scale = min(1.0, 2_048 / max(width, height))
-            width = max(1, math.ceil(width * scale))
-            height = max(1, math.ceil(height * scale))
-            scale = min(1.0, 768 / min(width, height))
-            width = max(1, math.ceil(width * scale))
-            height = max(1, math.ceil(height * scale))
-            return base + math.ceil(width / 512) * math.ceil(height / 512) * tile
-
-    claude_model = _claude_image_model(provider, model)
-    if claude_model is not None:
-        if claude_model == "claude-opus-4-7":
-            if effective_detail in {"auto", "high"}:
-                return 4_784 + _IMAGE_FRAMING_TOKENS
-            if effective_detail == "standard":
-                return 1_568 + _IMAGE_FRAMING_TOKENS
-            raise ValueError("unsupported image detail for selected Claude model")
-        if effective_detail in {"auto", "standard"}:
-            return 1_568 + _IMAGE_FRAMING_TOKENS
-        raise ValueError("unsupported image detail for selected Claude model")
-
-    raise ValueError("no image accounting policy for selected model")
 
 
 def unknown_image_tokens(encoded_bytes: int) -> int:
@@ -505,7 +319,6 @@ __all__ = [
     "inline_media_tokens",
     "media_block_tokens",
     "media_token_ceiling",
-    "model_image_tokens",
     "remote_media_tokens",
     "unknown_image_tokens",
 ]

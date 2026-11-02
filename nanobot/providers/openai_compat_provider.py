@@ -42,6 +42,7 @@ from nanobot.providers.base import (
     tool_arguments_json_for_replay,
     track_stream_delivery,
 )
+from nanobot.providers.capabilities import ModelCapabilities, model_capabilities_from_metadata
 from nanobot.providers.openai_responses import (
     ResponsesStreamCapture,
     build_responses_compaction_state,
@@ -74,7 +75,7 @@ from nanobot.providers.request_budget import (
 if TYPE_CHECKING:
     from openai import AsyncOpenAI as AsyncOpenAIType
 
-    from nanobot.providers.registry import ProviderSpec
+    from nanobot.providers.registry import ProviderModelSpec, ProviderSpec
 
 # Module-level placeholder — set lazily by _ensure_client on first real
 # use, or replaced by tests via ``patch(...)``.  Kept as a plain name so
@@ -645,6 +646,31 @@ class OpenAICompatProvider(LLMProvider):
         self._responses_failures: dict[str, int] = {}
         self._responses_tripped_at: dict[str, float] = {}
 
+    def model_capabilities(
+        self,
+        model: str,
+        *,
+        context_window_tokens: int,
+        max_output_tokens: int | None = None,
+    ) -> ModelCapabilities:
+        metadata_lookup = getattr(self._spec, "model_metadata", None)
+        metadata = cast(
+            "ProviderModelSpec | None",
+            metadata_lookup(model) if callable(metadata_lookup) else None,
+        )
+        provider_name = getattr(
+            self,
+            "provider_name",
+            getattr(self._spec, "name", "openai_compat"),
+        )
+        return model_capabilities_from_metadata(
+            provider_name,
+            model,
+            metadata,
+            context_window_tokens=context_window_tokens,
+            max_output_tokens=max_output_tokens,
+        )
+
     @property
     def is_known_local_manager(self) -> bool:
         """Whether this constructed provider owns the explicit local policy."""
@@ -801,8 +827,17 @@ class OpenAICompatProvider(LLMProvider):
         pending_tool_ids: dict[str, deque[str]] = {}
         is_deepseek = bool(self._spec and self._spec.name == "deepseek")
         model_name = model or self.default_model
-        force_string_content = (
-            is_deepseek and _model_slug(model_name) not in _DEEPSEEK_MULTIMODAL_MODELS
+        generation = getattr(self, "generation", None)
+        capabilities = self.model_capabilities(
+            model_name,
+            context_window_tokens=0,
+            max_output_tokens=getattr(generation, "max_tokens", None),
+        )
+        declared_image_support = capabilities.accepts_images
+        force_string_content = declared_image_support is False or (
+            declared_image_support is None
+            and is_deepseek
+            and _model_slug(model_name) not in _DEEPSEEK_MULTIMODAL_MODELS
         )
         opencode_deepseek = (
             self._spec is not None
@@ -1561,6 +1596,17 @@ class OpenAICompatProvider(LLMProvider):
                 limits,
                 completion_reserve_tokens=completion_reserve_tokens,
                 policy=LOCAL_MANAGER_POLICY,
+                capabilities=self.model_capabilities(
+                    selected_model,
+                    context_window_tokens=(
+                        limits.effective_total_tokens if limits is not None else 0
+                    ),
+                    max_output_tokens=(
+                        completion_reserve_tokens
+                        if completion_reserve_tokens is not None
+                        else limits.completion_reserve_tokens if limits is not None else None
+                    ),
+                ),
             )
         except (TypeError, ValueError, UnicodeError) as exc:
             raise ProviderRequestRejected(reason="invalid_request_envelope") from exc

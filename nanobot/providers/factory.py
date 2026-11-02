@@ -7,6 +7,7 @@ from pathlib import Path
 
 from nanobot.config.schema import Config, InlineFallbackConfig, ModelPresetConfig, ProviderConfig
 from nanobot.providers.base import GenerationSettings, LLMProvider
+from nanobot.providers.capabilities import ModelCapabilities
 from nanobot.providers.fallback_provider import FallbackProvider
 from nanobot.providers.registry import ProviderSpec, create_dynamic_spec, find_by_name
 
@@ -19,6 +20,7 @@ class ProviderSnapshot:
     signature: tuple[object, ...]
     generation: GenerationSettings | None = None
     model_preset: str | None = None
+    capabilities: ModelCapabilities | None = None
 
 
 @dataclass(frozen=True)
@@ -355,6 +357,11 @@ def build_unconfigured_provider_snapshot(config: Config, setup_error: str) -> Pr
         context_window_tokens=preset.context_window_tokens,
         signature=("unconfigured", setup_error, preset.model),
         generation=provider.generation,
+        capabilities=provider.model_capabilities(
+            preset.model,
+            context_window_tokens=preset.context_window_tokens,
+            max_output_tokens=preset.max_tokens,
+        ),
     )
 
 
@@ -434,8 +441,9 @@ def build_provider_snapshot(
         if preset_name is None and preset is None
         else preset_name
     )
+    provider = make_provider(config, preset=resolved)
     return ProviderSnapshot(
-        provider=make_provider(config, preset=resolved),
+        provider=provider,
         model=resolved.model,
         # Budget the selected model against its configured capacity. A fallback
         # gets its own context window when the wrapper invokes that leaf.
@@ -443,6 +451,11 @@ def build_provider_snapshot(
         signature=provider_signature(config, preset=resolved),
         generation=resolved.to_generation_settings(),
         model_preset=selected_preset,
+        capabilities=provider.model_capabilities(
+            resolved.model,
+            context_window_tokens=resolved.context_window_tokens,
+            max_output_tokens=resolved.max_tokens,
+        ),
     )
 
 

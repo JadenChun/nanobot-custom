@@ -6,6 +6,8 @@ import zlib
 
 import pytest
 
+from nanobot.providers.capabilities import default_model_capabilities
+from nanobot.providers.image_pricing import ImageOccurrence
 from nanobot.utils.media_tokens import (
     MAX_AUDIO_TOKENS,
     MAX_IMAGE_TOKENS,
@@ -15,7 +17,6 @@ from nanobot.utils.media_tokens import (
     image_dimensions,
     inline_media_tokens,
     media_block_tokens,
-    model_image_tokens,
     unknown_image_tokens,
 )
 
@@ -62,12 +63,19 @@ def test_image_allowance_covers_common_vision_accounting() -> None:
 
 
 def test_local_manager_vision_models_share_a_measurable_allowance() -> None:
+    occurrence = ImageOccurrence(800, 940, None, False, 1_500_000)
     for model in (
         "Qwen3.8-27B-UD-Q6_K_XL",
         "Qwen3.8-Flash-Next Gyro-M Abliterated (Strata)",
     ):
-        tokens = model_image_tokens("local_manager", model, (800, 940), None)
-        assert 128 < tokens < MAX_IMAGE_TOKENS
+        capabilities = default_model_capabilities(
+            "local_manager",
+            model,
+            context_window_tokens=262_144,
+        )
+        assert capabilities.image_pricing is not None
+        prices = capabilities.image_pricing.price((occurrence,))
+        assert 128 < prices[0].visual_tokens < MAX_IMAGE_TOKENS
 
 
 def test_inline_media_uses_dimensions_and_bounded_unknown_fallbacks() -> None:

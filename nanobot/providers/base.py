@@ -20,6 +20,7 @@ import json_repair
 from loguru import logger
 
 from nanobot.events import NO_EVENTS, EventSink, RetryStatusEvent, RetryWaitEvent
+from nanobot.providers.capabilities import ModelCapabilities
 from nanobot.providers.image_history import recent_image_messages
 from nanobot.providers.request_budget import BackendContextOverflow as BackendContextOverflow
 from nanobot.providers.request_budget import (
@@ -866,6 +867,23 @@ class LLMProvider(ABC):
         self.provider_name = provider_name
         self.generation = GenerationSettings()
         self._llm_call_observer: LLMCallObserver | None = None
+
+    def model_capabilities(
+        self,
+        model: str,
+        *,
+        context_window_tokens: int,
+        max_output_tokens: int | None = None,
+    ) -> ModelCapabilities:
+        """Resolve exact-route capabilities; adapters may layer catalog metadata."""
+        from nanobot.providers.capabilities import default_model_capabilities
+
+        return default_model_capabilities(
+            self.provider_name,
+            model,
+            context_window_tokens=context_window_tokens,
+            max_output_tokens=max_output_tokens,
+        )
 
     def set_llm_call_observer(self, observer: LLMCallObserver | None) -> None:
         """Attach a fail-open observer for each physical retry-managed call."""
