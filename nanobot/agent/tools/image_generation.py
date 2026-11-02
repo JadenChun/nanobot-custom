@@ -29,7 +29,6 @@ from nanobot.bus.events import (
     InboundMessage,
 )
 from nanobot.bus.queue import MessageBus
-from nanobot.config.paths import get_media_dir
 from nanobot.config_base import Base
 from nanobot.providers.image_generation import (
     ImageGenerationError,
@@ -38,7 +37,6 @@ from nanobot.providers.image_generation import (
     image_gen_provider_configs,
 )
 from nanobot.security.workspace_access import current_tool_workspace
-from nanobot.security.workspace_policy import WorkspaceBoundaryError, resolve_allowed_path
 from nanobot.utils.artifacts import (
     ArtifactError,
     generated_image_tool_result,
@@ -193,23 +191,18 @@ class ImageGenerationTool(Tool):
     def _resolve_reference_image(self, value: str) -> str:
         access = current_tool_workspace(self.workspace, restrict_to_workspace=True)
         workspace = access.project_path or self.workspace
+        candidate = Path(value).expanduser()
+        if not candidate.is_absolute():
+            candidate = workspace / candidate
         try:
-            resolved = resolve_allowed_path(
-                value,
-                workspace=workspace,
-                allowed_root=access.allowed_root,
-                extra_allowed_roots=[get_media_dir()] if access.allowed_root is not None else None,
-                strict=True,
-            )
-        except WorkspaceBoundaryError as exc:
+            resolved = self._write_tool.resolve_read_path(str(candidate))
+        except (OSError, PermissionError, ValueError) as exc:
             raise ImageGenerationError(
-                "reference_images must be inside the workspace or nanobot media directory"
+                "reference_images must be inside the workspace, a granted folder, "
+                "or the nanobot media directory"
             ) from exc
-        except OSError as exc:
-            raise ImageGenerationError(f"reference image not found: {value}") from exc
         if not resolved.is_file():
-            raise ImageGenerationError(f"reference image is not a file: {value}")
-        resolved = self._write_tool.resolve_read_path(str(resolved))
+            raise ImageGenerationError(f"reference image not found: {value}")
         raw = resolved.read_bytes()
         if detect_image_mime(raw) is None:
             raise ImageGenerationError(f"unsupported reference image: {value}")

@@ -488,6 +488,45 @@ def test_image_reference_scope_restricted_blocks_outside_and_full_allows(tmp_pat
         reset_workspace_scope(token)
 
 
+def test_image_reference_scope_allows_folder_granted_file(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    granted = tmp_path / "granted"
+    home.mkdir()
+    granted.mkdir()
+    ref = granted / "ref.png"
+    ref.write_bytes(PNG_BYTES)
+    store = FolderGrantStore(
+        agent_home=home,
+        instance_root=tmp_path / "instance",
+        path=tmp_path / "instance" / "webui" / "folder-grants.json",
+    )
+    store.upsert(
+        {"path": str(granted), "file_access": "read_write", "commands": True},
+        expected_revision=0,
+    )
+    policy = ResourceAccessPolicy(workspace=home, folder_grants=store.view)
+    tool = ImageGenerationTool(
+        workspace=home,
+        config=ImageGenerationToolConfig(enabled=True),
+        provider_config=ProviderConfig(api_key="sk-test"),
+        write_tool=WriteFileTool(
+            workspace=home,
+            allowed_dir=home,
+            resource_policy=policy,
+        ),
+    )
+    restricted = validate_workspace_scope_payload(
+        {"project_path": str(home), "access_mode": "restricted"},
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+    )
+    token = bind_workspace_scope(restricted)
+    try:
+        assert tool._resolve_reference_image(str(ref)) == str(ref.resolve())
+    finally:
+        reset_workspace_scope(token)
+
+
 def test_message_media_scope_restricted_blocks_outside_and_full_allows(tmp_path: Path) -> None:
     project = tmp_path / "project"
     outside = tmp_path / "outside"

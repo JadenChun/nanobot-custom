@@ -93,8 +93,13 @@ def rewrite_local_markdown_images(
     *,
     workspace_path: Path,
     sign_path: Callable[[Path], Mapping[str, Any] | None],
+    allow_external: bool = False,
 ) -> str:
-    """Rewrite markdown media paths inside the workspace to signed WebUI media URLs."""
+    """Rewrite markdown media paths to signed WebUI media URLs.
+
+    Paths outside the workspace are considered only when *allow_external* is
+    set; the caller's signer still performs the final managed-read check.
+    """
     if "![" not in text:
         return text
 
@@ -115,7 +120,8 @@ def rewrite_local_markdown_images(
             candidate = workspace_path / candidate
         try:
             resolved = candidate.resolve(strict=False)
-            resolved.relative_to(workspace_path)
+            if not allow_external:
+                resolved.relative_to(workspace_path)
         except (OSError, ValueError):
             return None
         if not resolved.is_file():
