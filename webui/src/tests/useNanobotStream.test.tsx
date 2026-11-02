@@ -520,6 +520,46 @@ describe("useNanobotStream", () => {
     expect(result.current.isStreaming).toBe(false);
   });
 
+  it("does not duplicate a completed answer after stream_end", () => {
+    const fake = fakeClient();
+    const { result } = renderHook(() => useNanobotStream("chat-complete-after-stream", EMPTY_MESSAGES), {
+      wrapper: wrap(fake.client),
+    });
+
+    act(() => {
+      fake.emit("chat-complete-after-stream", {
+        event: "delta",
+        chat_id: "chat-complete-after-stream",
+        text: "Hello",
+        turn_id: "turn-complete-after-stream",
+      });
+      fake.emit("chat-complete-after-stream", {
+        event: "stream_end",
+        chat_id: "chat-complete-after-stream",
+        text: "Hello",
+        turn_id: "turn-complete-after-stream",
+      });
+      fake.emit("chat-complete-after-stream", {
+        event: "message",
+        chat_id: "chat-complete-after-stream",
+        text: "Hello",
+        turn_id: "turn-complete-after-stream",
+      });
+      fake.emit("chat-complete-after-stream", {
+        event: "turn_end",
+        chat_id: "chat-complete-after-stream",
+        turn_id: "turn-complete-after-stream",
+      });
+    });
+
+    expect(result.current.messages).toHaveLength(1);
+    expect(result.current.messages[0]).toMatchObject({
+      role: "assistant",
+      content: "Hello",
+      isStreaming: false,
+    });
+  });
+
   it("stamps provider usage and latest context on the completed answer", () => {
     const fake = fakeClient();
     const { result } = renderHook(() => useNanobotStream("chat-usage", EMPTY_MESSAGES), {
