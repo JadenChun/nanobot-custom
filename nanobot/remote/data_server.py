@@ -91,7 +91,9 @@ class MobileDataServer:
         return await serve(self._ws_handler, "127.0.0.1", port, max_size=MAX_BODY)
 
     async def _ws_handler(self, websocket: ServerConnection) -> None:
-        headers = websocket.request.headers if websocket.request is not None else {}
+        headers: Headers = (
+            websocket.request.headers if websocket.request is not None else Headers()
+        )
         token = _bearer(headers.get("Authorization"))
         if token is None:
             await websocket.close(1008, "missing access")
@@ -105,12 +107,15 @@ class MobileDataServer:
         await websocket.send(json.dumps({"event": "ready", "chat_id": chat_id}))
         async for raw in websocket:
             try:
-                frame = json.loads(raw)
+                decoded = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            if not isinstance(frame, dict):
+            if not isinstance(decoded, dict):
                 continue
+            frame = cast(dict[str, object], decoded)
             kind = frame.get("type")
+            if not isinstance(kind, str):
+                continue
             if kind in {"new_chat", "new_temporary_chat"}:
                 await websocket.send(json.dumps({
                     "event": "attached",
@@ -118,24 +123,27 @@ class MobileDataServer:
                     "temporary": kind == "new_temporary_chat",
                 }))
             elif kind == "attach":
-                await websocket.send(json.dumps({"event": "attached", "chat_id": frame.get("chat_id", chat_id)}))
+                await websocket.send(json.dumps({
+                    "event": "attached",
+                    "chat_id": _frame_text(frame, "chat_id", chat_id),
+                }))
             elif kind == "message":
-                turn_id = str(frame.get("turn_id") or "fixture-turn")
+                turn_id = _frame_text(frame, "turn_id", "fixture-turn")
                 await websocket.send(json.dumps({
                     "event": "message_accepted",
-                    "chat_id": frame.get("chat_id", chat_id),
+                    "chat_id": _frame_text(frame, "chat_id", chat_id),
                     "turn_id": turn_id,
                 }))
                 await websocket.send(json.dumps({
                     "event": "message",
-                    "chat_id": frame.get("chat_id", chat_id),
+                    "chat_id": _frame_text(frame, "chat_id", chat_id),
                     "turn_id": turn_id,
                     "role": "assistant",
                     "content": "fixture reply",
                 }))
                 await websocket.send(json.dumps({
                     "event": "turn_end",
-                    "chat_id": frame.get("chat_id", chat_id),
+                    "chat_id": _frame_text(frame, "chat_id", chat_id),
                     "turn_id": turn_id,
                 }))
 
@@ -294,6 +302,11 @@ def _normalize(path: str) -> str:
     if path.startswith(("/handshake", "/read", "/refresh", "/mutation", "/logout", "/media/")):
         return "/mobile/v1" + path
     return path
+
+
+def _frame_text(frame: dict[str, object], key: str, fallback: str) -> str:
+    value = frame.get(key)
+    return value if isinstance(value, str) and value else fallback
 
 
 def _bearer(value: str | None) -> str | None:
