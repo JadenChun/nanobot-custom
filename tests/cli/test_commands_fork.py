@@ -1394,7 +1394,7 @@ def _probe_gateway_health_port(monkeypatch, seen):
     monkeypatch.setattr("nanobot.cli.gateway_runtime._tcp_endpoint_reachable", probe)
     monkeypatch.setattr(
         "nanobot.cli.gateway_runtime._install_gateway_shutdown_handlers",
-        lambda *_args: lambda: seen.__setitem__("restored", True),
+        lambda *_args, **_kwargs: lambda: seen.__setitem__("restored", True),
     )
 
 
