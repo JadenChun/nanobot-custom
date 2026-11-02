@@ -46,10 +46,10 @@ afterEach(() => {
   delete (window as unknown as { nanobotMobileTransport?: unknown }).nanobotMobileTransport;
 });
 
-function installPairedPlugin() {
+function installPairedPlugin(mode: "revoked" | "unreachable" = "revoked") {
   let emit: ((event: Record<string, unknown>) => void) | null = null;
   const refresh = vi.fn(async () => {
-    throw new Error("pairing was revoked");
+    throw new Error(mode === "revoked" ? "pairing was revoked" : "network");
   });
   const logout = vi.fn(async () => ({ serverRevocationPending: false }));
   const plugin = {
@@ -72,7 +72,11 @@ function installPairedPlugin() {
     Plugins: { NativeNetwork: plugin },
   };
   setTimeout(() => {
-    emit?.({ type: "http_response", request_id: 1, status: 401, body_base64: "" });
+    emit?.(
+      mode === "unreachable"
+        ? { type: "http_error", request_id: 1, code: "network" }
+        : { type: "http_response", request_id: 1, status: 401, body_base64: "" },
+    );
   }, 0);
   return { plugin, refresh, logout };
 }
@@ -115,5 +119,16 @@ describe("mobile pairing identity", () => {
     await vi.waitFor(() => expect(logout).toHaveBeenCalledWith({ serverReachable: true }));
     expect(reload).toHaveBeenCalledTimes(1);
     reload.mockRestore();
+  });
+
+  it("shows reconnect instead of the app shell when the desktop is unreachable", async () => {
+    const { logout } = installPairedPlugin("unreachable");
+    window.eval(bootstrapSource);
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".mobile-reauth")).not.toBeNull();
+    });
+    expect(document.body.textContent).toContain("Can't reach this desktop right now");
+    expect(logout).not.toHaveBeenCalled();
   });
 });

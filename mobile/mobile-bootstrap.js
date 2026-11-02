@@ -515,7 +515,8 @@
 
     async function requireValidAccess() {
       var probe = await probeHandshake();
-      if (probe.status !== 401) return true;
+      if (probe.error) return "unreachable";
+      if (probe.status !== 401) return "ok";
       var refreshed = false;
       try {
         refreshed = await plugin.refresh();
@@ -525,12 +526,13 @@
           message.indexOf("pairing was revoked") < 0 &&
           message.indexOf("no refresh credential") < 0
         ) {
-          return true;
+          return "unreachable";
         }
       }
       if (refreshed) {
         probe = await probeHandshake();
-        if (probe.status !== 401) return true;
+        if (probe.error) return "unreachable";
+        if (probe.status !== 401) return "ok";
       }
       try {
         await plugin.logout({ serverReachable: true });
@@ -538,7 +540,7 @@
         /* The next launch still starts from the stored pairing state. */
       }
       window.location.reload();
-      return false;
+      return "revoked";
     }
 
     function presentReauth(link, initialMessage) {
@@ -572,8 +574,13 @@
         status.textContent = "Connecting to the server...";
         void connectTarget(link).then(function () {
           return requireValidAccess();
-        }).then(function (valid) {
-          if (!valid) return;
+        }).then(function (access) {
+          if (access === "revoked") return;
+          if (access === "unreachable") {
+            status.textContent = "Still can't reach this desktop. Check Tailscale and retry.";
+            status.classList.add("is-error");
+            return;
+          }
           panel.remove();
           resolveReady();
         }).catch(function (error) {
@@ -589,7 +596,12 @@
     if (target && target.hasAccess) {
       try {
         await connectTarget(target);
-        if (!(await requireValidAccess())) return;
+        var access = await requireValidAccess();
+        if (access === "revoked") return;
+        if (access === "unreachable") {
+          presentReauth(target, "Can't reach this desktop right now. Check Tailscale and retry.");
+          return;
+        }
         resolveReady();
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
