@@ -2,6 +2,14 @@ import QRCode from "qrcode";
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+
+import {
   approveRemotePairing,
   buildMobilePairingLink,
   fetchRemoteAccessStatus,
@@ -30,17 +38,19 @@ export function RemoteAccessSettings({
   const [status, setStatus] = useState<RemoteAccessStatus | null>(initialStatus);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [origin, setOrigin] = useState("");
-  const [installationId, setInstallationId] = useState("");
-  const [label, setLabel] = useState("phone");
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [step, setStep] = useState<"intro" | "waiting" | "connected">("intro");
+  const [origin, setOrigin] = useState(
+    typeof window !== "undefined" && window.location.protocol === "https:"
+      ? window.location.origin
+      : "",
+  );
+  const [fullControl, setFullControl] = useState(true);
   const [pairingId, setPairingId] = useState("");
   const [code, setCode] = useState("");
-  const [approvalCode, setApprovalCode] = useState("");
-  const [mediaConsent, setMediaConsent] = useState(false);
-  const [fullControlConsent, setFullControlConsent] = useState(false);
   const [pairingLink, setPairingLink] = useState("");
   const [qrDataUrl, setQrDataUrl] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"link" | "code" | null>(null);
   const [revoking, setRevoking] = useState<{ installationId: string; label: string } | null>(null);
 
   const refresh = useCallback(async () => {
@@ -195,142 +205,242 @@ export function RemoteAccessSettings({
           Existing devices can still be reviewed and revoked here.
         </p>
       ) : (
-      <div className="space-y-3">
-        <h2 className="text-sm font-medium">Pair a phone</h2>
-        <label className="block text-xs">
-          Exact HTTPS origin
-          <input
-            aria-label="Exact HTTPS origin"
-            value={origin}
-            onChange={(event) => setOrigin(event.target.value)}
-            className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm"
-          />
-        </label>
-        <label className="block text-xs">
-          Phone installation ID (optional)
-          <input
-            aria-label="Phone installation ID"
-            value={installationId}
-            onChange={(event) => setInstallationId(event.target.value)}
-            placeholder="Leave blank to generate one for the QR"
-            className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm"
-          />
-        </label>
-        <label className="block text-xs">
-          Label
-          <input
-            aria-label="Device label"
-            value={label}
-            onChange={(event) => setLabel(event.target.value)}
-            className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm"
-          />
-        </label>
-        <label className="flex items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            aria-label="Allow chat media and attachments"
-            checked={mediaConsent}
-            onChange={(event) => setMediaConsent(event.target.checked)}
-          />
-          Allow chat media and attachments
-        </label>
-        <label className="flex items-start gap-2 text-xs">
-          <input
-            type="checkbox"
-            aria-label="Grant full owner control and shared history"
-            checked={fullControlConsent}
-            onChange={(event) => setFullControlConsent(event.target.checked)}
-            className="mt-0.5"
-          />
-          <span>
-            Grant full owner control and shared history. This device can use the same settings,
-            apps, skills, automations and workspace actions as the desktop WebUI.
-          </span>
-        </label>
-        <button
-          type="button"
-          disabled={busy || !origin.trim()}
-          onClick={() => void run(async () => {
-            const offer = await startRemotePairing(mutate, {
-              origin: origin.trim(),
-              label,
-              chatConsent: true,
-              mediaConsent,
-              fullControlConsent,
-              sharedHistoryConsent: fullControlConsent,
-            });
-            const targetInstallation = installationId.trim() || crypto.randomUUID();
-            setInstallationId(targetInstallation);
-            setPairingId(offer.pairing_id);
-            setCode(offer.comparison_code);
-            setApprovalCode("");
-            setPairingLink(buildMobilePairingLink(origin, targetInstallation, offer));
-          })}
-          className="rounded-md border px-3 py-1.5 text-sm"
-        >
-          Create pairing challenge
-        </button>
-        {pairingLink ? (
-          <div className="grid gap-2 rounded-xl border p-3 text-sm">
+        <div className="flex items-center justify-between gap-3 rounded-xl border p-4">
+          <div>
+            <h2 className="text-sm font-medium">Pair a phone</h2>
             <p className="text-xs text-muted-foreground">
-              Open this link on the phone. Keep it private until the codes match.
+              Scan a QR code and approve this phone. Full owner control is enabled by default.
             </p>
-            {qrDataUrl ? (
-              <img
-                src={qrDataUrl}
-                alt="Phone pairing QR code"
-                className="h-44 w-44 rounded-lg border bg-white p-2"
-              />
-            ) : null}
-            <textarea
-              aria-label="Phone pairing link"
-              readOnly
-              value={pairingLink}
-              rows={4}
-              className="w-full break-all rounded-md border bg-transparent px-2 py-1.5 font-mono text-xs"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard?.writeText(pairingLink).then(() => {
-                  setCopied(true);
-                  window.setTimeout(() => setCopied(false), 1500);
-                }).catch(() => undefined);
-              }}
-              className="w-fit rounded-md border px-3 py-1.5 text-sm"
-            >
-              {copied ? "Copied" : "Copy link"}
-            </button>
           </div>
-        ) : null}
-        {pairingId ? (
-          <div className="grid gap-2 rounded-xl border p-3 text-sm">
-            <p>Comparison code: <strong>{code}</strong></p>
-            <label className="text-xs">
-              Comparison code from the phone
-              <input
-                aria-label="Approval comparison code"
-                value={approvalCode}
-                onChange={(event) => setApprovalCode(event.target.value)}
-                className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm"
-              />
-            </label>
-            <button
-              type="button"
-              disabled={busy || !approvalCode.trim()}
-              onClick={() => void run(async () => {
-                await approveRemotePairing(mutate, { pairingId, comparisonCode: approvalCode });
-                setPairingId("");
-                setPairingLink("");
-              })}
-              className="w-fit rounded-md border px-3 py-1.5 text-sm"
-            >
-              Approve pairing
-            </button>
-          </div>
-        ) : null}
-      </div>
+          <button
+            type="button"
+            disabled={busy || !status}
+            onClick={() => {
+              setStep("intro");
+              setPairingId("");
+              setCode("");
+              setPairingLink("");
+              setSetupOpen(true);
+            }}
+            className="shrink-0 rounded-md border px-3 py-1.5 text-sm"
+          >
+            Set up remote access
+          </button>
+        </div>
       )}
+
+      <Dialog
+        open={setupOpen}
+        onOpenChange={(open) => {
+          setSetupOpen(open);
+          if (!open) {
+            setStep("intro");
+            setPairingId("");
+            setCode("");
+            setPairingLink("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {step === "connected" ? "You're connected" : "Connect your phone"}
+            </DialogTitle>
+            <DialogDescription>
+              {step === "intro"
+                ? "Continue chats and control this desktop from your phone."
+                : step === "waiting"
+                  ? "Scan the QR code, then confirm the same code on both devices."
+                  : "This phone can now use the same chats, settings, apps, skills and workspace actions as the desktop."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+
+          {step === "intro" ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-muted-foreground">
+                Nanobot can access this desktop, including files, apps and workspace actions,
+                to complete tasks you send from your phone. Only connect devices you own and trust.
+              </div>
+              <ul className="space-y-2 text-sm">
+                <li>Continue any chat or project from your phone.</li>
+                <li>Use settings, apps, skills, automations and workspace actions remotely.</li>
+                <li>Approve this phone once; the connection stays until you revoke it.</li>
+              </ul>
+              <label className="block text-xs">
+                Server address (HTTPS)
+                <input
+                  aria-label="Server address"
+                  value={origin}
+                  onChange={(event) => setOrigin(event.target.value)}
+                  placeholder="https://your-tailnet-host.ts.net"
+                  className="mt-1 w-full rounded-md border bg-transparent px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="flex items-start gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  aria-label="Allow full owner control"
+                  checked={fullControl}
+                  onChange={(event) => setFullControl(event.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  Allow full owner control. The phone can use the same settings, apps, skills,
+                  automations and workspace actions as this desktop.
+                </span>
+              </label>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSetupOpen(false)}
+                  className="rounded-md border px-3 py-1.5 text-sm"
+                >
+                  Later
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !origin.trim()}
+                  onClick={() => void run(async () => {
+                    const offer = await startRemotePairing(mutate, {
+                      origin: origin.trim(),
+                      label: "phone",
+                      chatConsent: true,
+                      mediaConsent: true,
+                      fullControlConsent: fullControl,
+                      sharedHistoryConsent: fullControl,
+                    });
+                    setPairingId(offer.pairing_id);
+                    setCode(offer.comparison_code);
+                    setPairingLink(
+                      buildMobilePairingLink(origin.trim(), crypto.randomUUID(), offer),
+                    );
+                    setStep("waiting");
+                  })}
+                  className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
+                >
+                  Get started
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {step === "waiting" ? (
+            <div className="space-y-4">
+              <div className="flex flex-col items-center gap-2">
+                {qrDataUrl ? (
+                  <img
+                    src={qrDataUrl}
+                    alt="Pairing QR code"
+                    className="h-48 w-48 rounded-lg border bg-white p-2"
+                  />
+                ) : (
+                  <div className="grid h-48 w-48 place-items-center rounded-lg border text-xs text-muted-foreground">
+                    Loading QR code
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">Scan this code with the phone.</p>
+              </div>
+              <div className="rounded-lg border p-3 text-center">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Pairing code</p>
+                <p className="mt-1 font-mono text-3xl font-semibold tracking-[0.25em]">{code}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(code).then(() => {
+                      setCopied("code");
+                      window.setTimeout(() => setCopied(null), 1500);
+                    }).catch(() => undefined);
+                  }}
+                  className="mt-2 rounded-md border px-3 py-1 text-xs"
+                >
+                  {copied === "code" ? "Copied" : "Copy code"}
+                </button>
+              </div>
+              <p className="text-center text-xs text-muted-foreground">
+                Waiting for the phone to connect. Approve once the code matches.
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(pairingLink).then(() => {
+                      setCopied("link");
+                      window.setTimeout(() => setCopied(null), 1500);
+                    }).catch(() => undefined);
+                  }}
+                  className="rounded-md border px-3 py-1.5 text-sm"
+                >
+                  {copied === "link" ? "Copied" : "Copy link"}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void run(async () => {
+                    const offer = await startRemotePairing(mutate, {
+                      origin: origin.trim(),
+                      label: "phone",
+                      chatConsent: true,
+                      mediaConsent: true,
+                      fullControlConsent: fullControl,
+                      sharedHistoryConsent: fullControl,
+                    });
+                    setPairingId(offer.pairing_id);
+                    setCode(offer.comparison_code);
+                    setPairingLink(
+                      buildMobilePairingLink(origin.trim(), crypto.randomUUID(), offer),
+                    );
+                  })}
+                  className="rounded-md border px-3 py-1.5 text-sm"
+                >
+                  Refresh code
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || !pairingId}
+                  onClick={() => void run(async () => {
+                    await approveRemotePairing(mutate, {
+                      pairingId,
+                      comparisonCode: code,
+                    });
+                    setStep("connected");
+                    await refresh();
+                  })}
+                  className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
+                >
+                  Approve phone
+                </button>
+              </div>
+              <textarea
+                aria-label="Phone pairing link"
+                readOnly
+                value={pairingLink}
+                rows={3}
+                className="w-full break-all rounded-md border bg-transparent px-2 py-1.5 font-mono text-xs"
+              />
+            </div>
+          ) : null}
+
+          {step === "connected" ? (
+            <div className="space-y-4">
+              <p className="text-sm">
+                The phone is paired with full owner control. You can revoke it at any time from
+                the device list.
+              </p>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSetupOpen(false)}
+                  className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

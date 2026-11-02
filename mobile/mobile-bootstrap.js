@@ -132,7 +132,7 @@
 
     var codeBlock = textElement("div", "mobile-pairing-code-block");
     codeBlock.hidden = true;
-    codeBlock.appendChild(textElement("p", "mobile-pairing-copy", "Confirm this code on the desktop, then approve the phone."));
+    codeBlock.appendChild(textElement("p", "mobile-pairing-copy", "Confirm this code matches the desktop, then approve the phone there."));
     var code = textElement("div", "mobile-pairing-code", "------");
     code.setAttribute("aria-label", "Comparison code");
     codeBlock.appendChild(code);
@@ -344,7 +344,7 @@
         ui.code.textContent = collected.comparison_code || "------";
         setState("waiting");
         setPill(ui.node, "Connected", "is-ok");
-        ui.status.textContent = "Confirm the code on the desktop, then approve.";
+        ui.status.textContent = "Confirm the code matches the desktop, then approve the phone there.";
         void poll(collected.pairing_id);
       } catch (error) {
         var message = String(error && error.message ? error.message : error);

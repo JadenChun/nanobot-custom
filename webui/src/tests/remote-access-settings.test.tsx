@@ -71,30 +71,32 @@ describe("RemoteAccessSettings", () => {
       { enabled: false },
     ));
 
-    await userEvent.type(screen.getByLabelText("Exact HTTPS origin"), "https://fixture.example");
-    await userEvent.type(screen.getByLabelText("Phone installation ID"), "install-phone-1");
-    await userEvent.click(screen.getByLabelText("Grant full owner control and shared history"));
-    await userEvent.click(screen.getByRole("button", { name: "Create pairing challenge" }));
+    await userEvent.click(screen.getByRole("button", { name: "Set up remote access" }));
+    await userEvent.type(screen.getByLabelText("Server address"), "https://fixture.example");
+    await userEvent.click(screen.getByRole("button", { name: "Get started" }));
     await waitFor(() => expect(screen.getByText("123456")).toBeInTheDocument());
     expect(mutate.requestMutation).toHaveBeenCalledWith(
       "settings.remote_access.pairing.start",
       expect.objectContaining({
+        origin: "https://fixture.example",
+        label: "phone",
+        chatConsent: true,
         fullControlConsent: true,
         sharedHistoryConsent: true,
-        mediaConsent: false,
+        mediaConsent: true,
       }),
     );
-    expect(await screen.findByAltText("Phone pairing QR code")).toBeInTheDocument();
+    expect(await screen.findByAltText("Pairing QR code")).toBeInTheDocument();
     const link = screen.getByLabelText("Phone pairing link") as HTMLTextAreaElement;
     expect(link.value).toContain("nanobot://pair?");
-    expect(link.value).toContain("installation=install-phone-1");
+    expect(link.value).toContain("installation=");
     expect(link.value).toContain("challenge=pair-1.nonce-value-000000000000.secret-value-000000000000");
-    await userEvent.type(screen.getByLabelText("Approval comparison code"), "123456");
-    await userEvent.click(screen.getByRole("button", { name: "Approve pairing" }));
+    await userEvent.click(screen.getByRole("button", { name: "Approve phone" }));
     await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
       "settings.remote_access.pairing.approve",
       { pairingId: "pair-1", comparisonCode: "123456" },
     ));
+    expect(await screen.findByText("You're connected")).toBeInTheDocument();
   });
 
   it("fetches status with bearer authorization", async () => {
@@ -122,7 +124,7 @@ describe("RemoteAccessSettings", () => {
       />,
     );
     expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Create pairing challenge" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Set up remote access" })).not.toBeInTheDocument();
     expect(screen.getByText(/New-device pairing and remote on\/off stay/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
   });
