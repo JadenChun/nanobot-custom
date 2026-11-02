@@ -2260,7 +2260,7 @@ export function ThreadComposer({
   );
   const projectPicker = (
     <WorkspaceProjectPicker
-      compact={!hasProjectFolder}
+      compact={!hasProjectFolder || mobileComposer}
       disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
       scope={workspaceScope}
       defaultScope={workspaceDefaultScope}
@@ -2585,6 +2585,9 @@ export function ThreadComposer({
               </Button>
             )}
             {showCompactProjectPicker && !mobileComposer && !voiceRecorder.isRecording ? projectPicker : null}
+            {mobileComposer && !voiceRecorder.isRecording && projectPickerAvailable && !workspaceControlsHidden ? (
+              <div className="thread-composer-mobile-project-picker">{projectPicker}</div>
+            ) : null}
             {mobileComposer && !voiceRecorder.isRecording ? accessControl : null}
             {mobileComposer && !voiceRecorder.isRecording && hasProjectFolder && workspaceScope ? (
               <span

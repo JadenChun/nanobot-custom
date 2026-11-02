@@ -363,3 +363,9 @@ html.mobile-runtime body {
     max-width: 7.5rem;
   }
 }
+
+.thread-composer-mobile-project-picker {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
