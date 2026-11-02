@@ -274,13 +274,12 @@ export function RemoteAccessSettings({
             <div className="space-y-4">
               <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-muted-foreground">
                 {fullControl
-                  ? `Nanobot can access this desktop, including files, apps, workspace actions and shared chat history${mediaConsent ? " and photo/file transfer" : ""}, to complete tasks you send from your phone. Only connect devices you own and trust.`
-                  : `This phone can read and continue the same chats${mediaConsent ? " and transfer photos/files" : ""}. Full owner control, shared history, settings, apps, skills, automations and workspace actions stay on this desktop. Only connect devices you own and trust.`}
+                  ? `Nanobot can access this desktop, including files, apps, workspace actions and existing chats${mediaConsent ? ", plus photo/file transfer" : ""}, to complete tasks you send from your phone. Only connect devices you own and trust.`
+                  : `This phone can read and continue existing desktop chats${mediaConsent ? " and transfer photos/files" : ""}. Full owner control, settings, apps, skills, automations and workspace actions stay on this desktop. Only connect devices you own and trust.`}
               </div>
               <ul className="space-y-2 text-sm">
-                <li>Continue any chat or project from your phone.</li>
+                <li>Continue any chat or project from your phone, including existing desktop chats.</li>
                 {mediaConsent ? <li>Send and receive photos and files in chats.</li> : null}
-                {fullControl ? <li>Read the shared chat history from this desktop.</li> : null}
                 {fullControl
                   ? <li>Use settings, apps, skills, automations and workspace actions remotely.</li>
                   : null}
@@ -305,9 +304,8 @@ export function RemoteAccessSettings({
                   className="mt-0.5"
                 />
                 <span>
-                  Allow full owner control, including shared chat history. The phone can use
-                  the same settings, apps, skills, automations, workspace actions and existing
-                  chats as this desktop.
+                  Allow full owner control. The phone can use the same settings, apps, skills,
+                  automations and workspace actions as this desktop.
                 </span>
               </label>
               <label className="flex items-start gap-2 text-xs">
@@ -338,7 +336,7 @@ export function RemoteAccessSettings({
                       chatConsent: true,
                       mediaConsent,
                       fullControlConsent: fullControl,
-                      sharedHistoryConsent: fullControl,
+                      sharedHistoryConsent: false,
                     });
                     setGrantedFullControl(fullControl);
                     setGrantedMedia(mediaConsent);
@@ -415,7 +413,7 @@ export function RemoteAccessSettings({
                       chatConsent: true,
                       mediaConsent,
                       fullControlConsent: fullControl,
-                      sharedHistoryConsent: fullControl,
+                      sharedHistoryConsent: false,
                     });
                     setGrantedFullControl(fullControl);
                     setGrantedMedia(mediaConsent);
@@ -463,8 +461,8 @@ export function RemoteAccessSettings({
             <div className="space-y-4">
               <p className="text-sm">
                 {grantedFullControl === false
-                  ? `The phone is paired for chats${grantedMedia === false ? " only" : " and media only"}. Full owner control is off, so settings, apps, skills, automations and workspace actions stay on this desktop. You can revoke it at any time from the device list.`
-                  : `The phone is paired with full owner control, including shared chat history. Photo and file transfer are ${grantedMedia === false ? "off" : "on"}. You can revoke it at any time from the device list.`}
+                  ? `The phone is paired for chats${grantedMedia === false ? " only" : " and media only"}, including existing desktop chats. Full owner control is off, so settings, apps, skills, automations and workspace actions stay on this desktop. You can revoke it at any time from the device list.`
+                  : `The phone is paired with full owner control. Photo and file transfer are ${grantedMedia === false ? "off" : "on"}. You can revoke it at any time from the device list.`}
               </p>
               <div className="flex justify-end">
                 <button
