@@ -8,8 +8,10 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.Base64
 import com.getcapacitor.BridgeActivity
 import com.getcapacitor.JSObject
@@ -140,6 +142,24 @@ class NativeNetworkPlugin : Plugin() {
         call.resolve(JSObject().put("state", "starting"))
     }
 
+    private fun defaultDeviceLabel(): String {
+        val configured = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+            try {
+                Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+            } catch (_: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+        val model = listOf(Build.MANUFACTURER, Build.MODEL)
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .trim()
+        return (configured?.trim()?.takeIf { it.isNotEmpty() } ?: model.ifEmpty { "Android device" })
+            .take(64)
+    }
+
     @PluginMethod
     fun pairingIdentity(call: PluginCall) {
         try {
@@ -161,7 +181,16 @@ class NativeNetworkPlugin : Plugin() {
         val origin = call.getString("origin")
         val installationId = call.getString("installationId")
         val rawChallenge = call.getString("challenge")
-        val label = call.getString("label") ?: "phone"
+        val requestedLabel = call.getString("label")?.trim().orEmpty()
+        val label = if (
+            requestedLabel.isEmpty() ||
+            requestedLabel.equals("android", ignoreCase = true) ||
+            requestedLabel.equals("phone", ignoreCase = true)
+        ) {
+            defaultDeviceLabel()
+        } else {
+            requestedLabel.take(64)
+        }
         if (origin.isNullOrBlank() || installationId.isNullOrBlank()) {
             call.reject("origin and installationId are required")
             return
