@@ -101,14 +101,10 @@ class OperationReplayCache:
                 record = self._records.get(key)
                 if record is not None:
                     return self._join(envelope, record)
-            async with self._lock:
-                self._expire_locked()
-                record = self._records.get(key)
-                if record is not None:
-                    return self._join(envelope, record)
                 if len(self._records) >= self.max_entries:
                     self._evict_locked()
                     if len(self._records) >= self.max_entries:
+                        self._key_locks.pop(key, None)
                         return MutationOutcome(
                             decision=MutationDecision.OUTCOME_UNKNOWN,
                             request_id=envelope.request_id,

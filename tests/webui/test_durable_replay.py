@@ -86,3 +86,20 @@ def test_replay_liveness_ages_crash_windows_and_releases_capacity(tmp_path: Path
     now += 8 * 24 * 60 * 60
     assert store.begin("req-new", "sidebar.update", "digest", None) is True
     assert store.lookup("req-old", "sidebar.update", "digest", None)[0] == "new"
+
+
+def test_rejected_admission_persists_aged_crash_windows(tmp_path: Path) -> None:
+    path = tmp_path / "replay.json"
+    now = 1000.0
+    store = DurableWebUIReplay(path, max_entries=1, clock=lambda: now)
+    assert store.begin("req-old", "sidebar.update", "digest", None)
+
+    now += 25 * 60 * 60
+    assert store.begin("req-wait", "sidebar.update", "digest", None) is False
+
+    restarted = DurableWebUIReplay(path, max_entries=1, clock=lambda: now)
+    assert restarted.lookup("req-old", "sidebar.update", "digest", None)[0] == "uncertain"
+
+    now += 8 * 24 * 60 * 60
+    assert store.begin("req-new", "sidebar.update", "digest", None) is True
+    assert store.lookup("req-old", "sidebar.update", "digest", None)[0] == "new"

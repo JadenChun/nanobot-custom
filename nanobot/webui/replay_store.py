@@ -129,6 +129,8 @@ class DurableWebUIReplay:
         with self._lock:
             if self._corrupt:
                 return "uncertain", None
+            if self._prune_locked():
+                self._save()
             entry = self._entries.get(request_id)
             if entry is None:
                 return "new", None
@@ -156,7 +158,8 @@ class DurableWebUIReplay:
             if request_id in self._entries:
                 return False
             if len(self._entries) >= self.max_entries:
-                self._prune_locked(make_room=True)
+                if self._prune_locked(make_room=True):
+                    self._save()
                 if len(self._entries) >= self.max_entries:
                     return False
             self._entries[request_id] = {
@@ -191,7 +194,7 @@ class DurableWebUIReplay:
             self._prune_locked()
             self._save()
 
-    def _prune_locked(self, *, make_room: bool = False) -> None:
+    def _prune_locked(self, *, make_room: bool = False) -> bool:
         """Expire results and age stale crash windows without dropping fresh ones.
 
         ``in_progress`` entries older than 24 hours are converted to ``uncertain``
@@ -201,19 +204,23 @@ class DurableWebUIReplay:
         a crash loop fails closed until the age policy releases them.
         """
         now = self.clock()
+        changed = False
         for request_id, entry in list(self._entries.items()):
             state = entry.get("state")
             age = now - float(entry.get("updated_at", now))
             if state == "completed" and age > self.ttl_s:
                 self._entries.pop(request_id, None)
+                changed = True
             elif state == "in_progress" and age > self.in_progress_ttl_s:
                 entry["state"] = "uncertain"
                 entry["updated_at"] = now
+                changed = True
             elif state == "uncertain" and age > self.uncertain_ttl_s:
                 self._entries.pop(request_id, None)
+                changed = True
         overflow = len(self._entries) - self.max_entries + (1 if make_room else 0)
         if overflow <= 0:
-            return
+            return changed
         ordered = sorted(
             self._entries.items(),
             key=lambda item: float(item[1].get("updated_at", 0)),
@@ -223,3 +230,5 @@ class DurableWebUIReplay:
         ]
         for request_id in completed[:overflow]:
             self._entries.pop(request_id, None)
+            changed = True
+        return changed
