@@ -59,6 +59,7 @@ class OperationReplayCache:
         self._lock = asyncio.Lock()
         self._records: dict[OperationKey, ReplayRecord] = {}
         self._key_locks: dict[OperationKey, asyncio.Lock] = {}
+        self._key_lock_refs: dict[OperationKey, int] = {}
 
     async def execute(
         self,
@@ -94,67 +95,75 @@ class OperationReplayCache:
                     http_status=409,
                 )
             key_lock = self._key_locks.setdefault(key, asyncio.Lock())
+            self._key_lock_refs[key] = self._key_lock_refs.get(key, 0) + 1
 
-        async with key_lock:
-            async with self._lock:
-                self._expire_locked()
-                record = self._records.get(key)
-                if record is not None:
-                    return self._join(envelope, record)
-                if len(self._records) >= self.max_entries:
-                    self._evict_locked()
+        try:
+            async with key_lock:
+                async with self._lock:
+                    self._expire_locked()
+                    record = self._records.get(key)
+                    if record is not None:
+                        return self._join(envelope, record)
                     if len(self._records) >= self.max_entries:
-                        self._key_locks.pop(key, None)
-                        return MutationOutcome(
-                            decision=MutationDecision.OUTCOME_UNKNOWN,
-                            request_id=envelope.request_id,
-                            effect_count=0,
-                            http_status=409,
-                        )
-            try:
-                result = await effect(envelope)
-            except Exception:
+                        self._evict_locked()
+                        if len(self._records) >= self.max_entries:
+                            return MutationOutcome(
+                                decision=MutationDecision.OUTCOME_UNKNOWN,
+                                request_id=envelope.request_id,
+                                effect_count=0,
+                                http_status=409,
+                            )
+                try:
+                    result = await effect(envelope)
+                except Exception:
+                    now = self.clock()
+                    uncertain = ReplayRecord(
+                        key=key,
+                        principal=envelope.principal,
+                        action=envelope.action,
+                        digest=envelope.digest,
+                        result={"error": "uncertain"},
+                        effect_count=0,
+                        created_at=now,
+                        expires_at=now + max(self.ttl_seconds, 3600.0),
+                    )
+                    async with self._lock:
+                        self._evict_locked()
+                        self._records[key] = uncertain
+                    raise
                 now = self.clock()
-                uncertain = ReplayRecord(
+                record = ReplayRecord(
                     key=key,
                     principal=envelope.principal,
                     action=envelope.action,
                     digest=envelope.digest,
-                    result={"error": "uncertain"},
-                    effect_count=0,
+                    result=result,
+                    effect_count=1,
                     created_at=now,
-                    expires_at=now + max(self.ttl_seconds, 3600.0),
+                    expires_at=now + self.ttl_seconds,
                 )
                 async with self._lock:
                     self._evict_locked()
-                    self._records[key] = uncertain
-                    self._key_locks.pop(key, None)
-                raise
-            now = self.clock()
-            record = ReplayRecord(
-                key=key,
-                principal=envelope.principal,
-                action=envelope.action,
-                digest=envelope.digest,
-                result=result,
-                effect_count=1,
-                created_at=now,
-                expires_at=now + self.ttl_seconds,
-            )
+                    self._records[key] = record
+                if not await authorize():
+                    # The effect is durable but this delivery is no longer authorized.
+                    return _denied(envelope, 403)
+                return MutationOutcome(
+                    decision=MutationDecision.APPLIED,
+                    request_id=envelope.request_id,
+                    effect_id=envelope.request_id,
+                    effect_count=1,
+                    http_status=200,
+                )
+        finally:
             async with self._lock:
-                self._evict_locked()
-                self._records[key] = record
-                self._key_locks.pop(key, None)
-            if not await authorize():
-                # The effect is durable but this delivery is no longer authorized.
-                return _denied(envelope, 403)
-            return MutationOutcome(
-                decision=MutationDecision.APPLIED,
-                request_id=envelope.request_id,
-                effect_id=envelope.request_id,
-                effect_count=1,
-                http_status=200,
-            )
+                remaining = self._key_lock_refs.get(key, 1) - 1
+                if remaining <= 0:
+                    self._key_lock_refs.pop(key, None)
+                    if not key_lock.locked():
+                        self._key_locks.pop(key, None)
+                else:
+                    self._key_lock_refs[key] = remaining
 
     def _join(self, envelope: MutationEnvelope, record: ReplayRecord) -> MutationOutcome:
         if (

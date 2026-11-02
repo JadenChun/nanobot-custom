@@ -261,3 +261,45 @@ async def test_failed_effect_is_uncertain_and_not_retried() -> None:
     assert retry.decision is MutationDecision.OUTCOME_UNKNOWN
     assert retry.effect_count == 0
     assert counter.effects == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_key_effect_runs_once_and_releases_lock() -> None:
+    cache = OperationReplayCache()
+    counter = Counter()
+    gate = asyncio.Event()
+
+    async def slow_effect(_envelope: MutationEnvelope) -> dict:
+        counter.effects += 1
+        await gate.wait()
+        return {"effect": counter.effects}
+
+    first = asyncio.create_task(
+        cache.execute(
+            envelope(),
+            current_generation=2,
+            current_epoch=7,
+            authorize=lambda: asyncio.sleep(0, result=True),
+            effect=slow_effect,
+        )
+    )
+    await asyncio.sleep(0)
+    second = asyncio.create_task(
+        cache.execute(
+            envelope(),
+            current_generation=2,
+            current_epoch=7,
+            authorize=lambda: asyncio.sleep(0, result=True),
+            effect=counter.effect,
+        )
+    )
+    await asyncio.sleep(0)
+    gate.set()
+    results = await asyncio.gather(first, second)
+    assert counter.effects == 1
+    assert [item.decision for item in results] == [
+        MutationDecision.APPLIED,
+        MutationDecision.REPLAYED,
+    ]
+    assert cache._key_locks == {}
+    assert cache._key_lock_refs == {}
