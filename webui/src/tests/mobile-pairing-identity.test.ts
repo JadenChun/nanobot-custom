@@ -46,6 +46,37 @@ afterEach(() => {
   delete (window as unknown as { nanobotMobileTransport?: unknown }).nanobotMobileTransport;
 });
 
+function installPairedPlugin() {
+  let emit: ((event: Record<string, unknown>) => void) | null = null;
+  const refresh = vi.fn(async () => {
+    throw new Error("pairing was revoked");
+  });
+  const logout = vi.fn(async () => ({ serverRevocationPending: false }));
+  const plugin = {
+    target: vi.fn(async () => ({
+      origin: "https://desktop.example",
+      installationId: "phone-local-id",
+      hasAccess: true,
+    })),
+    start: vi.fn(async () => ({})),
+    status: vi.fn(async () => ({ state: "ready" })),
+    addListener: vi.fn(async (_name: string, listener: (event: Record<string, unknown>) => void) => {
+      emit = listener;
+      return { remove: vi.fn(async () => {}) };
+    }),
+    http: vi.fn(async () => ({ requestId: 1 })),
+    refresh,
+    logout,
+  };
+  (window as unknown as { Capacitor?: unknown }).Capacitor = {
+    Plugins: { NativeNetwork: plugin },
+  };
+  setTimeout(() => {
+    emit?.({ type: "http_response", request_id: 1, status: 401, body_base64: "" });
+  }, 0);
+  return { plugin, refresh, logout };
+}
+
 describe("mobile pairing identity", () => {
   it("waits for the local identity when a link is submitted early", async () => {
     const { pairStart, releaseIdentity } = installPlugin();
@@ -73,5 +104,16 @@ describe("mobile pairing identity", () => {
       installationId: "phone-local-id",
       challenge: "pairing-1.nonce.secret",
     });
+  });
+
+  it("clears a revoked pairing before the app shell opens", async () => {
+    const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {});
+    const { refresh, logout } = installPairedPlugin();
+    window.eval(bootstrapSource);
+
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(logout).toHaveBeenCalledWith({ serverReachable: true }));
+    expect(reload).toHaveBeenCalledTimes(1);
+    reload.mockRestore();
   });
 });

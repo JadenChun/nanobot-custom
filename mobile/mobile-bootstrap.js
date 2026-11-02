@@ -480,6 +480,67 @@
       throw new Error("native transport readiness timeout");
     }
 
+    function probeHandshake() {
+      return new Promise(async function (resolve) {
+        var requestId = 0;
+        var done = false;
+        var unsubscribe = null;
+        var timer = setTimeout(function () { finish({ error: "timeout" }); }, 8000);
+        function finish(result) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          if (unsubscribe) unsubscribe();
+          resolve(result);
+        }
+        try {
+          unsubscribe = await transport.onEvent(function (event) {
+            if (requestId === 0 || event.request_id !== requestId) return;
+            if (event.type === "http_response") {
+              finish({ status: event.status, body: event.body_base64 });
+            } else if (event.type === "http_error") {
+              finish({ error: event.code });
+            }
+          });
+          requestId = await transport.http({
+            operation: "mobile_handshake",
+            method: "GET",
+            path: "/mobile/v1/handshake"
+          });
+        } catch (error) {
+          finish({ error: String(error && error.message ? error.message : error) });
+        }
+      });
+    }
+
+    async function requireValidAccess() {
+      var probe = await probeHandshake();
+      if (probe.status !== 401) return true;
+      var refreshed = false;
+      try {
+        refreshed = await plugin.refresh();
+      } catch (error) {
+        var message = String(error && error.message ? error.message : error);
+        if (
+          message.indexOf("pairing was revoked") < 0 &&
+          message.indexOf("no refresh credential") < 0
+        ) {
+          return true;
+        }
+      }
+      if (refreshed) {
+        probe = await probeHandshake();
+        if (probe.status !== 401) return true;
+      }
+      try {
+        await plugin.logout({ serverReachable: true });
+      } catch (_) {
+        /* The next launch still starts from the stored pairing state. */
+      }
+      window.location.reload();
+      return false;
+    }
+
     function presentReauth(link, initialMessage) {
       var stale = document.querySelector(".mobile-reauth");
       if (stale) stale.remove();
@@ -510,6 +571,9 @@
         status.classList.remove("is-error");
         status.textContent = "Connecting to the server...";
         void connectTarget(link).then(function () {
+          return requireValidAccess();
+        }).then(function (valid) {
+          if (!valid) return;
           panel.remove();
           resolveReady();
         }).catch(function (error) {
@@ -525,6 +589,7 @@
     if (target && target.hasAccess) {
       try {
         await connectTarget(target);
+        if (!(await requireValidAccess())) return;
         resolveReady();
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
