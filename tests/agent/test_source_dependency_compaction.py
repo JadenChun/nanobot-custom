@@ -276,7 +276,7 @@ async def test_projected_source_summary_publishes_v2_without_artifact_publicatio
         assert len(auxiliary_payload) < 4_000
         metrics = state.source_compaction.attempts[-1]
         assert metrics.prefix_mode == 'canonical'
-        assert metrics.prefix_fallback_reason == 'summary_provider_not_known_local_manager'
+        assert metrics.prefix_fallback_reason == 'summary_provider_missing_capability'
         assert observed_contexts[0].source_summary_mode == 'canonical'
         assert observed_contexts[0].single_attempt
         assert observed_contexts[0].request_deadline_monotonic is not None

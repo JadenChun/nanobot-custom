@@ -1147,6 +1147,7 @@ def status(
     if config_path.exists():
         from nanobot.config.errors import ConfigLoadError
         from nanobot.config.loader import resolve_config_env_vars, resolve_env_refs
+        from nanobot.providers.provider_policy import resolve_provider_policy
         from nanobot.providers.registry import PROVIDERS
 
         _model, _preset_tag = _model_display(loaded)
@@ -1181,7 +1182,19 @@ def status(
             elif spec.is_local:
                 # Local deployments show api_base instead of api_key
                 if resolve_env_refs(p.api_base or ""):
-                    console.print(f"{spec.label}: [green]✓ {p.api_base}[/green]")
+                    policy = resolve_provider_policy(
+                        spec.policy,
+                        request_accounting=p.request_accounting,
+                        max_request_bytes=p.max_request_bytes,
+                    )
+                    detail = f" ({policy.request_accounting.value}"
+                    if policy.max_request_bytes is not None:
+                        detail += f", {policy.max_request_bytes} bytes"
+                    detail += ")"
+                    console.print(
+                        f"{spec.label}: [green]✓ {p.api_base}[/green]"
+                        f"[dim]{detail}[/dim]"
+                    )
                 else:
                     console.print(f"{spec.label}: [dim]not set[/dim]")
             else:

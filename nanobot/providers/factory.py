@@ -9,6 +9,7 @@ from nanobot.config.schema import Config, InlineFallbackConfig, ModelPresetConfi
 from nanobot.providers.base import GenerationSettings, LLMProvider
 from nanobot.providers.capabilities import ModelCapabilities
 from nanobot.providers.fallback_provider import FallbackProvider
+from nanobot.providers.provider_policy import ProviderPolicy, resolve_provider_policy
 from nanobot.providers.registry import ProviderSpec, create_dynamic_spec, find_by_name
 
 
@@ -21,6 +22,7 @@ class ProviderSnapshot:
     generation: GenerationSettings | None = None
     model_preset: str | None = None
     capabilities: ModelCapabilities | None = None
+    policy: ProviderPolicy | None = None
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,26 @@ class _ProviderSetup:
     provider_config: ProviderConfig | None
     spec: ProviderSpec | None
     backend: str
+    policy: ProviderPolicy
+
+
+def _provider_policy(
+    spec: ProviderSpec | None,
+    provider_config: ProviderConfig | None,
+) -> ProviderPolicy:
+    return resolve_provider_policy(
+        spec.policy if spec is not None else None,
+        request_accounting=(
+            provider_config.request_accounting
+            if provider_config is not None
+            else None
+        ),
+        max_request_bytes=(
+            provider_config.max_request_bytes
+            if provider_config is not None
+            else None
+        ),
+    )
 
 
 def _resolve_model_preset(
@@ -130,6 +152,7 @@ def _resolve_provider_setup(
         provider_config=p,
         spec=spec,
         backend=backend,
+        policy=_provider_policy(spec, p),
     )
 
 
@@ -166,6 +189,7 @@ def _make_provider_core(
     p = setup.provider_config
     spec = setup.spec
     backend = setup.backend
+    policy = setup.policy
     effective_key = p.effective_keys[0] if p and p.effective_keys else None
 
     if backend == "openai_codex":
@@ -239,6 +263,7 @@ def _make_provider_core(
                 extra_query=p.extra_query if p else None,
                 proxy=p.proxy if p else None,
                 provider_name=provider_name,
+                policy=policy,
             )
         keys = p.effective_keys if p else []
         if keys and p is not None and (len(keys) > 1 or p.rate_limit > 0):
@@ -362,6 +387,7 @@ def build_unconfigured_provider_snapshot(config: Config, setup_error: str) -> Pr
             context_window_tokens=preset.context_window_tokens,
             max_output_tokens=preset.max_tokens,
         ),
+        policy=ProviderPolicy(),
     )
 
 
@@ -379,13 +405,14 @@ def provider_signature(
     def _fallback_signature(fallback: ModelPresetConfig) -> tuple[object, ...]:
         fp = config.get_provider(fallback.model, preset=fallback)
         provider_name = config.get_provider_name(fallback.model, preset=fallback)
+        spec = _provider_spec_for_config(provider_name, fp) if provider_name else None
         return (
             fallback.model,
             fallback.provider,
             provider_name,
             config.get_api_key(fallback.model, preset=fallback),
             config.get_api_base(fallback.model, preset=fallback),
-            _provider_extra_headers(find_by_name(provider_name) if provider_name else None, fp),
+            _provider_extra_headers(spec, fp),
             fp.extra_body if fp else None,
             fp.api_type if fp else "auto",
             fp.extra_query if fp else None,
@@ -400,16 +427,20 @@ def provider_signature(
             tuple(fp.effective_keys) if fp else (),
             fp.rate_limit if fp else 0,
             fp.timeout if fp else None,
+            _provider_policy(spec, fp).signature(),
         )
 
     provider_name = config.get_provider_name(resolved.model, preset=resolved)
+    primary_spec = (
+        _provider_spec_for_config(provider_name, p) if provider_name else None
+    )
     return (
         resolved.model,
         resolved.provider,
         provider_name,
         config.get_api_key(resolved.model, preset=resolved),
         config.get_api_base(resolved.model, preset=resolved),
-        _provider_extra_headers(find_by_name(provider_name) if provider_name else None, p),
+        _provider_extra_headers(primary_spec, p),
         p.extra_body if p else None,
         p.api_type if p else "auto",
         p.extra_query if p else None,
@@ -425,6 +456,7 @@ def provider_signature(
         p.rate_limit if p else 0,
         p.timeout if p else None,
         "legacy" if config.agents.defaults.fallback else "upstream",
+        _provider_policy(primary_spec, p).signature(),
         tuple(_fallback_signature(fallback) for fallback in fallback_presets),
     )
 
@@ -442,6 +474,9 @@ def build_provider_snapshot(
         else preset_name
     )
     provider = make_provider(config, preset=resolved)
+    p = config.get_provider(resolved.model, preset=resolved)
+    provider_name = config.get_provider_name(resolved.model, preset=resolved)
+    spec = _provider_spec_for_config(provider_name, p) if provider_name else None
     return ProviderSnapshot(
         provider=provider,
         model=resolved.model,
@@ -456,6 +491,7 @@ def build_provider_snapshot(
             context_window_tokens=resolved.context_window_tokens,
             max_output_tokens=resolved.max_tokens,
         ),
+        policy=_provider_policy(spec, p),
     )
 
 

@@ -17,6 +17,8 @@ from typing import Any
 
 from pydantic.alias_generators import to_snake
 
+from nanobot.providers.provider_policy import ESTIMATED_COMPAT_POLICY, ProviderPolicy
+
 
 @dataclass(frozen=True)
 class ProviderModelSpec:
@@ -68,6 +70,11 @@ class ProviderSpec:
     detect_by_key_prefix: str = ""  # match api_key prefix, e.g. "sk-or-"
     detect_by_base_keyword: str = ""  # match substring in api_base URL
     default_api_base: str = ""  # OpenAI-compatible base URL for this provider
+
+    # Declared runtime behavior for generic accounting, compaction, and
+    # pricing code. Presets configure facts; the loop never branches on a
+    # provider name.
+    policy: ProviderPolicy = ProviderPolicy()
 
     # gateway behavior
     strip_model_prefix: bool = False  # strip "provider/" before sending to gateway
@@ -719,6 +726,10 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         is_local=True,
         detect_by_base_keyword="127.0.0.1:8082",
         default_api_base="http://127.0.0.1:8082/v1",
+        # This gateway routes arbitrary local model aliases and reports
+        # approximate usage, so it opts into the generic estimated policy.
+        # Any other provider can declare the same policy or opt in via config.
+        policy=ESTIMATED_COMPAT_POLICY,
     ),
     # vLLM / any OpenAI-compatible local server
     ProviderSpec(

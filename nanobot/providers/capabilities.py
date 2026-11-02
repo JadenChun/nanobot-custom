@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from nanobot.providers.image_pricing import ImageRequestPricing, image_request_pricing
+from nanobot.providers.provider_policy import ImagePricingMode
 
 
 class _ModelMetadata(Protocol):
@@ -48,12 +49,20 @@ def default_model_capabilities(
     input_modalities: Iterable[str] | None = None,
     output_modalities: Iterable[str] | None = None,
     capability_source: str = "fallback",
+    image_pricing_mode: ImagePricingMode | None = None,
 ) -> ModelCapabilities:
     """Resolve generic route capabilities from the provider/model identity.
 
     Provider adapters may replace this with catalog metadata. A missing
     modality declaration remains unknown; it is not negative capability.
+    Image pricing follows the route's declared policy unless the caller
+    supplies an explicit mode.
     """
+    mode = (
+        image_pricing_mode
+        if image_pricing_mode is not None
+        else _declared_image_pricing_mode(provider)
+    )
     return ModelCapabilities(
         context_window_tokens=context_window_tokens,
         max_output_tokens=max_output_tokens,
@@ -61,9 +70,19 @@ def default_model_capabilities(
             None if input_modalities is None else frozenset(input_modalities)
         ),
         output_modalities=frozenset(output_modalities or ("text",)),
-        image_pricing=image_request_pricing(provider, model),
+        image_pricing=image_request_pricing(provider, model, mode=mode),
         capability_source=capability_source,
     )
+
+
+def _declared_image_pricing_mode(provider: str) -> ImagePricingMode:
+    """Read the provider preset's declared pricing mode, defaulting to auto."""
+    if not isinstance(cast(object, provider), str) or not provider.strip():
+        return "auto"
+    from nanobot.providers.registry import find_by_name
+
+    spec = find_by_name(provider)
+    return spec.policy.image_pricing if spec is not None else "auto"
 
 
 def model_capabilities_from_metadata(
@@ -74,6 +93,7 @@ def model_capabilities_from_metadata(
     context_window_tokens: int,
     max_output_tokens: int | None = None,
     capability_source: str = "catalog",
+    image_pricing_mode: ImagePricingMode | None = None,
 ) -> ModelCapabilities:
     """Layer curated provider metadata over the generic route defaults."""
     if metadata is None:
@@ -82,6 +102,7 @@ def model_capabilities_from_metadata(
             model,
             context_window_tokens=context_window_tokens,
             max_output_tokens=max_output_tokens,
+            image_pricing_mode=image_pricing_mode,
         )
     return default_model_capabilities(
         provider,
@@ -95,6 +116,7 @@ def model_capabilities_from_metadata(
         input_modalities=metadata.input_modalities,
         output_modalities=metadata.output_modalities,
         capability_source=capability_source,
+        image_pricing_mode=image_pricing_mode,
     )
 
 

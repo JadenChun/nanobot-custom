@@ -65,6 +65,7 @@ def build_static_preset_snapshot(
             context_window_tokens=preset.context_window_tokens,
             max_output_tokens=preset.max_tokens,
         ),
+        policy=getattr(provider, "policy", None),
     )
 
 

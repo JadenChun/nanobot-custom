@@ -566,6 +566,34 @@ Some OpenAI-compatible local servers require any non-empty API key even when the
 
 Config keys may be camelCase or snake_case. Provider names in model presets should use the registry name, such as `lm_studio`.
 
+### Provider runtime policy
+
+Local gateways often route arbitrary model aliases and report approximate
+usage instead of exact tokenizer counts. Nanobot accounts for those routes with
+a declared provider policy rather than a provider-name check. Local Inference
+Manager declares `estimated_compat` by default; vLLM, Ollama, LM Studio, and
+custom endpoints remain strict unless you opt in.
+
+```json
+{
+  "providers": {
+    "vllm": {
+      "apiBase": "http://127.0.0.1:8000/v1",
+      "apiKey": "EMPTY",
+      "requestAccounting": "estimated_compat",
+      "maxRequestBytes": 67108864
+    }
+  }
+}
+```
+
+`estimated_compat` keeps a bounded cl100k-based text estimate, enables locally
+reported usage anchors and provider-preview source summaries, and recognizes
+compatibility `400` context-overflow signals. `maxRequestBytes` caps the final
+JSON payload; when omitted it defaults to 64 MiB. Set
+`"requestAccounting": "strict"` to opt a route back out. The same behavior is
+available to any OpenAI-compatible provider name.
+
 ### AWS Bedrock
 
 Bedrock can use the AWS credential chain, profile, region, or Bedrock bearer token depending on your AWS setup.

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Protocol
 
+from nanobot.providers.provider_policy import ImagePricingMode
 from nanobot.utils.media_tokens import (
     MAX_IMAGE_TOKENS,
     estimate_image_tokens,
@@ -66,10 +67,22 @@ class _RejectPricing:
         raise ValueError(self._message)
 
 
-def image_request_pricing(provider: str, model: str) -> ImageRequestPricing | None:
-    """Return the exact-route image pricing policy, or None for the generic fallback."""
-    if provider == "local_manager":
-        return _FunctionPricing(_local_manager_tokens)
+def image_request_pricing(
+    provider: str,
+    model: str,
+    *,
+    mode: ImagePricingMode = "auto",
+) -> ImageRequestPricing | None:
+    """Return route-owned image pricing for the declared pricing mode.
+
+    ``local_generic`` covers arbitrary local model aliases; ``auto`` keeps
+    exact OpenAI/Claude model-family formulas; ``none`` delegates to the
+    bounded generic fallback in request measurement.
+    """
+    if mode == "none":
+        return None
+    if mode == "local_generic":
+        return _FunctionPricing(_local_generic_tokens)
     if _openai_image_model(provider, model) is not None:
         return _FunctionPricing(lambda occurrence: _openai_tokens(provider, model, occurrence))
     if provider in {"openai", "azure_openai", "openai_codex"} and _openai_image_family(
@@ -83,7 +96,7 @@ def image_request_pricing(provider: str, model: str) -> ImageRequestPricing | No
     return None
 
 
-def _local_manager_tokens(occurrence: ImageOccurrence) -> int:
+def _local_generic_tokens(occurrence: ImageOccurrence) -> int:
     effective_detail = _detail(occurrence.detail)
     if effective_detail not in {"low", "high", "auto"}:
         raise ValueError("unsupported local image detail")

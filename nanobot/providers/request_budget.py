@@ -24,6 +24,10 @@ from nanobot.providers.capabilities import (
     default_model_capabilities,
 )
 from nanobot.providers.image_pricing import ImageOccurrence
+from nanobot.providers.provider_policy import (
+    DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES,
+    RequestAccountingPolicy,
+)
 from nanobot.utils.media_tokens import (
     MAX_IMAGE_TOKENS,
     estimate_image_tokens,
@@ -34,9 +38,8 @@ from nanobot.utils.media_tokens import (
 
 DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER = 1024
 TOKEN_ESTIMATE_SAFETY_RATIO = 1.15
-LOCAL_MANAGER_POLICY = "local_manager_compat_cl100k_estimate"
-LOCAL_MANAGER_MAX_REQUEST_BYTES = 64 * 1024 * 1024
-RequestBudgetPolicy = Literal["strict", "local_manager_compat_cl100k_estimate"]
+ESTIMATED_COMPAT_POLICY = RequestAccountingPolicy.ESTIMATED_COMPAT.value
+RequestBudgetPolicy = Literal["strict", "estimated_compat"]
 _BEDROCK_BINARY_FRAMING_BYTES = 64
 _MODEL_ENCODING_BASES: dict[str, str] = {
     "gpt-4-turbo": "cl100k_base",
@@ -180,7 +183,7 @@ class PreparedRequestBudgetPreview:
 
 @dataclass(frozen=True, slots=True)
 class LocalRequestUsageReceipt:
-    """Invocation-only binding for one successful direct local-manager request."""
+    """Invocation-only binding for one successful estimated-compatible request."""
 
     provider_scope: str
     envelope_binding: str
@@ -915,16 +918,16 @@ def _text_token_measurement(
     conservative ceiling that cannot assign a nearby model's vocabulary to an
     arbitrary alias.
     """
-    if policy == LOCAL_MANAGER_POLICY:
+    if policy == ESTIMATED_COMPAT_POLICY:
         try:
             encoding = tiktoken.get_encoding("cl100k_base")
             tokens = len(encoding.encode(encoded.decode("utf-8"), disallowed_special=()))
             return max(1, math.ceil(tokens * TOKEN_ESTIMATE_SAFETY_RATIO)), (
-                LOCAL_MANAGER_POLICY
+                ESTIMATED_COMPAT_POLICY
             )
         except Exception:
             return max(1, len(encoded)), (
-                "local_manager_compat_cl100k_unavailable_utf8_byte_ceiling"
+                "estimated_compat_unavailable_utf8_byte_ceiling"
             )
     try:
         encoding_name = known_tiktoken_encoding(identity.provider, identity.model)
@@ -965,7 +968,7 @@ def _serialized_input_measurement(
                 allow_nan=False,
                 separators=(",", ":"),
             ).encode("utf-8")
-            if policy == LOCAL_MANAGER_POLICY
+            if policy == ESTIMATED_COMPAT_POLICY
             else b""
         )
         encoded = json.dumps(
@@ -983,8 +986,17 @@ def _serialized_input_measurement(
     return (
         max(1, text_units + supplemental_units),
         source,
-        len(request_json) if policy == LOCAL_MANAGER_POLICY else None,
+        len(request_json) if policy == ESTIMATED_COMPAT_POLICY else None,
     )
+
+
+def _estimated_compat_byte_limit(max_request_bytes: int | None) -> int:
+    raw = cast(object, max_request_bytes)
+    if raw is None:
+        return DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        raise ValueError("provider request byte limit is invalid")
+    return raw
 
 
 def measure_finalized_request(
@@ -995,6 +1007,7 @@ def measure_finalized_request(
     completion_reserve_tokens: int | None = None,
     policy: RequestBudgetPolicy = "strict",
     capabilities: ModelCapabilities | None = None,
+    max_request_bytes: int | None = None,
 ) -> TransportMeasurement:
     """Measure a detached finalized body against the selected transport limit."""
     if not isinstance(cast(object, identity), TransportIdentity):
@@ -1003,17 +1016,20 @@ def measure_finalized_request(
         raise ValueError("finalized provider request is invalid")
     if limits is not None and not isinstance(cast(object, limits), ProviderRequestLimits):
         raise ValueError("provider request limits are invalid")
-    if policy not in {"strict", LOCAL_MANAGER_POLICY}:
+    if policy not in {"strict", ESTIMATED_COMPAT_POLICY}:
         raise ValueError("provider request measurement policy is invalid")
     if policy == "strict" and limits is None:
         raise ValueError("provider request limits are invalid")
-    if policy == LOCAL_MANAGER_POLICY and (
-        identity.provider != "local_manager"
-        or identity.transport not in {
+    if policy == ESTIMATED_COMPAT_POLICY:
+        if identity.transport not in {
             "openai_chat_completions", "openai_chat_completions_stream",
-        }
-    ):
-        raise ValueError("local manager estimate is unsupported for this transport")
+        }:
+            raise ValueError(
+                "estimated compatibility policy is unsupported for this transport"
+            )
+        byte_limit = _estimated_compat_byte_limit(max_request_bytes)
+    else:
+        byte_limit = None
     if completion_reserve_tokens is not None and (
         isinstance(completion_reserve_tokens, bool)
         or not isinstance(cast(object, completion_reserve_tokens), int)
@@ -1045,7 +1061,7 @@ def measure_finalized_request(
         input_limit_tokens=input_limit,
         source=source,
         measured_bytes=measured_bytes,
-        limit_bytes=LOCAL_MANAGER_MAX_REQUEST_BYTES if policy == LOCAL_MANAGER_POLICY else None,
+        limit_bytes=byte_limit,
         policy=policy,
     )
 
@@ -1058,6 +1074,7 @@ def validate_finalized_request(
     completion_reserve_tokens: int | None = None,
     policy: RequestBudgetPolicy = "strict",
     capabilities: ModelCapabilities | None = None,
+    max_request_bytes: int | None = None,
 ) -> TransportMeasurement:
     """Return a valid measurement or raise without exposing request content."""
     try:
@@ -1068,22 +1085,23 @@ def validate_finalized_request(
             completion_reserve_tokens=completion_reserve_tokens,
             policy=policy,
             capabilities=capabilities,
+            max_request_bytes=max_request_bytes,
         )
     except ValueError as exc:
-        if policy == LOCAL_MANAGER_POLICY:
+        if policy == ESTIMATED_COMPAT_POLICY:
             raise ProviderRequestRejected(reason="invalid_request_envelope") from exc
         raise FinalizedRequestBudgetExceeded() from exc
     if (
-        policy == LOCAL_MANAGER_POLICY
+        measurement.limit_bytes is not None
         and measurement.measured_bytes is not None
-        and measurement.measured_bytes > LOCAL_MANAGER_MAX_REQUEST_BYTES
+        and measurement.measured_bytes > measurement.limit_bytes
     ):
         raise RequestPayloadBytesExceeded(
             measurement.measured_bytes,
-            LOCAL_MANAGER_MAX_REQUEST_BYTES,
+            measurement.limit_bytes,
         )
     if not measurement.fits:
-        reason = "local_estimated_admission" if policy == LOCAL_MANAGER_POLICY else (
+        reason = "local_estimated_admission" if policy == ESTIMATED_COMPAT_POLICY else (
             "estimated_admission"
         )
         raise FinalizedRequestBudgetExceeded(measurement, reason=reason)

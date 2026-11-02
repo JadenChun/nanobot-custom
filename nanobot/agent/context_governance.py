@@ -36,9 +36,9 @@ from nanobot.providers.conversation_state import (
     allows_conversation_message_merge,
 )
 from nanobot.providers.image_history import recent_image_messages
+from nanobot.providers.provider_policy import RequestAccountingPolicy
 from nanobot.providers.request_budget import (
     DEFAULT_FINALIZED_REQUEST_SAFETY_BUFFER,
-    LOCAL_MANAGER_POLICY,
     BackendContextOverflow,
     LocalUsageAnchor,
     PreparedRequestBudgetPreview,
@@ -826,13 +826,12 @@ class ContextGovernor:
         prefix_payload: list[dict[str, Any]] | None = None
         prefix_preview: PreparedRequestBudgetPreview | None = None
         prefix_provider = compaction.runtime.provider
-        known_local_summary = (
-            type(prefix_provider) is OpenAICompatProvider
-            and prefix_provider is state.config.provider
-            and prefix_provider.is_known_local_manager
+        supports_prefix_summary = (
+            prefix_provider is state.config.provider
+            and getattr(prefix_provider, 'supports_source_summary', False) is True
         )
-        if not known_local_summary:
-            prefix_fallback_reason = 'summary_provider_not_known_local_manager'
+        if not supports_prefix_summary:
+            prefix_fallback_reason = 'summary_provider_missing_capability'
         elif main_preview is None:
             prefix_fallback_reason = 'provider_preview_unavailable'
         elif any(
@@ -853,7 +852,7 @@ class ContextGovernor:
                     prefix_selection.transcript.messages(),
                 )
                 try:
-                    prefix_preview = self._local_auxiliary_preview(
+                    prefix_preview = self._compatibility_auxiliary_preview(
                         compaction.runtime,
                         prefix_payload,
                         max_output_tokens=allowance,
@@ -991,7 +990,7 @@ class ContextGovernor:
                     continue
                 payload = prepared_payload(evidence, None)
                 try:
-                    group_preview = self._local_auxiliary_preview(
+                    group_preview = self._compatibility_auxiliary_preview(
                         compaction.runtime,
                         payload,
                         max_output_tokens=allowance,
@@ -1070,7 +1069,7 @@ class ContextGovernor:
                             continue
                         payload = prepared_payload(selected, summary)
                         try:
-                            chunk_preview = self._local_auxiliary_preview(
+                            chunk_preview = self._compatibility_auxiliary_preview(
                                 compaction.runtime,
                                 payload,
                                 max_output_tokens=allowance,
@@ -1296,12 +1295,11 @@ class ContextGovernor:
         ):
             return False
         return (
-            identity.provider == 'local_manager'
-            and identity.transport in {
+            identity.transport in {
                 'openai_chat_completions',
                 'openai_chat_completions_stream',
             }
-            and measurement.policy == LOCAL_MANAGER_POLICY
+            and measurement.policy == RequestAccountingPolicy.ESTIMATED_COMPAT.value
             and input_tokens >= 0
             and reserve >= 0
             and buffer >= 0
@@ -1633,7 +1631,11 @@ class ContextGovernor:
             or type(measurement.source) is not str
             or not measurement.source
             or type(measurement.policy) is not str
-            or measurement.policy not in ('strict', LOCAL_MANAGER_POLICY)
+            or measurement.policy
+            not in {
+                RequestAccountingPolicy.STRICT.value,
+                RequestAccountingPolicy.ESTIMATED_COMPAT.value,
+            }
             or type(preview.envelope_binding) is not str
             or not preview.envelope_binding
         ):
@@ -1696,7 +1698,7 @@ class ContextGovernor:
         return cls._concrete_budget_preview(candidate)
 
     @staticmethod
-    def _local_auxiliary_preview(
+    def _compatibility_auxiliary_preview(
         runtime: LLMRuntime,
         messages: list[dict[str, Any]],
         *,
@@ -1707,13 +1709,8 @@ class ContextGovernor:
         idle_timeout_seconds: float,
         deadline_monotonic: float,
     ) -> PreparedRequestBudgetPreview | None:
-        from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-
         provider = runtime.provider
-        if (
-            type(provider) is not OpenAICompatProvider
-            or not provider.is_known_local_manager
-        ):
+        if getattr(provider, 'supports_source_summary', False) is not True:
             return None
         context = ProviderCallContext(
             request_limits=derive_provider_request_limits(

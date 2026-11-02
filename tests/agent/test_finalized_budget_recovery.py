@@ -40,7 +40,7 @@ from nanobot.providers.conversation_state import ProviderConversationStateContro
 from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.registry import find_by_name
 from nanobot.providers.request_budget import (
-    LOCAL_MANAGER_POLICY,
+    ESTIMATED_COMPAT_POLICY,
     BackendContextOverflow,
     FinalizedRequestBudgetExceeded,
     LocalRequestUsageReceipt,
@@ -227,8 +227,8 @@ def _local_overflow_measurement(input_limit: int, *, stream: bool = False) -> Tr
         safety_buffer_tokens=safety,
         total_limit_tokens=total,
         input_limit_tokens=input_limit,
-        source=LOCAL_MANAGER_POLICY,
-        policy=LOCAL_MANAGER_POLICY,
+        source=ESTIMATED_COMPAT_POLICY,
+        policy=ESTIMATED_COMPAT_POLICY,
     )
 
 
@@ -436,8 +436,8 @@ async def test_source_turn_recovers_one_finalized_request_budget_rejection(
                 rejected = replace(
                     result,
                     input_tokens=result.input_limit_tokens + 1,
-                    source=LOCAL_MANAGER_POLICY,
-                    policy=LOCAL_MANAGER_POLICY,
+                    source=ESTIMATED_COMPAT_POLICY,
+                    policy=ESTIMATED_COMPAT_POLICY,
                 )
                 exc = FinalizedRequestBudgetExceeded(rejected)
                 finalized_measurements.append(rejected)
@@ -1982,7 +1982,7 @@ async def test_source_failure_diagnostics_keep_safe_budget_and_usage_only(store)
         "completion_reserve=128",
         "safety_buffer=",
         "payload_bytes=",
-        "measurement_source=local_manager_compat_cl100k_estimate",
+        "measurement_source=estimated_compat",
         "prefix_mode=historical_prefix",
         "cache_read_tokens=23",
     ):

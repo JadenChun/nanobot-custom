@@ -32,6 +32,7 @@ from nanobot.providers.oauth_model_catalog import (
     get_oauth_model_catalog,
     invalidate_oauth_model_catalog,
 )
+from nanobot.providers.provider_policy import ProviderPolicy, resolve_provider_policy
 from nanobot.providers.registry import PROVIDERS, create_dynamic_spec, find_by_name
 from nanobot.webui.settings_contracts import (
     QueryParams,
@@ -448,6 +449,36 @@ def _provider_advanced_field_names(name: str, spec: Any) -> list[str]:
     return fields
 
 
+def _provider_policy_diagnostics(
+    spec: Any,
+    provider_config: ProviderConfig,
+) -> dict[str, object]:
+    """Expose effective policy values without credentials or request content."""
+    default = getattr(spec, "policy", None)
+    policy = resolve_provider_policy(
+        default if isinstance(default, ProviderPolicy) else None,
+        request_accounting=provider_config.request_accounting,
+        max_request_bytes=provider_config.max_request_bytes,
+    )
+    source = (
+        "config"
+        if provider_config.request_accounting is not None
+        or provider_config.max_request_bytes is not None
+        else "preset"
+        if policy != ProviderPolicy()
+        else "default"
+    )
+    return {
+        "request_accounting": policy.request_accounting.value,
+        "max_request_bytes": policy.max_request_bytes,
+        "supports_usage_anchor": policy.supports_usage_anchor,
+        "supports_source_summary": policy.supports_source_summary,
+        "overflow_detection": policy.overflow_detection,
+        "image_pricing": policy.image_pricing,
+        "source": source,
+    }
+
+
 def _provider_settings_row(
     name: str,
     spec: Any,
@@ -480,6 +511,7 @@ def _provider_settings_row(
         "region": getattr(provider_config, "region", None),
         "profile": getattr(provider_config, "profile", None),
         "proxy": provider_config.proxy,
+        "policy": _provider_policy_diagnostics(spec, provider_config),
     }
     if oauth_status is not None:
         row["oauth_account"] = oauth_status["account"]

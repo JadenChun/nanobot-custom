@@ -78,6 +78,15 @@ unknown model uses a bounded generic fallback, while an explicitly text-only
 model is sanitized before dispatch. Image transport preparation is separate
 from token accounting.
 
+Provider runtime behavior is a separate immutable `ProviderPolicy` snapshot,
+also captured for the turn. It declares request accounting, the optional
+payload-byte ceiling, usage-anchor and source-summary support, overflow
+detection, and the image-pricing mode. `local_manager` remains a registry
+preset that declares `estimated_compat`; it is not a runtime branch. Any
+OpenAI-compatible provider can declare the same policy or opt in through
+`requestAccounting` / `maxRequestBytes` config. Generic budget, compaction, and
+pricing code consumes policy values rather than provider names.
+
 ## Providers
 
 Provider metadata is centralized in `nanobot/providers/registry.py`. Configuration fields live in `nanobot/config/schema.py`.

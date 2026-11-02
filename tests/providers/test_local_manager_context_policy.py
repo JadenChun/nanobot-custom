@@ -35,7 +35,7 @@ from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.pooled_provider import PooledProvider
 from nanobot.providers.registry import find_by_name
 from nanobot.providers.request_budget import (
-    LOCAL_MANAGER_POLICY,
+    ESTIMATED_COMPAT_POLICY,
     BackendContextOverflow,
     FinalizedRequestBudgetExceeded,
     GovernedRequestConflictError,
@@ -172,7 +172,7 @@ def test_governor_accepts_concrete_local_provider_preview() -> None:
     )
 
     assert type(preview) is PreparedRequestBudgetPreview
-    assert preview.measurement.policy == LOCAL_MANAGER_POLICY
+    assert preview.measurement.policy == ESTIMATED_COMPAT_POLICY
     assert preview.effective_body["messages"] == messages
 
 
@@ -223,7 +223,7 @@ async def test_mock_transport_body_matches_preview_and_success_receipt() -> None
         stream=False,
     )
     assert preview is not None
-    assert preview.measurement.policy == LOCAL_MANAGER_POLICY
+    assert preview.measurement.policy == ESTIMATED_COMPAT_POLICY
     assert preview.measurement.completion_reserve_tokens == 17
     assert preview.effective_body["tools"] == [requested_tool, configured_tool]
     assert preview.effective_body["timeout"] == "gateway-body-timeout"
@@ -1517,12 +1517,15 @@ async def test_sync_close_cancellation_preserves_active_error_only() -> None:
     ("provider_name", "spec_name"),
     [("vllm", "vllm"), ("local_manager", "openai"), ("custom", "local_manager")],
 )
-async def test_relaxed_policy_requires_both_local_manager_identities(
+async def test_policy_comes_from_declared_spec_not_provider_name(
     provider_name: str,
     spec_name: str,
 ) -> None:
     provider = _local_provider(provider_name=provider_name, spec_name=spec_name)
-    assert provider._request_budget_policy == "strict"
+    expected = (
+        "estimated_compat" if spec_name == "local_manager" else "strict"
+    )
+    assert provider._request_budget_policy == expected
     body = provider._build_kwargs(
         [{"role": "user", "content": "界" * 2_000}],
         None,
@@ -1532,14 +1535,15 @@ async def test_relaxed_policy_requires_both_local_manager_identities(
         None,
         None,
     )
-    with pytest.raises(FinalizedRequestBudgetExceeded):
-        provider.validate_finalized_request(
-            body,
-            transport="openai_chat_completions",
-            model=MODEL,
-            provider_context=_context(5_000),
-            policy=provider._request_budget_policy,
-        )
+    if expected == "strict":
+        with pytest.raises(FinalizedRequestBudgetExceeded):
+            provider.validate_finalized_request(
+                body,
+                transport="openai_chat_completions",
+                model=MODEL,
+                provider_context=_context(5_000),
+                policy=provider._request_budget_policy,
+            )
 
 
 def test_local_cl100k_is_labeled_and_special_marker_text_is_counted_as_text() -> None:
@@ -1554,10 +1558,10 @@ def test_local_cl100k_is_labeled_and_special_marker_text_is_counted_as_text() ->
         TransportIdentity("local_manager", "openai_chat_completions", MODEL),
         body,
         ProviderRequestLimits(total_tokens=10_000, safety_buffer_tokens=0),
-        policy=LOCAL_MANAGER_POLICY,
+        policy=ESTIMATED_COMPAT_POLICY,
     )
-    assert measurement.source == LOCAL_MANAGER_POLICY
-    assert measurement.policy == LOCAL_MANAGER_POLICY
+    assert measurement.source == ESTIMATED_COMPAT_POLICY
+    assert measurement.policy == ESTIMATED_COMPAT_POLICY
     assert measurement.measured_bytes is not None
     assert measurement.measured_bytes > measurement.input_tokens
 
@@ -1674,7 +1678,7 @@ def test_reported_usage_floor_requires_same_converted_prefix_and_sdk_client_scop
         model=MODEL,
         provider_context=anchored_context,
     )
-    assert repriced.source == LOCAL_MANAGER_POLICY
+    assert repriced.source == ESTIMATED_COMPAT_POLICY
     assert repriced.input_tokens < anchored.input_tokens
 
     provider._client = AsyncOpenAI(
@@ -1688,7 +1692,7 @@ def test_reported_usage_floor_requires_same_converted_prefix_and_sdk_client_scop
         model=MODEL,
         provider_context=anchored_context,
     )
-    assert replaced_client.source == LOCAL_MANAGER_POLICY
+    assert replaced_client.source == ESTIMATED_COMPAT_POLICY
     assert replaced_client.input_tokens < anchored.input_tokens
 
     provider._client.base_url = httpx.URL("http://manager.changed/v1/")
@@ -1814,7 +1818,7 @@ def test_reported_usage_floor_declines_changed_input_and_effective_envelopes() -
 async def test_payload_byte_ceiling_is_independent_and_applies_without_token_limits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert budget_module.LOCAL_MANAGER_MAX_REQUEST_BYTES == 64 * 1024 * 1024
+    assert budget_module.DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES == 64 * 1024 * 1024
     metadata = "data:image/png;base64," + ("A" * 9_000)
     provider = _local_provider(extra_body={"metadata": {"inline": metadata}})
     messages = [{"role": "user", "content": "x"}]
@@ -1827,13 +1831,17 @@ async def test_payload_byte_ceiling_is_independent_and_applies_without_token_lim
         allow_nan=False,
         separators=(",", ":"),
     ).encode("utf-8"))
-    monkeypatch.setattr(budget_module, "LOCAL_MANAGER_MAX_REQUEST_BYTES", encoded_size)
+    monkeypatch.setattr(
+        provider,
+        "policy",
+        replace(provider.policy, max_request_bytes=encoded_size),
+    )
     measured = provider.validate_finalized_request(
         body,
         transport="openai_chat_completions",
         model=MODEL,
         provider_context=None,
-        policy=LOCAL_MANAGER_POLICY,
+        policy=ESTIMATED_COMPAT_POLICY,
     )
     assert measured is not None
     assert measured.input_limit_tokens is None
@@ -1844,10 +1852,9 @@ async def test_payload_byte_ceiling_is_independent_and_applies_without_token_lim
     provider._ensure_client = AsyncMock(return_value=SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=attempts)),
     ))
-    monkeypatch.setattr(
-        budget_module,
-        "LOCAL_MANAGER_MAX_REQUEST_BYTES",
-        encoded_size - 1,
+    provider.policy = replace(
+        provider.policy,
+        max_request_bytes=encoded_size - 1,
     )
     with pytest.raises(RequestPayloadBytesExceeded) as exceeded:
         await provider.chat(messages=messages, max_tokens=1)
@@ -1984,7 +1991,7 @@ async def test_malformed_body_has_no_transport_and_unsupported_local_media_stays
             TransportIdentity("local_manager", "openai_chat_completions", MODEL),
             unsupported_body,
             _context().request_limits,
-            policy=LOCAL_MANAGER_POLICY,
+            policy=ESTIMATED_COMPAT_POLICY,
         )
 
 

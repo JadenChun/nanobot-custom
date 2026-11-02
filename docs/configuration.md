@@ -312,6 +312,38 @@ Tracing covers the providers that go through nanobot's OpenAI-compatible client 
 | `github_copilot` | LLM (GitHub Copilot, OAuth) | `nanobot provider login github-copilot` |
 | `qianfan` | LLM (Baidu Qianfan) | [cloud.baidu.com](https://cloud.baidu.com/doc/qianfan/s/Hmh4suq26) |
 
+### Provider Runtime Policy
+
+Optional provider fields select generic request accounting without touching
+provider code:
+
+| Field | Values | Default |
+|---|---|---|
+| `requestAccounting` | `"strict"`, `"estimated_compat"` | Provider preset (strict unless declared) |
+| `maxRequestBytes` | Positive integer | 64 MiB when `estimated_compat` has no explicit cap |
+
+`estimated_compat` is intended for local gateways that route arbitrary model
+aliases or report approximate usage. It enables bounded cl100k text estimation,
+locally reported usage anchors, provider-preview source summaries, and
+compatibility `400` overflow recovery. `strict` disables those behaviors.
+
+```json
+{
+  "providers": {
+    "vllm": {
+      "apiBase": "http://127.0.0.1:8000/v1",
+      "requestAccounting": "estimated_compat",
+      "maxRequestBytes": 67108864
+    }
+  }
+}
+```
+
+Existing configurations are unchanged. Local Inference Manager declares
+`estimated_compat`; other local and hosted providers stay strict unless the
+config opts in. `nanobot status` and the WebUI provider settings payload expose
+the effective policy without credentials.
+
 <details>
 <summary><b>OpenAI</b></summary>
 

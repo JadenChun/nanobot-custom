@@ -599,6 +599,11 @@ class ProviderConfig(Base):
     proxy: str | None = None  # Explicit HTTP proxy; image downloads trust its DNS and egress
     thinking_style: str | None = None  # Thinking/reasoning style for custom providers
 
+    # Provider runtime policy overrides for generic accounting. Most providers
+    # leave these unset and inherit their registry policy (strict by default).
+    request_accounting: Literal["strict", "estimated_compat"] | None = None
+    max_request_bytes: int | None = Field(default=None, ge=1)
+
     # Valid values mirror the keys of _THINKING_STYLE_MAP in
     # nanobot/providers/openai_compat_provider.py. Kept duplicated here to
     # avoid an import cycle (schema.py must not import from providers/).

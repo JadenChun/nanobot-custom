@@ -43,22 +43,23 @@ model, the logical estimator retains its historical `cl100k_base` default.
 For other providers, the final request guard continues to use exact installed
 model mappings, listed canonical families, valid dated snapshots, and
 provider-owned Codex/Copilot routing prefixes. Unknown aliases and unavailable
-encodings retain the strict UTF-8 byte-based behavior. The `local_manager`
-policy is selected only when both the registered provider specification and
-configured provider identity are `local_manager`; a URL, model-name fragment,
-or wrapper name cannot enable it.
+encodings retain the strict UTF-8 byte-based behavior. The estimated
+compatibility policy is declared by a provider preset or by the
+`requestAccounting` config field; it is never inferred from a provider name,
+URL, model-name fragment, or wrapper. Local Inference Manager is one preset
+that declares it. Other local providers remain strict until they opt in.
 
-For that known route, the same finalized effective Chat body is used at
+For that route, the same finalized effective Chat body is used at
 pressure, auxiliary preflight, post-summary fit, preview, and dispatch. Ordinary
 Chat fields and additive configured extras are merged with the installed SDK's
 top-level `extra_body` precedence; client-only timeout/header/query controls
 are excluded from the JSON body. Conflicting governed model or message
 overrides are rejected before transport. Text uses the explicitly named
-`local_manager_compat_cl100k_estimate` with the existing 15% margin and the
-existing selected-model image allowance. This is a compatibility estimate,
-not a Qwen tokenizer or a guarantee of backend headroom. If the encoding is
-unavailable, the measurement identifies the UTF-8 byte-ceiling fallback rather
-than claiming a token estimate.
+`estimated_compat` policy with the existing 15% margin and the existing
+selected-model image allowance. This is a compatibility estimate, not a Qwen
+tokenizer or a guarantee of backend headroom. If the encoding is unavailable,
+the measurement identifies the UTF-8 byte-ceiling fallback rather than claiming
+a token estimate.
 
 The local request policy also applies an independent 64 MiB ceiling to the full
 serialized effective JSON, including inline base64 media and metadata. It

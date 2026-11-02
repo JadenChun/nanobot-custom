@@ -56,8 +56,12 @@ from nanobot.providers.openai_responses import (
     resolve_compact_threshold,
     responses_state_matches,
 )
+from nanobot.providers.provider_policy import (
+    DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES,
+    ProviderPolicy,
+    RequestAccountingPolicy,
+)
 from nanobot.providers.request_budget import (
-    LOCAL_MANAGER_POLICY,
     BackendContextOverflow,
     FinalizedRequestBudgetExceeded,
     GovernedRequestConflictError,
@@ -591,6 +595,7 @@ class OpenAICompatProvider(LLMProvider):
         proxy: str | None = None,
         provider_name: str = "openai",
         timeout: float | None = None,
+        policy: ProviderPolicy | None = None,
     ):
         super().__init__(api_key, api_base, provider_name=provider_name)
         if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
@@ -600,9 +605,15 @@ class OpenAICompatProvider(LLMProvider):
         self.extra_headers = dict(extra_headers) if extra_headers is not None else {}
         self._spec = spec
         self._extra_body: dict[str, Any] = dict(extra_body or {})
+        self.policy = (
+            policy
+            if policy is not None
+            else spec.policy if spec is not None else ProviderPolicy()
+        )
         self._request_budget_policy: RequestBudgetPolicy = (
-            LOCAL_MANAGER_POLICY
-            if spec is not None and spec.name == provider_name == "local_manager"
+            RequestAccountingPolicy.ESTIMATED_COMPAT.value
+            if self.policy.request_accounting
+            is RequestAccountingPolicy.ESTIMATED_COMPAT
             else "strict"
         )
         self._api_type = api_type if spec and spec.name == "openai" else "auto"
@@ -669,16 +680,38 @@ class OpenAICompatProvider(LLMProvider):
             metadata,
             context_window_tokens=context_window_tokens,
             max_output_tokens=max_output_tokens,
+            image_pricing_mode=self._resolved_policy().image_pricing,
+        )
+
+    def _resolved_policy(self) -> ProviderPolicy:
+        policy = getattr(self, "policy", None)
+        if isinstance(policy, ProviderPolicy):
+            return policy
+        spec_policy = getattr(getattr(self, "_spec", None), "policy", None)
+        return (
+            spec_policy
+            if isinstance(spec_policy, ProviderPolicy)
+            else ProviderPolicy()
         )
 
     @property
-    def is_known_local_manager(self) -> bool:
-        """Whether this constructed provider owns the explicit local policy."""
+    def supports_source_summary(self) -> bool:
+        """Whether this route may use provider-preview source summaries."""
+        policy = self._resolved_policy()
         return (
-            self.provider_name == "local_manager"
-            and self._request_budget_policy == LOCAL_MANAGER_POLICY
-            and self._spec is not None
-            and self._spec.name == "local_manager"
+            policy.request_accounting
+            is RequestAccountingPolicy.ESTIMATED_COMPAT
+            and policy.supports_source_summary
+        )
+
+    @property
+    def supports_usage_anchor(self) -> bool:
+        """Whether this route may anchor estimates to reported prompt usage."""
+        policy = self._resolved_policy()
+        return (
+            policy.request_accounting
+            is RequestAccountingPolicy.ESTIMATED_COMPAT
+            and policy.supports_usage_anchor
         )
 
     def _build_client(self) -> None:
@@ -1322,7 +1355,8 @@ class OpenAICompatProvider(LLMProvider):
                 extra_body.pop(field_name, None)
             kwargs["extra_body"] = extra_body
         if (
-            self._request_budget_policy == LOCAL_MANAGER_POLICY
+            self.policy.request_accounting
+            is RequestAccountingPolicy.ESTIMATED_COMPAT
             and provider_context is not None
             and (
                 provider_context.request_limits is not None
@@ -1499,7 +1533,7 @@ class OpenAICompatProvider(LLMProvider):
         identity: TransportIdentity,
     ) -> TransportMeasurement:
         if (
-            self._request_budget_policy != LOCAL_MANAGER_POLICY
+            not self.supports_usage_anchor
             or provider_context is None
             or type(provider_context.local_usage_anchor) is not LocalUsageAnchor
         ):
@@ -1550,7 +1584,8 @@ class OpenAICompatProvider(LLMProvider):
                 {"model": identity.model, "messages": deepcopy(appended)},
                 ProviderRequestLimits(total_tokens=2_147_483_647, safety_buffer_tokens=0),
                 completion_reserve_tokens=0,
-                policy=LOCAL_MANAGER_POLICY,
+                policy=self._request_budget_policy,
+                max_request_bytes=self.policy.max_request_bytes,
             )
         except (TypeError, ValueError, UnicodeError):
             return measurement
@@ -1595,7 +1630,8 @@ class OpenAICompatProvider(LLMProvider):
                 body,
                 limits,
                 completion_reserve_tokens=completion_reserve_tokens,
-                policy=LOCAL_MANAGER_POLICY,
+                policy=self._request_budget_policy,
+                max_request_bytes=self.policy.max_request_bytes,
                 capabilities=self.model_capabilities(
                     selected_model,
                     context_window_tokens=(
@@ -1616,14 +1652,13 @@ class OpenAICompatProvider(LLMProvider):
             provider_context,
             identity=identity,
         )
-        if measurement.measured_bytes is not None and (
-            measurement.measured_bytes
-            > self._local_request_byte_limit()
-        ):
-            raise RequestPayloadBytesExceeded(
-                measurement.measured_bytes,
-                self._local_request_byte_limit(),
-            )
+        if measurement.measured_bytes is not None:
+            byte_limit = self._request_byte_limit()
+            if measurement.measured_bytes > byte_limit:
+                raise RequestPayloadBytesExceeded(
+                    measurement.measured_bytes,
+                    byte_limit,
+                )
         if (
             provider_context is not None
             and provider_context.source_summary_mode is not None
@@ -1632,11 +1667,13 @@ class OpenAICompatProvider(LLMProvider):
             raise ProviderRequestRejected(reason="unsupported_auxiliary_envelope")
         return measurement
 
-    @staticmethod
-    def _local_request_byte_limit() -> int:
-        from nanobot.providers import request_budget
-
-        return request_budget.LOCAL_MANAGER_MAX_REQUEST_BYTES
+    def _request_byte_limit(self) -> int:
+        if self.policy.request_accounting is not RequestAccountingPolicy.ESTIMATED_COMPAT:
+            raise ValueError("request byte ceiling requires estimated compatibility")
+        return (
+            self.policy.max_request_bytes
+            or DEFAULT_ESTIMATED_COMPAT_MAX_REQUEST_BYTES
+        )
 
     @staticmethod
     def _validate_auxiliary_output_cap(
@@ -1706,7 +1743,11 @@ class OpenAICompatProvider(LLMProvider):
             provider_context,
             completion_reserve_tokens,
         )
-        if self._request_budget_policy != LOCAL_MANAGER_POLICY or policy != LOCAL_MANAGER_POLICY:
+        if (
+            self.policy.request_accounting
+            is not RequestAccountingPolicy.ESTIMATED_COMPAT
+            or policy != RequestAccountingPolicy.ESTIMATED_COMPAT.value
+        ):
             return super().validate_finalized_request(
                 body,
                 transport=transport,
@@ -1922,7 +1963,7 @@ class OpenAICompatProvider(LLMProvider):
         body: dict[str, object],
         provider_context: ProviderCallContext | None,
     ) -> LocalRequestUsageReceipt | None:
-        if self._request_budget_policy != LOCAL_MANAGER_POLICY:
+        if not self.supports_usage_anchor:
             return None
         messages = body.get("messages")
         model = body.get("model")
@@ -1963,7 +2004,7 @@ class OpenAICompatProvider(LLMProvider):
         stream: bool,
         tool_choice: str | dict[str, Any] | None = None,
     ) -> PreparedRequestBudgetPreview | None:
-        if self._request_budget_policy != LOCAL_MANAGER_POLICY:
+        if not self.supports_source_summary:
             return None
         if self._should_use_responses_api(model, generation.reasoning_effort):
             return None
@@ -3033,7 +3074,7 @@ class OpenAICompatProvider(LLMProvider):
         except Exception as e:
             overflow = (
                 self._backend_context_overflow(e)
-                if self._request_budget_policy == LOCAL_MANAGER_POLICY
+                if self.policy.overflow_detection == "compat_400"
                 else None
             )
             if overflow is not None:
@@ -3478,7 +3519,7 @@ class OpenAICompatProvider(LLMProvider):
         except Exception as e:
             overflow = (
                 self._backend_context_overflow(e)
-                if self._request_budget_policy == LOCAL_MANAGER_POLICY
+                if self.policy.overflow_detection == "compat_400"
                 else None
             )
             if overflow is not None:

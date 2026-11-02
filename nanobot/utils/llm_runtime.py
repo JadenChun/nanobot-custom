@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from nanobot.providers.base import GenerationSettings, LLMProvider
 from nanobot.providers.capabilities import ModelCapabilities, default_model_capabilities
+from nanobot.providers.provider_policy import ProviderPolicy
 
 if TYPE_CHECKING:
     from nanobot.providers.factory import ProviderSnapshot
@@ -28,6 +29,7 @@ class LLMRuntime:
     model_preset: str | None = None
     snapshot_signature: tuple[object, ...] | None = None
     capabilities: ModelCapabilities | None = None
+    policy: ProviderPolicy | None = None
 
     @classmethod
     def capture(
@@ -39,6 +41,7 @@ class LLMRuntime:
         model_preset: str | None = None,
         snapshot_signature: tuple[object, ...] | None = None,
         capabilities: ModelCapabilities | None = None,
+        policy: ProviderPolicy | None = None,
     ) -> LLMRuntime:
         """Capture provider defaults without retaining mutable generation state."""
         defaults = GenerationSettings()
@@ -69,6 +72,11 @@ class LLMRuntime:
                     max_output_tokens=max_tokens,
                 )
             ),
+            policy=(
+                policy
+                if policy is not None
+                else _resolve_provider_policy(provider)
+            ),
         )
 
     @property
@@ -82,6 +90,13 @@ class LLMRuntime:
             context_window_tokens=self.context_window_tokens,
             max_output_tokens=self.generation.max_tokens,
         )
+
+    @property
+    def resolved_policy(self) -> ProviderPolicy:
+        """Return the immutable provider policy snapshot for this run."""
+        if self.policy is not None:
+            return self.policy
+        return _resolve_provider_policy(self.provider)
 
     def with_generation_overrides(
         self,
@@ -106,6 +121,11 @@ class LLMRuntime:
                 ),
             ),
         )
+
+
+def _resolve_provider_policy(provider: LLMProvider) -> ProviderPolicy:
+    candidate = getattr(provider, "policy", None)
+    return candidate if isinstance(candidate, ProviderPolicy) else ProviderPolicy()
 
 
 def _resolve_provider_capabilities(
@@ -148,6 +168,7 @@ def runtime_from_provider_snapshot(
             model_preset=snapshot.model_preset,
             snapshot_signature=snapshot.signature,
             capabilities=snapshot.capabilities,
+            policy=snapshot.policy,
         )
     return LLMRuntime.capture(
         snapshot.provider,
@@ -156,4 +177,5 @@ def runtime_from_provider_snapshot(
         model_preset=snapshot.model_preset,
         snapshot_signature=snapshot.signature,
         capabilities=snapshot.capabilities,
+        policy=snapshot.policy,
     )
