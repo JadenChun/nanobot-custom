@@ -7,6 +7,6 @@
     "build": "bun build.ts"
   },
   "dependencies": {
-    "@tauri-apps/api": "2.8.0"
+    "@tauri-apps/api": "2.12.4"
   }
 }
