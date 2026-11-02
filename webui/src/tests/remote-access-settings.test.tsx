@@ -99,6 +99,28 @@ describe("RemoteAccessSettings", () => {
     expect(await screen.findByText("You're connected")).toBeInTheDocument();
   });
 
+  it("describes chat-and-media pairing when full owner control is off", async () => {
+    const mutate = mutationTransport();
+    render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
+    await userEvent.click(screen.getByRole("button", { name: "Set up remote access" }));
+    await userEvent.type(screen.getByLabelText("Server address"), "https://fixture.example");
+    await userEvent.click(screen.getByLabelText("Allow full owner control"));
+    expect(screen.getByText(/Full owner control is off/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
+      "settings.remote_access.pairing.start",
+      expect.objectContaining({
+        fullControlConsent: false,
+        sharedHistoryConsent: false,
+        chatConsent: true,
+        mediaConsent: true,
+      }),
+    ));
+    await userEvent.click(screen.getByRole("button", { name: "Approve phone" }));
+    expect(await screen.findByText(/paired for chats and media only/)).toBeInTheDocument();
+    expect(screen.queryByText(/paired with full owner control/)).not.toBeInTheDocument();
+  });
+
   it("fetches status with bearer authorization", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,

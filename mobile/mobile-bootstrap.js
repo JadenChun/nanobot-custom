@@ -203,6 +203,7 @@
     var stopped = false;
     var lastLink = null;
     var identityRef = null;
+    var identityPromise = null;
     var state = "idle";
 
     function hostLabel(origin) {
@@ -323,6 +324,29 @@
       }
     }
 
+    function loadIdentity() {
+      if (identityRef) return Promise.resolve(identityRef);
+      if (identityPromise) return identityPromise;
+      identityPromise = plugin.pairingIdentity().then(function (identity) {
+        if (!identity || !identity.installationId) {
+          throw new Error("pairing identity is unavailable");
+        }
+        identityRef = identity;
+        ui.installation.textContent = identity.installationId;
+        if (identity.origin) {
+          setPill(ui.server, hostLabel(identity.origin), "is-ok");
+          ui.server.title = identity.origin;
+        }
+        console.log("NANOBOT_MOBILE_PAIRING_ID " + identity.installationId);
+        console.log("NANOBOT_PAIRING_PANELS " + document.querySelectorAll(".mobile-pairing").length);
+        return identity;
+      }).catch(function (error) {
+        identityPromise = null;
+        throw error;
+      });
+      return identityPromise;
+    }
+
     async function begin(link) {
       stopTimers();
       lastLink = link;
@@ -330,10 +354,16 @@
       setPill(ui.server, hostLabel(link.origin), "is-ok");
       ui.server.title = link.origin || "";
       setPill(ui.node, "Starting", "is-warn");
-      var localInstallation = identityRef && identityRef.installationId
-        ? identityRef.installationId
-        : link.installationId;
-      ui.installation.textContent = localInstallation || "unknown";
+      var identity;
+      try {
+        identity = await loadIdentity();
+      } catch (error) {
+        fail(String(error && error.message ? error.message : error));
+        return;
+      }
+      if (lastLink !== link || state !== "connecting") return;
+      var localInstallation = identity.installationId;
+      ui.installation.textContent = localInstallation;
       ui.status.textContent = "Connecting to the server...";
       ui.status.classList.remove("is-error");
       try {
@@ -423,15 +453,7 @@
     setState("idle");
     void (async function () {
       try {
-        var identity = await plugin.pairingIdentity();
-        identityRef = identity;
-        ui.installation.textContent = identity.installationId;
-        if (identity.origin) {
-          setPill(ui.server, hostLabel(identity.origin), "is-ok");
-          ui.server.title = identity.origin;
-        }
-        console.log("NANOBOT_MOBILE_PAIRING_ID " + identity.installationId);
-        console.log("NANOBOT_PAIRING_PANELS " + document.querySelectorAll(".mobile-pairing").length);
+        await loadIdentity();
       } catch (error) {
         fail(String(error && error.message ? error.message : error));
         return;

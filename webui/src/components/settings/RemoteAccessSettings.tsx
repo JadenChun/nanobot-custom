@@ -46,6 +46,7 @@ export function RemoteAccessSettings({
       : "",
   );
   const [fullControl, setFullControl] = useState(true);
+  const [grantedFullControl, setGrantedFullControl] = useState<boolean | null>(null);
   const [pairingId, setPairingId] = useState("");
   const [code, setCode] = useState("");
   const [pairingLink, setPairingLink] = useState("");
@@ -235,6 +236,7 @@ export function RemoteAccessSettings({
           setSetupOpen(open);
           if (!open) {
             setStep("intro");
+            setGrantedFullControl(null);
             setPairingId("");
             setCode("");
             setPairingLink("");
@@ -248,10 +250,14 @@ export function RemoteAccessSettings({
             </DialogTitle>
             <DialogDescription>
               {step === "intro"
-                ? "Continue chats and control this desktop from your phone."
+                ? fullControl
+                  ? "Continue chats and control this desktop from your phone."
+                  : "Continue chats and transfer media from your phone."
                 : step === "waiting"
                   ? "Scan the QR code, then confirm the same code on both devices."
-                  : "This phone can now use the same chats, settings, apps, skills and workspace actions as the desktop."}
+                  : grantedFullControl === false
+                    ? "This phone can continue chats and transfer media. Full owner control stays off."
+                    : "This phone can now use the same chats, settings, apps, skills and workspace actions as the desktop."}
             </DialogDescription>
           </DialogHeader>
 
@@ -260,12 +266,16 @@ export function RemoteAccessSettings({
           {step === "intro" ? (
             <div className="space-y-4">
               <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-muted-foreground">
-                Nanobot can access this desktop, including files, apps and workspace actions,
-                to complete tasks you send from your phone. Only connect devices you own and trust.
+                {fullControl
+                  ? "Nanobot can access this desktop, including files, apps and workspace actions, to complete tasks you send from your phone. Only connect devices you own and trust."
+                  : "This phone can read and continue the same chats and transfer media from this desktop. Full owner control is off, so settings, apps, skills, automations and workspace actions stay on this desktop. Only connect devices you own and trust."}
               </div>
               <ul className="space-y-2 text-sm">
                 <li>Continue any chat or project from your phone.</li>
-                <li>Use settings, apps, skills, automations and workspace actions remotely.</li>
+                <li>Send and receive photos and files in chats.</li>
+                {fullControl
+                  ? <li>Use settings, apps, skills, automations and workspace actions remotely.</li>
+                  : null}
                 <li>Approve this phone once; the connection stays until you revoke it.</li>
               </ul>
               <label className="block text-xs">
@@ -311,6 +321,7 @@ export function RemoteAccessSettings({
                       fullControlConsent: fullControl,
                       sharedHistoryConsent: fullControl,
                     });
+                    setGrantedFullControl(fullControl);
                     setPairingId(offer.pairing_id);
                     setCode(offer.comparison_code);
                     setPairingLink(
@@ -386,6 +397,7 @@ export function RemoteAccessSettings({
                       fullControlConsent: fullControl,
                       sharedHistoryConsent: fullControl,
                     });
+                    setGrantedFullControl(fullControl);
                     setPairingId(offer.pairing_id);
                     setCode(offer.comparison_code);
                     setPairingLink(
@@ -425,8 +437,9 @@ export function RemoteAccessSettings({
           {step === "connected" ? (
             <div className="space-y-4">
               <p className="text-sm">
-                The phone is paired with full owner control. You can revoke it at any time from
-                the device list.
+                {grantedFullControl === false
+                  ? "The phone is paired for chats and media only. Full owner control is off, so settings, apps, skills, automations and workspace actions stay on this desktop. You can revoke it at any time from the device list."
+                  : "The phone is paired with full owner control. You can revoke it at any time from the device list."}
               </p>
               <div className="flex justify-end">
                 <button
