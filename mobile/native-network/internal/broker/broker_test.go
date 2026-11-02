@@ -83,6 +83,16 @@ func testServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"pairing_id":"pair-1","comparison_code":"123456"}`))
 	})
+	mux.HandleFunc("/mobile/v1/pair/code", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Nanobot-Pairing-Code") != "12345678" ||
+			r.Header.Get("X-Nanobot-Installation") != "install-1" ||
+			r.Header.Get("X-Nanobot-Label") != "phone" {
+			http.Error(w, "missing code pairing headers", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"pairing_id":"pair-code"}`))
+	})
 	mux.HandleFunc("/mobile/v1/refresh", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Nanobot-Installation") != "install-1" ||
 			r.Header.Get("X-Nanobot-Refresh-Token") != "refresh-1" {
@@ -423,6 +433,23 @@ func TestHTTPPairingRouteAllowsOnlyBoundedHeaders(t *testing.T) {
 		Headers:   map[string]string{"X-Admin": "1"},
 	}); err == nil {
 		t.Fatal("unlisted pairing header was accepted")
+	}
+	id, err = core.HTTP(HTTPRequest{
+		Operation: "mobile_pair_code",
+		Method:    http.MethodGet,
+		Path:      "/mobile/v1/pair/code",
+		Headers: map[string]string{
+			"X-Nanobot-Pairing-Code": "12345678",
+			"X-Nanobot-Installation": "install-1",
+			"X-Nanobot-Label":        "phone",
+		},
+	})
+	if err != nil || id == 0 {
+		t.Fatalf("code pairing HTTP: id=%d err=%v", id, err)
+	}
+	codeEvent := waitEvent(t, core, "http_response")
+	if codeEvent["status"].(float64) != 200 {
+		t.Fatalf("code pairing status: %v", codeEvent["status"])
 	}
 }
 

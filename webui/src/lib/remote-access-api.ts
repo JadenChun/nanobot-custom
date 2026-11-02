@@ -13,20 +13,58 @@ export interface RemoteAccessDevice {
   last_seen_at: number;
 }
 
+export interface RemoteTailscaleStatus {
+  available: boolean;
+  connected: boolean;
+  serve_mapped: boolean;
+  dns_name: string;
+  origin: string;
+  error?: string;
+}
+
 export interface RemoteAccessStatus {
   enabled: boolean;
   installation_id: string;
   devices: RemoteAccessDevice[];
+  owner_available?: boolean;
 }
 
 export interface RemotePairingOffer {
   pairing_id: string;
+  pairing_code?: string;
   comparison_code: string;
   nonce: string;
   collector_secret: string;
   expires_at: number;
+  expires_in?: number;
   expiration?: number;
   scopes?: string[];
+  transport?: "tailscale";
+  origin?: string;
+  qr_link?: string;
+}
+
+export interface RemotePairingPending {
+  pairing_id: string;
+  state:
+    | "offer_created"
+    | "pending_approval"
+    | "approved"
+    | "denied"
+    | "expired";
+  expires_at: number;
+  expires_in?: number;
+  requested_at?: number;
+  pairing_code?: string;
+  origin?: string;
+  transport?: "tailscale";
+  scopes?: string[];
+  device?: {
+    installation_id: string;
+    label: string;
+    platform?: string;
+    model?: string;
+  };
 }
 
 export interface RemotePairingApproval {
@@ -38,13 +76,11 @@ export interface RemotePairingApproval {
 /** Build the phone deep link for one owner-issued pairing challenge. */
 export function buildMobilePairingLink(
   origin: string,
-  installationId: string,
   offer: RemotePairingOffer,
 ): string {
   const challenge = `${offer.pairing_id}.${offer.nonce}.${offer.collector_secret}`;
   const params = new URLSearchParams({
     origin: origin.trim().replace(/\/+$/, ""),
-    installation: installationId.trim(),
     challenge,
   });
   return `nanobot://pair?${params.toString()}`;
@@ -74,6 +110,44 @@ export async function fetchRemoteAccessStatus(token: string): Promise<RemoteAcce
   return request<RemoteAccessStatus>(token, "/api/settings/remote-access");
 }
 
+export async function fetchRemoteTailscaleStatus(
+  token: string,
+): Promise<RemoteTailscaleStatus> {
+  return request<RemoteTailscaleStatus>(token, "/api/settings/remote-access/tailscale");
+}
+
+export async function fetchRemotePairingPendingList(
+  token: string,
+): Promise<RemotePairingPending[]> {
+  try {
+    const response = await request<
+      RemotePairingPending | { pending?: RemotePairingPending[] }
+    >(token, "/api/settings/remote-access/pairing/pending");
+    if ("pending" in response && Array.isArray(response.pending)) {
+      return response.pending;
+    }
+    return [response as RemotePairingPending];
+  } catch (exception) {
+    // Older servers do not expose the pending route; the waiting screen still
+    // works through the active offer held by this component.
+    if (exception instanceof Error && exception.message.includes("HTTP 404")) {
+      return [];
+    }
+    throw exception;
+  }
+}
+
+export async function fetchRemotePairingPending(
+  token: string,
+  pairingId?: string,
+): Promise<RemotePairingPending | null> {
+  const pending = await fetchRemotePairingPendingList(token);
+  if (pairingId) {
+    return pending.find((item) => item.pairing_id === pairingId) ?? null;
+  }
+  return pending[0] ?? null;
+}
+
 export async function setRemoteAccessEnabled(
   transport: RemoteAccessMutationTransport,
   enabled: boolean,
@@ -99,24 +173,42 @@ export async function startRemotePairing(
   input: {
     origin: string;
     label: string;
-    chatConsent: boolean;
-    mediaConsent: boolean;
-    fullControlConsent: boolean;
-    sharedHistoryConsent: boolean;
+    mediaConsent?: boolean;
+    fullControlConsent?: boolean;
+    sharedHistoryConsent?: boolean;
   },
 ): Promise<RemotePairingOffer> {
   return transport.requestMutation<RemotePairingOffer>(
     "settings.remote_access.pairing.start",
-    input,
+    {
+      origin: input.origin,
+      label: input.label,
+      chatConsent: true,
+      mediaConsent: input.mediaConsent ?? true,
+      fullControlConsent: input.fullControlConsent ?? true,
+      sharedHistoryConsent: input.sharedHistoryConsent ?? true,
+    },
   );
 }
 
 export async function approveRemotePairing(
   transport: RemoteAccessMutationTransport,
-  input: { pairingId: string; comparisonCode: string },
+  input: { pairingId: string; comparisonCode?: string },
 ): Promise<RemotePairingApproval> {
   return transport.requestMutation<RemotePairingApproval>(
     "settings.remote_access.pairing.approve",
-    input,
+    {
+      pairingId: input.pairingId,
+      ...(input.comparisonCode ? { comparisonCode: input.comparisonCode } : {}),
+    },
   );
+}
+
+export async function denyRemotePairing(
+  transport: RemoteAccessMutationTransport,
+  pairingId: string,
+): Promise<void> {
+  await transport.requestMutation("settings.remote_access.pairing.deny", {
+    pairingId,
+  });
 }

@@ -10,8 +10,13 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
-from nanobot.remote.protocol import ACCESS_TTL_SECONDS, REFRESH_IDLE_SECONDS, validate_scopes
-from nanobot.remote.store import RemoteAccessStore, StoreError
+from nanobot.remote.protocol import (
+    ACCESS_TTL_SECONDS,
+    OWNER_SCOPE,
+    REFRESH_IDLE_SECONDS,
+    validate_scopes,
+)
+from nanobot.remote.store import RemoteAccessStore, RemoteDevice, StoreError
 
 
 class AuthError(RuntimeError):
@@ -82,7 +87,7 @@ class TokenService:
                 access_token=access_token,
                 refresh_token=refresh_token,
                 expires_in=ACCESS_TTL_SECONDS,
-                refresh_expires_in=REFRESH_IDLE_SECONDS,
+                refresh_expires_in=_refresh_expires_in(scopes),
                 scopes=tuple(scopes),
             )
 
@@ -131,7 +136,7 @@ class TokenService:
                 access_token=access_token,
                 refresh_token=next_refresh,
                 expires_in=ACCESS_TTL_SECONDS,
-                refresh_expires_in=REFRESH_IDLE_SECONDS,
+                refresh_expires_in=_device_refresh_expires_in(rotated, self.clock()),
                 scopes=tuple(rotated.scopes),
             )
 
@@ -165,6 +170,19 @@ class TokenService:
 
 def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _refresh_expires_in(scopes: tuple[str, ...]) -> int:
+    """Owner sessions live until revoke; legacy chat-only keeps the idle window."""
+
+    return 0 if OWNER_SCOPE in scopes else REFRESH_IDLE_SECONDS
+
+
+def _device_refresh_expires_in(device: RemoteDevice, now: float) -> int:
+    if device.refresh_expires_at == 0:
+        return 0
+    remaining = int(device.refresh_expires_at - now)
+    return max(1, min(REFRESH_IDLE_SECONDS, remaining))
 
 
 def constant_time_equal(left: str, right: str) -> bool:

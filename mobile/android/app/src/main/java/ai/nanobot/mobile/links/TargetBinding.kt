@@ -6,7 +6,7 @@ class TargetBindingError(message: String) : Exception(message)
 
 object TargetBinding {
     fun bind(link: PairingLink, currentInstallation: String, currentOrigin: String?): BoundTarget {
-        if (link.installationId != currentInstallation) {
+        if (link.installationId.isNotBlank() && link.installationId != currentInstallation) {
             throw TargetBindingError("deep link installation does not match custody")
         }
         if (currentOrigin != null && currentOrigin.trimEnd('/') != link.origin) {

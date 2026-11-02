@@ -55,7 +55,11 @@ _LOCAL_ROUTES = {
     "/mobile/v1/model-settings": "chat.read",
     "/mobile/v1/workspaces": "chat.read",
 }
-_PAIRING_ROUTES = {"/mobile/v1/pair/collect", "/mobile/v1/pair/poll"}
+_PAIRING_ROUTES = {
+    "/mobile/v1/pair/collect",
+    "/mobile/v1/pair/poll",
+    "/mobile/v1/pair/code",
+}
 _REFRESH_ROUTE = "/mobile/v1/refresh"
 _LEGACY_MUTATION_ACTIONS = frozenset(
     {
@@ -71,8 +75,11 @@ _PAIRING_STATUS = {
     "pairing_expired": 410,
     "pairing_consumed": 410,
     "pairing_busy": 409,
+    "pairing_code_invalid": 403,
+    "pairing_denied": 403,
     "remote_access_disabled": 503,
     "pairing_rejected": 403,
+    "owner_required": 403,
     "bad_request": 400,
 }
 
@@ -424,6 +431,37 @@ class MobileGatewayEdge:
             value = headers.get(name)
             return value.strip() if isinstance(value, str) else ""
 
+        installation_id = header("X-Nanobot-Installation")
+        label = header("X-Nanobot-Label") or "mobile"
+        platform = header("X-Nanobot-Platform") or None
+        model = header("X-Nanobot-Model") or None
+        if path.endswith("/code"):
+            origin = header("X-Nanobot-Origin")
+            if not origin:
+                # The phone reaches this edge through the owner origin; native
+                # clients do not send the origin twice. Derive it from Host.
+                host = header("Host")
+                if host:
+                    origin = f"https://{host}"
+            pairing_code = header("X-Nanobot-Pairing-Code") or header("X-Nanobot-Code")
+            if not origin or not pairing_code or not installation_id:
+                return http_json_response({"error": "bad_request"}, status=400)
+            try:
+                result = await asyncio.to_thread(
+                    self.validator.client.collect_pairing_code,
+                    origin=origin,
+                    pairing_code=pairing_code,
+                    installation_id=installation_id,
+                    label=label,
+                    platform=platform,
+                    model=model,
+                )
+            except OwnerUnavailableError:
+                return http_json_response({"error": "owner_unavailable"}, status=503)
+            except OwnerRequestError as exc:
+                status = _PAIRING_STATUS.get(exc.code, 400)
+                return http_json_response({"error": exc.code}, status=status)
+            return http_json_response(result)
         pairing_id = header("X-Nanobot-Pairing-Id")
         nonce = header("X-Nanobot-Pairing-Nonce")
         collector_secret = header("X-Nanobot-Pairing-Secret")
@@ -431,8 +469,6 @@ class MobileGatewayEdge:
             return http_json_response({"error": "bad_request"}, status=400)
         try:
             if path.endswith("/collect"):
-                installation_id = header("X-Nanobot-Installation")
-                label = header("X-Nanobot-Label") or "mobile"
                 if not installation_id:
                     return http_json_response({"error": "bad_request"}, status=400)
                 result = await asyncio.to_thread(
@@ -442,6 +478,8 @@ class MobileGatewayEdge:
                     collector_secret=collector_secret,
                     installation_id=installation_id,
                     label=label,
+                    platform=platform,
+                    model=model,
                 )
             else:
                 result = await asyncio.to_thread(

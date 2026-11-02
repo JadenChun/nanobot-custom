@@ -85,6 +85,10 @@ var routes = map[string]route{
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/pair/poll$`),
 	},
+	"mobile_pair_code": {
+		method:  http.MethodGet,
+		pattern: regexp.MustCompile(`^/mobile/v1/pair/code$`),
+	},
 	"mobile_refresh_get": {
 		method:  http.MethodGet,
 		pattern: regexp.MustCompile(`^/mobile/v1/refresh$`),
@@ -150,6 +154,8 @@ var allowedHeaders = map[string]bool{
 	"x-nanobot-pairing-id":     true,
 	"x-nanobot-pairing-nonce":  true,
 	"x-nanobot-pairing-secret": true,
+	"x-nanobot-pairing-code":   true,
+	"x-nanobot-code":           true,
 	"x-nanobot-installation":   true,
 	"x-nanobot-label":          true,
 	"x-nanobot-refresh-token":  true,

@@ -16,11 +16,14 @@ from typing import TYPE_CHECKING, Any, cast
 from nanobot.remote.auth import AuthError, AuthRejectedError
 from nanobot.remote.pairing import (
     PairingBusyError,
+    PairingCodeInvalidError,
     PairingConsumedError,
+    PairingDeniedError,
     PairingDisabledError,
     PairingError,
     PairingExpiredError,
     PairingNotFoundError,
+    PairingOwnerRequiredError,
     PairingRateLimitedError,
     PairingRejectedError,
     PairingService,
@@ -217,6 +220,36 @@ def _make_handler(
                     {"ok": True, "revoked": revoked, "installation_id": target},
                 )
                 return
+            if path == "/pair/code":
+                try:
+                    payload = self._read_json()
+                    result = pairing.collect_by_code(
+                        origin=_required(payload, "origin"),
+                        pairing_code=_required(payload, "pairing_code"),
+                        installation_id=_required(payload, "installation_id"),
+                        label=_required(payload, "label"),
+                        platform=_optional(payload, "platform"),
+                        model=_optional(payload, "model"),
+                    )
+                except PairingDeniedError:
+                    self._write(HTTPStatus.FORBIDDEN, {"error": "pairing_denied"})
+                except PairingCodeInvalidError:
+                    self._write(HTTPStatus.FORBIDDEN, {"error": "pairing_code_invalid"})
+                except PairingRateLimitedError:
+                    self._write(HTTPStatus.TOO_MANY_REQUESTS, {"error": "rate_limited"})
+                except PairingExpiredError:
+                    self._write(HTTPStatus.GONE, {"error": "pairing_expired"})
+                except PairingBusyError:
+                    self._write(HTTPStatus.CONFLICT, {"error": "pairing_busy"})
+                except PairingDisabledError:
+                    self._write(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "remote_access_disabled"})
+                except PairingOwnerRequiredError:
+                    self._write(HTTPStatus.FORBIDDEN, {"error": "owner_required"})
+                except (ValueError, PairingError):
+                    self._write(HTTPStatus.BAD_REQUEST, {"error": "bad_request"})
+                else:
+                    self._write(HTTPStatus.OK, asdict(result))
+                return
             if path not in {"/pair/collect", "/pair/poll"}:
                 self._write(HTTPStatus.NOT_FOUND, {"error": "not_found"})
                 return
@@ -331,3 +364,8 @@ def _required(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{key} is required")
     return value
+
+
+def _optional(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    return value if isinstance(value, str) and value else None

@@ -12,7 +12,7 @@ data class PairingLink(
 class PairingLinkError(message: String) : Exception(message)
 
 object PairingLinkParser {
-    private val allowedKeys = setOf("origin", "installation", "challenge")
+    private val allowedKeys = setOf("origin", "installation", "challenge", "transport")
 
     fun parse(raw: String, expectedInstallation: String? = null): PairingLink {
         val uri = try {
@@ -32,8 +32,11 @@ object PairingLinkParser {
             URLDecoder.decode(pieces[0], "UTF-8") to URLDecoder.decode(pieces[1], "UTF-8")
         }
         val values = pairs.groupBy({ it.first }, { it.second }).mapValues { it.value }
-        if (values.keys != allowedKeys || values.any { it.value.size != 1 }) {
+        if (!values.keys.all { it in allowedKeys } || values.any { it.value.size != 1 }) {
             throw PairingLinkError("pairing query is not exact")
+        }
+        if ("origin" !in values || "challenge" !in values) {
+            throw PairingLinkError("pairing query is incomplete")
         }
         val origin = values.getValue("origin").single().trimEnd('/')
         val parsedOrigin = try { URI(origin) } catch (exception: Exception) { throw PairingLinkError("origin is invalid") }
@@ -43,15 +46,19 @@ object PairingLinkParser {
         ) {
             throw PairingLinkError("origin must be exact HTTPS")
         }
-        val installation = values.getValue("installation").single()
-        if (!Regex("^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$").matches(installation)) {
+        val installation = values["installation"]?.single()
+        if (installation != null && !Regex("^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$").matches(installation)) {
             throw PairingLinkError("installation is invalid")
         }
-        if (expectedInstallation != null && expectedInstallation != installation) {
+        if (expectedInstallation != null && installation != null && expectedInstallation != installation) {
             throw PairingLinkError("pairing link belongs to another installation")
         }
         val challenge = values.getValue("challenge").single()
         if (challenge.length !in 16..256) throw PairingLinkError("challenge is invalid")
-        return PairingLink(origin = origin, installationId = installation, challenge = challenge)
+        return PairingLink(
+            origin = origin,
+            installationId = installation ?: expectedInstallation ?: "",
+            challenge = challenge,
+        )
     }
 }

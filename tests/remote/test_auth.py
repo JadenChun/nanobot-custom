@@ -127,3 +127,21 @@ def test_refresh_idle_expiry_and_refresh_revoke_race(tmp_path) -> None:
     with pytest.raises(AuthRejectedError):
         tokens.validate_access(pair.access_token)
     assert store.get_device("install-0001").revoked
+
+
+def test_owner_refresh_never_idle_expires_but_legacy_chat_only_does(tmp_path) -> None:
+    clock = Clock()
+    store, tokens = service(tmp_path, clock)
+    owner = tokens.issue("install-owner", ("chat.read", "chat.write", "owner"))
+    legacy = tokens.issue("install-legacy", ("chat.read", "chat.write"))
+    assert owner.refresh_expires_in == 0
+    assert legacy.refresh_expires_in == 30 * 24 * 60 * 60
+
+    clock.advance(365 * 24 * 60 * 60)
+    rotated = tokens.refresh("install-owner", owner.refresh_token)
+    assert rotated.refresh_expires_in == 0
+    assert tokens.validate_access(rotated.access_token).installation_id == "install-owner"
+    with pytest.raises(AuthRejectedError):
+        tokens.refresh("install-legacy", legacy.refresh_token)
+    owner_device = store.get_device("install-owner")
+    assert owner_device is not None and owner_device.is_owner

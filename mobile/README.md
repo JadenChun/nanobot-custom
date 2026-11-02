@@ -66,6 +66,20 @@ TalkBack was explicitly skipped. Cellular/Wi-Fi handover passed: Wi-Fi was disab
 See `docs/mobile-client-tasks.md`.
 
 
+## Owner pairing (2026-11-03)
+
+New pairing is owner-only. The desktop shows a 300-second QR challenge plus an
+8-digit fallback code; the phone can scan the QR, paste the `nanobot://pair`
+link, or open **Use an 8-digit code instead** and enter the full HTTPS origin and
+code. Both paths require a desktop approval. The phone no longer displays or asks
+for a comparison code.
+
+Owner access is full control (files, commands, settings and existing chats), and
+the owner refresh token has no idle expiry: it remains valid until revoked in the
+desktop device list. Existing chat-only devices are revoked when the owner
+service starts and must re-pair as owner devices. Tailscale direct is the only
+v1 transport; there is no relay or biometric gate.
+
 ## Release signing
 
 Release signing is configured from the environment, never from tracked files. The default

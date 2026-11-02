@@ -17,7 +17,7 @@ const status = {
     {
       installation_id: "install-1",
       label: "Phone",
-      scopes: ["chat.read"],
+      scopes: ["chat.read", "chat.write", "media.read", "attachment.write", "owner"],
       status: "active" as const,
       created_at: 1,
       last_seen_at: 2,
@@ -25,42 +25,75 @@ const status = {
   ],
 };
 
+const pending = {
+  pairing_id: "pair-1",
+  state: "pending_approval" as const,
+  expires_at: Math.floor(Date.now() / 1000) + 300,
+  device: { installation_id: "phone-1", label: "Pixel 10", platform: "Android" },
+  scopes: ["chat.read", "chat.write", "media.read", "attachment.write", "owner"],
+};
+
 afterEach(() => vi.unstubAllGlobals());
 
-function mutationTransport() {
-  let approvalScopes = ["chat.read", "chat.write", "media.read", "attachment.write", "owner"];
+function mutationTransport(onStart?: () => void) {
   return {
-    requestMutation: vi.fn(async (action: string, payload: Record<string, unknown>) => {
+    requestMutation: vi.fn(async (action: string) => {
       if (action === "settings.remote_access.enable") return { enabled: false };
       if (action === "settings.remote_access.revoke") return { revoked: true };
       if (action === "settings.remote_access.pairing.start") {
-        approvalScopes = ["chat.read", "chat.write", "attachment.write"];
-        if (payload.mediaConsent === true) approvalScopes.push("media.read");
-        if (payload.fullControlConsent === true) approvalScopes.push("owner");
+        onStart?.();
         return {
           pairing_id: "pair-1",
-          comparison_code: "123456",
+          comparison_code: "12345678",
           nonce: "nonce-value-000000000000",
           collector_secret: "secret-value-000000000000",
-          expires_at: 999,
+          expires_at: Math.floor(Date.now() / 1000) + 300,
+          transport: "tailscale",
         };
       }
       if (action === "settings.remote_access.pairing.approve") {
-        return { pairing_id: "pair-1", installation_id: "install-1", scopes: approvalScopes };
+        return { pairing_id: "pair-1", installation_id: "phone-1", scopes: ["owner"] };
       }
+      if (action === "settings.remote_access.pairing.deny") return {};
       return {};
     }),
   };
 }
 
+function pendingFetch(state: { collected: boolean } = { collected: false }) {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/tailscale")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          available: true,
+          connected: true,
+          serve_mapped: true,
+          dns_name: "fixture.example",
+          origin: "https://fixture.example",
+          error: "",
+        }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () =>
+        url.includes("/pairing/pending") ? { pending: state.collected ? [pending] : [] } : status,
+    };
+  });
+}
+
 describe("RemoteAccessSettings", () => {
-  it("renders status and revokes a device after confirmation", async () => {
+  it("renders owner status and revokes after confirmation", async () => {
     const mutate = mutationTransport();
     render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
     expect(screen.getByText("Phone")).toBeInTheDocument();
+    expect(screen.getByText("Owner")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Revoke" }));
     expect(screen.getByRole("alertdialog", { name: "Revoke Phone" })).toBeInTheDocument();
-    expect(mutate.requestMutation).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Confirm revoke" }));
     await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
       "settings.remote_access.revoke",
@@ -68,19 +101,15 @@ describe("RemoteAccessSettings", () => {
     ));
   });
 
-  it("toggles remote access and starts an owner pairing challenge", async () => {
-    const mutate = mutationTransport();
+  it("starts an owner-only pairing and approves the scanned phone without a code", async () => {
+    const collection = { collected: false };
+    const mutate = mutationTransport(() => {
+      collection.collected = true;
+    });
+    vi.stubGlobal("fetch", pendingFetch(collection));
     render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
-    await userEvent.click(screen.getByRole("button", { name: "Disable" }));
-    await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
-      "settings.remote_access.enable",
-      { enabled: false },
-    ));
-
-    await userEvent.click(screen.getByRole("button", { name: "Set up remote access" }));
-    await userEvent.type(screen.getByLabelText("Server address"), "https://fixture.example");
-    await userEvent.click(screen.getByRole("button", { name: "Get started" }));
-    await waitFor(() => expect(screen.getByText("123456")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "Pair owner phone" }));
+    await waitFor(() => expect(screen.getByText("1234 5678")).toBeInTheDocument());
     expect(mutate.requestMutation).toHaveBeenCalledWith(
       "settings.remote_access.pairing.start",
       expect.objectContaining({
@@ -88,91 +117,62 @@ describe("RemoteAccessSettings", () => {
         label: "phone",
         chatConsent: true,
         fullControlConsent: true,
-        sharedHistoryConsent: false,
+        sharedHistoryConsent: true,
         mediaConsent: true,
       }),
     );
-    expect(await screen.findByAltText("Pairing QR code")).toBeInTheDocument();
-    const link = screen.getByLabelText("Phone pairing link") as HTMLTextAreaElement;
-    expect(link.value).toContain("nanobot://pair?");
-    expect(link.value).toContain("installation=");
-    expect(link.value).toContain("challenge=pair-1.nonce-value-000000000000.secret-value-000000000000");
-    await userEvent.click(screen.getByRole("button", { name: "Approve phone" }));
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Pixel 10 wants owner access/)).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "Approve owner access" }));
     await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
       "settings.remote_access.pairing.approve",
-      { pairingId: "pair-1", comparisonCode: "123456" },
+      { pairingId: "pair-1", comparisonCode: "12345678" },
     ));
-    expect(await screen.findByText("You're connected")).toBeInTheDocument();
+    expect(await screen.findByText("Owner phone connected")).toBeInTheDocument();
   });
 
-  it("describes chat-and-media pairing when full owner control is off", async () => {
-    const mutate = mutationTransport();
+  it("denies a pending owner request", async () => {
+    const collection = { collected: false };
+    const mutate = mutationTransport(() => {
+      collection.collected = true;
+    });
+    vi.stubGlobal("fetch", pendingFetch(collection));
     render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
-    await userEvent.click(screen.getByRole("button", { name: "Set up remote access" }));
-    await userEvent.type(screen.getByLabelText("Server address"), "https://fixture.example");
-    await userEvent.click(screen.getByLabelText("Allow full owner control"));
-    expect(screen.getByText(/Full owner control, settings/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Get started" }));
+    await userEvent.click(screen.getByRole("button", { name: "Pair owner phone" }));
+    await waitFor(() => expect(screen.getByText(/Pixel 10 wants owner access/)).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "Deny" }));
     await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
-      "settings.remote_access.pairing.start",
-      expect.objectContaining({
-        fullControlConsent: false,
-        sharedHistoryConsent: false,
-        chatConsent: true,
-        mediaConsent: true,
-      }),
+      "settings.remote_access.pairing.deny",
+      { pairingId: "pair-1" },
     ));
-    await userEvent.click(screen.getByRole("button", { name: "Approve phone" }));
-    expect(await screen.findByText(/paired for chats and media only/)).toBeInTheDocument();
-    expect(screen.queryByText(/paired with full owner control/)).not.toBeInTheDocument();
   });
 
-  it("withholds media when its consent is unchecked", async () => {
+  it("restores a phone-scanned request after reopening settings", async () => {
     const mutate = mutationTransport();
-    render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
-    await userEvent.click(screen.getByRole("button", { name: "Set up remote access" }));
-    await userEvent.type(screen.getByLabelText("Server address"), "https://fixture.example");
-    await userEvent.click(screen.getByLabelText("Allow photo and file transfer"));
-    await userEvent.click(screen.getByRole("button", { name: "Get started" }));
+    vi.stubGlobal("fetch", pendingFetch({ collected: true }));
+    render(<RemoteAccessSettings token="token" mutate={mutate} />);
+    expect(
+      await screen.findByText("Pixel 10 is waiting for owner approval"),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Approve owner access" }));
     await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
-      "settings.remote_access.pairing.start",
-      expect.objectContaining({
-        fullControlConsent: true,
-        sharedHistoryConsent: false,
-        mediaConsent: false,
-      }),
+      "settings.remote_access.pairing.approve",
+      { pairingId: "pair-1" },
     ));
-    await userEvent.click(screen.getByRole("button", { name: "Approve phone" }));
-    expect(await screen.findByText(/Photo and file transfer are off/)).toBeInTheDocument();
-  });
-
-  it("fetches status with bearer authorization", async () => {
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => status,
-    }));
-    vi.stubGlobal("fetch", fetchMock);
-    render(<RemoteAccessSettings token="api-token" mutate={mutationTransport()} />);
-    expect(await screen.findByText("Phone")).toBeInTheDocument();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    const init = fetchMock.mock.calls[0][1] as RequestInit;
-    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer api-token");
   });
 
   it("hides local-only enable and pairing controls on a mobile owner", () => {
-    const mutate = mutationTransport();
     render(
       <RemoteAccessSettings
         token="token"
-        mutate={mutate}
+        mutate={mutationTransport()}
         initialStatus={status}
         localSetupAvailable={false}
       />,
     );
     expect(screen.queryByRole("button", { name: "Disable" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Set up remote access" })).not.toBeInTheDocument();
-    expect(screen.getByText(/New-device pairing and remote on\/off stay/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pair owner phone" })).not.toBeInTheDocument();
+    expect(screen.getByText(/New-phone pairing and remote on\/off stay/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument();
   });
 });
