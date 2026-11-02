@@ -29,6 +29,12 @@ export interface RemotePairingOffer {
   scopes?: string[];
 }
 
+export interface RemotePairingApproval {
+  pairing_id?: string;
+  installation_id?: string;
+  scopes?: string[];
+}
+
 /** Build the phone deep link for one owner-issued pairing challenge. */
 export function buildMobilePairingLink(
   origin: string,
@@ -108,6 +114,9 @@ export async function startRemotePairing(
 export async function approveRemotePairing(
   transport: RemoteAccessMutationTransport,
   input: { pairingId: string; comparisonCode: string },
-): Promise<void> {
-  await transport.requestMutation("settings.remote_access.pairing.approve", input);
+): Promise<RemotePairingApproval> {
+  return transport.requestMutation<RemotePairingApproval>(
+    "settings.remote_access.pairing.approve",
+    input,
+  );
 }

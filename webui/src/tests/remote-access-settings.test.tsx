@@ -28,11 +28,15 @@ const status = {
 afterEach(() => vi.unstubAllGlobals());
 
 function mutationTransport() {
+  let approvalScopes = ["chat.read", "chat.write", "media.read", "attachment.write", "owner"];
   return {
-    requestMutation: vi.fn(async (action: string) => {
+    requestMutation: vi.fn(async (action: string, payload: Record<string, unknown>) => {
       if (action === "settings.remote_access.enable") return { enabled: false };
       if (action === "settings.remote_access.revoke") return { revoked: true };
       if (action === "settings.remote_access.pairing.start") {
+        approvalScopes = payload.fullControlConsent === true
+          ? ["chat.read", "chat.write", "media.read", "attachment.write", "owner"]
+          : ["chat.read", "chat.write", "media.read", "attachment.write"];
         return {
           pairing_id: "pair-1",
           comparison_code: "123456",
@@ -41,7 +45,9 @@ function mutationTransport() {
           expires_at: 999,
         };
       }
-      if (action === "settings.remote_access.pairing.approve") return { ok: true };
+      if (action === "settings.remote_access.pairing.approve") {
+        return { pairing_id: "pair-1", installation_id: "install-1", scopes: approvalScopes };
+      }
       return {};
     }),
   };

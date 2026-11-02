@@ -46,7 +46,9 @@ afterEach(() => {
   delete (window as unknown as { nanobotMobileTransport?: unknown }).nanobotMobileTransport;
 });
 
-function installPairedPlugin(mode: "revoked" | "unreachable" = "revoked") {
+function installPairedPlugin(
+  mode: "revoked" | "unreachable" | "server_error" | "transport_error" = "revoked",
+) {
   let emit: ((event: Record<string, unknown>) => void) | null = null;
   const refresh = vi.fn(async () => {
     throw new Error(mode === "revoked" ? "pairing was revoked" : "network");
@@ -59,7 +61,7 @@ function installPairedPlugin(mode: "revoked" | "unreachable" = "revoked") {
       hasAccess: true,
     })),
     start: vi.fn(async () => ({})),
-    status: vi.fn(async () => ({ state: "ready" })),
+    status: vi.fn(async () => ({ state: mode === "transport_error" ? "error" : "ready" })),
     addListener: vi.fn(async (_name: string, listener: (event: Record<string, unknown>) => void) => {
       emit = listener;
       return { remove: vi.fn(async () => {}) };
@@ -71,14 +73,40 @@ function installPairedPlugin(mode: "revoked" | "unreachable" = "revoked") {
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
     Plugins: { NativeNetwork: plugin },
   };
-  setTimeout(() => {
-    emit?.(
-      mode === "unreachable"
-        ? { type: "http_error", request_id: 1, code: "network" }
-        : { type: "http_response", request_id: 1, status: 401, body_base64: "" },
-    );
-  }, 0);
+  if (mode !== "transport_error") {
+    setTimeout(() => {
+      emit?.(
+        mode === "unreachable"
+          ? { type: "http_error", request_id: 1, code: "network" }
+          : {
+            type: "http_response",
+            request_id: 1,
+            status: mode === "server_error" ? 500 : 401,
+            body_base64: "",
+          },
+      );
+    }, 0);
+  }
   return { plugin, refresh, logout };
+}
+
+function installCancelPlugin() {
+  let resolvePairStart: (value: Record<string, unknown>) => void = () => {};
+  const pairStart = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => {
+    resolvePairStart = resolve;
+  }));
+  const pairPoll = vi.fn(async () => ({ status: "waiting" }));
+  const plugin = {
+    target: vi.fn(async () => ({ hasAccess: false })),
+    pairingIdentity: vi.fn(async () => ({ installationId: "phone-local-id" })),
+    pairStart,
+    pairPoll,
+    pendingPairingLink: vi.fn(async () => null),
+  };
+  (window as unknown as { Capacitor?: unknown }).Capacitor = {
+    Plugins: { NativeNetwork: plugin },
+  };
+  return { pairStart, pairPoll, resolvePairStart: (value: Record<string, unknown>) => resolvePairStart(value) };
 }
 
 describe("mobile pairing identity", () => {
@@ -110,6 +138,40 @@ describe("mobile pairing identity", () => {
     });
   });
 
+  it("ignores a pairing result that arrives after cancel", async () => {
+    const { pairStart, pairPoll, resolvePairStart } = installCancelPlugin();
+    window.eval(bootstrapSource);
+
+    const form = await vi.waitFor(() => {
+      const element = document.querySelector<HTMLFormElement>(".mobile-pairing-form");
+      expect(element).not.toBeNull();
+      return element as HTMLFormElement;
+    });
+    const input = document.querySelector<HTMLInputElement>(".mobile-pairing-input");
+    input!.value = [
+      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "installation=desktop-generated-id",
+      "challenge=pairing-1.nonce.secret",
+    ].join("&");
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(pairStart).toHaveBeenCalledTimes(1));
+
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((button) => button.textContent === "Use a different link");
+    cancel?.click();
+    expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+
+    resolvePairStart({
+      pairing_id: "stale-pairing",
+      comparison_code: "999999",
+      installationId: "phone-local-id",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+    expect(document.querySelector(".mobile-pairing-code")?.textContent).toBe("------");
+    expect(pairPoll).not.toHaveBeenCalled();
+  });
+
   it("clears a revoked pairing before the app shell opens", async () => {
     const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {});
     const { refresh, logout } = installPairedPlugin();
@@ -130,5 +192,25 @@ describe("mobile pairing identity", () => {
     });
     expect(document.body.textContent).toContain("Can't reach this desktop right now");
     expect(logout).not.toHaveBeenCalled();
+  });
+
+  it("shows reconnect when the native transport cannot start", async () => {
+    installPairedPlugin("transport_error");
+    window.eval(bootstrapSource);
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".mobile-reauth")).not.toBeNull();
+    });
+    expect(document.body.textContent).toContain("native transport failed");
+  });
+
+  it("shows reconnect on a non-200, non-401 handshake", async () => {
+    installPairedPlugin("server_error");
+    window.eval(bootstrapSource);
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".mobile-reauth")).not.toBeNull();
+    });
+    expect(document.body.textContent).toContain("Can't reach this desktop right now");
   });
 });

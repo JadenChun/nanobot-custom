@@ -42,10 +42,8 @@
   window.nanobotMobileTransport = transport;
 
   var resolveReady;
-  var rejectReady;
-  window.nanobotMobileReady = new Promise(function (resolve, reject) {
+  window.nanobotMobileReady = new Promise(function (resolve) {
     resolveReady = resolve;
-    rejectReady = reject;
   });
 
   function textElement(tag, className, value) {
@@ -204,6 +202,7 @@
     var lastLink = null;
     var identityRef = null;
     var identityPromise = null;
+    var generation = 0;
     var state = "idle";
 
     function hostLabel(origin) {
@@ -300,10 +299,11 @@
       ui.status.classList.remove("is-error");
     }
 
-    async function poll(pairingId) {
-      if (stopped) return;
+    async function poll(pairingId, run) {
+      if (stopped || run !== generation || state !== "waiting") return;
       try {
         var result = await plugin.pairPoll({ pairingId: pairingId });
+        if (stopped || run !== generation || state !== "waiting") return;
         if (result && result.status === "approved") {
           setPill(ui.node, "Connected", "is-ok");
           ui.status.textContent = "Paired. Loading Nanobot...";
@@ -313,7 +313,7 @@
         if (result && result.comparison_code) ui.code.textContent = result.comparison_code;
         ui.status.textContent = "Waiting for approval on the desktop.";
         ui.status.classList.remove("is-error");
-        pollTimer = setTimeout(function () { void poll(pairingId); }, 2000);
+        pollTimer = setTimeout(function () { void poll(pairingId, run); }, 2000);
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
@@ -348,6 +348,7 @@
     }
 
     async function begin(link) {
+      var run = ++generation;
       stopTimers();
       lastLink = link;
       setState("connecting");
@@ -361,7 +362,7 @@
         fail(String(error && error.message ? error.message : error));
         return;
       }
-      if (lastLink !== link || state !== "connecting") return;
+      if (run !== generation || lastLink !== link || state !== "connecting") return;
       var localInstallation = identity.installationId;
       ui.installation.textContent = localInstallation;
       ui.status.textContent = "Connecting to the server...";
@@ -373,12 +374,13 @@
           challenge: link.challenge,
           label: "android"
         });
+        if (run !== generation || lastLink !== link || state !== "connecting") return;
         ui.installation.textContent = collected.installationId || localInstallation;
         ui.code.textContent = collected.comparison_code || "------";
         setState("waiting");
         setPill(ui.node, "Connected", "is-ok");
         ui.status.textContent = "Confirm the code matches the desktop, then approve the phone there.";
-        void poll(collected.pairing_id);
+        void poll(collected.pairing_id, run);
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
         if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
@@ -444,6 +446,7 @@
     });
 
     ui.cancel.addEventListener("click", function () {
+      generation += 1;
       stopTimers();
       lastLink = null;
       setState("idle");
@@ -516,7 +519,7 @@
     async function requireValidAccess() {
       var probe = await probeHandshake();
       if (probe.error) return "unreachable";
-      if (probe.status !== 401) return "ok";
+      if (probe.status !== 401) return probe.status === 200 ? "ok" : "unreachable";
       var refreshed = false;
       try {
         refreshed = await plugin.refresh();
@@ -532,7 +535,7 @@
       if (refreshed) {
         probe = await probeHandshake();
         if (probe.error) return "unreachable";
-        if (probe.status !== 401) return "ok";
+        if (probe.status !== 401) return probe.status === 200 ? "ok" : "unreachable";
       }
       try {
         await plugin.logout({ serverReachable: true });
@@ -605,11 +608,7 @@
         resolveReady();
       } catch (error) {
         var message = String(error && error.message ? error.message : error);
-        if (message.indexOf("tailnet login required") >= 0 || message.indexOf("needs_login") >= 0) {
-          presentReauth(target, message);
-        } else {
-          rejectReady(error);
-        }
+        presentReauth(target, message || "Can't reach this desktop right now. Check Tailscale and retry.");
       }
       return;
     }

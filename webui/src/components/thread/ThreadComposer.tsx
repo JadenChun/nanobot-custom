@@ -2585,7 +2585,7 @@ export function ThreadComposer({
               </Button>
             )}
             {showCompactProjectPicker && !mobileComposer && !voiceRecorder.isRecording ? projectPicker : null}
-            {mobileComposer && !voiceRecorder.isRecording && projectPickerAvailable && !workspaceControlsHidden ? (
+            {mobileComposer && !voiceRecorder.isRecording && projectPickerAvailable && !workspaceControlsHidden && workspaceControls?.can_change_project !== false ? (
               <div className="thread-composer-mobile-project-picker">{projectPicker}</div>
             ) : null}
             {mobileComposer && !voiceRecorder.isRecording ? accessControl : null}

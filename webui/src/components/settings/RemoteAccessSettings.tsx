@@ -412,10 +412,13 @@ export function RemoteAccessSettings({
                   type="button"
                   disabled={busy || !pairingId}
                   onClick={() => void run(async () => {
-                    await approveRemotePairing(mutate, {
+                    const approval = await approveRemotePairing(mutate, {
                       pairingId,
                       comparisonCode: code,
                     });
+                    if (Array.isArray(approval.scopes)) {
+                      setGrantedFullControl(approval.scopes.includes("owner"));
+                    }
                     setStep("connected");
                     await refresh();
                   })}
