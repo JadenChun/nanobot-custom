@@ -376,6 +376,15 @@ html.mobile-runtime body {
   align-items: center;
 }
 
+html.mobile-runtime .thread-composer-footer-actions .composer-model-badge {
+  max-width: 9.5rem;
+}
+
+html.mobile-runtime .thread-composer-footer-actions .thread-composer-model-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .mobile-pairing-link,
 .mobile-pairing-manual {
   padding: 0.55rem 0.65rem;

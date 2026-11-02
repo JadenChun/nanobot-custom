@@ -30,7 +30,6 @@ import {
   CircleHelp,
   CornerDownRight,
   FileText,
-  Folder,
   GripVertical,
   History,
   ImageIcon,
@@ -2295,7 +2294,7 @@ export function ThreadComposer({
 
   const modelControl = modelLabel && !voiceRecorder.isRecording ? (
     <ModelPresetBadge
-      label={mobileComposer ? modelDetail || modelLabel : modelLabel}
+      label={modelLabel}
       modelDetail={modelDetail}
       modelPreset={modelPreset}
       modelPresets={modelPresets}
@@ -2505,14 +2504,6 @@ export function ThreadComposer({
             {inlineError}
           </div>
         ) : null}
-        {mobileComposer && !voiceRecorder.isRecording && modelControl ? (
-          <div className="thread-composer-mobile-model-row">
-            <span className="thread-composer-mobile-model-label">
-              {t("thread.composer.modelLabel", { defaultValue: "Model" })}
-            </span>
-            <div className="thread-composer-mobile-model-control">{modelControl}</div>
-          </div>
-        ) : null}
         <div
           className={cn(
             "thread-composer-footer flex flex-nowrap items-center motion-safe:transition-[padding-bottom] motion-safe:[transition-duration:220ms] motion-safe:ease-in-out",
@@ -2589,15 +2580,6 @@ export function ThreadComposer({
               <div className="thread-composer-mobile-project-picker">{projectPicker}</div>
             ) : null}
             {mobileComposer && !voiceRecorder.isRecording ? accessControl : null}
-            {mobileComposer && !voiceRecorder.isRecording && hasProjectFolder && workspaceScope ? (
-              <span
-                className="thread-composer-mobile-project"
-                title={workspaceScope.project_path}
-              >
-                <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                <span className="truncate">{workspaceScope.project_name}</span>
-              </span>
-            ) : null}
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter
                 ariaLabel={voiceRecordingStatusLabel}
@@ -2614,7 +2596,7 @@ export function ThreadComposer({
               isHero ? "gap-1.5" : "gap-2",
             )}
           >
-            {!mobileComposer ? modelControl : null}
+            {modelControl}
             {!voiceRecorder.isRecording && !mobileComposer ? (
               <ComposerUsagePopover
                 context={contextUsage}

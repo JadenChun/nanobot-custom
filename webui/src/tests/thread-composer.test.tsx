@@ -3804,7 +3804,7 @@ describe("ThreadComposer", () => {
 describe("ThreadComposer — mobile controls", () => {
   afterEach(() => resetMobileRuntime());
 
-  it("gives the model its own mobile row and keeps access in the control row", () => {
+  it("keeps the model chip in the footer and hides the access label on mobile", () => {
     const runtime: MobileRuntime = {
       transport: {} as MobileRuntime["transport"],
       request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
@@ -3832,6 +3832,12 @@ describe("ThreadComposer — mobile controls", () => {
         ]}
         onModelPresetChange={vi.fn()}
         workspaceScope={scope}
+        workspaceDefaultScope={{
+          project_path: "/tmp",
+          project_name: "workspace",
+          access_mode: "restricted",
+          restrict_to_workspace: true,
+        }}
         workspaceControls={{
           can_change_project: true,
           can_use_full_access: false,
@@ -3841,16 +3847,17 @@ describe("ThreadComposer — mobile controls", () => {
         workspacePermissions={permissionProjection({ can_enable_full: false })}
         persistentWorkspaceChat
         onWorkspaceAccessModeChange={vi.fn()}
+        onWorkspaceScopeChange={vi.fn()}
       />,
     );
 
-    const modelRow = container.querySelector(".thread-composer-mobile-model-row");
     const footer = container.querySelector(".thread-composer-footer");
-    expect(modelRow).not.toBeNull();
     expect(footer).not.toBeNull();
-    expect(within(modelRow as HTMLElement).getByText("Default")).toBeInTheDocument();
-    expect(within(footer as HTMLElement).getAllByText("Sandbox").length).toBeGreaterThan(0);
-    expect(modelRow?.textContent).not.toContain("Sandbox");
-    expect(footer?.textContent).not.toContain("Default");
+    expect(within(footer as HTMLElement).getByText("Default")).toBeInTheDocument();
+    expect(within(footer as HTMLElement).getByText("project")).toBeInTheDocument();
+    expect(container.querySelector(".thread-composer-mobile-project")).toBeNull();
+    expect(
+      within(footer as HTMLElement).getByLabelText(/Workspace access mode: Sandbox/).textContent,
+    ).toBe("");
   });
 });
