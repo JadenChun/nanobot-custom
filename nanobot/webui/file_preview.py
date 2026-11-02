@@ -134,10 +134,19 @@ def _resolve_preview_path(
         raise WebUIFilePreviewError(400, "path is too long")
 
     try:
+        allow_granted_outside_root = (
+            allow_folder_grants
+            and resource_policy is not None
+            and restrict_to_root is None
+        )
         allowed_root = (
-            restrict_to_root
-            if restrict_to_root is not None
-            else (scope.project_path if scope.restrict_to_workspace else None)
+            None
+            if allow_granted_outside_root
+            else (
+                restrict_to_root
+                if restrict_to_root is not None
+                else (scope.project_path if scope.restrict_to_workspace else None)
+            )
         )
         extra_roots = [get_media_dir()] if scope.restrict_to_workspace else None
         resolved = resolve_allowed_path(
