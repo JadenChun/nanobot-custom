@@ -127,24 +127,23 @@ describe("RemoteAccessSettings", () => {
     expect(screen.queryByText(/paired with full owner control/)).not.toBeInTheDocument();
   });
 
-  it("withholds media and shared history when those consents are unchecked", async () => {
+  it("withholds media when its consent is unchecked", async () => {
     const mutate = mutationTransport();
     render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
     await userEvent.click(screen.getByRole("button", { name: "Set up remote access" }));
     await userEvent.type(screen.getByLabelText("Server address"), "https://fixture.example");
-    await userEvent.click(screen.getByLabelText("Share chat history"));
-    await userEvent.click(screen.getByLabelText("Allow media transfer"));
+    await userEvent.click(screen.getByLabelText("Allow photo and file transfer"));
     await userEvent.click(screen.getByRole("button", { name: "Get started" }));
     await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
       "settings.remote_access.pairing.start",
       expect.objectContaining({
         fullControlConsent: true,
-        sharedHistoryConsent: false,
+        sharedHistoryConsent: true,
         mediaConsent: false,
       }),
     ));
     await userEvent.click(screen.getByRole("button", { name: "Approve phone" }));
-    expect(await screen.findByText(/Photo and file transfer are off; shared chat history is off/)).toBeInTheDocument();
+    expect(await screen.findByText(/including shared chat history. Photo and file transfer are off/)).toBeInTheDocument();
   });
 
   it("fetches status with bearer authorization", async () => {

@@ -124,6 +124,24 @@ function installCancelPlugin() {
   return { pairStart, pairPoll, resolvePairStart: (value: Record<string, unknown>) => resolvePairStart(value) };
 }
 
+function installStartupRejectPlugin() {
+  let rejectIdentity: (error: Error) => void = () => {};
+  const pairingIdentity = vi.fn(() => new Promise<{ installationId: string }>((_resolve, reject) => {
+    rejectIdentity = reject;
+  }));
+  const plugin = {
+    target: vi.fn(async () => ({ hasAccess: false })),
+    pairingIdentity,
+    pairStart: vi.fn(async () => ({ pairing_id: "pairing-1", comparison_code: "123456" })),
+    pairPoll: vi.fn(async () => ({ status: "waiting" })),
+    pendingPairingLink: vi.fn(async () => null),
+  };
+  (window as unknown as { Capacitor?: unknown }).Capacitor = {
+    Plugins: { NativeNetwork: plugin },
+  };
+  return { pairingIdentity, rejectIdentity: (error: Error) => rejectIdentity(error) };
+}
+
 function installRejectedPairStartPlugin() {
   let rejectPairStart: (error: Error) => void = () => {};
   const pairStart = vi.fn(() => new Promise<Record<string, unknown>>((_resolve, reject) => {
@@ -193,6 +211,31 @@ describe("mobile pairing identity", () => {
       installationId: "phone-local-id",
       challenge: "pairing-1.nonce.secret",
     });
+  });
+
+  it("ignores a startup identity rejection after cancel", async () => {
+    const { rejectIdentity } = installStartupRejectPlugin();
+    window.eval(bootstrapSource);
+
+    const form = await vi.waitFor(() => {
+      const element = document.querySelector<HTMLFormElement>(".mobile-pairing-form");
+      expect(element).not.toBeNull();
+      return element as HTMLFormElement;
+    });
+    const input = document.querySelector<HTMLInputElement>(".mobile-pairing-input");
+    input!.value = [
+      "nanobot://pair?origin=https%3A%2F%2Fdesktop.example",
+      "installation=desktop-generated-id",
+      "challenge=pairing-1.nonce.secret",
+    ].join("&");
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((button) => button.textContent === "Use a different link");
+    cancel?.click();
+    rejectIdentity(new Error("startup identity failed"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
+    expect(document.body.textContent).not.toContain("startup identity failed");
   });
 
   it("ignores a pairing result that arrives after cancel", async () => {

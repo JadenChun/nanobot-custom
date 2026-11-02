@@ -454,13 +454,16 @@
 
     setState("idle");
     void (async function () {
+      var startupGeneration = generation;
       var identity;
       try {
         identity = await loadIdentity();
       } catch (error) {
+        if (generation !== startupGeneration || state !== "idle") return;
         fail(String(error && error.message ? error.message : error));
         return;
       }
+      if (generation !== startupGeneration || state !== "idle") return;
       ui.installation.textContent = identity.installationId;
       if (identity.origin) {
         setPill(ui.server, hostLabel(identity.origin), "is-ok");

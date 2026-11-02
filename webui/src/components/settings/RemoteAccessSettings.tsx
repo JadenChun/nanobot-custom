@@ -47,7 +47,6 @@ export function RemoteAccessSettings({
   );
   const [fullControl, setFullControl] = useState(true);
   const [mediaConsent, setMediaConsent] = useState(true);
-  const [sharedHistory, setSharedHistory] = useState(true);
   const [grantedFullControl, setGrantedFullControl] = useState<boolean | null>(null);
   const [grantedMedia, setGrantedMedia] = useState<boolean | null>(null);
   const [pairingId, setPairingId] = useState("");
@@ -275,13 +274,13 @@ export function RemoteAccessSettings({
             <div className="space-y-4">
               <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-3 text-xs text-muted-foreground">
                 {fullControl
-                  ? `Nanobot can access this desktop, including files, apps and workspace actions${sharedHistory ? ", shared chat history" : ""}${mediaConsent ? " and photo/file transfer" : ""}, to complete tasks you send from your phone. Only connect devices you own and trust.`
-                  : `This phone can read and continue the same chats${mediaConsent ? " and transfer photos/files" : ""}. Full owner control${sharedHistory ? ", shared history" : ""}, settings, apps, skills, automations and workspace actions stay on this desktop. Only connect devices you own and trust.`}
+                  ? `Nanobot can access this desktop, including files, apps, workspace actions and shared chat history${mediaConsent ? " and photo/file transfer" : ""}, to complete tasks you send from your phone. Only connect devices you own and trust.`
+                  : `This phone can read and continue the same chats${mediaConsent ? " and transfer photos/files" : ""}. Full owner control, shared history, settings, apps, skills, automations and workspace actions stay on this desktop. Only connect devices you own and trust.`}
               </div>
               <ul className="space-y-2 text-sm">
                 <li>Continue any chat or project from your phone.</li>
                 {mediaConsent ? <li>Send and receive photos and files in chats.</li> : null}
-                {sharedHistory && fullControl ? <li>Read the shared chat history from this desktop.</li> : null}
+                {fullControl ? <li>Read the shared chat history from this desktop.</li> : null}
                 {fullControl
                   ? <li>Use settings, apps, skills, automations and workspace actions remotely.</li>
                   : null}
@@ -306,28 +305,15 @@ export function RemoteAccessSettings({
                   className="mt-0.5"
                 />
                 <span>
-                  Allow full owner control. The phone can use the same settings, apps, skills,
-                  automations and workspace actions as this desktop.
+                  Allow full owner control, including shared chat history. The phone can use
+                  the same settings, apps, skills, automations, workspace actions and existing
+                  chats as this desktop.
                 </span>
               </label>
               <label className="flex items-start gap-2 text-xs">
                 <input
                   type="checkbox"
-                  aria-label="Share chat history"
-                  checked={fullControl && sharedHistory}
-                  disabled={!fullControl}
-                  onChange={(event) => setSharedHistory(event.target.checked)}
-                  className="mt-0.5"
-                />
-                <span>
-                  Share chat history. The phone can read and continue this desktop&apos;s
-                  existing chats. Requires full owner control.
-                </span>
-              </label>
-              <label className="flex items-start gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  aria-label="Allow media transfer"
+                  aria-label="Allow photo and file transfer"
                   checked={mediaConsent}
                   onChange={(event) => setMediaConsent(event.target.checked)}
                   className="mt-0.5"
@@ -352,7 +338,7 @@ export function RemoteAccessSettings({
                       chatConsent: true,
                       mediaConsent,
                       fullControlConsent: fullControl,
-                      sharedHistoryConsent: fullControl && sharedHistory,
+                      sharedHistoryConsent: fullControl,
                     });
                     setGrantedFullControl(fullControl);
                     setGrantedMedia(mediaConsent);
@@ -429,7 +415,7 @@ export function RemoteAccessSettings({
                       chatConsent: true,
                       mediaConsent,
                       fullControlConsent: fullControl,
-                      sharedHistoryConsent: fullControl && sharedHistory,
+                      sharedHistoryConsent: fullControl,
                     });
                     setGrantedFullControl(fullControl);
                     setGrantedMedia(mediaConsent);
@@ -478,7 +464,7 @@ export function RemoteAccessSettings({
               <p className="text-sm">
                 {grantedFullControl === false
                   ? `The phone is paired for chats${grantedMedia === false ? " only" : " and media only"}. Full owner control is off, so settings, apps, skills, automations and workspace actions stay on this desktop. You can revoke it at any time from the device list.`
-                  : `The phone is paired with full owner control. Photo and file transfer are ${grantedMedia === false ? "off" : "on"}; shared chat history is ${sharedHistory ? "on" : "off"}. You can revoke it at any time from the device list.`}
+                  : `The phone is paired with full owner control, including shared chat history. Photo and file transfer are ${grantedMedia === false ? "off" : "on"}. You can revoke it at any time from the device list.`}
               </p>
               <div className="flex justify-end">
                 <button
