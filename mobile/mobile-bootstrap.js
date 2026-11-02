@@ -32,9 +32,28 @@
       return result.wsId;
     },
     wsSend: async function (wsId, data, kind) {
-      var binary = "";
-      for (var i = 0; i < data.length; i += 1) binary += String.fromCharCode(data[i]);
-      await plugin.wsSend({ wsId: wsId, kind: kind || "text", dataBase64: btoa(binary) });
+      var chunkBytes = 256 * 1024;
+      var frameKind = kind || "text";
+      var encode = function (bytes) {
+        var binary = "";
+        for (var i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+        return btoa(binary);
+      };
+      if (data.length <= chunkBytes) {
+        await plugin.wsSend({ wsId: wsId, kind: frameKind, dataBase64: encode(data) });
+        return;
+      }
+      await plugin.wsSendBegin({ wsId: wsId, kind: frameKind });
+      try {
+        for (var offset = 0; offset < data.length; offset += chunkBytes) {
+          var chunk = data.subarray(offset, Math.min(offset + chunkBytes, data.length));
+          await plugin.wsSendChunk({ wsId: wsId, dataBase64: encode(chunk) });
+        }
+        await plugin.wsSendEnd({ wsId: wsId });
+      } catch (error) {
+        await plugin.wsSendEnd({ wsId: wsId, discard: true }).catch(function () {});
+        throw error;
+      }
     },
     wsClose: async function (wsId) { await plugin.wsClose({ wsId: wsId }); },
     stop: async function () { await plugin.stop(); }

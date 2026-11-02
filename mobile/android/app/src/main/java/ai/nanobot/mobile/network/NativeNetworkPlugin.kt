@@ -53,6 +53,8 @@ class NativeNetworkPlugin : Plugin() {
     private val pollExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val operationExecutor = Executors.newCachedThreadPool()
     private val pendingNative = ConcurrentHashMap<Long, CompletableFuture<JSONObject>>()
+    private data class PendingWsFrame(val kind: Int, val data: ByteArrayOutputStream)
+    private val pendingWsFrames = ConcurrentHashMap<Long, PendingWsFrame>()
     @Volatile private var activePairing: PairingChallenge? = null
     private var pollTask: ScheduledFuture<*>? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -481,6 +483,78 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun wsSendBegin(call: PluginCall) {
+        val wsId = callLong(call, "wsId")
+        val kindName = call.getString("kind") ?: "text"
+        if (wsId == null) {
+            call.reject("wsId is required")
+            return
+        }
+        pendingWsFrames[wsId] = PendingWsFrame(
+            if (kindName == "binary") 1 else 0,
+            ByteArrayOutputStream(),
+        )
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun wsSendChunk(call: PluginCall) {
+        val wsId = callLong(call, "wsId")
+        val dataBase64 = call.getString("dataBase64")
+        if (wsId == null || dataBase64 == null) {
+            call.reject("wsId and dataBase64 are required")
+            return
+        }
+        val frame = pendingWsFrames[wsId]
+        if (frame == null) {
+            call.reject("no pending websocket frame")
+            return
+        }
+        val chunk = try {
+            Base64.decode(dataBase64, Base64.NO_WRAP)
+        } catch (exception: Exception) {
+            pendingWsFrames.remove(wsId)
+            call.reject("websocket chunk is not base64")
+            return
+        }
+        synchronized(frame.data) {
+            frame.data.write(chunk)
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun wsSendEnd(call: PluginCall) {
+        val current = transportHandle
+        val wsId = callLong(call, "wsId")
+        val discard = call.getBoolean("discard") ?: false
+        if (wsId == null) {
+            call.reject("wsId is required")
+            return
+        }
+        val frame = pendingWsFrames.remove(wsId)
+        if (frame == null) {
+            call.reject("no pending websocket frame")
+            return
+        }
+        if (discard) {
+            call.resolve()
+            return
+        }
+        if (current == 0L) {
+            call.reject("transport is not started")
+            return
+        }
+        val data = synchronized(frame.data) { frame.data.toByteArray() }
+        val status = NativeNetwork.wsSend(current, wsId, frame.kind, data)
+        if (status != 0) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve()
+    }
+
+    @PluginMethod
     fun wsClose(call: PluginCall) {
         val current = transportHandle
         val wsId = callLong(call, "wsId")
@@ -488,6 +562,7 @@ class NativeNetworkPlugin : Plugin() {
             call.reject("transport and wsId are required")
             return
         }
+        pendingWsFrames.remove(wsId)
         val status = NativeNetwork.wsClose(current, wsId)
         if (status != 0) {
             call.reject(NativeNetwork.lastError())
@@ -894,6 +969,7 @@ class NativeNetworkPlugin : Plugin() {
     private fun stopInternal() {
         pollTask?.cancel(false)
         pollTask = null
+        pendingWsFrames.clear()
         val current = transportHandle
         transportHandle = 0L
         if (current != 0L) {

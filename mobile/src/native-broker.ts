@@ -90,6 +90,9 @@ interface NativeNetworkPlugin {
   cancel(options: { requestId: number }): Promise<void>;
   wsOpen(options: { operation: 'fixture_ws'; path: string; headers?: Record<string, string> }): Promise<{ wsId: number }>;
   wsSend(options: { wsId: number; kind: 'text' | 'binary'; dataBase64: string }): Promise<void>;
+  wsSendBegin(options: { wsId: number; kind: 'text' | 'binary' }): Promise<void>;
+  wsSendChunk(options: { wsId: number; dataBase64: string }): Promise<void>;
+  wsSendEnd(options: { wsId: number; discard?: boolean }): Promise<void>;
   wsClose(options: { wsId: number }): Promise<void>;
   openLogin(): Promise<void>;
   stop(): Promise<void>;
@@ -137,7 +140,22 @@ export const nativeBroker = {
 
   async wsSend(wsId: number, data: Uint8Array, kind: 'text' | 'binary' = 'text'): Promise<void> {
     requireNative();
-    await plugin.wsSend({ wsId, kind, dataBase64: bytesToBase64(data) });
+    const chunkBytes = 256 * 1024;
+    if (data.length <= chunkBytes) {
+      await plugin.wsSend({ wsId, kind, dataBase64: bytesToBase64(data) });
+      return;
+    }
+    await plugin.wsSendBegin({ wsId, kind });
+    try {
+      for (let offset = 0; offset < data.length; offset += chunkBytes) {
+        const chunk = data.subarray(offset, Math.min(offset + chunkBytes, data.length));
+        await plugin.wsSendChunk({ wsId, dataBase64: bytesToBase64(chunk) });
+      }
+      await plugin.wsSendEnd({ wsId });
+    } catch (error) {
+      await plugin.wsSendEnd({ wsId, discard: true }).catch(() => undefined);
+      throw error;
+    }
   },
 
   async wsClose(wsId: number): Promise<void> {
