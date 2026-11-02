@@ -36,6 +36,9 @@ class ResponsesStreamCapture:
     """Losslessly capture terminal output items without changing stream results."""
 
     completed: bool = False
+    succeeded: bool = False
+    terminal_event: str | None = None
+    terminal_status: str | None = None
     response: dict[str, Any] | None = field(default=None, repr=False)
     _items_by_index: dict[int, dict[str, Any]] = field(default_factory=dict, repr=False)
 
@@ -50,11 +53,18 @@ class ResponsesStreamCapture:
         )
         self._items_by_index[output_index] = item_object
 
-    def record_completed(self, response: object) -> None:
+    def record_completed(self, response: object, *, event_type: str) -> None:
         response_object = _response_object(response)
         if response_object is None:
             return
+        status = response_object.get("status")
         self.completed = True
+        self.terminal_event = event_type
+        self.terminal_status = status if isinstance(status, str) else None
+        self.succeeded = (
+            event_type == "response.completed"
+            and self.terminal_status in (None, "completed")
+        )
         self.response = response_object
 
     @property
@@ -535,7 +545,7 @@ async def consume_sse_with_reasoning(
         elif event_type in {"response.completed", "response.incomplete"}:
             response_obj = _response_object(event.get("response")) or {}
             if capture is not None:
-                capture.record_completed(response_obj)
+                capture.record_completed(response_obj, event_type=event_type)
             finish_reason = _response_finish_reason(
                 response_obj,
                 fallback_status=event_type.removeprefix("response."),
@@ -828,7 +838,7 @@ async def consume_sdk_stream(
             resp = getattr(event, "response", None)
             response_obj = _response_object(resp) or {}
             if capture is not None:
-                capture.record_completed(resp)
+                capture.record_completed(response_obj, event_type=event_type)
             finish_reason = _response_finish_reason(
                 resp,
                 fallback_status=event_type.removeprefix("response."),

@@ -28,6 +28,7 @@ from nanobot.agent.context_governance import (
 )
 from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from nanobot.agent.policy import ToolPolicy
+from nanobot.agent.tools.base import ToolDenialKind
 from nanobot.agent.tools.execution import KnownToolResult, ToolResultCallback, execute_tool_calls
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.turn import ToolOutcome, TurnContext
@@ -50,7 +51,14 @@ from nanobot.providers.conversation_state import (
     ProviderConversationStateController,
     ProviderStateSettlement,
 )
-from nanobot.providers.request_budget import FinalizedRequestBudgetExceeded
+from nanobot.providers.request_budget import (
+    BackendContextOverflow,
+    FinalizedRequestBudgetExceeded,
+    LocalRequestUsageReceipt,
+    LocalUsageAnchor,
+    ProviderRequestRejected,
+    RequestPayloadBytesExceeded,
+)
 from nanobot.session.source import SourceValidationError
 from nanobot.session.source_projection import RuntimeNode
 from nanobot.session.source_request import SourceRequestLedger, SourceRequestTicket
@@ -89,6 +97,7 @@ class RecordedResponse:
 
     response: LLMResponse
     source_event_id: str | None
+    local_usage_anchor_eligible: bool = False
 
 
 ContinuationCallback = Callable[[], str | None]
@@ -101,6 +110,19 @@ _ARREARAGE_ERROR_MESSAGE = (
     "account is in arrears. Please top up / check the billing status of your API key and try again."
 )
 _PERSISTED_MODEL_ERROR_PLACEHOLDER = "[Assistant reply unavailable due to model error.]"
+_PRIVATE_NETWORK_RECOVERY_NOTE = (
+    "A tool call was rejected before it ran because it targeted a private/internal "
+    "address. No command was launched. Do not repeat that access or bypass it through "
+    "another tool, redirect, proxy, encoding, or alternate DNS. The denied command and "
+    "any calls queued after it were not run. Continue with independently permitted work "
+    "that does not touch the denied target, or explain the limitation to the user."
+)
+_MANAGED_CAPABILITY_RECOVERY_NOTE = (
+    "A tool call was denied before it ran because that unconfined host capability is "
+    "unavailable in this managed chat. Do not retry the denied tool or reach the same "
+    "external capability through another tool. Continue with a permitted tool or "
+    "explain the limitation to the user."
+)
 _MAX_EMPTY_RETRIES = 2
 _MAX_LENGTH_RECOVERIES = 3
 _MAX_INJECTIONS_PER_TURN = 3
@@ -119,19 +141,30 @@ def _restore_outer_whitespace(content: str, original: str | None) -> str:
 
 
 def _context_budget_error_response(
-    exc: FinalizedRequestBudgetExceeded,
+    exc: FinalizedRequestBudgetExceeded | BackendContextOverflow,
+    recovery_failure_reason: str | None = None,
 ) -> LLMResponse:
     """Convert the local final-request guard into a typed model error."""
-    measurement = exc.measurement
+    measurement = exc.measurement if isinstance(exc, FinalizedRequestBudgetExceeded) else None
     if measurement is not None:
         logger.warning(
             "Local request budget rejected provider={} model={} transport={} "
-            "measured_units={} input_limit={} over_by={} completion_reserve={} "
+            "measured_tokens={} input_limit={} over_by={} completion_reserve={} "
             "total_limit={} measurement_source={}",
             measurement.identity.provider, measurement.identity.model, measurement.identity.transport,
             measurement.input_tokens, measurement.input_limit_tokens, measurement.over_by,
             measurement.completion_reserve_tokens, measurement.total_limit_tokens, measurement.source,
         )
+    reason = (
+        'backend_context_overflow'
+        if isinstance(exc, BackendContextOverflow)
+        else 'local_estimated_admission'
+    )
+    logger.warning(
+        "Source recovery ended origin={} recovery_reason={}",
+        reason,
+        recovery_failure_reason or 'not_attempted',
+    )
     return LLMResponse(
         content=CONTEXT_BUDGET_ERROR_MESSAGE,
         finish_reason="error",
@@ -177,6 +210,8 @@ class AgentRunSpec:
     source_transcript: SourceTranscript | None = None
     source_initial_eligible_ids: frozenset[str] = frozenset()
     source_isolated: bool = False
+    source_compaction_idle_timeout_seconds: float = 300.0
+    source_compaction_overall_timeout_seconds: float = 900.0
     artifact_read_allowed: bool = False
     conversation_binding: ConversationRequestBinding | None = field(default=None, repr=False)
     artifact_grants: ArtifactGrantSet | None = field(default=None, repr=False)
@@ -185,6 +220,7 @@ class AgentRunSpec:
     ] | None = field(default=None, repr=False)
     artifact_handoff_collector: object | None = field(default=None, repr=False)
     busy_steering: BusySteering | None = field(default=None, repr=False)
+    allow_pre_dispatch_recovery: bool = False
 
 
 @dataclass(slots=True)
@@ -665,6 +701,7 @@ class AgentRunner:
             max_tool_result_chars=spec.max_tool_result_chars,
             context_window_tokens=spec.runtime.context_window_tokens,
             max_tokens=spec.runtime.generation.max_tokens,
+            generation=spec.runtime.generation,
             preserve_source=spec.source_writer is not None,
         )
         return ModelRequestState(
@@ -673,7 +710,9 @@ class AgentRunner:
             conversation_binding=spec.conversation_binding,
             compaction=compaction,
             source_compaction=SourceCompactionState(spec.source_writer, spec.runtime, messages,
-                spec.source_writer.stream_id if spec.source_isolated or spec.source_writer.parent_stream_id is not None else None)
+                spec.source_writer.stream_id if spec.source_isolated or spec.source_writer.parent_stream_id is not None else None,
+                idle_timeout_seconds=spec.source_compaction_idle_timeout_seconds,
+                overall_timeout_seconds=spec.source_compaction_overall_timeout_seconds)
                 if spec.source_writer is not None else None,
             source=SourceRequestLedger(spec.source_transcript,
                 initial_eligible_ids=spec.source_initial_eligible_ids)
@@ -704,6 +743,7 @@ class AgentRunner:
         empty_content_retries = 0
         missing_skill_recovery_attempted = False
         context_repo_exec_recovery_attempted = False
+        pre_dispatch_denial_recovery_attempted = False
         # Segments from one uninterrupted length-recovery chain. Tool work or
         # injected user input starts a new logical answer and clears the chain.
         length_recovery_parts: list[str] = []
@@ -867,6 +907,18 @@ class AgentRunner:
                     and iteration + 1 < spec.max_iterations
                     and self._is_context_repo_exec_denial(spec.tools, response.tool_calls, results, terminal)
                 )
+                recoverable_pre_dispatch_denial = (
+                    terminal is not None
+                    and spec.allow_pre_dispatch_recovery
+                    and spec.fail_on_tool_error
+                    and terminal.stop_reason == "tool_error"
+                    and terminal.recovery_kind in {
+                        ToolDenialKind.PRIVATE_NETWORK,
+                        ToolDenialKind.MANAGED_UNAVAILABLE,
+                    }
+                    and not pre_dispatch_denial_recovery_attempted
+                    and iteration + 1 < spec.max_iterations
+                )
                 results = [r.content if isinstance(r, ToolOutcome) else r for r in results]
                 public_events = [
                     {key: value for key, value in event.items() if not key.startswith("_")}
@@ -948,6 +1000,19 @@ class AgentRunner:
                             "and do not change its permissions. Use read_file or list_dir "
                             "for permitted file inspection. If no permitted tool can "
                             "complete the task, explain the limitation to the user."
+                        ),
+                    }, request_state.source)
+                if recoverable_pre_dispatch_denial:
+                    assert terminal is not None
+                    pre_dispatch_denial_recovery_attempted = True
+                    recovery_kind = terminal.recovery_kind
+                    terminal = None
+                    self._append_bound_message(messages, {
+                        "role": "system",
+                        "content": (
+                            _MANAGED_CAPABILITY_RECOVERY_NOTE
+                            if recovery_kind is ToolDenialKind.MANAGED_UNAVAILABLE
+                            else _PRIVATE_NETWORK_RECOVERY_NOTE
                         ),
                     }, request_state.source)
                 if terminal is not None:
@@ -1126,7 +1191,12 @@ class AgentRunner:
                     transcript=messages,
                 )
                 response = recorded_response.response
-                retry_usage = self._record_request_usage(spec, request_state, response)
+                retry_usage = self._record_request_usage(
+                    spec,
+                    request_state,
+                    response,
+                    recorded_response=recorded_response,
+                )
                 round_usages.append(retry_usage)
                 usage = self._merge_usage(usage, retry_usage)
                 raw_usage = self._merge_usage(raw_usage, retry_usage)
@@ -1445,9 +1515,11 @@ class AgentRunner:
     @staticmethod
     def _settle_source_ticket(state: ModelRequestState, ticket: SourceRequestTicket | None,
                               response: LLMResponse, *, malformed: bool = False,
-                              no_tools: bool = False) -> None:
-        if ticket is None or state.source is None:
-            return
+                              no_tools: bool = False) -> bool:
+        if ticket is None:
+            return True
+        if state.source is None:
+            return False
         valid = response.finish_reason in {'stop', 'length', 'tool_calls', 'function_call'}
         if malformed or (no_tools and response.has_tool_calls):
             valid = False
@@ -1455,6 +1527,7 @@ class AgentRunner:
             state.source.acknowledge(ticket)
         else:
             state.source.discard(ticket)
+        return valid
 
     def _record_and_settle(self, spec: AgentRunSpec, state: ModelRequestState,
                            ticket: SourceRequestTicket | None, response: LLMResponse,
@@ -1466,13 +1539,38 @@ class AgentRunner:
                 if record_source_response
                 else None
             )
-            recorded = RecordedResponse(response, source_event_id)
         except BaseException:
+            state.local_usage_anchor = None
             if ticket is not None and state.source is not None:
                 state.source.discard(ticket)
             raise
-        self._settle_source_ticket(state, ticket, response, malformed=malformed, no_tools=no_tools)
-        return recorded
+        ticket_accepted = self._settle_source_ticket(
+            state,
+            ticket,
+            response,
+            malformed=malformed,
+            no_tools=no_tools,
+        )
+        finish_is_usable = response.finish_reason in {
+            'stop', 'length', 'tool_calls', 'function_call',
+        }
+        response_has_usable_output = (
+            (not is_blank_text(response.content))
+            or (
+                response.has_tool_calls
+                and response.finish_reason in {'tool_calls', 'function_call'}
+            )
+        )
+        anchor_eligible = (
+            ticket_accepted
+            and record_source_response
+            and not malformed
+            and not (no_tools and response.has_tool_calls)
+            and finish_is_usable
+            and response.error_kind is None
+            and response_has_usable_output
+        )
+        return RecordedResponse(response, source_event_id, anchor_eligible)
 
     @staticmethod
     def _check_busy_stop(spec: AgentRunSpec) -> None:
@@ -1495,27 +1593,22 @@ class AgentRunner:
         source_view = self._source_view(request_state, messages, source_view)
         timeout_s = self._resolve_llm_timeout_s(spec)
         tool_definitions = spec.tools.get_definitions()
+        wants_streaming = hook.wants_streaming()
         messages, provider_context = await self.context_governor.prepare_request(
             request_state,
             messages,
             tool_definitions=tool_definitions,
             transcript=transcript,
             source_view=source_view,
+            stream=wants_streaming,
         )
         source_view = self._source_view(request_state, messages, request_state.source_view)
-
-        self._check_busy_stop(spec)
-        ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
-        kwargs = self._build_request_kwargs(
-            spec,
-            messages,
-            tools=tool_definitions,
-        )
-        wants_streaming = hook.wants_streaming()
 
         active_hosted_tools: dict[str, dict[str, Any]] = {}
         native_reasoning_open = False
         native_reasoning_close_task: asyncio.Task[None] | None = None
+        attempt_emitted_content = False
+        attempt_emitted_reasoning = False
         request_started_at = 0.0
         first_output_at: float | None = None
         generation_started_at: float | None = None
@@ -1537,6 +1630,37 @@ class AgentRunner:
                 return
             generation_elapsed_s += max(0.0, time.perf_counter() - generation_started_at)
             generation_started_at = None
+
+        thinking_buf = ""
+
+        async def _stream(delta: str) -> None:
+            nonlocal attempt_emitted_content
+            _generation_delta(delta)
+            if delta:
+                attempt_emitted_content = True
+                context.streamed_content = True
+                await _close_native_reasoning()
+            await hook.on_stream(context, delta)
+
+        async def _thinking(delta: str) -> None:
+            nonlocal attempt_emitted_reasoning, native_reasoning_open, thinking_buf
+            if not delta:
+                return
+            _generation_delta(delta)
+            prev_clean = strip_reasoning_tags(thinking_buf)
+            thinking_buf += delta
+            new_clean = strip_reasoning_tags(thinking_buf)
+            incremental = new_clean[len(prev_clean):]
+            if incremental:
+                attempt_emitted_reasoning = True
+                context.streamed_reasoning = True
+                native_reasoning_open = True
+                await hook.emit_reasoning(incremental)
+
+        async def _stream_recover() -> None:
+            _pause_generation()
+            await _close_native_reasoning()
+            await hook.on_stream_end(context, resuming=True)
 
         async def _close_native_reasoning() -> None:
             nonlocal native_reasoning_open, native_reasoning_close_task
@@ -1577,49 +1701,6 @@ class AgentRunner:
             elif event.get("phase") in {"end", "error"}:
                 active_hosted_tools.pop(call_id, None)
 
-        if wants_streaming:
-            thinking_buf = ""
-
-            async def _stream(delta: str) -> None:
-                _generation_delta(delta)
-                if delta:
-                    context.streamed_content = True
-                    await _close_native_reasoning()
-                await hook.on_stream(context, delta)
-
-            async def _thinking(delta: str) -> None:
-                nonlocal native_reasoning_open, thinking_buf
-                if not delta:
-                    return
-                _generation_delta(delta)
-                prev_clean = strip_reasoning_tags(thinking_buf)
-                thinking_buf += delta
-                new_clean = strip_reasoning_tags(thinking_buf)
-                incremental = new_clean[len(prev_clean):]
-                if incremental:
-                    context.streamed_reasoning = True
-                    native_reasoning_open = True
-                    await hook.emit_reasoning(incremental)
-
-            async def _stream_recover() -> None:
-                _pause_generation()
-                await _close_native_reasoning()
-                await hook.on_stream_end(context, resuming=True)
-
-            coro = spec.runtime.provider.chat_stream_with_retry(
-                **kwargs,
-                provider_context=provider_context,
-                on_content_delta=_stream,
-                on_thinking_delta=_thinking,
-                on_tool_call_delta=_provider_tool_event,
-                on_stream_recover=_stream_recover,
-            )
-        else:
-            coro = spec.runtime.provider.chat_with_retry(
-                **kwargs,
-                provider_context=provider_context,
-            )
-
         # Streaming requests also have provider-level idle timeouts
         # (NANOBOT_STREAM_IDLE_TIMEOUT_S), but a stream that keeps producing
         # very slow deltas can still run forever. Use a more generous wall-clock
@@ -1630,39 +1711,135 @@ class AgentRunner:
             if wants_streaming and timeout_s is not None
             else timeout_s
         )
-        request_started_at = time.perf_counter()
-        try:
-            response = (
-                await coro if outer_timeout_s is None
-                else await asyncio.wait_for(coro, timeout=outer_timeout_s)
-            )
+        recovery_used = False
+        original_budget_error: FinalizedRequestBudgetExceeded | BackendContextOverflow | None = None
+        recovery_failure_reason: str | None = None
+        ticket: SourceRequestTicket | None = None
+        while True:
             self._check_busy_stop(spec)
-        except asyncio.CancelledError:
-            if ticket is not None and request_state.source is not None:
-                request_state.source.discard(ticket)
-            _pause_generation()
-            await _close_native_reasoning()
-            raise
-        except asyncio.TimeoutError:
-            if outer_timeout_s is None:
-                response = LLMResponse(
-                    content="Error calling LLM: stream stalled",
-                    finish_reason="error",
-                    error_kind="timeout",
+            attempt_emitted_content = False
+            attempt_emitted_reasoning = False
+            ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
+            kwargs = self._build_request_kwargs(spec, messages, tools=tool_definitions)
+            if wants_streaming:
+                coro = spec.runtime.provider.chat_stream_with_retry(
+                    **kwargs,
+                    provider_context=provider_context,
+                    on_content_delta=_stream,
+                    on_thinking_delta=_thinking,
+                    on_tool_call_delta=_provider_tool_event,
+                    on_stream_recover=_stream_recover,
                 )
             else:
-                response = LLMResponse(
-                    content=f"Error calling LLM: timed out after {outer_timeout_s:g}s",
-                    finish_reason="error",
-                    error_kind="timeout",
+                coro = spec.runtime.provider.chat_with_retry(
+                    **kwargs,
+                    provider_context=provider_context,
                 )
-        except FinalizedRequestBudgetExceeded as exc:
-            # _record_and_settle discards this failed ticket exactly once.
-            response = _context_budget_error_response(exc)
-        except Exception:
-            if ticket is not None and request_state.source is not None:
-                request_state.source.discard(ticket)
-            raise
+            request_started_at = time.perf_counter()
+            try:
+                response = (
+                    await coro if outer_timeout_s is None
+                    else await asyncio.wait_for(coro, timeout=outer_timeout_s)
+                )
+                self._check_busy_stop(spec)
+            except asyncio.CancelledError:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
+                _pause_generation()
+                await _close_native_reasoning()
+                raise
+            except asyncio.TimeoutError:
+                if outer_timeout_s is None:
+                    response = LLMResponse(
+                        content="Error calling LLM: stream stalled",
+                        finish_reason="error",
+                        error_kind="timeout",
+                    )
+                else:
+                    response = LLMResponse(
+                        content=f"Error calling LLM: timed out after {outer_timeout_s:g}s",
+                        finish_reason="error",
+                        error_kind="timeout",
+                    )
+                break
+            except (FinalizedRequestBudgetExceeded, BackendContextOverflow) as exc:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
+                if original_budget_error is None:
+                    original_budget_error = exc
+                elif recovery_used:
+                    recovery_failure_reason = (
+                        'backend_context_overflow'
+                        if isinstance(exc, BackendContextOverflow)
+                        else 'local_estimated_admission'
+                    )
+                if (
+                    not recovery_used
+                    and not attempt_emitted_content
+                    and not attempt_emitted_reasoning
+                    and not active_hosted_tools
+                ):
+                    self._check_busy_stop(spec)
+                    recovered = await self.context_governor.recover_finalized_request(
+                        request_state,
+                        measurement=(
+                            exc.measurement
+                            if isinstance(exc, FinalizedRequestBudgetExceeded)
+                            else None
+                        ),
+                        backend_overflow=(
+                            exc if isinstance(exc, BackendContextOverflow) else None
+                        ),
+                        tool_definitions=tool_definitions,
+                        transcript=transcript,
+                        source_view=source_view,
+                        stream=wants_streaming,
+                    )
+                    recovery_failure_reason = recovered.unavailable_reason
+                    if recovered.recovered:
+                        assert recovered.prepared_messages is not None
+                        messages, provider_context = (
+                            recovered.prepared_messages,
+                            recovered.provider_context,
+                        )
+                        source_view = self._source_view(
+                            request_state, messages, request_state.source_view,
+                        )
+                        recovery_used = True
+                        first_output_at = None
+                        generation_started_at = None
+                        generation_elapsed_s = 0.0
+                        continue
+                response = _context_budget_error_response(
+                    original_budget_error,
+                    recovery_failure_reason,
+                )
+                break
+            except ProviderRequestRejected as exc:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
+                reason = exc.reason
+                logger.warning("Provider request rejected before completion reason={}", reason)
+                response = LLMResponse(
+                    content="Error: provider request could not be prepared.",
+                    finish_reason="error",
+                    error_kind=(
+                        "payload_too_large"
+                        if isinstance(exc, RequestPayloadBytesExceeded)
+                        else "invalid_request"
+                    ),
+                    error_should_retry=False,
+                )
+                break
+            except Exception:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
+                raise
+            break
         dropped, all_dropped, original_finish_reason = self._drop_malformed_tool_calls(response)
         recorded = self._record_and_settle(spec, request_state, ticket, response, malformed=dropped > 0)
         _pause_generation()
@@ -1677,7 +1854,12 @@ class AgentRunner:
             current_request_boundary=(len(transcript) if transcript is not None else None),
         )
         request_state.provider_compaction_applied |= response.provider_compaction_applied
-        round_usage = self._record_request_usage(spec, request_state, response)
+        round_usage = self._record_request_usage(
+            spec,
+            request_state,
+            response,
+            recorded_response=recorded,
+        )
         # chat_stream_with_retry may recover internally, so only fail unfinished
         # hosted calls after the provider returns its final error response.
         if response.finish_reason == "error":
@@ -1741,6 +1923,7 @@ class AgentRunner:
                 spec,
                 request_state,
                 fallback_response.response,
+                recorded_response=fallback_response,
             )
             return fallback_response, round_usage + fallback_usage
         return recorded, round_usage
@@ -1878,7 +2061,12 @@ class AgentRunner:
         )
 
         response = recorded.response
-        raw_usage = self._record_request_usage(spec, request_state, response)
+        raw_usage = self._record_request_usage(
+            spec,
+            request_state,
+            response,
+            recorded_response=recorded,
+        )
         round_usages.append(raw_usage)
         usage = self._merge_usage(usage, raw_usage)
         context.response = response
@@ -1941,7 +2129,12 @@ class AgentRunner:
             return None, usage, None
 
         response = recorded.response
-        raw_usage = self._record_request_usage(spec, request_state, response)
+        raw_usage = self._record_request_usage(
+            spec,
+            request_state,
+            response,
+            recorded_response=recorded,
+        )
         round_usages.append(raw_usage)
         usage = self._merge_usage(usage, raw_usage)
         if response.finish_reason == "error" or response.has_tool_calls:
@@ -1986,50 +2179,119 @@ class AgentRunner:
             tool_definitions=None,
             transcript=transcript,
             source_view=source_view,
+            stream=False,
+            tool_choice='none' if tool_choice_none else None,
         )
         source_view = self._source_view(request_state, messages, request_state.source_view)
-        self._check_busy_stop(spec)
-        ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
-        kwargs = self._build_request_kwargs(
-            spec,
-            messages,
-            tools=None,
-        )
-        if tool_choice_none:
-            kwargs["tool_choice"] = "none"
-        coro = spec.runtime.provider.chat_with_retry(
-            **kwargs,
-            provider_context=provider_context,
-        )
         timeout_s = self._resolve_llm_timeout_s(spec)
-        try:
-            response = (
-                await coro
-                if timeout_s is None
-                else await asyncio.wait_for(coro, timeout=timeout_s)
+        recovery_used = False
+        original_budget_error: FinalizedRequestBudgetExceeded | BackendContextOverflow | None = None
+        recovery_failure_reason: str | None = None
+        ticket: SourceRequestTicket | None = None
+        while True:
+            self._check_busy_stop(spec)
+            ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
+            kwargs = self._build_request_kwargs(spec, messages, tools=None)
+            if tool_choice_none:
+                kwargs["tool_choice"] = "none"
+            coro = spec.runtime.provider.chat_with_retry(
+                **kwargs,
+                provider_context=provider_context,
             )
-        except asyncio.TimeoutError:
-            response = LLMResponse(
-                content=f"Error calling LLM: timed out after {timeout_s:g}s",
-                finish_reason="error",
-                error_kind="timeout",
-            )
-        except FinalizedRequestBudgetExceeded as exc:
-            response = _context_budget_error_response(exc)
-        except Exception as exc:
-            if not normalize_provider_errors:
+            try:
+                response = (
+                    await coro
+                    if timeout_s is None
+                    else await asyncio.wait_for(coro, timeout=timeout_s)
+                )
+            except asyncio.TimeoutError:
+                response = LLMResponse(
+                    content=f"Error calling LLM: timed out after {timeout_s:g}s",
+                    finish_reason="error",
+                    error_kind="timeout",
+                )
+                break
+            except (FinalizedRequestBudgetExceeded, BackendContextOverflow) as exc:
                 if ticket is not None and request_state.source is not None:
                     request_state.source.discard(ticket)
+                    ticket = None
+                if original_budget_error is None:
+                    original_budget_error = exc
+                elif recovery_used:
+                    recovery_failure_reason = (
+                        'backend_context_overflow'
+                        if isinstance(exc, BackendContextOverflow)
+                        else 'local_estimated_admission'
+                    )
+                if not recovery_used:
+                    self._check_busy_stop(spec)
+                    recovered = await self.context_governor.recover_finalized_request(
+                        request_state,
+                        measurement=(
+                            exc.measurement
+                            if isinstance(exc, FinalizedRequestBudgetExceeded)
+                            else None
+                        ),
+                        backend_overflow=(
+                            exc if isinstance(exc, BackendContextOverflow) else None
+                        ),
+                        tool_definitions=None,
+                        transcript=transcript,
+                        source_view=source_view,
+                        stream=False,
+                        tool_choice='none' if tool_choice_none else None,
+                    )
+                    recovery_failure_reason = recovered.unavailable_reason
+                    if recovered.recovered:
+                        assert recovered.prepared_messages is not None
+                        messages, provider_context = (
+                            recovered.prepared_messages,
+                            recovered.provider_context,
+                        )
+                        source_view = self._source_view(
+                            request_state, messages, request_state.source_view,
+                        )
+                        recovery_used = True
+                        continue
+                response = _context_budget_error_response(
+                    original_budget_error,
+                    recovery_failure_reason,
+                )
+                break
+            except ProviderRequestRejected as exc:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
+                logger.warning("Provider request rejected before completion reason={}", exc.reason)
+                response = LLMResponse(
+                    content="Error: provider request could not be prepared.",
+                    finish_reason="error",
+                    error_kind=(
+                        "payload_too_large"
+                        if isinstance(exc, RequestPayloadBytesExceeded)
+                        else "invalid_request"
+                    ),
+                    error_should_retry=False,
+                )
+                break
+            except Exception as exc:
+                if not normalize_provider_errors:
+                    if ticket is not None and request_state.source is not None:
+                        request_state.source.discard(ticket)
+                        ticket = None
+                    raise
+                response = LLMResponse(
+                    content=f"Error calling LLM: {type(exc).__name__}: {exc}",
+                    finish_reason="error",
+                    error_kind="provider",
+                )
+                break
+            except BaseException:
+                if ticket is not None and request_state.source is not None:
+                    request_state.source.discard(ticket)
+                    ticket = None
                 raise
-            response = LLMResponse(
-                content=f"Error calling LLM: {type(exc).__name__}: {exc}",
-                finish_reason="error",
-                error_kind="provider",
-            )
-        except BaseException:
-            if ticket is not None and request_state.source is not None:
-                request_state.source.discard(ticket)
-            raise
+            break
         try:
             self._check_busy_stop(spec)
         except BaseException:
@@ -2116,14 +2378,43 @@ class AgentRunner:
         spec: AgentRunSpec,
         state: ModelRequestState,
         response: LLMResponse,
+        *,
+        recorded_response: RecordedResponse | None = None,
     ) -> LLMUsage:
         assert state.messages is not None
+        state.local_usage_anchor = None
         state.usage = self._usage_or_estimate(
             spec,
             state.messages,
             response,
             tool_definitions=state.tool_definitions,
         )
+        from nanobot.providers.openai_compat_provider import OpenAICompatProvider
+
+        reported = response.usage
+        receipt = response.local_usage_receipt
+        if (
+            type(spec.runtime.provider) is OpenAICompatProvider
+            and recorded_response is not None
+            and recorded_response.response is response
+            and recorded_response.local_usage_anchor_eligible
+            and type(receipt) is LocalRequestUsageReceipt
+            and response.finish_reason in {"stop", "tool_calls", "function_call"}
+            and response.error_kind is None
+            and reported is not None
+            and reported.source == "reported"
+            and reported.request_count == 1
+            and reported.input_tokens > 0
+            and reported.reported_tokens > 0
+            and reported.estimated_tokens == 0
+        ):
+            state.local_usage_anchor = LocalUsageAnchor(
+                receipt=receipt,
+                prompt_tokens=reported.input_tokens,
+                projection_epoch=(
+                    state.source.projection_epoch if state.source is not None else None
+                ),
+            )
         return state.usage
 
     def _estimate_response_usage(

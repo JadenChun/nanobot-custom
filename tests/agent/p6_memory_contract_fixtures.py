@@ -59,6 +59,10 @@ class SummaryProvider(LLMProvider):
         self.contexts.append(provider_context)
         return await self.chat(**kwargs)
 
+    async def chat_stream_with_context(self, *, provider_context, **kwargs):
+        self.contexts.append(provider_context)
+        return await self.chat(**kwargs)
+
 
 def summary_runtime(provider, *, window=8192):
     return LLMRuntime.capture(provider, "test-model", context_window_tokens=window)

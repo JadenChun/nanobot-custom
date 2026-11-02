@@ -773,6 +773,209 @@ async def test_ssrf_soft_block_can_finalize_after_streamed_tool_call(tmp_path, a
 
 
 @pytest.mark.asyncio
+async def test_foreground_turn_recovers_from_typed_private_url_denial(
+    tmp_path, admitted_async, monkeypatch,
+):
+    from nanobot.agent.tools.shell import ExecTool
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content="checking",
+            tool_calls=[ToolCallRequest(
+                id="private-url",
+                name="exec",
+                arguments={"command": "curl -s http://127.0.0.1:8188/system_stats"},
+            )],
+            usage=None,
+        ),
+        LLMResponse(
+            content="The local service is unavailable; continuing with other work.",
+            tool_calls=[],
+            usage=None,
+        ),
+    ])
+    loop = await _make_loop(tmp_path, admitted_async, provider)
+    exec_tool = loop.tools.get("exec")
+    assert isinstance(exec_tool, ExecTool)
+    spawn = AsyncMock(side_effect=AssertionError("denied command reached process launch"))
+    monkeypatch.setattr(exec_tool, "_spawn", spawn)
+    monkeypatch.setattr(
+        "nanobot.security.network.contains_internal_url",
+        lambda _command: True,
+    )
+
+    result = await _execute_inbound(loop,
+        InboundMessage(
+            channel="websocket",
+            sender_id="user",
+            chat_id="private-url-chat",
+            content="check the local status",
+        ),
+    )
+
+    assert provider.chat_with_retry.await_count == 2
+    assert result is not None
+    assert result.content == "The local service is unavailable; continuing with other work."
+    spawn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_direct_cli_turn_recovers_from_typed_private_url_denial(
+    tmp_path, admitted_async, monkeypatch,
+):
+    from nanobot.agent.tools.shell import ExecTool
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content="checking",
+            tool_calls=[ToolCallRequest(
+                id="private-url",
+                name="exec",
+                arguments={"command": "curl -s http://127.0.0.1:8188/system_stats"},
+            )],
+            usage=None,
+        ),
+        LLMResponse(content="Continuing in the CLI turn.", tool_calls=[], usage=None),
+    ])
+    loop = await _make_loop(tmp_path, admitted_async, provider)
+    exec_tool = loop.tools.get("exec")
+    assert isinstance(exec_tool, ExecTool)
+    spawn = AsyncMock(side_effect=AssertionError("denied command reached process launch"))
+    monkeypatch.setattr(exec_tool, "_spawn", spawn)
+    monkeypatch.setattr(
+        "nanobot.security.network.contains_internal_url",
+        lambda _command: True,
+    )
+
+    result = await loop.process_direct(
+        "check the local status",
+        session_key="cli:recovery",
+        channel="cli",
+        chat_id="cli-recovery",
+    )
+
+    assert provider.chat_with_retry.await_count == 2
+    assert result is not None
+    assert result.content == "Continuing in the CLI turn."
+    spawn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_api_direct_turn_does_not_enable_pre_dispatch_recovery(
+    tmp_path, admitted_async, monkeypatch,
+):
+    from nanobot.agent.tools.shell import ExecTool
+    from nanobot.agent.turn import TurnSource
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content="checking",
+            tool_calls=[ToolCallRequest(
+                id="private-url",
+                name="exec",
+                arguments={"command": "curl -s http://127.0.0.1:8188/system_stats"},
+            )],
+            usage=None,
+        ),
+        LLMResponse(content="must not be requested", tool_calls=[], usage=None),
+    ])
+    loop = await _make_loop(tmp_path, admitted_async, provider)
+    exec_tool = loop.tools.get("exec")
+    assert isinstance(exec_tool, ExecTool)
+    spawn = AsyncMock(side_effect=AssertionError("denied command reached process launch"))
+    monkeypatch.setattr(exec_tool, "_spawn", spawn)
+    monkeypatch.setattr(
+        "nanobot.security.network.contains_internal_url",
+        lambda _command: True,
+    )
+
+    result = await loop.process_direct(
+        "check the local status",
+        session_key="api:no-recovery",
+        channel="api",
+        chat_id="api-no-recovery",
+        source=TurnSource.API,
+    )
+
+    assert provider.chat_with_retry.await_count == 1
+    assert result is not None
+    assert "internal/private URL" in result.content
+    spawn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_managed_chat_runs_configured_mcp_tool(tmp_path, admitted_async):
+    from types import SimpleNamespace
+
+    from nanobot.agent.tools.mcp import MCPToolWrapper
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+    provider.generation = GenerationSettings()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        LLMResponse(
+            content="checking",
+            tool_calls=[ToolCallRequest(
+                id="mcp-status",
+                name="mcp_comfy_comfy_status",
+                arguments={},
+            )],
+            usage=None,
+        ),
+        LLMResponse(content="Comfy status completed.", tool_calls=[], usage=None),
+    ])
+    loop = await _make_loop(tmp_path, admitted_async, provider)
+    grant_root = loop.workspace / "granted-project"
+    grant_root.mkdir()
+    grants = FolderGrantStore.for_workspace(
+        loop.workspace,
+        sessions_root=loop.sessions.sessions_root,
+    )
+    grants.upsert(
+        {"path": str(grant_root), "file_access": "read_only", "commands": True},
+        expected_revision=0,
+    )
+    session = SimpleNamespace(
+        call_tool=AsyncMock(return_value=SimpleNamespace(content=[], isError=False))
+    )
+    loop.tools.register(MCPToolWrapper(
+        session,
+        "comfy",
+        SimpleNamespace(
+            name="comfy_status",
+            description="Comfy status fixture",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        tool_timeout=5,
+        transport_type="stdio",
+        server_command="fixture",
+    ))
+
+    result = await _execute_inbound(loop,
+        InboundMessage(
+            channel="websocket",
+            sender_id="user",
+            chat_id="managed-mcp-chat",
+            content="check Comfy",
+        ),
+    )
+
+    assert provider.chat_with_retry.await_count == 2
+    assert result is not None
+    assert result.content == "Comfy status completed."
+    session.call_tool.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_next_turn_after_llm_error_keeps_turn_boundary(tmp_path, admitted_async):
     from nanobot.agent.runner import _PERSISTED_MODEL_ERROR_PLACEHOLDER
     from nanobot.bus.events import InboundMessage

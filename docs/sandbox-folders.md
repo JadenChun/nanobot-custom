@@ -24,6 +24,13 @@ file tools for their permitted files. Ordinary indexed project folders do not
 acquire these special policies. Network policy is unchanged: a remote
 (non-loopback) WebUI client can preview only files inside the focused folder.
 
+Configured MCP servers are trusted integrations and their enabled tools are
+available in managed WebUI chats. An MCP server runs outside the Sandbox
+filesystem boundary, so review its command and `enabledTools` before enabling
+it. A shell command that targets a private or internal URL is rejected before
+launch; one such denial may be followed by a fresh model turn for unrelated
+permitted work, without replaying the command or its skipped batch.
+
 ## Folders Settings
 
 Use **Settings → Folders → Add folder** for any existing directory. Git is

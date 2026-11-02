@@ -8,7 +8,7 @@ from contextvars import ContextVar, Token
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 
@@ -26,6 +26,9 @@ from nanobot.agent.turn import TurnContext
 from nanobot.bus.events import OutboundMessage
 from nanobot.config.paths import get_workspace_path
 from nanobot.security.workspace_access import current_tool_workspace
+
+if TYPE_CHECKING:
+    from nanobot.context_repo.policy import ResourceAccessPolicy
 
 _CURRENT_MESSAGE_SENDS: ContextVar[set[tuple[str, str]] | None] = ContextVar(
     "message_sends",
@@ -92,12 +95,14 @@ class MessageTool(Tool):
         default_message_id: str | None = None,
         workspace: str | Path | None = None,
         restrict_to_workspace: bool = False,
+        resource_policy: "ResourceAccessPolicy | None" = None,
     ):
         self._send_callback = send_callback
         self._workspace = (
             Path(workspace).expanduser() if workspace is not None else get_workspace_path()
         )
         self._restrict_to_workspace = restrict_to_workspace
+        self._resource_policy = resource_policy
         self._fallback_channel = default_channel
         self._fallback_chat_id = default_chat_id
         self._fallback_message_id = default_message_id
@@ -114,6 +119,11 @@ class MessageTool(Tool):
             send_callback=send_callback,
             workspace=ctx.workspace,
             restrict_to_workspace=ctx.config.restrict_to_workspace,
+            resource_policy=(
+                ctx.fork_dependencies.resource_policy
+                if ctx.fork_dependencies is not None
+                else None
+            ),
         )
 
     async def execute_with_context(
@@ -182,7 +192,7 @@ class MessageTool(Tool):
         )
 
     def _resolve_media(self, media: list[str]) -> list[str]:
-        """Resolve local media attachments and enforce workspace restriction when enabled."""
+        """Resolve local media attachments and enforce the managed read policy."""
         resolved: list[str] = []
         access = current_tool_workspace(
             self._workspace,
@@ -192,11 +202,27 @@ class MessageTool(Tool):
         for p in media:
             if p.startswith(("http://", "https://")):
                 resolved.append(p)
-            elif not access.restrict_to_workspace:
+                continue
+            if not access.restrict_to_workspace:
                 path = Path(p).expanduser()
                 resolved.append(p if path.is_absolute() else str(workspace / path))
-            else:
-                resolved.append(str(resolve_workspace_path(p, workspace, access.allowed_root)))
+                continue
+            candidate = Path(p).expanduser()
+            if not candidate.is_absolute():
+                candidate = workspace / candidate
+            if self._resource_policy is not None and self._resource_policy.managed_mode:
+                # Managed reads are authorized by the shared policy, not by the
+                # focus-only workspace root. This keeps outbound attachments
+                # consistent with read_file for folder-granted files.
+                validated = candidate.resolve(strict=False)
+                self._resource_policy.validate_path(
+                    validated,
+                    "read",
+                    target_kind="file",
+                )
+                resolved.append(str(validated))
+                continue
+            resolved.append(str(resolve_workspace_path(p, workspace, access.allowed_root)))
         return resolved
 
     async def execute(

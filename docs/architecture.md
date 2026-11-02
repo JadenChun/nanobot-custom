@@ -60,6 +60,33 @@ that lifecycle. `AgentLoop.from_config()` therefore requires a caller-owned
 
 Keep this split in mind when debugging. If a problem is about channel routing, session keys, workspace selection, or outbound delivery, start in `agent/loop.py`. If it is about provider calls, tool calls, streaming, or iteration limits, start in `agent/runner.py`.
 
+## Model capabilities
+
+The loop is model-agnostic. Model facts travel through an immutable
+`ModelCapabilities` snapshot captured by `LLMRuntime` for the turn:
+
+- context and output limits;
+- input/output modalities;
+- image-request pricing for the exact provider/model route;
+- capability provenance.
+
+`ProviderSpec.model_metadata()` provides curated catalog facts. Provider
+adapters may resolve more exact capabilities and image pricing in
+`providers/capabilities.py` and `providers/image_pricing.py`. Request
+measurement consumes the snapshot; it does not branch on model names. An
+unknown model uses a bounded generic fallback, while an explicitly text-only
+model is sanitized before dispatch. Image transport preparation is separate
+from token accounting.
+
+Provider runtime behavior is a separate immutable `ProviderPolicy` snapshot,
+also captured for the turn. It declares request accounting, the optional
+payload-byte ceiling, usage-anchor and source-summary support, overflow
+detection, and the image-pricing mode. `local_manager` remains a registry
+preset that declares `estimated_compat`; it is not a runtime branch. Any
+OpenAI-compatible provider can declare the same policy or opt in through
+`requestAccounting` / `maxRequestBytes` config. Generic budget, compaction, and
+pricing code consumes policy values rather than provider names.
+
 ## Providers
 
 Provider metadata is centralized in `nanobot/providers/registry.py`. Configuration fields live in `nanobot/config/schema.py`.

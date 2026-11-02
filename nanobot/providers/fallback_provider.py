@@ -14,13 +14,14 @@ from loguru import logger
 
 from nanobot.events import RetryStatusEvent
 from nanobot.providers.base import (
-    FinalizedRequestBudgetExceeded,
     GenerationSettings,
     LLMCallObserver,
     LLMProvider,
     LLMResponse,
+    PreparedRequestBudgetPreview,
     ProviderCallContext,
     ProviderConversationState,
+    ProviderRequestRejected,
     RetryEventCallback,
     RetryStatusCallback,
     track_stream_delivery,
@@ -188,7 +189,9 @@ class FallbackProvider(LLMProvider):
                     transport_receipt=None,
                     continuation_metadata_present=False,
                 )
-        return replace(response, **states) if states else response
+        if not states and response.local_usage_receipt is None:
+            return response
+        return replace(response, **states, local_usage_receipt=None)
 
     def _primary_call_context(
         self,
@@ -205,12 +208,12 @@ class FallbackProvider(LLMProvider):
         request_limits = provider_context.request_limits
         if request_limits is not None and self._primary_context_window_tokens is not None:
             request_limits = request_limits.for_model_window(self._primary_context_window_tokens)
-        return ProviderCallContext(
+        return replace(
+            provider_context,
             conversation_state=provider_context.conversation_state,
             request_limits=request_limits,
             context_window_tokens=context_window_tokens,
-            session_id=provider_context.session_id,
-            events=provider_context.events,
+            local_usage_anchor=None,
         )
 
     def _primary_available(self) -> bool:
@@ -224,7 +227,50 @@ class FallbackProvider(LLMProvider):
 
     async def chat_once(self, **kwargs: Any) -> LLMResponse:
         """Keep bounded auxiliary work on its captured primary model."""
+        provider_context = kwargs.get("provider_context")
+        if isinstance(provider_context, ProviderCallContext):
+            kwargs["provider_context"] = self._primary_call_context(
+                provider_context,
+                kwargs.get("model"),
+            )
         return self._strip_bound_continuation(await self._primary.chat_once(**kwargs))
+
+    async def chat_stream_once(self, **kwargs: Any) -> LLMResponse:
+        """Stream one auxiliary request through the captured primary only."""
+        provider_context = kwargs.get("provider_context")
+        if isinstance(provider_context, ProviderCallContext):
+            kwargs["provider_context"] = self._primary_call_context(
+                provider_context,
+                kwargs.get("model"),
+            )
+        return self._strip_bound_continuation(
+            await self._primary.chat_stream_once(**kwargs)
+        )
+
+    def preview_request_budget(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str | None,
+        generation: GenerationSettings,
+        provider_context: ProviderCallContext,
+        stream: bool,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> PreparedRequestBudgetPreview | None:
+        """Delegate only when this wrapper has one unambiguous primary route."""
+        if self._has_fallbacks:
+            return None
+        context = self._primary_call_context(provider_context, model)
+        return self._primary.preview_request_budget(
+            messages=messages,
+            tools=tools,
+            model=model,
+            generation=generation,
+            provider_context=context,
+            stream=stream,
+            tool_choice=tool_choice,
+        )
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
         kwargs["messages"] = messages
@@ -422,6 +468,11 @@ class FallbackProvider(LLMProvider):
         provider_context: ProviderCallContext,
         **kwargs: Any,
     ) -> LLMResponse:
+        if provider_context.single_attempt:
+            return await self.chat_stream_once(
+                provider_context=provider_context,
+                **kwargs,
+            )
         on_stream_recover = kwargs.pop("on_stream_recover", None)
         call_kwargs: dict[str, Any] = dict(kwargs)
         call_kwargs["provider_context"] = self._primary_call_context(
@@ -561,12 +612,12 @@ class FallbackProvider(LLMProvider):
                 request_limits = provider_context.request_limits
                 if request_limits is not None and fallback.context_window_tokens is not None:
                     request_limits = request_limits.for_model_window(fallback.context_window_tokens)
-                fallback_kwargs["provider_context"] = ProviderCallContext(
+                fallback_kwargs["provider_context"] = replace(
+                    provider_context,
                     conversation_state=state,
                     request_limits=request_limits,
                     context_window_tokens=context_window_tokens,
-                    session_id=provider_context.session_id,
-                    events=provider_context.events,
+                    local_usage_anchor=None,
                 )
             if fallback.reasoning_effort is None:
                 fallback_kwargs.pop("reasoning_effort", None)
@@ -639,7 +690,7 @@ class FallbackProvider(LLMProvider):
             return await call(provider, kwargs), None
         except asyncio.CancelledError:
             raise
-        except FinalizedRequestBudgetExceeded:
+        except ProviderRequestRejected:
             raise
         except Exception as exc:
             response = LLMProvider._error_response_from_exception(exc)

@@ -9,7 +9,7 @@ import sys
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import typer
 from loguru import logger
@@ -39,6 +39,7 @@ from nanobot.cli.webui_support import (
 from nanobot.config.paths import get_default_sessions_root, is_default_workspace
 from nanobot.config.schema import Config
 from nanobot.gateway.runtime import GatewayInstance
+from nanobot.runtime_errors import RuntimeOwnedWorkError
 from nanobot.security.network import is_loopback_host
 from nanobot.utils.helpers import sync_workspace_templates
 from nanobot.webui.build import BuildMode
@@ -116,6 +117,10 @@ def _install_gateway_shutdown_handlers(
     shutdown_event: asyncio.Event,
     tasks: list[asyncio.Task[Any]],
     print_status: Callable[[str], None],
+    *,
+    on_first_sigint: Callable[[], None] | None = None,
+    on_force: Callable[[], None] | None = None,
+    on_sigterm: Callable[[], None] | None = None,
 ) -> Callable[[], None]:
     loop_signals: list[int] = []
     previous_handlers: list[tuple[int, Any]] = []
@@ -124,10 +129,17 @@ def _install_gateway_shutdown_handlers(
     def request_shutdown(signum: int) -> None:
         nonlocal requested
         if requested:
+            if on_force is not None:
+                on_force()
             for task in tasks:
                 task.cancel()
             return
         requested = True
+        if signum == signal.SIGINT:
+            if on_first_sigint is not None:
+                on_first_sigint()
+        elif on_sigterm is not None:
+            on_sigterm()
         logger.info("Gateway shutdown requested by {}", _signal_name(signum))
         print_status("\nShutting down... Press Ctrl+C again to force.")
         shutdown_event.set()
@@ -154,6 +166,26 @@ def _install_gateway_shutdown_handlers(
                 signal.signal(signum, handler)
 
     return restore
+
+
+def _gateway_failure_group(message: str, errors: Sequence[BaseException]) -> BaseException:
+    if len(errors) == 1:
+        return errors[0]
+    if all(isinstance(error, Exception) for error in errors):
+        return ExceptionGroup(
+            message,
+            [error for error in errors if isinstance(error, Exception)],
+        )
+    return BaseExceptionGroup(message, list(errors))
+
+
+def _has_owned_work_error(error: BaseException) -> bool:
+    if isinstance(error, RuntimeOwnedWorkError):
+        return True
+    if isinstance(error, BaseExceptionGroup):
+        group = cast(BaseExceptionGroup[BaseException], error)
+        return any(_has_owned_work_error(item) for item in group.exceptions)
+    return False
 
 
 def _print_gateway_health_endpoint(host: str, port: int) -> None:
@@ -253,15 +285,36 @@ async def _close_gateway_runtime(
     restore: Callable[[], None],
 ) -> None:
     """Join gateway tasks before closing their single owning composition."""
+    errors: list[BaseException] = []
     handle.agent.stop()
     for task in tasks:
         task.cancel()
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
-    disconnect_webui()
-    await composition.aclose()
-    await handle.bus.drain()
-    restore()
+    try:
+        disconnect_webui()
+    except BaseException as exc:
+        errors.append(exc)
+    try:
+        await composition.aclose()
+    except BaseException as exc:
+        errors.append(exc)
+        if _has_owned_work_error(exc):
+            try:
+                restore()
+            except BaseException as restore_error:
+                errors.append(restore_error)
+            raise _gateway_failure_group("gateway shutdown failed", errors)
+    try:
+        await handle.bus.drain()
+    except BaseException as exc:
+        errors.append(exc)
+    try:
+        restore()
+    except BaseException as exc:
+        errors.append(exc)
+    if errors:
+        raise _gateway_failure_group("gateway shutdown failed", errors)
 
 
 def _run_gateway(
@@ -443,6 +496,9 @@ def _run_gateway(
         processes = None
         cron_gateway = None
         telegram_busy = None
+        cron_shutdown_mode: Literal["graceful", "bounded", "forced"] | None = None
+        primary_error: BaseException | None = None
+        cleanup_errors: list[BaseException] = []
 
         def disconnect_webui() -> None:
             pass
@@ -450,9 +506,41 @@ def _run_gateway(
         def restore() -> None:
             pass
 
+        def request_cron_shutdown(
+            mode: Literal["graceful", "bounded", "forced"],
+        ) -> None:
+            nonlocal cron_shutdown_mode
+            if cron_shutdown_mode == "forced" and mode != "forced":
+                return
+            cron_shutdown_mode = mode
+            if cron_gateway is None:
+                return
+            if mode == "graceful":
+                cron_gateway.begin_graceful_shutdown()
+            elif mode == "bounded":
+                cron_gateway.request_bounded_shutdown()
+            else:
+                cron_gateway.force_shutdown()
+
+        def record_cleanup_error(error: BaseException) -> None:
+            cleanup_errors.append(error)
+            if _has_owned_work_error(error):
+                errors = ([primary_error] if primary_error is not None else []) + cleanup_errors
+                try:
+                    restore()
+                except BaseException as restore_error:
+                    errors.append(restore_error)
+                raise _gateway_failure_group("gateway shutdown retained owned work", errors)
+
         try:
             restore = _install_gateway_shutdown_handlers(
-                asyncio.get_running_loop(), shutdown, tasks, console.print,
+                asyncio.get_running_loop(),
+                shutdown,
+                tasks,
+                console.print,
+                on_first_sigint=lambda: request_cron_shutdown("graceful"),
+                on_force=lambda: request_cron_shutdown("forced"),
+                on_sigterm=lambda: request_cron_shutdown("bounded"),
             )
             webui_url = _webui_browser_url(config)
             browser_host = _host_for_local_browser(config.gateway.host)
@@ -502,6 +590,8 @@ def _run_gateway(
                 cron_gateway = GatewayCron(config.gateway.cron, handle.cron, agent, handle.sessions,
                     channels, config.workspace_path, root,
                     is_codex=lambda: agent.provider.provider_name == "openai_codex")
+                if cron_shutdown_mode is not None:
+                    request_cron_shutdown(cron_shutdown_mode)
             if config.gateway.process_continuations:
                 import hashlib
 
@@ -610,27 +700,46 @@ def _run_gateway(
                 done, _pending = await asyncio.wait(
                     [*tasks, wait_shutdown], return_when=asyncio.FIRST_COMPLETED,
                 )
-                if wait_shutdown not in done:
-                    for task in done:
+                for task in done:
+                    if task is not wait_shutdown and not task.cancelled():
                         task.result()
                 wait_shutdown.cancel()
                 with suppress(asyncio.CancelledError):
                     await wait_shutdown
             return False
-        except WebUIDevError:
+        except WebUIDevError as exc:
+            primary_error = exc
             logger.exception("WebUI development server failed")
             return True
+        except BaseException as exc:
+            primary_error = exc
+            raise
         finally:
             if telegram_busy is not None:
-                await telegram_busy.aclose()
+                try:
+                    await telegram_busy.aclose()
+                except BaseException as exc:
+                    record_cleanup_error(exc)
             if cron_gateway is not None:
-                await cron_gateway.aclose()
+                try:
+                    await cron_gateway.aclose()
+                except BaseException as exc:
+                    record_cleanup_error(exc)
             if processes is not None:
-                await processes.aclose()
-            await _close_gateway_runtime(
-                handle, composition, tasks,
-                disconnect_webui=disconnect_webui, restore=restore,
-            )
+                try:
+                    await processes.aclose()
+                except BaseException as exc:
+                    record_cleanup_error(exc)
+            try:
+                await _close_gateway_runtime(
+                    handle, composition, tasks,
+                    disconnect_webui=disconnect_webui, restore=restore,
+                )
+            except BaseException as exc:
+                record_cleanup_error(exc)
+            if cleanup_errors:
+                errors = ([primary_error] if primary_error is not None else []) + cleanup_errors
+                raise _gateway_failure_group("gateway shutdown failed", errors)
 
     unexpected_failure = asyncio.run(run())
     if unexpected_failure:

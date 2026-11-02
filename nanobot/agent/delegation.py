@@ -36,7 +36,11 @@ from nanobot.agent.tools.mcp import (
     connect_mcp_servers,
     is_read_only_mcp_tool,
 )
-from nanobot.agent.tools.registry import ManagedToolDispatchGuard, ToolRegistry
+from nanobot.agent.tools.registry import (
+    ManagedToolDispatchGuard,
+    ToolRegistry,
+    managed_webui_tool_names,
+)
 from nanobot.agent.tools.web import (
     WebFetchConfig,
     WebFetchTool,
@@ -332,7 +336,10 @@ class ForegroundAgentManager:
         extension_tools = optional_role_tools(profile.role)
         if extension_tools is not None:
             extension_tools.set_dispatch_guard(
-                ManagedToolDispatchGuard(self.resource_policy.folder_grants),
+                ManagedToolDispatchGuard(
+                    self.resource_policy.folder_grants,
+                    allowed_names=managed_webui_tool_names(extension_tools.iter_tools()),
+                ),
             )
             return extension_tools
 
@@ -387,7 +394,12 @@ class ForegroundAgentManager:
             for tool in self._read_only_mcp_tools.iter_tools():
                 if is_read_only_mcp_tool(tool):
                     tools.register(tool)
-        tools.set_dispatch_guard(ManagedToolDispatchGuard(self.resource_policy.folder_grants))
+        tools.set_dispatch_guard(
+            ManagedToolDispatchGuard(
+                self.resource_policy.folder_grants,
+                allowed_names=managed_webui_tool_names(tools.iter_tools()),
+            )
+        )
         return tools
 
     def _read_only_tools(self, role: str = "planner") -> ToolRegistry:

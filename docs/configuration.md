@@ -312,6 +312,38 @@ Tracing covers the providers that go through nanobot's OpenAI-compatible client 
 | `github_copilot` | LLM (GitHub Copilot, OAuth) | `nanobot provider login github-copilot` |
 | `qianfan` | LLM (Baidu Qianfan) | [cloud.baidu.com](https://cloud.baidu.com/doc/qianfan/s/Hmh4suq26) |
 
+### Provider Runtime Policy
+
+Optional provider fields select generic request accounting without touching
+provider code:
+
+| Field | Values | Default |
+|---|---|---|
+| `requestAccounting` | `"strict"`, `"estimated_compat"` | Provider preset (strict unless declared) |
+| `maxRequestBytes` | Positive integer | 64 MiB when `estimated_compat` has no explicit cap |
+
+`estimated_compat` is intended for local gateways that route arbitrary model
+aliases or report approximate usage. It enables bounded cl100k text estimation,
+locally reported usage anchors, provider-preview source summaries, and
+compatibility `400` overflow recovery. `strict` disables those behaviors.
+
+```json
+{
+  "providers": {
+    "vllm": {
+      "apiBase": "http://127.0.0.1:8000/v1",
+      "requestAccounting": "estimated_compat",
+      "maxRequestBytes": 67108864
+    }
+  }
+}
+```
+
+Existing configurations are unchanged. Local Inference Manager declares
+`estimated_compat`; other local and hosted providers stay strict unless the
+config opts in. `nanobot status` and the WebUI provider settings payload expose
+the effective policy without credentials.
+
 <details>
 <summary><b>OpenAI</b></summary>
 
@@ -1707,6 +1739,21 @@ nanobot uses a shared SSRF guard for built-in web fetches and HTTP/SSE MCP conne
 ```
 
 Keep whitelist entries as narrow as possible, such as a single host CIDR (`192.168.1.50/32`). The whitelist is global for the shared SSRF guard; it is not limited to one tool or one MCP server.
+
+A shell command containing a private or internal URL is rejected before the
+command starts. In a normal foreground chat, one such pre-launch denial may be
+followed by a fresh model turn so unrelated permitted work can continue. The
+denied command and other calls queued in the same batch are never replayed. A
+second denial ends the run. The private target remains blocked; recovery is not
+a network exception. Whitelist only an exact trusted service when that access is
+intended.
+
+Configured MCP servers are trusted integrations. Their registered tools are
+available as ordinary model tools in managed WebUI chats, just as in DSH; use
+`enabledTools` to limit what a server contributes. The MCP server runs outside
+the Sandbox filesystem boundary, so review its command and configuration before
+enabling it. Folder grants control Nanobot's file and shell tools, not the
+external MCP server's own host access.
 
 HTTP/SSE MCP connections use the same process-wide proxy environment behavior as `web_fetch`: proxied targets use the configured proxy, and URLs excluded by `NO_PROXY` remain DNS-pinned direct connections.
 

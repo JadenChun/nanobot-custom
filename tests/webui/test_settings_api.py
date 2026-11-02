@@ -2147,6 +2147,45 @@ def test_settings_payload_lists_local_manager_and_commandcode_separately(
     assert providers["commandcode"]["configured"] is True
 
 
+def test_settings_payload_exposes_effective_provider_policy(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.providers.local_manager.api_base = "http://127.0.0.1:8082/v1"
+    config.providers.vllm.request_accounting = "estimated_compat"
+    config.providers.vllm.max_request_bytes = 1_048_576
+    save_config(config, config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    payload = settings_payload()
+    providers = {row["name"]: row for row in payload["providers"]}
+
+    assert providers["local_manager"]["policy"] == {
+        "request_accounting": "estimated_compat",
+        "max_request_bytes": 64 * 1024 * 1024,
+        "supports_usage_anchor": True,
+        "supports_source_summary": True,
+        "overflow_detection": "compat_400",
+        "image_pricing": "local_generic",
+        "source": "preset",
+    }
+    assert providers["vllm"]["policy"] == {
+        "request_accounting": "estimated_compat",
+        "max_request_bytes": 1_048_576,
+        "supports_usage_anchor": True,
+        "supports_source_summary": True,
+        "overflow_detection": "compat_400",
+        "image_pricing": "auto",
+        "source": "config",
+    }
+    assert providers["openai"]["policy"]["request_accounting"] == "strict"
+    assert providers["openai"]["policy"]["max_request_bytes"] is None
+    assert providers["openai"]["policy"]["source"] == "default"
+    assert "api_key" not in providers["local_manager"]["policy"]
+
+
 def test_local_manager_provider_uses_live_gateway_catalog(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

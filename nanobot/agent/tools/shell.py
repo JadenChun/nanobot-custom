@@ -19,7 +19,14 @@ from urllib.parse import unquote
 from loguru import logger
 from pydantic import Field
 
-from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
+from nanobot.agent.tools.base import (
+    PRIVATE_NETWORK_DENIAL_NOTE,
+    Tool,
+    ToolDenialKind,
+    ToolDenialResult,
+    ToolResult,
+    tool_parameters,
+)
 from nanobot.agent.tools.context import (
     ToolContext,
     current_request_context,
@@ -1071,7 +1078,11 @@ class ExecTool(Tool):
             return ToolResult.error("Error: Shell-based desktop mutation is blocked because desktop_use is enabled")
         from nanobot.security.network import contains_internal_url
         if contains_internal_url(cmd):
-            return ToolResult.error("Error: Command blocked by safety guard (internal/private URL detected)")
+            return ToolDenialResult(
+                "Error: Command blocked by safety guard (internal/private URL detected)"
+                f"\n\n{PRIVATE_NETWORK_DENIAL_NOTE}",
+                kind=ToolDenialKind.PRIVATE_NETWORK,
+            )
         if self.resource_policy:
             policy_error = self.resource_policy.validate_exec(command, cwd)
             if policy_error:

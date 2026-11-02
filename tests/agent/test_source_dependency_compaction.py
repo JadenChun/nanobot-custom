@@ -43,6 +43,20 @@ async def _record_retrieval(writer, reader, reference):
     ))
 
 
+def install_test_stream_dispatch(provider, *, after_response=None, observe_context=None):
+    stream_with_context = provider.chat_stream_with_context
+
+    async def dispatch(*, provider_context, **kwargs):
+        if observe_context is not None:
+            observe_context(provider_context)
+        if provider_context.on_transport_attempt is not None:
+            provider_context.on_transport_attempt('test-stream')
+        response = await stream_with_context(provider_context=provider_context, **kwargs)
+        return after_response(response) if after_response is not None else response
+
+    provider.chat_stream_with_context = dispatch
+
+
 def _state(writer, reader, *, local=False):
     writer.append_message({'role': 'user', 'content': 'current instruction'})
     stream = writer.stream_id if local else None
@@ -245,6 +259,11 @@ async def test_projected_source_summary_publishes_v2_without_artifact_publicatio
         state.conversation.replace_transcript(state.source_compaction.raw_messages)
         publish_descriptor = Mock(side_effect=AssertionError('auxiliary compaction must not publish artifacts'))
         monkeypatch.setattr(SourceSessionStore, 'commit_artifact_descriptor', publish_descriptor)
+        observed_contexts = []
+        install_test_stream_dispatch(
+            state.config.provider,
+            observe_context=observed_contexts.append,
+        )
 
         await _prepare(state, state.config.tools.get_definitions())
 
@@ -255,6 +274,13 @@ async def test_projected_source_summary_publishes_v2_without_artifact_publicatio
         auxiliary_payload = str(state.config.provider.calls[0][0])
         assert 'Tool output stored as ' + descriptor.reference in auxiliary_payload
         assert len(auxiliary_payload) < 4_000
+        metrics = state.source_compaction.attempts[-1]
+        assert metrics.prefix_mode == 'canonical'
+        assert metrics.prefix_fallback_reason == 'summary_provider_missing_capability'
+        assert observed_contexts[0].source_summary_mode == 'canonical'
+        assert observed_contexts[0].single_attempt
+        assert observed_contexts[0].request_deadline_monotonic is not None
+        assert state.config.provider.calls[0][1]['tools'] is None
 
 
 async def test_proofless_publication_cannot_downgrade_projected_evidence_to_schema_v1(tmp_path):
@@ -286,14 +312,11 @@ async def test_projected_dependency_cas_change_after_summary_never_publishes_pro
         state.source.replace_projection(projected)
         state.source_compaction.raw_messages[:] = projected.messages()
         state.conversation.replace_transcript(state.source_compaction.raw_messages)
-        original_chat = state.config.provider.chat
-
-        async def mutate_after_transport(*args, **kwargs):
-            response = await original_chat(*args, **kwargs)
+        def mutate_after_transport(response):
             writer.store.update_metadata(writer.owner.key, {'title': 'concurrent title'})
             return response
 
-        state.config.provider.chat = mutate_after_transport
+        install_test_stream_dispatch(state.config.provider, after_response=mutate_after_transport)
         before = writer.owner.read_snapshot()
         with pytest.raises(SessionWriteConflict):
             await _prepare(state, state.config.tools.get_definitions())
@@ -403,14 +426,11 @@ async def test_root_dependency_cas_change_after_summary_never_publishes_projecti
         reader = ArtifactReader(writer, 'root_history', store, tool)
         await _record_retrieval(writer, reader, descriptor.reference)
         state = _state(writer, reader)
-        original_chat = state.config.provider.chat
-
-        async def mutate_after_transport(*args, **kwargs):
-            response = await original_chat(*args, **kwargs)
+        def mutate_after_transport(response):
             writer.store.update_metadata(writer.owner.key, {'title': 'concurrent title'})
             return response
 
-        state.config.provider.chat = mutate_after_transport
+        install_test_stream_dispatch(state.config.provider, after_response=mutate_after_transport)
         before = writer.owner.read_snapshot()
         active = state.source.transcript
         with pytest.raises(SessionWriteConflict):
@@ -476,10 +496,7 @@ async def test_dependency_change_after_first_fold_blocks_second_transport_and_pu
             return (8_000 if 'later chunk' in text else 5_000), 'fixture'
 
         provider.estimate_prompt_tokens = count
-        original_chat = provider.chat
-
-        async def revoke_after_first_fold(*args, **kwargs):
-            response = await original_chat(*args, **kwargs)
+        def revoke_after_first_fold(response):
             if len(provider.calls) == 1:
                 if revocation == 'corrupt_blob':
                     next(store.root.rglob('*.blob')).write_bytes(b'corrupt')
@@ -487,7 +504,7 @@ async def test_dependency_change_after_first_fold_blocks_second_transport_and_pu
                     tool._workspace = tmp_path / 'revoked-workspace'
             return response
 
-        provider.chat = revoke_after_first_fold
+        install_test_stream_dispatch(provider, after_response=revoke_after_first_fold)
         with pytest.raises((OSError, ArtifactValidationError)):
             await _prepare(state, registry.get_definitions())
         assert len(provider.calls) == 1
@@ -501,14 +518,11 @@ async def test_isolated_dependent_compaction_keeps_root_checkpoint_and_allows_ro
         await _record_retrieval(writer, reader, descriptor.reference)
         state = _state(writer, reader, local=True)
         parent = SourceTurnWriter(writer.store, writer.owner, run_id='root')
-        original_chat = state.config.provider.chat
-
-        async def append_unrelated(*args, **kwargs):
-            response = await original_chat(*args, **kwargs)
+        def append_unrelated(response):
             parent.append_message({'role': 'assistant', 'content': 'unrelated root append'})
             return response
 
-        state.config.provider.chat = append_unrelated
+        install_test_stream_dispatch(state.config.provider, after_response=append_unrelated)
         before = writer.owner.read_snapshot()
         await _prepare(state, state.config.tools.get_definitions())
         after = writer.owner.read_snapshot()

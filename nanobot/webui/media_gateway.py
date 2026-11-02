@@ -108,6 +108,11 @@ class WebUIMediaGateway:
                 path,
                 allow_folder_grants=allow_folder_grants,
             ),
+            allow_external=bool(
+                allow_folder_grants
+                and self._resource_policy is not None
+                and self._resource_policy.managed_mode
+            ),
         )
 
     def augment_transcript_media(

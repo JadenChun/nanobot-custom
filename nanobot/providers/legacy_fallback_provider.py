@@ -13,6 +13,7 @@ from nanobot.providers.base import (
     LLMCallObserver,
     LLMProvider,
     LLMResponse,
+    PreparedRequestBudgetPreview,
     ProviderCallContext,
     ProviderConversationState,
     RetryEventCallback,
@@ -115,7 +116,8 @@ class LegacyFallbackProvider(FallbackProvider, Generic[_Preset]):
             local['provider_context'] = replace(
                 context, conversation_state=self._state(slot, context.conversation_state, local['model']),
                 request_limits=request_limits,
-                context_window_tokens=capacity if self._candidates[slot].supports_native_compaction(local['model']) else None)
+                context_window_tokens=capacity if self._candidates[slot].supports_native_compaction(local['model']) else None,
+                local_usage_anchor=None)
         return local
 
     def _tag(self, slot: int, response: LLMResponse) -> LLMResponse:
@@ -131,7 +133,44 @@ class LegacyFallbackProvider(FallbackProvider, Generic[_Preset]):
                     transport_receipt=None,
                     continuation_metadata_present=False,
                 )
-        return replace(response, **states) if states else response
+        if not states and response.local_usage_receipt is None:
+            return response
+        return replace(response, **states, local_usage_receipt=None)
+
+    async def chat_stream_once(self, **kwargs: Any) -> LLMResponse:
+        """Keep one auxiliary stream on the captured primary preset."""
+        local = self._kwargs(0, kwargs)
+        return self._tag(0, await self._candidates[0].chat_stream_once(**local))
+
+    def preview_request_budget(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        model: str | None,
+        generation: GenerationSettings,
+        provider_context: ProviderCallContext,
+        stream: bool,
+        tool_choice: str | dict[str, Any] | None = None,
+    ) -> PreparedRequestBudgetPreview | None:
+        if len(self._candidates) != 1:
+            return None
+        route = self._kwargs(0, {
+            "messages": messages,
+            "tools": tools,
+            "model": model,
+            "provider_context": provider_context,
+        })
+        context = route.pop("provider_context")
+        return self._candidates[0].preview_request_budget(
+            messages=messages,
+            tools=tools,
+            model=route["model"],
+            generation=generation,
+            provider_context=context,
+            stream=stream,
+            tool_choice=tool_choice,
+        )
 
     async def chat(self, messages: list[dict[str, Any]], **kwargs: Any) -> LLMResponse:
         kwargs['messages'] = messages
@@ -151,6 +190,11 @@ class LegacyFallbackProvider(FallbackProvider, Generic[_Preset]):
     async def chat_stream_with_context(
         self, *, provider_context: ProviderCallContext, **kwargs: Any,
     ) -> LLMResponse:
+        if provider_context.single_attempt:
+            return await self.chat_stream_once(
+                provider_context=provider_context,
+                **kwargs,
+            )
         kwargs.pop('on_stream_recover', None)
         return self._tag(0, await self._primary.chat_stream_with_context(
             **self._kwargs(0, dict(kwargs, provider_context=provider_context))))

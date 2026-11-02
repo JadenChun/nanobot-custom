@@ -131,10 +131,14 @@ class CronRuntime:
         self._controllers: dict[int, tuple[InternalController, str, int]] = {}
         self._close_task: asyncio.Task[None] | None = None
         self._timer_task: asyncio.Task[None] | None = None
+        self._shutdown_mode: Literal["bounded", "graceful", "forced"] = "bounded"
+        self._shutdown_changed = asyncio.Event()
 
     def acquire(self) -> None:
         if self._close_task is not None:
             raise SchedulerConflictError("closed cron runtime cannot reacquire")
+        if self._shutdown_mode != "bounded":
+            raise SchedulerConflictError("stopping cron runtime cannot acquire")
         self.scheduler.acquire_and_reconcile()
         self._accepting = True
         try:
@@ -285,6 +289,74 @@ class CronRuntime:
         self._accepting = False
         self.scheduler.stop_claiming()
 
+    def begin_graceful_shutdown(self) -> None:
+        """Fence new work and join current effects without a timeout or cancellation."""
+        if self._shutdown_mode != "forced":
+            self._shutdown_mode = "graceful"
+            self._shutdown_changed.clear()
+        self.stop_claiming()
+
+    def request_bounded_shutdown(self) -> None:
+        """Replace a graceful wait with the ordinary bounded drain policy."""
+        if self._shutdown_mode != "forced":
+            self._shutdown_mode = "bounded"
+        self._shutdown_changed.set()
+        self.stop_claiming()
+
+    def force_shutdown(self) -> None:
+        """Cancel admitted cron work directly; resistant effects retain ownership."""
+        self._shutdown_mode = "forced"
+        self._shutdown_changed.set()
+        self.stop_claiming()
+        for task in tuple(self._tasks):
+            if not task.done() and task.cancelling() == 0:
+                task.cancel()
+
+    async def _drain_bounded(
+        self,
+        tasks: set[asyncio.Task[ClaimedTextCompositionResult]],
+        *,
+        already_cancelled: bool = False,
+    ) -> None:
+        pending = {task for task in tasks if not task.done()}
+        if not pending:
+            return
+        if already_cancelled:
+            _done, pending = await asyncio.wait(pending, timeout=self.injection.drain_timeout)
+            if pending:
+                raise RuntimeOwnedWorkError("cron effects did not drain; resources and lease retained")
+            return
+        _done, pending = await asyncio.wait(pending, timeout=self.injection.drain_timeout)
+        for task in pending:
+            task.cancel()
+        if pending:
+            _done, pending = await asyncio.wait(pending, timeout=self.injection.drain_timeout)
+        if pending:
+            raise RuntimeOwnedWorkError("cron effects did not drain; resources and lease retained")
+
+    async def _join_gracefully(
+        self,
+        tasks: set[asyncio.Task[ClaimedTextCompositionResult]],
+    ) -> None:
+        pending = {task for task in tasks if not task.done()}
+        if not pending:
+            return
+        changed = asyncio.create_task(self._shutdown_changed.wait())
+        try:
+            while pending:
+                done, _pending = await asyncio.wait(
+                    (*pending, changed), return_when=asyncio.FIRST_COMPLETED,
+                )
+                pending.difference_update(done)
+                if self._shutdown_mode != "graceful":
+                    await self._drain_bounded(
+                        pending, already_cancelled=self._shutdown_mode == "forced",
+                    )
+                    return
+        finally:
+            changed.cancel()
+            await asyncio.gather(changed, return_exceptions=True)
+
     async def _close(self) -> None:
         self.stop_claiming()
         if self._timer_task is not None:
@@ -292,17 +364,28 @@ class CronRuntime:
             await asyncio.gather(self._timer_task, return_exceptions=True)
         tasks = tuple(self._tasks)
         if tasks:
-            _done, pending = await asyncio.wait(tasks, timeout=self.injection.drain_timeout)
-            for task in pending:
-                task.cancel()
-            if pending:
-                _done, pending = await asyncio.wait(pending, timeout=self.injection.drain_timeout)
-            if pending:
-                raise RuntimeOwnedWorkError("cron effects did not drain; resources and lease retained")
+            owned = set(tasks)
+            if self._shutdown_mode == "graceful":
+                await self._join_gracefully(owned)
+            else:
+                await self._drain_bounded(
+                    owned, already_cancelled=self._shutdown_mode == "forced",
+                )
         self.scheduler.release_lease()
         if self._task_errors:
+            errors = tuple(self._task_errors)
             self._task_errors.clear()
-            raise CronWorkFailedError("admitted cron work failed; durable states require inspection")
+            failure = CronWorkFailedError("admitted cron work failed; durable states require inspection")
+            cause: BaseException = errors[0]
+            if len(errors) > 1:
+                if all(isinstance(error, Exception) for error in errors):
+                    cause = ExceptionGroup(
+                        "admitted cron work failures",
+                        [error for error in errors if isinstance(error, Exception)],
+                    )
+                else:
+                    cause = BaseExceptionGroup("admitted cron work failures", list(errors))
+            raise failure from cause
 
     async def aclose(self) -> None:
         self.stop_claiming()

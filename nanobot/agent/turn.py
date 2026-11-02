@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias, cast
 if TYPE_CHECKING:
     from nanobot.agent.busy_dispatch import BusyTurn
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
+    from nanobot.agent.tools.base import ToolDenialKind
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
     from nanobot.providers.base import LLMUsage
     from nanobot.security.desktop_permissions import (
@@ -764,6 +765,9 @@ class ToolOutcome:
     producer_receipt: FilesystemReadReceipt | None = None
     retrieval_receipt: ArtifactRetrievalReceipt | None = None
     handoff_receipt: ArtifactHandoffReceipt | None = field(default=None, repr=False, compare=False)
+    # Private recovery classification.  It is never persisted, serialized, or
+    # exposed as policy authority; message text alone cannot set it.
+    recovery_kind: ToolDenialKind | None = field(default=None, repr=False, compare=False)
 
     @property
     def result(self) -> Any:

@@ -75,8 +75,8 @@ export function AdvancedSettings({
             description={tx(
               isNativeHostSurface ? "settings.help.localServiceAccessNative" : "settings.help.localServiceAccess",
               isNativeHostSurface
-                ? "Allow Full Access shell commands to reach services on this Mac."
-                : "Allow Full Access shell commands to reach localhost services.",
+                ? "Allow channel setup checks to reach services on this Mac."
+                : "Allow channel setup checks to reach localhost services.",
             )}
           >
             <ToggleButton

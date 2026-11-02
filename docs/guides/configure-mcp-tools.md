@@ -70,6 +70,9 @@ Restart nanobot and ask a question that requires the MCP tool.
 ## Security notes
 
 - Stdio MCP starts a local process; review the command before enabling it.
+- Configured MCP servers are trusted integrations and their enabled tools are
+  available in managed WebUI chats. The server runs outside the Sandbox
+  filesystem boundary, so review the command and `enabledTools` before enabling it.
 - HTTP/SSE MCP uses nanobot's SSRF guard, including OAuth discovery, registration,
   token exchange, and redirects.
 - OAuth credentials live in the nanobot data directory, not in `config.json`.

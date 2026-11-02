@@ -104,3 +104,35 @@ def test_legacy_media_staging_keeps_existing_behavior(tmp_path: Path) -> None:
     assert signed is not None
     assert signed["url"].startswith("/api/media/")
     assert len(list(media_root.iterdir())) == 1
+
+
+def test_markdown_media_rewrites_folder_granted_external_image(tmp_path: Path) -> None:
+    gateway, store, project, media_root = _gateway(tmp_path, managed=True)
+    image = project / "external.png"
+    image.write_bytes(b"folder-granted fixture image")
+    text = f"![external]({image})"
+
+    rewritten = gateway.rewrite_local_markdown_images(
+        text,
+        workspace_path=store.agent_home,
+        allow_folder_grants=True,
+    )
+
+    assert "/api/media/" in rewritten
+    assert str(image) not in rewritten
+    assert len(list(media_root.iterdir())) == 1
+
+
+def test_markdown_media_keeps_external_path_without_grants(tmp_path: Path) -> None:
+    gateway, store, project, _media_root = _gateway(tmp_path, managed=True)
+    image = project / "external.png"
+    image.write_bytes(b"folder-granted fixture image")
+    text = f"![external]({image})"
+
+    rewritten = gateway.rewrite_local_markdown_images(
+        text,
+        workspace_path=store.agent_home,
+        allow_folder_grants=False,
+    )
+
+    assert rewritten == text

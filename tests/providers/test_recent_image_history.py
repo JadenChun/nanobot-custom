@@ -67,6 +67,42 @@ def test_tool_image_advances_window_without_changing_tool_structure_or_other_blo
     assert prepared[-2:] == messages[-2:]
 
 
+def test_parallel_tool_image_results_keep_the_whole_batch():
+    messages = history() + [
+        {"role": "assistant", "tool_calls": [
+            {"id": "a", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
+            {"id": "b", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
+            {"id": "c", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
+        ], "content": None},
+        {"role": "tool", "tool_call_id": "a", "name": "read_file", "content": [image("batch-a")]},
+        {"role": "tool", "tool_call_id": "b", "name": "read_file", "content": [image("batch-b")]},
+        {"role": "tool", "tool_call_id": "c", "name": "read_file", "content": [image("batch-c")]},
+    ]
+
+    prepared = recent_image_messages(messages)
+
+    assert images(prepared) == [image("batch-a"), image("batch-b"), image("batch-c")]
+    assert prepared[-3:] == messages[-3:]
+
+
+def test_a_later_tool_batch_advances_the_whole_window():
+    messages = history() + [
+        {"role": "assistant", "tool_calls": [
+            {"id": "old", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
+        ], "content": None},
+        {"role": "tool", "tool_call_id": "old", "name": "read_file", "content": [image("old")]},
+        {"role": "assistant", "tool_calls": [
+            {"id": "new", "type": "function", "function": {"name": "read_file", "arguments": "{}"}},
+        ], "content": None},
+        {"role": "tool", "tool_call_id": "new", "name": "read_file", "content": [image("new")]},
+    ]
+
+    prepared = recent_image_messages(messages)
+
+    assert images(prepared) == [image("new")]
+    assert prepared[-2:] == messages[-2:]
+
+
 class CapturingProvider(LLMProvider):
     def __init__(self, outcomes=None, delta=False):
         super().__init__(provider_name="image-fixture")

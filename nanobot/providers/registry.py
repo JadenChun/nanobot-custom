@@ -17,6 +17,8 @@ from typing import Any
 
 from pydantic.alias_generators import to_snake
 
+from nanobot.providers.provider_policy import ESTIMATED_COMPAT_POLICY, ProviderPolicy
+
 
 @dataclass(frozen=True)
 class ProviderModelSpec:
@@ -29,6 +31,10 @@ class ProviderModelSpec:
     context_window: int | None = None
     reasoning_efforts: tuple[str, ...] = ()
     supports_backend_search: bool = False
+    max_output_tokens: int | None = None
+    input_modalities: tuple[str, ...] | None = None
+    output_modalities: tuple[str, ...] | None = None
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,6 +70,11 @@ class ProviderSpec:
     detect_by_key_prefix: str = ""  # match api_key prefix, e.g. "sk-or-"
     detect_by_base_keyword: str = ""  # match substring in api_base URL
     default_api_base: str = ""  # OpenAI-compatible base URL for this provider
+
+    # Declared runtime behavior for generic accounting, compaction, and
+    # pricing code. Presets configure facts; the loop never branches on a
+    # provider name.
+    policy: ProviderPolicy = ProviderPolicy()
 
     # gateway behavior
     strip_model_prefix: bool = False  # strip "provider/" before sending to gateway
@@ -133,6 +144,23 @@ class ProviderSpec:
     # any extra fields; other providers (DeepSeek) require this key on the
     # wire to keep thinking-mode history intact.
     strip_history_reasoning_content: bool = False
+
+    def model_metadata(self, model: str) -> ProviderModelSpec | None:
+        """Look up curated metadata without rewriting configured or wire model IDs."""
+        normalized = model.strip().lower()
+        if not normalized:
+            return None
+        final_segment = normalized.rsplit("/", 1)[-1]
+        for entry in self.builtin_models:
+            entry_id = entry.id.strip().lower()
+            names = {
+                entry_id,
+                entry_id.rsplit("/", 1)[-1],
+                *(alias.strip().lower() for alias in entry.aliases),
+            }
+            if normalized in names or final_segment in names:
+                return entry
+        return None
 
     @property
     def label(self) -> str:
@@ -698,6 +726,10 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         is_local=True,
         detect_by_base_keyword="127.0.0.1:8082",
         default_api_base="http://127.0.0.1:8082/v1",
+        # This gateway routes arbitrary local model aliases and reports
+        # approximate usage, so it opts into the generic estimated policy.
+        # Any other provider can declare the same policy or opt in via config.
+        policy=ESTIMATED_COMPAT_POLICY,
     ),
     # vLLM / any OpenAI-compatible local server
     ProviderSpec(

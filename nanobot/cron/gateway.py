@@ -13,10 +13,16 @@ from nanobot.cron.canonical_execution import SilentCronAgent
 from nanobot.cron.channel_sender import ExactChannelAuthority
 from nanobot.cron.job_hooks import CronJobHooks
 from nanobot.cron.quota_recovery import CronQuotaRecovery, PendingQuotaRetry
-from nanobot.cron.runtime import CronRuntime, GatewayCronOptions, SystemScheduleClock
+from nanobot.cron.runtime import (
+    CronRuntime,
+    CronWorkFailedError,
+    GatewayCronOptions,
+    SystemScheduleClock,
+)
 from nanobot.cron.schedule import ScheduleClock
 from nanobot.cron.service import CronService
 from nanobot.cron.types import CronJob, cron_thread_id
+from nanobot.runtime_errors import RuntimeOwnedWorkError
 from nanobot.session.manager import SessionManager
 
 
@@ -117,6 +123,8 @@ class GatewayCron:
             async with asyncio.timeout(self.config.readiness_timeout_s):
                 while not self._channels_ready():
                     await asyncio.sleep(0.05)
+            if self._state == "stopping":
+                return
             self._validate_jobs()
             self.runtime.acquire()
             self._import_retry_budget()
@@ -135,7 +143,25 @@ class GatewayCron:
         result["state"] = self._state
         return result
 
+    def begin_graceful_shutdown(self) -> None:
+        self._state = "stopping"
+        self.runtime.begin_graceful_shutdown()
+
+    def request_bounded_shutdown(self) -> None:
+        self._state = "stopping"
+        self.runtime.request_bounded_shutdown()
+
+    def force_shutdown(self) -> None:
+        self._state = "stopping"
+        self.runtime.force_shutdown()
+
     async def aclose(self) -> None:
         self._state = "stopping"
-        await self.runtime.aclose()
+        try:
+            await self.runtime.aclose()
+        except RuntimeOwnedWorkError:
+            raise
+        except CronWorkFailedError:
+            self._state = "closed"
+            raise
         self._state = "closed"

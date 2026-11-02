@@ -36,7 +36,7 @@ async def test_final_budget_failure_releases_source_ticket_and_reports_context(
 
     provider = OpenAICompatProvider(
         api_key="fixture", provider_name="budget-fixture", api_type="chat_completions",
-        extra_body={"metadata": {"fixture": "private-payload-" + "x" * 200_000}},
+        extra_body={"metadata": {"fixture": "private-payload-" + "x" * 1_000_000}},
     )
     transport = AsyncMock(side_effect=create)
     provider._ensure_client = AsyncMock(return_value=SimpleNamespace(

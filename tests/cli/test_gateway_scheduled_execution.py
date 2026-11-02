@@ -96,7 +96,11 @@ def test_normal_gateway_runs_due_job_and_owns_busy_registration(tmp_path, monkey
     monkeypatch.setattr(TelegramChannel, "send_text_with_receipt", receipt)
     monkeypatch.setattr("nanobot.gateway.runtime.monitor_gateway_clients", idle)
     monkeypatch.setattr("nanobot.gateway.runtime.GatewayRuntime.foreground_instance", foreground)
-    monkeypatch.setattr(gateway_runtime, "_install_gateway_shutdown_handlers", lambda *_: lambda: None)
+    monkeypatch.setattr(
+        gateway_runtime,
+        "_install_gateway_shutdown_handlers",
+        lambda *_args, **_kwargs: lambda: None,
+    )
     monkeypatch.setattr(gateway_runtime, "_tcp_endpoint_reachable", lambda *_: False)
     monkeypatch.setattr(gateway_runtime, "_webui_endpoint_reachable", lambda *_: False)
     monkeypatch.setattr(gateway_runtime, "_prepare_webui_bundle_for_gateway", lambda *_a, **_kw: None)

@@ -65,9 +65,9 @@ from nanobot.agent.tools.exec_session import ExecCompletionSink, ExecSessionMana
 from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
 from nanobot.agent.tools.message import capture_message_deliveries
 from nanobot.agent.tools.registry import (
-    MANAGED_WEBUI_TOOL_NAMES,
     ManagedToolDispatchGuard,
     ToolRegistry,
+    managed_webui_tool_names,
 )
 from nanobot.agent.tools.runtime_control import AgentRuntimeControl
 from nanobot.agent.trace import sanitize_trace
@@ -568,6 +568,8 @@ class AgentLoop:
         restart_mode: str = "auto",
         local_trigger_store: LocalTriggerStore | None = None,
         idle_compact_check_interval_seconds: int = 0,
+        source_compaction_idle_timeout_seconds: float = 300.0,
+        source_compaction_overall_timeout_seconds: float = 900.0,
         recovery_admission: RecoveryAdmission | None = None,
         fork_dependencies: ForkToolDependencies | None = None,
         _owns_fork_dependencies: bool = False,
@@ -789,6 +791,8 @@ class AgentLoop:
             else None
         )
         self._idle_compact_check_interval_s = idle_compact_check_interval_seconds
+        self._source_compaction_idle_timeout_seconds = source_compaction_idle_timeout_seconds
+        self._source_compaction_overall_timeout_seconds = source_compaction_overall_timeout_seconds
         self._next_idle_compact_check_at = time.monotonic()
         if model_preset:
             self.set_model_preset(model_preset, publish_update=False)
@@ -939,6 +943,12 @@ class AgentLoop:
             disabled_skills=defaults.disabled_skills,
             session_ttl_minutes=defaults.session_ttl_minutes,
             idle_compact_check_interval_seconds=defaults.idle_compact_check_interval_seconds,
+            source_compaction_idle_timeout_seconds=(
+                defaults.source_compaction.idle_timeout_seconds
+            ),
+            source_compaction_overall_timeout_seconds=(
+                defaults.source_compaction.overall_timeout_seconds
+            ),
             tools_config=config.tools,
             model_presets=preset_helpers.configured_model_presets(config),
             model_preset=defaults.model_preset,
@@ -2194,6 +2204,7 @@ class AgentLoop:
         request_context: RequestContext | None = None,
         provider_state: ProviderConversationState | None = None,
         run_context: RunTurnContext | None = None,
+        allow_pre_dispatch_recovery: bool = False,
     ) -> AgentRunResult:
         """Run the agent iteration loop.
 
@@ -2522,6 +2533,7 @@ class AgentLoop:
                 tool_policy=tool_policy,
                 turn_context=run_context,
                 fail_on_tool_error=True,
+                allow_pre_dispatch_recovery=allow_pre_dispatch_recovery,
                 runtime=runtime,
                 max_iterations=self.max_iterations,
                 max_tool_result_chars=self.max_tool_result_chars,
@@ -2534,6 +2546,12 @@ class AgentLoop:
                 provider_retry_mode=self.provider_retry_mode,
                 checkpoint_callback=_checkpoint,
                 source_writer=source_writer,
+                source_compaction_idle_timeout_seconds=(
+                    getattr(self, "_source_compaction_idle_timeout_seconds", 300.0)
+                ),
+                source_compaction_overall_timeout_seconds=(
+                    getattr(self, "_source_compaction_overall_timeout_seconds", 900.0)
+                ),
                 consolidate_history=(
                     partial(
                         self.consolidator.summarize_transcript,
@@ -4157,6 +4175,7 @@ class AgentLoop:
         if not session.policy.persist:
             disabled_tools.update({"repository_catalog", "save_knowledge"})
         grants = self._fork_dependencies.resource_policy.folder_grants
+        managed_tool_names = managed_webui_tool_names(tools.iter_tools())
         run_context = ctx.run_context
         local_private_workspace_authority = False
         if (
@@ -4204,7 +4223,7 @@ class AgentLoop:
         ):
             managed_registry = tools.filtered([
                 name for name in tools.tool_names
-                if name in MANAGED_WEBUI_TOOL_NAMES
+                if name in managed_tool_names
                 and (name != "select_workspace" or ctx.kind is TurnKind.USER)
             ])
             if self.tools_config.file.enable and ctx.kind is TurnKind.USER:
@@ -4242,7 +4261,10 @@ class AgentLoop:
                     )
                 tools = restricted
         tools.set_dispatch_guard(
-            ManagedToolDispatchGuard(self._fork_dependencies.resource_policy.folder_grants)
+            ManagedToolDispatchGuard(
+                self._fork_dependencies.resource_policy.folder_grants,
+                allowed_names=managed_tool_names,
+            )
         )
         ctx.tools = tools
 
@@ -4582,6 +4604,15 @@ class AgentLoop:
                 provider_state=ctx.provider_state,
                 run_context=ctx.run_context,
                 events=ctx.events,
+                allow_pre_dispatch_recovery=bool(
+                    self._trusted_foreground_inbound(ctx.msg)
+                    and ctx.run_context is not None
+                    and ctx.run_context.request is not None
+                    and ctx.run_context.request.source in {
+                        TurnSource.DIRECT,
+                        TurnSource.GATEWAY,
+                    }
+                ),
             )
         ctx.run_result = result
         ctx.provider_state_settlement = result.provider_state_settlement

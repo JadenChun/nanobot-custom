@@ -387,6 +387,38 @@ class IdleCompactionConfig(Base):
         return self
 
 
+class SourceCompactionConfig(Base):
+    """Foreground source-summary stream and whole-operation time limits."""
+
+    _ALIASES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("idle_timeout_seconds", "idleTimeoutSeconds"),
+        ("overall_timeout_seconds", "overallTimeoutSeconds"),
+    )
+
+    idle_timeout_seconds: float = Field(default=300.0, gt=0, allow_inf_nan=False)
+    overall_timeout_seconds: float = Field(default=900.0, gt=0, allow_inf_nan=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_alias_duplicates(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        data = dict(cast(Mapping[object, object], value))
+        for snake_name, camel_name in cls._ALIASES:
+            if snake_name in data and camel_name in data:
+                raise ValueError(f"Specify only one of {camel_name!r} or {snake_name!r}")
+        for name in ("idleTimeoutSeconds", "idle_timeout_seconds",
+                     "overallTimeoutSeconds", "overall_timeout_seconds"):
+            if name not in data:
+                continue
+            raw = data[name]
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise ValueError(f"{name} must be a finite positive number")
+            if not math.isfinite(raw) or raw <= 0:
+                raise ValueError(f"{name} must be a finite positive number")
+        return data
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -405,6 +437,10 @@ class AgentDefaults(Base):
             if "idleCompaction" in data and "idle_compaction" in data:
                 raise ValueError(
                     "Specify only one of 'idleCompaction' or 'idle_compaction'"
+                )
+            if "sourceCompaction" in data and "source_compaction" in data:
+                raise ValueError(
+                    "Specify only one of 'sourceCompaction' or 'source_compaction'"
                 )
             if "idleCompactAfterMinutes" in data and "sessionTtlMinutes" in data:
                 raise ValueError(
@@ -498,6 +534,7 @@ class AgentDefaults(Base):
         ge=0,
     )  # Minimum interval in seconds between scans for idle sessions
     idle_compaction: IdleCompactionConfig = Field(default_factory=IdleCompactionConfig)
+    source_compaction: SourceCompactionConfig = Field(default_factory=SourceCompactionConfig)
     dream: DreamConfig = Field(default_factory=DreamConfig)
 
     @model_validator(mode="before")
@@ -561,6 +598,11 @@ class ProviderConfig(Base):
     extra_query: dict[str, str] | None = None  # Extra query params (e.g. api-version for Azure-style gateways)
     proxy: str | None = None  # Explicit HTTP proxy; image downloads trust its DNS and egress
     thinking_style: str | None = None  # Thinking/reasoning style for custom providers
+
+    # Provider runtime policy overrides for generic accounting. Most providers
+    # leave these unset and inherit their registry policy (strict by default).
+    request_accounting: Literal["strict", "estimated_compat"] | None = None
+    max_request_bytes: int | None = Field(default=None, ge=1)
 
     # Valid values mirror the keys of _THINKING_STYLE_MAP in
     # nanobot/providers/openai_compat_provider.py. Kept duplicated here to
@@ -891,7 +933,7 @@ class ToolsConfig(Base):
             "allowLocalPreviewAccess",
             "allow_local_preview_access",
         ),
-    )  # allow WebUI Full Access shell checks against localhost services; legacy allowLocalPreviewAccess still reads
+    )  # allow channel setup validation to reach localhost services; legacy allowLocalPreviewAccess still reads
     webui_allow_remote_package_install: bool = Field(
         default=False,
         validation_alias=AliasChoices(
