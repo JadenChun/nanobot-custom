@@ -15,6 +15,7 @@ from nanobot.utils.media_tokens import (
     image_dimensions,
     inline_media_tokens,
     media_block_tokens,
+    model_image_tokens,
     unknown_image_tokens,
 )
 
@@ -58,6 +59,15 @@ def test_image_allowance_covers_common_vision_accounting() -> None:
     assert estimate_image_tokens(1024, 1024) < MAX_IMAGE_TOKENS
     assert estimate_image_tokens(1, 1) < 1_000
     assert estimate_image_tokens(10_000, 10_000) == MAX_IMAGE_TOKENS
+
+
+def test_local_manager_vision_models_share_a_measurable_allowance() -> None:
+    for model in (
+        "Qwen3.8-27B-UD-Q6_K_XL",
+        "Qwen3.8-Flash-Next Gyro-M Abliterated (Strata)",
+    ):
+        tokens = model_image_tokens("local_manager", model, (800, 940), None)
+        assert 128 < tokens < MAX_IMAGE_TOKENS
 
 
 def test_inline_media_uses_dimensions_and_bounded_unknown_fallbacks() -> None:

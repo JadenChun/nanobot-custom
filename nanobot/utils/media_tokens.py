@@ -231,12 +231,15 @@ def model_image_tokens(
     A missing dimension pair means the image is remote, opaque, or a file
     reference. Policies either provide a documented upper bound or reject it.
     """
-    selected = _selected_model(provider, model)
     effective_detail = "auto" if detail is None else detail.strip().lower()
     if detail is not None and effective_detail not in {"low", "high", "auto", "original"}:
         raise ValueError("unsupported image detail")
 
-    if provider == "local_manager" and selected == "qwen3.8-27b-ud-q6_k_xl":
+    if provider == "local_manager":
+        # Local Manager can serve several model families. The request budget
+        # must still be measurable before dispatch, so use the conservative
+        # shared image allowance and let the selected backend remain
+        # authoritative if it cannot accept images.
         if effective_detail not in {"low", "high", "auto"}:
             raise ValueError("unsupported local image detail")
         if dimensions is None:
@@ -244,9 +247,7 @@ def model_image_tokens(
         width, height = dimensions
         if width <= 0 or height <= 0:
             raise ValueError("local image dimensions are invalid")
-        patches = math.ceil(width / 28) * math.ceil(height / 28)
-        area = math.ceil(width * height / 750)
-        return max(_MIN_IMAGE_TOKENS, patches, area) + _IMAGE_FRAMING_TOKENS
+        return estimate_image_tokens(width, height)
 
     openai_model = _openai_image_model(provider, model)
     if openai_model is not None:

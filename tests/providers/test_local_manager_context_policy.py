@@ -2318,3 +2318,32 @@ async def test_hosted_responses_effective_output_cap_is_checked_before_dispatch(
     assert len(requests) == (0 if should_reject else 1)
     if requests:
         assert json.loads(requests[0].content)["max_output_tokens"] == effective_cap
+
+
+def test_strata_vision_image_is_measurable_before_dispatch() -> None:
+    provider = _local_provider()
+    model = "Qwen3.8-Flash-Next Gyro-M Abliterated (Strata)"
+    body = {
+        "model": model,
+        "messages": [{
+            "role": "tool",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": _png_data_uri(800, 940)},
+                    "_meta": {"path": "/tmp/ideal-365-crop.png"},
+                },
+                {"type": "text", "text": "(Image file: /tmp/ideal-365-crop.png)"},
+            ],
+        }],
+    }
+
+    measurement = provider._measure_local_body(
+        body,
+        transport="openai_chat_completions_stream",
+        model=model,
+        provider_context=_context(total=262_144),
+    )
+
+    assert measurement.input_tokens > 0
+    assert "inline_image" in measurement.source
