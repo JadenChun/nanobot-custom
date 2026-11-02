@@ -14,7 +14,7 @@ class MediaFetchError(message: String) : Exception(message)
 class NativeMediaFetcher(
     private val transport: NativeMediaTransport,
     private val store: MediaHandleStore,
-    private val maxBytes: Int = 2 * 1024 * 1024,
+    private val maxBytes: Int = 8 * 1024 * 1024,
     private val timeoutMs: Long = 30_000,
 ) {
     fun fetch(signature: String, payload: String, range: String? = null): MediaHandle {

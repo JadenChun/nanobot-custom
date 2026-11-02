@@ -4,7 +4,7 @@ import java.io.File
 import java.io.InputStream
 
 data class AttachmentLimits(
-    val maxBytes: Int = 256 * 1024,
+    val maxBytes: Int = 6 * 1024 * 1024,
     val allowedMime: Set<String> = setOf(
         "image/jpeg", "image/png", "image/webp", "image/gif",
         "application/pdf", "text/plain", "text/markdown",

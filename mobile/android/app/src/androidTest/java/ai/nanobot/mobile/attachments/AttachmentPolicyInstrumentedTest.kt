@@ -7,6 +7,12 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class AttachmentPolicyInstrumentedTest {
+
+    @Test
+    fun defaultsMatchTheDesktopAttachmentLimit() {
+        assertEquals(6 * 1024 * 1024, AttachmentLimits().maxBytes)
+    }
+
     @Test
     fun validatesAndCopiesWithinTheBound() {
         val limits = AttachmentLimits(maxBytes = 8)

@@ -23,9 +23,9 @@
     "access_ttl_seconds": 600,
     "challenge_ttl_seconds": 120,
     "refresh_idle_seconds": 2592000,
-    "max_ws_frame_bytes": 524288,
-    "max_attachment_bytes": 262144,
-    "max_media_response_bytes": 2097152,
+    "max_ws_frame_bytes": 37748736,
+    "max_attachment_bytes": 6291456,
+    "max_media_response_bytes": 8388608,
     "max_request_body_bytes": 1048576
   },
   "routes": [

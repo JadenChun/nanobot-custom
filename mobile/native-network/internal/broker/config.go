@@ -11,8 +11,8 @@ const (
 	abiVersionValue   = 1
 	defaultQueueSize  = 128
 	defaultBodyLimit  = 1 << 20
-	defaultRespLimit  = 2 << 20
-	defaultFrameLimit = 64 << 10
+	defaultRespLimit  = 8 << 20
+	defaultFrameLimit = 37_748_736
 	defaultSendQueue  = 16
 	maxRequestTimeout = 120_000
 )
@@ -91,7 +91,7 @@ func (c *Config) normalize() error {
 	if c.QueueSize > 1024 {
 		return fmt.Errorf("%w: queue_size is too large", ErrInvalid)
 	}
-	if c.MaxResponseBytes > 16<<20 || c.MaxWSFrameBytes > 1<<20 {
+	if c.MaxResponseBytes > 16<<20 || c.MaxWSFrameBytes > 41_943_040 {
 		return fmt.Errorf("%w: configured limit is too large", ErrInvalid)
 	}
 	return nil

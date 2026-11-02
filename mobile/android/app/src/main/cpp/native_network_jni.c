@@ -127,12 +127,24 @@ Java_ai_nanobot_mobile_network_NativeNetwork_wsClose(JNIEnv *env, jobject thiz, 
 JNIEXPORT jbyteArray JNICALL
 Java_ai_nanobot_mobile_network_NativeNetwork_pollEvent(JNIEnv *env, jobject thiz, jlong handle) {
     (void)thiz;
-    const int32_t capacity = 512 * 1024;
+    int32_t capacity = 512 * 1024;
     char *buffer = malloc(capacity);
     if (buffer == NULL) {
         return NULL;
     }
     int32_t length = nanobot_network_poll_event((int64_t)handle, buffer, capacity);
+    if (length == -7) {
+        free(buffer);
+        capacity = 12 * 1024 * 1024;
+        buffer = malloc(capacity);
+        if (buffer == NULL) {
+            return NULL;
+        }
+        length = nanobot_network_poll_event((int64_t)handle, buffer, capacity);
+    }
+    if (length < 0) {
+        length = 0;
+    }
     jbyteArray result = copy_bytes(env, buffer, length);
     free(buffer);
     return result;

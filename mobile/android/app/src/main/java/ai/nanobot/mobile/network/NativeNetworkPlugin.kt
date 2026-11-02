@@ -815,7 +815,8 @@ class NativeNetworkPlugin : Plugin() {
             .put("hostname", record.hostname)
             .put("state_dir", stateDir.absolutePath)
             .put("state_key_base64", record.stateKeyBase64)
-            .put("max_ws_frame_bytes", 512 * 1024)
+            .put("max_ws_frame_bytes", 37_748_736)
+            .put("max_response_bytes", 8 * 1024 * 1024)
         val newHandle = NativeNetwork.start(config.toString())
         if (newHandle == 0L) {
             throw IllegalStateException(NativeNetwork.lastError())

@@ -23,9 +23,9 @@ BRIDGE_VERSION = 1
 ACCESS_TTL_SECONDS = 10 * 60
 CHALLENGE_TTL_SECONDS = 120
 REFRESH_IDLE_SECONDS = 30 * 24 * 60 * 60
-MAX_WS_FRAME_BYTES = 512 * 1024
-MAX_ATTACHMENT_BYTES = 256 * 1024
-MAX_MEDIA_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_WS_FRAME_BYTES = 37_748_736  # Desktop WebUI default; supports 4 x 6 MiB attachments encoded in one frame.
+MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024  # Match the desktop single-file attachment limit.
+MAX_MEDIA_RESPONSE_BYTES = 8 * 1024 * 1024  # Allow a full 6 MiB attachment plus response overhead.
 MAX_REQUEST_BODY_BYTES = 1 * 1024 * 1024
 
 SUPPORTED_SCOPES = frozenset(

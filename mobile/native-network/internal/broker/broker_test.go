@@ -97,7 +97,7 @@ func testServer(t *testing.T) *httptest.Server {
 		if err != nil {
 			return
 		}
-		conn.SetReadLimit(512 * 1024)
+		conn.SetReadLimit(37_748_736)
 		defer conn.Close(websocket.StatusNormalClosure, "")
 		for {
 			typ, data, err := conn.Read(r.Context())
@@ -117,7 +117,7 @@ func testServer(t *testing.T) *httptest.Server {
 func waitEvent(t *testing.T, core *Core, eventType string) map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
-	buffer := make([]byte, 512*1024)
+	buffer := make([]byte, 12*1024*1024)
 	for time.Now().Before(deadline) {
 		n, err := core.PollEvent(buffer)
 		if err != nil {
@@ -428,13 +428,13 @@ func TestHTTPPairingRouteAllowsOnlyBoundedHeaders(t *testing.T) {
 
 func TestWebSocketAllowsAttachmentSizedFrame(t *testing.T) {
 	server := testServer(t)
-	core := testCore(t, server, func(cfg *Config) { cfg.MaxWSFrameBytes = 512 * 1024 })
+	core := testCore(t, server, func(cfg *Config) { cfg.MaxWSFrameBytes = 37_748_736 })
 	wsID, err := core.WSOpen(WSRequest{Operation: "fixture_ws", Path: "/fixture/v1/ws"})
 	if err != nil {
 		t.Fatalf("WSOpen: %v", err)
 	}
 	waitEvent(t, core, "ws_open")
-	payload := make([]byte, 200*1024)
+	payload := make([]byte, 3*1024*1024)
 	for i := range payload {
 		payload[i] = 'x'
 	}

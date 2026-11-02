@@ -141,7 +141,7 @@ async def test_edge_handshake_read_media_scopes_and_unknown_routes(edge_setup) -
     assert payload["principal"] == "mobile:install-0001"
     assert payload["socket_epoch"] == 7
     assert payload["capabilities"]["chat"] is True
-    assert payload["limits"]["max_attachment_bytes"] == 256 * 1024
+    assert payload["limits"]["max_attachment_bytes"] == 6 * 1024 * 1024
 
     read = await edge.handle(None, request("/mobile/v1/read?cursor=next", pair.access_token))
     assert read is not None and read.status_code == 200
@@ -251,6 +251,14 @@ async def test_edge_scope_denial_and_ws_frame_epoch(edge_setup) -> None:
     )
     assert attachment["ok"] is True
     assert attachment["result"]["bytes"] == 5
+    large = b"x" * (3 * 1024 * 1024)
+    large_attachment = await edge.handle_ws_frame(
+        identity,
+        7,
+        {"type": "attachment", "data_base64": base64.b64encode(large).decode()},
+    )
+    assert large_attachment["ok"] is True
+    assert large_attachment["result"]["bytes"] == len(large)
     unknown = await edge.handle_ws_frame(identity, 7, {"type": "unknown"})
     assert unknown["ok"] is False
 
