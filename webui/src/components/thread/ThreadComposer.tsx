@@ -30,6 +30,7 @@ import {
   CircleHelp,
   CornerDownRight,
   FileText,
+  Folder,
   GripVertical,
   History,
   ImageIcon,
@@ -52,6 +53,13 @@ import {
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   floatingItemClassName,
   floatingSurfaceElevationClassName,
@@ -90,6 +98,7 @@ import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import type { SendAttachment, SendOptions } from "@/hooks/useNanobotStream";
 import { useVoiceRecorder, type VoiceRecorderErrorKey } from "@/hooks/useVoiceRecorder";
+import { getMobileRuntime } from "@/lib/mobile-runtime";
 import type {
   CliAppInfo,
   ChatSummary,
@@ -959,6 +968,7 @@ export function ThreadComposer({
   onQuotedContextChange,
 }: ThreadComposerProps) {
   const { t } = useTranslation();
+  const mobileComposer = isMobileRuntimeActive();
   const [value, setValue] = useState("");
   const [selectedSessionMentions, setSelectedSessionMentions] = useState<SessionMention[]>([]);
   const [sessionDragPreview, setSessionDragPreview] = useState<{
@@ -1072,6 +1082,23 @@ export function ThreadComposer({
     },
     [enqueue, formatRejection, interactionDisabled],
   );
+
+  const mobileTransport = getMobileRuntime()?.transport;
+  const pickCamera = useCallback(async () => {
+    if (!mobileTransport?.pickCamera) return;
+    try {
+      const picked = await mobileTransport.pickCamera();
+      if (!picked) return;
+      const binary = atob(picked.dataBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      addFiles([new File([bytes], picked.name, { type: picked.mediaType })]);
+    } catch (error) {
+      setInlineError(error instanceof Error ? error.message : "Camera capture failed");
+    }
+  }, [addFiles, mobileTransport]);
 
   const {
     isDragging,
@@ -2233,7 +2260,7 @@ export function ThreadComposer({
   );
   const projectPicker = (
     <WorkspaceProjectPicker
-      compact={!hasProjectFolder}
+      compact={!hasProjectFolder || mobileComposer}
       disabled={interactionDisabled || workspaceScopeDisabled || workspaceControlsHidden}
       scope={workspaceScope}
       defaultScope={workspaceDefaultScope}
@@ -2245,6 +2272,45 @@ export function ThreadComposer({
       onChange={onWorkspaceScopeChange}
     />
   );
+
+  const accessControl = workspaceScope && !workspaceControlsHidden ? (
+    <WorkspacePermissionV2Control
+      enabled={workspaces?.controls.permission_v2 === true}
+      permissions={workspacePermissions}
+      loading={workspacePermissionsLoading}
+      error={workspacePermissionsError}
+      disabled={persistentWorkspaceChat && interactionDisabled}
+      persistentChat={persistentWorkspaceChat}
+      draftFullAccess={!persistentWorkspaceChat && !!onDraftFullAccess}
+      onRequestFullAccess={
+        !persistentWorkspaceChat && onDraftFullAccess
+          ? () => onDraftFullAccess(value)
+          : undefined
+      }
+      isHero={mobileComposer ? false : isHero}
+      onModeChange={onWorkspaceAccessModeChange}
+      onRetryRestricted={onRetryWorkspaceRestricted}
+    />
+  ) : null;
+
+  const modelControl = modelLabel && !voiceRecorder.isRecording ? (
+    <ModelPresetBadge
+      label={mobileComposer ? modelDetail || modelLabel : modelLabel}
+      modelDetail={modelDetail}
+      modelPreset={modelPreset}
+      modelPresets={modelPresets}
+      onPresetChange={onModelPresetChange}
+      onManageModels={onManageModels}
+      onRequestComposerFocus={() => textareaRef.current?.focus()}
+      provider={modelProvider}
+      providerLabel={modelProviderLabel}
+      needsSetup={modelNeedsSetup}
+      attentionRequest={modelSetupAttentionRequest}
+      fallbackModelName={fallbackModelName}
+      isHero={mobileComposer ? false : isHero}
+      onClick={modelNeedsSetup ? onModelBadgeClick : undefined}
+    />
+  ) : null;
 
   return (
     <form
@@ -2439,6 +2505,14 @@ export function ThreadComposer({
             {inlineError}
           </div>
         ) : null}
+        {mobileComposer && !voiceRecorder.isRecording && modelControl ? (
+          <div className="thread-composer-mobile-model-row">
+            <span className="thread-composer-mobile-model-label">
+              {t("thread.composer.modelLabel", { defaultValue: "Model" })}
+            </span>
+            <div className="thread-composer-mobile-model-control">{modelControl}</div>
+          </div>
+        ) : null}
         <div
           className={cn(
             "thread-composer-footer flex flex-nowrap items-center motion-safe:transition-[padding-bottom] motion-safe:[transition-duration:220ms] motion-safe:ease-in-out",
@@ -2464,23 +2538,66 @@ export function ThreadComposer({
               hidden
               onChange={onFilePick}
             />
-            <Button
-              type="button"
-              size="icon"
-              variant="ghost"
-              disabled={attachButtonDisabled}
-              aria-label={t("thread.composer.attachImage")}
-              onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                "thread-composer-action touch-target rounded-full text-muted-foreground hover:text-foreground",
-                isHero
-                  ? "h-8 w-8 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card"
-                  : "h-9 w-9 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card",
-              )}
-            >
-              <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
-            </Button>
-            {showCompactProjectPicker && !voiceRecorder.isRecording ? projectPicker : null}
+            {mobileTransport?.pickCamera ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    disabled={attachButtonDisabled}
+                    aria-label={t("thread.composer.attachImage")}
+                    className={cn(
+                      "thread-composer-action touch-target rounded-full text-muted-foreground hover:text-foreground",
+                      isHero
+                        ? "h-8 w-8 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card"
+                        : "h-9 w-9 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card",
+                    )}
+                  >
+                    <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="top" align="start">
+                  <DropdownMenuItem onSelect={() => void pickCamera()}>
+                    Take a photo
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>
+                    Choose from library
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                disabled={attachButtonDisabled}
+                aria-label={t("thread.composer.attachImage")}
+                onClick={() => fileInputRef.current?.click()}
+                className={cn(
+                  "thread-composer-action touch-target rounded-full text-muted-foreground hover:text-foreground",
+                  isHero
+                    ? "h-8 w-8 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card"
+                    : "h-9 w-9 border border-border/55 bg-card shadow-[0_2px_8px_rgba(15,23,42,0.05)] hover:bg-card",
+                )}
+              >
+                <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
+              </Button>
+            )}
+            {showCompactProjectPicker && !mobileComposer && !voiceRecorder.isRecording ? projectPicker : null}
+            {mobileComposer && !voiceRecorder.isRecording && projectPickerAvailable && !workspaceControlsHidden && workspaceControls?.can_change_project !== false ? (
+              <div className="thread-composer-mobile-project-picker">{projectPicker}</div>
+            ) : null}
+            {mobileComposer && !voiceRecorder.isRecording ? accessControl : null}
+            {mobileComposer && !voiceRecorder.isRecording && hasProjectFolder && workspaceScope ? (
+              <span
+                className="thread-composer-mobile-project"
+                title={workspaceScope.project_path}
+              >
+                <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="truncate">{workspaceScope.project_name}</span>
+              </span>
+            ) : null}
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter
                 ariaLabel={voiceRecordingStatusLabel}
@@ -2489,25 +2606,7 @@ export function ThreadComposer({
                 isHero={isHero}
                 levels={voiceRecorder.levels}
               />
-            ) : workspaceScope && !workspaceControlsHidden ? (
-              <WorkspacePermissionV2Control
-                enabled={workspaces?.controls.permission_v2 === true}
-                permissions={workspacePermissions}
-                loading={workspacePermissionsLoading}
-                error={workspacePermissionsError}
-                disabled={persistentWorkspaceChat && interactionDisabled}
-                persistentChat={persistentWorkspaceChat}
-                draftFullAccess={!persistentWorkspaceChat && !!onDraftFullAccess}
-                onRequestFullAccess={
-                  !persistentWorkspaceChat && onDraftFullAccess
-                    ? () => onDraftFullAccess(value)
-                    : undefined
-                }
-                isHero={isHero}
-                onModeChange={onWorkspaceAccessModeChange}
-                onRetryRestricted={onRetryWorkspaceRestricted}
-              />
-            ) : null}
+            ) : !mobileComposer ? accessControl : null}
           </div>
           <div
             className={cn(
@@ -2515,25 +2614,8 @@ export function ThreadComposer({
               isHero ? "gap-1.5" : "gap-2",
             )}
           >
-            {modelLabel && !voiceRecorder.isRecording ? (
-              <ModelPresetBadge
-                label={modelLabel}
-                modelDetail={modelDetail}
-                modelPreset={modelPreset}
-                modelPresets={modelPresets}
-                onPresetChange={onModelPresetChange}
-                onManageModels={onManageModels}
-                onRequestComposerFocus={() => textareaRef.current?.focus()}
-                provider={modelProvider}
-                providerLabel={modelProviderLabel}
-                needsSetup={modelNeedsSetup}
-                attentionRequest={modelSetupAttentionRequest}
-                fallbackModelName={fallbackModelName}
-                isHero={isHero}
-                onClick={modelNeedsSetup ? onModelBadgeClick : undefined}
-              />
-            ) : null}
-            {!voiceRecorder.isRecording ? (
+            {!mobileComposer ? modelControl : null}
+            {!voiceRecorder.isRecording && !mobileComposer ? (
               <ComposerUsagePopover
                 context={contextUsage}
                 rounds={recentRoundUsage}
@@ -2619,7 +2701,7 @@ export function ThreadComposer({
             </Button>
           </div>
         </div>
-        {projectPickerAvailable && hasProjectFolder ? (
+        {projectPickerAvailable && hasProjectFolder && !mobileComposer ? (
           <div
             className="composer-workspace-drawer"
             data-composer-workspace-drawer=""

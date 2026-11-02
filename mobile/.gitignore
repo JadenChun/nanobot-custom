@@ -1,0 +1,23 @@
+node_modules/
+www/
+www-shared/
+toolchain/
+evidence/
+.knownPackages
+
+# Android build state and machine-local paths
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/app/src/main/jniLibs/
+android/local.properties
+android/.idea/
+android/capacitor-cordova-android-plugins/build/
+android/app/src/main/assets/public/
+
+# Signing and private runtime state
+*.jks
+*.keystore
+*.p12

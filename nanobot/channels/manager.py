@@ -250,6 +250,7 @@ class ChannelManager:
                 skill_state_action=self._webui_skill_state_action,
                 recovery_action=self._webui_recovery_action,
                 logger=logger,
+                remote_access=self.config.remote_access,
             )
             kwargs["gateway"] = gateway
         channel = cls(section, self.bus, **kwargs)

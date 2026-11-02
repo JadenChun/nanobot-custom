@@ -70,6 +70,11 @@ _WEBUI_MUTATION_REQUEST_ATTR = "_nanobot_webui_mutation_request"
 _CHANNEL_CONNECT_ACTIONS = frozenset({"start", "poll", "cancel"})
 _MCP_OAUTH_CALLBACK_URL_MAX_BYTES = 8 * 1024
 _MCP_RELOAD_TIMEOUT_SECONDS = 15.0
+_REMOTE_ACCESS_LOCAL_ONLY_PATHS = frozenset({
+    "/api/settings/remote-access/enable",
+    "/api/settings/remote-access/pairing/start",
+    "/api/settings/remote-access/pairing/approve",
+})
 _query_first = contracts.query_first
 
 
@@ -125,6 +130,14 @@ _CAPABILITY_ROUTES = {
     "/api/settings/network-safety/update": "network-update",
 }
 
+_REMOTE_ROUTES = {
+    "/api/settings/remote-access": "status",
+    "/api/settings/remote-access/enable": "enable",
+    "/api/settings/remote-access/revoke": "revoke",
+    "/api/settings/remote-access/pairing/start": "pair-start",
+    "/api/settings/remote-access/pairing/approve": "pair-approve",
+}
+
 _SYSTEM_ROUTES = {
     "/api/settings/cli-apps": "cli-list",
     "/api/settings/cli-apps/install": "cli-install",
@@ -175,6 +188,10 @@ _SETTINGS_MUTATION_PATHS = frozenset({
     "/api/settings/channels/configure",
     "/api/settings/pairing/approve",
     "/api/settings/pairing/deny",
+    "/api/settings/remote-access/enable",
+    "/api/settings/remote-access/revoke",
+    "/api/settings/remote-access/pairing/start",
+    "/api/settings/remote-access/pairing/approve",
     "/api/settings/mcp-oauth/start",
     "/api/settings/mcp-oauth/complete",
     "/api/settings/mcp-oauth/cancel",
@@ -289,6 +306,24 @@ class WebUISettingsRouter:
             return await asyncio.to_thread(self._handle_settings_usage)
 
         domain, action = route
+        if domain == "remote":
+            from nanobot.webui.settings_remote import handle_remote_access
+
+            if (
+                path in _REMOTE_ACCESS_LOCAL_ONLY_PATHS
+                and not _is_local_browser_request(connection, request.headers)
+            ):
+                return self._error_response(403, "local_ui_required")
+            identity = getattr(connection, "mobile_identity", None)
+            if identity is not None:
+                setattr(
+                    request,
+                    "_nanobot_owner_installation",
+                    getattr(identity, "installation_id", None),
+                )
+            return await asyncio.to_thread(
+                handle_remote_access, self.settings.config, request, path
+            )
         domain_request = self._domain_request(
             connection,
             request,
@@ -298,6 +333,12 @@ class WebUISettingsRouter:
                     "features-enable",
                     "channel-configure",
                     "channel-connect",
+                    "cli-install",
+                    "cli-update",
+                    "cli-uninstall",
+                    "settings.remote_access.enable",
+                    "settings.remote_access.pairing.start",
+                    "settings.remote_access.pairing.approve",
                 }
             ),
         )
@@ -340,6 +381,8 @@ class WebUISettingsRouter:
             return "capabilities", action
         if action := _SYSTEM_ROUTES.get(path):
             return "system", action
+        if action := _REMOTE_ROUTES.get(path):
+            return "remote", action
         if _channel_connect_route(path) is not None:
             return "system", "channel-connect"
         return None

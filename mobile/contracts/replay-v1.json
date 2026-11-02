@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "identity": [
+    "installation_id",
+    "gateway_generation",
+    "request_id"
+  ],
+  "cases": [
+    {
+      "name": "submit-new-current-epoch",
+      "mode": "submit",
+      "record": false,
+      "epoch": "current",
+      "expected_decision": "applied",
+      "expected_effect_count": 1
+    },
+    {
+      "name": "submit-existing",
+      "mode": "submit",
+      "record": true,
+      "epoch": "current",
+      "expected_decision": "replayed",
+      "expected_effect_count": 1
+    },
+    {
+      "name": "replay-only-existing",
+      "mode": "replay_only",
+      "record": true,
+      "epoch": "stale",
+      "expected_decision": "replayed",
+      "expected_effect_count": 1
+    },
+    {
+      "name": "replay-only-miss",
+      "mode": "replay_only",
+      "record": false,
+      "epoch": "current",
+      "expected_decision": "outcome_unknown",
+      "expected_effect_count": 0
+    },
+    {
+      "name": "submit-stale-epoch",
+      "mode": "submit",
+      "record": false,
+      "epoch": "stale",
+      "expected_decision": "denied",
+      "expected_effect_count": 0
+    },
+    {
+      "name": "changed-digest",
+      "mode": "replay_only",
+      "record": true,
+      "epoch": "stale",
+      "expected_decision": "denied",
+      "expected_effect_count": 0
+    },
+    {
+      "name": "revoked-before-delivery",
+      "mode": "submit",
+      "record": false,
+      "epoch": "current",
+      "expected_decision": "denied",
+      "expected_effect_count": 1
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+
+def releaseKeystorePath = System.getenv("NANOBOT_MOBILE_KEYSTORE") ?: "${System.properties['user.home']}/.config/nanobot-mobile/release.keystore"
+def releaseKeyAlias = System.getenv("NANOBOT_MOBILE_KEY_ALIAS")
+def releaseStorePassword = System.getenv("NANOBOT_MOBILE_KEYSTORE_PASSWORD")
+def releaseKeyPassword = System.getenv("NANOBOT_MOBILE_KEY_PASSWORD") ?: releaseStorePassword
+def releasePasswordFile = System.getenv("NANOBOT_MOBILE_KEYSTORE_PASSWORD_FILE")
+if (!releaseStorePassword && releasePasswordFile) {
+    def passwordSource = new File(releasePasswordFile)
+    if (passwordSource.isFile()) {
+        releaseStorePassword = passwordSource.text.trim()
+        if (!releaseKeyPassword) releaseKeyPassword = releaseStorePassword
+    }
+}
+def releaseKeystore = new File(releaseKeystorePath)
+def hasReleaseSigning = releaseKeystore.isFile() && releaseKeyAlias && releaseStorePassword
+
+android {
+    namespace = "ai.nanobot.mobile"
+    compileSdk = rootProject.ext.compileSdkVersion
+    buildToolsVersion = "36.0.0"
+    ndkVersion = "29.0.14206865"
+    def mobileAbis = project.findProperty('mobileAbis')?.split(',') ?: ['x86_64', 'arm64-v8a']
+    defaultConfig {
+        applicationId "ai.nanobot.mobile"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+        externalNativeBuild {
+            cmake {
+                abiFilters(*mobileAbis)
+            }
+        }
+    }
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.31.6'
+        }
+    }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile releaseKeystore
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    kotlinOptions {
+        jvmTarget = '21'
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:2.2.20"
+    implementation project(':capacitor-android')
+    implementation "com.journeyapps:zxing-android-embedded:4.3.0"
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+
+tasks.register("verifyReleaseSigning") {
+    doLast {
+        if (!hasReleaseSigning) {
+            throw new GradleException(
+                "Release signing is not configured. Set NANOBOT_MOBILE_KEYSTORE, " +
+                "NANOBOT_MOBILE_KEY_ALIAS and a password environment variable, or run " +
+                "mobile/scripts/build-release.sh."
+            )
+        }
+    }
+}
+
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    dependsOn("verifyReleaseSigning")
+}

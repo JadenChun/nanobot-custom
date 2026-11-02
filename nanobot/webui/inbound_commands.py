@@ -10,6 +10,7 @@ import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from loguru import logger
@@ -41,6 +42,7 @@ from nanobot.webui.forking import handle_webui_fork_chat
 from nanobot.webui.gateway_services import GatewayServices
 from nanobot.webui.mcp_presets_api import normalize_mcp_preset_mentions
 from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from nanobot.webui.replay_store import DurableWebUIReplay
 from nanobot.webui.session_access import (
     SessionMention,
     WebuiSessionAccess,
@@ -58,6 +60,11 @@ if TYPE_CHECKING:
 _WEBUI_REQUEST_CACHE_TTL_S = 5 * 60.0
 _WEBUI_REQUEST_CACHE_MAX = 256
 _PREPARE_FULL_ACTION = "workspace.access.prepare_full"
+_MOBILE_MUTATION_ACTIONS = frozenset({
+    "sidebar.update",
+    "recovery.continue",
+    "recovery.dismiss",
+})
 _SOURCE_BOUND_PERMISSION_ACTIONS = frozenset({
     "workspace.access.add_folder",
     "workspace.access.allow_once",
@@ -90,6 +97,8 @@ class WebUICommandTransport(Protocol):
     """Typed transport capabilities consumed by WebUI command orchestration."""
 
     def is_allowed(self, sender_id: str) -> bool: ...
+
+    async def revalidate_mobile_connection(self, connection: Any) -> bool: ...
 
     def webui_subscribers(self, chat_id: str) -> tuple[ServerConnection, ...]: ...
 
@@ -146,10 +155,65 @@ class WebUICommandTransport(Protocol):
     ) -> None: ...
 
 
+def _typed_mobile_identity(connection: Any) -> Any | None:
+    """Return only a real mobile identity, never a loose test mock."""
+    identity = getattr(connection, "mobile_identity", None)
+    if identity is None:
+        return None
+    installation_id = getattr(identity, "installation_id", None)
+    scopes = getattr(identity, "scopes", None)
+    if not isinstance(installation_id, str) or not installation_id:
+        return None
+    if not isinstance(scopes, (tuple, list, set, frozenset)):
+        return None
+    return identity
+
+
+def _mobile_denial_message(connection: Any, action: str) -> str:
+    """Name the documented local-only exception instead of a generic denial."""
+    if _typed_mobile_identity(connection) is not None and (
+        action.startswith("settings.remote_access.")
+        or action == "workspace.pick_folder"
+        or action in {"settings.channel.configure", "settings.channel.connect.start",
+                      "settings.channel.connect.poll", "settings.channel.connect.cancel"}
+    ):
+        return "local_ui_required"
+    return "access_denied"
+
+
+def _mobile_mutation_allowed(connection: Any, action: str) -> bool:
+    """Allow legacy chat organization and enabled owner operations.
+
+    The operation registry is the single allowlist for owner devices; a legacy
+    chat-only device keeps the three shared-organization actions.
+    """
+    identity = _typed_mobile_identity(connection)
+    if identity is None:
+        return False
+    scopes = identity.scopes
+    if action in _MOBILE_MUTATION_ACTIONS:
+        return True
+    if "owner" not in scopes:
+        return False
+    try:
+        from nanobot.remote.operations import load_registry
+
+        spec = load_registry().mutations.get(action)
+    except Exception:
+        return False
+    return spec is not None and spec.enabled
+
+
 class WebUICommandRouter:
     """Own WebUI command semantics while a transport host owns raw connections."""
 
-    def __init__(self, transport: WebUICommandTransport, gateway: GatewayServices) -> None:
+    def __init__(
+        self,
+        transport: WebUICommandTransport,
+        gateway: GatewayServices,
+        *,
+        replay_store: DurableWebUIReplay | None = None,
+    ) -> None:
         self._transport = transport
         self.gateway = gateway
         self._http_router = gateway.http
@@ -171,6 +235,15 @@ class WebUICommandRouter:
         ] = {}
         self.request_operations: dict[str, WebUIRequestOperation] = {}
         self.request_locks: dict[ServerConnection, asyncio.Lock] = {}
+        if replay_store is None:
+            settings = getattr(gateway, "settings", None)
+            config = getattr(settings, "config", None)
+            config_path = getattr(config, "path", None)
+            if config_path is not None:
+                replay_store = DurableWebUIReplay(
+                    Path(config_path).parent / "webui" / "mutation-replay-v1.json"
+                )
+        self._durable_replay = replay_store
 
     def workspace_controls_available(self, connection: ServerConnection) -> bool:
         return (
@@ -310,6 +383,18 @@ class WebUICommandRouter:
         envelope: dict[str, Any],
     ) -> None:
         """Execute one typed WebUI command."""
+        if _typed_mobile_identity(connection) is not None:
+            if not await self._transport.revalidate_mobile_connection(connection):
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="access_expired",
+                )
+                try:
+                    await connection.close(1008, "access expired")
+                except Exception:
+                    pass
+                return
         command_type = envelope.get("type")
         if command_type == "webui_request":
             await self.start_webui_request(connection, envelope)
@@ -786,15 +871,6 @@ class WebUICommandRouter:
                 detail="invalid webui request_id",
             )
             return
-        if connection not in self._webui_connections:
-            await self.send_webui_response(
-                connection,
-                request_id,
-                status=403,
-                message="access_denied",
-            )
-            return
-
         action = envelope.get("action")
         payload = envelope.get("payload")
         if not isinstance(action, str) or re.fullmatch(
@@ -814,6 +890,17 @@ class WebUICommandRouter:
                 request_id,
                 status=400,
                 message="WebUI mutation payload must be an object",
+            )
+            return
+        if (
+            connection not in self._webui_connections
+            and not _mobile_mutation_allowed(connection, action)
+        ):
+            await self.send_webui_response(
+                connection,
+                request_id,
+                status=403,
+                message=_mobile_denial_message(connection, action),
             )
             return
 
@@ -887,16 +974,128 @@ class WebUICommandRouter:
         ):
             await self.send_webui_response(connection, request_id, status=409, message="source_changed")
             return
-        if operation is None:
-            operation_task = asyncio.create_task(
-                self.execute_webui_request(
-                    connection,
+        if operation is None and self._durable_replay is not None:
+            try:
+                durable_state, durable_entry = self._durable_replay.lookup(
+                    request_id,
                     action,
-                    typed_payload,
-                    source_binding=source_binding,
-                    source_binding_captured=source_binding_captured,
+                    payload_digest.hex(),
+                    source_binding,
                 )
-            )
+            except Exception:
+                logger.exception("WebUI replay ledger lookup failed")
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=503,
+                    message="replay_store_unavailable",
+                )
+                return
+            if durable_state == "mismatch":
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=409,
+                    message="request_id was already used for a different WebUI mutation",
+                )
+                return
+            if durable_state == "uncertain":
+                await self.send_webui_response(
+                    connection,
+                    request_id,
+                    status=409,
+                    message="replay_uncertain",
+                )
+                return
+            if durable_state == "completed":
+                stored_value = durable_entry.get("result") if durable_entry else None
+                stored: dict[str, Any] = (
+                    cast(dict[str, Any], stored_value)
+                    if isinstance(stored_value, dict)
+                    else {}
+                )
+                cached = WebUIRequestResult(
+                    status=stored.get("status"),
+                    message=stored.get("message"),
+                    result=stored.get("result"),
+                    workspace_scope=stored.get("workspace_scope"),
+                    workspace_permissions=stored.get("workspace_permissions"),
+                )
+
+                async def _cached_result() -> WebUIRequestResult:
+                    return cached
+
+                cached_task = asyncio.create_task(_cached_result())
+                key = (connection, request_id)
+                if key in self.request_tasks:
+                    return
+                delivery_task = asyncio.create_task(
+                    self.deliver_webui_request(
+                        connection,
+                        request_id,
+                        cached_task,
+                        action=action,
+                        payload=typed_payload,
+                        sequence=True,
+                        source_binding=source_binding,
+                    )
+                )
+                self.request_tasks[key] = delivery_task
+                return
+        if operation is None:
+            if self._durable_replay is not None:
+                try:
+                    started = self._durable_replay.begin(
+                        request_id,
+                        action,
+                        payload_digest.hex(),
+                        source_binding,
+                    )
+                except Exception:
+                    logger.exception("WebUI replay ledger admission failed")
+                    await self.send_webui_response(
+                        connection,
+                        request_id,
+                        status=503,
+                        message="replay_store_unavailable",
+                    )
+                    return
+                if not started:
+                    await self.send_webui_response(
+                        connection,
+                        request_id,
+                        status=409,
+                        message="replay_uncertain",
+                    )
+                    return
+
+            async def execute_and_persist() -> WebUIRequestResult:
+                try:
+                    result = await self.execute_webui_request(
+                        connection,
+                        action,
+                        typed_payload,
+                        source_binding=source_binding,
+                        source_binding_captured=source_binding_captured,
+                    )
+                except asyncio.CancelledError:
+                    if self._durable_replay is not None:
+                        try:
+                            self._durable_replay.uncertain(request_id)
+                        except Exception:
+                            logger.exception("WebUI replay ledger could not mark uncertainty")
+                    raise
+                except Exception:
+                    if self._durable_replay is not None:
+                        try:
+                            self._durable_replay.uncertain(request_id)
+                        except Exception:
+                            logger.exception("WebUI replay ledger could not mark uncertainty")
+                    raise
+                self._record_replay_result(request_id, result)
+                return result
+
+            operation_task = asyncio.create_task(execute_and_persist())
             new_operation = WebUIRequestOperation(
                 action=action,
                 payload_digest=payload_digest,
@@ -1047,12 +1246,14 @@ class WebUICommandRouter:
         result: WebUIRequestResult,
         source_binding: dict[str, object] | None,
     ) -> None:
-        if connection not in self._webui_connections:
+        if connection not in self._webui_connections and not _mobile_mutation_allowed(
+            connection, action
+        ):
             await self.send_webui_response(
                 connection,
                 request_id,
                 status=403,
-                message="access_denied",
+                message=_mobile_denial_message(connection, action),
             )
             return
         if (
@@ -1103,6 +1304,22 @@ class WebUICommandRouter:
             workspace_permissions=result.workspace_permissions,
         )
 
+    def _record_replay_result(
+        self,
+        request_id: str,
+        result: WebUIRequestResult,
+    ) -> None:
+        """Persist a completed result, or uncertainty when the effect timed out."""
+        if self._durable_replay is None:
+            return
+        try:
+            if result.status == 504 or result.message == "timeout":
+                self._durable_replay.uncertain(request_id)
+            else:
+                self._durable_replay.complete(request_id, result)
+        except Exception:
+            logger.exception("WebUI replay ledger could not store the result")
+
     async def execute_webui_request(
         self,
         connection: ServerConnection,
@@ -1112,30 +1329,48 @@ class WebUICommandRouter:
         source_binding: dict[str, object] | None = None,
         source_binding_captured: bool = False,
     ) -> WebUIRequestResult:
+        timeout_s = 30.0
+        try:
+            from nanobot.remote.operations import load_registry
+
+            spec = load_registry().mutations.get(action)
+            if spec is not None:
+                timeout_s = float(spec.timeout_s or 30.0)
+                if spec.max_request_bytes is not None:
+                    encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                    if len(encoded) > spec.max_request_bytes:
+                        return WebUIRequestResult(status=413, message="request_too_large")
+        except Exception:
+            pass
         try:
             lock = self.request_locks.setdefault(connection, asyncio.Lock())
             async with lock:
-                if action in _SOURCE_BOUND_PERMISSION_ACTIONS:
-                    response = await self._http_router.dispatch_webui_mutation(
+                async def dispatch() -> Any:
+                    if action in _SOURCE_BOUND_PERMISSION_ACTIONS:
+                        return await self._http_router.dispatch_webui_mutation(
+                            connection,
+                            action,
+                            payload,
+                            expected_source_binding=source_binding,
+                        )
+                    if action == _PREPARE_FULL_ACTION and source_binding_captured:
+                        return await self._http_router.dispatch_webui_mutation(
+                            connection,
+                            action,
+                            payload,
+                            expected_source_binding=source_binding,
+                            check_expected_source_binding=True,
+                        )
+                    return await self._http_router.dispatch_webui_mutation(
                         connection,
                         action,
                         payload,
-                        expected_source_binding=source_binding,
                     )
-                elif action == _PREPARE_FULL_ACTION and source_binding_captured:
-                    response = await self._http_router.dispatch_webui_mutation(
-                        connection,
-                        action,
-                        payload,
-                        expected_source_binding=source_binding,
-                        check_expected_source_binding=True,
-                    )
-                else:
-                    response = await self._http_router.dispatch_webui_mutation(
-                        connection,
-                        action,
-                        payload,
-                    )
+
+                try:
+                    response = await asyncio.wait_for(dispatch(), timeout=timeout_s)
+                except TimeoutError:
+                    return WebUIRequestResult(status=504, message="timeout")
                 status = response.status_code
                 body = bytes(response.body).decode("utf-8", errors="replace").strip()
                 if 200 <= status < 300:

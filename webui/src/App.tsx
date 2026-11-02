@@ -35,10 +35,13 @@ import {
 } from "@/components/workbench/workbench-model";
 import { floatingSurfaceElevationClassName } from "@/components/ui/floating-surface";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { MobileConnectionNotice } from "@/components/MobileConnectionNotice";
+import { useMobileBack } from "@/hooks/useMobileBack";
 
 import { useSessions } from "@/hooks/useSessions";
 import { useDeferredTitleRefresh } from "@/hooks/useDeferredTitleRefresh";
 import { useSidebarState } from "@/hooks/useSidebarState";
+import { isMobileRuntimeActive, mobileOwnerCapability } from "@/lib/mobile-runtime";
 import { useSkillsCatalog } from "@/hooks/useSkills";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
 import { usePageVisibility } from "@/hooks/usePageVisibility";
@@ -1468,6 +1471,22 @@ function Shell({
     setMobileSidebarOpen(false);
   }, []);
 
+  useMobileBack(useCallback(() => {
+    if (sessionSearchOpen) {
+      setSessionSearchOpen(false);
+      return true;
+    }
+    if (mobileSidebarOpen) {
+      setMobileSidebarOpen(false);
+      return true;
+    }
+    if (view !== "chat") {
+      setView("chat");
+      return true;
+    }
+    return false;
+  }, [mobileSidebarOpen, sessionSearchOpen, view]));
+
   const toggleSidebar = useCallback(() => {
     const isNativeHost =
       typeof window !== "undefined" &&
@@ -2531,6 +2550,7 @@ function Shell({
     onRequestRenameProject,
     onNewChatInProject,
     onOpenSettings,
+    settingsAvailable: !isMobileRuntimeActive() || mobileOwnerCapability(),
     onOpenApps,
     onOpenAutomations,
     onOpenSkills,
@@ -2571,6 +2591,7 @@ function Shell({
           showHostChrome && "host-window-shell",
         )}
       >
+        <MobileConnectionNotice status={client.status} />
         {showHostChrome ? (
           <HostChrome
             rightAction={

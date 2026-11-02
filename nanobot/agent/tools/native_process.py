@@ -167,6 +167,12 @@ class NativeProcessHandle:
             with suppress(ProcessLookupError):
                 self._supervisor.kill()
         await self.wait()
+        # Retire the supervisor before returning so callers can observe its
+        # exit without racing asyncio's process-exit wakeup.
+        reap_task = self._reap_task
+        if not reap_task.done():
+            with suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(reap_task), timeout=10)
 
     async def close_control(self) -> None:
         if self._control_fd >= 0:

@@ -28,6 +28,7 @@ from nanobot.webui.ws_http import GatewayHTTPHandler
 if TYPE_CHECKING:
     from nanobot.bus.queue import MessageBus
     from nanobot.channels.websocket.runtime import WebSocketConfig
+    from nanobot.config.schema import RemoteAccessConfig
     from nanobot.cron.service import CronService
     from nanobot.session.manager import SessionManager
     from nanobot.triggers.local_store import LocalTriggerStore
@@ -81,6 +82,8 @@ def build_gateway_services(
     skill_state_action: Callable[[set[str]], None] | None = None,
     recovery_action: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
     logger: Any = default_logger,
+    mobile_edge: Any | None = None,
+    remote_access: "RemoteAccessConfig | None" = None,
 ) -> GatewayServices:
     settings = WebUISettingsServices.create(
         config_path or get_config_path(),
@@ -167,7 +170,24 @@ def build_gateway_services(
         recovery_action=recovery_action,
         log=logger,
     )
-    endpoint = WebUIGatewayEndpoint(config=config, http=http, tokens=tokens)
+    if mobile_edge is None and remote_access is not None and remote_access.enabled:
+        from nanobot.remote.composition import build_mobile_edge
+
+        mobile_edge = build_mobile_edge(remote_access, http, media)
+    if remote_access is not None and remote_access.enabled:
+        from nanobot.remote.client import RemoteAccessClient
+        from nanobot.remote.composition import owner_socket_path
+        from nanobot.remote.permissions import OwnerPermissionAdapter
+
+        owner_client = RemoteAccessClient(
+            owner_socket_path(remote_access),
+            timeout=remote_access.owner_timeout_seconds,
+        )
+        http.owner_permission_adapter = OwnerPermissionAdapter(owner_client)
+        http.owner_audit_client = owner_client
+    endpoint = WebUIGatewayEndpoint(
+        config=config, http=http, tokens=tokens, mobile_edge=mobile_edge
+    )
     return GatewayServices(
         http=http,
         endpoint=endpoint,

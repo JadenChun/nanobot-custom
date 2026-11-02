@@ -17,8 +17,9 @@ import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlencode, urlsplit, urlunsplit
 
 from loguru import logger
 from websockets.datastructures import Headers
@@ -179,6 +180,7 @@ WEBSOCKET_MUTATION_ROUTES = {
     "workspace.access.mode.set": "/api/workspaces/access/mode",
     "workspace.access.prepare_full": "/api/workspaces/access/prepare-full",
     "workspace.folder.edit": "/api/workspaces/folders/edit",
+    "workspace.directories.resolve": "/api/workspace-directories/resolve",
     "repository.remember": "/api/repositories/remember",
     "repository.forget": "/api/repositories/forget",
     "repository.discover": "/api/repositories/discover",
@@ -211,6 +213,10 @@ WEBSOCKET_MUTATION_ROUTES = {
     "settings.channel.configure": "/api/settings/channels/configure",
     "settings.pairing.approve": "/api/settings/pairing/approve",
     "settings.pairing.deny": "/api/settings/pairing/deny",
+    "settings.remote_access.enable": "/api/settings/remote-access/enable",
+    "settings.remote_access.revoke": "/api/settings/remote-access/revoke",
+    "settings.remote_access.pairing.start": "/api/settings/remote-access/pairing/start",
+    "settings.remote_access.pairing.approve": "/api/settings/remote-access/pairing/approve",
     "settings.mcp.enable": "/api/settings/mcp-presets/enable",
     "settings.mcp.disable": "/api/settings/mcp-presets/disable",
     "settings.mcp.remove": "/api/settings/mcp-presets/remove",
@@ -240,6 +246,46 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
     "/api/repositories/remember",
     "/api/repositories/forget",
     "/api/repositories/discover",
+    "/api/settings/remote-access/enable",
+    "/api/settings/remote-access/pairing/start",
+    "/api/settings/remote-access/pairing/approve",
+})
+
+
+def _typed_owner_identity(connection: Any) -> Any | None:
+    """Return a real owner-scoped mobile identity, never a loose mock."""
+    identity = getattr(connection, "mobile_identity", None)
+    if identity is None:
+        return None
+    installation_id = getattr(identity, "installation_id", None)
+    scopes = getattr(identity, "scopes", None)
+    if not isinstance(installation_id, str) or not installation_id:
+        return None
+    if not isinstance(scopes, (tuple, list, set, frozenset)):
+        return None
+    return identity if "owner" in scopes else None
+
+
+_OWNER_DELEGATED_LOCAL_PATHS = frozenset({
+    "/api/workspaces/grants/upsert",
+    "/api/workspaces/grants/revoke",
+    "/api/workspaces/access/prepare-full",
+    "/api/workspaces/access/mode",
+    "/api/workspaces/access/add-folder",
+    "/api/workspaces/access/resolve",
+    "/api/workspaces/access/continue",
+    "/api/workspaces/access/cancel",
+    "/api/workspaces/access/allow-once",
+    "/api/workspaces/folders/edit",
+    "/api/repositories/remember",
+    "/api/repositories/forget",
+    "/api/repositories/discover",
+})
+
+_OWNER_PERMISSION_HANDLED_ACTIONS = frozenset({
+    "workspace.grant.upsert",
+    "workspace.access.prepare_full",
+    "workspace.access.mode.set",
 })
 
 
@@ -358,6 +404,33 @@ def _resolve_bootstrap_model_name(
 # ---------------------------------------------------------------------------
 
 
+_MOBILE_COMMAND_NAMES = frozenset({
+    "/new",
+    "/compact",
+    "/stop",
+    "/status",
+    "/model",
+    "/history",
+    "/goal",
+    "/skill",
+    "/help",
+})
+
+
+def _filter_mobile_commands(payload: dict[str, Any]) -> dict[str, Any]:
+    commands = payload.get("commands")
+    if not isinstance(commands, list):
+        return payload
+    filtered: list[dict[str, Any]] = []
+    for command in cast(list[Any], commands):
+        if not isinstance(command, dict):
+            continue
+        typed = cast(dict[str, Any], command)
+        if typed.get("command") in _MOBILE_COMMAND_NAMES:
+            filtered.append(typed)
+    return {**payload, "commands": filtered}
+
+
 class GatewayHTTPHandler:
     """Handles all HTTP routes served alongside the WebSocket endpoint.
 
@@ -418,6 +491,11 @@ class GatewayHTTPHandler:
                 bus,
             )
         self.settings = settings
+        from nanobot.webui.workspace_directories import WorkspaceDirectoryBrowser
+
+        self.directory_browser = WorkspaceDirectoryBrowser(
+            lambda: self.settings.config.load().remote_access.directory_browser
+        )
         self.skills_workspace_path = skills_workspace_path
         self.skills_context_manager = context_manager or ContextRepoManager()
         self.skills_resource_policy = resource_policy or ResourceAccessPolicy(
@@ -444,6 +522,8 @@ class GatewayHTTPHandler:
         self.local_trigger_pending_ids = local_trigger_pending_ids
         self._log = log
         self._runtime_surface = runtime_surface
+        self.owner_permission_adapter: Any | None = None
+        self.owner_audit_client: Any | None = None
 
         from nanobot.webui.settings_api import runtime_capabilities as _rc
         from nanobot.webui.settings_routes import WebUISettingsRouter
@@ -465,6 +545,180 @@ class GatewayHTTPHandler:
             mcp_reload=mcp_reload,
             mcp_oauth_redirect_uri=self._mcp_oauth_redirect_uri,
         )
+
+    def mobile_read_payload(self) -> dict[str, Any]:
+        """Return the projection used by the authenticated mobile read edge."""
+        if self.session_manager is None:
+            return {"sessions": []}
+        return self._sessions_list_payload()
+
+    def mobile_model_settings_payload(self) -> dict[str, Any]:
+        """Return only the model-selection projection the mobile composer needs.
+
+        The phone is not a settings administrator: providers, credentials and
+        mutation controls are deliberately absent.
+        """
+        from nanobot.webui.settings_api import settings_payload
+
+        payload = self.settings.read(settings_payload, surface="mobile")
+        raw_providers = payload.get("providers")
+        providers: list[dict[str, Any]] = []
+        if isinstance(raw_providers, list):
+            for raw_provider in cast(list[Any], raw_providers):
+                if not isinstance(raw_provider, dict):
+                    continue
+                provider = cast(dict[str, Any], raw_provider)
+                providers.append(
+                    {
+                        "name": provider.get("name"),
+                        "label": provider.get("label"),
+                        "configured": bool(provider.get("configured")),
+                    }
+                )
+        return {
+            "agent": payload.get("agent") if isinstance(payload.get("agent"), dict) else {},
+            "model_presets": payload.get("model_presets")
+            if isinstance(payload.get("model_presets"), list)
+            else [],
+            "model_call_order": payload.get("model_call_order")
+            if isinstance(payload.get("model_call_order"), list)
+            else [],
+            "model_call_order_editable": False,
+            "providers": providers,
+        }
+
+    def mobile_workspaces_payload(self, *, owner: bool = False) -> dict[str, Any]:
+        """Return workspace metadata; owner devices may manage server grants.
+
+        A legacy chat-only device keeps the read-only projection. The native
+        OS folder picker is never advertised to a remote owner; M37's server
+        directory browser is the selection surface.
+        """
+        return self.workspaces.payload(
+            controls_available=owner,
+            folder_picker_available=False,
+            management_available=owner,
+        )
+
+    async def mobile_api_payload(
+        self,
+        path: str,
+        *,
+        owner: bool = False,
+    ) -> tuple[int, dict[str, Any]]:
+        """Dispatch one allowlisted mobile chat read through the local handler.
+
+        A legacy chat-only device keeps the filtered slash palette; owners see all.
+        """
+        request = WsRequest(path, Headers())
+        setattr(request, "_nanobot_trusted_proxy_authenticated", True)
+        response = await self.dispatch(None, request, internal=True)
+        if response is None:
+            return 404, {"error": "not_found"}
+        body: Any
+        try:
+            body = json.loads(response.body) if response.body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 502, {"error": "invalid_response"}
+        if not isinstance(body, dict):
+            return 502, {"error": "invalid_response"}
+        payload = cast(dict[str, Any], body)
+        if path == "/api/commands" and not owner:
+            payload = _filter_mobile_commands(payload)
+        return response.status_code, payload
+
+    async def mobile_feature_payload(
+        self,
+        path: str,
+        identity: Any | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """Dispatch one owner-allowlisted standard read route.
+
+        The operation registry has already bounded the path; this method keeps
+        the standard handler authoritative and never constructs native authority.
+        """
+        request = WsRequest(path, Headers())
+        setattr(request, "_nanobot_trusted_proxy_authenticated", True)
+        if identity is not None:
+            installation = getattr(identity, "installation_id", None)
+            if isinstance(installation, str) and installation:
+                setattr(request, "_nanobot_owner_installation", installation)
+        response = await self.dispatch(None, request, internal=True)
+        if response is None:
+            return 404, {"error": "not_found"}
+        body: Any
+        try:
+            body = json.loads(response.body) if response.body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 502, {"error": "invalid_response"}
+        if not isinstance(body, dict):
+            return 502, {"error": "invalid_response"}
+        return response.status_code, cast(dict[str, Any], body)
+
+    async def mobile_mutation_payload(
+        self,
+        identity: Any,
+        action: str,
+        payload: dict[str, Any],
+        *,
+        access_token: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """Test helper: run an allowlisted mutation with an explicit owner token."""
+        from nanobot.remote.operations import OperationRegistryError, load_registry
+
+        try:
+            spec = load_registry().mutations.get(action)
+        except OperationRegistryError:
+            spec = None
+        if spec is None or not spec.enabled:
+            return 403, {"error": "operation_not_allowed"}
+        if not getattr(identity, "is_owner", False):
+            return 403, {"error": "owner_required"}
+        if spec.max_request_bytes is not None:
+            encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            if len(encoded) > spec.max_request_bytes:
+                return 413, {"error": "request_too_large"}
+        connection = SimpleNamespace(
+            mobile_identity=identity,
+            mobile_access_token=access_token,
+        )
+        response = await self.dispatch_webui_mutation(connection, action, payload)
+        body: Any
+        try:
+            body = json.loads(response.body) if response.body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 502, {"error": "invalid_response"}
+        if not isinstance(body, dict):
+            return 502, {"error": "invalid_response"}
+        return response.status_code, cast(dict[str, Any], body)
+
+    def mobile_thread_payload(
+        self,
+        key: str,
+        query: dict[str, list[str]],
+    ) -> tuple[int, dict[str, Any]]:
+        """Return one persisted thread, including restricted permission state.
+
+        Mobile may read the projection but cannot enable Full access: the
+        permission projection is requested with ``controls_available=False`` so
+        the existing mode control explains the local-only boundary.
+        """
+        suffix = f"?{urlencode(query, doseq=True)}" if query else ""
+        path = f"/api/sessions/{quote(key, safe='')}/webui-thread{suffix}"
+        request = WsRequest(path, Headers())
+        setattr(request, "_nanobot_trusted_proxy_authenticated", True)
+        response = self._handle_webui_thread_get(
+            request,
+            key,
+            allow_remote_permissions=True,
+        )
+        try:
+            body = json.loads(response.body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 502, {"error": "invalid_thread_payload"}
+        if not isinstance(body, dict):
+            return 502, {"error": "invalid_thread_payload"}
+        return response.status_code, cast(dict[str, Any], body)
 
     def workspace_controls_available(self, connection: Any) -> bool:
         return (
@@ -492,7 +746,13 @@ class GatewayHTTPHandler:
 
     # -- Main dispatch ------------------------------------------------------
 
-    async def dispatch(self, connection: Any, request: WsRequest) -> Any | None:
+    async def dispatch(
+        self,
+        connection: Any,
+        request: WsRequest,
+        *,
+        internal: bool = False,
+    ) -> Any | None:
         """Route an HTTP request. Returns Response or None."""
         got, _ = _parse_request_path(request.path)
         started = time.perf_counter()
@@ -500,7 +760,8 @@ class GatewayHTTPHandler:
         setattr(
             request,
             "_nanobot_trusted_proxy_authenticated",
-            _is_trusted_proxy_authenticated_request(connection, request.headers, self.config),
+            internal
+            or _is_trusted_proxy_authenticated_request(connection, request.headers, self.config),
         )
 
         try:
@@ -537,6 +798,8 @@ class GatewayHTTPHandler:
         path: str,
     ) -> WebUIMutationAuthorizationFailure | None:
         if path not in _LOCAL_ONLY_WEBUI_MUTATION_PATHS:
+            return None
+        if path in _OWNER_DELEGATED_LOCAL_PATHS and _typed_owner_identity(connection):
             return None
         if (
             not _is_loopback_host(self.config.host)
@@ -576,10 +839,25 @@ class GatewayHTTPHandler:
         if isinstance(path, Response):
             return path
 
+        from nanobot.remote.permissions import ACTION_OPERATIONS
+
+        if action in ACTION_OPERATIONS and action not in _OWNER_PERMISSION_HANDLED_ACTIONS:
+            permission_failure = await self._authorize_owner_permission(
+                connection,
+                action,
+                payload,
+            )
+            if permission_failure is not None:
+                return permission_failure
+
         headers = self._connection_headers(connection)
         request = WsRequest(path, headers)
         setattr(request, "_nanobot_trusted_proxy_authenticated", True)
         setattr(request, _WEBUI_MUTATION_REQUEST_ATTR, True)
+        identity = getattr(connection, "mobile_identity", None)
+        installation = getattr(identity, "installation_id", None)
+        if isinstance(installation, str) and installation:
+            setattr(request, "_nanobot_owner_installation", installation)
         setattr(request, _WEBUI_MUTATION_PAYLOAD_ATTR, dict(payload))
         if check_expected_source_binding or expected_source_binding is not None:
             expected_binding = (
@@ -588,9 +866,93 @@ class GatewayHTTPHandler:
                 else None
             )
             setattr(request, _WEBUI_EXPECTED_SOURCE_BINDING_ATTR, expected_binding)
-        response = await self._dispatch_resolved(connection, request, path)
+        audit_client = getattr(self, "owner_audit_client", None)
+        audit_identity = getattr(connection, "mobile_identity", None)
+        audit_installation = getattr(audit_identity, "installation_id", None)
+        if (
+            audit_client is not None
+            and isinstance(audit_installation, str)
+            and audit_installation
+        ):
+            try:
+                await asyncio.to_thread(
+                    audit_client.audit_event,
+                    installation_id=audit_installation,
+                    operation=action,
+                    decision="attempted",
+                    actor_installation_id=audit_installation,
+                )
+            except Exception:
+                self._log.exception("owner audit pre-effect write failed")
+                return _http_error(503, "audit_unavailable")
+        try:
+            response = await self._dispatch_resolved(connection, request, path)
+        except asyncio.CancelledError:
+            if (
+                getattr(self, "owner_audit_client", None) is not None
+                and isinstance(audit_installation, str)
+                and audit_installation
+            ):
+                try:
+                    getattr(self, "owner_audit_client").audit_event(
+                        installation_id=audit_installation,
+                        operation=action,
+                        decision="failed",
+                        actor_installation_id=audit_installation,
+                    )
+                except Exception:
+                    self._log.debug("owner audit cancellation write failed", exc_info=True)
+            raise
+        except Exception:
+            if (
+                getattr(self, "owner_audit_client", None) is not None
+                and isinstance(audit_installation, str)
+                and audit_installation
+            ):
+                try:
+                    await asyncio.to_thread(
+                        getattr(self, "owner_audit_client").audit_event,
+                        installation_id=audit_installation,
+                        operation=action,
+                        decision="failed",
+                        actor_installation_id=audit_installation,
+                    )
+                except Exception:
+                    self._log.debug("owner audit failure write failed", exc_info=True)
+            self._log.exception("WebUI mutation failed")
+            return _http_error(500, "mutation_failed")
         if isinstance(response, Response):
+            if (
+                getattr(self, "owner_audit_client", None) is not None
+                and isinstance(audit_installation, str)
+                and audit_installation
+            ):
+                try:
+                    await asyncio.to_thread(
+                        getattr(self, "owner_audit_client").audit_event,
+                        installation_id=audit_installation,
+                        operation=action,
+                        decision="applied" if 200 <= response.status_code < 300 else "denied",
+                        actor_installation_id=audit_installation,
+                    )
+                except Exception:
+                    self._log.debug("owner audit write failed", exc_info=True)
             return response
+        if (
+            getattr(self, "owner_audit_client", None) is not None
+            and isinstance(audit_installation, str)
+            and audit_installation
+        ):
+            try:
+                await asyncio.to_thread(
+                    getattr(self, "owner_audit_client").audit_event,
+                    installation_id=audit_installation,
+                    operation=action,
+                    decision="denied",
+                    actor_installation_id=audit_installation,
+                )
+            except Exception:
+                self._log.debug("owner audit denial write failed", exc_info=True)
         return _http_error(404, "WebUI mutation action not found")
 
     def _is_webui_mutation_path(self, path: str) -> bool:
@@ -618,6 +980,7 @@ class GatewayHTTPHandler:
             "/api/workspaces/access/mode",
             "/api/workspaces/access/prepare-full",
             "/api/workspaces/folders/edit",
+            "/api/workspace-directories/resolve",
             "/api/repositories/remember",
             "/api/repositories/forget",
             "/api/repositories/discover",
@@ -687,6 +1050,11 @@ class GatewayHTTPHandler:
 
         # Automation routes
         response = await self._dispatch_automation_routes(request, got)
+        if response is not None:
+            return response
+
+        # Directory browser routes
+        response = await self._dispatch_directory_routes(request, got)
         if response is not None:
             return response
 
@@ -977,6 +1345,7 @@ class GatewayHTTPHandler:
         key: str,
         *,
         connection: Any | None = None,
+        allow_remote_permissions: bool = False,
     ) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -1082,10 +1451,13 @@ class GatewayHTTPHandler:
                     "user_message_offset": 0,
                 }
         data["workspace_scope"] = self.workspaces.scope_payload(scope)
-        if (
+        local_permission_projection = (
             connection is not None
             and _is_loopback_host(self.config.host)
             and _is_local_browser_request(connection, request.headers)
+        )
+        if (
+            (local_permission_projection or allow_remote_permissions)
             and self.workspace_access_recovery is not None
             and self.session_manager is not None
         ):
@@ -1105,7 +1477,11 @@ class GatewayHTTPHandler:
                     permissions = (
                         self.workspace_access_recovery.workspace_permissions(
                             chat_id,
-                            controls_available=self.workspace_controls_available(connection),
+                            controls_available=(
+                                self.workspace_controls_available(connection)
+                                if local_permission_projection
+                                else False
+                            ),
                         )
                     )
                     # Projection may discover a durable residual after restart;
@@ -1551,6 +1927,79 @@ class GatewayHTTPHandler:
             request=request,
         )
 
+    # -- Directory browser routes -------------------------------------------
+
+    @staticmethod
+    def _directory_installation(request: WsRequest) -> str:
+        value = getattr(request, "_nanobot_owner_installation", None)
+        if isinstance(value, str) and value:
+            return value
+        return "local"
+
+    async def _dispatch_directory_routes(
+        self,
+        request: WsRequest,
+        got: str,
+    ) -> Response | None:
+        from nanobot.webui.workspace_directories import DirectoryBrowserError
+
+        if got == "/api/workspace-directories/roots":
+            if not self.check_api_token(request):
+                return _http_error(401, "Unauthorized")
+            try:
+                payload = await asyncio.to_thread(self.directory_browser.roots)
+            except DirectoryBrowserError as exc:
+                return _http_error(exc.status, exc.code)
+            return _http_json_response(payload)
+        if got == "/api/workspace-directories/list":
+            if not self.check_api_token(request):
+                return _http_error(401, "Unauthorized")
+            query = _parse_query(request.path)
+            raw_limit = (_query_first(query, "limit") or "").strip()
+            try:
+                limit = int(raw_limit) if raw_limit else 50
+            except ValueError:
+                return _http_error(400, "invalid_limit")
+            try:
+                payload = await asyncio.to_thread(
+                    self.directory_browser.list,
+                    root_id=(_query_first(query, "root") or "").strip(),
+                    relative_path=(_query_first(query, "path") or "").strip(),
+                    cursor=(_query_first(query, "cursor") or "").strip() or None,
+                    limit=limit,
+                    installation_id=self._directory_installation(request),
+                )
+            except DirectoryBrowserError as exc:
+                return _http_error(exc.status, exc.code)
+            return _http_json_response(payload)
+        if got == "/api/workspace-directories/resolve":
+            if not getattr(request, _WEBUI_MUTATION_REQUEST_ATTR, False):
+                return _http_error(405, "WebUI mutations require an authenticated WebSocket")
+            if not self.check_api_token(request):
+                return _http_error(401, "Unauthorized")
+            payload = _mutation_payload(request)
+            if not isinstance(payload, dict):
+                return _http_error(400, "invalid_directory_request")
+            root_id = payload.get("root")
+            relative_path = payload.get("path", "")
+            policy_revision = payload.get("policy_revision")
+            if not isinstance(root_id, str) or not isinstance(policy_revision, str):
+                return _http_error(400, "invalid_directory_request")
+            if not isinstance(relative_path, str):
+                return _http_error(400, "invalid_directory_request")
+            try:
+                result = await asyncio.to_thread(
+                    self.directory_browser.resolve,
+                    root_id=root_id,
+                    relative_path=relative_path,
+                    policy_revision=policy_revision,
+                    installation_id=self._directory_installation(request),
+                )
+            except DirectoryBrowserError as exc:
+                return _http_error(exc.status, exc.code)
+            return _http_json_response(result)
+        return None
+
     # -- Misc routes --------------------------------------------------------
 
     async def _dispatch_misc_routes(
@@ -1568,6 +2017,7 @@ class GatewayHTTPHandler:
             "/api/workspaces/grants/upsert",
             "/api/workspaces/grants/revoke",
             "/api/workspaces/folders/edit",
+            "/api/workspace-directories/resolve",
             "/api/repositories/remember",
             "/api/repositories/forget",
             "/api/repositories/discover",
@@ -1681,11 +2131,39 @@ class GatewayHTTPHandler:
             return _http_error(400, "invalid_permission_request")
         if not self._matches_expected_webui_source(request, payload):
             return _http_error(409, "source_changed")
+        local_ui = _is_loopback_host(self.config.host) and _is_local_browser_request(
+            connection,
+            request.headers,
+        )
+        owner_authorized = _typed_owner_identity(connection) is not None
+        if not local_ui and not owner_authorized:
+            return _http_error(403, "local_ui_required")
+        if owner_authorized:
+            action_name = (
+                "workspace.access.prepare_full"
+                if path == "/api/workspaces/access/prepare-full"
+                else "workspace.access.mode.set"
+            )
+            permission_failure = await self._authorize_owner_permission(
+                connection,
+                action_name,
+                payload,
+            )
+            if permission_failure is not None:
+                return permission_failure
         try:
             if path == "/api/workspaces/access/prepare-full":
-                result = self.workspaces.prepare_full(payload, local_ui=True)
+                result = self.workspaces.prepare_full(
+                    payload,
+                    local_ui=local_ui,
+                    owner_authorized=owner_authorized,
+                )
             else:
-                result = self.workspaces.set_permission_mode(payload, local_ui=True)
+                result = self.workspaces.set_permission_mode(
+                    payload,
+                    local_ui=local_ui,
+                    owner_authorized=owner_authorized,
+                )
         except WorkspacePermissionActionError as exc:
             return _http_error(exc.status, exc.message)
         except Exception:
@@ -1716,6 +2194,97 @@ class GatewayHTTPHandler:
         except Exception:
             self._log.exception("workspace mode committed but event publication failed")
         return _http_json_response(dict(result))
+
+    async def _authorize_owner_permission(
+        self,
+        connection: Any,
+        action: str,
+        payload: dict[str, Any],
+    ) -> Response | None:
+        identity = _typed_owner_identity(connection)
+        if identity is None:
+            return None
+        adapter = getattr(self, "owner_permission_adapter", None)
+        if adapter is None:
+            return _http_error(503, "owner_permission_unavailable")
+        token = getattr(connection, "mobile_access_token", None)
+        if not isinstance(token, str) or not token:
+            return _http_error(401, "missing_access")
+        from nanobot.remote.permissions import PermissionAdapterError
+
+        try:
+            await asyncio.to_thread(
+                adapter.authorize,
+                access_token=token,
+                installation_id=identity.installation_id,
+                action=action,
+                payload=payload,
+            )
+        except PermissionAdapterError as exc:
+            return _http_error(exc.status, exc.code)
+        except Exception:
+            self._log.exception("owner permission adapter failed")
+            return _http_error(503, "owner_permission_unavailable")
+        return None
+
+    def _owner_grant_payload(
+        self,
+        request: WsRequest,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Consume a fresh directory-browser token before an owner grant commit.
+
+        The standard grant handler still performs its own revision/authority
+        checks; this step replaces a caller-supplied path with the canonical
+        path bound to the resolve token so a listing or path swap is not
+        authority.
+        """
+        allowed = {
+            "expected_revision",
+            "path",
+            "file_access",
+            "commands",
+            "commit_token",
+            "root",
+            "extent",
+        }
+        unknown = set(payload) - allowed
+        if unknown:
+            raise ValueError("grant payload has unlisted fields")
+        token = payload.get("commit_token")
+        root_id = payload.get("root")
+        relative = payload.get("path")
+        extent = payload.get("extent", "read")
+        file_access = payload.get("file_access")
+        commands = payload.get("commands")
+        if not isinstance(token, str) or not isinstance(root_id, str):
+            raise ValueError("grant commit is missing token/root")
+        if not isinstance(relative, str) or not isinstance(extent, str):
+            raise ValueError("grant commit is missing path/extent")
+        if file_access not in {"read_only", "read_write"}:
+            raise ValueError("grant commit has an invalid access extent")
+        expected_extent = "write" if file_access == "read_write" else "read"
+        if extent != expected_extent:
+            raise ValueError("grant commit extent does not match file access")
+        if not isinstance(commands, bool):
+            raise ValueError("grant commit commands must be boolean")
+        if extent == "read" and commands:
+            raise ValueError("a read grant cannot request commands")
+        installation = self._directory_installation(request)
+        resolved = self.directory_browser.consume_commit_token(
+            token,
+            installation_id=installation,
+            root_id=root_id,
+            relative_path=relative,
+            extent=extent,
+        )
+        cleaned = {
+            "expected_revision": payload.get("expected_revision"),
+            "path": resolved["canonical_path"],
+            "file_access": file_access,
+            "commands": commands,
+        }
+        return cleaned
 
     def _matches_expected_webui_source(
         self,
@@ -1793,6 +2362,24 @@ class GatewayHTTPHandler:
         if not isinstance(raw_payload, dict):
             return _http_error(400, "invalid management payload")
         payload = cast(dict[str, Any], raw_payload)
+        owner_identity = _typed_owner_identity(connection)
+        owner_authorized = owner_identity is not None
+        if path == "/api/workspaces/grants/upsert" and owner_authorized:
+            permission_failure = await self._authorize_owner_permission(
+                connection,
+                "workspace.grant.upsert",
+                payload,
+            )
+            if permission_failure is not None:
+                return permission_failure
+            try:
+                payload = self._owner_grant_payload(request, payload)
+            except Exception as exc:
+                from nanobot.webui.workspace_directories import DirectoryBrowserError
+
+                if isinstance(exc, DirectoryBrowserError):
+                    return _http_error(exc.status, exc.code)
+                return _http_error(400, "invalid_grant_commit")
         grant_receipt: WorkspaceGrantReceipt | None = None
         try:
             if path == "/api/workspaces/grants/upsert":

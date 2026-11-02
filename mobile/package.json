@@ -1,0 +1,23 @@
+{
+  "name": "nanobot-mobile",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "sync:android": "capacitor sync android",
+    "open:android": "capacitor open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.0",
+    "@capacitor/core": "8.6.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0",
+    "@types/node": "24.0.0",
+    "typescript": "5.7.2",
+    "vite": "5.4.11"
+  }
+}

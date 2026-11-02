@@ -1037,19 +1037,31 @@ export async function fetchWorkspaces(
   );
 }
 
+export interface WorkspaceGrantCommit {
+  commit_token: string;
+  root: string;
+  extent: "read" | "write";
+  /** Canonical-relative path bound by the resolve token. */
+  relative_path: string;
+}
+
 export async function upsertWorkspaceGrant(
   transport: WebUIMutationTransport,
   grant: FolderGrantInput,
   expectedRevision: number,
+  commit?: WorkspaceGrantCommit,
 ): Promise<WorkspaceGrantUpsertPayload> {
   const payload = await mutation<WorkspacesPayload & { grant_receipt?: unknown }>(
     transport,
     "workspace.grant.upsert",
     {
     expected_revision: expectedRevision,
-    path: grant.path,
+    path: commit?.relative_path ?? grant.path,
     file_access: grant.file_access,
     commands: grant.commands,
+    ...(commit
+      ? { commit_token: commit.commit_token, root: commit.root, extent: commit.extent }
+      : {}),
     },
   );
   return {

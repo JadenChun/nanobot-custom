@@ -1,0 +1,2201 @@
+{
+  "contract": "nanobot-mobile-operations",
+  "version": 1,
+  "inventory_contract": "nanobot-desktop-parity",
+  "inventory_version": 1,
+  "owner_scope": "owner",
+  "local_only_exception_rows": [
+    "workspace.pick_folder",
+    "devices.remote.enable",
+    "devices.remote.pairing_start",
+    "devices.remote.pairing_approve",
+    "devices.scope.upgrade",
+    "devices.owner.devices_list",
+    "devices.entry.mapping",
+    "lifecycle.server_start",
+    "lifecycle.service_install",
+    "lifecycle.diagnostics"
+  ],
+  "operations": [
+    {
+      "id": "apps.cli.install",
+      "inventory_row": "apps.cli.install",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/cli-apps/install",
+      "action": "settings.cli_app.install",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 300,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.cli.list",
+      "inventory_row": "apps.cli.list",
+      "category": "apps",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings/cli-apps",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.cli.test",
+      "inventory_row": "apps.cli.test",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/cli-apps/test",
+      "action": "settings.cli_app.test",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.cli.uninstall",
+      "inventory_row": "apps.cli.uninstall",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/cli-apps/uninstall",
+      "action": "settings.cli_app.uninstall",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.cli.update",
+      "inventory_row": "apps.cli.update",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/cli-apps/update",
+      "action": "settings.cli_app.update",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 300,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.features.disable",
+      "inventory_row": "apps.features.disable",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/nanobot-features/disable",
+      "action": "settings.feature.disable",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 131072,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.features.enable",
+      "inventory_row": "apps.features.enable",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/nanobot-features/enable",
+      "action": "settings.feature.enable",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 300,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.features.list",
+      "inventory_row": "apps.features.list",
+      "category": "apps",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings/nanobot-features",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 1048576,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.custom",
+      "inventory_row": "apps.mcp.custom",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-presets/custom",
+      "action": "settings.mcp.custom",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.disable",
+      "inventory_row": "apps.mcp.disable",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-presets/disable",
+      "action": "settings.mcp.disable",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.enable",
+      "inventory_row": "apps.mcp.enable",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-presets/enable",
+      "action": "settings.mcp.enable",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.import",
+      "inventory_row": "apps.mcp.import",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-presets/import",
+      "action": "settings.mcp.import",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 1048576,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.import_cursor",
+      "inventory_row": "apps.mcp.import_cursor",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-presets/import-cursor",
+      "action": "settings.mcp.import_cursor",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 1048576,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.list",
+      "inventory_row": "apps.mcp.list",
+      "category": "apps",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings/mcp-presets",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.oauth.cancel",
+      "inventory_row": "apps.mcp.oauth_cancel",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-oauth/cancel",
+      "action": "settings.mcp.oauth_cancel",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.oauth.complete",
+      "inventory_row": "apps.mcp.oauth_complete",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-oauth/complete",
+      "action": "settings.mcp.oauth_complete",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.oauth.start",
+      "inventory_row": "apps.mcp.oauth_start",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-oauth/start",
+      "action": "settings.mcp.oauth_start",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.oauth.status",
+      "inventory_row": "apps.mcp.oauth_status",
+      "category": "apps",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings/mcp-oauth/status",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 65536,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.reconnect",
+      "inventory_row": "apps.mcp.reconnect",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-presets/reconnect",
+      "action": "settings.mcp.reconnect",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.remove",
+      "inventory_row": "apps.mcp.remove",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-presets/remove",
+      "action": "settings.mcp.remove",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.test",
+      "inventory_row": "apps.mcp.test",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-presets/test",
+      "action": "settings.mcp.test",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "apps.mcp.tools",
+      "inventory_row": "apps.mcp.tools",
+      "category": "apps",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/mcp-presets/tools",
+      "action": "settings.mcp.tools",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "attachment.write",
+      "inventory_row": "chat.attachment.write",
+      "category": "chat",
+      "kind": "attachment",
+      "method": "POST",
+      "path": "/mobile/v1/attachment",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "automations.delete",
+      "inventory_row": "automations.delete",
+      "category": "automations",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/automations/delete",
+      "action": "automation.delete",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "automations.disable",
+      "inventory_row": "automations.disable",
+      "category": "automations",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/automations/disable",
+      "action": "automation.disable",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "automations.enable",
+      "inventory_row": "automations.enable",
+      "category": "automations",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/automations/enable",
+      "action": "automation.enable",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "automations.list",
+      "inventory_row": "automations.list",
+      "category": "automations",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/webui/automations",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 4194304,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "automations.run",
+      "inventory_row": "automations.run",
+      "category": "automations",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/automations/run",
+      "action": "automation.run",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "automations.session.list",
+      "inventory_row": "automations.session.list",
+      "category": "automations",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/sessions/{key}/automations",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 1048576,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "automations.update",
+      "inventory_row": "automations.update",
+      "category": "automations",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/automations/update",
+      "action": "automation.update",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "chat.attach",
+      "inventory_row": "chat.attach",
+      "category": "chat",
+      "kind": "ws_frame",
+      "method": null,
+      "path": null,
+      "action": null,
+      "ws_type": "attach",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 524288,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "chat.fork",
+      "inventory_row": "chat.fork",
+      "category": "chat",
+      "kind": "ws_frame",
+      "method": null,
+      "path": null,
+      "action": null,
+      "ws_type": "fork_chat",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "chat.message",
+      "inventory_row": "chat.message.send",
+      "category": "chat",
+      "kind": "ws_frame",
+      "method": null,
+      "path": null,
+      "action": null,
+      "ws_type": "message",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 1048576,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "chat.new",
+      "inventory_row": "chat.new",
+      "category": "chat",
+      "kind": "ws_frame",
+      "method": null,
+      "path": null,
+      "action": null,
+      "ws_type": "new_chat",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "chat.recovery.continue",
+      "inventory_row": "chat.recovery.continue",
+      "category": "chat",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/recovery/continue",
+      "action": "recovery.continue",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "chat.recovery.dismiss",
+      "inventory_row": "chat.recovery.dismiss",
+      "category": "chat",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/recovery/dismiss",
+      "action": "recovery.dismiss",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "chat.temporary.discard",
+      "inventory_row": "chat.temporary.discard",
+      "category": "chat",
+      "kind": "ws_frame",
+      "method": null,
+      "path": null,
+      "action": null,
+      "ws_type": "discard_temporary_chat",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "chat.temporary.new",
+      "inventory_row": "chat.temporary.new",
+      "category": "chat",
+      "kind": "ws_frame",
+      "method": null,
+      "path": null,
+      "action": null,
+      "ws_type": "new_temporary_chat",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "chat.transcribe",
+      "inventory_row": "chat.transcribe",
+      "category": "chat",
+      "kind": "ws_frame",
+      "method": null,
+      "path": null,
+      "action": null,
+      "ws_type": "transcribe_audio",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": 524288,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "commands.list",
+      "inventory_row": "chat.commands.read",
+      "category": "chat",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/commands",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 524288,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "devices.remote.revoke",
+      "inventory_row": "devices.remote.revoke",
+      "category": "devices_entry",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/remote-access/revoke",
+      "action": "settings.remote_access.revoke",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "devices.remote.status",
+      "inventory_row": "devices.remote.status",
+      "category": "devices_entry",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings/remote-access",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 524288,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "lifecycle.restart",
+      "inventory_row": "lifecycle.restart",
+      "category": "lifecycle",
+      "kind": "ws_frame",
+      "method": null,
+      "path": null,
+      "action": null,
+      "ws_type": "message",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "media.binary_preview",
+      "inventory_row": "media.binary_preview",
+      "category": "media_files",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/sessions/{key}/file-preview",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 30,
+        "range_requests": true
+      }
+    },
+    {
+      "id": "media.download",
+      "inventory_row": "media.download",
+      "category": "media_files",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/media/{sig}/{payload}",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 60,
+        "range_requests": true
+      }
+    },
+    {
+      "id": "media.fetch",
+      "inventory_row": "chat.media.read",
+      "category": "chat",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/media/{sig}/{payload}",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 60,
+        "range_requests": true
+      }
+    },
+    {
+      "id": "sessions.context",
+      "inventory_row": "chat.context.read",
+      "category": "chat",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/sessions/{key}/context",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "sessions.delete",
+      "inventory_row": "chat.delete",
+      "category": "chat",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/sessions/{key}/delete",
+      "action": "session.delete",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "sessions.file_preview",
+      "inventory_row": "chat.file_preview.read",
+      "category": "chat",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/sessions/{key}/file-preview",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 30,
+        "range_requests": true
+      }
+    },
+    {
+      "id": "sessions.list",
+      "inventory_row": "chat.sessions.list",
+      "category": "chat",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/sessions",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 4194304,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "sessions.thread",
+      "inventory_row": "chat.thread.read",
+      "category": "chat",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/sessions/{key}/webui-thread",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 8388608,
+        "timeout_s": 30,
+        "range_requests": true
+      }
+    },
+    {
+      "id": "settings.api_service.start",
+      "inventory_row": "settings.api_service.start",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/api-service/start",
+      "action": "settings.api_service.start",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.api_service.status",
+      "inventory_row": "settings.api_service.status",
+      "category": "settings",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings/api-service",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 262144,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.api_service.stop",
+      "inventory_row": "settings.api_service.stop",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/api-service/stop",
+      "action": "settings.api_service.stop",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.channel.configure",
+      "inventory_row": "settings.channel.configure",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/channels/configure",
+      "action": "settings.channel.configure",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.channel.connect.cancel",
+      "inventory_row": "settings.channel.connect.cancel",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/channels/{channel}/connect/cancel",
+      "action": "settings.channel.connect.cancel",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.channel.connect.poll",
+      "inventory_row": "settings.channel.connect.poll",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/channels/{channel}/connect/poll",
+      "action": "settings.channel.connect.poll",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.channel.connect.start",
+      "inventory_row": "settings.channel.connect.start",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/channels/{channel}/connect/start",
+      "action": "settings.channel.connect.start",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 131072,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.channel.validate",
+      "inventory_row": "settings.channel.validate",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/channels/validate",
+      "action": "settings.channel.validate",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.image.update",
+      "inventory_row": "settings.image_generation.update",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/image-generation/update",
+      "action": "settings.image_generation.update",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.model.call_order",
+      "inventory_row": "settings.model_call_order.update",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/model-call-order/update",
+      "action": "settings.model_call_order.update",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 131072,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.model.create",
+      "inventory_row": "settings.model_configuration.create",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/model-configurations/create",
+      "action": "settings.model_configuration.create",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.model.delete",
+      "inventory_row": "settings.model_configuration.delete",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/model-configurations/delete",
+      "action": "settings.model_configuration.delete",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.model.migrate",
+      "inventory_row": "settings.model_configuration.migrate",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/model-configurations/migrate",
+      "action": "settings.model_configuration.migrate",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.model.update",
+      "inventory_row": "settings.model_configuration.update",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/model-configurations/update",
+      "action": "settings.model_configuration.update",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.network_safety.update",
+      "inventory_row": "settings.network_safety.update",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/network-safety/update",
+      "action": "settings.network_safety.update",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.pairing.approve",
+      "inventory_row": "settings.pairing.approve",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/pairing/approve",
+      "action": "settings.pairing.approve",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.pairing.deny",
+      "inventory_row": "settings.pairing.deny",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/pairing/deny",
+      "action": "settings.pairing.deny",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.pairing.list",
+      "inventory_row": "settings.pairing.list",
+      "category": "settings",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings/pairing",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 262144,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.provider.create",
+      "inventory_row": "settings.provider.create",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/provider/create",
+      "action": "settings.provider.create",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.provider.oauth.complete",
+      "inventory_row": "settings.provider.oauth_complete",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/provider/oauth-login/complete",
+      "action": "settings.provider.oauth_complete",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.provider.oauth.logout",
+      "inventory_row": "settings.provider.oauth_logout",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/provider/oauth-logout",
+      "action": "settings.provider.oauth_logout",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.provider.oauth_login",
+      "inventory_row": "settings.provider.oauth_login",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/provider/oauth-login",
+      "action": "settings.provider.oauth_login",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.provider.update",
+      "inventory_row": "settings.provider.update",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/provider/update",
+      "action": "settings.provider.update",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.provider_models.read",
+      "inventory_row": "settings.provider_models.read",
+      "category": "settings",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings/provider-models",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.read",
+      "inventory_row": "settings.read",
+      "category": "settings",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 4194304,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.transcription.update",
+      "inventory_row": "settings.transcription.update",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/transcription/update",
+      "action": "settings.transcription.update",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.update",
+      "inventory_row": "settings.agent.update",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/update",
+      "action": "settings.agent.update",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 1048576,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.usage.read",
+      "inventory_row": "settings.usage.read",
+      "category": "settings",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings/usage",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 4194304,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.version_check",
+      "inventory_row": "settings.version_check",
+      "category": "settings",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/settings/version-check",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 262144,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "settings.web_search.update",
+      "inventory_row": "settings.web_search.update",
+      "category": "settings",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/settings/web-search/update",
+      "action": "settings.web_search.update",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "sidebar.read",
+      "inventory_row": "chat.sidebar.read",
+      "category": "chat",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/webui/sidebar-state",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 1048576,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "sidebar.update",
+      "inventory_row": "chat.sidebar.update",
+      "category": "chat",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/sidebar-state/update",
+      "action": "sidebar.update",
+      "ws_type": "set_sidebar_state",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "skills.delete",
+      "inventory_row": "skills.delete",
+      "category": "skills",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/skills/delete",
+      "action": "skill.delete",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "skills.detail",
+      "inventory_row": "skills.detail",
+      "category": "skills",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/webui/skills/{name}",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "skills.install",
+      "inventory_row": "skills.marketplace.install",
+      "category": "skills",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/skills/install",
+      "action": "skill.install",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 300,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "skills.list",
+      "inventory_row": "skills.list",
+      "category": "skills",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/webui/skills",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 4194304,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "skills.marketplace.search",
+      "inventory_row": "skills.marketplace.search",
+      "category": "skills",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/webui/skills/search",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "skills.marketplace.trending",
+      "inventory_row": "skills.marketplace.trending",
+      "category": "skills",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/webui/skills/trending",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "skills.marketplace.trends",
+      "inventory_row": "skills.marketplace.trends",
+      "category": "skills",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/webui/skills/trends",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "skills.update",
+      "inventory_row": "skills.enable",
+      "category": "skills",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/webui/skills/update",
+      "action": "skill.update",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 131072,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.access.add_folder",
+      "inventory_row": "workspace.access.add_folder",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/workspaces/access/add-folder",
+      "action": "workspace.access.add_folder",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.access.allow_once",
+      "inventory_row": "workspace.access.allow_once",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/workspaces/access/allow-once",
+      "action": "workspace.access.allow_once",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.access.cancel",
+      "inventory_row": "workspace.access.cancel",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/workspaces/access/cancel",
+      "action": "workspace.access.cancel",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.access.continue",
+      "inventory_row": "workspace.access.continue",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/workspaces/access/continue",
+      "action": "workspace.access.continue",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.access.mode.set",
+      "inventory_row": "workspace.access.mode.set",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/workspaces/access/mode",
+      "action": "workspace.access.mode.set",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.access.prepare_full",
+      "inventory_row": "workspace.access.prepare_full",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/workspaces/access/prepare-full",
+      "action": "workspace.access.prepare_full",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.access.resolve",
+      "inventory_row": "workspace.access.resolve",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/workspaces/access/resolve",
+      "action": "workspace.access.resolve",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.directories.list",
+      "inventory_row": "workspace.directories.list",
+      "category": "workspace",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/workspace-directories/list",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 65536,
+        "timeout_s": 5,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.directories.resolve",
+      "inventory_row": "workspace.directories.resolve",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": "POST",
+      "path": "/api/workspace-directories/resolve",
+      "action": "workspace.directories.resolve",
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.directories.roots",
+      "inventory_row": "workspace.directories.roots",
+      "category": "workspace",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/workspace-directories/roots",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 65536,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.folder.edit",
+      "inventory_row": "workspace.folder.edit",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/workspaces/folders/edit",
+      "action": "workspace.folder.edit",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 131072,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.grant.revoke",
+      "inventory_row": "workspace.grant.revoke",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/workspaces/grants/revoke",
+      "action": "workspace.grant.revoke",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.grant.upsert",
+      "inventory_row": "workspace.grant.upsert",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/workspaces/grants/upsert",
+      "action": "workspace.grant.upsert",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.list",
+      "inventory_row": "workspace.list",
+      "category": "workspace",
+      "kind": "read",
+      "method": "GET",
+      "path": "/api/workspaces",
+      "action": null,
+      "ws_type": null,
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "none",
+      "bounds": {
+        "max_request_bytes": null,
+        "max_response_bytes": 2097152,
+        "timeout_s": 30,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.repository.discover",
+      "inventory_row": "workspace.repository.discover",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/repositories/discover",
+      "action": "repository.discover",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 120,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.repository.forget",
+      "inventory_row": "workspace.repository.forget",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/repositories/forget",
+      "action": "repository.forget",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 65536,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.repository.remember",
+      "inventory_row": "workspace.repository.remember",
+      "category": "workspace",
+      "kind": "mutation",
+      "method": null,
+      "path": "/api/repositories/remember",
+      "action": "repository.remember",
+      "ws_type": "webui_request",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 131072,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    },
+    {
+      "id": "workspace.scope.set",
+      "inventory_row": "chat.workspace_scope.set",
+      "category": "chat",
+      "kind": "ws_frame",
+      "method": null,
+      "path": null,
+      "action": null,
+      "ws_type": "set_workspace_scope",
+      "scope": "owner",
+      "enabled": true,
+      "planned_task": null,
+      "replay": "submit",
+      "bounds": {
+        "max_request_bytes": 262144,
+        "max_response_bytes": null,
+        "timeout_s": 60,
+        "range_requests": false
+      }
+    }
+  ]
+}

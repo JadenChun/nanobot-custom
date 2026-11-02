@@ -4,6 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ThreadComposer } from "@/components/thread/ThreadComposer";
 import { SESSION_DRAG_TYPE } from "@/lib/session-drag";
+import {
+  installMobileRuntime,
+  resetMobileRuntime,
+  type MobileRuntime,
+} from "@/lib/mobile-runtime";
 import type {
   ChatSummary,
   CliAppInfo,
@@ -3793,4 +3798,59 @@ describe("ThreadComposer", () => {
     ).toBeNull();
   });
 
+});
+
+
+describe("ThreadComposer — mobile controls", () => {
+  afterEach(() => resetMobileRuntime());
+
+  it("gives the model its own mobile row and keeps access in the control row", () => {
+    const runtime: MobileRuntime = {
+      transport: {} as MobileRuntime["transport"],
+      request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
+      handshake: async () => ({}),
+      read: async () => ({}),
+      onEvent: async () => () => undefined,
+      createWebSocket: () => ({}) as WebSocket,
+    };
+    installMobileRuntime(runtime);
+    const scope: WorkspaceScopePayload = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted",
+      restrict_to_workspace: true,
+    };
+    const { container } = render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        modelLabel="Default"
+        modelPreset="default"
+        modelPresets={[
+          { name: "default", model: "model-a", provider: "provider-a" },
+          { name: "alt", model: "model-b", provider: "provider-b" },
+        ]}
+        onModelPresetChange={vi.fn()}
+        workspaceScope={scope}
+        workspaceControls={{
+          can_change_project: true,
+          can_use_full_access: false,
+          permission_v2: true,
+        }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection({ can_enable_full: false })}
+        persistentWorkspaceChat
+        onWorkspaceAccessModeChange={vi.fn()}
+      />,
+    );
+
+    const modelRow = container.querySelector(".thread-composer-mobile-model-row");
+    const footer = container.querySelector(".thread-composer-footer");
+    expect(modelRow).not.toBeNull();
+    expect(footer).not.toBeNull();
+    expect(within(modelRow as HTMLElement).getByText("Default")).toBeInTheDocument();
+    expect(within(footer as HTMLElement).getAllByText("Sandbox").length).toBeGreaterThan(0);
+    expect(modelRow?.textContent).not.toContain("Sandbox");
+    expect(footer?.textContent).not.toContain("Default");
+  });
 });

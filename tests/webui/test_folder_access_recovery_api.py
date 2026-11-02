@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 from websockets.datastructures import Headers
@@ -130,3 +130,65 @@ async def test_recovery_action_commits_before_publishing_and_returns_exact_resul
     assert response.status_code == 200
     assert json.loads(response.body) == result
     assert [kind for kind, _payload in events] == ["commit", "publish"]
+
+
+@pytest.mark.asyncio
+async def test_owner_remote_can_resolve_recovery_action() -> None:
+    from nanobot.remote.edge import AccessIdentity
+
+    result = {
+        "workspace_access_request": {"status": "ready"},
+        "workspace_scope": {"access_mode": "restricted"},
+    }
+
+    class RecoveryOwner:
+        calls = 0
+
+        def resolve(self, _payload):
+            self.calls += 1
+            return result
+
+        async def publish(self, *_args):
+            return None
+
+    class _Adapter:
+        calls = 0
+
+        def authorize(self, **_kwargs):
+            self.calls += 1
+            return True
+
+    owner = RecoveryOwner()
+    adapter = _Adapter()
+    handler = object.__new__(GatewayHTTPHandler)
+    handler.config = SimpleNamespace(host="127.0.0.1")
+    handler.workspace_access_recovery = owner
+    handler.owner_permission_adapter = adapter
+    handler.check_api_token = lambda _request: True
+    handler._log = SimpleNamespace(exception=lambda *_args: None)
+    handler.authorize_webui_mutation = lambda *_args: None
+    handler._webui_mutation_path = GatewayHTTPHandler._webui_mutation_path
+    handler._connection_headers = lambda _connection: Headers(
+        [("Host", "127.0.0.1:8765")]
+    )
+
+    async def dispatch(self, connection, request, path):
+        return await self._handle_workspace_access_action(connection, request, path)
+
+    handler._dispatch_resolved = MethodType(dispatch, handler)
+    connection = SimpleNamespace(
+        remote_address=("203.0.113.1", 1234),
+        mobile_identity=AccessIdentity(
+            "install-owner", ("chat.read", "chat.write", "owner"), 1e12, 1
+        ),
+        mobile_access_token="access-token",
+    )
+    response = await GatewayHTTPHandler.dispatch_webui_mutation(
+        handler,
+        connection,
+        "workspace.access.resolve",
+        {"chat_id": "chat-a"},
+    )
+    assert response.status_code == 200
+    assert owner.calls == 1
+    assert adapter.calls == 1

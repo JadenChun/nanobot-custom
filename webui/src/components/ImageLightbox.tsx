@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { useMobileMediaUrl } from "@/lib/mobile-media";
 import { cn } from "@/lib/utils";
 import type { UIImage } from "@/lib/types";
 
@@ -37,6 +38,7 @@ export function ImageLightbox({
   const open = index !== null;
   const total = images.length;
   const current = index !== null ? images[index] : null;
+  const resolvedCurrent = useMobileMediaUrl(current?.url);
 
   const go = useCallback(
     (delta: number) => {
@@ -76,7 +78,7 @@ export function ImageLightbox({
     return [prev, next].filter((i) => i && i.url);
   }, [images, index, total]);
 
-  if (!current || !current.url) return null;
+  if (!current || !resolvedCurrent) return null;
 
   const hasMany = total > 1;
   const counter = hasMany ? `${index! + 1} / ${total}` : null;
@@ -115,8 +117,8 @@ export function ImageLightbox({
             }}
           >
             <img
-              key={current.url}
-              src={current.url}
+              key={resolvedCurrent}
+              src={resolvedCurrent}
               alt={current.name ?? ""}
               decoding="async"
               draggable={false}
@@ -163,7 +165,7 @@ export function ImageLightbox({
           {/* Invisible preload — browser decodes adjacent images so prev/next swap is instant. */}
           <div aria-hidden className="hidden">
             {preload.map((img, i) => (
-              <img key={`${img.url}-${i}`} src={img.url} alt="" />
+              <PreloadImage key={`${img.url}-${i}`} image={img} />
             ))}
           </div>
         </DialogPrimitive.Content>
@@ -176,6 +178,11 @@ interface NavButtonProps {
   side: "left" | "right";
   label: string;
   onClick: React.MouseEventHandler<HTMLButtonElement>;
+}
+
+function PreloadImage({ image }: { image: UIImage }) {
+  const src = useMobileMediaUrl(image.url);
+  return src ? <img src={src} alt="" /> : null;
 }
 
 function NavButton({ side, label, onClick }: NavButtonProps) {

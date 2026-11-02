@@ -1,5 +1,8 @@
 import { ChevronLeft, Loader2 } from "lucide-react";
 
+import { RemoteAccessSettings } from "@/components/settings/RemoteAccessSettings";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
+import { useClient } from "@/providers/ClientProvider";
 import { SkillsCatalogSettings } from "@/components/settings/SkillsCatalogSettings";
 import { ImageGenerationSettings } from "@/components/settings/capabilities/ImageGenerationSettings";
 import { AdvancedSettings } from "@/components/settings/capabilities/SecuritySettings";
@@ -67,6 +70,7 @@ export function SettingsPage({
   onRefreshWorkspaces,
   onPickWorkspaceFolder,
 }: SettingsPageProps) {
+  const { client } = useClient();
   const {
     activeSection,
     apiService,
@@ -521,6 +525,14 @@ export function SettingsPage({
             capabilityError={nanobotFeaturesError}
             onApiServiceAction={handleApiServiceAction}
             onInstallCapability={(name) => void installCapabilities([name])}
+          />
+        );
+      case "remote_access":
+        return (
+          <RemoteAccessSettings
+            token={token}
+            mutate={client}
+            localSetupAvailable={!isMobileRuntimeActive()}
           />
         );
       case "advanced":

@@ -1,4 +1,5 @@
 import type { RuntimeCapabilities, RuntimeSurface } from "./types";
+import { getMobileRuntime } from "./mobile-runtime";
 
 export interface RuntimeHost {
   surface: RuntimeSurface;
@@ -108,6 +109,14 @@ export function createRuntimeHost(
     ...(capabilities ?? {}),
   };
   const bridge = getHostSocketBridge();
+  const mobile = getMobileRuntime();
+  if (mobile) {
+    return {
+      surface: "native",
+      capabilities: mergedCapabilities,
+      socketFactory: (url) => mobile.createWebSocket(url),
+    };
+  }
   return {
     surface,
     capabilities: mergedCapabilities,
@@ -130,7 +139,7 @@ export function getRuntimeHost(
 }
 
 export function isNativeRuntime(surface?: string | null): boolean {
-  return getHostApi() !== null || toRuntimeSurface(surface) === "native";
+  return getMobileRuntime() !== null || getHostApi() !== null || toRuntimeSurface(surface) === "native";
 }
 
 export function createHostWebSocket(url: string): WebSocket {

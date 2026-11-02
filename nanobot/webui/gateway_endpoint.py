@@ -20,6 +20,7 @@ from nanobot.webui.ws_http import GatewayHTTPHandler
 
 if TYPE_CHECKING:
     from nanobot.channels.websocket.runtime import WebSocketConfig
+    from nanobot.remote.edge import MobileGatewayEdge
 
 
 def is_websocket_upgrade(request: WsRequest) -> bool:
@@ -43,10 +44,12 @@ class WebUIGatewayEndpoint:
         config: WebSocketConfig,
         http: GatewayHTTPHandler,
         tokens: GatewayTokenStore,
+        mobile_edge: "MobileGatewayEdge | None" = None,
     ) -> None:
         self._config = config
         self._http = http
         self._tokens = tokens
+        self._mobile_edge = mobile_edge
         self.webui_connections: set[ServerConnection] = set()
 
     async def process_request(
@@ -58,6 +61,14 @@ class WebUIGatewayEndpoint:
     ) -> Any:
         """Route one listener request to a WS handshake or the HTTP application."""
         got, query = parse_request_path(request.path)
+        if got == "/mobile/v1/ws" and is_websocket_upgrade(request):
+            if self._mobile_edge is None:
+                return connection.respond(404, "Not Found")
+            return await self._mobile_edge.authorize_websocket(connection, request)
+        if got == "/mobile/v1" or got.startswith("/mobile/v1/"):
+            if self._mobile_edge is None:
+                return connection.respond(404, "Not Found")
+            return await self._mobile_edge.handle(connection, request)
         expected_ws = normalize_config_path(self._config.path)
         if got == expected_ws and is_websocket_upgrade(request):
             terminal_version = query_first(query, "terminal_protocol")
@@ -112,6 +123,21 @@ class WebUIGatewayEndpoint:
 
     def is_webui_connection(self, connection: ServerConnection) -> bool:
         return connection in self.webui_connections
+
+    async def revalidate_mobile_connection(self, connection: ServerConnection) -> bool:
+        """Revalidate current owner authority for one established mobile socket."""
+        identity = getattr(connection, "mobile_identity", None)
+        if identity is None:
+            return True
+        token = getattr(connection, "mobile_access_token", None)
+        if self._mobile_edge is None or not isinstance(token, str) or not token:
+            return False
+        try:
+            fresh = await self._mobile_edge.revalidate_mobile_access(identity, token)
+        except Exception:
+            return False
+        setattr(connection, "mobile_identity", fresh)
+        return True
 
     def discard_connection(self, connection: ServerConnection) -> None:
         self.webui_connections.discard(connection)
