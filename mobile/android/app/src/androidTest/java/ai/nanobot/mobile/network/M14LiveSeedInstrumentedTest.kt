@@ -26,9 +26,11 @@ class M14LiveSeedInstrumentedTest {
         assumeTrue("live auth key is not installed", keyFile.exists())
         val authKey = keyFile.readText().trim()
         assumeTrue("live auth key is empty", authKey.isNotEmpty())
+        val origin = InstrumentationRegistry.getArguments().getString("origin")
+            ?: "https://fedora.taila1e707.ts.net"
         val store = CustodyStore(context)
         val record = store.loadOrCreate(
-            "https://fedora.taila1e707.ts.net",
+            origin,
             null,
             "nanobot-android",
         )
