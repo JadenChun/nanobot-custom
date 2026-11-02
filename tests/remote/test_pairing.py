@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 from pathlib import Path
 
@@ -8,13 +9,17 @@ import pytest
 from nanobot.remote.auth import TokenService
 from nanobot.remote.pairing import (
     PairingBusyError,
+    PairingCodeInvalidError,
     PairingConsumedError,
+    PairingDeniedError,
     PairingExpiredError,
     PairingNotFoundError,
+    PairingOwnerRequiredError,
     PairingRateLimitedError,
     PairingRejectedError,
     PairingService,
 )
+from nanobot.remote.protocol import OWNER_PAIRING_SCOPES
 from nanobot.remote.store import RemoteAccessStore
 
 
@@ -135,7 +140,7 @@ def test_pairing_expiry_and_restart(tmp_path) -> None:
     clock = Clock()
     store, tokens, pairing = setup(tmp_path, clock)
     created = offer(pairing)
-    clock.advance(121)
+    clock.advance(301)
     with pytest.raises(PairingExpiredError):
         pairing.collect(
             pairing_id=created.pairing_id,
@@ -247,3 +252,139 @@ def test_concurrent_collect_and_approve_have_one_winner(tmp_path) -> None:
         thread.join()
     assert sorted(approve_outcomes) == ["busy", "ok"]
     assert len(store.snapshot()["devices"]) == 1
+
+
+def test_owner_only_offer_requires_consent_and_complete_scopes(tmp_path) -> None:
+    _store, _tokens, pairing = setup(tmp_path)
+    with pytest.raises(PairingOwnerRequiredError):
+        offer(pairing, owner_only=True, full_control_consent=False)
+    with pytest.raises(PairingOwnerRequiredError):
+        offer(
+            pairing,
+            owner_only=True,
+            full_control_consent=True,
+            scopes=("chat.read", "chat.write"),
+        )
+    created = offer(pairing, owner_only=True, full_control_consent=True)
+    assert set(OWNER_PAIRING_SCOPES).issubset(created.scopes)
+    assert created.media_consent is True
+    assert created.transport == "tailscale"
+
+
+def test_eight_digit_code_is_unique_and_supports_manual_approval(tmp_path) -> None:
+    _store, _tokens, pairing = setup(tmp_path)
+    offers = [offer(pairing) for _index in range(25)]
+    codes = [created.pairing_code for created in offers]
+    assert all(re.fullmatch(r"\d{8}", code) for code in codes)
+    assert len(set(codes)) == len(codes)
+    assert all(created.comparison_code == created.pairing_code for created in offers)
+
+    created = offers[0]
+    pending = pairing.collect_by_code(
+        origin=created.origin,
+        pairing_code=created.pairing_code,
+        installation_id="install-9001",
+        label="Pixel 10",
+        platform="Android 16",
+        model="Pixel 10",
+    )
+    assert pending.state == "pending_approval"
+    assert pending.pairing_code == created.pairing_code
+    assert pending.platform == "Android 16"
+    assert pending.model == "Pixel 10"
+    assert pending.origin == created.origin
+
+    with pytest.raises(PairingCodeInvalidError):
+        pairing.approve(pairing_id=created.pairing_id)
+    with pytest.raises(PairingCodeInvalidError):
+        pairing.approve(pairing_id=created.pairing_id, pairing_code="00000000")
+    approved = pairing.approve(
+        pairing_id=created.pairing_id,
+        pairing_code=created.pairing_code,
+    )
+    assert approved.installation_id == "install-9001"
+    assert pairing.status(created.pairing_id).state == "approved"
+
+
+def test_wrong_origin_and_repeated_code_attempts_are_rejected(tmp_path) -> None:
+    _store, _tokens, pairing = setup(tmp_path)
+    created = offer(pairing)
+    with pytest.raises(PairingCodeInvalidError):
+        pairing.collect_by_code(
+            origin="https://other.example",
+            pairing_code=created.pairing_code,
+            installation_id="install-9002",
+            label="phone",
+        )
+    for _attempt in range(5):
+        with pytest.raises(PairingCodeInvalidError):
+            pairing.collect_by_code(
+                origin=created.origin,
+                pairing_code="00000000",
+                installation_id="install-9002",
+                label="phone",
+            )
+    with pytest.raises(PairingRateLimitedError):
+        pairing.collect_by_code(
+            origin=created.origin,
+            pairing_code="00000000",
+            installation_id="install-9002",
+            label="phone",
+        )
+
+
+def test_qr_approval_needs_no_comparison_code_and_pending_metadata(tmp_path) -> None:
+    _store, _tokens, pairing = setup(tmp_path)
+    created = offer(pairing, owner_only=True, full_control_consent=True)
+    status = pairing.status(created.pairing_id)
+    assert status.state == "offer_created"
+    assert status.label == "phone"
+
+    pending = pairing.collect(
+        pairing_id=created.pairing_id,
+        nonce=created.nonce,
+        collector_secret=created.collector_secret,
+        installation_id="install-9003",
+        label="Pixel 10",
+        platform="Android 16",
+    )
+    assert pending.state == "pending_approval"
+    pending_list = pairing.pending()
+    assert len(pending_list) == 1
+    assert pending_list[0].state == "pending_approval"
+    assert pending_list[0].platform == "Android 16"
+
+    approved = pairing.approve(pairing_id=created.pairing_id)
+    assert approved.installation_id == "install-9003"
+    assert set(OWNER_PAIRING_SCOPES).issubset(approved.scopes)
+
+
+def test_deny_and_expiry_states(tmp_path) -> None:
+    clock = Clock()
+    _store, _tokens, pairing = setup(tmp_path, clock)
+    created = offer(pairing, owner_only=True, full_control_consent=True)
+    pairing.collect(
+        pairing_id=created.pairing_id,
+        nonce=created.nonce,
+        collector_secret=created.collector_secret,
+        installation_id="install-9004",
+        label="phone",
+    )
+    denied = pairing.deny(created.pairing_id)
+    assert denied.state == "denied"
+    assert pairing.status(created.pairing_id).state == "denied"
+    assert pairing.pending() == []
+    with pytest.raises(PairingDeniedError):
+        pairing.approve(pairing_id=created.pairing_id)
+
+    expired = offer(pairing, owner_only=True, full_control_consent=True)
+    clock.advance(301)
+    assert pairing.status(expired.pairing_id).state == "expired"
+    with pytest.raises(PairingExpiredError):
+        pairing.collect(
+            pairing_id=expired.pairing_id,
+            nonce=expired.nonce,
+            collector_secret=expired.collector_secret,
+            installation_id="install-9005",
+            label="phone",
+        )

@@ -21,7 +21,7 @@
   ],
   "limits": {
     "access_ttl_seconds": 600,
-    "challenge_ttl_seconds": 120,
+    "challenge_ttl_seconds": 300,
     "refresh_idle_seconds": 2592000,
     "max_ws_frame_bytes": 37748736,
     "max_attachment_bytes": 6291456,
@@ -168,7 +168,7 @@
     "outcome_unknown_status": 409
   },
   "pairing": {
-    "challenge_ttl_seconds": 120,
+    "challenge_ttl_seconds": 300,
     "access_ttl_seconds": 600,
     "refresh_idle_seconds": 2592000,
     "full_control_consent_required_for_owner": true,

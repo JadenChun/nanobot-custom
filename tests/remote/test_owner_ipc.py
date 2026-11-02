@@ -56,10 +56,98 @@ def test_owner_ipc_gateway_and_admin_boundaries(tmp_path) -> None:
         client.ping()
 
 
+def test_owner_ipc_owner_pairing_pending_qr_and_manual_code(tmp_path) -> None:
+    owner, client, _token = start_owner(tmp_path)
+    try:
+        client.set_enabled(True)
+        offer = client.create_pairing(
+            origin="https://fixture.example:8443",
+            label="Pixel 10",
+        )
+        assert set(offer["scopes"]) >= {
+            "owner",
+            "chat.read",
+            "chat.write",
+            "media.read",
+            "attachment.write",
+        }
+        assert offer["transport"] == "tailscale"
+        assert len(offer["pairing_code"]) == 8
+        assert offer["qr_link"].startswith("nanobot://pair?")
+        assert offer["state"] == "offer_created"
+
+        pending = client.pending_pairings()
+        assert pending["pending"][0]["state"] == "offer_created"
+        assert pending["pending"][0]["pairing_code"] == offer["pairing_code"]
+
+        client.collect_pairing(
+            pairing_id=offer["pairing_id"],
+            nonce=offer["nonce"],
+            collector_secret=offer["collector_secret"],
+            installation_id="install-qr-1",
+            label="Pixel 10",
+            platform="Android 16",
+            model="Pixel 10",
+        )
+        status = client.pairing_status(offer["pairing_id"])
+        assert status["state"] == "pending_approval"
+        assert status["device"]["platform"] == "Android 16"
+        assert status["device"]["label"] == "Pixel 10"
+        assert status["origin"] == "https://fixture.example:8443"
+        assert status["transport"] == "tailscale"
+        client.approve_pairing(pairing_id=offer["pairing_id"])
+        assert client.pairing_status(offer["pairing_id"])["state"] == "approved"
+
+        manual = client.create_pairing(
+            origin="https://fixture.example:8443",
+            label="Manual phone",
+        )
+        collected = client.collect_pairing_code(
+            origin="https://fixture.example:8443",
+            pairing_code=manual["pairing_code"],
+            installation_id="install-code-1",
+            label="Manual phone",
+            platform="Android 16",
+        )
+        assert collected["state"] == "pending_approval"
+        with pytest.raises(OwnerRequestError) as missing:
+            client.approve_pairing(pairing_id=manual["pairing_id"])
+        assert missing.value.code == "pairing_code_invalid"
+        approved = client.approve_pairing(
+            pairing_id=manual["pairing_id"],
+            pairing_code=manual["pairing_code"],
+        )
+        assert approved["state"] == "approved"
+        assert owner.store.get_device("install-code-1").is_owner  # type: ignore[union-attr]
+
+        denied = client.create_pairing(
+            origin="https://fixture.example:8443",
+            label="Denied phone",
+        )
+        client.collect_pairing(
+            pairing_id=denied["pairing_id"],
+            nonce=denied["nonce"],
+            collector_secret=denied["collector_secret"],
+            installation_id="install-deny-1",
+            label="Denied phone",
+        )
+        assert client.deny_pairing(denied["pairing_id"])["state"] == "denied"
+        with pytest.raises(OwnerRequestError) as rejected:
+            client.approve_pairing(pairing_id=denied["pairing_id"])
+        assert rejected.value.code == "pairing_denied"
+    finally:
+        owner.stop()
+
+
 def test_owner_restart_recovers_durable_state(tmp_path) -> None:
     owner, client, token = start_owner(tmp_path)
     client.set_enabled(True)
-    client.add_device("install-0001", "phone", ["chat.read"], "refresh-token-1")
+    client.add_device(
+        "install-0001",
+        "phone",
+        ["chat.read", "chat.write", "owner"],
+        "refresh-token-1",
+    )
     owner.stop()
 
     restarted = RemoteAccessOwner(tmp_path / "remote-access")

@@ -20,7 +20,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable, cast
 
-from nanobot.remote.protocol import REFRESH_IDLE_SECONDS, ContractError, validate_scopes
+from nanobot.remote.protocol import (
+    OWNER_SCOPE,
+    REFRESH_IDLE_SECONDS,
+    ContractError,
+    validate_scopes,
+)
 
 try:  # POSIX selected-OS boundary; Windows tests use the thread lock only.
     import fcntl
@@ -59,10 +64,17 @@ class RemoteDevice:
     last_seen_at: float
     refresh_hash: str
     revoked_at: float | None = None
+    # 0 means "until revoke" (owner devices); legacy chat-only devices keep an
+    # absolute idle deadline.
+    refresh_expires_at: float = 0.0
 
     @property
     def revoked(self) -> bool:
         return self.revoked_at is not None
+
+    @property
+    def is_owner(self) -> bool:
+        return OWNER_SCOPE in self.scopes
 
 
 @dataclass
@@ -186,6 +198,7 @@ class RemoteAccessStore:
         label: str,
         scopes: tuple[str, ...],
         refresh_token: str,
+        refresh_expires_at: float | None = None,
     ) -> RemoteDevice:
         with self._locked():
             state = self._require_state()
@@ -197,13 +210,19 @@ class RemoteAccessStore:
                 validate_scopes(scopes)
             except ContractError as exc:
                 raise StoreError(str(exc)) from exc
+            now = self.clock()
+            if refresh_expires_at is None:
+                refresh_expires_at = (
+                    0.0 if OWNER_SCOPE in scopes else now + REFRESH_IDLE_SECONDS
+                )
             device = RemoteDevice(
                 installation_id=installation_id,
                 label=label[:64],
                 scopes=tuple(scopes),
-                created_at=self.clock(),
-                last_seen_at=self.clock(),
+                created_at=now,
+                last_seen_at=now,
                 refresh_hash=hash_refresh_token(refresh_token),
+                refresh_expires_at=refresh_expires_at,
             )
             state.devices[installation_id] = device
             state.revision += 1
@@ -232,6 +251,11 @@ class RemoteAccessStore:
                 last_seen_at=device.last_seen_at,
                 refresh_hash=device.refresh_hash,
                 revoked_at=device.revoked_at,
+                refresh_expires_at=(
+                    0.0
+                    if OWNER_SCOPE in scopes
+                    else device.refresh_expires_at or self.clock() + REFRESH_IDLE_SECONDS
+                ),
             )
             state.devices[installation_id] = updated
             state.revision += 1
@@ -252,6 +276,7 @@ class RemoteAccessStore:
                 last_seen_at=device.last_seen_at,
                 refresh_hash=device.refresh_hash,
                 revoked_at=device.revoked_at,
+                refresh_expires_at=device.refresh_expires_at,
             )
             state.devices[installation_id] = updated
             state.revision += 1
@@ -272,6 +297,11 @@ class RemoteAccessStore:
                 last_seen_at=self.clock(),
                 refresh_hash=hash_refresh_token(refresh_token),
                 revoked_at=device.revoked_at,
+                refresh_expires_at=(
+                    0.0
+                    if device.is_owner
+                    else self.clock() + REFRESH_IDLE_SECONDS
+                ),
             )
             state.devices[installation_id] = updated
             state.revision += 1
@@ -292,11 +322,47 @@ class RemoteAccessStore:
                 last_seen_at=device.last_seen_at,
                 refresh_hash=device.refresh_hash,
                 revoked_at=device.revoked_at or self.clock(),
+                refresh_expires_at=device.refresh_expires_at,
             )
             state.devices[installation_id] = updated
             state.revision += 1
             self._save_locked(state)
             return updated
+
+    def revoke_legacy_chat_only_devices(self) -> list[str]:
+        """Revoke active devices that predate owner-only pairing.
+
+        Owner-scoped devices are left untouched. This is an explicit migration
+        helper; it is not run implicitly so legacy internal flows keep working.
+        """
+
+        with self._locked():
+            state = self._require_state()
+            revoked: list[str] = []
+            now = self.clock()
+            for installation_id, device in list(state.devices.items()):
+                if device.revoked or OWNER_SCOPE in device.scopes:
+                    continue
+                state.devices[installation_id] = RemoteDevice(
+                    installation_id=device.installation_id,
+                    label=device.label,
+                    scopes=device.scopes,
+                    created_at=device.created_at,
+                    last_seen_at=device.last_seen_at,
+                    refresh_hash=device.refresh_hash,
+                    revoked_at=now,
+                    refresh_expires_at=device.refresh_expires_at,
+                )
+                revoked.append(installation_id)
+            if revoked:
+                state.revision += 1
+                self._save_locked(state)
+            return revoked
+
+    def migrate_legacy_chat_only_devices(self) -> list[str]:
+        """Alias for the explicit owner-only pairing migration."""
+
+        return self.revoke_legacy_chat_only_devices()
 
     def validate_refresh(self, installation_id: str, refresh_token: str) -> RemoteDevice | None:
         state = self.load()
@@ -306,7 +372,7 @@ class RemoteAccessStore:
         if device is None or device.revoked:
             return None
         now = self.clock()
-        if now - device.last_seen_at > REFRESH_IDLE_SECONDS:
+        if device.refresh_expires_at and now >= device.refresh_expires_at:
             return None
         if not hmac.compare_digest(device.refresh_hash, hash_refresh_token(refresh_token)):
             return None
@@ -458,18 +524,32 @@ class RemoteAccessStore:
             try:
                 scopes = tuple(value.get("scopes", ()))
                 validate_scopes(scopes)
+                created_at = float(value["created_at"])
+                last_seen_at = float(value["last_seen_at"])
+                raw_expiry = value.get("refresh_expires_at")
+                if raw_expiry is None:
+                    # Legacy records omitted the field. Owner devices never
+                    # expire; chat-only records keep the old idle deadline.
+                    refresh_expires_at = (
+                        0.0
+                        if OWNER_SCOPE in scopes
+                        else last_seen_at + REFRESH_IDLE_SECONDS
+                    )
+                else:
+                    refresh_expires_at = float(raw_expiry)
                 device = RemoteDevice(
                     installation_id=str(value["installation_id"]),
                     label=str(value["label"])[:64],
                     scopes=scopes,
-                    created_at=float(value["created_at"]),
-                    last_seen_at=float(value["last_seen_at"]),
+                    created_at=created_at,
+                    last_seen_at=last_seen_at,
                     refresh_hash=str(value["refresh_hash"]),
                     revoked_at=(
                         float(value["revoked_at"])
                         if value.get("revoked_at") is not None
                         else None
                     ),
+                    refresh_expires_at=refresh_expires_at,
                 )
             except (KeyError, TypeError, ValueError, ContractError) as exc:
                 raise StoreCorruptError("device record is malformed") from exc

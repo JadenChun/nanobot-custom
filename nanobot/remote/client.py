@@ -109,6 +109,8 @@ class RemoteAccessClient:
         collector_secret: str,
         installation_id: str,
         label: str,
+        platform: str | None = None,
+        model: str | None = None,
     ) -> dict[str, Any]:
         return self._call(
             "pair_collect",
@@ -118,6 +120,31 @@ class RemoteAccessClient:
                 "collector_secret": collector_secret,
                 "installation_id": installation_id,
                 "label": label,
+                "platform": platform,
+                "model": model,
+            },
+            role="pairing",
+        )
+
+    def collect_pairing_code(
+        self,
+        *,
+        origin: str,
+        pairing_code: str,
+        installation_id: str,
+        label: str,
+        platform: str | None = None,
+        model: str | None = None,
+    ) -> dict[str, Any]:
+        return self._call(
+            "pair_collect_code",
+            {
+                "origin": origin,
+                "pairing_code": pairing_code,
+                "installation_id": installation_id,
+                "label": label,
+                "platform": platform,
+                "model": model,
             },
             role="pairing",
         )
@@ -144,9 +171,9 @@ class RemoteAccessClient:
         *,
         origin: str,
         label: str,
-        chat_consent: bool,
-        media_consent: bool = False,
-        full_control_consent: bool = False,
+        chat_consent: bool = True,
+        media_consent: bool = True,
+        full_control_consent: bool = True,
         shared_history_consent: bool = False,
     ) -> dict[str, Any]:
         return self._call(
@@ -163,16 +190,41 @@ class RemoteAccessClient:
             require_admin=True,
         )
 
+    def pending_pairings(self) -> dict[str, Any]:
+        return self._call("pair_pending", {}, role="admin", require_admin=True)
+
+    def pairing_status(self, pairing_id: str) -> dict[str, Any]:
+        return self._call(
+            "pair_status",
+            {"pairing_id": pairing_id},
+            role="admin",
+            require_admin=True,
+        )
+
     def approve_pairing(
         self,
         *,
         pairing_id: str,
-        comparison_code: str,
+        comparison_code: str | None = None,
+        pairing_code: str | None = None,
         scopes: list[str] | None = None,
     ) -> dict[str, Any]:
+        params: dict[str, Any] = {"pairing_id": pairing_id, "scopes": scopes}
+        if pairing_code is not None:
+            params["pairing_code"] = pairing_code
+        if comparison_code is not None:
+            params["comparison_code"] = comparison_code
         return self._call(
             "pair_approve",
-            {"pairing_id": pairing_id, "comparison_code": comparison_code, "scopes": scopes},
+            params,
+            role="admin",
+            require_admin=True,
+        )
+
+    def deny_pairing(self, pairing_id: str) -> dict[str, Any]:
+        return self._call(
+            "pair_deny",
+            {"pairing_id": pairing_id},
             role="admin",
             require_admin=True,
         )

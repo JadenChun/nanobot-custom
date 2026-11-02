@@ -23,6 +23,68 @@ def pairing_service(tmp_path: Path) -> tuple[RemoteAccessStore, PairingService]:
     return store, PairingService(store, tokens)
 
 
+def test_listener_manual_pairing_code_without_nonce(tmp_path) -> None:
+    store, pairing = pairing_service(tmp_path)
+    listener = RemoteHTTPListener(pairing, port=0)
+    port = listener.start()
+    base = f"http://127.0.0.1:{port}"
+    try:
+        with httpx.Client(base_url=base, timeout=3.0) as client:
+            created = pairing.create_challenge(
+                origin="https://fixture.example:8443",
+                label="phone",
+                chat_consent=True,
+                media_consent=True,
+                full_control_consent=True,
+                owner_only=True,
+            )
+            wrong_code = f"{(int(created.pairing_code) + 1) % 100_000_000:08d}"
+            wrong = client.post(
+                "/remote/v1/pair/code",
+                json={
+                    "origin": created.origin,
+                    "pairing_code": wrong_code,
+                    "installation_id": "install-code-1",
+                    "label": "Pixel 10",
+                },
+            )
+            assert wrong.status_code == 403
+            assert wrong.json()["error"] == "pairing_code_invalid"
+
+            collected = client.post(
+                "/remote/v1/pair/code",
+                json={
+                    "origin": created.origin,
+                    "pairing_code": created.pairing_code,
+                    "installation_id": "install-code-1",
+                    "label": "Pixel 10",
+                    "platform": "Android 16",
+                    "model": "Pixel 10",
+                },
+            )
+            assert collected.status_code == 200
+            assert collected.json()["state"] == "pending_approval"
+            assert collected.json()["platform"] == "Android 16"
+
+            pairing.approve(
+                pairing_id=created.pairing_id,
+                pairing_code=created.pairing_code,
+            )
+            approved = client.post(
+                "/remote/v1/pair/poll",
+                json={
+                    "pairing_id": created.pairing_id,
+                    "nonce": created.nonce,
+                    "collector_secret": created.collector_secret,
+                },
+            )
+            assert approved.status_code == 200
+            assert approved.json()["status"] == "approved"
+            assert approved.json()["refresh_expires_in"] == 0
+    finally:
+        listener.stop()
+
+
 def test_listener_pairing_flow_and_bounds(tmp_path) -> None:
     store, pairing = pairing_service(tmp_path)
     listener = RemoteHTTPListener(pairing, port=0)

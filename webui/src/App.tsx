@@ -176,6 +176,7 @@ const SETTINGS_SECTION_KEYS: SettingsSectionKey[] = [
   "skills",
   "runtime",
   "advanced",
+  "remote_access",
 ];
 
 function isSettingsSectionKey(value: string | null): value is SettingsSectionKey {

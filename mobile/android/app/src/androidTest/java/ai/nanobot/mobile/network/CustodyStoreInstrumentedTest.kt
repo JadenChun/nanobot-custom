@@ -58,6 +58,20 @@ class CustodyStoreInstrumentedTest {
     }
 
     @Test
+    fun ownerRefreshWithoutExpiryStoresZeroDeadline() {
+        val saved = store.saveTokens(
+            "https://fixture.example:8443",
+            "install-owner",
+            "access-secret",
+            "refresh-secret",
+            accessExpiresIn = 600,
+            refreshExpiresIn = 0,
+        )
+        assertEquals(0L, saved.refreshExpiresAt)
+        assertEquals(0L, store.load()!!.refreshExpiresAt)
+    }
+
+    @Test
     fun installationIdentityIsStableBeforePairing() {
         val first = store.installationIdentity()
         val second = store.installationIdentity()

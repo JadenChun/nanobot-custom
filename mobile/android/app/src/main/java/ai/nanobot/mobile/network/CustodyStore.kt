@@ -206,7 +206,9 @@ class CustodyStore(context: Context) {
             accessToken = accessToken,
             refreshToken = refreshToken,
             accessExpiresAt = now + accessExpiresIn * 1000L,
-            refreshExpiresAt = now + refreshExpiresIn * 1000L,
+            // 0 means "until revoke" (owner device); keep it distinct from a
+            // timestamp that is already in the past.
+            refreshExpiresAt = if (refreshExpiresIn <= 0) 0L else now + refreshExpiresIn * 1000L,
             updatedAt = now,
         )
         save(updated)

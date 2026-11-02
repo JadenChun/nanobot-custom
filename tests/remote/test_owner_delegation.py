@@ -385,8 +385,8 @@ def test_product_pairing_path_grants_owner_via_ipc(tmp_path) -> None:
         owner.stop()
 
 
-def test_product_pairing_without_consent_stays_legacy(tmp_path) -> None:
-    from nanobot.remote.client import RemoteAccessClient
+def test_product_pairing_without_owner_consent_is_rejected(tmp_path) -> None:
+    from nanobot.remote.client import OwnerRequestError, RemoteAccessClient
     from nanobot.remote.owner import RemoteAccessOwner
 
     owner = RemoteAccessOwner(tmp_path / "remote-access")
@@ -394,14 +394,15 @@ def test_product_pairing_without_consent_stays_legacy(tmp_path) -> None:
     owner.store.set_enabled(True)
     try:
         client = RemoteAccessClient(owner.socket_path, admin_token=owner.store.admin_token())
-        offer = client.create_pairing(
-            origin="https://fixture.example:8443",
-            label="phone",
-            chat_consent=True,
-            media_consent=False,
-        )
-        assert "owner" not in offer["scopes"]
-        assert "chat.read" in offer["scopes"]
+        with pytest.raises(OwnerRequestError) as rejected:
+            client.create_pairing(
+                origin="https://fixture.example:8443",
+                label="phone",
+                chat_consent=True,
+                media_consent=False,
+                full_control_consent=False,
+            )
+        assert rejected.value.code == "owner_required"
     finally:
         owner.stop()
 

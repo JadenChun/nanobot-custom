@@ -15,7 +15,16 @@ interface PairingArgs {
   label: string;
 }
 
-function installPlugin() {
+interface PairingCodeArgs {
+  origin: string;
+  installationId: string;
+  code: string;
+  label: string;
+}
+
+function installPlugin(
+  pairStartCodeImpl?: (args: PairingCodeArgs) => Promise<Record<string, unknown>>,
+) {
   let releaseIdentity: (identity: { installationId: string }) => void = () => {};
   const identity = new Promise<{ installationId: string }>((resolve) => {
     releaseIdentity = resolve;
@@ -26,17 +35,50 @@ function installPlugin() {
     installationId: args.installationId,
   }));
   const pairPoll = vi.fn(async () => ({ status: "approved" }));
+  const pairStartCode = vi.fn(
+    pairStartCodeImpl ??
+      (async (args: PairingCodeArgs) => ({
+        pairing_id: "pairing-code",
+        comparison_code: "87654321",
+        nonce: "nonce-value-000000000000",
+        collector_secret: "secret-value-000000000000",
+        installationId: args.installationId,
+      })),
+  );
   const plugin = {
     target: vi.fn(async () => ({ hasAccess: false })),
     pairingIdentity: vi.fn(() => identity),
     pairStart,
+    pairStartCode,
     pairPoll,
     pendingPairingLink: vi.fn(async () => null),
   };
   (window as unknown as { Capacitor?: unknown }).Capacitor = {
     Plugins: { NativeNetwork: plugin },
   };
-  return { plugin, pairStart, releaseIdentity };
+  return { plugin, pairStart, pairStartCode, releaseIdentity };
+}
+
+function installPreflightPlugin() {
+  const connectTailscale = vi.fn(async () => ({ state: "needs_login" }));
+  const plugin = {
+    target: vi.fn(async () => ({ hasAccess: false })),
+    pairingIdentity: vi.fn(async () => ({
+      installationId: "phone-local-id",
+      origin: "https://desktop.example",
+      hasAccess: false,
+    })),
+    connectTailscale,
+    status: vi.fn(async () => ({ state: "needs_login" })),
+    pairStart: vi.fn(),
+    pairStartCode: vi.fn(),
+    pairPoll: vi.fn(),
+    pendingPairingLink: vi.fn(async () => null),
+  };
+  (window as unknown as { Capacitor?: unknown }).Capacitor = {
+    Plugins: { NativeNetwork: plugin },
+  };
+  return { plugin, connectTailscale };
 }
 
 afterEach(() => {
@@ -213,6 +255,86 @@ describe("mobile pairing identity", () => {
     });
   });
 
+  it("starts manual pairing from an HTTPS origin and 8-digit code", async () => {
+    const { pairStartCode, releaseIdentity } = installPlugin();
+    window.eval(bootstrapSource);
+
+    await vi.waitFor(() => {
+      expect(document.querySelector(".mobile-pairing-manual")).not.toBeNull();
+    });
+    const manual = document.querySelector<HTMLDetailsElement>(".mobile-pairing-manual");
+    manual!.open = true;
+    const origin = document.querySelector<HTMLInputElement>("#mobile-pairing-origin");
+    const code = document.querySelector<HTMLInputElement>("#mobile-pairing-code-input");
+    const button = [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((item) => item.textContent === "Pair with code");
+    origin!.value = "https://desktop.example";
+    code!.value = "12345678";
+    button!.click();
+    releaseIdentity({ installationId: "phone-local-id" });
+    await vi.waitFor(() => expect(pairStartCode).toHaveBeenCalledTimes(1));
+    expect(pairStartCode.mock.calls[0][0]).toMatchObject({
+      installationId: "phone-local-id",
+      code: "12345678",
+    });
+    await vi.waitFor(() => {
+      expect(document.querySelector(".mobile-pairing")).toBeNull();
+    });
+  });
+
+  it("checks a saved Tailscale target before showing pairing controls", async () => {
+    const { connectTailscale } = installPreflightPlugin();
+    window.eval(bootstrapSource);
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain("Tailscale sign-in is required before pairing");
+    });
+    expect(connectTailscale).toHaveBeenCalledWith({
+      origin: "https://desktop.example",
+      installationId: "phone-local-id",
+    });
+    const cancel = [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((item) => item.textContent === "Use a different link");
+    cancel?.click();
+  });
+
+  it("retries the manual code after a Tailscale sign-in is required", async () => {
+    let attempts = 0;
+    const { pairStartCode, releaseIdentity } = installPlugin(async (args) => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("tailnet login required");
+      return {
+        pairing_id: "pairing-code",
+        nonce: "nonce-value-000000000000",
+        collector_secret: "secret-value-000000000000",
+        installationId: args.installationId,
+      };
+    });
+    window.eval(bootstrapSource);
+    await vi.waitFor(() => {
+      expect(document.querySelector(".mobile-pairing-manual")).not.toBeNull();
+    });
+    const origin = document.querySelector<HTMLInputElement>("#mobile-pairing-origin");
+    const code = document.querySelector<HTMLInputElement>("#mobile-pairing-code-input");
+    const button = [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((item) => item.textContent === "Pair with code");
+    origin!.value = "https://desktop.example";
+    code!.value = "12345678";
+    button!.click();
+    releaseIdentity({ installationId: "phone-local-id" });
+    await vi.waitFor(() => expect(pairStartCode).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain("Tailscale sign-in is required");
+    });
+    const retry = [...document.querySelectorAll<HTMLButtonElement>(".mobile-pairing-button")]
+      .find((item) => item.textContent === "Retry");
+    retry!.click();
+    await vi.waitFor(() => expect(pairStartCode).toHaveBeenCalledTimes(2));
+    expect(pairStartCode.mock.calls[1][0]).toMatchObject({
+      origin: "https://desktop.example",
+      code: "12345678",
+    });
+  });
+
   it("ignores a startup identity rejection after cancel", async () => {
     const { rejectIdentity } = installStartupRejectPlugin();
     window.eval(bootstrapSource);
@@ -268,7 +390,7 @@ describe("mobile pairing identity", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(document.querySelector<HTMLElement>(".mobile-pairing")?.dataset.state).toBe("idle");
-    expect(document.querySelector(".mobile-pairing-code")?.textContent).toBe("------");
+    expect(document.body.textContent).not.toContain("999999");
     expect(pairPoll).not.toHaveBeenCalled();
   });
 

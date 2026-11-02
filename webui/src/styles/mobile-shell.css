@@ -68,6 +68,10 @@ html.mobile-runtime body {
   line-height: 1.4;
 }
 
+.mobile-pairing[data-state="idle"] .mobile-pairing-status-list {
+  display: none;
+}
+
 .mobile-pairing-status-list {
   display: flex;
   flex-direction: column;
@@ -129,6 +133,7 @@ html.mobile-runtime body {
 
 .mobile-pairing-input {
   flex: 1 1 auto;
+  width: 100%;
   height: 2.6rem;
   padding: 0 0.6rem;
   border: 1px solid hsl(var(--border, 240 4% 16%));
@@ -167,15 +172,16 @@ html.mobile-runtime body {
   content: "";
 }
 
-.mobile-pairing-scan {
+.mobile-pairing-scan-primary {
   width: 100%;
-  min-height: 2.6rem;
-  border: 1px solid hsl(var(--border, 240 4% 16%));
-  border-radius: 0.5rem;
-  background: hsl(var(--secondary, 240 4% 15%));
-  color: inherit;
+  min-height: 2.9rem;
+  border: 1px solid hsl(var(--primary, 0 0% 98%));
+  border-radius: 0.6rem;
+  background: hsl(var(--primary, 0 0% 98%));
+  color: hsl(var(--primary-foreground, 0 0% 9%));
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.92rem;
+  font-weight: 600;
 }
 
 .mobile-pairing-code-block {
@@ -368,4 +374,30 @@ html.mobile-runtime body {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
+}
+
+.mobile-pairing-link,
+.mobile-pairing-manual {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid hsl(var(--border, 240 4% 16%));
+  border-radius: 0.6rem;
+}
+
+.mobile-pairing-link[hidden],
+.mobile-pairing-manual[hidden] {
+  display: none;
+}
+
+.mobile-pairing-link > summary,
+.mobile-pairing-manual > summary {
+  cursor: pointer;
+  color: hsl(var(--muted-foreground, 240 5% 65%));
+  font-size: 0.78rem;
+}
+
+.mobile-pairing-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
 }

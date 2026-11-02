@@ -39,9 +39,9 @@ class RemoteAccessManager:
         *,
         origin: str,
         label: str,
-        chat_consent: bool,
-        media_consent: bool = False,
-        full_control_consent: bool = False,
+        chat_consent: bool = True,
+        media_consent: bool = True,
+        full_control_consent: bool = True,
         shared_history_consent: bool = False,
     ) -> dict[str, Any]:
         return self.client.create_pairing(
@@ -53,18 +53,26 @@ class RemoteAccessManager:
             shared_history_consent=shared_history_consent,
         )
 
+    def pending_pairings(self) -> dict[str, Any]:
+        return self.client.pending_pairings()
+
     def approve_pairing(
         self,
         *,
         pairing_id: str,
-        comparison_code: str,
+        comparison_code: str | None = None,
+        pairing_code: str | None = None,
         scopes: list[str] | None = None,
     ) -> dict[str, Any]:
         return self.client.approve_pairing(
             pairing_id=pairing_id,
             comparison_code=comparison_code,
+            pairing_code=pairing_code,
             scopes=scopes,
         )
+
+    def deny_pairing(self, pairing_id: str) -> dict[str, Any]:
+        return self.client.deny_pairing(pairing_id)
 
     def cancel_pairing(self, pairing_id: str) -> bool:
         return self.client.cancel_pairing(pairing_id)
@@ -85,12 +93,13 @@ def _parse_args() -> argparse.Namespace:
     create = sub.add_parser("pair-create")
     create.add_argument("--origin", required=True)
     create.add_argument("--label", default="mobile")
-    create.add_argument("--chat-consent", choices=["true", "false"], default="true")
-    create.add_argument("--media-consent", choices=["true", "false"], default="false")
+    sub.add_parser("pair-pending")
     approve = sub.add_parser("pair-approve")
     approve.add_argument("--pairing-id", required=True)
-    approve.add_argument("--code", required=True)
+    approve.add_argument("--code")
     approve.add_argument("--scope", action="append", default=[])
+    deny = sub.add_parser("pair-deny")
+    deny.add_argument("--pairing-id", required=True)
     cancel = sub.add_parser("pair-cancel")
     cancel.add_argument("--pairing-id", required=True)
     return parser.parse_args()
@@ -125,20 +134,23 @@ def main() -> int:
                 manager.create_pairing(
                     origin=args.origin,
                     label=args.label,
-                    chat_consent=args.chat_consent == "true",
-                    media_consent=args.media_consent == "true",
                 ),
                 args.json,
             )
+        elif args.command == "pair-pending":
+            _print(manager.pending_pairings(), args.json)
         elif args.command == "pair-approve":
             _print(
                 manager.approve_pairing(
                     pairing_id=args.pairing_id,
                     comparison_code=args.code,
+                    pairing_code=args.code,
                     scopes=args.scope or None,
                 ),
                 args.json,
             )
+        elif args.command == "pair-deny":
+            _print(manager.deny_pairing(args.pairing_id), args.json)
         elif args.command == "pair-cancel":
             _print(manager.cancel_pairing(args.pairing_id), args.json)
         return 0

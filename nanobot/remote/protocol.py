@@ -21,8 +21,20 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 MOBILE_PROTOCOL_VERSION = 1
 BRIDGE_VERSION = 1
 ACCESS_TTL_SECONDS = 10 * 60
-CHALLENGE_TTL_SECONDS = 120
+CHALLENGE_TTL_SECONDS = 5 * 60
 REFRESH_IDLE_SECONDS = 30 * 24 * 60 * 60
+# Owner devices have no idle expiry: refresh_expires_at == 0 means "until revoke".
+# Legacy chat-only records keep the old 30-day idle window until re-paired.
+PAIRING_CODE_DIGITS = 8
+PAIRING_CODE_TTL_SECONDS = CHALLENGE_TTL_SECONDS
+PAIRING_TRANSPORT = "tailscale"
+OWNER_PAIRING_SCOPES = (
+    "owner",
+    "chat.read",
+    "chat.write",
+    "media.read",
+    "attachment.write",
+)
 MAX_WS_FRAME_BYTES = 37_748_736  # Desktop WebUI default; supports 4 x 6 MiB attachments encoded in one frame.
 MAX_ATTACHMENT_BYTES = 6 * 1024 * 1024  # Match the desktop single-file attachment limit.
 MAX_MEDIA_RESPONSE_BYTES = 8 * 1024 * 1024  # Allow a full 6 MiB attachment plus response overhead.
@@ -148,12 +160,18 @@ class RefreshRequest(BaseModel):
 
 
 class RefreshResponse(BaseModel):
+    """Token response; ``refresh_expires_in`` 0/null means "until revoke"."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     access_token: str
     refresh_token: str
     expires_in: int = Field(ge=1, le=ACCESS_TTL_SECONDS)
-    refresh_expires_in: int = Field(ge=1, le=REFRESH_IDLE_SECONDS)
+    refresh_expires_in: int | None = Field(
+        default=REFRESH_IDLE_SECONDS,
+        ge=0,
+        le=REFRESH_IDLE_SECONDS,
+    )
 
 
 class MutationEnvelope(BaseModel):
@@ -226,6 +244,7 @@ class PairingChallenge(BaseModel):
     media_consent: bool
     full_control_consent: bool = False
     shared_history_consent: bool = False
+    transport: str = PAIRING_TRANSPORT
 
     @field_validator("origin")
     @classmethod
@@ -238,6 +257,61 @@ class PairingChallenge(BaseModel):
         return validate_installation_id(value)
 
 
+class PairingDeviceInfo(BaseModel):
+    """Device metadata shown on the desktop pending card."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    installation_id: str
+    label: str = Field(min_length=1, max_length=64)
+    platform: str | None = Field(default=None, max_length=64)
+    model: str | None = Field(default=None, max_length=64)
+
+    @field_validator("installation_id")
+    @classmethod
+    def _installation(cls, value: str) -> str:
+        return validate_installation_id(value)
+
+
+class PairingStatusPayload(BaseModel):
+    """Shared pending/status shape for IPC and settings responses.
+
+    ``state`` is one of ``offer_created``, ``pending_approval``, ``approved``,
+    ``denied`` or ``expired``. ``pairing_code`` is only returned to the local
+    desktop; the phone collects with it but never needs it for approval.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    pairing_id: str
+    state: Literal[
+        "offer_created",
+        "pending_approval",
+        "approved",
+        "denied",
+        "expired",
+    ]
+    expires_at: int
+    expires_in: int = Field(ge=0)
+    requested_at: int
+    origin: str
+    transport: str = PAIRING_TRANSPORT
+    scopes: tuple[str, ...]
+    device: PairingDeviceInfo | None = None
+    pairing_code: str | None = Field(default=None, min_length=8, max_length=8)
+
+    @field_validator("origin")
+    @classmethod
+    def _origin(cls, value: str) -> str:
+        return validate_origin(value)
+
+    @field_validator("scopes")
+    @classmethod
+    def _scopes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        validate_scopes(value)
+        return value
+
+
 class DeviceRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -247,6 +321,8 @@ class DeviceRecord(BaseModel):
     created_at: int
     last_seen_at: int
     revoked_at: int | None = None
+    # 0 means "until revoke"; legacy chat-only records use an absolute deadline.
+    refresh_expires_at: int = 0
 
     @field_validator("scopes")
     @classmethod

@@ -73,7 +73,11 @@ _MCP_RELOAD_TIMEOUT_SECONDS = 15.0
 _REMOTE_ACCESS_LOCAL_ONLY_PATHS = frozenset({
     "/api/settings/remote-access/enable",
     "/api/settings/remote-access/pairing/start",
+    "/api/settings/remote-access/pairing/pending",
     "/api/settings/remote-access/pairing/approve",
+    "/api/settings/remote-access/pairing/deny",
+    "/api/settings/remote-access/pairing/cancel",
+    "/api/settings/remote-access/tailscale",
 })
 _query_first = contracts.query_first
 
@@ -132,10 +136,14 @@ _CAPABILITY_ROUTES = {
 
 _REMOTE_ROUTES = {
     "/api/settings/remote-access": "status",
+    "/api/settings/remote-access/tailscale": "tailscale",
     "/api/settings/remote-access/enable": "enable",
     "/api/settings/remote-access/revoke": "revoke",
     "/api/settings/remote-access/pairing/start": "pair-start",
+    "/api/settings/remote-access/pairing/pending": "pair-pending",
     "/api/settings/remote-access/pairing/approve": "pair-approve",
+    "/api/settings/remote-access/pairing/deny": "pair-deny",
+    "/api/settings/remote-access/pairing/cancel": "pair-cancel",
 }
 
 _SYSTEM_ROUTES = {
@@ -192,6 +200,8 @@ _SETTINGS_MUTATION_PATHS = frozenset({
     "/api/settings/remote-access/revoke",
     "/api/settings/remote-access/pairing/start",
     "/api/settings/remote-access/pairing/approve",
+    "/api/settings/remote-access/pairing/deny",
+    "/api/settings/remote-access/pairing/cancel",
     "/api/settings/mcp-oauth/start",
     "/api/settings/mcp-oauth/complete",
     "/api/settings/mcp-oauth/cancel",

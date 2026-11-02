@@ -115,3 +115,41 @@ def test_store_rejects_symlinked_state_file(tmp_path) -> None:
     store.state_path.symlink_to(target)
     with pytest.raises(StoreCorruptError):
         store.load()
+
+
+def test_owner_device_has_no_idle_expiry_and_legacy_helper_preserves_owner(tmp_path) -> None:
+    class Clock:
+        now = 1000.0
+
+        def __call__(self) -> float:
+            return self.now
+
+    clock = Clock()
+    store = RemoteAccessStore(tmp_path, clock=clock)
+    store.load_or_create()
+    store.set_enabled(True)
+    owner = store.add_device(
+        installation_id="install-owner",
+        label="Pixel",
+        scopes=("owner", "chat.read", "chat.write"),
+        refresh_token="owner-refresh",
+    )
+    legacy = store.add_device(
+        installation_id="install-legacy",
+        label="old phone",
+        scopes=("chat.read", "chat.write"),
+        refresh_token="legacy-refresh",
+    )
+    assert owner.refresh_expires_at == 0
+    assert legacy.refresh_expires_at > clock.now
+
+    clock.now += 365 * 24 * 60 * 60
+    assert store.validate_refresh("install-owner", "owner-refresh") is not None
+    assert store.validate_refresh("install-legacy", "legacy-refresh") is None
+
+    assert store.revoke_legacy_chat_only_devices() == ["install-legacy"]
+    owner_device = store.get_device("install-owner")
+    legacy_device = store.get_device("install-legacy")
+    assert owner_device is not None and not owner_device.revoked
+    assert legacy_device is not None and legacy_device.revoked
+    assert store.revoke_legacy_chat_only_devices() == []

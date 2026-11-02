@@ -17,6 +17,7 @@ import com.getcapacitor.BridgeActivity
 import com.getcapacitor.JSObject
 import com.getcapacitor.PermissionState
 import com.getcapacitor.Plugin
+import androidx.browser.customtabs.CustomTabsIntent
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.ActivityCallback
@@ -237,6 +238,110 @@ class NativeNetworkPlugin : Plugin() {
                 mainHandler.post { call.resolve(result) }
             } catch (exception: Exception) {
                 mainHandler.post { call.reject(exception.message ?: "pairing collect failed") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun pairStartCode(call: PluginCall) {
+        val origin = call.getString("origin")
+        val installationId = call.getString("installationId")
+        val code = call.getString("code")
+        val requestedLabel = call.getString("label")?.trim().orEmpty()
+        val label = if (
+            requestedLabel.isEmpty() ||
+            requestedLabel.equals("android", ignoreCase = true) ||
+            requestedLabel.equals("phone", ignoreCase = true)
+        ) {
+            defaultDeviceLabel()
+        } else {
+            requestedLabel.take(64)
+        }
+        if (origin.isNullOrBlank() || installationId.isNullOrBlank() || code.isNullOrBlank()) {
+            call.reject("origin, installationId and code are required")
+            return
+        }
+        if (!Regex("^[0-9]{8}$").matches(code)) {
+            call.reject("pairing code must be 8 digits")
+            return
+        }
+        operationExecutor.execute {
+            try {
+                val existing = custody.load()
+                if (
+                    transportHandle == 0L ||
+                    existing == null ||
+                    existing.origin != origin ||
+                    existing.installationId != installationId
+                ) {
+                    startTransport(origin, installationId, "nanobot-" + installationId.takeLast(6))
+                }
+                waitUntilReady()
+                val collected = jsonRequest(
+                    "mobile_pair_code",
+                    "/mobile/v1/pair/code",
+                    body = null,
+                    headers = mapOf(
+                        "X-Nanobot-Pairing-Code" to code,
+                        "X-Nanobot-Installation" to installationId,
+                        "X-Nanobot-Label" to label,
+                    ),
+                )
+                val rawChallenge = collected.optString("challenge")
+                activePairing = if (rawChallenge.isNotBlank()) {
+                    PairingChallengeCodec.decode(rawChallenge)
+                } else {
+                    PairingChallenge(
+                        collected.getString("pairing_id"),
+                        collected.getString("nonce"),
+                        collected.getString("collector_secret"),
+                    )
+                }
+                val result = JSObject(collected.toString())
+                    .put("origin", origin)
+                    .put("installationId", installationId)
+                mainHandler.post { call.resolve(result) }
+            } catch (exception: Exception) {
+                mainHandler.post { call.reject(exception.message ?: "pairing code failed") }
+            }
+        }
+    }
+
+    @PluginMethod
+    fun connectTailscale(call: PluginCall) {
+        val origin = call.getString("origin")
+        val installationId = call.getString("installationId")
+        if (origin.isNullOrBlank() || installationId.isNullOrBlank()) {
+            call.reject("origin and installationId are required")
+            return
+        }
+        operationExecutor.execute {
+            try {
+                val existing = custody.load()
+                if (
+                    transportHandle == 0L ||
+                    existing == null ||
+                    existing.origin != origin ||
+                    existing.installationId != installationId
+                ) {
+                    startTransport(origin, installationId, "nanobot-" + installationId.takeLast(6))
+                }
+                val current = transportHandle
+                if (current == 0L) throw IllegalStateException("transport is not started")
+                val deadline = System.currentTimeMillis() + 5_000
+                var status = JSONObject()
+                while (System.currentTimeMillis() < deadline) {
+                    val bytes = NativeNetwork.status(current) ?: break
+                    status = JSONObject(String(bytes, StandardCharsets.UTF_8))
+                    if (status.optString("state") != "starting") break
+                    Thread.sleep(250)
+                }
+                val result = JSObject()
+                    .put("state", status.optString("state", "starting"))
+                    .put("message", status.optString("message"))
+                mainHandler.post { call.resolve(result) }
+            } catch (exception: Exception) {
+                mainHandler.post { call.reject(exception.message ?: "tailscale connection failed") }
             }
         }
     }
@@ -588,9 +693,15 @@ class NativeNetworkPlugin : Plugin() {
             call.reject("native transport returned an unapproved login URL")
             return
         }
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(loginURL))
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(intent)
+        try {
+            val customTabs = CustomTabsIntent.Builder().setShowTitle(true).build()
+            customTabs.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            customTabs.launchUrl(context, Uri.parse(loginURL))
+        } catch (exception: Exception) {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(loginURL))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        }
         call.resolve()
     }
 

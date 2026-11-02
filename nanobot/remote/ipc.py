@@ -20,11 +20,14 @@ from nanobot.remote.delegation import (
 )
 from nanobot.remote.pairing import (
     PairingBusyError,
+    PairingCodeInvalidError,
     PairingConsumedError,
+    PairingDeniedError,
     PairingDisabledError,
     PairingError,
     PairingExpiredError,
     PairingNotFoundError,
+    PairingOwnerRequiredError,
     PairingPending,
     PairingRateLimitedError,
     PairingRejectedError,
@@ -226,18 +229,35 @@ class OwnerIPCServer:
                     collector_secret=cast(str, collector_secret),
                     installation_id=cast(str, installation_id),
                     label=cast(str, label),
+                    platform=_string_param(params, "platform"),
+                    model=_string_param(params, "model"),
                 )
             except PairingError as exc:
                 return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
-            return {
-                "ok": True,
-                "result": {
-                    "pairing_id": pending.pairing_id,
-                    "comparison_code": pending.comparison_code,
-                    "expires_at": pending.expires_at,
-                    "installation_id": pending.installation_id,
-                },
-            }
+            return {"ok": True, "result": _pending_payload(pending)}
+        if method == "pair_collect_code":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            origin = _string_param(params, "origin")
+            pairing_code = _string_param(params, "pairing_code") or _string_param(
+                params, "comparison_code"
+            )
+            installation_id = _string_param(params, "installation_id")
+            label = _string_param(params, "label")
+            if None in (origin, pairing_code, installation_id, label):
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing fields are required"}}
+            try:
+                pending = self.pairing.collect_by_code(
+                    origin=cast(str, origin),
+                    pairing_code=cast(str, pairing_code),
+                    installation_id=cast(str, installation_id),
+                    label=cast(str, label),
+                    platform=_string_param(params, "platform"),
+                    model=_string_param(params, "model"),
+                )
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            return {"ok": True, "result": _pending_payload(pending)}
         if method == "pair_poll":
             if self.pairing is None:
                 return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
@@ -269,16 +289,7 @@ class OwnerIPCServer:
                     },
                 }
             assert isinstance(result, PairingPending)
-            return {
-                "ok": True,
-                "result": {
-                    "status": "pending",
-                    "pairing_id": result.pairing_id,
-                    "comparison_code": result.comparison_code,
-                    "expires_at": result.expires_at,
-                    "installation_id": result.installation_id,
-                },
-            }
+            return {"ok": True, "result": _pending_payload(result)}
         if method == "ping":
             return {"ok": True, "result": {"version": 1, "started_at": self._started_at}}
         if method == "status":
@@ -428,46 +439,82 @@ class OwnerIPCServer:
                 return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
             origin = _string_param(params, "origin")
             label = _string_param(params, "label")
-            chat_consent = _bool_param(params, "chat_consent")
-            media_consent = _bool_param(params, "media_consent", default=False)
             full_control_consent = _bool_param(params, "full_control_consent", default=False)
-            shared_history_consent = _bool_param(params, "shared_history_consent", default=False)
-            if (
-                origin is None
-                or label is None
-                or chat_consent is None
-                or media_consent is None
-                or full_control_consent is None
-                or shared_history_consent is None
-            ):
-                return {"ok": False, "error": {"code": "bad_request", "message": "pairing consent fields are required"}}
+            shared_history_consent = _bool_param(
+                params, "shared_history_consent", default=False
+            )
+            scopes = _string_list_param(params, "scopes")
+            if origin is None or label is None or full_control_consent is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing fields are required"}}
+            if full_control_consent is not True:
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "owner_required",
+                        "message": "owner pairing requires full-control consent",
+                    },
+                }
             try:
                 offer = self.pairing.create_challenge(
                     origin=origin,
                     label=label,
-                    chat_consent=chat_consent,
-                    media_consent=media_consent,
-                    full_control_consent=full_control_consent,
-                    shared_history_consent=shared_history_consent,
+                    chat_consent=True,
+                    media_consent=True,
+                    scopes=tuple(scopes) if scopes is not None else None,
+                    full_control_consent=True,
+                    shared_history_consent=bool(shared_history_consent),
+                    owner_only=True,
+                    transport=_string_param(params, "transport") or "tailscale",
                 )
-            except (PairingError, ValueError) as exc:
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            except ValueError as exc:
                 return {"ok": False, "error": {"code": "pairing_rejected", "message": str(exc)}}
-            return {"ok": True, "result": {**offer.__dict__, "scopes": list(offer.scopes)}}
+            return {
+                "ok": True,
+                "result": {
+                    **offer.__dict__,
+                    "scopes": list(offer.scopes),
+                    "expires_in": max(0, offer.expires_at - int(time.time())),
+                    "qr_link": offer.qr_link,
+                    "state": "offer_created",
+                },
+            }
+        if method in {"pair_pending", "pair_status"}:
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = _string_param(params, "pairing_id")
+            try:
+                if pairing_id is None:
+                    return {
+                        "ok": True,
+                        "result": {"pending": [_pending_payload(item) for item in self.pairing.pending()]},
+                    }
+                return {
+                    "ok": True,
+                    "result": _pending_payload(self.pairing.status(pairing_id)),
+                }
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
         if method == "pair_approve":
             if self.pairing is None:
                 return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
             pairing_id = _string_param(params, "pairing_id")
-            code = _string_param(params, "comparison_code")
+            code = _string_param(params, "pairing_code") or _string_param(
+                params, "comparison_code"
+            )
             scopes = _string_list_param(params, "scopes")
-            if pairing_id is None or code is None:
-                return {"ok": False, "error": {"code": "bad_request", "message": "pairing_id and comparison_code are required"}}
+            if pairing_id is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing_id is required"}}
             try:
                 approved = self.pairing.approve(
                     pairing_id=pairing_id,
                     comparison_code=code,
                     scopes=tuple(scopes) if scopes is not None else None,
                 )
-            except (PairingError, ValueError) as exc:
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            except ValueError as exc:
                 return {"ok": False, "error": {"code": "pairing_rejected", "message": str(exc)}}
             self.store.record_audit(
                 installation_id=approved.installation_id,
@@ -475,7 +522,25 @@ class OwnerIPCServer:
                 decision="applied",
                 request_id=approved.pairing_id,
             )
-            return {"ok": True, "result": {"pairing_id": approved.pairing_id, "installation_id": approved.installation_id, "scopes": list(approved.scopes)}}
+            return {"ok": True, "result": {"pairing_id": approved.pairing_id, "installation_id": approved.installation_id, "scopes": list(approved.scopes), "state": "approved"}}
+        if method == "pair_deny":
+            if self.pairing is None:
+                return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
+            pairing_id = _string_param(params, "pairing_id")
+            if pairing_id is None:
+                return {"ok": False, "error": {"code": "bad_request", "message": "pairing_id is required"}}
+            try:
+                pending = self.pairing.deny(pairing_id)
+            except PairingError as exc:
+                return {"ok": False, "error": {"code": _pairing_code(exc), "message": str(exc)}}
+            if pending.installation_id:
+                self.store.record_audit(
+                    installation_id=pending.installation_id,
+                    operation="pairing.deny",
+                    decision="denied",
+                    request_id=pending.pairing_id,
+                )
+            return {"ok": True, "result": _pending_payload(pending)}
         if method == "pair_cancel":
             if self.pairing is None:
                 return {"ok": False, "error": {"code": "unavailable", "message": "pairing service is not running"}}
@@ -771,6 +836,47 @@ def _pairing_code(exc: PairingError) -> str:
         return "pairing_busy"
     if isinstance(exc, PairingDisabledError):
         return "remote_access_disabled"
+    if isinstance(exc, PairingOwnerRequiredError):
+        return "owner_required"
+    if isinstance(exc, PairingCodeInvalidError):
+        return "pairing_code_invalid"
+    if isinstance(exc, PairingDeniedError):
+        return "pairing_denied"
     if isinstance(exc, PairingRejectedError):
         return "pairing_rejected"
     return "pairing_error"
+
+
+def _pending_payload(pending: PairingPending) -> dict[str, Any]:
+    device = {
+        "installation_id": pending.installation_id,
+        "label": pending.label,
+        "platform": pending.platform,
+        "model": pending.model,
+    }
+    return {
+        "pairing_id": pending.pairing_id,
+        "state": pending.state,
+        "status": "pending" if pending.state == "pending_approval" else pending.state,
+        "expires_at": pending.expires_at,
+        "expires_in": max(0, pending.expires_at - int(time.time())),
+        "requested_at": pending.requested_at,
+        "installation_id": pending.installation_id,
+        "label": pending.label,
+        "platform": pending.platform,
+        "model": pending.model,
+        "device": device,
+        "origin": pending.origin,
+        "transport": pending.transport,
+        "scopes": list(pending.scopes),
+        # Kept for older internal callers; the desktop-facing name is pairing_code.
+        "pairing_code": pending.pairing_code,
+        "comparison_code": pending.comparison_code,
+        "nonce": pending.nonce,
+        "collector_secret": pending.collector_secret,
+        "challenge": (
+            f"{pending.pairing_id}.{pending.nonce}.{pending.collector_secret}"
+            if pending.pairing_id and pending.nonce and pending.collector_secret
+            else ""
+        ),
+    }

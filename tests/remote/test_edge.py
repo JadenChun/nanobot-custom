@@ -412,6 +412,79 @@ async def test_edge_pairing_collect_approve_poll(edge_setup) -> None:
 
 
 @pytest.mark.asyncio
+async def test_edge_manual_pairing_code_collects_without_nonce(edge_setup) -> None:
+    owner, edge, _pair = edge_setup
+    offer = owner.pairing.create_challenge(
+        origin="https://fedora.taila1e707.ts.net",
+        label="phone",
+        chat_consent=True,
+        media_consent=True,
+        full_control_consent=True,
+        owner_only=True,
+    )
+
+    wrong_code = f"{(int(offer.pairing_code) + 1) % 100_000_000:08d}"
+    wrong = await edge.handle(
+        None,
+        request(
+            "/mobile/v1/pair/code",
+            None,
+            [
+                ("X-Nanobot-Origin", offer.origin),
+                ("X-Nanobot-Pairing-Code", wrong_code),
+                ("X-Nanobot-Installation", "install-code-1"),
+            ],
+        ),
+    )
+    assert wrong is not None and wrong.status_code == 403
+    assert body(wrong)["error"] == "pairing_code_invalid"
+
+    collected = await edge.handle(
+        None,
+        request(
+            "/mobile/v1/pair/code",
+            None,
+            [
+                ("Host", "fedora.taila1e707.ts.net"),
+                ("X-Nanobot-Pairing-Code", offer.pairing_code),
+                ("X-Nanobot-Installation", "install-code-1"),
+                ("X-Nanobot-Label", "Pixel 10"),
+                ("X-Nanobot-Platform", "Android 16"),
+                ("X-Nanobot-Model", "Pixel 10"),
+            ],
+        ),
+    )
+    assert collected is not None and collected.status_code == 200
+    pending = body(collected)
+    assert pending["state"] == "pending_approval"
+    assert pending["device"]["platform"] == "Android 16"
+    assert pending["transport"] == "tailscale"
+    assert pending["nonce"] == offer.nonce
+    assert pending["collector_secret"] == offer.collector_secret
+    assert pending["challenge"] == f"{offer.pairing_id}.{offer.nonce}.{offer.collector_secret}"
+
+    owner.pairing.approve(
+        pairing_id=offer.pairing_id,
+        pairing_code=offer.pairing_code,
+    )
+    approved = await edge.handle(
+        None,
+        request(
+            "/mobile/v1/pair/poll",
+            None,
+            [
+                ("X-Nanobot-Pairing-Id", offer.pairing_id),
+                ("X-Nanobot-Pairing-Nonce", offer.nonce),
+                ("X-Nanobot-Pairing-Secret", offer.collector_secret),
+            ],
+        ),
+    )
+    assert approved is not None and approved.status_code == 200
+    assert body(approved)["status"] == "approved"
+    assert body(approved)["refresh_expires_in"] == 0
+
+
+@pytest.mark.asyncio
 async def test_edge_refresh_rotates_access_without_bearer(edge_setup) -> None:
     owner, edge, pair = edge_setup
     headers = [

@@ -40,7 +40,7 @@ def _status(manager: RemoteAccessManager, cfg: Config) -> dict[str, Any]:
     try:
         owner = manager.status()
         return {
-            "enabled": cfg.remote_access.enabled,
+            "enabled": bool(owner.get("enabled", cfg.remote_access.enabled)),
             "installation_id": owner.get("installation_id", ""),
             "devices": owner.get("devices", []),
             "owner_available": True,
@@ -64,6 +64,20 @@ def handle_remote_access(
     manager, cfg = _manager(config)
     if path == _PREFIX:
         return http_json_response(_status(manager, cfg))
+    if path == f"{_PREFIX}/tailscale":
+        from nanobot.remote.tailscale import tailscale_status
+
+        return http_json_response(tailscale_status())
+    if path == f"{_PREFIX}/pairing/pending":
+        try:
+            return http_json_response(manager.pending_pairings())
+        except OwnerUnavailableError as exc:
+            return http_json_response(
+                {"error": "owner_unavailable", "message": str(exc)},
+                status=503,
+            )
+        except OwnerRequestError as exc:
+            return _owner_error_response(exc)
     raw_body = getattr(request, "_nanobot_webui_mutation_payload", None)
     if not isinstance(raw_body, dict):
         return http_error(400, "invalid remote-access payload")
@@ -71,8 +85,8 @@ def handle_remote_access(
     try:
         if path == f"{_PREFIX}/enable":
             enabled = bool(body.get("enabled"))
-            config.update(lambda current: setattr(current.remote_access, "enabled", enabled))
             manager.set_enabled(enabled)
+            config.update(lambda current: setattr(current.remote_access, "enabled", enabled))
             return http_json_response({"enabled": enabled})
         if path == f"{_PREFIX}/revoke":
             installation_id = body.get("installation_id")
@@ -90,27 +104,78 @@ def handle_remote_access(
             label = body.get("label", "mobile")
             if not isinstance(origin, str):
                 return http_error(400, "origin is required")
+            if body.get("fullControlConsent") is not True:
+                return http_json_response(
+                    {
+                        "error": "owner_required",
+                        "message": "fullControlConsent=true is required for owner pairing",
+                    },
+                    status=400,
+                )
             return http_json_response(
                 manager.create_pairing(
                     origin=origin,
                     label=str(label),
                     chat_consent=True,
-                    media_consent=bool(body.get("mediaConsent", False)),
-                    full_control_consent=bool(body.get("fullControlConsent", False)),
+                    media_consent=True,
+                    full_control_consent=True,
                     shared_history_consent=bool(body.get("sharedHistoryConsent", False)),
                 )
             )
         if path == f"{_PREFIX}/pairing/approve":
             pairing_id = body.get("pairingId")
-            comparison_code = body.get("comparisonCode")
-            if not isinstance(pairing_id, str) or not isinstance(comparison_code, str):
-                return http_error(400, "pairing id and comparison code are required")
+            decision = body.get("decision", "approve")
+            if not isinstance(pairing_id, str):
+                return http_error(400, "pairing id is required")
+            if decision == "deny":
+                return http_json_response(manager.deny_pairing(pairing_id))
+            code = body.get("pairingCode", body.get("comparisonCode"))
+            if code is not None and not isinstance(code, str):
+                return http_error(400, "pairing code must be a string")
             return http_json_response(
                 manager.approve_pairing(
                     pairing_id=pairing_id,
-                    comparison_code=comparison_code,
+                    comparison_code=code if isinstance(code, str) else None,
+                    pairing_code=code if isinstance(code, str) else None,
                 )
             )
+        if path == f"{_PREFIX}/pairing/deny":
+            pairing_id = body.get("pairingId")
+            if not isinstance(pairing_id, str):
+                return http_error(400, "pairing id is required")
+            return http_json_response(manager.deny_pairing(pairing_id))
+        if path == f"{_PREFIX}/pairing/cancel":
+            pairing_id = body.get("pairingId")
+            if not isinstance(pairing_id, str):
+                return http_error(400, "pairing id is required")
+            return http_json_response({"cancelled": manager.cancel_pairing(pairing_id)})
         return http_error(404, "remote-access route not found")
-    except (OwnerUnavailableError, OwnerRequestError, OSError) as exc:
+    except OwnerUnavailableError as exc:
+        return http_json_response(
+            {"error": "owner_unavailable", "message": str(exc)},
+            status=503,
+        )
+    except OwnerRequestError as exc:
+        return _owner_error_response(exc)
+    except OSError as exc:
         return http_error(503, str(exc))
+
+
+_OWNER_ERROR_STATUS = {
+    "owner_required": 403,
+    "pairing_expired": 410,
+    "pairing_code_invalid": 403,
+    "pairing_denied": 403,
+    "pairing_rate_limited": 429,
+    "pairing_not_found": 404,
+    "pairing_busy": 409,
+    "pairing_consumed": 410,
+    "remote_access_disabled": 503,
+}
+
+
+def _owner_error_response(exc: OwnerRequestError) -> Response:
+    return http_json_response(
+        {"error": exc.code, "message": str(exc)},
+        status=_OWNER_ERROR_STATUS.get(exc.code, 503),
+    )

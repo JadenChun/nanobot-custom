@@ -45,6 +45,9 @@ class RemoteAccessOwner:
 
     def start(self) -> None:
         self.store.load_or_create()
+        # The owner client now exposes owner-only pairing. Existing chat-only
+        # records are not grandfathered; they must re-pair as owner devices.
+        self.store.revoke_legacy_chat_only_devices()
         self.server.start()
         if self.listener_port is not None:
             self.listener = RemoteHTTPListener(
