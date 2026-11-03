@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import os
 import re
 import time
@@ -14,7 +13,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
@@ -53,24 +51,12 @@ from nanobot.channels.delivery_contract import (
     ChannelTextReceipt,
     PartialChannelTextDeliveryError,
 )
-from nanobot.channels.routed_delivery import (
-    RoutedAttachment,
-    RoutedDeliveryError,
-    RoutedDeliveryReceipt,
-    RoutedDeliveryRequest,
-    RoutedPartKind,
-    RoutedPartReceipt,
-)
 from nanobot.command.builtin import build_help_text
 from nanobot.config.paths import get_media_dir
 from nanobot.config.schema import Base
 from nanobot.security.network import validate_url_target
-from nanobot.session.busy_inbox import InboxConflictError, TelegramAlbumMember
 from nanobot.utils.helpers import split_message
 from nanobot.utils.logging_bridge import redirect_lib_logging
-
-if TYPE_CHECKING:
-    from nanobot.channels.telegram.busy_inbox import TelegramBusyInbox
 
 TELEGRAM_MAX_MESSAGE_LEN = 4000  # Telegram message character limit
 # Telegram's actual API limit is 4096; we split raw markdown at 4000 as a
@@ -562,8 +548,6 @@ class TelegramChannel(BaseChannel):
         # complete provider attempt. Ordinary sends intentionally remain outside
         # this lock and can therefore still interleave with this dormant path.
         self._receipt_target_locks: dict[tuple[int, int | None] | int, asyncio.Lock] = {}
-        self._busy_inbox: TelegramBusyInbox | None = None
-        self._authenticated_startup: Callable[[TelegramChannel], Awaitable[None]] | None = None
 
     def _require_app(self) -> TelegramApplication:
         if self._app is None:
@@ -573,30 +557,6 @@ class TelegramChannel(BaseChannel):
     @property
     def authenticated_account_id(self) -> str | None:
         return str(self._bot_user_id) if type(self._bot_user_id) is int and self._bot_user_id > 0 else None
-
-    def install_authenticated_startup(self, callback: Callable[[TelegramChannel], Awaitable[None]]) -> None:
-        """Install a local owner before receiving any provider updates."""
-        if self._running or self._authenticated_startup is not None:
-            raise RuntimeError("Telegram startup owner must be installed before channel start")
-        self._authenticated_startup = callback
-
-    def remove_authenticated_startup(self, callback: Callable[[TelegramChannel], Awaitable[None]]) -> None:
-        if self._authenticated_startup == callback:
-            self._authenticated_startup = None
-
-    def register_busy_inbox(self, edge: TelegramBusyInbox) -> None:
-        """Bind one AgentLoop-owned edge after this bot's identity is known."""
-        if self._busy_inbox is not None:
-            raise RuntimeError("Telegram channel already has a registered busy inbox")
-        if (not edge.matches_channel(self) or self._bot_user_id is None
-                or str(self._bot_user_id) != edge.account_id):
-            raise ValueError("Telegram busy inbox must match this authenticated bot account")
-        self._busy_inbox = edge
-        edge.wake_notices()
-
-    def unregister_busy_inbox(self, edge: TelegramBusyInbox) -> None:
-        if self._busy_inbox is edge:
-            self._busy_inbox = None
 
     def is_chat_allowed(self, chat_id: str | int, chat_type: str) -> bool:
         """Group restrictions supplement sender authorization; private chats pass."""
@@ -624,33 +584,6 @@ class TelegramChannel(BaseChannel):
     def _is_update_allowed(self, message: Message, user: User) -> bool:
         return (self.is_allowed(self._sender_id(user))
                 and self.is_chat_allowed(message.chat_id, message.chat.type))
-
-    def busy_account_matches(self, account_id: str) -> bool:
-        """Expose the current bot identity check to the registered H1 edge."""
-        return self._bot_user_id is not None and str(self._bot_user_id) == account_id
-
-    def owns_busy_inbox(self, edge: object) -> bool:
-        """Tell the H1 edge whether it is still the channel's active owner."""
-        return self._busy_inbox is edge
-
-    @staticmethod
-    def busy_sender_id(user: object) -> str | None:
-        """Parse sender identity from an untrusted H1 transport boundary."""
-        user_id = getattr(user, "id", None)
-        username = getattr(user, "username", None)
-        if (type(user_id) is not int or user_id <= 0
-                or username is not None and not isinstance(username, str)):
-            return None
-        return f"{user_id}|{username}" if username else str(user_id)
-
-    def busy_update_allowed(self, message: object, user: object) -> bool:
-        """Apply the channel's current sender and chat policy to an H1 update."""
-        sender_id = self.busy_sender_id(user)
-        chat_id = getattr(message, "chat_id", None)
-        chat_type = getattr(getattr(message, "chat", None), "type", None)
-        if sender_id is None or type(chat_id) is not int or not isinstance(chat_type, str):
-            return False
-        return self.is_allowed(sender_id) and self.is_chat_allowed(chat_id, chat_type)
 
     @staticmethod
     def _normalize_telegram_command(content: str) -> str:
@@ -807,8 +740,6 @@ class TelegramChannel(BaseChannel):
         self._bot_user_id = getattr(bot_info, "id", None)
         self._bot_username = getattr(bot_info, "username", None)
         self.logger.info("bot @{} connected", bot_info.username)
-        if self._authenticated_startup is not None:
-            await self._authenticated_startup(self)
 
         try:
             await self._app.bot.set_my_commands(self.BOT_COMMANDS)
@@ -946,27 +877,6 @@ class TelegramChannel(BaseChannel):
     @staticmethod
     def _is_remote_media_url(path: str) -> bool:
         return path.startswith(("http://", "https://"))
-
-    def busy_is_remote_media_url(self, path: str) -> bool:
-        return self._is_remote_media_url(path)
-
-    def busy_media_type(
-        self, path: str,
-    ) -> Literal["photo", "video", "voice", "audio", "document"]:
-        return self._get_media_type(path)
-
-    @staticmethod
-    def _split_routed_text(content: str) -> tuple[str, ...]:
-        """Return the exact Markdown chunks used by receipt-bearing sends."""
-        return tuple(
-            markdown
-            for markdown, _html in _split_telegram_markdown_html_chunks(
-                content, TELEGRAM_HTML_MAX_LEN,
-            )
-        )
-
-    def busy_split_routed_text(self, content: str) -> tuple[str, ...]:
-        return self._split_routed_text(content)
 
     @staticmethod
     def _is_rich_capability_error(exc: Exception) -> bool:
@@ -1421,234 +1331,6 @@ class TelegramChannel(BaseChannel):
             request_digest=request_digest,
             parts=tuple(receipts),
         )
-
-    async def send_routed_with_receipt(
-        self, request: RoutedDeliveryRequest,
-    ) -> RoutedDeliveryReceipt:
-        """Preflight and send one immutable H1 bundle to its exact Telegram route."""
-        from nanobot.channels.routed_delivery import validate_routed_receipt
-
-        edge = self._busy_inbox
-        if edge is None or not edge.authorizes_address(request.address):
-            raise RoutedDeliveryError("definitely-unsent", "telegram_route_not_authorized")
-        app = self._app
-        if app is None or not self._app_ready.is_set():
-            raise RoutedDeliveryError("definitely-unsent", "telegram_app_unavailable")
-        address = request.address
-        if address.channel != self.name or str(self._bot_user_id) != address.account_id:
-            raise RoutedDeliveryError("definitely-unsent", "telegram_account_mismatch")
-        try:
-            chat_id = int(address.chat_id)
-            thread_id = int(address.thread_id) if address.thread_id is not None else None
-            reply_id = int(address.reply_to_message_id) if address.reply_to_message_id is not None else None
-        except ValueError as exc:
-            raise RoutedDeliveryError("definitely-unsent", "telegram_route_invalid") from exc
-        if (str(chat_id) != address.chat_id or chat_id == 0
-                or (address.thread_id is not None and str(thread_id) != address.thread_id)
-                or (address.reply_to_message_id is not None and str(reply_id) != address.reply_to_message_id)):
-            raise RoutedDeliveryError("definitely-unsent", "telegram_route_invalid")
-
-        prepared_media: list[tuple[RoutedAttachment, bytes | str]] = []
-        for attachment in request.bundle.attachments:
-            if attachment.reference_digest is not None:
-                if (not self._is_remote_media_url(attachment.source)
-                        or hashlib.sha256(attachment.source.encode("utf-8")).hexdigest()
-                        != attachment.reference_digest):
-                    raise RoutedDeliveryError("definitely-unsent", "telegram_media_reference_changed")
-                ok, _reason = validate_url_target(attachment.source)
-                if not ok:
-                    raise RoutedDeliveryError("definitely-unsent", "telegram_media_url_rejected")
-                prepared_media.append((attachment, attachment.source))
-                continue
-            if attachment.content_digest is None or self._is_remote_media_url(attachment.source):
-                raise RoutedDeliveryError("definitely-unsent", "telegram_media_binding_invalid")
-            try:
-                media_bytes = Path(attachment.source).read_bytes()
-            except (OSError, ValueError) as exc:
-                raise RoutedDeliveryError("definitely-unsent", "telegram_media_unavailable") from exc
-            if (len(media_bytes) > 50 * 1024 * 1024
-                    or hashlib.sha256(media_bytes).hexdigest() != attachment.content_digest):
-                raise RoutedDeliveryError("definitely-unsent", "telegram_media_changed")
-            prepared_media.append((attachment, media_bytes))
-
-        prepared_text: list[tuple[int, str, str]] = []
-        for part_index, text in enumerate(request.bundle.emitted_text_parts):
-            try:
-                chunks = _split_telegram_markdown_html_chunks(text, TELEGRAM_HTML_MAX_LEN)
-            except ValueError as exc:
-                raise RoutedDeliveryError("definitely-unsent", "telegram_text_invalid") from exc
-            if len(chunks) != 1 or chunks[0][0] != text:
-                raise RoutedDeliveryError("definitely-unsent", "telegram_text_empty")
-            markdown, html = chunks[0]
-            prepared_text.append((part_index, markdown, html))
-        if not prepared_media and not prepared_text:
-            raise RoutedDeliveryError("definitely-unsent", "telegram_bundle_empty")
-
-        reply_params = (
-            ReplyParameters(message_id=reply_id)
-            if reply_id is not None else None
-        )
-        target_lock_key = (chat_id, thread_id)
-        lock = self._receipt_target_locks.get(target_lock_key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._receipt_target_locks[target_lock_key] = lock
-
-        receipts: list[RoutedPartReceipt] = []
-
-        def receipt_prefix() -> RoutedDeliveryReceipt | None:
-            if not receipts:
-                return None
-            return RoutedDeliveryReceipt(
-                address=address,
-                action_id=request.action_id,
-                bundle_digest=request.bundle_digest,
-                parts=tuple(receipts),
-            )
-
-        def authorize_before_send() -> None:
-            if (self._busy_inbox is not edge or self._app is not app
-                    or not self._app_ready.is_set() or not edge.authorizes_address(address)):
-                disposition = "uncertain" if receipts else "definitely-unsent"
-                raise RoutedDeliveryError(
-                    disposition, "telegram_route_revoked", receipt=receipt_prefix(),
-                )
-
-        def make_receipt(
-            response: Message, *, message_index: int, part_index: int, kind: RoutedPartKind,
-        ) -> RoutedPartReceipt:
-            message_id = response.message_id
-            response_chat = response.chat.id
-            response_thread = response.message_thread_id
-            response_reply = (
-                response.reply_to_message.message_id
-                if response.reply_to_message is not None else None
-            )
-            if type(message_id) is not int or message_id <= 0 or type(response_chat) is not int:
-                raise ValueError("Telegram acknowledgement has incomplete message identity")
-            if response_chat != chat_id or response_thread != thread_id or response_reply != reply_id:
-                raise ValueError("Telegram acknowledgement has incomplete exact-route evidence")
-            return RoutedPartReceipt(
-                index=len(receipts),
-                message_index=message_index,
-                part_index=part_index,
-                kind=kind,
-                provider_message_id=message_id,
-                provider_chat_id=response_chat,
-                provider_thread_id=response_thread,
-                provider_reply_to_message_id=response_reply,
-            )
-
-        try:
-            await lock.acquire()
-        except asyncio.CancelledError as exc:
-            raise RoutedDeliveryError(
-                "definitely-unsent", "telegram_send_cancelled_before_provider",
-            ) from exc
-        try:
-            for index, (attachment, source) in enumerate(prepared_media):
-                authorize_before_send()
-                try:
-                    filename = attachment.filename if isinstance(source, bytes) else None
-                    if attachment.media_type == "photo":
-                        response = await app.bot.send_photo(
-                            chat_id=chat_id, photo=source, filename=filename,
-                            reply_parameters=reply_params, message_thread_id=thread_id,
-                        )
-                    elif attachment.media_type == "video":
-                        response = await app.bot.send_video(
-                            chat_id=chat_id, video=source, filename=filename,
-                            supports_streaming=True, reply_parameters=reply_params,
-                            message_thread_id=thread_id,
-                        )
-                    elif attachment.media_type == "voice":
-                        response = await app.bot.send_voice(
-                            chat_id=chat_id, voice=source, filename=filename,
-                            reply_parameters=reply_params, message_thread_id=thread_id,
-                        )
-                    elif attachment.media_type == "audio":
-                        response = await app.bot.send_audio(
-                            chat_id=chat_id, audio=source, filename=filename,
-                            reply_parameters=reply_params, message_thread_id=thread_id,
-                        )
-                    else:
-                        response = await app.bot.send_document(
-                            chat_id=chat_id, document=source, filename=filename,
-                            reply_parameters=reply_params, message_thread_id=thread_id,
-                        )
-                    receipts.append(make_receipt(
-                        response, message_index=index, part_index=0, kind="media",
-                    ))
-                except RoutedDeliveryError:
-                    raise
-                except BadRequest as exc:
-                    disposition = "uncertain" if receipts else "definitely-unsent"
-                    raise RoutedDeliveryError(
-                        disposition, "telegram_media_rejected", receipt=receipt_prefix(),
-                    ) from exc
-                except BaseException as exc:
-                    raise RoutedDeliveryError(
-                        "uncertain", "telegram_media_send_uncertain", receipt=receipt_prefix(),
-                    ) from exc
-
-            text_index = len(prepared_media)
-            for part_index, markdown, html in prepared_text:
-                authorize_before_send()
-                try:
-                    response = await app.bot.send_message(
-                        chat_id=chat_id, text=html, parse_mode="HTML",
-                        reply_parameters=reply_params, message_thread_id=thread_id,
-                    )
-                except BadRequest as exc:
-                    if not self._is_html_parse_rejection(exc):
-                        disposition = "uncertain" if receipts else "definitely-unsent"
-                        raise RoutedDeliveryError(
-                            disposition, "telegram_text_rejected", receipt=receipt_prefix(),
-                        ) from exc
-                    authorize_before_send()
-                    try:
-                        response = await app.bot.send_message(
-                            chat_id=chat_id, text=markdown,
-                            reply_parameters=reply_params, message_thread_id=thread_id,
-                        )
-                    except BadRequest as plain_exc:
-                        disposition = "uncertain" if receipts else "definitely-unsent"
-                        raise RoutedDeliveryError(
-                            disposition, "telegram_text_rejected", receipt=receipt_prefix(),
-                        ) from plain_exc
-                    except BaseException as plain_exc:
-                        raise RoutedDeliveryError(
-                            "uncertain", "telegram_text_send_uncertain", receipt=receipt_prefix(),
-                        ) from plain_exc
-                except RoutedDeliveryError:
-                    raise
-                except BaseException as exc:
-                    raise RoutedDeliveryError(
-                        "uncertain", "telegram_text_send_uncertain", receipt=receipt_prefix(),
-                    ) from exc
-                try:
-                    receipts.append(make_receipt(
-                        response, message_index=text_index,
-                        part_index=part_index, kind="text",
-                    ))
-                except ValueError as exc:
-                    raise RoutedDeliveryError(
-                        "uncertain", "telegram_receipt_invalid", receipt=receipt_prefix(),
-                    ) from exc
-        finally:
-            lock.release()
-
-        receipt = RoutedDeliveryReceipt(
-            address=address,
-            action_id=request.action_id,
-            bundle_digest=request.bundle_digest,
-            parts=tuple(receipts),
-        )
-        try:
-            validate_routed_receipt(request, receipt)
-        except ValueError as exc:
-            raise RoutedDeliveryError("uncertain", "telegram_receipt_invalid", receipt=receipt) from exc
-        return receipt
 
     async def _call_with_retry(
         self,
@@ -2339,13 +2021,6 @@ class TelegramChannel(BaseChannel):
             content = f"{cmd_part} {rest[0]}" if rest else cmd_part
         content = self._normalize_telegram_command(content)
 
-        edge = self._busy_inbox
-        if edge is not None:
-            if not await self._is_group_message_for_bot(message):
-                return
-            if await edge.handle_update(message, user, content=content, direct=True):
-                return
-
         if await self._try_fast_command(message):
             return
 
@@ -2443,33 +2118,16 @@ class TelegramChannel(BaseChannel):
                     "sender_id": sender_id, "chat_id": str_chat_id,
                     "chat_type": message.chat.type,
                     "contents": [], "media": [],
-                    "members": [], "member_messages": {},
                     "metadata": metadata,
                     "session_key": session_key,
-                    "media_group_id": str(media_group_id),
-                    "direct": direct,
                 }
                 self._start_typing(str_chat_id)
                 self._media_group_buffers[key]["typing_task"] = self._typing_tasks.get(str_chat_id)
                 await self._add_reaction(str_chat_id, message.message_id, self.config.react_emoji)
             buf = self._media_group_buffers[key]
-            member = TelegramAlbumMember.create(
-                str(message.message_id), content, tuple(media_paths),
-            )
-            if self._busy_inbox is not None:
-                previous = next(
-                    (value for value in buf["members"] if value.message_id == member.message_id),
-                    None,
-                )
-                if previous is not None:
-                    if previous.digest != member.digest:
-                        raise InboxConflictError("album member identity payload changed")
-                    return
             if content and content != "[empty message]":
                 buf["contents"].append(content)
             buf["media"].extend(media_paths)
-            buf["members"].append(member)
-            buf["member_messages"][member.message_id] = (message, user)
             if key not in self._media_group_tasks:
                 self._media_group_tasks[key] = asyncio.create_task(self._flush_media_group(key))
             return
@@ -2477,12 +2135,6 @@ class TelegramChannel(BaseChannel):
         # Start typing indicator before processing
         self._start_typing(str_chat_id)
         await self._add_reaction(str_chat_id, message.message_id, self.config.react_emoji)
-
-        edge = self._busy_inbox
-        if edge is not None and await edge.handle_update(
-            message, user, content=content, media=tuple(media_paths), direct=direct,
-        ):
-            return
 
         # Forward to the message bus
         await self._handle_message(
@@ -2513,26 +2165,6 @@ class TelegramChannel(BaseChannel):
                         await task
                 return
             content = "\n".join(buf["contents"]) or "[empty message]"
-            edge = self._busy_inbox
-            members = tuple(buf["members"])
-            member_messages = buf["member_messages"]
-            if edge is not None and members:
-                members = tuple(sorted(members, key=lambda member: int(member.message_id)))
-                content = "\n".join(member.content for member in members if member.content) or "[empty message]"
-                media = tuple(path for member in members for path in member.media)
-                first_id = members[0].message_id
-                message, user = member_messages[first_id]
-                if await edge.handle_update(
-                    message,
-                    user,
-                    content=content,
-                    media=media,
-                    album_id=buf["media_group_id"],
-                    album_members=members,
-                    direct=buf["direct"],
-                    transport_id=f"album:{buf['chat_id']}:{buf['media_group_id']}",
-                ):
-                    return
             await self._handle_message(
                 sender_id=buf["sender_id"], chat_id=buf["chat_id"],
                 content=content, media=list(dict.fromkeys(buf["media"])),

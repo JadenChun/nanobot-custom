@@ -84,7 +84,6 @@ from nanobot.utils.runtime import (
 )
 
 if TYPE_CHECKING:
-    from nanobot.agent.busy_steering import BusySteering
     from nanobot.agent.tools.filesystem import ReadFileTool
     from nanobot.session.artifact_grants import ArtifactGrantSet, ArtifactHandoffReceipt
     from nanobot.session.artifact_reader import ArtifactReader
@@ -219,7 +218,6 @@ class AgentRunSpec:
         [SourceTurnWriter, bool, ReadFileTool], ArtifactReader | None
     ] | None = field(default=None, repr=False)
     artifact_handoff_collector: object | None = field(default=None, repr=False)
-    busy_steering: BusySteering | None = field(default=None, repr=False)
     allow_pre_dispatch_recovery: bool = False
 
 
@@ -344,7 +342,6 @@ class AgentRunner:
         wait_at_terminal: bool = False,
         source: SourceRequestLedger | None = None,
         assistant_event_id: str | None = None,
-        allow_busy_steering: bool = True,
     ) -> tuple[bool, int]:
         """Drain pending injections. Returns (should_continue, updated_cycles).
 
@@ -370,13 +367,7 @@ class AgentRunner:
                     source_event_ids.append(None)
 
         if injection_cycles < _MAX_INJECTION_CYCLES:
-            if spec.busy_steering is not None:
-                if allow_busy_steering:
-                    for binding in spec.busy_steering.drain(limit=_MAX_INJECTIONS_PER_TURN):
-                        injections.append(dict(binding.message))
-                        source_event_ids.append(binding.source_event_id)
-            else:
-                accept_injections(await self._drain_injections(spec))
+            accept_injections(await self._drain_injections(spec))
             real_injection = bool(injections)
         if not injections and allow_continuation and assistant_message is not None:
             continuation = self._build_continuation_message(spec)
@@ -386,7 +377,6 @@ class AgentRunner:
             not injections
             and wait_at_terminal
             and injection_cycles < _MAX_INJECTION_CYCLES
-            and spec.busy_steering is None
         ):
             accept_injections(await self._drain_injections(spec, terminal=True))
             real_injection = bool(injections)
@@ -529,12 +519,6 @@ class AgentRunner:
             else None
         )
         try:
-            if spec.busy_steering is not None:
-                if spec.injection_callback is not None or spec.terminal_injection_callback is not None:
-                    raise ValueError("durable busy steering is exclusive with generic injection callbacks")
-                spec.busy_steering.validate_context(spec.turn_context, spec.source_writer)
-                if spec.source_writer is not None and spec.source_transcript is None:
-                    raise ValueError("durable busy steering requires a source transcript")
             if (spec.source_writer is not None and (spec.turn_context is None
                     or spec.turn_context.execution_owner is not spec.source_writer.owner)):
                 raise ValueError("Source recording requires the same dispatch owner")
@@ -755,12 +739,6 @@ class AgentRunner:
         governance_config = request_state.config
 
         for iteration in range(spec.max_iterations):
-            if spec.busy_steering is not None:
-                drained, injection_cycles = await self._try_drain_injections(
-                    spec, messages, None, injection_cycles, source=request_state.source,
-                    phase="before model dispatch",
-                )
-                had_injections = had_injections or drained
             context = AgentHookContext(
                 iteration=iteration,
                 messages=messages,
@@ -1139,7 +1117,6 @@ class AgentRunner:
                 _drained, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles, source=request_state.source,
                     phase="after tool execution",
-                    allow_busy_steering=iteration + 1 < spec.max_iterations,
                 )
                 if _drained:
                     had_injections = True
@@ -1271,7 +1248,6 @@ class AgentRunner:
                 conversation_state=conversation_state,
                 phase="after final response",
                 iteration=iteration,
-                allow_busy_steering=iteration + 1 < spec.max_iterations,
                 allow_continuation=(
                     response.finish_reason not in {"refusal", "content_filter"}
                 ),
@@ -1313,7 +1289,6 @@ class AgentRunner:
                 should_continue, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles, source=request_state.source,
                     phase="after LLM error",
-                    allow_busy_steering=iteration + 1 < spec.max_iterations,
                 )
                 if should_continue:
                     had_injections = True
@@ -1339,7 +1314,6 @@ class AgentRunner:
                 should_continue, injection_cycles = await self._try_drain_injections(
                     spec, messages, None, injection_cycles, source=request_state.source,
                     phase="after empty response",
-                    allow_busy_steering=iteration + 1 < spec.max_iterations,
                 )
                 if should_continue:
                     had_injections = True
@@ -1398,7 +1372,6 @@ class AgentRunner:
             drained_after_max_iterations, injection_cycles = await self._try_drain_injections(
                 spec, messages, None, injection_cycles, source=request_state.source,
                 phase="after max_iterations",
-                allow_busy_steering=False,
             )
             if drained_after_max_iterations:
                 had_injections = True
@@ -1572,11 +1545,6 @@ class AgentRunner:
         )
         return RecordedResponse(response, source_event_id, anchor_eligible)
 
-    @staticmethod
-    def _check_busy_stop(spec: AgentRunSpec) -> None:
-        if spec.turn_context is not None and spec.turn_context.busy_turn is not None:
-            spec.turn_context.busy_turn.check_stop()
-
     async def _request_model(
         self,
         spec: AgentRunSpec,
@@ -1589,7 +1557,6 @@ class AgentRunner:
         source_view: SourceTranscript | None = None,
         transcript: list[dict[str, Any]] | None,
     ) -> tuple[RecordedResponse, LLMUsage]:
-        self._check_busy_stop(spec)
         source_view = self._source_view(request_state, messages, source_view)
         timeout_s = self._resolve_llm_timeout_s(spec)
         tool_definitions = spec.tools.get_definitions()
@@ -1716,7 +1683,6 @@ class AgentRunner:
         recovery_failure_reason: str | None = None
         ticket: SourceRequestTicket | None = None
         while True:
-            self._check_busy_stop(spec)
             attempt_emitted_content = False
             attempt_emitted_reasoning = False
             ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
@@ -1741,7 +1707,6 @@ class AgentRunner:
                     await coro if outer_timeout_s is None
                     else await asyncio.wait_for(coro, timeout=outer_timeout_s)
                 )
-                self._check_busy_stop(spec)
             except asyncio.CancelledError:
                 if ticket is not None and request_state.source is not None:
                     request_state.source.discard(ticket)
@@ -1781,7 +1746,6 @@ class AgentRunner:
                     and not attempt_emitted_reasoning
                     and not active_hosted_tools
                 ):
-                    self._check_busy_stop(spec)
                     recovered = await self.context_governor.recover_finalized_request(
                         request_state,
                         measurement=(
@@ -2171,7 +2135,6 @@ class AgentRunner:
         record_source_response: bool = True,
         normalize_provider_errors: bool = False,
     ) -> RecordedResponse:
-        self._check_busy_stop(spec)
         source_view = self._source_view(request_state, messages, source_view)
         messages, provider_context = await self.context_governor.prepare_request(
             request_state,
@@ -2189,7 +2152,6 @@ class AgentRunner:
         recovery_failure_reason: str | None = None
         ticket: SourceRequestTicket | None = None
         while True:
-            self._check_busy_stop(spec)
             ticket = request_state.source.issue(source_view) if request_state.source is not None and source_view is not None else None
             kwargs = self._build_request_kwargs(spec, messages, tools=None)
             if tool_choice_none:
@@ -2224,7 +2186,6 @@ class AgentRunner:
                         else 'local_estimated_admission'
                     )
                 if not recovery_used:
-                    self._check_busy_stop(spec)
                     recovered = await self.context_governor.recover_finalized_request(
                         request_state,
                         measurement=(
@@ -2292,12 +2253,6 @@ class AgentRunner:
                     ticket = None
                 raise
             break
-        try:
-            self._check_busy_stop(spec)
-        except BaseException:
-            if ticket is not None and request_state.source is not None:
-                request_state.source.discard(ticket)
-            raise
         recorded = self._record_and_settle(
             spec,
             request_state,

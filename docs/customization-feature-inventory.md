@@ -103,7 +103,7 @@ line; this inventory does not claim they were first written during the merge.
 | **Durable source and context checkpoints** | Source-bound transcript writers, projection provenance, checkpoint dependencies and guarded publication integrated with upstream governance | Custom durability layer; the governor and basic summary schema themselves are upstream foundations |
 | **Private tool-result artifacts** | Scoped artifact storage, integrity checks, grants, read provenance, handoff and rematerialization | Preserves evidence outside prompt projections; not a reason to mix runtime storage into context Git repositories |
 | **Legacy memory recovery** | Receipt-based preparation, checked conversion, transaction phases, quarantine and startup admission before legacy archival changes | Migration/recovery machinery rather than a new business-facing memory product |
-| **Busy conversational control (H1)** | Durable inbox, bounded stateless control inference, steering/next-turn lanes, status/stop coordination and origin-aware reply intents | Explicit offline integration has local evidence; normal Telegram startup does not register the adapter. Whole-H1 and live cross-channel acceptance remain separate |
+| **Retired H1 compatibility guard** | Read-only parsing of legacy busy-inbox metadata; unsettled accepted or uncertain work blocks normal turns and destructive session changes | H1 control inference, durable inbox writers and steering are removed. Operational disposition of any pre-existing state remains a separate cutover task |
 | **Provider execution safeguards** | Immutable runtime snapshots, shared key coordination, concrete-provider state boundaries, finalized-request budget checks and coordinated OAuth publication | Added integration/correctness work; not all underlying providers or Responses support are custom |
 | **Durable scheduled-work substrate** | Definition/action/occurrence stores, scheduler ownership, delivery outbox and recovery/reconciliation identities | Implemented but dormant in the normal gateway; missing marketing contracts remain blockers |
 | **Owned runtime lifecycle** | Two-phase composition/preflight, explicit acquisition, reverse cleanup, startup admission and restricted plugin/tool registration | Default foreground lifecycle is wired; it deliberately does not activate every imported autonomous subsystem |
@@ -119,7 +119,7 @@ Migration source map:
 [checkpoint model](../nanobot/session/context_checkpoint.py),
 [artifact store](../nanobot/session/artifact_store.py),
 [memory recovery](../nanobot/agent/memory_recovery.py),
-[busy control](../nanobot/agent/busy_control.py),
+[legacy H1 guard](../nanobot/session/legacy_h1.py),
 [runtime composition](../nanobot/runtime_composition.py), and
 [cron runtime](../nanobot/cron/runtime.py).
 
@@ -154,7 +154,7 @@ too much emphasis on subagent delegation when describing this requirement.
 | Capability | Current migration behavior |
 | --- | --- |
 | Receive input while the model or a tool is waiting | The asynchronous bus continues receiving. Same-session follow-ups enter the active turn's pending-input path rather than opening a competing conversation turn |
-| Status, stop, steering and a queue for independent work | H1 provides an explicitly registered owning consumer and Telegram adapter. Offline tests exercise these paths; normal gateway composition does not register that adapter |
+| Status, stop, steering and a queue for independent work | H1 is retired. Ordinary Telegram uses the canonical bus/turn path; same-session follow-ups use the existing pending-input path. Legacy unsettled H1 state is refused rather than replayed |
 | Let a shell process continue after its tool call returns | Config-enabled `exec` supports `yield_time_ms`, returning a session ID; `exec_session` and `list_exec_sessions` manage it. This is process execution, not an independent LLM task or a durable completion-notification service |
 | Automatically continue the assistant when that process completes | No completion-to-assistant-turn connection was found for `ExecSessionManager`. Output and exit state are collected through session polling. Local-trigger coordination exists separately, but it does not subscribe to exec-session completion |
 | Delegate work to another LLM session | The normal registry exposes foreground roles that await their results. Imported background `spawn` code is excluded from core registration. Restoring it is not necessary for the clarified process/continuation requirement |
@@ -166,29 +166,24 @@ queue a continuation for the assistant when the work completes. A scheduled due
 time and a process exit are different trigger sources; neither requires the
 assistant to keep making model calls while waiting.
 
-The [H1 contract](migration/h1-implementation-contract.md) explicitly chooses no
-additional task-working agent and a FIFO next-turn lane for independent tasks.
-Its tool-free control inference can propose a route while the task provider is
-blocked, but it does not perform a second substantive user task. The clarified
-background-process requirement can preserve that single-assistant ownership:
-the initial turn ends or explicitly yields after launching the process; a
-completion later enters through the owning session's continuation path. If the
-assistant is busy, the completion waits for a safe boundary rather than starting
-a competing transcript writer. Steering takes effect at a safe runner boundary;
-accepting it does not interrupt an in-flight tool immediately. H1 remains
-**NOT_ACCEPTED** as a whole.
+The H1 busy-input design is historical and has been retired by the
+[cleanup plan](telegram-h1-concurrency-cleanup-plan.md). Its tool-free control
+model, durable inbox writer and steering path are no longer active. The clarified
+background-process requirement preserves single-assistant ownership instead: the
+initial turn ends or explicitly yields after launching the process; a completion
+later enters through the owning session's continuation path. If the assistant is
+busy, the completion waits for a safe boundary rather than starting a competing
+transcript writer. Sessions carrying unsettled legacy H1 work fail closed until
+an explicit operational recovery decision is made.
 
 Evidence: [bus admission](../nanobot/agent/loop.py),
-[owning consumer](../nanobot/agent/busy_dispatch.py),
+[legacy H1 guard](../nanobot/session/legacy_h1.py),
 [foreground role execution](../nanobot/agent/delegation.py),
 [explicit core registry](../nanobot/agent/tools/fork_factories.py),
 [reserved plugin names](../nanobot/agent/tools/loader.py), and
 [process sessions](../nanobot/agent/tools/exec_session.py). The separate
 [local-trigger coordinator](../nanobot/triggers/local_turns.py) is an integration
 building block, not an already connected process-completion service.
-Only the registration definition and its internal call to the channel's
-registration method occur in the package source; no normal startup caller was
-found for `register_telegram_busy_inbox`.
 
 The relevant reference is background tool execution and completion delivery.
 [OpenCode's v2 tools documentation](https://dev.opencode.ai/v2/docs/tools/)
@@ -252,7 +247,9 @@ The background/responsiveness follow-up additionally ran:
 Result: **89 passed**. A second selection covered
 `tests/migration/test_h1_telegram_inbox.py`,
 `tests/tools/test_exec_session_tools.py` and
-`tests/agent/test_exec_session_isolation.py`: **78 passed**. The repository's
+`tests/agent/test_exec_session_isolation.py`: **78 passed**. The H1 test files
+from that historical run were retired by the 2026-11-04 cleanup; the results are
+retained as evidence for the removed implementation. The repository's
 existing environment lacks the optional Telegram package, so initial collection
 of that selection was blocked. It passed with the manifest's Telegram dependency
 ranges installed into a disposable `/tmp` target supplied through `PYTHONPATH`;
@@ -260,8 +257,8 @@ the existing environment was not modified. The target resolved
 `python-telegram-bot==22.8`. Evidence is retained under
 `/tmp/nanobot-background-review-o2to0ffn/`, including the install log, command,
 test output and matching before/after hashes for 543 runtime/selected-test files.
-These **167 focused offline passes** do not qualify live startup, all of H1,
-automatic process-completion continuation, or marketing scheduling.
+These **167 focused offline passes** do not qualify live startup, the retired
+H1 behavior, automatic process-completion continuation, or marketing scheduling.
 
 The historical [158-path staging audit](migration/p0-compatibility-inventory.tsv)
 remains useful but covers a different staging snapshot. It does not account for
@@ -283,7 +280,7 @@ credential-location compatibility and repository-management/memory design as
 separate bounded follow-ups. This inventory does not expand that milestone or
 activate any dormant feature. The background-process/continuation capability
 above is an additional product/design follow-up; it does not require restoring
-background subagents or changing H1 into a multi-agent system.
+background subagents or reintroducing H1 busy-input control.
 
 The subsequent discussion accepted a simpler direction: catalog-assisted,
 agent-driven context discovery through existing tools, without assuming a new

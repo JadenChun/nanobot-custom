@@ -46,7 +46,7 @@ injection; **Absent** = no implementation on this branch.
 | --- | --- | --- |
 | Turn engine (`AgentLoop` → `AgentRunner`, streaming, tool loop) | Active | `agent/loop.py`, `agent/runner.py` |
 | Whole-batch policy preflight + terminal tool outcomes | Active | `agent/policy.py`, `runner._execute_tools` |
-| Busy-input admission, steering, stop, recovery (H1) | Active | `agent/busy_*.py`, `session/busy_inbox.py`, `session/execution_owner.py` |
+| Busy-input admission, steering, stop, recovery (H1) | Retired (was active on inspected branch) | Removed by the 2026-11-04 cleanup; legacy guard in `session/legacy_h1.py` |
 | Session authority: lease, generation, execution owner | Active | `session/runtime_authority.py`, `session/keys.py` |
 | Session modes + legacy→canonical conversion | Active | `session/session_mode.py`, `session/mode_storage.py` |
 | Source-bound transcripts (every model input traceable) | Active | `session/source.py`, `session/turn_writer.py`, `agent/turn.py` |

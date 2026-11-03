@@ -1,5 +1,10 @@
 # H1: offline implementation and functional acceptance
 
+**Historical/superseded, 2026-11-04:** the implementation described here was
+retired by the [cleanup plan](../telegram-h1-concurrency-cleanup-plan.md).
+This document and its qualification evidence are retained as history; the H1
+control model, durable inbox writer and steering path are no longer active.
+
 Status: **IN_PROGRESS, NOT_ACCEPTED** (2026-10-15). ROOT_DIRECT.
 The human accepted the five recommendations on priority, reply destinations,
 temporary recovery/privacy, bounded control inference and offline-first activation.

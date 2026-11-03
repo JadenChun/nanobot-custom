@@ -1,5 +1,11 @@
 # H1 busy-input inbox: proposed engineering contract
 
+**Historical/superseded, 2026-11-04:** this design is retained as engineering
+evidence only. The [cleanup plan](../telegram-h1-concurrency-cleanup-plan.md)
+retires the H1 control model, durable inbox writer and steering path. No new H1
+writer, replay engine or automatic migration is authorized; a narrow read-only
+legacy-state guard protects unsettled stored work.
+
 Status: **design proposal, not an implementation or enablement authorization** (2026-09-28). The accepted user experience and dependency order are in [the migration plan](../nanobot-upstream-migration-plan.md#6a-h1-conversational-control-of-a-busy-assistant). This document narrows the scheduling and recovery design for review. The bounded P4 receipt-quarantine safety slice passed, but the candidate remains disabled by `MigrationIncompleteError`; H1 may not be activated before stable P5 interfaces and the P7 single-consumer canary.
 
 ## Stage discipline

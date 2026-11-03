@@ -10,6 +10,7 @@ from pydantic import BaseModel, ValidationError
 from pydantic_settings import SettingsError
 
 from nanobot.config.errors import ConfigIssue, ConfigLoadError, validation_issues
+from nanobot.config.legacy_h1 import retired_telegram_busy_error
 from nanobot.config.schema import (
     Config,
     _resolve_tool_config_refs,  # pyright: ignore[reportPrivateUsage]
@@ -120,6 +121,19 @@ def load_config(config_path: Path | None = None) -> Config:
         )
 
     data = _migrate_config(cast(dict[str, Any], data))
+    retired_error = retired_telegram_busy_error(data.get("gateway"))
+    if retired_error is not None:
+        raise ConfigLoadError(
+            path,
+            kind="invalid_schema",
+            summary=str(retired_error),
+            issues=(
+                ConfigIssue(
+                    path=("gateway", "telegramBusy"),
+                    message="Remove the retired H1 block or set enabled=false.",
+                ),
+            ),
+        )
     try:
         config = Config.model_validate(data)
     except ValidationError as exc:
