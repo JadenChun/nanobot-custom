@@ -28,6 +28,10 @@ and the mobile/session-recovery documents are separate context only.
   dependency evidence before claiming acceptance.
 - Do not run the real gateway, alter live settings/state, call real providers,
   send Telegram messages, start/stop local model servers, or merge/push/deploy.
+- Research/preparation documents are also distributed to local `staging` as
+  documentation only. Its newer unrelated product commits are not part of this
+  frozen baseline. Do not merge this branch's complete older product tree into
+  `staging`; eventual integration must preserve the then-current staging code.
 
 When dispatching an implementation worker, perform the development skill's
 current availability preflight; prefer the available Q6 base worker or its

@@ -1,6 +1,7 @@
 # SuperAgent research and future agent-managed sessions
 
 Date: **2026-11-03** (Asia/Kuala_Lumpur).
+Source-reference update: **2026-11-04**; original article URL retained below.
 Status: **research findings and future direction; implementation deferred**.
 Nanobot source baseline: `a90191a41b025884e76ce029b98a5d5349171f2e`.
 DeepSeek prototype snapshot: `8c32a9dc5d72c033816c6a8110b37f40cf94fba4`.
@@ -49,11 +50,16 @@ worker orchestration a requirement for existing process continuation.
   by SIAPI.AI, dated 2026-11-01. The supplied
   [Google share link](https://share.google/SaQFZXQAg66RGozbF) resolved there.
   It is an independent explanation, not DeepSeek product documentation.
-- The original team essay, [Exploring Super-agent Design: Towards a More
-  Autonomous Agent System](https://x.com/DeepSeekHarness/status/2116857257245987236),
-  was located but returned HTTP 403. Its full original text was not verified.
-  Search summaries and a third-party translation were encountered while
-  locating it; broader claims from them are not implementation evidence here.
+- Original team essay: [Exploring Super-agent Design: Towards a More
+  Autonomous Agent System](https://x.com/DeepSeekHarness/article/2116857257245987236).
+  This is the direct article URL supplied by the user on 2026-11-04; retain it
+  alongside the [associated post](https://x.com/DeepSeekHarness/status/2116857257245987236).
+  The article URL returned HTTP 403 when checked on 2026-11-04, as did the post
+  during the earlier study. The original full text has not been verified or
+  archived in this repository. Search summaries and a third-party translation
+  encountered during the study are not substitutes for the original article
+  or implementation evidence. The prototype findings below remain separately
+  supported by the inspected code and its documentation.
 - Nanobot findings come from the baseline source, existing project documents,
   focused tests, and a read-only inspection of the selected desktop runtime.
   Imported classes, documentation, passing isolated checks, active registration,

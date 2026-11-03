@@ -43,6 +43,13 @@ isolated worktree; this does not change those separate plans' scope.
 No live gateway, Telegram account, model server, configuration, session storage,
 or GPU allocation is part of this preparation or the offline implementation.
 
+**Draft distribution, 2026-11-04:** copy the research and preparation documents
+to local `staging` through a documentation-only commit. This does not merge the
+cleanup branch's product tree into `staging`, rebase its frozen code baseline,
+or activate a runtime change. `staging` already has newer unrelated product
+commits; preserve them when integrating a reviewed cleanup delta later. Keep
+implementation in the isolated worktree until its own acceptance is complete.
+
 Preparation checks passed in the final frozen environment: Python 3.14.8,
 BasedPyright 1.40.2, Ruff 0.17.1, dependency consistency, and imports resolving to
 this worktree. All declared project extras and discovered channel dependencies
