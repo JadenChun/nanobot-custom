@@ -32,6 +32,7 @@ PermissionFullUnavailableReason = Literal[
 ]
 
 _TOKEN = object()
+_DERIVED_FULL_REQUEST = object()
 _RUNTIME_ID = re.compile(r"^[0-9a-f]{32}$")
 _MAX_ID_LENGTH = 128
 _MAX_SESSION_KEY_LENGTH = 256
@@ -142,6 +143,7 @@ class WorkspaceFullAccessReference:
     source_binding: PermissionSourceBinding
     epoch: int
     _token: object = field(repr=False)
+    _request_token: object | None = field(default=None, repr=False)
     request_turn_id: str | None = field(default=None, repr=False)
     request_input_event_id: str | None = field(default=None, repr=False)
 
@@ -550,6 +552,7 @@ class DesktopPermissionOwner:
                 return base
             return replace(
                 base,
+                _request_token=_DERIVED_FULL_REQUEST,
                 request_turn_id=request_turn_id,
                 request_input_event_id=request_input_event_id,
             )
@@ -625,12 +628,15 @@ class DesktopPermissionOwner:
             base = self._full.get(source)
             if base is None or typed.epoch <= 0:
                 return False
-            if (
-                typed.epoch != base.epoch
-                or typed.session_key != base.session_key
-                or typed.source_binding != base.source_binding
-            ):
-                return False
+            if typed is not base:
+                if typed._request_token is not _DERIVED_FULL_REQUEST:
+                    return False
+                if (
+                    typed.epoch != base.epoch
+                    or typed.session_key != base.session_key
+                    or typed.source_binding != base.source_binding
+                ):
+                    return False
             if typed.request_turn_id is not None:
                 return request_turn_id == typed.request_turn_id
             return True
