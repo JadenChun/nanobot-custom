@@ -152,6 +152,7 @@ function socketTransportFixture() {
   });
   const wsSend = vi.fn(async () => undefined);
   const wsClose = vi.fn(async () => undefined);
+  const wsPing = vi.fn(async () => true);
   const transport: MobileTransport = {
     start: vi.fn(async () => undefined),
     status: vi.fn(async () => ({})),
@@ -168,6 +169,7 @@ function socketTransportFixture() {
     wsOpen,
     wsSend,
     wsClose,
+    wsPing,
     stop: vi.fn(async () => undefined),
   };
   return {
@@ -175,6 +177,7 @@ function socketTransportFixture() {
     wsOpen,
     wsSend,
     wsClose,
+    wsPing,
     emit: (event: MobileEvent) => listener?.(event),
     subscribed: () => listener !== null,
   };
@@ -271,6 +274,37 @@ describe("mobile socket lifecycle", () => {
     fixture.emit({ type: "ws_frame", ws_id: 2, data_base64: base64Of("new") });
     expect(firstMessages).toEqual(["old"]);
     expect(secondMessages).toEqual(["new"]);
+  });
+
+  it("keeps a healthy open socket during foreground recovery", async () => {
+    const fixture = socketTransportFixture();
+    fixture.wsPing.mockResolvedValue(true);
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const opened = vi.fn();
+    socket.onopen = opened;
+    await vi.waitFor(() => expect(fixture.wsOpen).toHaveBeenCalledTimes(1));
+    await runtime.recover();
+    expect(fixture.wsPing).toHaveBeenCalledWith(1);
+    expect(fixture.wsClose).not.toHaveBeenCalled();
+    expect(fixture.wsOpen).toHaveBeenCalledTimes(1);
+    expect(opened).toHaveBeenCalledTimes(1);
+  });
+
+  it("renews credentials and replaces a stale socket once", async () => {
+    const fixture = socketTransportFixture();
+    fixture.wsPing.mockResolvedValue(false);
+    const runtime = createMobileRuntime(fixture.transport);
+    const socket = runtime.createWebSocket("wss://host/mobile/v1/ws");
+    const opened = vi.fn();
+    socket.onopen = opened;
+    await vi.waitFor(() => expect(fixture.wsOpen).toHaveBeenCalledTimes(1));
+    await Promise.all([runtime.recover(), runtime.recover()]);
+    expect(fixture.wsPing).toHaveBeenCalledTimes(1);
+    expect(fixture.transport.refresh).toHaveBeenCalledTimes(1);
+    expect(fixture.wsClose).toHaveBeenCalledWith(1);
+    expect(fixture.wsOpen).toHaveBeenCalledTimes(2);
+    expect(opened).toHaveBeenCalledTimes(2);
   });
 
   it("rejects sends before open and forwards text bytes after open", async () => {

@@ -51,6 +51,7 @@ export interface MobileTransport {
   wsOpen(path: string, headers?: Record<string, string>): Promise<number>;
   wsSend(wsId: number, data: Uint8Array, kind?: "text" | "binary"): Promise<void>;
   wsClose(wsId: number): Promise<void>;
+  wsPing?(wsId: number): Promise<boolean>;
   stop(): Promise<void>;
 }
 
@@ -61,6 +62,8 @@ export interface MobileRuntime {
   read(path?: string): Promise<Record<string, unknown>>;
   onEvent(listener: (event: MobileEvent) => void): Promise<() => void>;
   createWebSocket(url: string): WebSocket;
+  /** Restore foreground connectivity once; no-op when no runtime is installed. */
+  recover(): Promise<void>;
 }
 
 let installedMobileRuntime: MobileRuntime | null = null;
@@ -87,6 +90,10 @@ export function isMobileRuntimeActive(): boolean {
   return installedMobileRuntime !== null;
 }
 
+export function recoverMobileRuntime(): Promise<void> {
+  return installedMobileRuntime?.recover() ?? Promise.resolve();
+}
+
 export function resetMobileRuntime(): void {
   installedMobileRuntime = null;
   ownerCapability = false;
@@ -106,6 +113,8 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
   }>();
   const listeners = new Set<(event: MobileEvent) => void>();
   let listening: Promise<() => void> | null = null;
+  const sockets = new Set<MobileWebSocket>();
+  let recovery: Promise<void> | null = null;
 
   const ensureListener = (): Promise<() => void> => {
     if (listening === null) {
@@ -185,7 +194,22 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
       return () => listeners.delete(listener);
     },
     createWebSocket(url) {
-      return new MobileWebSocket(runtime, url) as unknown as WebSocket;
+      const socket = new MobileWebSocket(runtime, url);
+      sockets.add(socket);
+      return socket as unknown as WebSocket;
+    },
+    async recover() {
+      if (recovery !== null) return recovery;
+      recovery = (async () => {
+        const active = [...sockets].filter((socket) => !socket.isRetired());
+        for (const socket of active) {
+          await socket.recover();
+          if (socket.isRetired()) sockets.delete(socket);
+        }
+      })().finally(() => {
+        recovery = null;
+      });
+      return recovery;
     },
   };
   return runtime;
@@ -211,6 +235,35 @@ class MobileWebSocket {
       throw new Error("mobile socket path is not allowlisted");
     }
     void this.open();
+  }
+
+  isRetired(): boolean {
+    return this.retired;
+  }
+
+  async recover(): Promise<void> {
+    if (this.retired || this.readyState !== 1 || !this.wsId) return;
+    const ping = this.runtime.transport.wsPing;
+    if (!ping) return;
+    let healthy = false;
+    try {
+      healthy = await ping.call(this.runtime.transport, this.wsId);
+    } catch {
+      healthy = false;
+    }
+    if (healthy && this.readyState === 1) return;
+    await this.runtime.transport.refresh().catch(() => false);
+    await this.reopen();
+  }
+
+  private async reopen(): Promise<void> {
+    const staleId = this.wsId;
+    this.wsId = 0;
+    this.readyState = 0;
+    this.unsubscribe?.();
+    this.unsubscribe = null;
+    if (staleId) void this.runtime.transport.wsClose(staleId);
+    await this.open();
   }
 
   private async open(): Promise<void> {

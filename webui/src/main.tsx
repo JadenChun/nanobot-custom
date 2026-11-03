@@ -8,6 +8,7 @@ import { initializeLoopbackRuntimeHost } from "./lib/runtime";
 import {
   createMobileRuntime,
   installMobileRuntime,
+  recoverMobileRuntime,
   isMobileRuntimeActive,
   shouldRegisterServiceWorker,
   type MobileTransport,
@@ -49,6 +50,15 @@ document.documentElement.classList.toggle("webkit-runtime", isWebKitRuntime);
 
 initializeLoopbackRuntimeHost();
 if (isMobileRuntimeActive()) document.documentElement.classList.add("mobile-runtime");
+
+if (isMobileRuntimeActive()) {
+  const recover = () => {
+    if (document.visibilityState === "visible") void recoverMobileRuntime();
+  };
+  document.addEventListener("visibilitychange", recover);
+  window.addEventListener("pageshow", recover);
+  window.addEventListener("online", recover);
+}
 
 async function renderWebui(container: HTMLElement) {
   await initializeI18n();
