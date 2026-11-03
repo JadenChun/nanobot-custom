@@ -245,12 +245,7 @@ class MobileWebSocket {
     if (this.retired || this.readyState !== 1 || !this.wsId) return;
     const ping = this.runtime.transport.wsPing;
     if (!ping) return;
-    let healthy = false;
-    try {
-      healthy = await ping.call(this.runtime.transport, this.wsId);
-    } catch {
-      healthy = false;
-    }
+    const healthy = await ping.call(this.runtime.transport, this.wsId).catch(() => false);
     if (healthy && this.readyState === 1) return;
     await this.runtime.transport.refresh().catch(() => false);
     await this.reopen();
