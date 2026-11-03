@@ -6778,3 +6778,125 @@ def scope_b_payload(project: Path) -> dict[str, object]:
         "access_mode": "restricted",
         "restrict_to_workspace": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_remote_owner_full_message_requires_own_device_consent(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.remote.edge import AccessIdentity
+
+    default_workspace = tmp_path / "default"
+    project = tmp_path / "project"
+    default_workspace.mkdir()
+    project.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    conn.remote_address = ("203.0.113.5", 50123)
+    conn.mobile_identity = AccessIdentity(
+        "install-a",
+        ("chat.read", "chat.write", "owner"),
+        1e12,
+        1,
+    )
+    channel.revalidate_mobile_connection = AsyncMock(return_value=True)
+    key = "websocket:remote-owner-full"
+    scope = default_workspace_scope(project, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    workspaces = channel.gateway.workspaces
+    owner = sessions.desktop_permissions
+    source = workspaces._source_binding(key)
+    assert source is not None
+    token = workspaces.source_token("remote-owner-full")
+    assert token is not None
+    current = workspaces._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    enabled = workspaces.set_permission_mode(
+        {
+            "chat_id": "remote-owner-full",
+            "mode": "full",
+            "expected_runtime_id": owner.runtime_id,
+            "expected_permission_revision": current["revision"],
+        },
+        local_ui=False,
+        owner_authorized=True,
+        owner_installation_id="install-a",
+    )
+    assert "error" not in enabled
+
+    def envelope(turn_id: str) -> dict[str, object]:
+        return {
+            "type": "message",
+            "chat_id": "remote-owner-full",
+            "content": "full work",
+            "webui": True,
+            "turn_id": turn_id,
+            "request_settings_version": 1,
+            "request_intent": "new",
+            "source_token": token,
+            "workspace_scope": {
+                "project_path": str(project),
+                "access_mode": "full",
+                "restrict_to_workspace": False,
+            },
+        }
+
+    await channel._dispatch_envelope(conn, "webui-client", envelope("turn-a"))
+    bus.publish_inbound.assert_awaited_once()
+    wth.clear_websocket_turns("remote-owner-full")
+
+    conn.mobile_identity = AccessIdentity(
+        "install-b",
+        ("chat.read", "chat.write", "owner"),
+        1e12,
+        1,
+    )
+    await channel._dispatch_envelope(conn, "webui-client", envelope("turn-b-denied"))
+    denied = json.loads(conn.send.await_args.args[0])
+    assert denied["detail"] == "workspace_scope_rejected"
+    assert denied["reason"] == "full_access_unavailable"
+    assert bus.publish_inbound.await_count == 1
+
+    current = workspaces._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    confirmed = workspaces.set_permission_mode(
+        {
+            "chat_id": "remote-owner-full",
+            "mode": "full",
+            "expected_runtime_id": owner.runtime_id,
+            "expected_permission_revision": current["revision"],
+        },
+        local_ui=False,
+        owner_authorized=True,
+        owner_installation_id="install-b",
+    )
+    assert "error" not in confirmed
+    await channel._dispatch_envelope(conn, "webui-client", envelope("turn-b"))
+    assert bus.publish_inbound.await_count == 2
+    from nanobot.security.desktop_permissions import full_permission_from_message
+
+    assert full_permission_from_message(bus.publish_inbound.await_args.args[0]) is not None

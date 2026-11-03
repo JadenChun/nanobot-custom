@@ -1126,6 +1126,12 @@ class WebUIWorkspaceController:
             and current_projection["mode"] == "full"
             and current_projection["state"] == "active"
         ):
+            if owner_installation_id is not None:
+                self.permission_owner.record_remote_full_consent(
+                    installation_id=owner_installation_id,
+                    session_key=key,
+                    source_binding=source,
+                )
             return {
                 "workspace_scope": self.scope_payload(
                     self._scope_for_mode(scope.project_path, "full")

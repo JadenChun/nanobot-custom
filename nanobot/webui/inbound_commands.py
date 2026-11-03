@@ -233,6 +233,17 @@ def _typed_mobile_identity(connection: Any) -> Any | None:
     return identity
 
 
+def _typed_owner_mobile_identity(connection: Any) -> Any | None:
+    """Return a real mobile identity carrying the owner scope."""
+    identity = _typed_mobile_identity(connection)
+    if identity is None:
+        return None
+    scopes = getattr(identity, "scopes", None)
+    if not isinstance(scopes, (tuple, list, set, frozenset)):
+        return None
+    return identity if "owner" in scopes else None
+
+
 def _mobile_denial_message(connection: Any, action: str) -> str:
     """Name the documented local-only exception instead of a generic denial."""
     if _typed_mobile_identity(connection) is not None and (
@@ -777,6 +788,8 @@ class WebUICommandRouter:
         if temporary_policy is None or temporary_policy.hydrate_transcript:
             await self._transport.webui_hydrate(chat_id)
 
+        local_controls = self.workspace_controls_available(connection)
+        controls_available = local_controls or _typed_owner_mobile_identity(connection) is not None
         scope = await self.workspace_scope_or_error(
             connection,
             lambda: (
@@ -789,7 +802,7 @@ class WebUICommandRouter:
                     envelope,
                     chat_id=chat_id,
                     chat_running=websocket_turn_wall_started_at(chat_id) is not None,
-                    controls_available=self.workspace_controls_available(connection),
+                    controls_available=controls_available,
                 )
             ),
             chat_id=chat_id,
@@ -821,7 +834,7 @@ class WebUICommandRouter:
             else:
                 permission_reference = self._workspaces.ingress_full_reference(
                     chat_id,
-                    local_ui=self.workspace_controls_available(connection),
+                    local_ui=local_controls,
                     installation_id=(
                         mobile_installation
                         if isinstance(mobile_installation, str) and mobile_installation

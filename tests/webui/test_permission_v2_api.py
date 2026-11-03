@@ -2043,3 +2043,113 @@ def test_permission_control_v1_source_and_version_are_validated_before_effect(
             local_ui=True,
         )
     assert stale_prepare.value.message == "source_changed"
+
+
+def test_two_remote_installations_each_confirm_full_consent(tmp_path: Path) -> None:
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    manager = SessionManager(home, sessions_root=tmp_path / "sessions")
+    key = "websocket:two-owner"
+    scope = default_workspace_scope(project, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    manager._jsonl_store.save(session)
+    manager._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    controller = WebUIWorkspaceController(
+        session_manager=manager,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=FolderGrantStore(
+            agent_home=home,
+            instance_root=instance,
+            path=instance / "webui" / "folder-grants.json",
+        ),
+        native_supervisor_available=True,
+    )
+    owner = manager.desktop_permissions
+    source = controller._source_binding(key)
+    assert source is not None
+    token = controller.source_token("two-owner")
+    assert token is not None
+    current = controller._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+
+    first = controller.set_permission_mode(
+        {
+            "chat_id": "two-owner",
+            "mode": "full",
+            "expected_runtime_id": owner.runtime_id,
+            "expected_permission_revision": current["revision"],
+        },
+        local_ui=False,
+        owner_authorized=True,
+        owner_installation_id="install-a",
+    )
+    assert "error" not in first
+    assert controller.ingress_full_reference(
+        "two-owner",
+        local_ui=False,
+        installation_id="install-a",
+        request_turn_id="turn-a",
+    ) is not None
+    assert controller.ingress_full_reference(
+        "two-owner",
+        local_ui=False,
+        installation_id="install-b",
+        request_turn_id="turn-b",
+    ) is None
+
+    second = controller.set_permission_mode(
+        {
+            "chat_id": "two-owner",
+            "mode": "full",
+            "expected_runtime_id": owner.runtime_id,
+            "expected_permission_revision": first["workspace_permissions"]["revision"],
+        },
+        local_ui=False,
+        owner_authorized=True,
+        owner_installation_id="install-b",
+    )
+    assert "error" not in second
+    assert controller.ingress_full_reference(
+        "two-owner",
+        local_ui=False,
+        installation_id="install-b",
+        request_turn_id="turn-b",
+    ) is not None
+
+    full_scope = controller.scope_from_envelope(
+        {
+            "workspace_scope": {
+                "project_path": str(project),
+                "access_mode": "full",
+                "restrict_to_workspace": False,
+            },
+        },
+        session_key=key,
+        controls_available=True,
+    )
+    assert full_scope.access_mode == "full"
+
+    owner.clear_remote_full_consents(session_key=key)
+    assert controller.ingress_full_reference(
+        "two-owner",
+        local_ui=False,
+        installation_id="install-a",
+    ) is None
+    assert controller.ingress_full_reference(
+        "two-owner",
+        local_ui=False,
+        installation_id="install-b",
+    ) is None

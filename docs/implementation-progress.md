@@ -641,3 +641,17 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   without a second published message.
 - Focused: 231 Python tests, 281 WebUI tests; strict 0/528, comparator no new
   diagnostics.
+
+#### MC04 — PASS (focused)
+
+- Remote authenticated owner identities now count as permission-control
+  availability for Full message admission; untrusted/legacy connections still
+  require localhost controls.
+- Full messages still resolve the existing installation/source-bound consent
+  proof. A second owner installation remains denied until it explicitly
+  confirms; confirming while Full is already active records that device's own
+  consent.
+- Added a two-installation controller proof and a remote owner WS-boundary
+  journey: A executes Full, B is denied, B confirms, B then submits a Full
+  message carrying a real request proof.
+- Focused: 242 Python tests; strict 0/528, comparator no new diagnostics.
