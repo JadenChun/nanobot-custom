@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal, NoReturn, TypedDict, cast
 
@@ -41,6 +41,11 @@ class PermissionSourceBinding(TypedDict):
     store_identity: str
     incarnation: str
     generation: int
+
+
+def is_temporary_source_binding(binding: PermissionSourceBinding) -> bool:
+    """Return whether this binding belongs to an in-memory Temporary Chat."""
+    return binding.get("store_identity", "").startswith("temporary:")
 
 
 class TaskAccessFolder(TypedDict):
@@ -137,6 +142,8 @@ class WorkspaceFullAccessReference:
     source_binding: PermissionSourceBinding
     epoch: int
     _token: object = field(repr=False)
+    request_turn_id: str | None = field(default=None, repr=False)
+    request_input_event_id: str | None = field(default=None, repr=False)
 
     def __reduce__(self) -> NoReturn:
         raise TypeError("workspace Full permission references cannot be serialized")
@@ -191,6 +198,7 @@ class _SourceIdentity:
     store_identity: str
     incarnation: str
     generation: int
+    lifetime: Literal["canonical", "temporary"] = "canonical"
 
 
 @dataclass
@@ -454,7 +462,7 @@ class DesktopPermissionOwner:
         process_counts: Callable[[], tuple[int, int]] | None = None,
     ) -> WorkspaceFullAccessReference:
         source = _source_identity(session_key, source_binding)
-        if not persistent or not existing:
+        if (not persistent and source.lifetime != "temporary") or not existing:
             raise WorkspacePermissionUnavailableError("session_required")
         if not local:
             raise WorkspacePermissionUnavailableError("session_required")
@@ -527,13 +535,24 @@ class DesktopPermissionOwner:
         *,
         session_key: str,
         source_binding: PermissionSourceBinding,
+        request_turn_id: str | None = None,
+        request_input_event_id: str | None = None,
     ) -> WorkspaceFullAccessReference | None:
         try:
             source = _source_identity(session_key, source_binding)
         except (TypeError, ValueError):
             return None
         with self._lock:
-            return self._full.get(source)
+            base = self._full.get(source)
+            if base is None:
+                return None
+            if request_turn_id is None and request_input_event_id is None:
+                return base
+            return replace(
+                base,
+                request_turn_id=request_turn_id,
+                request_input_event_id=request_input_event_id,
+            )
 
     def record_remote_full_consent(
         self,
@@ -591,6 +610,7 @@ class DesktopPermissionOwner:
         *,
         session_key: str,
         source_binding: PermissionSourceBinding,
+        request_turn_id: str | None = None,
     ) -> bool:
         if type(reference) is not WorkspaceFullAccessReference:
             return False
@@ -602,7 +622,18 @@ class DesktopPermissionOwner:
         except (TypeError, ValueError):
             return False
         with self._lock:
-            return self._full.get(source) is typed and typed.epoch > 0
+            base = self._full.get(source)
+            if base is None or typed.epoch <= 0:
+                return False
+            if (
+                typed.epoch != base.epoch
+                or typed.session_key != base.session_key
+                or typed.source_binding != base.source_binding
+            ):
+                return False
+            if typed.request_turn_id is not None:
+                return request_turn_id == typed.request_turn_id
+            return True
 
     def with_current_reference(
         self,
@@ -654,6 +685,14 @@ class DesktopPermissionOwner:
                 }
         return None
 
+    @staticmethod
+    def is_temporary_full_reference(reference: object) -> bool:
+        return (
+            type(reference) is WorkspaceFullAccessReference
+            and reference.is_owner_issued()
+            and is_temporary_source_binding(reference.source_binding)
+        )
+
     def is_current_full_reference(self, reference: object) -> bool:
         if type(reference) is not WorkspaceFullAccessReference:
             return False
@@ -664,6 +703,7 @@ class DesktopPermissionOwner:
             typed,
             session_key=typed.session_key,
             source_binding=typed.source_binding,
+            request_turn_id=typed.request_turn_id,
         )
 
     def disable_full(
@@ -1339,11 +1379,13 @@ def _source_identity(session_key: str, source_binding: PermissionSourceBinding) 
     binding = validate_source_binding(dict(source_binding))
     if not 1 <= len(session_key) <= _MAX_SESSION_KEY_LENGTH:
         raise ValueError("invalid session key")
+    store_identity = binding["store_identity"]
     return _SourceIdentity(
         session_key,
-        binding["store_identity"],
+        store_identity,
         binding["incarnation"],
         binding["generation"],
+        "temporary" if store_identity.startswith("temporary:") else "canonical",
     )
 
 

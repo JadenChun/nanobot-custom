@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from nanobot.bus.events import (
     INBOUND_META_RUNTIME_CONTROL,
@@ -13,6 +13,7 @@ from nanobot.bus.events import (
     InboundMessage,
 )
 from nanobot.bus.queue import MessageBus
+from nanobot.security.desktop_permissions import PermissionSourceBinding
 from nanobot.security.workspace_access import WorkspaceScope
 from nanobot.session.manager import Session, SessionManager
 from nanobot.webui.workspaces import WebUIWorkspaceController
@@ -41,6 +42,7 @@ class TemporaryChatMessagePolicy:
 
     session_key: str
     workspace_scope: WorkspaceScope
+    source_binding: PermissionSourceBinding
     require_existing_session: bool = True
     hydrate_transcript: bool = False
     persist_transcript: bool = False
@@ -72,6 +74,8 @@ class WebUITemporaryChats:
         # events cannot create a durable transcript after a chat is discarded.
         self._known_transient_chat_ids: set[str] = set()
         self._media_paths: dict[str, set[str]] = {}
+        self._incarnations: dict[str, str] = {}
+        self._access_modes: dict[str, Literal["restricted", "full"]] = {}
 
     def _session_key(self, chat_id: str) -> str:
         return f"{self._channel_name}:{chat_id}"
@@ -101,6 +105,8 @@ class WebUITemporaryChats:
         self._owner_chat_ids.setdefault(owner, set()).add(chat_id)
         self._active_sessions[chat_id] = session
         self._known_transient_chat_ids.add(chat_id)
+        self._incarnations[chat_id] = str(uuid.uuid4())
+        self._access_modes[chat_id] = "restricted"
         return chat_id
 
     def message_policy(
@@ -125,10 +131,46 @@ class WebUITemporaryChats:
         if command.startswith("/") and command not in _TEMPORARY_CHAT_COMMANDS:
             raise TemporaryChatError("temporary_chat_command_rejected")
 
+        mode = self._access_modes.get(chat_id, "restricted")
+        binding = self.binding(owner, chat_id)
+        if binding is None:
+            raise TemporaryChatError("temporary_chat_unavailable")
         return TemporaryChatMessagePolicy(
             session_key=self._session_key(chat_id),
-            workspace_scope=self._workspaces.restricted_default_scope(),
+            workspace_scope=self._workspaces.ephemeral_scope(mode),
+            source_binding=binding,
         )
+
+    def binding(
+        self,
+        owner: object | None,
+        chat_id: str,
+    ) -> PermissionSourceBinding | None:
+        """Return the private ephemeral source binding for its active owner.
+
+        ``owner=None`` is reserved for the server-side permission controller and
+        is never reachable from a client field.
+        """
+        if owner is not None and self._owners.get(chat_id) is not owner:
+            return None
+        incarnation = self._incarnations.get(chat_id)
+        if incarnation is None:
+            return None
+        return {
+            "store_identity": f"temporary:{chat_id}",
+            "incarnation": incarnation,
+            "generation": 1,
+        }
+
+    def access_mode(self, chat_id: str) -> Literal["restricted", "full"]:
+        return self._access_modes.get(chat_id, "restricted")
+
+    def set_access_mode(self, chat_id: str, mode: Literal["restricted", "full"]) -> None:
+        if chat_id not in self._incarnations:
+            raise TemporaryChatError("temporary_chat_unavailable")
+        if mode not in {"restricted", "full"}:
+            raise TemporaryChatError("invalid_request_settings")
+        self._access_modes[chat_id] = mode
 
     def validate_attach(self, chat_id: str) -> None:
         """Reject attempts to recover a non-persistent session."""
@@ -174,6 +216,8 @@ class WebUITemporaryChats:
 
     def _forget_owner(self, owner: object, chat_id: str) -> None:
         self._owners.pop(chat_id, None)
+        self._incarnations.pop(chat_id, None)
+        self._access_modes.pop(chat_id, None)
         chat_ids = self._owner_chat_ids.get(owner)
         if chat_ids is None:
             return
@@ -190,6 +234,14 @@ class WebUITemporaryChats:
             raise TemporaryChatError("temporary_chat_unavailable")
 
         session_key = self._session_key(chat_id)
+        binding = self.binding(None, chat_id)
+        if binding is not None:
+            try:
+                self._workspaces.discard_temporary_permissions(chat_id, binding)
+            except Exception:
+                self._logger.warning(
+                    "failed to retire a temporary Full permission",
+                )
         self._forget_owner(owner, chat_id)
         self._active_sessions.pop(chat_id, None)
         self._discard_media(chat_id)

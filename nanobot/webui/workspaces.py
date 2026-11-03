@@ -20,11 +20,13 @@ from nanobot.context_repo.policy import ResourceAccessPolicy
 from nanobot.security.desktop_permissions import (
     DesktopPermissionOwner,
     PermissionFullUnavailableReason,
+    PermissionMode,
     PermissionSourceBinding,
     WorkspacePermissionConflictError,
     WorkspacePermissionProjection,
     WorkspacePermissionReference,
     WorkspacePermissionUnavailableError,
+    is_temporary_source_binding,
 )
 from nanobot.security.folder_grants import (
     FolderFileAccess,
@@ -258,6 +260,8 @@ class WebUIWorkspaceController:
         self.permission_owner: DesktopPermissionOwner | None = (
             session_manager.desktop_permissions if session_manager is not None else None
         )
+        self._temporary_binding: Callable[[str], PermissionSourceBinding | None] | None = None
+        self._temporary_mode_setter: Callable[[str, PermissionMode], None] | None = None
         self._default_workspace = default_workspace
         self._default_restrict_to_workspace = default_restrict_to_workspace
         self._configured_exec_sandbox = configured_exec_sandbox
@@ -642,6 +646,8 @@ class WebUIWorkspaceController:
         *,
         local_ui: bool,
         installation_id: str | None = None,
+        request_turn_id: str | None = None,
+        request_input_event_id: str | None = None,
     ) -> object | None:
         """Return private chat authority only after local or owner authentication."""
         from nanobot.webui.session_identity import is_valid_webui_chat_id
@@ -673,11 +679,74 @@ class WebUIWorkspaceController:
             source_binding=source,
         ):
             return None
-        reference = owner.full_reference(session_key=key, source_binding=source)
+        reference = owner.full_reference(
+            session_key=key,
+            source_binding=source,
+            request_turn_id=request_turn_id,
+            request_input_event_id=request_input_event_id,
+        )
         if reference is None or not owner.authorizes_full(
             reference,
             session_key=key,
             source_binding=source,
+            request_turn_id=request_turn_id,
+        ):
+            return None
+        return reference
+
+    def discard_temporary_permissions(
+        self,
+        chat_id: str,
+        source: PermissionSourceBinding,
+    ) -> None:
+        """Retire an ephemeral Full grant when its transient chat ends."""
+        owner = self.permission_owner
+        if owner is None or not is_temporary_source_binding(source):
+            return
+        key = webui_session_key(chat_id)
+        grant_store = self.grant_store
+
+        def process_counts() -> tuple[int, int]:
+            if grant_store is None:
+                return 0, 0
+            return grant_store.view.session_native_process_counts(
+                session_key=key,
+                kind="chat_full",
+            )
+
+        owner.disable_full(
+            session_key=key,
+            source_binding=source,
+            active_turn=False,
+            active_processes=0,
+            unknown_processes=0,
+            process_counts=process_counts,
+            reason="session_deleted",
+        )
+        owner.clear_remote_full_consents(session_key=key)
+
+    def temporary_full_reference(
+        self,
+        chat_id: str,
+        source: PermissionSourceBinding,
+        *,
+        request_turn_id: str | None,
+    ) -> object | None:
+        """Resolve Temporary Chat Full only through the server-owned binding."""
+        owner = self.permission_owner
+        if owner is None or not is_temporary_source_binding(source):
+            return None
+        key = webui_session_key(chat_id)
+        reference = owner.full_reference(
+            session_key=key,
+            source_binding=source,
+            request_turn_id=request_turn_id,
+        )
+        if reference is None or not owner.authorizes_full(
+            reference,
+            session_key=key,
+            source_binding=source,
+            request_turn_id=request_turn_id,
         ):
             return None
         return reference
@@ -705,6 +774,9 @@ class WebUIWorkspaceController:
 
         if not isinstance(chat_id, str) or not is_valid_webui_chat_id(chat_id):
             raise WorkspacePermissionActionError(400, "invalid_permission_request")
+        temporary_source = self._temporary_source(chat_id)
+        if temporary_source is not None:
+            return self._prepare_temporary_full(chat_id, temporary_source)
         if self._sessions is None or self.permission_owner is None:
             raise WorkspacePermissionActionError(503, "permission_state_unavailable")
 
@@ -807,6 +879,131 @@ class WebUIWorkspaceController:
             return "permission_changed"
         return None
 
+    def _prepare_temporary_full(
+        self,
+        chat_id: str,
+        source: PermissionSourceBinding,
+    ) -> WorkspaceModeActionResult:
+        owner = self.permission_owner
+        if owner is None:
+            raise WorkspacePermissionActionError(503, "permission_state_unavailable")
+        key = webui_session_key(chat_id)
+        unavailable_reason: PermissionFullUnavailableReason | None = (
+            "configured_sandbox" if self._configured_exec_sandbox
+            else "supervisor_unavailable" if not self._native_supervisor_available
+            else None
+        )
+        projection = self._permission_projection(
+            key,
+            source,
+            can_enable_full=unavailable_reason is None,
+            unavailable_reason=unavailable_reason,
+        )
+        return {
+            "workspace_scope": self.scope_payload(
+                self.ephemeral_scope(
+                    "full" if projection["mode"] == "full" else "restricted"
+                )
+            ),
+            "workspace_permissions": projection,
+            "source_token": self._temporary_source_token(source),
+        }
+
+    def _temporary_source_token(
+        self,
+        source: PermissionSourceBinding,
+    ) -> str:
+        raw = f"temporary:{source['incarnation']}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+    def _set_temporary_permission_mode(
+        self,
+        chat_id: str,
+        mode: PermissionMode,
+        runtime_id: str,
+        expected_revision: int,
+        source: PermissionSourceBinding,
+        *,
+        owner_installation_id: str | None,
+    ) -> WorkspaceModeActionResult:
+        owner = self.permission_owner
+        setter = self._temporary_mode_setter
+        if owner is None or setter is None:
+            raise WorkspacePermissionActionError(503, "permission_state_unavailable")
+        key = webui_session_key(chat_id)
+        unavailable_reason: PermissionFullUnavailableReason | None = (
+            "configured_sandbox" if self._configured_exec_sandbox
+            else "supervisor_unavailable" if not self._native_supervisor_available
+            else None
+        )
+        current = self._permission_projection(
+            key,
+            source,
+            can_enable_full=unavailable_reason is None,
+            unavailable_reason=unavailable_reason,
+        )
+        if runtime_id != owner.runtime_id or expected_revision != current["revision"]:
+            raise WorkspacePermissionActionError(409, "permission_changed")
+        grant_store = self.grant_store
+
+        def process_counts() -> tuple[int, int]:
+            if grant_store is None:
+                return 0, 0
+            return grant_store.view.session_native_process_counts(
+                session_key=key,
+                kind="chat_full",
+            )
+
+        if mode == "full":
+            try:
+                owner.enable_full(
+                    session_key=key,
+                    source_binding=source,
+                    persistent=False,
+                    existing=True,
+                    local=True,
+                    idle=True,
+                    configured_sandbox=self._configured_exec_sandbox,
+                    supervisor_available=self._native_supervisor_available,
+                    stores_healthy=True,
+                    process_counts=process_counts,
+                )
+            except WorkspacePermissionUnavailableError as exc:
+                raise WorkspacePermissionActionError(409, "full_access_unavailable") from exc
+            except WorkspacePermissionConflictError as exc:
+                raise WorkspacePermissionActionError(409, exc.message) from exc
+            if owner_installation_id is not None:
+                owner.record_remote_full_consent(
+                    installation_id=owner_installation_id,
+                    session_key=key,
+                    source_binding=source,
+                )
+        else:
+            try:
+                owner.disable_full(
+                    session_key=key,
+                    source_binding=source,
+                    active_turn=False,
+                    active_processes=0,
+                    unknown_processes=0,
+                    process_counts=process_counts,
+                )
+            except WorkspacePermissionConflictError as exc:
+                raise WorkspacePermissionActionError(409, exc.message) from exc
+        setter(chat_id, mode)
+        scope = self.ephemeral_scope(mode)
+        projection = self._permission_projection(
+            key,
+            source,
+            can_enable_full=unavailable_reason is None,
+            unavailable_reason=unavailable_reason,
+        )
+        return {
+            "workspace_scope": self.scope_payload(scope, permission_retiring=projection["state"] == "retiring"),
+            "workspace_permissions": projection,
+            "source_token": self._temporary_source_token(source),
+        }
+
     def set_permission_mode(
         self,
         raw_payload: object,
@@ -842,6 +1039,18 @@ class WebUIWorkspaceController:
             or expected_revision < 0
         ):
             raise WorkspacePermissionActionError(400, "invalid_permission_request")
+        temporary_source = self._temporary_source(chat_id)
+        if temporary_source is not None:
+            if mode not in {"restricted", "full"}:
+                raise WorkspacePermissionActionError(400, "invalid_permission_request")
+            return self._set_temporary_permission_mode(
+                chat_id,
+                cast(PermissionMode, mode),
+                runtime_id,
+                expected_revision,
+                temporary_source,
+                owner_installation_id=owner_installation_id,
+            )
         if self._sessions is None or self.permission_owner is None:
             raise WorkspacePermissionActionError(503, "permission_state_unavailable")
 
@@ -1037,7 +1246,10 @@ class WebUIWorkspaceController:
     _REQUEST_DEFAULTS_KEY = "webui_request_defaults"
 
     def source_token(self, chat_id: str) -> str | None:
-        """Return a content-free token bound to the current canonical source."""
+        """Return a content-free token bound to the current source."""
+        temporary = self._temporary_source(chat_id)
+        if temporary is not None:
+            return self._temporary_source_token(temporary)
         source = self._source_binding(webui_session_key(chat_id))
         if source is None:
             return None
@@ -1081,6 +1293,30 @@ class WebUIWorkspaceController:
             create_if_absent=False,
         )
         return next_revision
+
+    def set_temporary_owners(
+        self,
+        *,
+        binding: Callable[[str], PermissionSourceBinding | None],
+        set_mode: Callable[[str, PermissionMode], None],
+    ) -> None:
+        """Attach the transient chat owner without exposing it to clients."""
+        self._temporary_binding = binding
+        self._temporary_mode_setter = set_mode
+
+    def ephemeral_scope(self, mode: PermissionMode) -> WorkspaceScope:
+        """Return the in-memory scope for an active Temporary Chat."""
+        return self._scope_for_mode(self._default_workspace, mode)
+
+    def _temporary_source(self, chat_id: str) -> PermissionSourceBinding | None:
+        resolver = self._temporary_binding
+        if resolver is None:
+            return None
+        try:
+            binding = resolver(chat_id)
+        except Exception:
+            return None
+        return binding if isinstance(binding, dict) else None
 
     def _observe_full_retirement_activity(
         self,

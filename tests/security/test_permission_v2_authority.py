@@ -490,3 +490,34 @@ def test_once_reauthorization_waits_for_prior_retirement_receipt(
     assert persisted == [replacement.epoch]
     assert owner.is_current_task_reference(replacement)
     assert owner.projection(**kwargs)["task_access"]["state"] == "active"
+
+
+def test_full_reference_can_be_bound_to_one_request_identity() -> None:
+    owner = DesktopPermissionOwner()
+    kwargs = {
+        "session_key": "websocket:chat-a",
+        "source_binding": _source(),
+    }
+    owner.enable_full(
+        **kwargs,
+        persistent=True,
+        existing=True,
+        local=True,
+        idle=True,
+        configured_sandbox=False,
+        supervisor_available=True,
+        stores_healthy=True,
+    )
+
+    bound = owner.full_reference(
+        **kwargs,
+        request_turn_id="turn-1",
+        request_input_event_id="input-1",
+    )
+    assert bound is not None
+    assert bound.request_turn_id == "turn-1"
+    assert bound.request_input_event_id == "input-1"
+    assert owner.authorizes_full(bound, **kwargs, request_turn_id="turn-1")
+    assert not owner.authorizes_full(bound, **kwargs, request_turn_id="turn-2")
+    assert owner.is_current_full_reference(bound)
+    assert owner.full_reference(**kwargs, request_turn_id="turn-x") is not None

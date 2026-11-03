@@ -3447,12 +3447,41 @@ class AgentLoop:
             not persistent or workspace_access_continuation.session_key != key
         ):
             raise RuntimeError("workspace continuation requires its existing persistent source")
+        temporary_full = bool(
+            workspace_full_reference is not None
+            and self.sessions.desktop_permissions.is_temporary_full_reference(
+                workspace_full_reference
+            )
+        )
         if workspace_full_reference is not None and (
-            not persistent
+            (not persistent and not temporary_full)
             or workspace_full_reference.session_key != key
             or workspace_access_continuation is not None
         ):
-            raise RuntimeError("workspace Full permission requires its existing persistent source")
+            raise RuntimeError("workspace Full permission requires its existing source")
+        current_turn_id: str | None = None
+        if workspace_full_reference is not None and context.request is not None:
+            from nanobot.webui.metadata import WEBUI_TURN_METADATA_KEY
+
+            raw_turn_id = context.request.metadata.get(WEBUI_TURN_METADATA_KEY)
+            current_turn_id = raw_turn_id if isinstance(raw_turn_id, str) else None
+            if (
+                workspace_full_reference.request_turn_id is not None
+                and workspace_full_reference.request_turn_id != current_turn_id
+            ):
+                raise WorkspaceScopeError("full_access_unavailable", status=409)
+        if temporary_full and workspace_full_reference is not None:
+            owner = self.sessions.desktop_permissions
+            if not owner.authorizes_full(
+                workspace_full_reference,
+                session_key=key,
+                source_binding=workspace_full_reference.source_binding,
+                request_turn_id=current_turn_id,
+            ):
+                raise WorkspaceScopeError("full_access_unavailable", status=409)
+            context.workspace_full_reference = workspace_full_reference
+            yield
+            return
         if not persistent:
             if self.sessions.has_managed_authority:
                 resolved = self.sessions.resolve_session_mode(key)
@@ -3524,6 +3553,7 @@ class AgentLoop:
                     workspace_full_reference,
                     session_key=key,
                     source_binding=source_binding,
+                    request_turn_id=current_turn_id,
                 ):
                     raise WorkspaceScopeError("full_access_unavailable", status=409)
                 context.workspace_full_reference = workspace_full_reference
@@ -4240,6 +4270,19 @@ class AgentLoop:
                 local_private_workspace_authority = task_is_current or full_is_current
             except Exception:
                 local_private_workspace_authority = False
+        if (
+            not local_private_workspace_authority
+            and ctx.msg.channel == "websocket"
+            and run_context is not None
+            and run_context.request is not None
+            and run_context.request.source is TurnSource.GATEWAY
+        ):
+            full_reference = run_context.workspace_full_reference
+            owner = self.sessions.desktop_permissions
+            local_private_workspace_authority = bool(
+                owner.is_temporary_full_reference(full_reference)
+                and owner.is_current_full_reference(full_reference)
+            )
         if (
             ctx.msg.channel == "websocket"
             and grants is not None
