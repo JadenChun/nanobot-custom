@@ -498,3 +498,37 @@ func TestHTTPRefreshRouteUsesBoundedHeaders(t *testing.T) {
 		t.Fatalf("body: %q err=%v", body, err)
 	}
 }
+
+func TestWebSocketIDsAreUniqueAcrossConnections(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, nil)
+	first, err := core.WSOpen(WSRequest{Operation: "fixture_ws", Path: "/fixture/v1/ws"})
+	if err != nil || first != 1 {
+		t.Fatalf("first WSOpen: id=%d err=%v", first, err)
+	}
+	waitEvent(t, core, "ws_open")
+	if err := core.WSClose(first); err != nil {
+		t.Fatalf("first WSClose: %v", err)
+	}
+	waitEvent(t, core, "ws_closed")
+
+	second, err := core.WSOpen(WSRequest{Operation: "fixture_ws", Path: "/fixture/v1/ws"})
+	if err != nil || second != 2 {
+		t.Fatalf("second WSOpen: id=%d err=%v", second, err)
+	}
+	waitEvent(t, core, "ws_open")
+	if err := core.WSClose(first); err != ErrNotFound {
+		t.Fatalf("retired WSClose: %v", err)
+	}
+	if err := core.WSSend(second, 0, []byte("new")); err != nil {
+		t.Fatalf("second WSSend: %v", err)
+	}
+	event := waitEvent(t, core, "ws_frame")
+	if event["ws_id"] != float64(second) && event["ws_id"] != second {
+		t.Fatalf("frame routed to stale id: %v", event)
+	}
+	if err := core.WSClose(second); err != nil {
+		t.Fatalf("second WSClose: %v", err)
+	}
+	waitEvent(t, core, "ws_closed")
+}

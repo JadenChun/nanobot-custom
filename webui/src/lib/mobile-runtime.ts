@@ -201,6 +201,8 @@ class MobileWebSocket {
   readonly url: string;
   private wsId = 0;
   private unsubscribe: (() => void) | null = null;
+  private retired = false;
+  private closeEmitted = false;
 
   constructor(private runtime: MobileRuntime, url: string) {
     this.url = url;
@@ -213,12 +215,25 @@ class MobileWebSocket {
 
   private async open(): Promise<void> {
     try {
-      this.unsubscribe = await this.runtime.onEvent((event) => this.handleEvent(event));
-      this.wsId = await this.runtime.transport.wsOpen("/mobile/v1/ws");
+      const unsubscribe = await this.runtime.onEvent((event) => this.handleEvent(event));
+      if (this.retired) {
+        unsubscribe();
+        return;
+      }
+      this.unsubscribe = unsubscribe;
+      const wsId = await this.runtime.transport.wsOpen("/mobile/v1/ws");
+      if (this.retired) {
+        if (wsId) void this.runtime.transport.wsClose(wsId);
+        return;
+      }
+      if (!wsId) throw new Error("mobile socket was not admitted");
+      this.wsId = wsId;
       this.readyState = 1;
       this.onopen?.call(this as unknown as WebSocket, new Event("open"));
     } catch {
-      this.fail();
+      if (this.retired) return;
+      this.onerror?.call(this as unknown as WebSocket, new Event("error"));
+      this.emitClose(1006);
     }
   }
 
@@ -230,27 +245,38 @@ class MobileWebSocket {
   }
 
   close(): void {
+    if (this.retired) return;
+    this.retired = true;
     this.readyState = 2;
-    if (this.wsId) void this.runtime.transport.wsClose(this.wsId);
+    const wsId = this.wsId;
+    this.wsId = 0;
+    if (wsId) void this.runtime.transport.wsClose(wsId);
     this.unsubscribe?.();
     this.unsubscribe = null;
-    this.readyState = 3;
-    this.onclose?.call(this as unknown as WebSocket, new CloseEvent("close", { code: 1000 }));
+    this.emitClose(1000);
   }
 
   private handleEvent(event: MobileEvent): void {
+    if (this.retired || !this.wsId) return;
     if (event.type === "ws_frame" && event.ws_id === this.wsId) {
-      const raw = typeof event.data_base64 === "string" ? atob(event.data_base64) : "";
+      const raw = typeof event.data_base64 === "string" ? decodeBase64(event.data_base64) : "";
       this.onmessage?.call(this as unknown as WebSocket, new MessageEvent("message", { data: raw }));
     } else if (event.type === "ws_closed" && event.ws_id === this.wsId) {
-      this.readyState = 3;
-      this.onclose?.call(this as unknown as WebSocket, new CloseEvent("close", { code: Number(event.code ?? 1000) }));
+      this.wsId = 0;
+      this.emitClose(Number(event.code ?? 1000));
     }
   }
 
-  private fail(): void {
+  private emitClose(code: number): void {
+    if (this.closeEmitted) return;
+    this.closeEmitted = true;
+    this.retired = true;
+    this.wsId = 0;
     this.readyState = 3;
-    this.onerror?.call(this as unknown as WebSocket, new Event("error"));
+    const unsubscribe = this.unsubscribe;
+    this.unsubscribe = null;
+    unsubscribe?.();
+    this.onclose?.call(this as unknown as WebSocket, new CloseEvent("close", { code }));
   }
 }
 

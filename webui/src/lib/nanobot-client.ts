@@ -793,10 +793,12 @@ export class NanobotClient {
     this.setStatus("connecting");
     const sock = this.socketFactory(this.currentUrl);
     this.socket = sock;
-    sock.onopen = () => this.handleOpen();
-    sock.onmessage = (ev) => this.handleMessage(ev);
-    sock.onerror = () => this.setStatus("error");
-    sock.onclose = (ev) => this.handleClose(ev);
+    sock.onopen = () => this.handleOpen(sock);
+    sock.onmessage = (ev) => this.handleMessage(sock, ev);
+    sock.onerror = () => {
+      if (this.socket === sock) this.setStatus("error");
+    };
+    sock.onclose = (ev) => this.handleClose(sock, ev);
   }
 
   close(): void {
@@ -1067,7 +1069,8 @@ export class NanobotClient {
     for (const chatId of chatIds) this.emitRunStatus(chatId, null);
   }
 
-  private handleOpen(): void {
+  private handleOpen(sock: WebSocket): void {
+    if (this.socket !== sock) return;
     this.setStatus("open");
     this.reconnectAttempts = 0;
     // Re-attach every known chat_id so deliveries continue routing after a drop.
@@ -1082,7 +1085,8 @@ export class NanobotClient {
     for (const frame of queued) this.rawSend(frame);
   }
 
-  private handleMessage(ev: MessageEvent): void {
+  private handleMessage(sock: WebSocket, ev: MessageEvent): void {
+    if (this.socket !== sock) return;
     let parsed: InboundEvent;
     try {
       parsed = JSON.parse(typeof ev.data === "string" ? ev.data : "") as InboundEvent;
@@ -1335,7 +1339,8 @@ export class NanobotClient {
     }
   }
 
-  private handleClose(event?: { code?: number }): void {
+  private handleClose(sock: WebSocket, event?: { code?: number }): void {
+    if (this.socket !== sock) return;
     this.socket = null;
     this.clearTemporaryChats();
     const willReconnect = !this.intentionallyClosed && this.shouldReconnect;
