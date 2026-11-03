@@ -3423,6 +3423,52 @@ describe("ThreadComposer", () => {
     expect(screen.queryByRole("group", { name: "Queued guidance" })).not.toBeInTheDocument();
   });
 
+  it("sends a queued prompt with its submitted workspace snapshot", async () => {
+    const onSend = vi.fn();
+    const submittedScope = {
+      project_path: "/tmp/submitted-project",
+      project_name: "submitted-project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const laterScope = {
+      project_path: "/tmp/later-project",
+      project_name: "later-project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const { rerender } = render(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming
+        workspaceScope={submittedScope}
+        placeholder="Type your message..."
+      />,
+    );
+    const input = screen.getByLabelText("Message input");
+    fireEvent.change(input, { target: { value: "use the submitted project" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onSend).not.toHaveBeenCalled();
+
+    rerender(
+      <ThreadComposer
+        onSend={onSend}
+        onStop={vi.fn()}
+        isStreaming={false}
+        workspaceScope={laterScope}
+        placeholder="Type your message..."
+      />,
+    );
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+    expect(onSend).toHaveBeenCalledWith(
+      "use the submitted project",
+      undefined,
+      expect.objectContaining({ workspaceScope: submittedScope }),
+    );
+  });
+
   it("lets users edit queued guidance before it is sent", async () => {
     const onSend = vi.fn();
     const { rerender } = render(

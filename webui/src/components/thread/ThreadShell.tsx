@@ -1449,10 +1449,11 @@ export function ThreadShell({
 
   const withWorkspaceScope = useCallback(
     (options?: SendOptions): SendOptions | undefined => {
-      if (!workspaceScope) return options;
+      const effective = options?.workspaceScope ?? workspaceScope;
+      if (!effective) return options;
       return {
         ...(options ?? {}),
-        workspaceScope,
+        workspaceScope: effective,
       };
     },
     [workspaceScope],

@@ -334,6 +334,7 @@ interface QueuedPrompt {
   images?: QueuedPromptImage[];
   quotedContext?: string;
   sessionMentions?: SessionMention[];
+  workspaceScope?: WorkspaceScopePayload | null;
 }
 
 interface QueuedPromptImage {
@@ -1849,6 +1850,7 @@ export function ThreadComposer({
         ...(activeSessionMentions.length > 0
           ? { sessionMentions: activeSessionMentions }
           : {}),
+        ...(workspaceScope ? { workspaceScope } : {}),
       },
     ]);
     clear();
@@ -1858,6 +1860,7 @@ export function ThreadComposer({
     activeSessionMentions,
     canQueueGuidance,
     clear,
+    workspaceScope,
     clearComposerText,
     maxTextBytes,
     normalizedQuotedContext,
@@ -1922,6 +1925,7 @@ export function ThreadComposer({
         const options: SendOptions | undefined = (
           prompt.quotedContext
           || prompt.sessionMentions?.length
+          || prompt.workspaceScope
           || isStreaming
         )
           ? {
@@ -1929,6 +1933,7 @@ export function ThreadComposer({
               ...(prompt.sessionMentions?.length
                 ? { sessionMentions: prompt.sessionMentions }
                 : {}),
+              ...(prompt.workspaceScope ? { workspaceScope: prompt.workspaceScope } : {}),
               ...(isStreaming ? { continueActiveTurn: true } : {}),
             }
           : undefined;
@@ -1950,12 +1955,17 @@ export function ThreadComposer({
     setQueuedPrompts((items) => items.filter((item) => item.id !== nextPrompt.id));
     const queuedImages = queuedImagesToSendImages(nextPrompt.images);
     const options: SendOptions | undefined = (
-      nextPrompt.quotedContext || nextPrompt.sessionMentions?.length
+      nextPrompt.quotedContext
+      || nextPrompt.sessionMentions?.length
+      || nextPrompt.workspaceScope
     )
       ? {
           ...(nextPrompt.quotedContext ? { quotedContext: nextPrompt.quotedContext } : {}),
           ...(nextPrompt.sessionMentions?.length
             ? { sessionMentions: nextPrompt.sessionMentions }
+            : {}),
+          ...(nextPrompt.workspaceScope
+            ? { workspaceScope: nextPrompt.workspaceScope }
             : {}),
         }
       : undefined;
