@@ -19,6 +19,7 @@ interface MobileTaskNotificationBridge {
 declare global {
   interface Window {
     nanobotMobileNotifications?: MobileTaskNotificationBridge;
+    __TAURI_INTERNALS__?: unknown;
   }
 }
 
@@ -30,12 +31,18 @@ function mobileBridge(): MobileTaskNotificationBridge | undefined {
   return window.nanobotMobileNotifications;
 }
 
+function isDesktopShell(): boolean {
+  return typeof window !== "undefined"
+    && typeof window.__TAURI_INTERNALS__ !== "undefined";
+}
+
 export function taskNotificationsSupported(): boolean {
-  if (mobileBridge()?.notify) return true;
+  if (isDesktopShell() || mobileBridge()?.notify) return true;
   return typeof Notification !== "undefined";
 }
 
 export async function requestTaskNotificationPermission(): Promise<boolean> {
+  if (isDesktopShell()) return true;
   const bridge = mobileBridge();
   if (bridge?.requestPermission) {
     try {
@@ -87,6 +94,17 @@ export function showTaskNotification({
   tag?: string;
   title?: string;
 }): void {
+  if (isDesktopShell()) {
+    const query = new URLSearchParams({ title, body });
+    if (tag) query.set("tag", tag);
+    void fetch(`/api/desktop/notify?${query.toString()}`, {
+      credentials: "same-origin",
+    }).catch(() => {
+      // Desktop notifications are best-effort and must not affect chat.
+    });
+    return;
+  }
+
   const bridge = mobileBridge();
   if (bridge?.notify) {
     try {
