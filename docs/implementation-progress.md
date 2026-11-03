@@ -533,3 +533,19 @@ WebUI after the visible-label change: 1415 tests passed, build/lint exit 0.
   `test_webui_message_scope_change_while_running_uses_submitted_snapshot`, and
   the composer test `keeps access and project controls usable while streaming`.
 - Focused selector: 488 passed. WebUI: 1419 passed, build/lint exit 0.
+
+### Final code-gate results after next-request mode
+
+- Full Python suite: **17555 passed, 22 skipped, 6 subtests passed**, exit 0
+  in 777.66s (`/tmp/opencode/full-suite-r11.log`).
+- Strict basedpyright: **0 errors / 528 files**; comparator introduced 0.
+- WebUI: **1419 passed**, build exit 0, lint exit 0.
+- Installed candidate `r6`:
+  `sha256=709914e331ee96662274494f3bb16b5da4b290ffb8b7752c653d48deea66dac8`;
+  pulled installed APK matches, signer `CN=jaden`, `zipalign` verifies, and the
+  bundled JS hash matches `mobile/www-shared`.
+- The phone relaunched into the updated composer after the update and showed
+  the project and Sandbox controls once the gateway connection re-established.
+- Physical exercise of the next-request Full path still needs the staging
+  gateway restarted from this branch; the currently running gateway was started
+  from the older checkout before these commits.
