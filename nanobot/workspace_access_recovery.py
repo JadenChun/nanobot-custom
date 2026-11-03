@@ -267,6 +267,7 @@ class WorkspaceOnceActionResult(FolderAccessActionResult):
 class WorkspaceModeActionResult(TypedDict):
     workspace_scope: WorkspaceScopePayload
     workspace_permissions: WorkspacePermissionProjection
+    source_token: NotRequired[str | None]
 
 
 class WorkspaceModeConflictErrorPayload(TypedDict):
