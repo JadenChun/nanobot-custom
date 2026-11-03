@@ -8,6 +8,17 @@ update changes documentation only.
 The consolidated [remaining-work assessment](nanobot-remaining-work.md) combines
 this direction with the previous production-compatibility findings.
 
+**2026-11-03 discussion update:** [SuperAgent research and future agent-managed
+sessions](superagent-research-and-session-direction.md) records the inspected
+prototype, corrected nanobot capability findings, local inference constraints,
+and the future direction of one main conversation with directly accessible,
+agent-managed task sessions. First stabilise the existing agent and current
+desktop/channel/session behaviour; orchestration implementation is deferred.
+The earlier single-assistant/process-continuation scope below does not permanently
+exclude multiple execution sessions. The October gap assessment is historical;
+see the [implemented prototype](assistant-prototype-integration.md) and current
+[folder-map behaviour](sandbox-folders.md) for subsequent changes.
+
 ## Agreed outcomes
 
 - One personal assistant can handle different projects in the same conversation;
