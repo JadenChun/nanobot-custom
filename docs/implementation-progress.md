@@ -549,3 +549,31 @@ WebUI after the visible-label change: 1415 tests passed, build/lint exit 0.
 - Physical exercise of the next-request Full path still needs the staging
   gateway restarted from this branch; the currently running gateway was started
   from the older checkout before these commits.
+
+### Mobile owner Full projection and physical next-request test
+
+- The mobile thread route now carries the authenticated owner flag into the
+  permission projection. Owner devices see `can_enable_full=true` and can use
+  the existing owner-authorized `workspace.access.mode.set` path; legacy
+  devices keep `controls_unavailable` and cannot promote themselves.
+- Physical phone test on the Nothing A142 against a staging gateway started
+  from this branch:
+  - While a turn was running (`Stop response` visible, `Working for 4s`), the
+    access control opened with an enabled `Full access` item.
+  - Confirming Full switched the composer label to **Full** while the same turn
+    continued, with **For the next message** visible.
+  - The session metadata was updated to `workspace_scope.access_mode=full`
+    while the active turn continued; the running turn's captured scope was not
+    changed.
+- Restarting the staging gateway invalidated the phone's existing access token.
+  The open WebSocket closed with `1008 access expired`; the in-session composer
+  stayed at `Sending…` instead of surfacing the reconnect screen. A cold app
+  restart then **Retry** restored the phone without re-pairing. This is recorded
+  as a gateway-restart recovery finding; ordinary same-gateway token rotation
+  still needs its own physical run.
+- Final gates after the owner-projection fix:
+  - Full Python suite: **17556 passed, 22 skipped, 6 subtests passed**, exit 0.
+  - Strict basedpyright: **0 / 528**, comparator introduced 0.
+  - WebUI: 1419 passed, build/lint exit 0.
+  - Installed app: candidate `r6` hash/signature verified; staging gateway now
+    runs from this worktree.
