@@ -764,3 +764,15 @@ test, MC05 real native command closure, and M38/signed-release review.
 - Remaining qualification: MC05 real native command closure and M38/signed
   release review. The literal two-phone UI confirmation was not repeated; the
   authenticated A/B installation journey covers the public protocol.
+
+### MC05 real native closure evidence
+
+- Ran `/tmp/opencode/mc05_native_closure.py` on the Linux host with the real
+  `ExecTool` native supervisor, a request-derived Full reference
+  (`request_turn_id=turn-native`), and a live `cat` process.
+- Before revocation the owner held the derived native registration; after
+  `disable_full`, the derived stdin/registration was retired and the base Full
+  proof was removed.
+- Result: `MC05_NATIVE_PASS base_handles=1 derived_retired=true session=ef7a086ade9c`
+  (`/tmp/opencode/mc-phone-evidence/mc05-native.log`).
+- This is real process closure, not only synthetic callback aggregation.
