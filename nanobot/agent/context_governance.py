@@ -42,6 +42,7 @@ from nanobot.providers.request_budget import (
     BackendContextOverflow,
     LocalUsageAnchor,
     PreparedRequestBudgetPreview,
+    PreparedRequestRoute,
     ProviderRequestRejected,
     RequestPayloadBytesExceeded,
     TransportIdentity,
@@ -250,6 +251,9 @@ class SourceCompactionMetrics:
     completion_reserve: int | None = None
     safety_buffer: int | None = None
     measurement_source: str | None = None
+    summary_generation_allowance: int | None = None
+    summary_retained_tokens: int | None = None
+    summary_reserve_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,6 +285,10 @@ class SourceCompactionState:
     attempts: list[SourceCompactionMetrics] = field(default_factory=list)
     idle_timeout_seconds: float = 300.0
     overall_timeout_seconds: float = 900.0
+    pressure_trigger_ratio: float = 0.9
+    target_ratio: float = 0.6
+    summary_generation_tokens: int | None = None
+    summary_retained_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1661,6 +1669,20 @@ class ContextGovernor:
             )
         ):
             return None
+        route = preview.route
+        if route is not None:
+            if type(route) is not PreparedRequestRoute:
+                return None
+            if (
+                route.provider != identity.provider
+                or route.model != identity.model
+                or route.transport != identity.transport
+                or route.accounting_policy != measurement.policy
+                or route.context_window_tokens != measurement.total_limit_tokens
+                or route.completion_reserve_tokens != measurement.completion_reserve_tokens
+                or route.envelope_binding != preview.envelope_binding
+            ):
+                return None
         return preview
 
     @classmethod

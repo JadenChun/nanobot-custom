@@ -40,6 +40,7 @@ from nanobot.providers.request_budget import (
     TransportMeasurement,
     validate_finalized_request,
 )
+from nanobot.providers.request_budget import PreparedRequestRoute as PreparedRequestRoute
 from nanobot.utils.helpers import sanitize_surrogates_deep
 
 if TYPE_CHECKING:
@@ -1006,6 +1007,11 @@ class LLMProvider(ABC):
 
     def supports_native_compaction(self, model: str | None = None) -> bool:
         """Whether requests may include provider-native context compaction."""
+        return False
+
+    @property
+    def supports_source_summary(self) -> bool:
+        """Whether this route can prepare and dispatch a same-route source summary."""
         return False
 
     def validate_finalized_request(

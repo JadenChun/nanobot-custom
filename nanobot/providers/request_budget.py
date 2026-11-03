@@ -9,6 +9,7 @@ cannot be represented deterministically.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from collections.abc import Mapping
@@ -170,6 +171,101 @@ class TransportMeasurement:
 
 
 @dataclass(frozen=True, slots=True)
+class PreparedRequestRoute:
+    """Content-free identity of the concrete route selected for one request.
+
+    The governor uses this to keep pressure accounting, routing and dispatch on
+    the same leaf.  It carries no endpoint, credential, prompt or image bytes.
+    """
+
+    purpose: Literal["main", "source_summary"]
+    provider: str
+    model: str
+    transport: str
+    accounting_policy: str
+    context_window_tokens: int | None
+    completion_reserve_tokens: int
+    native_compaction: bool
+    envelope_binding: str = field(repr=False)
+    fallback_index: int = 0
+    route_token: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("provider", self.provider),
+            ("model", self.model),
+            ("transport", self.transport),
+            ("accounting_policy", self.accounting_policy),
+            ("envelope_binding", self.envelope_binding),
+        ):
+            if not isinstance(cast(object, value), str) or not value.strip():
+                raise ValueError(f"{name} must be a non-empty string")
+        if self.purpose not in {"main", "source_summary"}:
+            raise ValueError("unsupported request purpose")
+        if (
+            isinstance(self.context_window_tokens, bool)
+            or (
+                self.context_window_tokens is not None
+                and (
+                    not isinstance(self.context_window_tokens, int)
+                    or self.context_window_tokens <= 0
+                )
+            )
+            or isinstance(self.completion_reserve_tokens, bool)
+            or not isinstance(self.completion_reserve_tokens, int)
+            or self.completion_reserve_tokens < 0
+            or type(self.native_compaction) is not bool
+            or isinstance(self.fallback_index, bool)
+            or not isinstance(self.fallback_index, int)
+            or self.fallback_index < 0
+        ):
+            raise ValueError("invalid request route facts")
+        digest = hashlib.sha256(
+            json.dumps(
+                [
+                    self.purpose,
+                    self.provider,
+                    self.model,
+                    self.transport,
+                    self.accounting_policy,
+                    self.context_window_tokens,
+                    self.completion_reserve_tokens,
+                    self.native_compaction,
+                    self.envelope_binding,
+                    self.fallback_index,
+                ],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        object.__setattr__(self, "route_token", digest)
+
+    @classmethod
+    def from_preview(
+        cls,
+        preview: "PreparedRequestBudgetPreview",
+        *,
+        purpose: Literal["main", "source_summary"] = "main",
+        fallback_index: int = 0,
+        native_compaction: bool = False,
+    ) -> "PreparedRequestRoute":
+        """Describe the leaf/request already measured by a provider preview."""
+        measurement = preview.measurement
+        return cls(
+            purpose=purpose,
+            provider=measurement.identity.provider,
+            model=measurement.identity.model,
+            transport=measurement.identity.transport,
+            accounting_policy=measurement.policy,
+            context_window_tokens=measurement.total_limit_tokens,
+            completion_reserve_tokens=measurement.completion_reserve_tokens,
+            native_compaction=native_compaction,
+            envelope_binding=preview.envelope_binding,
+            fallback_index=fallback_index,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedRequestBudgetPreview:
     """Private converted request view used to align local pressure with dispatch."""
 
@@ -179,6 +275,7 @@ class PreparedRequestBudgetPreview:
     converted_tools: tuple[dict[str, object], ...] | None = field(repr=False)
     effective_body: dict[str, object] = field(repr=False)
     sdk_kwargs: dict[str, object] = field(repr=False)
+    route: PreparedRequestRoute | None = None
 
 
 @dataclass(frozen=True, slots=True)
