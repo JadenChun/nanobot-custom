@@ -299,6 +299,12 @@ Optional P8 is outside migration completion and, if pursued, follows the product
 
 ## 6A. H1: conversational control of a busy assistant
 
+**Historical/superseded, 2026-11-04:** the Telegram H1 implementation was retired
+by the [cleanup plan](telegram-h1-concurrency-cleanup-plan.md). This section and
+the linked design remain as rationale and engineering evidence; the active
+cleanup branch does not implement or require H1 control inference, a durable
+busy inbox or steering. A narrow read-only guard protects unsettled stored state.
+
 The [busy-input inbox engineering proposal](migration/h1-busy-inbox-design.md) records the current 20-message fallback/republication gap, a candidate one-owner/two-lane ordering and crash protocol, and the material choices to accept before H1 implementation. It is a design supplement, not a change to the frozen upstream target or an authorization to activate the candidate.
 
 **Accepted behavior.** Channels are authenticated input/output transports for one personal assistant, not separate agents or memories. A message received during work can steer that active run, wait for the next turn, stop it, or ask for grounded status. Telegram and other IM channels must understand and answer ordinary language while the task runner is busy, with no required buttons or command syntax. A separate bounded control-model inference may run concurrently with the task call to make an informed IM reply possible; it is not a second task-working agent. Preserve fast, explicit stop controls as a fallback. This is a post-migration harness-experience target, not a claim that pinned upstream or the current fork already implements it.

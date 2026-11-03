@@ -58,14 +58,10 @@ async def test_bus_scope_is_locked_preserves_envelope_and_drains_once(tmp_path):
     coordinator.complete.assert_called_once()
 
 
-@pytest.mark.parametrize('gate', [False, True])
-async def test_waiting_bus_cancellation_has_no_lifecycle_effects(tmp_path, gate):
+async def test_waiting_bus_cancellation_has_no_lifecycle_effects(tmp_path):
     loop, delivery, coordinator = bus_host(tmp_path)
     lock = loop._get_session_lock('telegram:42')
-    if gate:
-        loop._concurrency_gate = asyncio.Semaphore(0)
-    else:
-        await lock.acquire()
+    await lock.acquire()
     task = asyncio.create_task(loop._dispatch(message()))
     await asyncio.sleep(0)
     task.cancel()
@@ -76,8 +72,7 @@ async def test_waiting_bus_cancellation_has_no_lifecycle_effects(tmp_path, gate)
     delivery.complete.assert_not_awaited()
     coordinator.complete.assert_not_called()
     loop._publish_next_deferred_automation_turn.assert_not_awaited()
-    if not gate:
-        lock.release()
+    lock.release()
 
 
 async def test_delivery_failure_does_not_repeat_stage_or_change_computation(tmp_path):
@@ -337,12 +332,10 @@ async def test_fenced_approval_retains_original_snapshot(tmp_path, original_pend
         await loop.approval_admission.store(session_key=key, channel='telegram', chat_id='42', summary='old')
     fence = asyncio.get_running_loop().create_future()
     loop._bus_cleanup_tasks[key] = {fence}
-    loop._concurrency_gate = asyncio.Semaphore(1)
     waiting = asyncio.create_task(loop._dispatch(message('yes')))
     await asyncio.sleep(0)
     await asyncio.sleep(0)
     assert not loop._get_session_lock(key).locked()
-    assert not loop._concurrency_gate.locked()
     await loop.approval_admission.store(session_key=key, channel='telegram', chat_id='42', summary='new')
     fence.set_result(None)
     await asyncio.wait_for(waiting, 1)

@@ -325,8 +325,6 @@ async def _execute_tool_call(
             await _record_result(tool_result_callback, ordinal, tool_call, dispatch_error,
                                  classified, event, dispatched=False)
             return classified, event
-        if turn_context is not None and turn_context.busy_turn is not None:
-            turn_context.busy_turn.check_stop()
         if turn_context is not None and turn_context.execution_owner is not None:
             turn_context.execution_owner.validate_dispatch()
         try:

@@ -94,8 +94,7 @@ class SourceTurnWriter:
 
     def _append(self, payload: dict[str, Any], *, execution_ids: list[str] | None = None,
                 execution_id: str | None = None, source_origin: dict[str, Any] | None = None,
-                 artifact_read: dict[str, Any] | None = None,
-                 busy_input_id: str | None = None) -> dict[str, Any]:
+                 artifact_read: dict[str, Any] | None = None) -> dict[str, Any]:
         if self._writes.failed:
             raise SourceValidationError('Source turn recording failed')
         try:
@@ -110,8 +109,6 @@ class SourceTurnWriter:
                 event['_source_origin'] = deepcopy(source_origin)
             if artifact_read is not None:
                 event['_artifact_read'] = deepcopy(artifact_read)
-            if busy_input_id is not None:
-                event['_busy_input_id'] = busy_input_id
             event['_stream_id'] = self.stream_id
             if self.parent_stream_id is not None:
                 event['_parent_stream_id'] = self.parent_stream_id
@@ -139,31 +136,6 @@ class SourceTurnWriter:
             self._writes.failed = True
             raise SourceValidationError('Invalid source turn message')
         return self._append(payload)
-
-    def append_busy_input(self, content: str, media: tuple[str, ...], *, binding_id: str) -> dict[str, object]:
-        """Bind original H1 input to this real owner, never to a callback's ID.
-
-        Same-stream retries may recover a committed row, but cannot move a row
-        into another invocation or change its content. Provider/general message
-        payloads cannot assign the reserved binding marker.
-        """
-        if (len(binding_id) != 64 or any(char not in '0123456789abcdef' for char in binding_id)
-                or self.failed or self.parent_stream_id is not None):
-            raise SourceValidationError('Invalid busy input source binding')
-        self.owner.validate_dispatch()
-        existing = [event for event in self.owner.read_snapshot().events
-                    if event.get('_busy_input_id') == binding_id]
-        if existing:
-            event = existing[0]
-            if (len(existing) != 1 or event.get('_stream_id') != self.stream_id
-                    or event.get('_run_id') != self.run_id or event.get('role') != 'user'
-                    or event.get('content') != content or event.get('media', []) != list(media)):
-                raise SourceValidationError('Conflicting busy input source binding')
-            return deepcopy(event)
-        payload: dict[str, object] = {'role': 'user', 'content': content}
-        if media:
-            payload['media'] = list(media)
-        return self._append(payload, busy_input_id=binding_id)
 
     def consume_pending_followup(
         self,

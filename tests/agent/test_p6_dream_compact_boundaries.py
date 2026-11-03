@@ -204,7 +204,7 @@ async def stop(loop):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("wait", ["pre-start", "lock", "concurrency"])
+@pytest.mark.parametrize("wait", ["pre-start", "lock"])
 async def test_queued_compact_settles_once_without_admitted_effects(loop, wait):
     key = "websocket:test"
     session = loop.sessions.get_or_create(key)
@@ -218,8 +218,6 @@ async def test_queued_compact_settles_once_without_admitted_effects(loop, wait):
     lock = loop._get_session_lock(key)
     if wait == "lock":
         await lock.acquire()
-    elif wait == "concurrency":
-        loop._concurrency_gate = asyncio.Semaphore(0)
     msg = message()
     task = loop._enqueue_bus_dispatch(msg, key)
     msg.metadata["nested"]["value"] = "mutated"
@@ -246,8 +244,6 @@ async def test_queued_compact_settles_once_without_admitted_effects(loop, wait):
     finally:
         if wait == "lock":
             lock.release()
-        elif wait == "concurrency":
-            loop._concurrency_gate = None
     result = await loop.process_direct("successor", session_key=key)
     assert result is not None and result.content == "done"
 

@@ -98,27 +98,18 @@ The relevant configuration fragment is:
       "drainTimeoutS": 5.0,
       "adapterCwd": "/absolute/existing/script-working-directory",
       "codexQuotaRetry": true
-    },
-    "telegramBusy": {
-      "enabled": true,
-      "sessionKey": "telegram:123456789",
-      "ownerSenderIds": ["123456789"],
-      "ownerChatIds": ["123456789"],
-      "controlProvider": "your-configured-provider",
-      "controlModel": "your-explicit-control-model"
     }
   }
 }
 ```
 
-These example IDs and paths are placeholders. Busy input requires the enabled
-Telegram channel's numeric `allowFrom` entries to belong to the configured
-owners. The selected implementation uses a persistent Telegram session with
-`agents.defaults.unifiedSession=false`. Temporary and shared cross-channel
-inboxes remain outside this integration; existing WebUI recovery is retained.
-The control model has no tools or task transcript. Scope defaults capture a
-finite snapshot of currently registered tools; explicit `toolScope` and
-`automationScope` lists can restrict that snapshot further.
+These example IDs and paths are placeholders. Telegram busy-input control (H1)
+is retired and is not part of normal gateway composition. A legacy
+`gateway.telegramBusy` block remains loadable only when it is disabled; an
+enabled or malformed block fails configuration loading with a retired-H1
+explanation. The block is never emitted by `Config.model_dump(by_alias=True)`.
+Ordinary Telegram authentication, media/albums, replies, routing, streaming and
+stop handling continue through the same canonical agent and bus path.
 
 For background execution, pass `notify_on_exit=true` to `exec`. Inline completion
 does not start another turn. Cancellation/termination does not schedule a
@@ -206,7 +197,7 @@ zero introduced diagnostic signatures and a zero-error strict report.
 
 The normal gateway integration test runs a due job through the canonical runner
 and acknowledges it through a local receipt adapter. Additional checks cover
-topic binding, duplicate/restart behavior, busy input, A/B project context,
+topic binding, duplicate/restart behavior, retired H1 configuration compatibility, A/B project context,
 background A completion while B is selected, managed knowledge policy, Git index
 preservation and conflicts. Final local qualification passed:
 

@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 if TYPE_CHECKING:
-    from nanobot.agent.busy_dispatch import BusyTurn
     from nanobot.agent.tools.artifact import ArtifactRetrievalReceipt
     from nanobot.agent.tools.base import ToolDenialKind
     from nanobot.agent.tools.read_provenance import FilesystemReadReceipt
@@ -390,7 +389,6 @@ class TurnContext:
     workspace_full_reference: WorkspaceFullAccessReference | None = field(
         default=None, repr=False,
     )
-    busy_turn: BusyTurn | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.request is not None:

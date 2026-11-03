@@ -1,6 +1,6 @@
 # Telegram H1 and global concurrency cleanup
 
-Prepared: **2026-11-03–04**. Status: **ready for implementation; no runtime cleanup yet**.
+Prepared: **2026-11-03–04**. Status: **implementation complete; retained as the cleanup contract**.
 Decision record: [SuperAgent research and future session direction](superagent-research-and-session-direction.md).
 Code baseline: `a90191a41b025884e76ce029b98a5d5349171f2e`.
 

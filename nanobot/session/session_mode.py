@@ -2312,9 +2312,9 @@ class SessionModeResolver:
             f"{self.backend.storage_key(key)}.jsonl", limit=67_108_864
         )
         session = self.backend.parse_legacy_bytes(original, expected_key=key)
-        from nanobot.session.busy_inbox import require_busy_inbox_disposition
+        from nanobot.session.legacy_h1 import require_legacy_h1_disposition
 
-        require_busy_inbox_disposition(session.metadata)
+        require_legacy_h1_disposition(session.metadata)
         forbidden = {
             "runtime_checkpoint",
             "pending_user_turn",
@@ -2428,9 +2428,9 @@ class SessionModeResolver:
             session = self.backend.parse_legacy_bytes(original, expected_key=key)
             if item.sidecar_bytes is not None:
                 session = self.backend.overlay_managed_checkpoint_bytes(session, item.sidecar_bytes)
-            from nanobot.session.busy_inbox import require_busy_inbox_disposition
+            from nanobot.session.legacy_h1 import require_legacy_h1_disposition
 
-            require_busy_inbox_disposition(session.metadata)
+            require_legacy_h1_disposition(session.metadata)
             session.replace_messages(replacement_events)
             session.metadata.pop("context_checkpoint", None)
             session.metadata.pop("runtime_checkpoint", None)
@@ -2945,9 +2945,9 @@ class SessionModeResolver:
         old = _parse_json(old_bytes)
         item = self._inventory_for_key(key)
         data = item.source_bytes
-        from nanobot.session.busy_inbox import require_busy_inbox_disposition
+        from nanobot.session.legacy_h1 import require_legacy_h1_disposition
 
-        require_busy_inbox_disposition(self._read_header(key)["metadata"])
+        require_legacy_h1_disposition(self._read_header(key)["metadata"])
         if current.mode == "canonical":
             from nanobot.session.execution_owner import ExecutionOwnershipError
             from nanobot.session.source import validate_execution_links

@@ -495,7 +495,6 @@ def _run_gateway(
         shutdown = asyncio.Event()
         processes = None
         cron_gateway = None
-        telegram_busy = None
         cron_shutdown_mode: Literal["graceful", "bounded", "forced"] | None = None
         primary_error: BaseException | None = None
         cleanup_errors: list[BaseException] = []
@@ -573,14 +572,6 @@ def _run_gateway(
             await handle.mcp.connect()
             assert recovery is not None
             await recovery.scan()
-            if config.gateway.telegram_busy.enabled:
-                from nanobot.channels.telegram.gateway_busy import GatewayTelegramBusy
-                from nanobot.channels.telegram.runtime import TelegramChannel
-
-                telegram = channels.get_channel("telegram")
-                if not isinstance(telegram, TelegramChannel):
-                    raise ValueError("Telegram busy input requires the enabled Telegram channel")
-                telegram_busy = GatewayTelegramBusy(config, agent, telegram)
             if config.gateway.cron.enabled:
                 from nanobot.cron.gateway import GatewayCron
 
@@ -678,8 +669,6 @@ def _run_gateway(
                     processes.start()
                 if cron_gateway is not None:
                     tasks.append(asyncio.create_task(cron_gateway.run()))
-                if telegram_busy is not None:
-                    tasks.append(asyncio.create_task(telegram_busy.run()))
                 if health_server_enabled:
                     tasks.append(asyncio.create_task(
                         _health_server(
@@ -715,11 +704,6 @@ def _run_gateway(
             primary_error = exc
             raise
         finally:
-            if telegram_busy is not None:
-                try:
-                    await telegram_busy.aclose()
-                except BaseException as exc:
-                    record_cleanup_error(exc)
             if cron_gateway is not None:
                 try:
                     await cron_gateway.aclose()

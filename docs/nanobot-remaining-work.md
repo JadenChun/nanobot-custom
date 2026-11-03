@@ -7,11 +7,12 @@ current priority is stability of the existing agent, desktop/channel alignment,
 and constrained local inference. This is deferred direction, not another
 implementation or release-completion requirement for the work recorded below.
 
-**Current cleanup preparation, 2026-11-03:** the
-[H1/concurrency cleanup plan](telegram-h1-concurrency-cleanup-plan.md) scopes the
-retirement of Telegram-specific H1 coordination and the optional global turn
-cap. A6 below describes the inspected implementation, not its future direction;
-the retirement is planned and has not been implemented by these documents.
+**Current cleanup implementation, 2026-11-04:** the
+[H1/concurrency cleanup plan](telegram-h1-concurrency-cleanup-plan.md) retires
+Telegram-specific H1 coordination and the optional global turn cap. The offline
+cleanup is implemented on `codex/telegram-h1-concurrency-cleanup`; no gateway,
+live state, channel or production cutover is authorized by that work. A6 below
+retains the inspected implementation as history, not as future direction.
 
 Implementation update: **2026-10-23**, branch `codex/complete-remaining-work`.
 The accepted prototype features are implemented behind their explicit gateway
@@ -24,7 +25,7 @@ historical scope and acceptance criteria.
 | --- | --- |
 | A1–A4/A7 | Existing-repository catalog, compact discovery, on-demand reading, automatic selected-knowledge tool/instructions and opted-in safe Git sync implemented; project switch and managed-policy checks pass |
 | A5 | Durable external-process completion queues a continuation to the same assistant; cancellation, duplicates, scope and restart cases covered |
-| A6 | Selected persistent Telegram owner wired after authentication and before polling; status/stop/steering/queued work use the existing inbox. Temporary/shared cross-channel admission remains outside scope |
+| A6 | H1 retired. Ordinary Telegram uses the canonical bus/turn path; a read-only legacy-state guard protects accepted or uncertain old H1 work. No H1 control model, durable inbox writer or global turn cap remains active |
 | A8 | Domain workflow, provider setup and optional crawler/VPN registration extracted to extension modules; compatibility methods and capability policies retained |
 | M1 | Contract fields, external checks, topic receipts, owner alerts, bookkeeping and idempotent copied-state import implemented |
 | M2 | Explicit normal gateway timer, canonical execution, real status, transport readiness, shutdown and restart handling implemented; disabled SDK/API/default gateway paths remain inert |
@@ -105,7 +106,7 @@ Source: [payload/state types](../nanobot/cron/types.py),
 | A3 | **Connect automatic knowledge saving to the correct destination.** Runtime memory storage and arbitrary file writes exist; automatic project/client knowledge write-back is not established | Useful facts and agreed decisions reach the designated knowledge repo and can be recovered later, including after compaction. Preserve existing store/script/proposal policies. Do not copy private runtime transcripts wholesale into knowledge repositories |
 | A4 | **Connect reliable, knowledge-only Git synchronization.** Helpers exist but have no package runtime caller. The current helper includes rebase/reset-based conflict recovery and uses the shared Git index when committing | Only opted-in knowledge repos sync automatically. Retain local knowledge on failure and report actual sync state. Avoid including unrelated staged work, overwriting another writer, or applying reset-based recovery to general code repos. Serialize conflicting Git operations and demonstrate conflict/retry behavior before reusing the helper |
 | A5 | **Complete process completion → assistant continuation.** Exec sessions can return while a process runs and support output/status/cancellation; their manager does not publish a completion into an assistant turn | Completion wakes an idle owner or queues behind active work through existing canonical ownership. Retain job/output identity, original instructions or references, project path, session and reply destination. Cover failure, cancellation, duplicate completion and restart; do not assume a process survives runtime shutdown |
-| A6 | **Finish the selected busy-input/channel integration.** H1 has local control/inbox evidence, but normal Telegram startup does not call `register_telegram_busy_inbox`; whole-H1 acceptance remains outstanding | Demonstrate the intended status/stop/steering/queued-work behavior through actual chosen-channel composition. Preserve authorization, origins, output routing and existing WebUI recovery. Treat unimplemented temporary/cross-channel cases explicitly; offline seam tests alone do not qualify live operation |
+| A6 | **H1 busy-input integration retired (superseded 2026-11-04).** The inspected implementation exposed local control/inbox evidence but normal Telegram startup did not register it. The cleanup removes the control model, durable inbox writer, steering path and global turn cap. Sessions with unsettled legacy H1 state are protected by a read-only recovery guard | Normal Telegram remains on the canonical bus/turn path. Legacy accepted or uncertain work must receive an explicit operational disposition before any later cutover; no automatic replay, migration or new H1 writer is introduced |
 | A7 | **Verify cross-project behavior using existing tools before adding architecture.** Scope-aware tools exist, while some foreground managers are constructed around a fixed workspace | Exercise A → B → general conversation → A in one chat; checks do not create files in the previous repo; knowledge is retrieved and saved correctly. A background completion for A retains A's directory while the conversation is on B. First assess instructions, explicit paths and current scopes; add runtime changes only for demonstrated gaps |
 | A8 | **Remove domain coupling through optional extension boundaries.** VPN registrations and a crawler-specific role/configuration currently occur in core factory/composition paths | Marketing/VPN/crawler capabilities remain available to the client through optional tools, skills, scripts or plugins. The generic harness does not need to understand their domain workflow. Preserve enforceable capability boundaries while moving registrations; avoid a wholesale extension-system rewrite |
 
@@ -189,7 +190,8 @@ compatibility and retry contracts (M1/M3), followed by qualified scheduling
 composition (M2) and release rehearsal (M4). Repository/skill policy fixes and a
 small catalog → on-demand reading → knowledge-save/sync workflow (A1–A4/A7)
 can be developed on the prototype without changing production. Background
-completion and busy-channel integration (A5/A6) are separate bounded work.
+completion (A5) remains separate bounded work, while the busy-channel integration
+(A6) is retired by the H1 cleanup.
 Keep extension cleanup (A8) compatible with the client's existing capabilities.
 
 Related evidence: [customization inventory](customization-feature-inventory.md),

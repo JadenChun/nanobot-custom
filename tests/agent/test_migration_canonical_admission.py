@@ -23,7 +23,6 @@ def host(tmp_path):
     loop.sessions = SessionManager(tmp_path / "workspace", sessions_root=tmp_path / "sessions")
     loop.run_store = RunStore(tmp_path, session_manager=loop.sessions)
     loop._session_locks = weakref.WeakValueDictionary()
-    loop._concurrency_gate = None
     loop._bus_cleanup_tasks = {}
     loop._pending_republish = {}
     loop.tools = ToolRegistry()
@@ -194,20 +193,6 @@ async def test_direct_approval_cleanup_uses_effective_key_while_lock_owned(tmp_p
     assert observed == [('cron:job', 'idle')]
 
 
-async def test_cancelled_gate_waiter_does_not_publish_idle(tmp_path):
-    loop = host(tmp_path)
-    loop._concurrency_gate = asyncio.Semaphore(0)
-    idle = AsyncMock()
-    loop.runtime_event_publisher = SimpleNamespace(run_status_changed=idle, clear_turn=lambda key: None)
-    task = asyncio.create_task(loop.process_direct('waiting', session_key='cli:same'))
-    await asyncio.sleep(0)
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    idle.assert_not_awaited()
-    assert not loop._get_session_lock('cli:same').locked()
-
-
 async def test_idle_publisher_failure_still_clears_and_unlocks(tmp_path):
     loop = host(tmp_path)
     cleared = []
@@ -219,7 +204,7 @@ async def test_idle_publisher_failure_still_clears_and_unlocks(tmp_path):
     assert not loop._get_session_lock('cli:same').locked()
 
 
-@pytest.mark.parametrize('fence', ['session', 'gate', 'cleanup'])
+@pytest.mark.parametrize('fence', ['session', 'cleanup'])
 async def test_unadmitted_cancel_terminal_has_no_admission_effects(tmp_path, fence):
     from nanobot.agent.turn import TurnCallbacks
 
@@ -236,13 +221,6 @@ async def test_unadmitted_cancel_terminal_has_no_admission_effects(tmp_path, fen
             return await original()
 
         lock.acquire = acquire
-    elif fence == 'gate':
-        class Gate(asyncio.Semaphore):
-            async def acquire(self):
-                reached.set()
-                return await super().acquire()
-
-        loop._concurrency_gate = Gate(0)
     else:
         loop._bus_cleanup_tasks['cli:queued'] = {future}
         original_wait = asyncio.wait
