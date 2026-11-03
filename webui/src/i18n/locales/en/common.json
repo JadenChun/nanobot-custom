@@ -258,7 +258,7 @@
       "fileEditDisplay": "Choose whether file edit activity opens as line counts or a diff.",
       "codeWrap": "Keep long code lines readable on smaller screens.",
       "brandLogos": "Show third-party provider and CLI logos in Settings.",
-      "browserNotifications": "Notify only when this page is in the background. Off by default.",
+      "browserNotifications": "Notify when a request finishes while the app is not focused. Off by default.",
       "maxResults": "Results returned by each web_search call.",
       "timeout": "Seconds before a search provider request times out.",
       "jinaReader": "Use Jina Reader for web_fetch when available.",

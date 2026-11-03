@@ -227,7 +227,7 @@
       "selectedModelProvider": "選択したモデルによって設定されます。",
       "selectedModelValue": "選択したモデルによって設定されます。",
       "brandLogos": "設定で第三者プロバイダーと CLI のロゴを表示します。",
-      "browserNotifications": "このページがバックグラウンドにある場合のみ通知します。既定ではオフです。",
+      "browserNotifications": "アプリがフォーカスされていないときにリクエスト完了を通知します。既定ではオフです。",
       "cliAppsCatalog": "nanobot がローカルで実行できるアプリ CLI アダプターだけをインストールします。ネイティブアプリは変更しません。",
       "cliAppsFilter": "アプリ、カテゴリ、機能で検索します。",
       "logs": "ネイティブエンジンのログフォルダーを開きます。",

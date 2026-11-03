@@ -818,6 +818,7 @@ impl Controller {
                     let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
                     return;
                 }
+                native::install_notification_handler(&existing, app_for_reuse.clone());
                 if existing.navigate(chat_url).is_err() {
                     let _ = sender.send(Err("chat_window_unavailable".to_owned()));
                     return;
@@ -866,6 +867,7 @@ impl Controller {
                     let _ = sender.send(Err("navigation_policy_install_failed".to_owned()));
                     return;
                 }
+                native::install_notification_handler(&chat, app_for_create.clone());
                 native::install_hide_on_close(&app_for_create, shared_for_event, &chat);
                 let _ = sender.send(Ok(()));
             });

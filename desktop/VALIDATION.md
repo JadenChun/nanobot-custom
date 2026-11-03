@@ -57,6 +57,11 @@ The release-window observation is recorded in
 
 ## Build and validation
 
+RPM 0.3.0-7 adds native task-completion notifications. WebKit notification
+permission is granted for the local chat origin, and the WebView's
+`show-notification` signal is forwarded to the system notification daemon, so
+the existing WebUI **Task notifications** setting now reaches the desktop.
+
 RPM 0.3.0-6 uses WebKitGTK's current default renderer without overriding
 `WEBKIT_DISABLE_DMABUF_RENDERER`. If a particular installation shows black
 content, launch it with `WEBKIT_DISABLE_DMABUF_RENDERER=1 nanobot-desktop` to

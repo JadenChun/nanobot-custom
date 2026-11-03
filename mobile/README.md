@@ -65,6 +65,13 @@ passed on the A142. Small-image send and the live refresh instrumentation test a
 TalkBack was explicitly skipped. Cellular/Wi-Fi handover passed: Wi-Fi was disabled, cellular became the default network, Wi-Fi was re-enabled, and the existing WebSocket accepted a follow-up message. The QR scanner is locked to portrait; scanning and cancellation return to the normal portrait app. Remaining gate is final human review/acceptance.
 See `docs/mobile-client-tasks.md`.
 
+## Turn-complete notifications
+
+The shared WebUI **Task notifications** setting is bridged to Capacitor Local
+Notifications. Android 13+ asks for notification permission when the setting is
+enabled, and a completed turn shows a system notification while the app is not
+focused. Background delivery still depends on Android keeping the app process
+and its WebSocket alive; the v1 client does not use push delivery.
 
 ## Owner pairing (2026-11-03)
 

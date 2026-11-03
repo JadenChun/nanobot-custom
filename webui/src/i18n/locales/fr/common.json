@@ -227,7 +227,7 @@
       "selectedModelProvider": "Défini par le modèle sélectionné.",
       "selectedModelValue": "Défini par le modèle sélectionné.",
       "brandLogos": "Affiche les logos de fournisseurs tiers et CLI dans les Réglages.",
-      "browserNotifications": "Notifier uniquement lorsque cette page est en arrière-plan. Désactivé par défaut.",
+      "browserNotifications": "Notifier lorsqu’une requête se termine alors que l’application n’est pas au premier plan. Désactivé par défaut.",
       "cliAppsCatalog": "Installe uniquement les adaptateurs CLI d’applications que nanobot peut exécuter localement ; les applications natives restent inchangées.",
       "cliAppsFilter": "Recherchez par application, catégorie ou capacité.",
       "logs": "Ouvre le dossier des journaux du moteur natif.",

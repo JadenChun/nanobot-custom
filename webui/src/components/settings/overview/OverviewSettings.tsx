@@ -37,6 +37,10 @@ import type {
   LocalPreferences,
 } from "@/lib/local-preferences";
 import { providerBrand, providerDisplayLabel } from "@/lib/provider-brand";
+import {
+  requestTaskNotificationPermission,
+  taskNotificationsSupported,
+} from "@/lib/task-notifications";
 import type { SettingsPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { shortWorkspacePath } from "@/lib/workspace";
@@ -430,18 +434,14 @@ export function AppearanceSettings({
           >
             <ToggleButton
               checked={localPrefs.browserNotifications}
+              disabled={!taskNotificationsSupported()}
               onChange={(enabled) => {
                 if (!enabled) {
                   onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: false }));
                   return;
                 }
-                if (typeof Notification === "undefined") return;
-                if (Notification.permission === "granted") {
-                  onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: true }));
-                  return;
-                }
-                void Notification.requestPermission().then((permission) => {
-                  if (permission === "granted") {
+                void requestTaskNotificationPermission().then((granted) => {
+                  if (granted) {
                     onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: true }));
                   }
                 });

@@ -23,10 +23,11 @@ use tauri::{
     AppHandle, LogicalSize, Manager, Wry,
 };
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_notification::NotificationExt as TauriNotificationExt;
 use url::Url;
 use webkit2gtk::{
-    NavigationPolicyDecisionExt, PolicyDecisionExt, PolicyDecisionType, URIRequestExt,
-    WebViewExt,
+    NavigationPolicyDecisionExt, NotificationExt as WebKitNotificationExt, PolicyDecisionExt,
+    PolicyDecisionType, URIRequestExt, WebViewExt,
 };
 
 use crate::controller::Shared;
@@ -494,6 +495,34 @@ fn finish_hide_callback(
         restore();
         false
     }
+}
+
+pub fn install_notification_handler(window: &WebviewWindow<Wry>, app: AppHandle<Wry>) {
+    let _ = window.with_webview(move |platform| {
+        let view = platform.inner();
+        let notification_app = app.clone();
+        view.connect_show_notification(move |_view, notification| {
+            let title = notification
+                .title()
+                .map(|value| value.to_string())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "nanobot".to_owned());
+            let body = notification
+                .body()
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            if body.trim().is_empty() {
+                return false;
+            }
+            notification_app
+                .notification()
+                .builder()
+                .title(title)
+                .body(body)
+                .show()
+                .is_ok()
+        });
+    });
 }
 
 pub fn install_navigation_policy(

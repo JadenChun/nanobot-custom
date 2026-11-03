@@ -11,6 +11,7 @@ use nanobot_desktop::{
 };
 use serde_json::Value;
 use tauri::{
+    webview::{PermissionKind, PermissionResponse},
     AppHandle, Manager, State, Wry,
 };
 use tauri_plugin_dialog::DialogExt;
@@ -132,6 +133,11 @@ fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .on_permission_request(|_webview, kind| match kind {
+            PermissionKind::Notifications => PermissionResponse::Allow,
+            _ => PermissionResponse::Default,
+        })
         .setup(|app| {
             let app_handle = app.handle().clone();
             let guard = match native::acquire_host_guard(&app_handle) {
