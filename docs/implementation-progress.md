@@ -490,7 +490,11 @@ WebUI after the visible-label change: 1415 tests passed, build/lint exit 0.
 ### Physical composer/AC10 evidence (Nothing A142, Android 16)
 
 - Candidate `r5`: `sha256=528f874a20a8491b89cd9223447fca12c5cc09f6527532d86a176838e24d5afb`,
-  signer `CN=jaden`, `adb install -r` preserved `firstInstallTime`.
+  signer `CN=jaden` / SHA-256
+  `8c30d04957e9724d1668e585890913b0581676c9460789f658c4ed9f84ba0c81`,
+  `zipalign -c -v 4` and `apksigner verify` pass. The pulled installed APK has
+  the same SHA-256 and its bundle hash matches `mobile/www-shared`.
+  `adb install -r` preserved `firstInstallTime` (2026-11-02 22:04:34).
 - Composer controls measured from the live accessibility tree at the normal
   phone width (density 420): attach, project, voice and send are **118x118 px =
   45.0x45.0 dp**; the Sandbox access control is **176x118 px = 67.0x45.0 dp**.
