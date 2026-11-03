@@ -1289,8 +1289,8 @@ describe("ThreadComposer", () => {
     const accessButton = screen.getByRole("button", {
       name: "Workspace access mode: Full access",
     });
-    const fullLabel = within(accessButton).getByText("Full access");
-    const shortLabel = within(accessButton).getByText("Full");
+    const fullLabel = accessButton.querySelector(".thread-composer-access-label-full");
+    const shortLabel = accessButton.querySelector(".thread-composer-access-label-short");
     expect(accessButton).toHaveAttribute("title", "Full access");
     expect(fullLabel).toHaveClass("thread-composer-access-label-full");
     expect(shortLabel).toHaveClass("thread-composer-access-label-short");

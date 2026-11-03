@@ -748,6 +748,7 @@ export function WorkspacePermissionV2Control({
             ) : (
               <ShieldCheck className={cn("shrink-0", mobile ? "h-4 w-4" : "mr-1.5 h-3.5 w-3.5")} aria-hidden />
             )}
+            <span className="sr-only">{label}</span>
             {mobile ? (
               <span aria-hidden className="min-w-0 truncate text-[11.5px] font-semibold">
                 {compactLabel}

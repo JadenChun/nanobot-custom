@@ -2562,6 +2562,7 @@ export function ThreadComposer({
                     )}
                   >
                     <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
+                    <span className="sr-only">{t("thread.composer.attachImage")}</span>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="start">
@@ -2589,6 +2590,7 @@ export function ThreadComposer({
                 )}
               >
                 <Plus className={cn(isHero ? "h-[18px] w-[18px]" : "h-4 w-4")} />
+                <span className="sr-only">{t("thread.composer.attachImage")}</span>
               </Button>
             )}
             {showCompactProjectPicker && !mobileComposer && !voiceRecorder.isRecording ? projectPicker : null}
