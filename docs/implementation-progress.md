@@ -353,3 +353,16 @@ Evidence:
   snapshot when dequeued. The send boundary no longer overwrites an explicit
   snapshot with later picker state.
 - The remaining composer/touch/accessibility presentation work is not complete.
+
+### Updated integrated evidence
+
+- WebUI full suite: 1412 passed / 90 files, exit 0.
+- WebUI build and lint: exit 0.
+- Android debug build after the queue-snapshot/shared-asset rebuild: BUILD SUCCESSFUL.
+- Emulator M01 rerun on the updated APK: M01 PASS, 37 instrumentation tests
+  passed, native probe executed on `emulator-5590`. The second run logged a
+  non-fatal Capacitor safe-area CSS injection warning; it did not affect the
+  probe or instrumentation result and is reported rather than waived.
+- Strict basedpyright after the E changes: 0 errors / 528 files; regression
+  comparison remains `PASS_NO_NEW_DIAGNOSTICS`.
+- Full Python suite after the E/F changes: running.
