@@ -1,14 +1,10 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { type Dispatch, type SetStateAction } from "react";
 import {
-  ArrowUpCircle,
   Bot,
-  Check,
   ChevronRight,
-  ExternalLink,
   Globe2,
   HardDrive,
   ImageIcon,
-  Loader2,
   Mic,
   Server,
   type LucideIcon,
@@ -26,10 +22,8 @@ import {
 } from "@/components/settings/shared/SettingsControls";
 import { TokenUsageHeatmap } from "@/components/settings/TokenUsageHeatmap";
 import { ToggleButton } from "@/components/settings/ToggleButton";
-import { Button } from "@/components/ui/button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { useLogoFallback } from "@/hooks/useLogoFallback";
-import { checkVersion } from "@/lib/api";
 import type {
   FileEditDisplayMode,
   LocalActivityMode,
@@ -40,7 +34,6 @@ import { providerBrand, providerDisplayLabel } from "@/lib/provider-brand";
 import type { SettingsPayload } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { shortWorkspacePath } from "@/lib/workspace";
-import { useClient } from "@/providers/ClientProvider";
 
 export function OverviewSettings({
   settings,
@@ -204,48 +197,19 @@ export function OverviewSettings({
       <section>
         <SettingsSectionTitle>{tx("settings.sections.about", "About")}</SettingsSectionTitle>
         <SettingsGroup>
-          <VersionCheckRow currentVersion={settings.version?.current} />
+          <VersionRow currentVersion={settings.version?.current} />
         </SettingsGroup>
       </section>
     </div>
   );
 }
 
-function VersionCheckRow({ currentVersion }: { currentVersion?: string }) {
+function VersionRow({ currentVersion }: { currentVersion?: string }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
-  const { token } = useClient();
-  const [checking, setChecking] = useState(false);
-  const [result, setResult] = useState<
-    | { type: "up-to-date" }
-    | { type: "update"; latestVersion: string; pypiUrl?: string }
-    | { type: "error"; message: string }
-    | null
-  >(null);
-
-  const handleCheck = async () => {
-    setChecking(true);
-    setResult(null);
-    try {
-      const res = await checkVersion(token);
-      if (res.updateAvailable) {
-        setResult({
-          type: "update",
-          latestVersion: res.updateAvailable.latestVersion,
-          pypiUrl: res.updateAvailable.pypiUrl,
-        });
-      } else {
-        setResult({ type: "up-to-date" });
-      }
-    } catch (err) {
-      setResult({ type: "error", message: (err as Error).message });
-    } finally {
-      setChecking(false);
-    }
-  };
 
   return (
-    <div className="flex min-h-[62px] flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+    <div className="flex min-h-[62px] items-center gap-3 px-4 py-3.5 sm:px-5">
       <div className="min-w-0">
         <div className="text-[14px] font-medium leading-5 text-foreground">
           {tx("settings.about.version", "Version")}
@@ -253,53 +217,6 @@ function VersionCheckRow({ currentVersion }: { currentVersion?: string }) {
         <div className="mt-0.5 text-[12px] leading-5 text-muted-foreground">
           {currentVersion ? `v${currentVersion}` : "nanobot"}
         </div>
-      </div>
-      <div className="flex shrink-0 flex-col items-end gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void handleCheck()}
-          disabled={checking}
-          className="rounded-full"
-        >
-          {checking ? (
-            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden />
-          ) : (
-            <ArrowUpCircle className="mr-1.5 h-3.5 w-3.5" aria-hidden />
-          )}
-          {checking
-            ? tx("settings.about.checking", "Checking...")
-            : tx("settings.about.checkForUpdates", "Check for updates")}
-        </Button>
-        {result?.type === "up-to-date" ? (
-          <span className="inline-flex items-center gap-1.5 text-[12px] text-emerald-600 dark:text-emerald-300">
-            <Check className="h-3 w-3" aria-hidden />
-            {tx("settings.about.upToDate", "You're up to date")}
-          </span>
-        ) : null}
-        {result?.type === "update" ? (
-          <span className="inline-flex items-center gap-1.5 text-[12px] text-blue-600 dark:text-blue-300">
-            <ArrowUpCircle className="h-3 w-3" aria-hidden />
-            {t("settings.about.updateAvailable", {
-              defaultValue: "Update available v{{version}}",
-              version: result.latestVersion,
-            })}
-            {result.pypiUrl ? (
-              <a
-                href={result.pypiUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-0.5 underline-offset-2 hover:underline"
-              >
-                PyPI
-                <ExternalLink className="h-2.5 w-2.5" aria-hidden />
-              </a>
-            ) : null}
-          </span>
-        ) : null}
-        {result?.type === "error" ? (
-          <span className="text-[12px] text-destructive">{result.message}</span>
-        ) : null}
       </div>
     </div>
   );
