@@ -667,3 +667,17 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
 - Added a two-request/multiple-handle proof plus an unrelated-source negative;
   native-handle close callbacks are observed, not just reference invalidation.
 - Focused: 72 Python tests; strict 0/528, comparator no new diagnostics.
+
+#### MC06 — PASS (focused; native instrumentation pending)
+
+- Android refresh now uses the independent owner route `POST /remote/v1/refresh`
+  with `installation_id`/`refresh_token` in the bounded body, not the
+  gateway-dependent `/mobile/v1/refresh` GET.
+- Native plugin exposes owner status/devices/revoke through the same exact
+  broker operations. Shared WebUI remote-access reads and revoke use the owner
+  transport when the paired phone is an owner; gateway mutation remains the
+  fallback/unsupported Start path.
+- Added `/remote/v1/refresh` to the protocol route contract and mobile contract.
+- Checks: Kotlin compile, 92 WebUI tests, WebUI build/lint, broker Go tests,
+  strict 0/528. The owner-refresh/status/device instrumented journey is added
+  but not executed here (no live service shutdown authorized).

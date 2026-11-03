@@ -1,4 +1,5 @@
 import { fetchWithTimeout } from "./http";
+import { getMobileRuntime, mobileOwnerCapability } from "./mobile-runtime";
 
 export interface RemoteAccessMutationTransport {
   requestMutation<T>(action: string, payload: Record<string, unknown>): Promise<T>;
@@ -108,7 +109,50 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
+function mobileOwnerTransport() {
+  const runtime = getMobileRuntime();
+  if (!runtime || !mobileOwnerCapability()) return null;
+  return runtime.transport;
+}
+
+function ownerDeviceRows(value: unknown): RemoteAccessDevice[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const row = item as Record<string, unknown>;
+    const installationId = typeof row.installation_id === "string"
+      ? row.installation_id
+      : "";
+    if (!installationId) return [];
+    return [{
+      installation_id: installationId,
+      label: typeof row.label === "string" ? row.label : "",
+      scopes: Array.isArray(row.scopes)
+        ? row.scopes.filter((scope): scope is string => typeof scope === "string")
+        : [],
+      status: row.status === "revoked" ? "revoked" as const : "active" as const,
+      created_at: typeof row.created_at === "number" ? row.created_at : 0,
+      last_seen_at: typeof row.last_seen_at === "number" ? row.last_seen_at : 0,
+    }];
+  });
+}
+
 export async function fetchRemoteAccessStatus(token: string): Promise<RemoteAccessStatus> {
+  const transport = mobileOwnerTransport();
+  if (transport?.remoteStatus && transport.remoteDevices) {
+    const [status, devices] = await Promise.all([
+      transport.remoteStatus(),
+      transport.remoteDevices(),
+    ]);
+    return {
+      enabled: status.enabled === true,
+      installation_id: typeof status.installation_id === "string"
+        ? status.installation_id
+        : "",
+      devices: ownerDeviceRows(devices.devices),
+      owner_available: true,
+    };
+  }
   return request<RemoteAccessStatus>(token, "/api/settings/remote-access");
 }
 
@@ -165,6 +209,11 @@ export async function revokeRemoteDevice(
   transport: RemoteAccessMutationTransport,
   installationId: string,
 ): Promise<void> {
+  const owner = mobileOwnerTransport();
+  if (owner?.remoteRevoke) {
+    await owner.remoteRevoke(installationId);
+    return;
+  }
   await transport.requestMutation("settings.remote_access.revoke", {
     installation_id: installationId,
   });

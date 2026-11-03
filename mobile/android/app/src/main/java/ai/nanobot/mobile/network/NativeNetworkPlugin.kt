@@ -535,6 +535,52 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun remoteStatus(call: PluginCall) {
+        ownerRequest(call, "remote_status", "/remote/v1/status", null)
+    }
+
+    @PluginMethod
+    fun remoteDevices(call: PluginCall) {
+        ownerRequest(call, "remote_devices", "/remote/v1/devices", null)
+    }
+
+    @PluginMethod
+    fun remoteRevoke(call: PluginCall) {
+        val installationId = call.getString("installationId")
+        if (
+            installationId.isNullOrBlank() ||
+            !Regex("^[A-Za-z0-9._-]{1,128}$").matches(installationId)
+        ) {
+            call.reject("invalid installation id")
+            return
+        }
+        ownerRequest(
+            call,
+            "remote_device_revoke",
+            "/remote/v1/devices/$installationId/revoke",
+            JSONObject(),
+        )
+    }
+
+    private fun ownerRequest(
+        call: PluginCall,
+        operation: String,
+        path: String,
+        body: JSONObject?,
+    ) {
+        operationExecutor.execute {
+            try {
+                val result = jsonRequest(operation, path, body = body)
+                mainHandler.post { call.resolve(JSObject(result.toString())) }
+            } catch (exception: Exception) {
+                mainHandler.post {
+                    call.reject(exception.message ?: "owner request failed")
+                }
+            }
+        }
+    }
+
+    @PluginMethod
     fun status(call: PluginCall) {
         val current = transportHandle
         if (current == 0L) {
@@ -1063,13 +1109,11 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     private fun requestRefresh(record: CustodyRecord): JSONObject = jsonRequest(
-        "mobile_refresh_get",
-        "/mobile/v1/refresh",
-        body = null,
-        headers = mapOf(
-            "X-Nanobot-Installation" to record.installationId,
-            "X-Nanobot-Refresh-Token" to record.refreshToken,
-        ),
+        "remote_refresh",
+        "/remote/v1/refresh",
+        body = JSONObject()
+            .put("installation_id", record.installationId)
+            .put("refresh_token", record.refreshToken),
     )
 
     private fun isUnauthorized(exception: Exception): Boolean =

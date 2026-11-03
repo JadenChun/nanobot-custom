@@ -8,6 +8,11 @@
       await plugin.start({ origin: origin, installationId: installationId, hostname: hostname });
     },
     status: async function () { return await plugin.status(); },
+    remoteStatus: async function () { return await plugin.remoteStatus(); },
+    remoteDevices: async function () { return await plugin.remoteDevices(); },
+    remoteRevoke: async function (installationId) {
+      return await plugin.remoteRevoke({ installationId: installationId });
+    },
     http: async function (request) {
       var result = await plugin.http(request);
       return result.requestId;

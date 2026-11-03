@@ -47,6 +47,9 @@ export interface MobileTransport {
   onEvent(listener: (event: MobileEvent) => void): Promise<() => void>;
   openLogin(): Promise<void>;
   refresh(): Promise<boolean>;
+  remoteStatus?(): Promise<Record<string, unknown>>;
+  remoteDevices?(): Promise<Record<string, unknown>>;
+  remoteRevoke?(installationId: string): Promise<Record<string, unknown>>;
   pickCamera?(): Promise<MobilePickedCamera>;
   wsOpen(path: string, headers?: Record<string, string>): Promise<number>;
   wsSend(wsId: number, data: Uint8Array, kind?: "text" | "binary"): Promise<void>;
