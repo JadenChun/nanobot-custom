@@ -373,8 +373,21 @@ html.mobile-runtime body {
 
 .thread-composer-mobile-project-picker {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   align-items: center;
+}
+
+.thread-composer-mobile-project-picker .thread-composer-action {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+}
+
+/* Project text yields before the permission label at narrow phone widths. */
+@media (pointer: coarse) {
+  .thread-composer-mobile-project-picker .thread-composer-project-label {
+    max-width: 4.5rem;
+  }
 }
 
 .mobile-pairing-link,

@@ -3925,3 +3925,75 @@ describe("next-message settings hint", () => {
     );
   });
 });
+
+describe("composer access control semantics", () => {
+  const scope = {
+    project_path: "/tmp/project",
+    project_name: "project",
+    access_mode: "restricted" as const,
+    restrict_to_workspace: true,
+  };
+
+  it("exposes the selected Full state and busy state to assistive tech", () => {
+    const fullScope = { ...scope, access_mode: "full" as const, restrict_to_workspace: false };
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={fullScope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(fullScope)}
+        workspacePermissions={permissionProjection({ mode: "full", can_enable_full: false })}
+        persistentWorkspaceChat
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+    const access = screen.getByRole("button", { name: "Workspace access mode: Full access" });
+    expect(access).toHaveAttribute("aria-pressed", "true");
+    expect(access).toHaveAttribute("aria-busy", "false");
+  });
+
+  it("describes an unavailable reason and lets the user open the explanation", async () => {
+    const user = userEvent.setup();
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={null}
+        persistentWorkspaceChat
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+    const access = screen.getByRole("button", { name: "Workspace access mode: Access unavailable" });
+    expect(access).toBeEnabled();
+    expect(access).toHaveAccessibleDescription(
+      /Full access is unavailable with the current local controls/,
+    );
+    await user.click(access);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Full access is unavailable with the current local controls.",
+    );
+  });
+
+  it("describes the loading state while permissions refresh", () => {
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection()}
+        workspacePermissionsLoading
+        persistentWorkspaceChat
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Workspace access mode: Sandbox" }),
+    ).toHaveAttribute("aria-busy", "true");
+  });
+});
