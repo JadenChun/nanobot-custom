@@ -313,3 +313,43 @@ Not implemented:
 - Full Python suite clean rerun: **17539 passed, 22 skipped, 6 subtests passed**,
   exit 0 in 718.42s (`/tmp/opencode/full-suite-r2.log`). The 22 skips are the
   repository's existing platform/native skips, not waived or claimed as execution.
+
+### Mobile C native completion
+
+Implemented and built:
+- `Core.WSPing` sends one protocol ping and waits for its pong with a five-second
+  context deadline.
+- Exported through `nanobot_network_ws_ping`, JNI
+  `NativeNetwork.wsPing`, Kotlin plugin `wsPing`, and the bootstrap transport.
+- Refresh is one in-flight rotation shared by every caller. Rotated tokens are
+  persisted only while the same live custody binding exists; logout/revoke
+  clears/fences custody so an older completion cannot restore it.
+- MainActivity emits `nanobot-native-resume` into the shared recovery path.
+- Broker owner-control routes (`/remote/v1/status`, `/refresh`, `/devices`,
+  exact `/devices/<id>/revoke`) remain allowlisted.
+
+Evidence:
+- `mobile/scripts/test-cabi.sh` -> PASS, `NANOBOT_CABI_SMOKE_OK version=1`.
+- `mobile/scripts/build-native-network.sh` -> PASS (arm64-v8a and x86_64).
+- `cd mobile/android && ./gradlew --no-daemon :app:assembleDebug` -> BUILD SUCCESSFUL.
+- `mobile/scripts/qualify-emulator.sh --evidence-dir /tmp/opencode/mobile-emulator-evidence --native-tests` -> M01 PASS; 37 instrumentation tests passed; native probe executed on `emulator-5590`.
+  Evidence includes the debug/arm64 APKs, probe logcat, package dump and shell screenshot.
+- Go broker tests pass, including `WSPing` live/retired cases.
+
+### Mobile E additional outcome
+
+- Remote Full confirmation is now bound to the confirming installation and the
+  current source binding. Another device gets no reference and must confirm for
+  itself; local UI authentication remains valid. Disabling Full removes the
+  consent, and source replacement invalidates it.
+- Explicit restricted requests remain Sandbox (earlier commit).
+- Still not implemented: versioned request-settings envelope, per-request source
+  token, steering/queue dispositions, non-authorizing Full confirmation IDs,
+  ephemeral temporary Full bindings and request-scoped proofs.
+
+### Mobile F partial outcome
+
+- A queued prompt captures its workspace/mode at queue time and sends that
+  snapshot when dequeued. The send boundary no longer overwrites an explicit
+  snapshot with later picker state.
+- The remaining composer/touch/accessibility presentation work is not complete.
