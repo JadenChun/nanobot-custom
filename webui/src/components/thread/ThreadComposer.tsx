@@ -2292,9 +2292,10 @@ export function ThreadComposer({
     />
   ) : null;
 
+  const mobileModelLabel = (modelLabel ?? "").replace(/\s*\([^)]*\)\s*$/, "").trim();
   const modelControl = modelLabel && !voiceRecorder.isRecording ? (
     <ModelPresetBadge
-      label={modelLabel}
+      label={mobileComposer ? mobileModelLabel || modelLabel : modelLabel}
       modelDetail={modelDetail}
       modelPreset={modelPreset}
       modelPresets={modelPresets}
