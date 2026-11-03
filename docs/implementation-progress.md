@@ -625,3 +625,19 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
 - Added a real channel-boundary test that enables temporary Full, then submits
   one restricted and one Full envelope and observes the effective scope.
 - Focused: 55 Python tests; strict 0/528, comparator introduced 0.
+
+#### MC03 — PASS (focused)
+
+- The active WebUI turn now stores its captured workspace scope alongside its
+  turn identity.
+- A v1 `request_intent: "new"` message arriving while a turn is active is
+  rejected `not_admitted/busy_new_request` before media, transcript, or default
+  effects. The same submission can be retried after the turn ends.
+- Steering validates the exact active turn and the captured active scope, not
+  the mutable chat preference. Wrong target or changed project/mode is
+  `not_admitted`; source validation still applies.
+- Added public channel-boundary coverage: busy Sandbox B is not admitted while
+  Full A runs; matching steer is admitted; changed-context steer is rejected
+  without a second published message.
+- Focused: 231 Python tests, 281 WebUI tests; strict 0/528, comparator no new
+  diagnostics.

@@ -34,6 +34,7 @@ from nanobot.session.webui_turns import (
     clear_websocket_turns,
     register_queued_websocket_turn_if_idle,
     websocket_turn_id,
+    websocket_turn_scope,
     websocket_turn_wall_started_at,
 )
 from nanobot.utils.helpers import safe_filename
@@ -43,7 +44,9 @@ from nanobot.webui.gateway_services import GatewayServices
 from nanobot.webui.mcp_presets_api import normalize_mcp_preset_mentions
 from nanobot.webui.metadata import (
     WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_REQUEST_INTENT_METADATA_KEY,
     WEBUI_SOURCE_TOKEN_METADATA_KEY,
+    WEBUI_TARGET_TURN_METADATA_KEY,
 )
 from nanobot.webui.replay_store import DurableWebUIReplay
 from nanobot.webui.session_access import (
@@ -687,6 +690,15 @@ class WebUICommandRouter:
                 **rejection_fields,
             )
             return
+        if request_intent == "new" and websocket_turn_wall_started_at(chat_id) is not None:
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail="not_admitted",
+                reason="busy_new_request",
+                **rejection_fields,
+            )
+            return
         if not isinstance(content, str):
             await self._transport.webui_send_event(
                 connection,
@@ -786,12 +798,8 @@ class WebUICommandRouter:
         if scope is None:
             return
         if request_intent == "steer":
-            current_scope = (
-                self._workspaces.scope_for_session_key(chat_id)
-                if temporary_policy is None
-                else temporary_policy.workspace_scope
-            )
-            if scope.metadata() != current_scope.metadata():
+            current_scope = websocket_turn_scope(chat_id)
+            if current_scope is None or scope.metadata() != current_scope:
                 await self._transport.webui_send_event(
                     connection,
                     "error",
@@ -800,7 +808,6 @@ class WebUICommandRouter:
                     **rejection_fields,
                 )
                 return
-
         permission_reference = None
         if scope.access_mode == "full":
             mobile_identity = getattr(connection, "mobile_identity", None)
@@ -851,6 +858,11 @@ class WebUICommandRouter:
         if envelope.get("webui") is True:
             metadata["webui"] = True
             metadata.update(self._transcripts.client_turn_metadata(envelope.get("turn_id")))
+        if isinstance(request_intent, str):
+            metadata[WEBUI_REQUEST_INTENT_METADATA_KEY] = request_intent
+        target_turn_id = envelope.get("target_turn_id")
+        if isinstance(target_turn_id, str):
+            metadata[WEBUI_TARGET_TURN_METADATA_KEY] = target_turn_id
         trusted_webui = metadata.get("webui") is True and connection in self._webui_connections
         is_user_shell = (
             trusted_webui
@@ -884,7 +896,11 @@ class WebUICommandRouter:
         is_webui = metadata.get("webui") is True
         queued_owner = None
         if is_webui and not is_user_shell and builtin_command_starts_agent_turn(content):
-            queued_owner = register_queued_websocket_turn_if_idle(chat_id, turn_id)
+            queued_owner = register_queued_websocket_turn_if_idle(
+                chat_id,
+                turn_id,
+                workspace_scope=scope.metadata(),
+            )
             if queued_owner is not None:
                 metadata[WEBSOCKET_TURN_OWNER_METADATA_KEY] = queued_owner
 

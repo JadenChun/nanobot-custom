@@ -372,8 +372,8 @@ async def test_temporary_chat_is_transient_and_discarded(bus, tmp_path) -> None:
             "media": [{"data_url": "data:text/plain;base64,cHJpdmF0ZQ=="}],
             "cli_apps": [{"name": "drawio"}],
             "workspace_scope": {
-                "project_path": str(selected_project),
-                "access_mode": "full",
+                "project_path": str(tmp_path),
+                "access_mode": "restricted",
             },
             "turn_id": "turn-1",
             "webui": True,
@@ -6664,3 +6664,117 @@ async def test_legacy_webui_message_without_v1_fields_still_admits(
     )
 
     bus.publish_inbound.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_busy_new_request_is_not_admitted_but_matching_steer_is(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_workspace = tmp_path / "default"
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    default_workspace.mkdir()
+    project_a.mkdir()
+    project_b.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:busy-intent"
+    scope_a = default_workspace_scope(project_a, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope_a.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("busy-intent")
+    assert token is not None
+    turn_owner = wth.register_queued_websocket_turn_if_idle(
+        "busy-intent",
+        "turn-active",
+        workspace_scope=scope_a.metadata(),
+    )
+    assert turn_owner is not None
+    channel.gateway.media.store_inbound_attachments = MagicMock()
+    try:
+        await channel._dispatch_envelope(
+            conn,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": "busy-intent",
+                "content": "new work in B",
+                "webui": True,
+                "turn_id": "turn-busy",
+                "request_settings_version": 1,
+                "request_intent": "new",
+                "source_token": token,
+                "workspace_scope": scope_b_payload(project_b),
+                "media": [{"data_url": "data:text/plain;base64,aGVsbG8="}],
+            },
+        )
+        payload = json.loads(conn.send.await_args.args[0])
+        assert payload["event"] == "error"
+        assert payload["detail"] == "not_admitted"
+        assert payload["reason"] == "busy_new_request"
+        bus.publish_inbound.assert_not_awaited()
+        channel.gateway.media.store_inbound_attachments.assert_not_called()
+
+        await channel._dispatch_envelope(
+            conn,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": "busy-intent",
+                "content": "guide A",
+                "webui": True,
+                "turn_id": "turn-steer",
+                "request_settings_version": 1,
+                "request_intent": "steer",
+                "target_turn_id": "turn-active",
+                "source_token": token,
+                "workspace_scope": scope_a.metadata(),
+            },
+        )
+        bus.publish_inbound.assert_awaited_once()
+
+        await channel._dispatch_envelope(
+            conn,
+            "webui-client",
+            {
+                "type": "message",
+                "chat_id": "busy-intent",
+                "content": "wrong context",
+                "webui": True,
+                "turn_id": "turn-steer-wrong",
+                "request_settings_version": 1,
+                "request_intent": "steer",
+                "target_turn_id": "turn-active",
+                "source_token": token,
+                "workspace_scope": scope_b_payload(project_b),
+            },
+        )
+        rejected = json.loads(conn.send.await_args.args[0])
+        assert rejected["detail"] == "not_admitted"
+        assert rejected["reason"] == "steering_context_changed"
+        assert bus.publish_inbound.await_count == 1
+    finally:
+        wth.clear_websocket_turn_if_current("busy-intent", turn_owner)
+
+
+def scope_b_payload(project: Path) -> dict[str, object]:
+    return {
+        "project_path": str(project),
+        "access_mode": "restricted",
+        "restrict_to_workspace": True,
+    }

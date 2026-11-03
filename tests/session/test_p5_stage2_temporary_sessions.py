@@ -10,6 +10,7 @@ from nanobot.channels.websocket.tests.test_websocket_channel import (
     _basic_handler,
     _new_temporary_chat,
 )
+from nanobot.session import webui_turns as wth
 from nanobot.session.manager import Session, SessionManager
 from nanobot.session.runtime_authority import OfflineSessionOperator
 from nanobot.webui.temporary_chats import TemporaryChatError
@@ -362,6 +363,7 @@ async def test_temporary_submitted_sandbox_wins_when_full_is_enabled(tmp_path):
         )
         sandbox_message = bus.publish_inbound.await_args.args[0]
         assert sandbox_message.workspace_scope.access_mode == "restricted"
+        wth.clear_websocket_turns(chat_id)
 
         await channel._dispatch_envelope(
             owner,

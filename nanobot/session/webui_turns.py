@@ -83,6 +83,7 @@ _WEBSOCKET_TURN_OWNERS: dict[str, str] = {}
 class _WebsocketTurn:
     started_at: float
     turn_id: str | None
+    workspace_scope: dict[str, Any] | None = None
     transcript_persistence_failed: bool = False
     continuation_reference: WorkspaceAccessContinuationReference | None = None
     continuation_admitted: bool = False
@@ -365,9 +366,20 @@ def websocket_turn_id(chat_id: str) -> str | None:
     return _WEBSOCKET_TURN_IDS.get(chat_id)
 
 
+def websocket_turn_scope(chat_id: str) -> dict[str, Any] | None:
+    """Return the captured workspace scope of the active WebUI turn."""
+    owner = _WEBSOCKET_TURN_OWNERS.get(chat_id)
+    turn = _WEBSOCKET_ACTIVE_TURNS.get(chat_id, {}).get(owner) if owner else None
+    if turn is None or turn.workspace_scope is None:
+        return None
+    return dict(turn.workspace_scope)
+
+
 def register_queued_websocket_turn_if_idle(
     chat_id: str,
     turn_id: str | None,
+    *,
+    workspace_scope: dict[str, Any] | None = None,
 ) -> str | None:
     """Track an accepted WebUI turn while it waits for AgentLoop admission."""
     if websocket_turn_wall_started_at(chat_id) is not None:
@@ -376,6 +388,7 @@ def register_queued_websocket_turn_if_idle(
     _WEBSOCKET_ACTIVE_TURNS.setdefault(chat_id, {})[owner] = _WebsocketTurn(
         started_at=time.time(),
         turn_id=turn_id,
+        workspace_scope=dict(workspace_scope) if workspace_scope is not None else None,
     )
     _sync_websocket_turn_projection(chat_id)
     return owner
