@@ -20,6 +20,7 @@ func TestMobileUIReadRoutesAreAllowlisted(t *testing.T) {
 		{"mobile_workspaces", "/mobile/v1/workspaces"},
 		{"mobile_thread", "/mobile/v1/sessions/websocket%3Achat-1/thread?limit=2&direction=latest"},
 		{"mobile_api", "/mobile/v1/api?path=%2Fapi%2Fcommands"},
+		{"mobile_dispatch", "/mobile/v1/dispatch?path=%2Fapi%2Fsettings"},
 	}
 	for _, tc := range cases {
 		resolved, route, err := resolveRoute(cfg, origin, tc.operation, http.MethodGet, tc.path)

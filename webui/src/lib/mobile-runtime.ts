@@ -68,6 +68,7 @@ export interface MobileRuntime {
 
 let installedMobileRuntime: MobileRuntime | null = null;
 let ownerCapability = false;
+let standardDispatchCapability = false;
 
 /** Whether the paired device negotiated the owner capability (M30/M31). */
 export function mobileOwnerCapability(): boolean {
@@ -76,6 +77,15 @@ export function mobileOwnerCapability(): boolean {
 
 export function setMobileOwnerCapability(value: boolean): void {
   ownerCapability = value;
+}
+
+/** Whether the paired server advertises the standard owner dispatch route. */
+export function mobileStandardDispatchCapability(): boolean {
+  return standardDispatchCapability;
+}
+
+export function setMobileStandardDispatchCapability(value: boolean): void {
+  standardDispatchCapability = value;
 }
 
 export function installMobileRuntime(runtime: MobileRuntime): void {
@@ -97,6 +107,7 @@ export function recoverMobileRuntime(): Promise<void> {
 export function resetMobileRuntime(): void {
   installedMobileRuntime = null;
   ownerCapability = false;
+  standardDispatchCapability = false;
 }
 
 export function shouldRegisterServiceWorker(): boolean {
@@ -180,6 +191,14 @@ export function createMobileRuntime(transport: MobileTransport): MobileRuntime {
         typeof capabilities === "object"
           && capabilities !== null
           && (capabilities as Record<string, unknown>).owner === true,
+      );
+      setMobileStandardDispatchCapability(
+        payload.request_settings_version === 1
+        || (
+          typeof capabilities === "object"
+          && capabilities !== null
+          && (capabilities as Record<string, unknown>).standard_dispatch === true
+        ),
       );
       return payload;
     },

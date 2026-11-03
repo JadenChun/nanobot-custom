@@ -830,3 +830,52 @@ async def test_owner_loss_before_private_delivery_fails_closed(edge_setup) -> No
     response = await pending
     assert response.status_code == 503
     assert marker.encode() not in response.body
+
+
+@pytest.mark.asyncio
+async def test_standard_dispatch_is_owner_only_and_forwards_the_exact_path(edge_setup) -> None:
+    owner, _edge, pair = edge_setup
+    owner_pair = owner.tokens.issue(
+        "install-owner",
+        ("chat.read", "chat.write", "owner"),
+    )
+    seen: list[tuple[str, str, str]] = []
+
+    async def standard(
+        identity: AccessIdentity,
+        method: str,
+        path: str,
+    ) -> tuple[int, dict[str, Any]]:
+        seen.append((identity.installation_id, method, path))
+        return 200, {"path": path}
+
+    validator = OwnerAccessValidator(
+        RemoteAccessClient(owner.socket_path, timeout=2.0),
+        cache_ttl=0.0,
+    )
+    edge = MobileGatewayEdge(
+        validator,
+        generation_provider=lambda: 1,
+        standard_handler=standard,
+    )
+    denied = await edge.handle(
+        None,
+        request(
+            "/mobile/v1/dispatch?path=" + quote("/api/settings", safe=""),
+            pair.access_token,
+        ),
+    )
+    assert denied is not None and denied.status_code == 403
+    assert body(denied)["error"] == "owner_required"
+    assert seen == []
+
+    allowed = await edge.handle(
+        None,
+        request(
+            "/mobile/v1/dispatch?path=" + quote("/api/settings?section=models", safe=""),
+            owner_pair.access_token,
+        ),
+    )
+    assert allowed is not None and allowed.status_code == 200
+    assert body(allowed) == {"path": "/api/settings?section=models"}
+    assert seen == [("install-owner", "GET", "/api/settings?section=models")]

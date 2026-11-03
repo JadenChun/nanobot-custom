@@ -226,6 +226,9 @@ class MobileGatewayEdge:
         ] | None = None,
         api_handler: Callable[[AccessIdentity, str], Awaitable[tuple[int, dict[str, Any]]]] | None = None,
         feature_handler: Callable[[AccessIdentity, str], Awaitable[tuple[int, dict[str, Any]]]] | None = None,
+        standard_handler: Callable[
+            [AccessIdentity, str, str], Awaitable[tuple[int, dict[str, Any]]]
+        ] | None = None,
     ) -> None:
         self.validator = validator
         self.generation_provider = generation_provider
@@ -242,6 +245,7 @@ class MobileGatewayEdge:
         self.thread_handler = thread_handler
         self.api_handler = api_handler
         self.feature_handler = feature_handler
+        self.standard_handler = standard_handler
 
     async def authorize_websocket(self, connection: Any, request: WsRequest) -> Response | None:
         token = bearer_token(request.headers)
@@ -354,6 +358,27 @@ class MobileGatewayEdge:
                     http_json_response(await self.workspaces_handler(identity)),
                     scope=scope,
                 )
+
+        if path == "/mobile/v1/dispatch":
+            if not identity.is_owner:
+                return http_json_response({"error": "owner_required"}, status=403)
+            if self.standard_handler is None:
+                return http_json_response({"error": "dispatch_unavailable"}, status=503)
+            raw_path = (query.get("path") or [""])[0]
+            try:
+                status, payload = await asyncio.wait_for(
+                    self.standard_handler(identity, "GET", raw_path),
+                    timeout=self._timeout("sessions.thread"),
+                )
+            except TimeoutError:
+                return http_json_response({"error": "dispatch_timeout"}, status=504)
+            encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            if len(encoded) > MOBILE_API_MAX_RESPONSE_BYTES:
+                return http_json_response({"error": "response_too_large"}, status=413)
+            return await self._authorized_delivery(
+                token, identity, http_json_response(payload, status=status),
+                scope="chat.read",
+            )
 
         if path == "/mobile/v1/feature":
             if not identity.is_owner:
@@ -560,6 +585,8 @@ class MobileGatewayEdge:
             "attachments": "attachment.write" in identity.scopes,
             "lifecycle": False,
             "owner": identity.is_owner,
+            "request_settings_version": 1,
+            "standard_dispatch": True,
         }
         return {
             "mobile_protocol": MOBILE_PROTOCOL_VERSION,

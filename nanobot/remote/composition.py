@@ -113,6 +113,13 @@ def build_mobile_edge(
     async def feature_handler(identity: Any, path: str) -> tuple[int, dict[str, Any]]:
         return await http.mobile_feature_payload(path, identity)
 
+    async def standard_handler(
+        identity: Any,
+        method: str,
+        path: str,
+    ) -> tuple[int, dict[str, Any]]:
+        return await http.mobile_standard_payload(identity, method, path)
+
     return MobileGatewayEdge(
         validator,
         generation_provider=lambda: 1,
@@ -125,4 +132,5 @@ def build_mobile_edge(
         thread_handler=thread_handler,
         api_handler=api_handler,
         feature_handler=feature_handler,
+        standard_handler=standard_handler,
     )
