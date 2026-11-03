@@ -1,7 +1,7 @@
 # SuperAgent research and future agent-managed sessions
 
 Date: **2026-11-03** (Asia/Kuala_Lumpur).
-Source-reference update: **2026-11-04**; original article URL retained below.
+Source-reference update: **2026-11-04**; user-supplied article text archived and reviewed.
 Status: **research findings and future direction; implementation deferred**.
 Nanobot source baseline: `a90191a41b025884e76ce029b98a5d5349171f2e`.
 DeepSeek prototype snapshot: `8c32a9dc5d72c033816c6a8110b37f40cf94fba4`.
@@ -54,12 +54,13 @@ worker orchestration a requirement for existing process continuation.
   Autonomous Agent System](https://x.com/DeepSeekHarness/article/2116857257245987236).
   This is the direct article URL supplied by the user on 2026-11-04; retain it
   alongside the [associated post](https://x.com/DeepSeekHarness/status/2116857257245987236).
-  The article URL returned HTTP 403 when checked on 2026-11-04, as did the post
-  during the earlier study. The original full text has not been verified or
-  archived in this repository. Search summaries and a third-party translation
-  encountered during the study are not substitutes for the original article
-  or implementation evidence. The prototype findings below remain separately
-  supported by the inspected code and its documentation.
+  The live URL returned HTTP 403, but the user subsequently supplied the article
+  text on 2026-11-04. The [source record and full-text archive](references/deepseek-superagent-design-article.md)
+  preserve that attachment byte for byte. It labels itself an English machine
+  translation of a Chinese original; the translation and live page have not
+  been independently authenticated. The supplied text has now been reviewed.
+  Earlier search summaries and third-party accounts are not substitutes for it.
+  Article design claims remain distinct from the inspected prototype code.
 - Nanobot findings come from the baseline source, existing project documents,
   focused tests, and a read-only inspection of the selected desktop runtime.
   Imported classes, documentation, passing isolated checks, active registration,
@@ -103,10 +104,79 @@ inference capacity is limited.
 coordination implementation rather than extend it to desktop; agent-managed
 sessions are its future replacement. The
 [cleanup plan](telegram-h1-concurrency-cleanup-plan.md) and isolated coding
-workspace are now prepared; runtime implementation remains pending. Preserve
+workspace are prepared; consult that work separately for implementation status.
+Preserve
 the generic SessionManager, canonical execution/source
 ownership, background-process continuation, and required accepted-input/recovery
 handling. Removing the channel-specific layer is not removal of these foundations.
+
+## What the supplied article adds
+
+This section describes the [user-supplied article](references/deepseek-superagent-design-article.txt),
+not newly verified runtime behaviour. The article itself says it discusses
+architectural ideas and is not a feature announcement for DeepSeek Harness.
+
+It frames the goal as continuity across conversations, productive task
+concurrency, proactive event handling, and persistent operation. Its central
+distinction matches our goal: the user follows one continuing assistant while
+the system manages execution contexts. Router and Worker are **logical roles**;
+neither must always be exactly one physical session. The example uses a
+long-lived router because it is sufficient for the authors' present workload.
+
+| Article component | Design described | Relevance to our future direction |
+| --- | --- | --- |
+| Two-level architecture (§2) | The router handles human interaction, global context and dispatch; isolated workers execute tasks and may contain teams/subagents | Separate routing from substantial work without requiring the user to manage every execution session |
+| Event-driven triggers (§3) | Code filters deterministic noise; model policies assess candidates; many-to-many subscriptions pass follow-ups to owning workers without another router decision | Task ownership and explicit event routing matter; a parent model need not reinterpret every follow-up |
+| Context organisation (§3.3) | Inline likely-needed summaries and related IDs, spill larger content behind references, and follow linked objects through a Chain of Recall | Keep the main context bounded and retrieve task detail on demand; a folder map still supplies location rather than task ownership |
+| Full-duplex channels (§4) | Long tools return a started acknowledgement; completion arrives as a later event; output detail fits the channel | Managed sessions alone do not make a blocking router responsive; background execution and input admission are separate parts of the design |
+| Compute/state/environment separation (§5) | Persist sessions independently from loop compute and reach existing execution machines through endpoint daemons | Cross-device/cloud operation is an additional design choice, not a prerequisite for our current local desktop goal |
+| External Watchdog (§6) | A separate scheduled session checks infrastructure and substantive progress and attempts recovery | A future recovery option with its own compute and authority requirements; not part of the H1 cleanup |
+
+Router event batching (§2.1) groups arrivals from the preceding inference step
+into a later call. It is different from making simultaneous model requests and
+does not prove that our local inference backend can serve a router and workers
+responsively. The article suggests a lighter router model and stronger worker
+models; the actual assignments, availability and performance for nanobot remain
+open. Its speculative background work (§3.4) is also an optional policy, not
+authorization for us to start tasks or take external actions without a request.
+
+### Direct collaboration remains a product decision
+
+In the article's ordinary external-channel flow, workers report to the router
+and do not post their reasoning/tool activity directly to people. This differs
+from forbidding inspection or intervention: §8.2 explicitly leaves open how a
+person can take over or collaborate during background work, and allows visible
+conversations to differ from underlying execution sessions. The inspected
+prototype's Open Session control is separate implementation evidence below.
+Our accepted requirement remains direct access to each actual working session,
+with a main/router page that shows status and requests for attention. The
+article does not select that UI for us or remove our need to design it.
+
+### Reported experiments and their limits
+
+Section 7 reports a synthetic scheduling experiment: about 300 messages and 20
+work requests per run, five runs per design, with coding replaced by a tool
+that consumes time. Reported task-completion p50/p95 in minutes are 12.4/15.7
+for Super-agent, 12.6/15.5 without pass-through, 20.4/29.5 for a neutral
+single-session/subagent prompt, and 13.8/29.0 for its delegation-first prompt.
+Super-agent used 23.2M cache-read tokens per run versus 6.1M and 10.8M for the
+single-session variants. Removing pass-through increased that to 31.8M with
+similar completion times in this workload: reduced router overhead, rather
+than demonstrated task-quality improvement, is the relevant result.
+
+The separate router test used a real router model and mock workers. Across about
+1–40 decision-requiring triggers per minute, reported average batch size rose
+1.0→2.8, time per request 2.5→3.9 seconds, and amortised inference time per
+decision fell 6.4→1.6 seconds. These are the authors' preliminary measurements,
+not nanobot benchmarks or local-model throughput guarantees. The article does
+not establish coding quality, a universal session count, or production capacity.
+
+Its open questions (§8) cover router scaling and long-term memory, interaction
+without a one-chat/one-session mapping, context/permission boundaries between
+agents, and security/privacy. In particular, connected execution machines and
+credentials create risks beyond ordinary session routing. None of the cloud,
+endpoint, speculative-work, or Watchdog proposals is added to the current
+cleanup scope by saving this reference.
 
 ## What the DeepSeek prototype actually implements
 
@@ -230,13 +300,14 @@ currently specialises per-chat focus for WebSocket; other channels use the
 configured default. Showing or controlling a Telegram conversation from desktop
 therefore needs deliberate projection, authority, and output-routing decisions.
 
-The earlier H1 work coordinates input to one busy assistant: steer, next turn,
-status, and stop. Its [implemented Telegram integration](../nanobot/channels/telegram/gateway_busy.py)
+At the inspected baseline, H1 coordinated input to one busy assistant: steer,
+next turn, status, and stop. Its [Telegram integration at that baseline](https://github.com/JadenChun/nanobot-custom/blob/a90191a41b025884e76ce029b98a5d5349171f2e/nanobot/channels/telegram/gateway_busy.py)
 uses one explicitly configured persistent owner, requires `unifiedSession=false`,
 and excludes general cross-channel ownership. Its tool-free control model proposes
 routes; the runtime retains authority. The broader [H1 design](migration/h1-busy-inbox-design.md)
-contains proposals beyond this supported slice. Use current source and
-[integration notes](assistant-prototype-integration.md) when reading it.
+contains proposals beyond this supported slice. Use the pinned source and
+[baseline integration notes](https://github.com/JadenChun/nanobot-custom/blob/a90191a41b025884e76ce029b98a5d5349171f2e/docs/assistant-prototype-integration.md)
+when reading that historical implementation.
 
 The separate `agents.defaults.unifiedSession` option maps eligible messages to
 `unified:default`; explicit session-key overrides remain separate. It performs
@@ -251,7 +322,7 @@ requests** separate. Several topics can retain context while only one request
 uses a constrained local model. Task concurrency can also consist of external
 processes waiting/completing without another active model generation.
 
-Nanobot already offers `NANOBOT_MAX_CONCURRENT_REQUESTS`: unset/non-positive means
+At the inspected baseline, nanobot offered `NANOBOT_MAX_CONCURRENT_REQUESTS`: unset/non-positive means
 unlimited admitted inbound turns; a positive value caps turns in one AgentLoop.
 It holds across the admitted turn, including tool waits, and applies to sessions
 using different providers/models in that gateway. Auxiliary/delegated calls within
@@ -259,8 +330,9 @@ a turn, separate gateways, and the Telegram control model are not all covered by
 that limit. A distinct provider object can still target the same physical
 inference server. It is an optional instance-wide work limit, not provider-aware
 inference scheduling.
-See [configuration](configuration.md#runtime-environment-variables),
-[admission](../nanobot/agent/loop.py), and [control calls](../nanobot/agent/busy_control.py).
+See the baseline [configuration](https://github.com/JadenChun/nanobot-custom/blob/a90191a41b025884e76ce029b98a5d5349171f2e/docs/configuration.md#runtime-environment-variables),
+[admission](https://github.com/JadenChun/nanobot-custom/blob/a90191a41b025884e76ce029b98a5d5349171f2e/nanobot/agent/loop.py), and
+[control calls](https://github.com/JadenChun/nanobot-custom/blob/a90191a41b025884e76ce029b98a5d5349171f2e/nanobot/agent/busy_control.py).
 
 The earlier suggestion to set this global limit to 1 for local inference is
 withdrawn for mixed-provider use: it would also hold back independent cloud
