@@ -109,6 +109,7 @@
       "interface": "Interface",
       "ai": "AI",
       "system": "System",
+      "notifications": "Notifications",
       "about": "About",
       "status": "Status",
       "localPreferences": "Local preferences",

@@ -51,11 +51,15 @@ export function OverviewSettings({
   requiresRestart,
   onSelectSection,
   showBrandLogos,
+  localPrefs,
+  onChangeLocalPrefs,
 }: {
   settings: SettingsPayload;
   requiresRestart: boolean;
   onSelectSection: (section: SettingsSectionKey) => void;
   showBrandLogos: boolean;
+  localPrefs: LocalPreferences;
+  onChangeLocalPrefs: Dispatch<SetStateAction<LocalPreferences>>;
 }) {
   const { t } = useTranslation();
   const tx = (key: string, fallback: string) => t(key, { defaultValue: fallback });
@@ -202,6 +206,39 @@ export function OverviewSettings({
             caption={workspaceCaption}
             onClick={() => onSelectSection("runtime")}
           />
+        </SettingsGroup>
+      </section>
+
+      <section>
+        <SettingsSectionTitle>{tx("settings.sections.notifications", "Notifications")}</SettingsSectionTitle>
+        <SettingsGroup>
+          <SettingsRow
+            title={tx("settings.rows.browserNotifications", "Task notifications")}
+            description={tx(
+              "settings.help.browserNotifications",
+              "Notify when a request finishes while the app is not focused. Off by default.",
+            )}
+          >
+            <ToggleButton
+              checked={localPrefs.browserNotifications}
+              disabled={!taskNotificationsSupported()}
+              onChange={(enabled) => {
+                if (!enabled) {
+                  onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: false }));
+                  return;
+                }
+                void requestTaskNotificationPermission().then((granted) => {
+                  if (granted) {
+                    onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: true }));
+                  }
+                });
+              }}
+              ariaLabel={tx("settings.rows.browserNotifications", "Task notifications")}
+              label={localPrefs.browserNotifications
+                ? tx("settings.values.on", "On")
+                : tx("settings.values.off", "Off")}
+            />
+          </SettingsRow>
         </SettingsGroup>
       </section>
 
@@ -423,33 +460,6 @@ export function AppearanceSettings({
               onChange={(brandLogos) => onChangeLocalPrefs((prev) => ({ ...prev, brandLogos }))}
               ariaLabel={tx("settings.rows.brandLogos", "Brand logos")}
               label={localPrefs.brandLogos ? tx("settings.values.on", "On") : tx("settings.values.off", "Off")}
-            />
-          </SettingsRow>
-          <SettingsRow
-            title={tx("settings.rows.browserNotifications", "Task notifications")}
-            description={tx(
-              "settings.help.browserNotifications",
-              "Notify only when this page is in the background. Off by default.",
-            )}
-          >
-            <ToggleButton
-              checked={localPrefs.browserNotifications}
-              disabled={!taskNotificationsSupported()}
-              onChange={(enabled) => {
-                if (!enabled) {
-                  onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: false }));
-                  return;
-                }
-                void requestTaskNotificationPermission().then((granted) => {
-                  if (granted) {
-                    onChangeLocalPrefs((prev) => ({ ...prev, browserNotifications: true }));
-                  }
-                });
-              }}
-              ariaLabel={tx("settings.rows.browserNotifications", "Task notifications")}
-              label={localPrefs.browserNotifications
-                ? tx("settings.values.on", "On")
-                : tx("settings.values.off", "Off")}
             />
           </SettingsRow>
         </SettingsGroup>
