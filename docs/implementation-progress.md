@@ -371,3 +371,7 @@ Emulator artifact hashes (private evidence directory):
 - universal debug APK `9ad2a0297c7ee50f82fc970eb6efafd67e7fdf355e318b97e6da921dd68ea6d1`
 - arm64-only debug APK `7f74716cab6cd4a889e0e030a5b1da171283be916a383264f2c5a00ea5d75f04`
 - device: API 36 x86_64 AVD, 37 instrumentation tests.
+- Full Python suite after native/E/F changes: **17540 passed, 22 skipped,
+  6 subtests passed**, exit 0 in 769.13s (`/tmp/opencode/full-suite-r3.log`).
+- Strict after changes: 0 errors / 528 files; regression comparison
+  `PASS_NO_NEW_DIAGNOSTICS` (`/tmp/opencode/p6-after-r2.json`).
