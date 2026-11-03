@@ -9,6 +9,7 @@ from nanobot.channels.websocket.runtime import WebSocketConfig
 from nanobot.remote.edge import AccessIdentity
 from nanobot.session.manager import SessionManager
 from nanobot.webui.gateway_services import build_gateway_services
+from tests.webui.mobile_mutation_helper import mobile_mutation_payload
 
 
 @pytest.fixture
@@ -73,20 +74,20 @@ async def test_owner_mutation_payload_denies_local_only_and_unregistered(gateway
         1e12,
         1,
     )
-    status, payload = await gateway.http.mobile_mutation_payload(
+    status, payload = await mobile_mutation_payload(gateway.http,
         owner, "settings.remote_access.enable", {"enabled": True}
     )
     assert status == 403
     assert payload["error"] == "operation_not_allowed"
 
-    status, payload = await gateway.http.mobile_mutation_payload(
+    status, payload = await mobile_mutation_payload(gateway.http,
         owner, "workspace.pick_folder", {}
     )
     assert status == 403
     assert payload["error"] == "operation_not_allowed"
 
     legacy = AccessIdentity("install-legacy", ("chat.read", "chat.write"), 1e12, 1)
-    status, payload = await gateway.http.mobile_mutation_payload(
+    status, payload = await mobile_mutation_payload(gateway.http,
         legacy, "settings.agent.update", {}
     )
     assert status == 403

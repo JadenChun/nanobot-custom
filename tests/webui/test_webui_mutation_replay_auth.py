@@ -10,6 +10,7 @@ from types import MethodType, SimpleNamespace
 import pytest
 from websockets.datastructures import Headers
 
+from nanobot.remote.edge import AccessIdentity
 from nanobot.security.folder_grants import FolderGrantStore
 from nanobot.security.workspace_access import default_workspace_scope
 from nanobot.session.manager import Session, SessionManager
@@ -872,3 +873,81 @@ async def test_product_mutation_effect_timeout(monkeypatch, tmp_path) -> None:
     assert restarted.lookup(
         "req-timeout", "workspace.access.resolve", "digest", None
     )[0] == "uncertain"
+
+
+@pytest.mark.asyncio
+async def test_mobile_owner_ws_entry_denies_unregistered_local_action(tmp_path: Path) -> None:
+    lease, _sessions, _controller, router, _local, _joined, frames = (
+        await _managed_prepare_router(tmp_path, "mobile-owner-entry")
+    )
+    connection = _Connection("remote", peer="203.0.113.9")
+    connection.mobile_identity = AccessIdentity(
+        "install-owner",
+        ("chat.read", "chat.write", "owner"),
+        1e12,
+        1,
+    )
+    try:
+        response = await _send_mutation(
+            router,
+            connection,
+            frames,
+            {
+                "type": "webui_request",
+                "request_id": "mobile-owner-denied-1",
+                "action": "settings.remote_access.enable",
+                "payload": {"enabled": True},
+            },
+        )
+    finally:
+        if lease.close is not None:
+            await lease.close()
+
+    assert response["event"] == "webui_response"
+    assert response["request_id"] == "mobile-owner-denied-1"
+    assert response["ok"] is False
+    assert response["error"]["status"] == 403
+
+
+@pytest.mark.asyncio
+async def test_mobile_owner_ws_entry_uses_the_standard_mutation_dispatcher(
+    tmp_path: Path,
+) -> None:
+    lease, _sessions, _controller, router, _local, _joined, frames = (
+        await _managed_prepare_router(tmp_path, "mobile-owner-dispatch")
+    )
+    connection = _Connection("remote", peer="203.0.113.10")
+    connection.mobile_identity = AccessIdentity(
+        "install-owner",
+        ("chat.read", "chat.write", "owner"),
+        1e12,
+        1,
+    )
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def dispatch(_connection, action, payload):
+        calls.append((action, dict(payload)))
+        from websockets.http11 import Response
+
+        return Response(200, "OK", [], b'{"updated":true}')
+
+    router._http_router.dispatch_webui_mutation = dispatch
+    try:
+        response = await _send_mutation(
+            router,
+            connection,
+            frames,
+            {
+                "type": "webui_request",
+                "request_id": "mobile-owner-dispatch-1",
+                "action": "settings.agent.update",
+                "payload": {"agent": {"name": "mobile"}},
+            },
+        )
+    finally:
+        if lease.close is not None:
+            await lease.close()
+
+    assert response["event"] == "webui_response"
+    assert response["ok"] is True
+    assert calls == [("settings.agent.update", {"agent": {"name": "mobile"}})]
