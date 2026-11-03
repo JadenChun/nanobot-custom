@@ -57,6 +57,11 @@ The release-window observation is recorded in
 
 ## Build and validation
 
+RPM 0.3.0-7 adds task-completion notifications. The shared WebUI posts a
+completion event to a loopback-only gateway route, which invokes the desktop
+`notify-send` notifier. This avoids WebView notification-permission prompts
+while keeping the mobile local-notification bridge separate.
+
 RPM 0.3.0-6 uses WebKitGTK's current default renderer without overriding
 `WEBKIT_DISABLE_DMABUF_RENDERER`. If a particular installation shows black
 content, launch it with `WEBKIT_DISABLE_DMABUF_RENDERER=1 nanobot-desktop` to

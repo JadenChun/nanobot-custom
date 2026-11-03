@@ -240,6 +240,8 @@ export function SettingsPage({
             settings={settings}
             requiresRestart={hasPendingRestart}
             showBrandLogos={localPrefs.brandLogos}
+            localPrefs={localPrefs}
+            onChangeLocalPrefs={setLocalPrefs}
             onSelectSection={selectSection}
           />
         );

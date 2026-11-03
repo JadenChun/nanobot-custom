@@ -30,6 +30,7 @@ import {
 import type { UIMessageTurnFields } from "@/lib/thread-event-projection";
 import { formatQuotedUserMessage } from "@/lib/user-message-quote";
 import { readLocalPreferences } from "@/lib/local-preferences";
+import { showTaskNotification } from "@/lib/task-notifications";
 import type {
   InboundEvent,
   OutboundCliAppMention,
@@ -343,13 +344,14 @@ export function useNanobotStream(
 
   const notifyInBackground = useCallback((body: string) => {
     if (
-      typeof Notification === "undefined"
-      || Notification.permission !== "granted"
-      || document.visibilityState === "visible"
-      || !readLocalPreferences().browserNotifications
+      !readLocalPreferences().browserNotifications
+      || (document.visibilityState === "visible" && document.hasFocus())
     ) return;
-    new Notification("nanobot", { body });
-  }, []);
+    showTaskNotification({
+      body,
+      tag: chatId ? `nanobot-turn-${chatId}` : undefined,
+    });
+  }, [chatId]);
 
   const clearPendingStreamWork = useCallback(() => {
     if (streamFrameRef.current !== null) {
@@ -982,7 +984,10 @@ export function useNanobotStream(
       }
 
       if (ev.event === "turn_end") {
-        if (typeof ev.turn_id === "string") sideChannelTurnIdsRef.current.delete(ev.turn_id);
+        const completedTurnId = typeof ev.turn_id === "string" ? ev.turn_id : null;
+        const sideChannelTurn = completedTurnId !== null
+          && sideChannelTurnIdsRef.current.has(completedTurnId);
+        if (completedTurnId) sideChannelTurnIdsRef.current.delete(completedTurnId);
         if ("goal_state" in ev && ev.goal_state != null && typeof ev.goal_state === "object") {
           setGoalState(ev.goal_state);
         }
@@ -1037,13 +1042,15 @@ export function useNanobotStream(
           return finalized;
         });
         suppressStreamUntilTurnEndRef.current = false;
-        notifyInBackground(
-          modelFailure
-            ? resolveModelRequestFailureCopy(modelFailure, t).body
-            : ev.outcome === "failed"
-              ? ev.failure_message || "This turn failed and has ended."
-            : t("recovery.completed", { defaultValue: "Task completed" }),
-        );
+        if (!sideChannelTurn) {
+          notifyInBackground(
+            modelFailure
+              ? resolveModelRequestFailureCopy(modelFailure, t).body
+              : ev.outcome === "failed"
+                ? ev.failure_message || "This turn failed and has ended."
+              : t("recovery.completed", { defaultValue: "Task completed" }),
+          );
+        }
         onTurnEnd?.();
         return;
       }

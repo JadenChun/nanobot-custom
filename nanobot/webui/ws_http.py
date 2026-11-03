@@ -13,6 +13,8 @@ import asyncio
 import json
 import mimetypes
 import re
+import shutil
+import subprocess
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -2061,7 +2063,46 @@ class GatewayHTTPHandler:
             return self._handle_webui_sidebar_state(request)
         if got == "/api/webui/sidebar-state/update":
             return self._handle_webui_sidebar_state_update(request)
+        if got == "/api/desktop/notify":
+            return await self._handle_desktop_notify(connection, request)
         return None
+
+    async def _handle_desktop_notify(
+        self,
+        connection: Any,
+        request: WsRequest,
+    ) -> Response:
+        if not (
+            _is_loopback_host(self.config.host)
+            and _is_local_browser_request(connection, request.headers)
+        ):
+            return _http_error(403, "local_ui_required")
+        query = _request_query(request)
+        title = (query.get("title") or ["nanobot"])[0].strip()[:120] or "nanobot"
+        body = (query.get("body") or [""])[0].strip()[:500]
+        if not body:
+            return _http_error(400, "missing notification body")
+        command = shutil.which("notify-send")
+        if command is None:
+            return _http_error(503, "desktop notifications unavailable")
+        try:
+            completed = await asyncio.to_thread(
+                subprocess.run,
+                [command, "--app-name=nanobot", title, body],
+                capture_output=True,
+                check=False,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            self._log.warning("desktop notification command failed", exc_info=True)
+            return _http_error(500, "notification failed")
+        if completed.returncode != 0:
+            self._log.warning(
+                "desktop notification command exited with status {}",
+                completed.returncode,
+            )
+            return _http_error(500, "notification failed")
+        return _http_json_response({"ok": True})
 
     async def _handle_workspace_access_action(
         self,
