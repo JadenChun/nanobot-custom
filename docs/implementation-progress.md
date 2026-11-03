@@ -27,9 +27,9 @@ remaining blockers. Private logs and runtime data stay outside the repository.
 | Mobile B delivery authorization | focused complete; helper cleanup deferred | uncached revalidation before private delivery |
 | Mobile C owner wiring / foreground recovery | complete (focused + emulator M01) | native Ping/refresh/resume bridge, owner routes, foreground recovery; physical Doze/radio pending |
 | Mobile D pairing continuity | desktop/WebUI/JS complete; native custody pending | renewal + dialog restore; Kotlin process-death custody not implemented |
-| Mobile E request authority/backend | partial | device-bound remote Full consent and restricted non-promotion; versioned settings/proofs not implemented |
-| Mobile F composer settings/presentation | partial | queued workspace/mode snapshot done; full presentation/accessibility pending |
-| Mobile G standard feature dispatcher | pending | separate later change |
+| Mobile E request authority/backend | focused complete (version/defaults/Full consent) | temporary ephemeral Full, request proofs and steering transport remain |
+| Mobile F composer settings/presentation | focused complete | queued snapshot + next-message hint; physical visual/touch evidence pending |
+| Mobile G standard feature dispatcher | reads complete | standard owner read dispatch + wrappers; mutation/WS parity still wrapper-based |
 | Integrated qualification / M38 | local gates green; release gates pending | full Python/WebUI/type/build/M01 pass; signed phone and M38 pending |
 
 ## Acceptance evidence
@@ -375,3 +375,22 @@ Emulator artifact hashes (private evidence directory):
   6 subtests passed**, exit 0 in 769.13s (`/tmp/opencode/full-suite-r3.log`).
 - Strict after changes: 0 errors / 528 files; regression comparison
   `PASS_NO_NEW_DIAGNOSTICS` (`/tmp/opencode/p6-after-r2.json`).
+
+### E/G/F continuation evidence
+
+- Request settings v1 is advertised by HTTP bootstrap and mobile handshake; the
+  WebUI sends `request_settings_version: 1` on messages.
+- Envelope validation covers version, intent/target, source token and confirmation
+  id shape without side effects; steering is explicitly `not_admitted` rather than
+  becoming a second new run.
+- Accepted submissions persist versioned project/mode defaults; Full consent
+  remains device/source bound and is never reconstructed from metadata.
+- Owner reads prefer `/mobile/v1/dispatch` through the registry-allowlisted
+  desktop dispatcher, with fallback to the existing feature/API wrappers.
+- `mobile/scripts/check-desktop-parity.py` -> PASS, 127 rows / 9 categories.
+- Full Python suite: **17544 passed, 22 skipped, 6 subtests passed**, exit 0.
+- WebUI: **1415 tests passed**, build exit 0, lint exit 0.
+- Strict basedpyright: 0 errors / 528 files; regression comparison still
+  `PASS_NO_NEW_DIAGNOSTICS`.
+- Android debug build: BUILD SUCCESSFUL.
+- Emulator M01 rerun: PASS, 37 instrumentation tests, native probe executed.
