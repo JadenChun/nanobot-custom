@@ -1512,8 +1512,13 @@ function Shell({
               [activeKey]: { ...current[activeKey], workspaceScope: next },
             };
           });
-        } else if (!activeChatRunning) {
-          client.setWorkspaceScope(activeChatId, next);
+        } else {
+          // Reflect an unsubmitted selection immediately, even while a turn is
+          // running; the next message carries this exact snapshot.
+          setWorkspaceOverrides((current) => ({ ...current, [activeChatId]: next }));
+          if (!activeChatRunning) {
+            client.setWorkspaceScope(activeChatId, next);
+          }
         }
         return;
       }
