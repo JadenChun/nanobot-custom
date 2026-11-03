@@ -1117,6 +1117,7 @@ class ContextGovernor:
                 check_deadline()
 
             truncated_boundaries: set[int] = set()
+            truncated_failure: str | None = None
             for fold_index in range(4):
                 chosen = None
                 evidence = None
@@ -1188,6 +1189,11 @@ class ContextGovernor:
                                 chosen, evidence, prepared = boundary, selected, payload
                                 break
                 if chosen is None or evidence is None or prepared is None:
+                    if truncated_failure is not None:
+                        raise SourceCompactionUnavailableError(
+                            'Bounded source summary failed: invalid_response',
+                            reason=truncated_failure,
+                        )
                     raise SourceCompactionUnavailableError(
                         'Eligible source chunk exceeds auxiliary budget',
                         reason=(chunk_rejection_reason
@@ -1238,6 +1244,7 @@ class ContextGovernor:
                         # Discard the truncated candidate and retry the same
                         # evidence cursor with the next smaller closed chunk.
                         truncated_boundaries.add(chosen)
+                        truncated_failure = failure_reason
                         check_deadline()
                         continue
                     raise SourceCompactionUnavailableError(
