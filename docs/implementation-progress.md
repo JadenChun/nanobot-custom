@@ -21,8 +21,8 @@ remaining blockers. Private logs and runtime data stay outside the repository.
 | Package | Status | Notes |
 | --- | --- | --- |
 | P1 provider route and request preparation | complete (focused checks) | typed route metadata, wrapper preview, auxiliary primary binding |
-| P2 ordinary context lifecycle / recovery | in progress | follows P1 |
-| P3 authorized media inputs | pending | independent of P1/P2 |
+| P2 ordinary context lifecycle / recovery | focused complete; secondary replanning partial | preventive budgeting wired; bounded replanning not expanded |
+| P3 authorized media inputs | focused complete | exact read-only input snapshots; foreground only |
 | Mobile A socket correctness | pending | |
 | Mobile B delivery authorization | pending | |
 | Mobile C owner wiring / foreground recovery | pending | after A/B |
@@ -73,6 +73,85 @@ Known limitation:
   re-evaluates the same next-attempt decision and reprices the selected leaf. A
   cross-check rejecting a stale selection is not yet enforced by a typed dispatch
   exception; final per-leaf guards still reject over-budget bodies.
+
+### P2
+
+Outcomes:
+- Pressure and admission now use the route-finalized prepared request (P1 wrapper
+  preview) rather than a generic legacy estimate whenever the route supports it.
+- Summary generation allowance resolves from the captured summary runtime's
+  generation setting, clamped by declared model output capability, route capacity
+  and the operation budget. The accepted `SourceCompactionConfig` override is
+  `summaryGenerationTokens` / `summary_generation_tokens`.
+- Retained summary text is separately bounded by the rebuilt main request's
+  available space and is the publication/truncation boundary. A completed `stop`
+  response over that retained budget is discarded, not published.
+- Compaction reserves capacity for the summary envelope, useful generation,
+  estimate safety and bounded next-step growth; proactive compaction can trigger
+  before the old 90%-of-budget ratio when that reserve would otherwise be consumed.
+- Trigger/target ratios and the generation override are typed deployment settings
+  with camelCase and snake_case spellings and validation (target < trigger).
+
+Focused checks:
+- `.venv/bin/ruff check` on changed context/config/provider files -> PASS.
+- `.venv/bin/python -m pytest tests/agent/test_source_pressure_compaction.py tests/agent/test_source_compaction_publication.py tests/agent/test_source_dependency_compaction.py tests/session/test_source_compaction.py tests/agent/test_finalized_budget_recovery.py -q` -> 119 passed.
+- `.venv/bin/python -m pytest tests/agent/test_memory_budget_hardening.py -q` -> 17 passed.
+- `.venv/bin/python -m pytest tests/config tests/agent/test_context_governance.py tests/agent/test_compaction_proof_boundary.py tests/agent/test_defensive_boundary_views.py tests/agent/test_loop_consolidation_tokens.py -q` -> passed after the fixture updates below.
+- New authored config cases: `.venv/bin/python -m pytest tests/config/test_source_compaction_policy.py -q` -> 16 passed.
+
+Conflicting cases updated intentionally with the accepted plan:
+- `tests/agent/test_source_pressure_compaction.py` now expects the summary
+  allowance from the captured generation instead of a fixed 2,048.
+- `tests/agent/test_memory_budget_hardening.py` / `tests/agent/p6_memory_contract_fixtures.py`
+  pin the synthetic fixture's runtime generation to 2,048 so its exact-boundary
+  arithmetic remains deterministic under a model-derived budget.
+
+Requirements-only author:
+- Session `ses_e5ed3a802ffe1dYcK02mlHNPk7`; artifact
+  `/tmp/opencode/p2-requirements-tests/test_source_compaction_config.py` (outside repo),
+  integrated unchanged as `tests/config/test_source_compaction_policy.py`.
+
+Known limitations:
+- Exceptional summary-output truncation fails honestly within the existing call
+  ceiling and preserves source/checkpoint; a bounded smaller-chunk retry strategy
+  was not added. Preventive continuity is the validated path.
+- No live provider canary or physical long-session journey has been run; these
+  remain qualification items, not claims.
+
+### P3
+
+Outcomes:
+- `exec` accepts an additive optional `input_files` list of exact paths. Omission
+  preserves the existing shell confinement.
+- Each path resolves through the same `read_file` policy, must be an approved
+  regular file, and is copied into a bounded server-owned per-invocation snapshot
+  (16 files / 64 MiB) before launch. Symlinks, private runtime storage and changed
+  sources fail closed. Writes to the mounted paths are read-only.
+- Managed bubblewrap restores only those snapshot files at their original paths,
+  after private instance masking. Unlisted siblings/parent directories stay
+  masked, and the whole media directory is never mounted.
+- Foreground-only: `yield_time_ms`/`notify_on_exit` with `input_files` is rejected
+  because snapshot lifetime cannot be guaranteed.
+- MCP image results and generated-image results advertise the exact-input contract;
+  saved replay images now say no bytes are present and allow an authorized reread.
+
+Focused checks:
+- `.venv/bin/ruff check` on changed tool/provider files -> PASS.
+- `.venv/bin/python -m pytest tests/tools/test_sandbox.py tests/tools/test_filesystem_tools.py tests/tools/test_mcp_tool.py tests/utils/test_artifacts.py tests/agent/test_recent_image_governance.py tests/agent/test_managed_exec.py tests/providers/test_recent_image_history.py -q` -> 199 passed.
+- Real managed-bwrap smoke: `test_exec_input_files_exposes_only_exact_approved_files`
+  copies bytes from a media path, denies an unlisted sibling, denies private
+  storage and a symlink, verifies read-only mounting, and checks the advertised
+  schema bound.
+
+Requirements-only author:
+- Session `ses_e5ecc4b29ffeTf6rSA3Fxrsdkq`; case specification artifact
+  `/tmp/opencode/p3-requirements-tests/input_files_cases.md` (outside repo),
+  integrated into the focused managed-exec test.
+
+Known limitations:
+- Session/background shell commands cannot use `input_files` in this change.
+- No cross-turn automatic historical image injection or binary-retention migration
+  was added; explicit reread remains the supported path.
 
 ## Commits
 

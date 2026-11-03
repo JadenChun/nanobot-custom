@@ -99,6 +99,89 @@ def _legacy_exec_tool(tmp_path: Path) -> tuple[Path, FolderGrantStore, ExecTool]
     return home, store, ExecTool(working_dir=str(home), resource_policy=policy)
 
 
+@pytest.mark.asyncio
+@pytest.mark.skipif(not managed_bwrap_available(), reason="managed bwrap unavailable")
+async def test_exec_input_files_exposes_only_exact_approved_files(tmp_path: Path) -> None:
+    from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.config.paths import get_media_dir
+
+    home, project, _store, policy = _managed_tools(tmp_path, access="read_write")
+    media = get_media_dir()
+    media.mkdir(parents=True, exist_ok=True)
+    generated = media / "generated-image.bin"
+    sibling = media / "unlisted-sibling.txt"
+    generated.write_bytes(b"GENERATED-IMAGE-BYTES")
+    sibling.write_text("UNLISTED-SIBLING-CONTENT", encoding="utf-8")
+
+    scope_token, request = _bind_managed_turn(home, project)
+    tool = ExecTool(
+        working_dir=str(home),
+        restrict_to_workspace=True,
+        resource_policy=policy,
+        read_file_tool=ReadFileTool(workspace=home, resource_policy=policy),
+    )
+    try:
+        with request:
+            copied = await tool.execute(
+                command=f"cp {shlex.quote(str(generated))} ./copied.bin && cat ./copied.bin",
+                input_files=[str(generated)],
+            )
+            assert "Exit code: 0" in copied
+            assert "GENERATED-IMAGE-BYTES" in copied
+            assert (project / "copied.bin").read_bytes() == b"GENERATED-IMAGE-BYTES"
+
+            sibling_read = await tool.execute(
+                command=f"cat {shlex.quote(str(sibling))}",
+                input_files=[str(generated)],
+            )
+            assert "Exit code: 0" not in sibling_read
+            assert "UNLISTED-SIBLING-CONTENT" not in sibling_read
+
+            unguarded = await tool.execute(
+                command=f"cat {shlex.quote(str(sibling))}",
+            )
+            assert "Exit code: 0" not in unguarded
+            assert "UNLISTED-SIBLING-CONTENT" not in unguarded
+
+            read_only = await tool.execute(
+                command=f"printf changed > {shlex.quote(str(generated))}",
+                input_files=[str(generated)],
+            )
+            assert "Exit code: 0" not in read_only
+            assert generated.read_bytes() == b"GENERATED-IMAGE-BYTES"
+
+            link = media / "linked-image.bin"
+            link.symlink_to(generated)
+            symlink_denied = await tool.execute(
+                command=f"cat {shlex.quote(str(link))}",
+                input_files=[str(link)],
+            )
+            assert symlink_denied.startswith("Error: input_files was not admitted")
+
+            properties = tool.parameters["properties"]
+            assert properties["input_files"]["type"] == ["array", "null"]
+            assert properties["input_files"]["maxItems"] == 16
+
+            denied_path = tmp_path / "instance" / "private.json"
+            denied_path.parent.mkdir(parents=True, exist_ok=True)
+            denied_path.write_text("PRIVATE-CONTROL", encoding="utf-8")
+            denied = await tool.execute(
+                command=f"cat {shlex.quote(str(denied_path))}",
+                input_files=[str(denied_path)],
+            )
+            assert denied.startswith("Error: input_files was not admitted")
+            assert "PRIVATE-CONTROL" not in denied
+
+            session = await tool.execute(
+                command="cat ignored",
+                input_files=[str(generated)],
+                yield_time_ms=100,
+            )
+            assert session.startswith("Error: input_files is supported only")
+    finally:
+        reset_workspace_scope(scope_token)
+
+
 def _enable_full(
     owner: DesktopPermissionOwner,
     source_binding: PermissionSourceBinding,

@@ -5,7 +5,9 @@ from copy import deepcopy
 from typing import TypeGuard
 
 IMAGE_HISTORY_OMISSION = (
-    "[Earlier image omitted from model context — do not describe or reference it]"
+    "[Earlier image omitted from model context; no image bytes are present. "
+    "Reread its saved file with read_file under current access if needed; do not "
+    "claim visual details from this placeholder]"
 )
 
 

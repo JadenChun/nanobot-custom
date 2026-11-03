@@ -57,6 +57,7 @@ def _bwrap(
     *,
     sandbox_ro_binds: Iterable[str] | None = None,
     sandbox_rw_binds: Iterable[str] | None = None,
+    input_files: Iterable[tuple[Path, str]] = (),
 ) -> str:
     """Wrap command in a bubblewrap sandbox (requires bwrap in container).
 
@@ -102,6 +103,12 @@ def _bwrap(
         args += ["--ro-bind-try", p, p]
     for p in _normalize_bind_paths(sandbox_rw_binds, workspace=ws):
         args += ["--bind-try", p, p]
+    for source, target in input_files:
+        args += _ensure_mountpoint_args(
+            Path(target).parent,
+            reset_roots=(Path("/"),),
+        )
+        args += ["--ro-bind", str(source), target]
     args += ["--chdir", sandbox_cwd, "--", "sh", "-c", command]
     return shlex.join(args)
 
@@ -117,6 +124,7 @@ def wrap_command(
     *,
     sandbox_ro_binds: Iterable[str] | None = None,
     sandbox_rw_binds: Iterable[str] | None = None,
+    input_files: Iterable[tuple[Path, str]] = (),
 ) -> str:
     """Wrap *command* using the named sandbox backend."""
     if backend := _BACKENDS.get(sandbox):
@@ -126,6 +134,7 @@ def wrap_command(
             cwd,
             sandbox_ro_binds=sandbox_ro_binds,
             sandbox_rw_binds=sandbox_rw_binds,
+            input_files=input_files,
         )
     raise ValueError(f"Unknown sandbox backend {sandbox!r}. Available: {list(_BACKENDS)}")
 
@@ -170,6 +179,7 @@ def wrap_managed_command(
     grant_snapshot: FolderGrantSnapshot | None = None,
     excluded_roots: Iterable[Path] = (),
     task_roots: Iterable[tuple[str, str, bool]] = (),
+    input_files: Iterable[tuple[Path, str]] = (),
     shell_program: str | None = None,
     login: bool = False,
 ) -> str:
@@ -250,6 +260,21 @@ def wrap_managed_command(
         elif private.exists():
             args += _ensure_mountpoint_args(private, reset_roots=(instance, Path("/tmp")))
             args += ["--tmpfs", str(private)]
+    # Exact per-invocation read snapshots are restored after private masks so
+    # the approved files remain readable at their advertised paths.
+    for source, target in input_files:
+        destination = Path(target)
+        if not destination.is_absolute() or destination.is_symlink():
+            raise PermissionError("Sandbox input file target changed")
+        if grants.is_private_path(destination) and not destination.is_relative_to(
+            get_media_dir().resolve(strict=False)
+        ):
+            raise PermissionError("Sandbox input file target is private")
+        args += _ensure_mountpoint_args(
+            destination.parent,
+            reset_roots=(instance, Path("/tmp")),
+        )
+        args += ["--ro-bind", str(source), str(destination)]
     args += ["--setenv", "TMPDIR", "/tmp",
              "--setenv", "XDG_CACHE_HOME", "/tmp/nanobot-cache",
              "--setenv", "npm_config_cache", "/tmp/nanobot-cache/npm",

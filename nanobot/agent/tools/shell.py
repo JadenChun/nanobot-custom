@@ -8,12 +8,14 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path, PureWindowsPath
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from urllib.parse import unquote
 
 from loguru import logger
@@ -49,6 +51,7 @@ from nanobot.agent.tools.native_process import (
 )
 from nanobot.agent.tools.sandbox import wrap_command, wrap_managed_command
 from nanobot.agent.tools.schema import (
+    ArraySchema,
     BooleanSchema,
     IntegerSchema,
     StringSchema,
@@ -68,6 +71,9 @@ from nanobot.security.workspace_access import (
     current_workspace_focus,
     current_workspace_scope,
 )
+
+if TYPE_CHECKING:
+    from nanobot.agent.tools.filesystem import ReadFileTool
 from nanobot.security.workspace_policy import is_path_within
 
 _IS_WINDOWS = sys.platform == "win32"
@@ -133,6 +139,15 @@ class ExecToolConfig(Base):
 
 
 @dataclass(slots=True)
+class _StagedInput:
+    """One approved input copied from its source into the invocation snapshot."""
+
+    requested: str
+    resolved: Path
+    snapshot: Path
+
+
+@dataclass(slots=True)
 class _PreparedCommand:
     command: str
     cwd: str
@@ -191,6 +206,17 @@ class _PreparedCommand:
             maximum=MAX_OUTPUT_CHARS,
             nullable=True,
         ),
+        input_files=ArraySchema(
+            StringSchema("Exact existing file path to expose read-only"),
+            description=(
+                "Optional exact files (for example generated images or attachments) to make "
+                "readable at their original paths inside a Sandbox command. Each path must "
+                "pass the current read policy; this is not an access grant. Omit for no "
+                "additional inputs. Foreground commands only."
+            ),
+            max_items=16,
+            nullable=True,
+        ),
     )
 )
 class ExecTool(Tool):
@@ -218,6 +244,8 @@ class ExecTool(Tool):
     @classmethod
     def create(cls, ctx: ToolContext) -> Tool:
         cfg = ctx.config.exec
+        from nanobot.agent.tools.filesystem import ReadFileTool
+
         return cls(
             working_dir=ctx.workspace,
             timeout=cfg.timeout,
@@ -234,6 +262,7 @@ class ExecTool(Tool):
             session_manager=ctx.exec_session_manager,
             resource_policy=ctx.fork_dependencies.resource_policy if ctx.fork_dependencies else None,
             desktop_use_active=ctx.config.desktop_use.enabled,
+            read_file_tool=ReadFileTool.create(ctx),
         )
 
     def __init__(
@@ -254,9 +283,11 @@ class ExecTool(Tool):
         session_manager: ExecSessionManager | None = None,
         resource_policy: ResourceAccessPolicy | None = None,
         desktop_use_active: bool = False,
+        read_file_tool: "ReadFileTool | None" = None,
     ):
         self.resource_policy = resource_policy
         self.desktop_use_active = desktop_use_active
+        self._read_file_tool = read_file_tool
         self.timeout = timeout
         self.working_dir = working_dir
         self.sandbox = sandbox
@@ -291,12 +322,113 @@ class ExecTool(Tool):
         self.allowed_env_keys = allowed_env_keys or []
         self._session_manager = session_manager or DEFAULT_EXEC_SESSION_MANAGER
 
+    def _input_path_is_private(self, resolved: Path) -> bool:
+        from nanobot.config.paths import get_data_dir, get_media_dir
+
+        media = get_media_dir().resolve(strict=False)
+        if resolved.is_relative_to(media):
+            return False
+        data = get_data_dir().resolve(strict=False)
+        if resolved.is_relative_to(data):
+            return True
+        policy = self.resource_policy
+        grants = policy.folder_grants if policy is not None else None
+        return bool(grants is not None and grants.is_private_path(resolved))
+
+    def _stage_input_files(
+        self,
+        values: list[str] | None,
+    ) -> tuple[Path | None, list[_StagedInput]] | ToolResult:
+        """Copy approved inputs into one bounded per-invocation snapshot."""
+        if not values:
+            return None, []
+        reader = self._read_file_tool
+        if reader is None:
+            return ToolResult.error("Error: input file read policy is unavailable")
+        if len(values) > self._MAX_INPUT_FILES:
+            return ToolResult.error(
+                f"Error: input_files accepts at most {self._MAX_INPUT_FILES} files"
+            )
+        staging = Path(tempfile.mkdtemp(prefix="nanobot-exec-inputs-"))
+        staged: list[_StagedInput] = []
+        seen: set[Path] = set()
+        total_bytes = 0
+        try:
+            for raw in values:
+                if type(raw) is not str or not raw.strip():
+                    raise ValueError("input_files entries must be non-empty paths")
+                requested = Path(raw).expanduser()
+                if requested.is_symlink():
+                    raise PermissionError("symlink inputs are not allowed")
+                try:
+                    resolved = reader.resolve_read_path(str(requested))
+                except (OSError, PermissionError, ValueError) as exc:
+                    raise PermissionError("input path is not readable") from exc
+                if resolved in seen:
+                    continue
+                if resolved.is_symlink() or not resolved.is_file():
+                    raise PermissionError("input path is not an approved regular file")
+                if self._input_path_is_private(resolved):
+                    raise PermissionError("input path is private runtime storage")
+                flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                descriptor = os.open(resolved, flags)
+                try:
+                    before = os.fstat(descriptor)
+                    if not stat.S_ISREG(before.st_mode):
+                        raise PermissionError("input path is not a regular file")
+                    total_bytes += before.st_size
+                    if before.st_size > self._MAX_INPUT_BYTES or total_bytes > self._MAX_INPUT_BYTES:
+                        raise ValueError("input files exceed the snapshot byte limit")
+                    snapshot = staging / f"{len(staged):02d}-{resolved.name}"
+                    with open(snapshot, "wb") as destination, os.fdopen(
+                        descriptor, "rb", closefd=False,
+                    ) as source:
+                        shutil.copyfileobj(source, destination, 1024 * 1024)
+                    after = os.fstat(descriptor)
+                    if (
+                        (after.st_size, after.st_mtime_ns, after.st_ino)
+                        != (before.st_size, before.st_mtime_ns, before.st_ino)
+                    ):
+                        raise PermissionError("input changed while it was being read")
+                finally:
+                    os.close(descriptor)
+                snapshot.chmod(0o400)
+                staged.append(_StagedInput(str(requested), resolved, snapshot))
+                seen.add(resolved)
+            return staging, staged
+        except (OSError, PermissionError, ValueError) as exc:
+            shutil.rmtree(staging, ignore_errors=True)
+            return ToolResult.error(f"Error: input_files was not admitted ({exc})")
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
+
+    def _revalidate_input_files(self, staged: list[_StagedInput]) -> ToolResult | None:
+        """Fail closed if an approved input changed before launch."""
+        reader = self._read_file_tool
+        if reader is None or not staged:
+            return None
+        for item in staged:
+            try:
+                resolved = reader.resolve_read_path(item.requested)
+            except (OSError, PermissionError, ValueError):
+                return ToolResult.error(
+                    "Error: input_files permission changed before command launch"
+                )
+            if resolved != item.resolved or resolved.is_symlink() or not item.snapshot.is_file():
+                return ToolResult.error(
+                    "Error: input_files source changed before command launch"
+                )
+        return None
+
     @property
     def name(self) -> str:
         return "exec"
 
     _MAX_TIMEOUT = 600
     _MAX_OUTPUT = 10_000
+    _MAX_INPUT_FILES = 16
+    _MAX_INPUT_BYTES = 64 * 1024 * 1024
 
     # Kernel device files safe as stdio redirect targets (#3599).
     _BENIGN_DEVICE_PATHS: frozenset[str] = frozenset({
@@ -327,6 +459,58 @@ class ExecTool(Tool):
         max_output_chars: int | None = None,
         max_output_tokens: int | None = None,
         notify_on_exit: bool = False,
+        input_files: list[str] | None = None,
+        **kwargs: Any,
+    ) -> str | ToolOutcome:
+        """Run a shell command, optionally exposing exact approved input files.
+
+        ``input_files`` is additive: omitting it preserves the existing shell
+        confinement. Supplying a path is not an access grant; each path passes
+        the same read resolver and current policy as ``read_file``.
+        """
+        if input_files and (yield_time_ms is not None or notify_on_exit):
+            return ToolResult.error(
+                "Error: input_files is supported only for foreground commands"
+            )
+        staged_result = self._stage_input_files(input_files)
+        if isinstance(staged_result, str):
+            return staged_result
+        staging, staged = staged_result
+        input_mounts = tuple(
+            (item.snapshot, str(item.resolved)) for item in staged
+        )
+        try:
+            return await self._execute_impl(
+                command=command,
+                cmd=cmd,
+                working_dir=working_dir,
+                workdir=workdir,
+                timeout=timeout,
+                shell=shell,
+                login=login,
+                yield_time_ms=yield_time_ms,
+                max_output_chars=max_output_chars,
+                max_output_tokens=max_output_tokens,
+                notify_on_exit=notify_on_exit,
+                input_mounts=input_mounts,
+                staged_inputs=staged,
+                **kwargs,
+            )
+        finally:
+            if staging is not None:
+                shutil.rmtree(staging, ignore_errors=True)
+
+    async def _execute_impl(
+        self, command: str | None = None, cmd: str | None = None,
+        working_dir: str | None = None, workdir: str | None = None,
+        timeout: int | None = None, shell: str | None = None,
+        login: bool | None = None, yield_time_ms: int | None = None,
+        max_output_chars: int | None = None,
+        max_output_tokens: int | None = None,
+        notify_on_exit: bool = False,
+        *,
+        input_mounts: tuple[tuple[Path, str], ...] = (),
+        staged_inputs: list[_StagedInput] | None = None,
         **kwargs: Any,
     ) -> str | ToolOutcome:
         command = command or cmd
@@ -336,7 +520,14 @@ class ExecTool(Tool):
         if max_output_chars is None:
             max_output_chars = max_output_tokens
 
-        prepared = self._prepare_command(command, working_dir, timeout, shell, login)
+        prepared = self._prepare_command(
+            command,
+            working_dir,
+            timeout,
+            shell,
+            login,
+            input_mounts=input_mounts,
+        )
         if isinstance(prepared, ToolOutcome):
             return prepared
         if isinstance(prepared, str):
@@ -353,6 +544,10 @@ class ExecTool(Tool):
             return prepared
         if isinstance(prepared, str):
             return prepared
+
+        revalidation_error = self._revalidate_input_files(staged_inputs or [])
+        if revalidation_error is not None:
+            return revalidation_error
 
         if yield_time_ms is not None or notify_on_exit:
             return await self._execute_session(
@@ -497,6 +692,8 @@ class ExecTool(Tool):
         timeout: int | None = None,
         shell: str | None = None,
         login: bool | None = None,
+        *,
+        input_mounts: tuple[tuple[Path, str], ...] = (),
     ) -> _PreparedCommand | str | ToolOutcome:
         focus = current_workspace_focus()
         full_reference = focus.full_reference if focus is not None else None
@@ -581,6 +778,7 @@ class ExecTool(Tool):
                     grant_snapshot=grant_snapshot,
                     excluded_roots=policy.managed_repository_roots(),
                     task_roots=task_roots,
+                    input_files=input_mounts,
                     shell_program=selected_shell,
                     login=bool(login),
                 )
@@ -609,6 +807,7 @@ class ExecTool(Tool):
                     cwd,
                     sandbox_ro_binds=[str(p) for p in self.sandbox_ro_binds],
                     sandbox_rw_binds=[str(p) for p in self.sandbox_rw_binds],
+                    input_files=input_mounts,
                 )
                 cwd = str(Path(workspace).resolve())
 

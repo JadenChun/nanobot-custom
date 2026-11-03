@@ -114,8 +114,10 @@ def generated_image_tool_result(artifacts: list[dict[str, Any]]) -> str:
             "next_step": (
                 "Use these artifact paths as reference_images for follow-up edits. "
                 "Call the message tool with the artifact paths in the media parameter "
-                "to deliver the images to the user. Keep raw paths internal unless the "
-                "user asks for debug details."
+                "to deliver the images to the user. To inspect or copy one from a "
+                "Sandbox shell, pass its exact path in the exec tool's 'input_files' "
+                "list and write only to an authorized workspace folder. Keep raw paths "
+                "internal unless the user asks for debug details."
             ),
         },
         ensure_ascii=False,
