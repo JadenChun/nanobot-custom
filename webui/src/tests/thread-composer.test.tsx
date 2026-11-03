@@ -3909,3 +3909,19 @@ describe("ThreadComposer — mobile controls", () => {
     ).toBe("");
   });
 });
+
+describe("next-message settings hint", () => {
+  it("labels editable selections as applying to the next message while running", () => {
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+      />,
+    );
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
+      "For the next message",
+    );
+  });
+});

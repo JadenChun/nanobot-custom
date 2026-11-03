@@ -2606,6 +2606,16 @@ export function ThreadComposer({
               />
             ) : !mobileComposer ? accessControl : null}
           </div>
+          {isStreaming ? (
+            <span
+              role="status"
+              className="mr-auto shrink-0 pl-1 text-[11px] leading-4 text-muted-foreground"
+            >
+              {t("thread.composer.nextMessage", {
+                defaultValue: "For the next message",
+              })}
+            </span>
+          ) : null}
           <div
             className={cn(
               "thread-composer-footer-actions ml-auto flex min-w-0 items-center justify-end",
