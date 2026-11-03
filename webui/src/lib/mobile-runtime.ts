@@ -264,7 +264,14 @@ class MobileWebSocket {
   }
 
   async recover(): Promise<void> {
-    if (this.retired || this.readyState !== 1 || !this.wsId) return;
+    if (this.retired) return;
+    if (this.readyState !== 1 || !this.wsId) {
+      // The owning client performs the reconnect; refreshing here makes a
+      // foreground return use the current access token without duplicating
+      // the socket.
+      await this.runtime.transport.refresh().catch(() => false);
+      return;
+    }
     const ping = this.runtime.transport.wsPing;
     if (!ping) return;
     const healthy = await ping.call(this.runtime.transport, this.wsId).catch(() => false);

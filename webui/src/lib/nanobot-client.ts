@@ -237,6 +237,7 @@ export class NanobotClient {
   // Frames queued while the socket is not yet OPEN
   private sendQueue: Outbound[] = [];
   private reconnectAttempts = 0;
+  private authRetryFailures = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly shouldReconnect: boolean;
   private readonly maxBackoffMs: number;
@@ -801,6 +802,25 @@ export class NanobotClient {
     sock.onclose = (ev) => this.handleClose(sock, ev);
   }
 
+  async retry(): Promise<void> {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.intentionallyClosed = false;
+    this.reconnectAttempts = 0;
+    this.authRetryFailures = 0;
+    if (this.options.onReauth) {
+      try {
+        const refreshed = await this.options.onReauth();
+        if (refreshed) this.currentUrl = refreshed;
+      } catch {
+        // Keep the current URL; the notice remains actionable.
+      }
+    }
+    this.connect();
+  }
+
   close(): void {
     this.intentionallyClosed = true;
     if (this.reconnectTimer) {
@@ -1092,6 +1112,7 @@ export class NanobotClient {
     if (this.socket !== sock) return;
     this.setStatus("open");
     this.reconnectAttempts = 0;
+    this.authRetryFailures = 0;
     // Re-attach every known chat_id so deliveries continue routing after a drop.
     for (const chatId of this.knownChats) {
       this.rawSend({ type: "attach", chat_id: chatId });
@@ -1501,9 +1522,22 @@ export class NanobotClient {
       if (this.options.onReauth) {
         try {
           const refreshed = await this.options.onReauth();
-          if (refreshed) this.currentUrl = refreshed;
+          if (refreshed) {
+            this.currentUrl = refreshed;
+            this.authRetryFailures = 0;
+          } else {
+            this.authRetryFailures += 1;
+            if (this.authRetryFailures >= 3) {
+              this.setStatus("error");
+              return;
+            }
+          }
         } catch {
-          // fall through to retry with current URL
+          this.authRetryFailures += 1;
+          if (this.authRetryFailures >= 3) {
+            this.setStatus("error");
+            return;
+          }
         }
       }
       this.connect();

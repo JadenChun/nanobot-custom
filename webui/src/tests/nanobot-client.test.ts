@@ -2371,3 +2371,34 @@ describe("versioned request settings", () => {
     });
   });
 });
+
+describe("bounded mobile recovery", () => {
+  it("stops silent retrying and exposes an actionable retry after repeated reauth failure", async () => {
+    const reauth = vi.fn().mockResolvedValue(null);
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: true,
+      maxBackoffMs: 2_000,
+      onReauth: reauth,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      lastSocket().fakeCloseWithCode(1008);
+      await vi.advanceTimersByTimeAsync(2_000);
+    }
+
+    expect(client.status).toBe("error");
+    const socketsBeforeRetry = FakeSocket.instances.length;
+
+    reauth.mockResolvedValue("ws://refreshed");
+    await client.retry();
+    expect(FakeSocket.instances.length).toBe(socketsBeforeRetry + 1);
+    expect(lastSocket().url).toBe("ws://refreshed");
+    expect(client.status).toBe("connecting");
+    lastSocket().fakeOpen();
+    expect(client.status).toBe("open");
+  });
+});

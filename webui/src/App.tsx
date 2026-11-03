@@ -2597,7 +2597,10 @@ function Shell({
           showHostChrome && "host-window-shell",
         )}
       >
-        <MobileConnectionNotice status={client.status} />
+        <MobileConnectionNotice
+          status={client.status}
+          onRetry={() => void client.retry()}
+        />
         {showHostChrome ? (
           <HostChrome
             rightAction={

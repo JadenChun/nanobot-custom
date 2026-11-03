@@ -681,3 +681,18 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
 - Checks: Kotlin compile, 92 WebUI tests, WebUI build/lint, broker Go tests,
   strict 0/528. The owner-refresh/status/device instrumented journey is added
   but not executed here (no live service shutdown authorized).
+
+#### MC07 — PASS (focused; installed recovery qualification pending)
+
+- Foreground visibility on a closed native socket now refreshes the access
+  token without opening a duplicate socket; the owning client performs the
+  single reconnect.
+- Reconnect reauthentication is bounded to three failures. It then surfaces the
+  existing mobile connection notice in `error` state with an explicit Retry
+  action instead of staying indefinitely at Sending/Connecting.
+- Manual Retry refreshes the URL/token, resets reconnect counters and starts
+  one current socket. Draft and pairing state are untouched; no uncertain
+  message/mutation is auto-resubmitted. Confirmed device revocation remains the
+  native refresh path's distinct logout signal.
+- Added client tests for bounded failure and manual retry, plus the notice's
+  actionable button. Focused: 185 WebUI tests, build/lint.
