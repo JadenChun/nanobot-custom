@@ -394,3 +394,28 @@ Emulator artifact hashes (private evidence directory):
   `PASS_NO_NEW_DIAGNOSTICS`.
 - Android debug build: BUILD SUCCESSFUL.
 - Emulator M01 rerun: PASS, 37 instrumentation tests, native probe executed.
+
+### Temporary Full, request proofs, steering and native pairing custody
+
+- Temporary chats own a private in-memory source binding (`temporary:<chat_id>`,
+  fresh incarnation, generation fence). The same permission owner can enable
+  Full for it without creating a canonical session, source file or durable grant.
+- Discarding the temporary chat retires the ephemeral Full and its device
+  consent; another temporary chat's binding cannot resolve the reference.
+- Full references can be bound to one `request_turn_id` and are rejected at
+  admission for another turn. Persistent ingress derives the same bound proof.
+- Same-context steering with a matching active target is admitted into the
+  existing pending queue; changed context returns explicit `not_admitted`
+  (`steering_context_changed`) so it can be queued as a new request.
+- Android custody now retains the eligible pairing id/origin/challenge across
+  process death; approved polling clears it and the phone bootstrapper restores
+  the active challenge instead of rescanning.
+
+Focused checks:
+- `tests/webui/test_temporary_full.py` -> 4 passed (binding isolation, request
+  binding, ephemeral loop execution, discard retirement).
+- `tests/webui tests/webui/test_permission_v2_api.py tests/security/test_permission_v2_authority.py tests/session/test_p5_stage2_temporary_sessions.py` -> 896 passed.
+- Android `:app:assembleDebug` -> BUILD SUCCESSFUL.
+- Emulator M01 -> PASS, 37 instrumentation tests.
+- Full Python suite, WebUI suite/build/lint and strict comparator run after these
+  changes; totals recorded below.
