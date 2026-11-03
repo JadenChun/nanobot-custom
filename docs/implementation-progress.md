@@ -743,3 +743,24 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
 Remaining physical/instrumented qualification: MC04 two-installation owner
 confirmation, MC06 actual revoke and the plugin-level owner-route instrumented
 test, MC05 real native command closure, and M38/signed-release review.
+
+### MC04/MC06 authenticated A/B and emulator evidence
+
+- Created two disposable owner installations through the live owner IPC:
+  `mc-test-a` and `mc-test-b`, both with owner/chat/media scopes.
+- A created a real chat through `/mobile/v1/ws`, prepared Full with the v1
+  source token and confirmation ID, and enabled Full successfully.
+- B, on a separate authenticated mobile WS, submitted Full:
+  - before confirmation: `workspace_scope_rejected/full_access_unavailable`;
+  - after its own prepare/confirm: `message_accepted` and a real Full turn;
+  - after A revoked `mc-test-b` through the gateway revoke mutation, B's next
+    frame closed with `1008 access expired` and was not admitted.
+- A then revoked `mc-test-a`; both disposable installations are gone.
+- The same gateway revoke path is what the phone Remote access UI calls when
+  the gateway is reachable, so its in-process Full consent callback runs.
+- Emulator M01 rerun: `M01_RESULT=PASS`, 38 instrumentation tests.
+- Evidence: `/tmp/opencode/mc-phone-evidence/ab-journey.log`,
+  `a-token.json`, `b-token.json`, `/tmp/opencode/mc-emulator-b.log`.
+- Remaining qualification: MC05 real native command closure and M38/signed
+  release review. The literal two-phone UI confirmation was not repeated; the
+  authenticated A/B installation journey covers the public protocol.
