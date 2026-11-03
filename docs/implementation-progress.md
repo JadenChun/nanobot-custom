@@ -20,16 +20,16 @@ remaining blockers. Private logs and runtime data stay outside the repository.
 
 | Package | Status | Notes |
 | --- | --- | --- |
-| P1 provider route and request preparation | complete (focused checks) | typed route metadata, wrapper preview, auxiliary primary binding |
-| P2 ordinary context lifecycle / recovery | focused complete; secondary replanning partial | preventive budgeting wired; bounded replanning not expanded |
+| P1 provider route and request preparation | complete (focused checks) | route metadata, wrapper preview, selected-route dispatch check, typed re-preparation |
+| P2 ordinary context lifecycle / recovery | focused complete | preventive budgeting, model-derived summaries, bounded truncated-summary replanning |
 | P3 authorized media inputs | focused complete | exact read-only input snapshots; foreground only |
 | Mobile A socket correctness | focused complete | identity, terminal lifecycle, UTF-8, unique broker ids |
-| Mobile B delivery authorization | focused complete; helper cleanup deferred | uncached revalidation before private delivery |
+| Mobile B delivery authorization | complete (focused) | uncached revalidation; test helper removed from production; WS-boundary cases |
 | Mobile C owner wiring / foreground recovery | complete (focused + emulator M01) | native Ping/refresh/resume bridge, owner routes, foreground recovery; physical Doze/radio pending |
 | Mobile D pairing continuity | complete (focused + native custody) | renewal, restore, Kotlin pending-setup custody; physical device evidence pending |
 | Mobile E request authority/backend | focused complete | versioned settings, defaults, device/source Full consent, ephemeral Temporary Full, request-bound proofs, same-context steering |
 | Mobile F composer settings/presentation | focused complete | queued snapshot + next-message hint; physical visual/touch evidence pending |
-| Mobile G standard feature dispatcher | focused complete | standard owner read dispatch, standard mobile WS actions, typed replay mutation adapter retained |
+| Mobile G standard feature dispatcher | focused complete | standard owner read dispatch; mobile WS actions and mutations use the standard dispatcher with replay/auth; wrapper tests retained for old builds |
 | Integrated qualification / M38 | local gates green; release gates pending | full Python/WebUI/type/build/M01 pass; signed phone and M38 pending |
 
 ## Acceptance evidence
@@ -436,3 +436,18 @@ Remaining are external or non-code qualification items: physical-phone
 Doze/radio/Tailscale/signed-update journey, signed candidate evidence, and the
 M38 independent integrated release review. No installation, merge or push was
 performed.
+
+### P1/P2/B/G code-gap closure
+
+- P1: `ProviderRouteChanged` is raised when dispatch selects a leaf different
+  from the captured preview; the runner drops the stale selection once and lets
+  the selected leaf's final guard re-verify. Added a stale-quote regression.
+- P2: a truncated summary is discarded and the same evidence cursor retries the
+  next smaller closed chunk within the existing deadline and four-call ceiling.
+- B: removed `GatewayHTTPHandler.mobile_mutation_payload` from production;
+  admission cases now use a test adapter plus authenticated WS-boundary owner
+  denial/success cases.
+- G: authenticated mobile WS mutation entry is verified to route into the
+  standard dispatcher with operation allowlisting and replay/auth semantics.
+- Focused: 132 passed across route/context/mutation selectors.
+- Strict: 0/528; comparator introduced 0.
