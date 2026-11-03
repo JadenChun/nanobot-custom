@@ -833,6 +833,63 @@ describe("ThreadShell", () => {
     expect(screen.queryByText("failed to read file")).not.toBeInTheDocument();
   });
 
+  it("rechecks a linked file when the same streaming reply finishes (CP-08)", async () => {
+    await preloadMarkdownText();
+    const client = makeClient();
+    let available = false;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("websocket%3Apreview-stream/webui-thread")) {
+        return Promise.resolve(httpJson(transcriptFromSimpleMessages([
+          { role: "user", content: "Show the file" },
+        ])));
+      }
+      if (url.includes("/file-preview?") && url.includes("probe=1")) {
+        return Promise.resolve(httpJson({ available }));
+      }
+      if (url.includes("/file-preview?")) {
+        return Promise.resolve(httpJson({
+          path: "/external/stream.txt", display_path: "stream.txt", project_path: "/project",
+          language: "text", content: "stream-marker\n", size: 14, truncated: false,
+        }));
+      }
+      return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(wrap(client, <ThreadShell
+      session={session("preview-stream")} title="Streaming preview" onToggleSidebar={() => {}}
+    />));
+    await screen.findByText("Show the file");
+    act(() => {
+      client._emitChat("preview-stream", {
+        event: "goal_status", chat_id: "preview-stream", status: "running",
+        started_at: Date.now() / 1000, turn_id: "preview-turn",
+      });
+      client._emitChat("preview-stream", {
+        event: "delta", chat_id: "preview-stream", text: "Open `files/stream.txt`",
+        turn_id: "preview-turn",
+      });
+    });
+    await screen.findByTestId("inline-file-path");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("file-preview?path=files%2Fstream.txt&probe=1"),
+      expect.anything(),
+    ));
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByTestId("inline-file-path")).not.toHaveAttribute("role");
+
+    available = true;
+    act(() => client._emitChat("preview-stream", {
+      event: "turn_end", chat_id: "preview-stream", turn_id: "preview-turn",
+    }));
+
+    await waitFor(() => expect(screen.getByTestId("inline-file-path")).toHaveAttribute("role", "button"));
+    fireEvent.click(screen.getByTestId("inline-file-path"));
+    await waitFor(() => expect(screen.getByTestId("file-preview-panel")).toHaveTextContent("stream-marker"));
+    expect(screen.getAllByTestId("inline-file-path")).toHaveLength(1);
+    expect(screen.getAllByText("Show the file")).toHaveLength(1);
+  });
+
   it("hides actions for a complete assistant-only message until turn_end", async () => {
     const client = makeClient();
     vi.mocked(fetch).mockImplementation(async (input) => (

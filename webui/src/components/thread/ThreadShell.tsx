@@ -599,7 +599,7 @@ const FILE_PREVIEW_CLOSE_ANIMATION_MS = 320;
 type FilePreviewAvailabilityCacheEntry = {
   available?: boolean;
   promise: Promise<boolean>;
-  revision: number;
+  revision: string;
 };
 
 function clampFilePreviewWidth(width: number, maxWidth: number): number {
@@ -1356,7 +1356,7 @@ export function ThreadShell({
     () => new Map<string, FilePreviewAvailabilityCacheEntry>(),
     [historyKey],
   );
-  const filePreviewAvailabilityRevision = displayMessages.length;
+  const filePreviewAvailabilityRevision = `${displayMessages.length}:${turnActive}`;
   const resolveFilePreviewAvailability = useCallback((path: string) => {
     if (!historyKey) return Promise.resolve(false);
     const cached = filePreviewAvailabilityCache.get(path);

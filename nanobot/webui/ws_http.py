@@ -58,6 +58,7 @@ from nanobot.webui.file_preview import (
     WebUIFilePreviewError,
     file_preview_availability_payload,
     file_preview_payload,
+    file_preview_reference,
 )
 from nanobot.webui.gateway_tokens import GatewayTokenStore, token_response_payload
 from nanobot.webui.http_utils import (
@@ -148,6 +149,7 @@ from nanobot.webui.thread_disk import delete_webui_thread
 from nanobot.webui.transcript import (
     WEBUI_TRANSCRIPT_SCHEMA_VERSION,
     build_webui_thread_response,
+    read_transcript_lines,
 )
 from nanobot.webui.workspaces import (
     RepositoryInUseError,
@@ -1570,6 +1572,7 @@ class GatewayHTTPHandler:
                         decoded_key.split(":", 1)[1],
                     )
                 )
+            referenced_path = file_preview_reference(path, read_transcript_lines(decoded_key))
             if is_probe:
                 payload = file_preview_availability_payload(
                     path,
@@ -1580,6 +1583,7 @@ class GatewayHTTPHandler:
                     permission_owner=permission_owner,
                     permission_reference=permission_reference,
                     restrict_to_root=None if local_access else scope.project_path,
+                    referenced_path=referenced_path,
                 )
             else:
                 payload = file_preview_payload(
@@ -1591,6 +1595,7 @@ class GatewayHTTPHandler:
                     permission_owner=permission_owner,
                     permission_reference=permission_reference,
                     restrict_to_root=None if local_access else scope.project_path,
+                    referenced_path=referenced_path,
                 )
         except WebUIFilePreviewError as e:
             if is_probe and e.status in {400, 403, 404, 415}:

@@ -1,10 +1,12 @@
-"""Workspace-scoped source preview payloads for the WebUI."""
+"""Workspace and assistant-shared source previews for the WebUI."""
 
 from __future__ import annotations
 
 import re
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping, Sequence
+from pathlib import Path, PurePosixPath
+from posixpath import normpath
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import unquote, urlparse
 
 from nanobot.config.paths import get_media_dir
@@ -19,6 +21,8 @@ if TYPE_CHECKING:
     )
 
 MAX_FILE_PREVIEW_BYTES = 384 * 1024
+_INLINE_PATH_RE = re.compile(r"(?<!`)`([^`\r\n]+)`(?!`)")
+_LINK_PATH_RE = re.compile(r"(?<!!)\[[^\]\r\n]*\]\(\s*(?:<([^>\r\n]+)>|([^\s)]+))")
 
 
 class WebUIFilePreviewError(ValueError):
@@ -28,6 +32,105 @@ class WebUIFilePreviewError(ValueError):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+def file_preview_reference(
+    raw_path: str | None,
+    records: Sequence[Mapping[str, object]],
+) -> Path | None:
+    """Resolve only a file the assistant shared in this chat's display transcript.
+
+    Relative references use absolute paths observed in successful tool results in
+    the same turn. A filename alone never triggers a filesystem search or grants
+    access to a directory. Read-policy checks still apply to the returned file.
+    """
+    requested = _clean_preview_path(raw_path)
+    if not requested or len(requested) > 4096:
+        return None
+    texts: dict[str, list[str]] = {}
+    deltas: dict[str, str] = {}
+    observed: dict[str, set[Path]] = {}
+    legacy_turn = 0
+    for record in records:
+        event = record.get("event")
+        if event in ("user", "user_message"):
+            legacy_turn += 1
+        turn = record.get("turn_id")
+        turn = turn if isinstance(turn, str) and turn else f"legacy:{legacy_turn}"
+        text = record.get("text")
+        if event == "delta" and isinstance(text, str):
+            deltas[turn] = deltas.get(turn, "") + text
+        elif event in ("message", "stream_end") and record.get("kind") not in (
+            "progress", "tool_hint", "reasoning",
+        ) and isinstance(text, str):
+            texts.setdefault(turn, []).append(text)
+        tool_events = record.get("tool_events")
+        if not isinstance(tool_events, list):
+            continue
+        # Display transcript objects come from JSON, whose object keys are strings.
+        for item in cast(list[object], tool_events):
+            if not isinstance(item, dict):
+                continue
+            tool = cast(dict[str, object], item)
+            if tool.get("phase") != "end" or tool.get("error"):
+                continue
+            paths = observed.setdefault(turn, set())
+            result = tool.get("result")
+            if isinstance(result, str):
+                paths.update(_absolute_preview_paths(result))
+            arguments = tool.get("arguments")
+            if isinstance(arguments, dict):
+                args = cast(dict[str, object], arguments)
+                for key in ("path", "file_path", "absolute_path"):
+                    value = args.get(key)
+                    if isinstance(value, str):
+                        paths.update(_absolute_preview_paths(value))
+
+    for turn, delta in deltas.items():
+        if turn not in texts:
+            texts[turn] = [delta]
+    suffix = PurePosixPath(normpath(requested.replace("\\", "/"))).parts
+    while suffix and suffix[0] in {".", ".."}:
+        suffix = suffix[1:]
+    matches: set[Path] = set()
+    for turn, replies in texts.items():
+        references = [path for text in replies for path in _preview_text_references(text)]
+        if requested not in references:
+            continue
+        if Path(requested).expanduser().is_absolute():
+            try:
+                matches.add(Path(requested).expanduser().resolve(strict=False))
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise WebUIFilePreviewError(400, "invalid path") from exc
+            continue
+        candidates = set(observed.get(turn, ()))
+        for reference in references:
+            candidates.update(_absolute_preview_paths(reference))
+        for candidate in candidates:
+            parts = PurePosixPath(candidate.as_posix()).parts
+            if suffix and parts[-len(suffix):] == suffix:
+                matches.add(candidate)
+    if len(matches) > 1:
+        raise WebUIFilePreviewError(409, "file reference is ambiguous; use its full path")
+    return next(iter(matches), None)
+
+
+def _preview_text_references(text: str) -> list[str]:
+    paths = [match.group(1) for match in _INLINE_PATH_RE.finditer(text)]
+    paths.extend(match.group(1) or match.group(2) for match in _LINK_PATH_RE.finditer(text))
+    return [_clean_preview_path(path) for path in paths]
+
+
+def _absolute_preview_paths(text: str) -> set[Path]:
+    paths: set[Path] = set()
+    for value in [*text.splitlines(), *_preview_text_references(text)]:
+        value = _clean_preview_path(value.strip().strip("\"'"))
+        if value and len(value) <= 4096 and Path(value).expanduser().is_absolute():
+            try:
+                paths.add(Path(value).expanduser().resolve(strict=False))
+            except (OSError, ValueError, RuntimeError):
+                continue
+    return paths
 
 
 def file_preview_payload(
@@ -41,6 +144,7 @@ def file_preview_payload(
     permission_owner: DesktopPermissionOwner | None = None,
     permission_reference: WorkspacePermissionReference | None = None,
     restrict_to_root: Path | None = None,
+    referenced_path: Path | None = None,
 ) -> dict[str, Any]:
     """Return a text preview for a file allowed by the session workspace scope."""
 
@@ -53,6 +157,7 @@ def file_preview_payload(
         permission_owner=permission_owner,
         permission_reference=permission_reference,
         restrict_to_root=restrict_to_root,
+        referenced_path=referenced_path,
     )
 
     try:
@@ -93,6 +198,7 @@ def file_preview_availability_payload(
     permission_owner: DesktopPermissionOwner | None = None,
     permission_reference: WorkspacePermissionReference | None = None,
     restrict_to_root: Path | None = None,
+    referenced_path: Path | None = None,
 ) -> dict[str, bool]:
     """Confirm that a path is a readable text preview candidate without loading it fully."""
 
@@ -105,6 +211,7 @@ def file_preview_availability_payload(
         permission_owner=permission_owner,
         permission_reference=permission_reference,
         restrict_to_root=restrict_to_root,
+        referenced_path=referenced_path,
     )
     try:
         with open(resolved, "rb") as f:
@@ -126,12 +233,18 @@ def _resolve_preview_path(
     permission_owner: DesktopPermissionOwner | None,
     permission_reference: WorkspacePermissionReference | None,
     restrict_to_root: Path | None = None,
+    referenced_path: Path | None = None,
 ) -> Path:
     path = _clean_preview_path(raw_path)
     if not path:
         raise WebUIFilePreviewError(400, "missing path")
     if len(path) > 4096:
         raise WebUIFilePreviewError(400, "path is too long")
+    # Only the server-resolved, assistant-shared file extends the preview scope;
+    # its parent folder and unrelated files receive no additional access.
+    shared_files = [referenced_path] if referenced_path is not None and resource_policy else []
+    if referenced_path is not None:
+        path = str(referenced_path)
 
     try:
         allow_granted_outside_root = (
@@ -154,6 +267,7 @@ def _resolve_preview_path(
             workspace=scope.project_path,
             allowed_root=allowed_root,
             extra_allowed_roots=extra_roots,
+            extra_allowed_files=shared_files,
             strict=True,
         )
     except FileNotFoundError as e:
@@ -172,6 +286,7 @@ def _resolve_preview_path(
                 resolved,
                 "read",
                 extra_read_roots=extra_roots,
+                extra_read_files=shared_files,
                 managed=managed_access,
                 allow_folder_grants=allow_folder_grants,
                 permission_owner=permission_owner,
