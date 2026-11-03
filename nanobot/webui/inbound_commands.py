@@ -804,6 +804,8 @@ class WebUICommandRouter:
                     **rejection_fields,
                 )
                 return
+            if temporary_policy is None:
+                self._workspaces.mark_full_request_admitted(chat_id)
 
         if not self._transport.is_allowed(client_id):
             await self._transport.webui_send_event(

@@ -2764,7 +2764,6 @@ function Shell({
                         workspaceControls={workspaces?.controls ?? null}
                       workspaces={workspaces}
                       onRefreshWorkspaces={refreshWorkspaces}
-                        workspaceScopeDisabled={activeChatRunning}
                         workspaceError={workspaceError}
                         onWorkspaceScopeChange={applyWorkspaceScope}
                         onWorkspaceScopeAcknowledged={(scope) => {
@@ -2817,7 +2816,6 @@ function Shell({
                       workspaceControls={workspaces?.controls ?? null}
                       workspaces={workspaces}
                       onRefreshWorkspaces={refreshWorkspaces}
-                      workspaceScopeDisabled={paneRunning}
                       workspaceError={context.active ? workspaceError : null}
                       onWorkspaceScopeChange={(scope) => {
                         if (paneRunning) return;

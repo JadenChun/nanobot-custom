@@ -1861,7 +1861,7 @@ async def test_webui_scope_rejects_missing_project_path(bus: MagicMock, tmp_path
 
 
 @pytest.mark.asyncio
-async def test_webui_scope_rejects_running_scope_change(
+async def test_webui_message_scope_change_while_running_uses_submitted_snapshot(
     bus: MagicMock, tmp_path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     default_workspace = tmp_path / "default"
@@ -1913,12 +1913,14 @@ async def test_webui_scope_rejects_running_scope_change(
         wth._WEBSOCKET_TURN_WALL_STARTED_AT.clear()
 
     payload = json.loads(conn.send.await_args.args[0])
-    assert payload["event"] == "error"
-    assert payload["detail"] == "workspace_scope_rejected"
-    assert payload["reason"] == "chat_running"
+    assert payload["event"] == "message_accepted"
     assert payload["chat_id"] == "chat-running"
     assert payload["turn_id"] == "turn-scope-rejected"
-    bus.publish_inbound.assert_not_awaited()
+    bus.publish_inbound.assert_awaited_once()
+    inbound = bus.publish_inbound.await_args.args[0]
+    assert inbound.workspace_scope is not None
+    assert inbound.workspace_scope.project_path == other.resolve()
+    assert inbound.workspace_scope.access_mode == "restricted"
 
 
 @pytest.mark.asyncio

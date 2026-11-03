@@ -1786,3 +1786,164 @@ def test_source_token_and_chat_request_defaults_are_versioned(tmp_path: Path) ->
     assert defaults["access_mode"] == "restricted"
     assert defaults["revision"] == 2
     assert controller.source_token("defaults-chat") == token
+
+
+def test_full_selected_during_a_running_turn_applies_to_the_next_request(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    other = tmp_path / "other"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    other.mkdir()
+    manager = SessionManager(home, sessions_root=tmp_path / "sessions")
+    key = "websocket:mode-next"
+    scope = default_workspace_scope(project, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    manager._jsonl_store.save(session)
+    manager._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    grants = FolderGrantStore(
+        agent_home=home,
+        instance_root=instance,
+        path=instance / "webui" / "folder-grants.json",
+    )
+    controller = WebUIWorkspaceController(
+        session_manager=manager,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=grants,
+        native_supervisor_available=True,
+    )
+    owner = manager.desktop_permissions
+    source = controller._source_binding(key)
+    assert source is not None
+    current = controller._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    turn_owner = register_queued_websocket_turn_if_idle("mode-next", "turn-1")
+    assert turn_owner is not None
+    try:
+        result = controller.set_permission_mode({
+            "chat_id": "mode-next",
+            "mode": "full",
+            "expected_runtime_id": owner.runtime_id,
+            "expected_permission_revision": current["revision"],
+        }, local_ui=True)
+
+        assert "error" not in result
+        assert result["workspace_permissions"]["mode"] == "full"
+        assert result["workspace_scope"]["access_mode"] == "full"
+        # The selected mode is current for the next request; the running turn
+        # keeps its already-captured scope.
+        assert controller.scope_for_session_key(key).access_mode == "full"
+
+        next_scope = controller.scope_for_message(
+            {
+                "workspace_scope": {
+                    "project_path": str(other),
+                    "access_mode": "full",
+                    "restrict_to_workspace": False,
+                }
+            },
+            chat_id="mode-next",
+            chat_running=True,
+            controls_available=True,
+        )
+        assert next_scope.access_mode == "full"
+        assert next_scope.project_path == other.resolve()
+        reference = controller.ingress_full_reference(
+            "mode-next",
+            local_ui=True,
+            request_turn_id="turn-next",
+        )
+        assert reference is not None
+        assert controller.permission_owner.authorizes_full(
+            reference,
+            session_key=key,
+            source_binding=source,
+            request_turn_id="turn-next",
+        )
+
+        controller.mark_full_request_admitted("mode-next")
+        controller.persist_scope("mode-next", next_scope)
+        assert controller.scope_for_session_key(key).access_mode == "full"
+    finally:
+        clear_websocket_turn_if_current("mode-next", turn_owner)
+
+
+def test_deferred_full_can_be_rolled_back_before_the_next_request(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    manager = SessionManager(home, sessions_root=tmp_path / "sessions")
+    key = "websocket:mode-next-rollback"
+    scope = default_workspace_scope(project, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    manager._jsonl_store.save(session)
+    manager._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    grants = FolderGrantStore(
+        agent_home=home,
+        instance_root=instance,
+        path=instance / "webui" / "folder-grants.json",
+    )
+    controller = WebUIWorkspaceController(
+        session_manager=manager,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=grants,
+        native_supervisor_available=True,
+    )
+    owner = manager.desktop_permissions
+    source = controller._source_binding(key)
+    assert source is not None
+    current = controller._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    turn_owner = register_queued_websocket_turn_if_idle("mode-next-rollback", "turn-1")
+    assert turn_owner is not None
+    try:
+        enabled = controller.set_permission_mode({
+            "chat_id": "mode-next-rollback",
+            "mode": "full",
+            "expected_runtime_id": owner.runtime_id,
+            "expected_permission_revision": current["revision"],
+        }, local_ui=True)
+        assert "error" not in enabled
+        assert enabled["workspace_permissions"]["mode"] == "full"
+        assert owner.full_reference(session_key=key, source_binding=source) is not None
+
+        restricted = controller.set_permission_mode({
+            "chat_id": "mode-next-rollback",
+            "mode": "restricted",
+            "expected_runtime_id": owner.runtime_id,
+            "expected_permission_revision": enabled["workspace_permissions"]["revision"],
+        }, local_ui=True)
+
+        assert "error" not in restricted
+        assert restricted["workspace_permissions"]["mode"] == "restricted"
+        assert restricted["workspace_scope"]["access_mode"] == "restricted"
+        assert owner.full_reference(session_key=key, source_binding=source) is None
+    finally:
+        clear_websocket_turn_if_current("mode-next-rollback", turn_owner)

@@ -3997,3 +3997,48 @@ describe("composer access control semantics", () => {
     ).toHaveAttribute("aria-busy", "true");
   });
 });
+
+describe("settings during a running turn", () => {
+  it("keeps access and project controls usable while streaming", async () => {
+    const user = userEvent.setup();
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "restricted" as const,
+      restrict_to_workspace: true,
+    };
+    const onWorkspaceAccessModeChange = vi.fn().mockResolvedValue(undefined);
+    const onWorkspaceScopeChange = vi.fn();
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        onStop={vi.fn()}
+        isStreaming
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceDefaultScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection()}
+        persistentWorkspaceChat
+        onWorkspaceAccessModeChange={onWorkspaceAccessModeChange}
+        onWorkspaceScopeChange={onWorkspaceScopeChange}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("For the next message");
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Sandbox" }));
+    await user.click(screen.getByRole("menuitem", { name: /Full access/ }));
+    await user.click(screen.getByRole("button", { name: "Enable Full access" }));
+    await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
+
+    await user.click(screen.getByRole("button", { name: "Choose project folder" }));
+    fireEvent.change(screen.getByLabelText("Paste path"), {
+      target: { value: "/tmp/other" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Use folder" }));
+    expect(onWorkspaceScopeChange).toHaveBeenCalledWith(
+      expect.objectContaining({ project_path: "/tmp/other" }),
+    );
+  });
+});

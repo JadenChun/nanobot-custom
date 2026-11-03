@@ -465,6 +465,7 @@ class DesktopPermissionOwner:
         stores_healthy: bool,
         persist: Callable[[int], None] | None = None,
         process_counts: Callable[[], tuple[int, int]] | None = None,
+        expire_tasks: bool = True,
     ) -> WorkspaceFullAccessReference:
         source = _source_identity(session_key, source_binding)
         if (not persistent and source.lifetime != "temporary") or not existing:
@@ -518,13 +519,15 @@ class DesktopPermissionOwner:
                     raise WorkspacePermissionConflictError("native_processes_unknown")
                 if active_processes:
                     raise WorkspacePermissionConflictError("native_processes_active")
-            for identity, reference in tuple(self._tasks.items()):
-                if _source_for_task(identity) == source:
-                    self._close_native_stdin_unlocked(reference)
+            if expire_tasks:
+                for identity, reference in tuple(self._tasks.items()):
+                    if _source_for_task(identity) == source:
+                        self._close_native_stdin_unlocked(reference)
             epoch = self._next_epoch()
             if persist is not None:
                 persist(epoch)
-            self._expire_source_tasks(source)
+            if expire_tasks:
+                self._expire_source_tasks(source)
             reference = WorkspaceFullAccessReference(
                 session_key=source.session_key,
                 source_binding=_binding_from_source(source),

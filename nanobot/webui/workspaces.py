@@ -262,6 +262,7 @@ class WebUIWorkspaceController:
         )
         self._temporary_binding: Callable[[str], PermissionSourceBinding | None] | None = None
         self._temporary_mode_setter: Callable[[str, PermissionMode], None] | None = None
+        self._deferred_full_sources: dict[str, PermissionSourceBinding] = {}
         self._default_workspace = default_workspace
         self._default_restrict_to_workspace = default_restrict_to_workspace
         self._configured_exec_sandbox = configured_exec_sandbox
@@ -1090,9 +1091,21 @@ class WebUIWorkspaceController:
                 "workspace_scope": self.scope_payload(scope),
                 "workspace_permissions": current_projection,
             }
+        if (
+            mode == "full"
+            and current_projection["mode"] == "full"
+            and current_projection["state"] == "active"
+        ):
+            return {
+                "workspace_scope": self.scope_payload(
+                    self._scope_for_mode(scope.project_path, "full")
+                ),
+                "workspace_permissions": current_projection,
+            }
         if mode == "full":
             active_turn = _session_has_active_turn(self._sessions, key, chat_id)
-            if active_turn:
+            deferred = active_turn and current_projection["mode"] == "restricted"
+            if active_turn and not deferred:
                 raise WorkspacePermissionActionError(409, "chat_running")
             grant_store = self.grant_store
             if self.focus_owner is None or grant_store is None:
@@ -1101,16 +1114,19 @@ class WebUIWorkspaceController:
                 grant_store.snapshot()
                 source_scope = self._scope_for_mode(scope.project_path, "full")
 
+                def full_only_counts() -> tuple[int, int]:
+                    return grant_store.view.session_native_process_counts(
+                        session_key=key,
+                        kind="chat_full",
+                    )
+
                 def process_counts() -> tuple[int, int]:
                     return _sum_native_counts(
                         grant_store.view.session_native_process_counts(
                             session_key=key,
                             kind="task_once",
                         ),
-                        grant_store.view.session_native_process_counts(
-                            session_key=key,
-                            kind="chat_full",
-                        ),
+                        full_only_counts(),
                     )
 
                 self.permission_owner.enable_full(
@@ -1128,8 +1144,14 @@ class WebUIWorkspaceController:
                         source_scope,
                         create_if_absent=False,
                     ),
-                    process_counts=process_counts,
+                    process_counts=full_only_counts if deferred else process_counts,
+                    expire_tasks=not deferred,
                 )
+                if deferred:
+                    # The running turn keeps its captured scope. The selected
+                    # mode is current for the next request and can be rolled
+                    # back until that request is admitted.
+                    self._deferred_full_sources[chat_id] = source
                 if owner_installation_id is not None:
                     self.permission_owner.record_remote_full_consent(
                         installation_id=owner_installation_id,
@@ -1155,15 +1177,23 @@ class WebUIWorkspaceController:
                     )
 
                 native_counts = full_native_counts
+            active_turn = _session_has_active_turn(self._sessions, key, chat_id)
+            deferred_source = self._deferred_full_sources.get(chat_id)
+            rollback_only = bool(
+                active_turn
+                and deferred_source is not None
+                and deferred_source == source
+            )
             try:
                 self.permission_owner.disable_full(
                     session_key=key,
                     source_binding=source,
-                    active_turn=_session_has_active_turn(self._sessions, key, chat_id),
+                    active_turn=active_turn and not rollback_only,
                     active_processes=0,
                     unknown_processes=0,
                     process_counts=native_counts,
                 )
+                self._deferred_full_sources.pop(chat_id, None)
             except WorkspacePermissionConflictError as exc:
                 current_scope = self._scope_for_mode(scope.project_path, "full")
                 projection = self.permission_owner.projection(
@@ -1422,18 +1452,14 @@ class WebUIWorkspaceController:
         chat_running: bool,
         controls_available: bool,
     ) -> WorkspaceScope:
-        scope = self.scope_from_envelope(
+        # A message envelope is a submitted request snapshot. The running turn
+        # keeps its captured scope, so a queued next request may carry a
+        # different project/mode once its authority has been validated.
+        return self.scope_from_envelope(
             envelope,
             session_key=webui_session_key(chat_id),
             controls_available=controls_available,
         )
-        if (
-            WORKSPACE_SCOPE_METADATA_KEY in envelope
-            and chat_running
-            and scope.metadata() != self.scope_for_session_key(webui_session_key(chat_id)).metadata()
-        ):
-            raise WorkspaceScopeError("chat_running", status=409)
-        return scope
 
     def persist_scope(
         self, chat_id: str, scope: WorkspaceScope, *, create_if_absent: bool = True
@@ -1447,6 +1473,12 @@ class WebUIWorkspaceController:
                 create_if_absent=create_if_absent,
             )
         self._draft_scopes.pop(session_key, None)
+        if scope.access_mode == "full":
+            self._deferred_full_sources.pop(chat_id, None)
+
+    def mark_full_request_admitted(self, chat_id: str) -> None:
+        """A Full request is now queued or running for this chat."""
+        self._deferred_full_sources.pop(chat_id, None)
 
     def stage_scope(self, chat_id: str, scope: WorkspaceScope) -> None:
         """Keep a new chat's scope transient until its first accepted message."""

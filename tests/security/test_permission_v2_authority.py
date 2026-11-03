@@ -521,3 +521,46 @@ def test_full_reference_can_be_bound_to_one_request_identity() -> None:
     assert not owner.authorizes_full(bound, **kwargs, request_turn_id="turn-2")
     assert owner.is_current_full_reference(bound)
     assert owner.full_reference(**kwargs, request_turn_id="turn-x") is not None
+
+
+def test_deferred_full_preserves_an_active_task_reference(tmp_path) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    owner = DesktopPermissionOwner()
+    source = _source()
+    reference = owner.activate_once(
+        session_key="websocket:chat-a",
+        source_binding=source,
+        task_turn_id="turn-original",
+        task_input_event_id="event-original",
+        path=root,
+        file_access="read_only",
+        commands=False,
+    )
+
+    owner.enable_full(
+        session_key="websocket:chat-a",
+        source_binding=source,
+        persistent=True,
+        existing=True,
+        local=True,
+        idle=True,
+        configured_sandbox=False,
+        supervisor_available=True,
+        stores_healthy=True,
+        expire_tasks=False,
+    )
+
+    assert owner.is_current_task_reference(reference)
+    assert owner.authorizes_once(
+        reference,
+        session_key="websocket:chat-a",
+        source_binding=source,
+        task_turn_id="turn-original",
+        task_input_event_id="event-original",
+    )
+    full = owner.full_reference(
+        session_key="websocket:chat-a",
+        source_binding=source,
+    )
+    assert full is not None
