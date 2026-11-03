@@ -393,10 +393,16 @@ class SourceCompactionConfig(Base):
     _ALIASES: ClassVar[tuple[tuple[str, str], ...]] = (
         ("idle_timeout_seconds", "idleTimeoutSeconds"),
         ("overall_timeout_seconds", "overallTimeoutSeconds"),
+        ("pressure_trigger_ratio", "pressureTriggerRatio"),
+        ("target_ratio", "targetRatio"),
+        ("summary_generation_tokens", "summaryGenerationTokens"),
     )
 
     idle_timeout_seconds: float = Field(default=300.0, gt=0, allow_inf_nan=False)
     overall_timeout_seconds: float = Field(default=900.0, gt=0, allow_inf_nan=False)
+    pressure_trigger_ratio: float = Field(default=0.9, gt=0, le=1, allow_inf_nan=False)
+    target_ratio: float = Field(default=0.6, gt=0, le=1, allow_inf_nan=False)
+    summary_generation_tokens: int | None = Field(default=None, gt=0)
 
     @model_validator(mode="before")
     @classmethod
@@ -407,8 +413,10 @@ class SourceCompactionConfig(Base):
         for snake_name, camel_name in cls._ALIASES:
             if snake_name in data and camel_name in data:
                 raise ValueError(f"Specify only one of {camel_name!r} or {snake_name!r}")
-        for name in ("idleTimeoutSeconds", "idle_timeout_seconds",
-                     "overallTimeoutSeconds", "overall_timeout_seconds"):
+        for name in (
+            "idleTimeoutSeconds", "idle_timeout_seconds",
+            "overallTimeoutSeconds", "overall_timeout_seconds",
+        ):
             if name not in data:
                 continue
             raw = data[name]
@@ -417,6 +425,12 @@ class SourceCompactionConfig(Base):
             if not math.isfinite(raw) or raw <= 0:
                 raise ValueError(f"{name} must be a finite positive number")
         return data
+
+    @model_validator(mode="after")
+    def validate_ratios(self) -> "SourceCompactionConfig":
+        if self.target_ratio >= self.pressure_trigger_ratio:
+            raise ValueError("target_ratio must be below pressure_trigger_ratio")
+        return self
 
 
 class AgentDefaults(Base):

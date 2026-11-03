@@ -570,6 +570,9 @@ class AgentLoop:
         idle_compact_check_interval_seconds: int = 0,
         source_compaction_idle_timeout_seconds: float = 300.0,
         source_compaction_overall_timeout_seconds: float = 900.0,
+        source_compaction_pressure_trigger_ratio: float = 0.9,
+        source_compaction_target_ratio: float = 0.6,
+        source_compaction_summary_generation_tokens: int | None = None,
         recovery_admission: RecoveryAdmission | None = None,
         fork_dependencies: ForkToolDependencies | None = None,
         _owns_fork_dependencies: bool = False,
@@ -793,6 +796,11 @@ class AgentLoop:
         self._idle_compact_check_interval_s = idle_compact_check_interval_seconds
         self._source_compaction_idle_timeout_seconds = source_compaction_idle_timeout_seconds
         self._source_compaction_overall_timeout_seconds = source_compaction_overall_timeout_seconds
+        self._source_compaction_pressure_trigger_ratio = source_compaction_pressure_trigger_ratio
+        self._source_compaction_target_ratio = source_compaction_target_ratio
+        self._source_compaction_summary_generation_tokens = (
+            source_compaction_summary_generation_tokens
+        )
         self._next_idle_compact_check_at = time.monotonic()
         if model_preset:
             self.set_model_preset(model_preset, publish_update=False)
@@ -948,6 +956,13 @@ class AgentLoop:
             ),
             source_compaction_overall_timeout_seconds=(
                 defaults.source_compaction.overall_timeout_seconds
+            ),
+            source_compaction_pressure_trigger_ratio=(
+                defaults.source_compaction.pressure_trigger_ratio
+            ),
+            source_compaction_target_ratio=defaults.source_compaction.target_ratio,
+            source_compaction_summary_generation_tokens=(
+                defaults.source_compaction.summary_generation_tokens
             ),
             tools_config=config.tools,
             model_presets=preset_helpers.configured_model_presets(config),
@@ -2551,6 +2566,15 @@ class AgentLoop:
                 ),
                 source_compaction_overall_timeout_seconds=(
                     getattr(self, "_source_compaction_overall_timeout_seconds", 900.0)
+                ),
+                source_compaction_pressure_trigger_ratio=(
+                    getattr(self, "_source_compaction_pressure_trigger_ratio", 0.9)
+                ),
+                source_compaction_target_ratio=(
+                    getattr(self, "_source_compaction_target_ratio", 0.6)
+                ),
+                source_compaction_summary_generation_tokens=(
+                    getattr(self, "_source_compaction_summary_generation_tokens", None)
                 ),
                 consolidate_history=(
                     partial(

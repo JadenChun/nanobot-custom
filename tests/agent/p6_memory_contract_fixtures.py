@@ -180,6 +180,13 @@ async def fitting_prefix(root, rows, boundary):
 
     backend = source_store(root)
     provider = SummaryProvider([LLMResponse(content="retained facts")])
+    # The summary budget now follows the captured runtime generation; pin it to
+    # the exact 2048 used by this synthetic boundary fixture.
+    provider.generation = GenerationSettings(
+        max_tokens=2048,
+        temperature=provider.generation.temperature,
+        reasoning_effort=provider.generation.reasoning_effort,
+    )
 
     def count(messages, tools, model):
         if messages[0]["content"].startswith("Summarize historical evidence"):

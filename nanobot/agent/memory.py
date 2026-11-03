@@ -1284,7 +1284,8 @@ class Consolidator:
         checkpoint publication. This method never archives, truncates, retries,
         supplies tools, or resumes provider conversation state.
         """
-        if (type(max_output_tokens) is not int or not 0 < max_output_tokens <= 2048
+        if (type(max_output_tokens) is not int
+                or max_output_tokens <= 0
                 or not 0 < timeout_seconds <= 60):
             raise ValueError('Invalid source summary limits')
         messages = Consolidator.source_summary_messages(source_messages, previous_summary)
@@ -1303,6 +1304,7 @@ class Consolidator:
         *,
         runtime: LLMRuntime,
         max_output_tokens: int = 2048,
+        retained_text_tokens: int | None = None,
         timeout_seconds: float = 60,
         request_deadline_monotonic: float | None = None,
         stream_idle_timeout_seconds: float | None = None,
@@ -1312,9 +1314,13 @@ class Consolidator:
         on_transport_attempt: Callable[[str], None] | None = None,
     ) -> SourceSummaryResult:
         """Transport one already-built and preflighted auxiliary payload exactly once."""
-        if (type(max_output_tokens) is not int or not 0 < max_output_tokens <= 2048
+        if (type(max_output_tokens) is not int
+                or max_output_tokens <= 0
                 or not 0 < timeout_seconds <= 60):
             raise ValueError('Invalid source summary limits')
+        retained = max_output_tokens if retained_text_tokens is None else retained_text_tokens
+        if type(retained) is not int or not 0 < retained <= max_output_tokens:
+            raise ValueError('Invalid retained source summary limit')
         provider = runtime.provider
         transport_attempts_authoritative = Consolidator._route_reports_transport_attempts(
             provider
@@ -1477,7 +1483,7 @@ class Consolidator:
         if len(summary) > 64_000:
             return result('invalid_response', usage=response.usage, calls=calls,
                           failure_reason='summary_output_limit')
-        if truncate_text_to_tokens(summary, max_output_tokens) != summary:
+        if truncate_text_to_tokens(summary, retained) != summary:
             return result('invalid_response', usage=response.usage, calls=calls,
                           failure_reason='summary_truncated')
         return result('complete', summary=summary, usage=response.usage, calls=calls)
