@@ -612,3 +612,16 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   (`/tmp/opencode/mc01-requirements-author/request-admission-cases.md`).
 - Focused: 259 Python tests, 444 WebUI tests, WebUI build/lint; strict 0/528,
   comparator introduced 0.
+
+#### MC02 — PASS (focused)
+
+- Temporary message admission now uses the submitted workspace scope, not the
+  live temporary policy scope. Explicit Sandbox remains Sandbox even after
+  temporary Full was enabled; explicit Full still resolves through the same
+  temporary owner/proof path.
+- A differing temporary project is rejected before execution. Temporary
+  messages remain connection-owned and use the transient source; canonical
+  source-token metadata is not attached to them.
+- Added a real channel-boundary test that enables temporary Full, then submits
+  one restricted and one Full envelope and observes the effective scope.
+- Focused: 55 Python tests; strict 0/528, comparator introduced 0.

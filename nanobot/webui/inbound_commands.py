@@ -668,7 +668,10 @@ class WebUICommandRouter:
             )
             return
         request_intent = envelope.get("request_intent")
-        current_source_token = self._workspaces.source_token(chat_id)
+        temporary_owned = self._temporary_chats.owns(connection, chat_id)
+        current_source_token = (
+            None if temporary_owned else self._workspaces.source_token(chat_id)
+        )
         settings_error = request_settings_error(
             envelope,
             current_source_token=current_source_token,
@@ -765,7 +768,10 @@ class WebUICommandRouter:
         scope = await self.workspace_scope_or_error(
             connection,
             lambda: (
-                temporary_policy.workspace_scope
+                self._workspaces.scope_for_temporary_message(
+                    envelope,
+                    temporary_policy.workspace_scope,
+                )
                 if temporary_policy is not None
                 else self._workspaces.scope_for_message(
                     envelope,

@@ -232,3 +232,62 @@ async def test_discarding_a_temporary_chat_retires_full_and_consent(
         source_binding=binding,
     ) is None
     assert chats.binding(owner, chat_id) is None
+
+
+def test_submitted_temporary_sandbox_wins_over_later_full_policy(tmp_path: Path) -> None:
+    from nanobot.security.workspace_access import WorkspaceScopeError
+
+    _sessions, controller, chats = _fixture(tmp_path)
+    owner = object()
+    chat_id = chats.create(owner, trusted_webui=True)
+    prepared = controller.prepare_full({"chat_id": chat_id}, local_ui=True)
+    controller.set_permission_mode(
+        {
+            "chat_id": chat_id,
+            "mode": "full",
+            "expected_runtime_id": prepared["workspace_permissions"]["runtime_id"],
+            "expected_permission_revision": prepared["workspace_permissions"]["revision"],
+        },
+        local_ui=True,
+    )
+    policy = chats.message_policy(owner, chat_id, "use full access")
+    assert policy is not None
+    assert policy.workspace_scope.access_mode == "full"
+
+    submitted = controller.scope_for_temporary_message(
+        {
+            "workspace_scope": {
+                "project_path": str(policy.workspace_scope.project_path),
+                "access_mode": "restricted",
+                "restrict_to_workspace": True,
+            }
+        },
+        policy.workspace_scope,
+    )
+    assert submitted.access_mode == "restricted"
+
+    submitted_full = controller.scope_for_temporary_message(
+        {
+            "workspace_scope": {
+                "project_path": str(policy.workspace_scope.project_path),
+                "access_mode": "full",
+                "restrict_to_workspace": False,
+            }
+        },
+        policy.workspace_scope,
+    )
+    assert submitted_full.access_mode == "full"
+
+    other = tmp_path / "other"
+    other.mkdir()
+    with pytest.raises(WorkspaceScopeError, match="temporary_scope_changed"):
+        controller.scope_for_temporary_message(
+            {
+                "workspace_scope": {
+                    "project_path": str(other),
+                    "access_mode": "restricted",
+                    "restrict_to_workspace": True,
+                }
+            },
+            policy.workspace_scope,
+        )

@@ -1476,6 +1476,25 @@ class WebUIWorkspaceController:
             controls_available=controls_available,
         )
 
+    def scope_for_temporary_message(
+        self,
+        envelope: dict[str, Any],
+        policy_scope: WorkspaceScope,
+    ) -> WorkspaceScope:
+        """Use the submitted temporary scope while keeping its transient project."""
+        raw = envelope.get(WORKSPACE_SCOPE_METADATA_KEY)
+        if raw is None:
+            return policy_scope
+        scope = validate_workspace_scope_payload(
+            raw,
+            default_workspace=policy_scope.project_path,
+            default_restrict_to_workspace=policy_scope.restrict_to_workspace,
+            source_channel=_WEBUI_SCOPE_CHANNEL,
+        )
+        if scope.project_path != policy_scope.project_path:
+            raise WorkspaceScopeError("temporary_scope_changed", status=409)
+        return scope
+
     def scope_for_message(
         self,
         envelope: dict[str, Any],
