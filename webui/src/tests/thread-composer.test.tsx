@@ -3850,7 +3850,7 @@ describe("ThreadComposer", () => {
 describe("ThreadComposer — mobile controls", () => {
   afterEach(() => resetMobileRuntime());
 
-  it("keeps the model chip in the footer and hides the access label on mobile", () => {
+  it("keeps the model chip in the footer and shows the compact access label on mobile", () => {
     const runtime: MobileRuntime = {
       transport: {} as MobileRuntime["transport"],
       request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
@@ -3906,7 +3906,7 @@ describe("ThreadComposer — mobile controls", () => {
     expect(container.querySelector(".thread-composer-mobile-project")).toBeNull();
     expect(
       within(footer as HTMLElement).getByLabelText(/Workspace access mode: Sandbox/).textContent,
-    ).toBe("");
+    ).toContain("Sandbox");
   });
 });
 

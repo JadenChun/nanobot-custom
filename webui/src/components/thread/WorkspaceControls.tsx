@@ -718,7 +718,7 @@ export function WorkspacePermissionV2Control({
             className={cn(
               "thread-composer-access touch-target whitespace-nowrap rounded-control border border-transparent font-semibold shadow-none",
               mobile
-                ? "h-9 w-9 justify-center px-0"
+                ? "h-9 w-auto max-w-[8.5rem] justify-center gap-1 px-2"
                 : "min-w-0 max-w-[min(15rem,45vw)]",
               isHero ? "h-8 px-2.5 text-[12px]" : "h-9 px-3 text-[12.5px]",
               mobile && "px-0",
@@ -736,13 +736,17 @@ export function WorkspacePermissionV2Control({
             ) : (
               <ShieldCheck className={cn("shrink-0", mobile ? "h-4 w-4" : "mr-1.5 h-3.5 w-3.5")} aria-hidden />
             )}
-            {!mobile ? (
+            {mobile ? (
+              <span aria-hidden className="min-w-0 truncate text-[11.5px] font-semibold">
+                {compactLabel}
+              </span>
+            ) : (
               <>
                 <span aria-hidden className="thread-composer-access-label-full min-w-0 truncate">{label}</span>
                 <span aria-hidden className="thread-composer-access-label-short hidden min-w-0 truncate">{compactLabel}</span>
                 {loading ? <Loader2 className="ml-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />}
               </>
-            ) : null}
+            )}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[min(22rem,calc(100vw-1rem))]">
