@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
-import os
 import re
 import time
 import uuid
@@ -761,11 +760,6 @@ class AgentLoop:
         self._automation_turn_coordinators = (
             ("cron", self._cron_turns),
             ("local trigger", self._local_trigger_turns),
-        )
-        # NANOBOT_MAX_CONCURRENT_REQUESTS: unset or <=0 means unlimited.
-        _max = int(os.environ.get("NANOBOT_MAX_CONCURRENT_REQUESTS", "0"))
-        self._concurrency_gate: asyncio.Semaphore | None = (
-            asyncio.Semaphore(_max) if _max > 0 else None
         )
         self.consolidator = Consolidator(
             store=self.context.memory,
@@ -3363,33 +3357,32 @@ class AgentLoop:
                            if not task.done()}
                 if not pending:
                     self._bus_cleanup_tasks.pop(key, None)
-                    async with self._concurrency_gate or nullcontext():
-                        # Select the live policy only after lifecycle cleanup and
-                        # under admission: queued temporary work cannot recreate
-                        # a disposed session or acquire persistent source authority.
-                        if workspace_access_continuation is not None:
-                            if (
-                                not require_existing_session
-                                or ephemeral
-                                or workspace_access_continuation.session_key != key
-                            ):
-                                raise RuntimeError("invalid workspace continuation admission")
-                            self._read_workspace_continuation_source(
-                                key,
-                                workspace_access_continuation,
-                            )
-                            session = None
-                        else:
-                            session = (
-                                self.sessions.get_cached(key)
-                                if require_existing_session or not ephemeral else None
-                            )
-                            if require_existing_session and session is None:
-                                raise RuntimeError("required session is not active")
-                        yield (
-                            session if not ephemeral and session is not None
-                            and not session.policy.persist else None
+                    # Select the live policy only after lifecycle cleanup and
+                    # under admission: queued temporary work cannot recreate
+                    # a disposed session or acquire persistent source authority.
+                    if workspace_access_continuation is not None:
+                        if (
+                            not require_existing_session
+                            or ephemeral
+                            or workspace_access_continuation.session_key != key
+                        ):
+                            raise RuntimeError("invalid workspace continuation admission")
+                        self._read_workspace_continuation_source(
+                            key,
+                            workspace_access_continuation,
                         )
+                        session = None
+                    else:
+                        session = (
+                            self.sessions.get_cached(key)
+                            if require_existing_session or not ephemeral else None
+                        )
+                        if require_existing_session and session is None:
+                            raise RuntimeError("required session is not active")
+                    yield (
+                        session if not ephemeral and session is not None
+                        and not session.policy.persist else None
+                    )
                     return
             await asyncio.wait(pending)
 
