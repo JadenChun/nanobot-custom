@@ -25,10 +25,10 @@ remaining blockers. Private logs and runtime data stay outside the repository.
 | P3 authorized media inputs | focused complete | exact read-only input snapshots; foreground only |
 | Mobile A socket correctness | focused complete | identity, terminal lifecycle, UTF-8, unique broker ids |
 | Mobile B delivery authorization | complete (focused) | uncached revalidation; test helper removed from production; WS-boundary cases |
-| Mobile C owner wiring / foreground recovery | complete (focused + emulator M01) | native Ping/refresh/resume bridge, owner routes, foreground recovery; physical Doze/radio pending |
+| Mobile C owner wiring / foreground recovery | complete (focused + emulator M01 + physical Doze) | native Ping/refresh/resume bridge, owner routes, foreground recovery; physical radio/tailnet pending |
 | Mobile D pairing continuity | complete (focused + native custody) | renewal, restore, Kotlin pending-setup custody; physical device evidence pending |
 | Mobile E request authority/backend | focused complete | versioned settings, defaults, device/source Full consent, ephemeral Temporary Full, request-bound proofs, same-context steering |
-| Mobile F composer settings/presentation | focused complete | queued snapshot + next-message hint; physical visual/touch evidence pending |
+| Mobile F composer settings/presentation | focused complete; access mode while streaming remains | queued snapshot, next-message hint, 44px floor, project-first truncation, accessible access state; physical touch/name evidence recorded |
 | Mobile G standard feature dispatcher | focused complete | standard owner read dispatch; mobile WS actions and mutations use the standard dispatcher with replay/auth; wrapper tests retained for old builds |
 | Integrated qualification / M38 | local gates green; release gates pending | full Python/WebUI/type/build/M01 pass; signed phone and M38 pending |
 
@@ -486,3 +486,24 @@ Observed:
 - A 10+ minute Doze/background draft-retention run is in progress.
 
 WebUI after the visible-label change: 1415 tests passed, build/lint exit 0.
+
+### Physical composer/AC10 evidence (Nothing A142, Android 16)
+
+- Candidate `r5`: `sha256=528f874a20a8491b89cd9223447fca12c5cc09f6527532d86a176838e24d5afb`,
+  signer `CN=jaden`, `adb install -r` preserved `firstInstallTime`.
+- Composer controls measured from the live accessibility tree at the normal
+  phone width (density 420): attach, project, voice and send are **118x118 px =
+  45.0x45.0 dp**; the Sandbox access control is **176x118 px = 67.0x45.0 dp**.
+  All meet the >=44 px requirement.
+- Accessible names exposed on the phone: `Attach files`, `Choose project
+  folder`, `Sandbox`, `Voice input`, `Send message`.
+- The previous 32 px narrow-container shrink rule was removed; the project
+  control now has an unconditional 44 px floor and yields its text before the
+  permission label.
+- A 12-minute Doze/background run retained the composer draft, resumed at
+  `Connecting…`, then restored the chat without a reconnect screen. Airplane
+  mode remained off and device idle returned to ACTIVE.
+- Narrow-width physical measurement was not performed: changing display
+  overrides was declined by the user and the overrides were restored
+  (`wm size` / `wm density` reset). The 44 px floor is enforced in CSS but only
+  the normal-width physical bounds are recorded.
