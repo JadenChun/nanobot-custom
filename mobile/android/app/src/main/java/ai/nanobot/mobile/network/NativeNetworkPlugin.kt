@@ -261,6 +261,17 @@ class NativeNetworkPlugin : Plugin() {
                         "X-Nanobot-Label" to label,
                     ),
                 )
+                try {
+                    custody.savePendingPairing(
+                        origin,
+                        installationId,
+                        challenge.pairingId,
+                        PairingChallengeCodec.encode(challenge),
+                    )
+                } catch (exception: Exception) {
+                    // Pairing itself is still valid; native custody is retried on
+                    // the next foreground/poll boundary.
+                }
                 val result = JSObject(collected.toString())
                     .put("origin", origin)
                     .put("installationId", installationId)
@@ -376,6 +387,38 @@ class NativeNetworkPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun pendingPairing(call: PluginCall) {
+        val pending = try {
+            custody.loadPendingPairing()
+        } catch (exception: Exception) {
+            call.reject(exception.message ?: "pending pairing is unavailable")
+            return
+        }
+        if (pending == null) {
+            call.resolve(JSObject().put("pending", false))
+            return
+        }
+        val challenge = try {
+            PairingChallengeCodec.decode(pending.challenge).also { activePairing = it }
+        } catch (exception: Exception) {
+            try {
+                custody.clearPendingPairing()
+            } catch (_: Exception) {
+                // Corrupt pending state is discarded; a new scan is required.
+            }
+            call.resolve(JSObject().put("pending", false))
+            return
+        }
+        call.resolve(
+            JSObject()
+                .put("pending", true)
+                .put("origin", pending.origin)
+                .put("pairingId", challenge.pairingId)
+                .put("challenge", pending.challenge)
+        )
+    }
+
+    @PluginMethod
     fun pairPoll(call: PluginCall) {
         val pairingId = call.getString("pairingId")
         if (pairingId.isNullOrBlank()) {
@@ -414,6 +457,11 @@ class NativeNetworkPlugin : Plugin() {
                     polled.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
                 )
                 activePairing = null
+                try {
+                    custody.clearPendingPairing()
+                } catch (_: Exception) {
+                    // Approved credentials are already persisted.
+                }
                 mainHandler.post {
                     call.resolve(
                         JSObject()

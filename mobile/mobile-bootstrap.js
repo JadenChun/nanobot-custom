@@ -594,6 +594,30 @@
       });
     });
 
+    async function restorePendingPairing(run) {
+      if (typeof plugin.pendingPairing !== "function") return false;
+      var pending = null;
+      try {
+        pending = await plugin.pendingPairing();
+      } catch (_) {
+        return false;
+      }
+      if (stopped || run !== generation || state !== "idle") return false;
+      if (!pending || pending.pending !== true || !pending.pairingId) return false;
+      pendingSetup = {
+        kind: "link",
+        challenge: pending.challenge,
+        pairingId: pending.pairingId
+      };
+      lastLink = { origin: pending.origin, challenge: pending.challenge };
+      setState("waiting");
+      setPill(ui.server, hostLabel(pending.origin), "is-ok");
+      setPill(ui.node, "Connected", "is-ok");
+      ui.status.textContent = "Waiting for the desktop owner to approve this phone.";
+      void poll(pending.pairingId, run);
+      return true;
+    }
+
     function retryPending() {
       if (pendingSetup) {
         var run = ++generation;
@@ -674,7 +698,9 @@
           setPill(ui.node, "Connects when pairing");
         }
       }
-      watchForLink();
+      if (!(await restorePendingPairing(startupGeneration))) {
+        watchForLink();
+      }
     })();
   }
 

@@ -26,6 +26,12 @@ class CustodyCorruptException(message: String, cause: Throwable? = null) : Excep
 
 class CustodyKeyInvalidException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+data class PendingPairingSetup(
+    val origin: String,
+    val pairingId: String,
+    val challenge: String,
+)
+
 data class CustodyRecord(
     val version: Int = 1,
     val installationId: String,
@@ -38,6 +44,9 @@ data class CustodyRecord(
     val stateKeyBase64: String = "",
     val revocationPending: Boolean = false,
     val updatedAt: Long = 0,
+    val pendingPairingId: String = "",
+    val pendingPairingOrigin: String = "",
+    val pendingPairingChallenge: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("version", version)
@@ -51,6 +60,9 @@ data class CustodyRecord(
         .put("state_key_base64", stateKeyBase64)
         .put("revocation_pending", revocationPending)
         .put("updated_at", updatedAt)
+        .put("pending_pairing_id", pendingPairingId)
+        .put("pending_pairing_origin", pendingPairingOrigin)
+        .put("pending_pairing_challenge", pendingPairingChallenge)
 
     companion object {
         fun fromJson(json: JSONObject): CustodyRecord {
@@ -80,6 +92,9 @@ data class CustodyRecord(
                 stateKeyBase64 = stateKey,
                 revocationPending = json.optBoolean("revocation_pending", false),
                 updatedAt = json.optLong("updated_at"),
+                pendingPairingId = json.optString("pending_pairing_id"),
+                pendingPairingOrigin = json.optString("pending_pairing_origin"),
+                pendingPairingChallenge = json.optString("pending_pairing_challenge"),
             )
         }
     }
@@ -213,6 +228,69 @@ class CustodyStore(context: Context) {
         )
         save(updated)
         return updated
+    }
+
+    @Synchronized
+    fun savePendingPairing(
+        origin: String,
+        installationId: String,
+        pairingId: String,
+        challenge: String,
+    ): CustodyRecord {
+        if (origin.isBlank() || pairingId.isBlank() || challenge.isBlank()) {
+            throw CustodyException("pending pairing is incomplete")
+        }
+        if (pairingId.length > 128 || challenge.length > 4096) {
+            throw CustodyException("pending pairing exceeds the bound")
+        }
+        val record = load() ?: loadOrCreate(origin, installationId)
+        if (record.origin != origin) {
+            throw CustodyMismatchException("custody is bound to a different origin")
+        }
+        val updated = record.copy(
+            pendingPairingId = pairingId,
+            pendingPairingOrigin = origin,
+            pendingPairingChallenge = challenge,
+            updatedAt = System.currentTimeMillis(),
+        )
+        save(updated)
+        return updated
+    }
+
+    @Synchronized
+    fun loadPendingPairing(): PendingPairingSetup? {
+        val record = load() ?: return null
+        if (
+            record.pendingPairingId.isBlank() ||
+            record.pendingPairingOrigin.isBlank() ||
+            record.pendingPairingChallenge.isBlank()
+        ) {
+            return null
+        }
+        return PendingPairingSetup(
+            origin = record.pendingPairingOrigin,
+            pairingId = record.pendingPairingId,
+            challenge = record.pendingPairingChallenge,
+        )
+    }
+
+    @Synchronized
+    fun clearPendingPairing() {
+        val record = load() ?: return
+        if (
+            record.pendingPairingId.isBlank() &&
+            record.pendingPairingChallenge.isBlank()
+        ) {
+            return
+        }
+        save(
+            record.copy(
+                pendingPairingId = "",
+                pendingPairingOrigin = "",
+                pendingPairingChallenge = "",
+                updatedAt = System.currentTimeMillis(),
+            )
+        )
     }
 
     /**
