@@ -61,7 +61,7 @@ def test_request_intent_never_reinterprets_guidance_as_a_new_run() -> None:
         {"request_intent": "steer", "target_turn_id": "turn-1"},
         current_source_token=None,
         active_turn_id="turn-1",
-    ) == ("not_admitted", "steering_unavailable")
+    ) is None
     assert request_settings_error(
         {"request_intent": "steer", "target_turn_id": "turn-old"},
         current_source_token=None,

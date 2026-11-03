@@ -102,9 +102,7 @@ def request_settings_error(
                 or target != active_turn_id
             ):
                 return "not_admitted", "steering_target_changed"
-            # The WebUI queue has no admitted steering transport; never
-            # reinterpret guidance as a second new run.
-            return "not_admitted", "steering_unavailable"
+            return None
     source_token = envelope.get("source_token")
     if source_token is not None:
         if not isinstance(source_token, str):
@@ -649,6 +647,7 @@ class WebUICommandRouter:
                 **rejection_fields,
             )
             return
+        request_intent = envelope.get("request_intent")
         settings_error = request_settings_error(
             envelope,
             current_source_token=self._workspaces.source_token(chat_id),
@@ -759,6 +758,21 @@ class WebUICommandRouter:
         )
         if scope is None:
             return
+        if request_intent == "steer":
+            current_scope = (
+                self._workspaces.scope_for_session_key(chat_id)
+                if temporary_policy is None
+                else temporary_policy.workspace_scope
+            )
+            if scope.metadata() != current_scope.metadata():
+                await self._transport.webui_send_event(
+                    connection,
+                    "error",
+                    detail="not_admitted",
+                    reason="steering_context_changed",
+                    **rejection_fields,
+                )
+                return
 
         permission_reference = None
         if scope.access_mode == "full":
