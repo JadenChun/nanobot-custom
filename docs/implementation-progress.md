@@ -294,3 +294,14 @@ Not implemented:
   Baseline/current Python source inventory hashes:
   `59bbbed829653b941dd53f0f9bf5fdab771dfd736cae6b121d369bd76d46bfc9`
   and `1630e1ae8b755305c0fbeaf08d3e05f20eda6fa50fbd0980966555c8589d4585`.
+
+### Integrated checks (partial)
+
+- WebUI full test suite: `cd webui && bun run test` -> 90 files, 1411 tests
+  passed, exit 0 (`/tmp/opencode/webui-tests.log`).
+- WebUI build: `cd webui && bun run build` -> exit 0
+  (`/tmp/opencode/webui-build.log`); the existing >500 kB chunk warning remains.
+- WebUI lint: `cd webui && bun run lint` -> exit 0 after one focused
+  `no-useless-assignment` correction (`/tmp/opencode/webui-lint.log`).
+- Repository Python lint: `.venv/bin/ruff check nanobot/` -> PASS.
+- Full Python suite: running; result appended when complete.
