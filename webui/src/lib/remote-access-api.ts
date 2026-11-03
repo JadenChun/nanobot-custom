@@ -57,6 +57,8 @@ export interface RemotePairingPending {
   requested_at?: number;
   pairing_code?: string;
   origin?: string;
+  created_at?: number;
+  renewable?: boolean;
   transport?: "tailscale";
   scopes?: string[];
   device?: {
@@ -188,6 +190,16 @@ export async function startRemotePairing(
       fullControlConsent: input.fullControlConsent ?? true,
       sharedHistoryConsent: input.sharedHistoryConsent ?? true,
     },
+  );
+}
+
+export async function renewRemotePairing(
+  transport: RemoteAccessMutationTransport,
+  pairingId: string,
+): Promise<RemotePairingPending> {
+  return transport.requestMutation<RemotePairingPending>(
+    "settings.remote_access.pairing.renew",
+    { pairingId },
   );
 }
 

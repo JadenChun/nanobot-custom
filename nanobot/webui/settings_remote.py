@@ -144,6 +144,11 @@ def handle_remote_access(
             if not isinstance(pairing_id, str):
                 return http_error(400, "pairing id is required")
             return http_json_response(manager.deny_pairing(pairing_id))
+        if path == f"{_PREFIX}/pairing/renew":
+            pairing_id = body.get("pairingId")
+            if not isinstance(pairing_id, str):
+                return http_error(400, "pairing id is required")
+            return http_json_response(manager.renew_pairing(pairing_id))
         if path == f"{_PREFIX}/pairing/cancel":
             pairing_id = body.get("pairingId")
             if not isinstance(pairing_id, str):

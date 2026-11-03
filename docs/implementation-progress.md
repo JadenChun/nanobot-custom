@@ -23,10 +23,10 @@ remaining blockers. Private logs and runtime data stay outside the repository.
 | P1 provider route and request preparation | complete (focused checks) | typed route metadata, wrapper preview, auxiliary primary binding |
 | P2 ordinary context lifecycle / recovery | focused complete; secondary replanning partial | preventive budgeting wired; bounded replanning not expanded |
 | P3 authorized media inputs | focused complete | exact read-only input snapshots; foreground only |
-| Mobile A socket correctness | pending | |
-| Mobile B delivery authorization | pending | |
-| Mobile C owner wiring / foreground recovery | pending | after A/B |
-| Mobile D pairing continuity | pending | after C |
+| Mobile A socket correctness | focused complete | identity, terminal lifecycle, UTF-8, unique broker ids |
+| Mobile B delivery authorization | focused complete; helper cleanup deferred | uncached revalidation before private delivery |
+| Mobile C owner wiring / foreground recovery | partial | broker/native recovery not implemented; blocked on Android toolchain |
+| Mobile D pairing continuity | focused complete (desktop/WebUI/phone JS) | renewal + restore; native custody pending |
 | Mobile E request authority/backend | pending | after D |
 | Mobile F composer settings/presentation | pending | after E/C |
 | Mobile G standard feature dispatcher | pending | separate change |
@@ -152,6 +152,83 @@ Known limitations:
 - Session/background shell commands cannot use `input_files` in this change.
 - No cross-turn automatic historical image injection or binary-retention migration
   was added; explicit reread remains the supported path.
+
+### Mobile A
+
+Outcomes:
+- `MobileWebSocket` now has one terminal path: every open failure, remote close,
+  explicit close or close-during-open produces exactly one `onclose`; open
+  failure also emits one `onerror`.
+- Late open/frame/close events for a retired instance are ignored; a late native
+  open after `close()` is closed once and emits no open/message.
+- Incoming frames decode with the UTF-8 `decodeBase64` helper instead of raw
+  `atob`; `你好 👋` survives.
+- `NanobotClient` guards open/message/error/close callbacks by current socket
+  identity, so a retiring socket cannot null or drive the replacement socket.
+- Broker WebSocket ids are monotonically unique per live core; retired ids are
+  rejected by `WSSend`/`WSClose`.
+
+Focused checks:
+- `cd webui && bun run test -- src/tests/mobile-runtime.test.ts src/tests/nanobot-client.test.ts src/tests/mobile-http-bridge.test.ts src/tests/mobile-wiring.test.ts` -> 97 passed (before the new cases), then `mobile-runtime` -> 11 passed with the new lifecycle cases.
+- `source mobile/scripts/mobile-env.sh && cd mobile/native-network && go test ./internal/broker` -> PASS, including the new unique-id case.
+
+Requirements-only author:
+- Session `ses_e5ec01916ffevd5BoPelD1KHil`; artifact
+  `/tmp/opencode/mobile-a-requirements-tests/socket_cases.md` (outside repo),
+  integrated as vitest public-boundary cases.
+
+### Mobile B
+
+Outcomes:
+- Private read/thread/feature/api/model-settings/workspaces/media responses are
+  re-authorized through an uncached owner validation immediately before release.
+- A revoke acknowledged after warm admission and before the handler returns
+  yields 401 with no private payload; owner loss yields 503; scope loss yields 403.
+- Existing initial validation, bounds, cancellation and replay behavior remain.
+
+Focused checks:
+- `.venv/bin/ruff check nanobot/remote/edge.py tests/remote/test_edge.py` -> PASS.
+- `.venv/bin/python -m pytest tests/remote/test_edge.py tests/remote/test_edge_integration.py tests/webui/test_owner_mobile_api.py tests/webui/test_mobile_owner_feature_api.py tests/webui/test_mobile_commands.py -q` -> 33 passed, then `tests/remote/test_edge.py` -> 18 passed with the new authorization cases.
+
+Requirements-only author:
+- Session `ses_e5ec01915ffeJnYe8jKsakJ3eU`; artifact
+  `/tmp/opencode/mobile-b-requirements-tests/delivery_cases.md` (outside repo),
+  integrated as warm-cache revoke and owner-loss cases.
+
+Known limitations:
+- The test-only `GatewayHTTPHandler.mobile_mutation_payload` helper and its
+  owner-denial/enrollment cases have not yet been relocated to the public WS
+  entry; protection remains in place.
+
+### Mobile D
+
+Outcomes:
+- Pending pairing state survives closing and reopening the desktop dialog; the
+  component no longer resets it on dialog close and restores pending state when
+  the dialog is reopened.
+- A desktop-local `pair_renew` operation extends an eligible offer to
+  `min(now + 300s, created_at + 1800s)` under the pairing lock, retaining the
+  collector/device binding, code, nonce and scopes. Denied/approved/consumed
+  offers and offers past the 30-minute setup limit cannot renew.
+- Expired but renewable offers are restored with a “Renew setup” action and a
+  “Continue setup on the desktop” message; the phone bootstrapper retains the
+  pending setup and resumes polling the same pairing id after Tailscale
+  readiness instead of rescanning. Retries are rate-limited to one per 5 s and
+  stop after 5 minutes.
+- Renewal is exposed only through the local authenticated settings/owner path;
+  no public renewal endpoint was added.
+
+Focused checks:
+- `.venv/bin/ruff check` on pairing/IPC/client/management/settings/ws_http -> PASS.
+- `.venv/bin/python -m pytest tests/remote/test_pairing.py tests/remote/test_owner_ipc.py tests/webui/test_remote_access_settings.py tests/webui/test_mobile_owner_feature_api.py -q` -> 24 passed.
+- `cd webui && bun run test -- src/tests/remote-access-settings.test.tsx` -> 7 passed, including dialog close/reopen and expired-renew cases.
+- `cd webui && bun run test -- src/tests/bootstrap.test.ts` -> 9 passed.
+
+Known limitations:
+- Kotlin/`NativeNetworkPlugin` custody of the pending setup and native retry
+  ordering are not compiled or instrumented; the JS bootstrapper retains the
+  setup in memory for the current app lifetime, and native behavior still needs
+  Android build/device evidence.
 
 ## Commits
 

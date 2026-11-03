@@ -219,6 +219,7 @@ WEBSOCKET_MUTATION_ROUTES = {
     "settings.remote_access.pairing.approve": "/api/settings/remote-access/pairing/approve",
     "settings.remote_access.pairing.deny": "/api/settings/remote-access/pairing/deny",
     "settings.remote_access.pairing.cancel": "/api/settings/remote-access/pairing/cancel",
+    "settings.remote_access.pairing.renew": "/api/settings/remote-access/pairing/renew",
     "settings.mcp.enable": "/api/settings/mcp-presets/enable",
     "settings.mcp.disable": "/api/settings/mcp-presets/disable",
     "settings.mcp.remove": "/api/settings/mcp-presets/remove",
@@ -254,6 +255,7 @@ _LOCAL_ONLY_WEBUI_MUTATION_PATHS = frozenset({
     "/api/settings/remote-access/pairing/approve",
     "/api/settings/remote-access/pairing/deny",
     "/api/settings/remote-access/pairing/cancel",
+    "/api/settings/remote-access/pairing/renew",
 })
 
 

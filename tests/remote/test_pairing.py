@@ -388,3 +388,64 @@ def test_deny_and_expiry_states(tmp_path) -> None:
             installation_id="install-9005",
             label="phone",
         )
+
+
+def test_renew_extends_an_expired_offer_within_the_setup_limit(tmp_path) -> None:
+    clock = Clock()
+    _store, _tokens, pairing = setup(tmp_path, clock)
+    created = offer(pairing)
+    clock.advance(301)
+    assert pairing.status(created.pairing_id).state == "expired"
+
+    renewed = pairing.renew(created.pairing_id)
+    assert renewed.expires_at > int(clock.now)
+    assert renewed.expires_at <= created.expires_at - 300 + 1800
+    assert renewed.renewable is True
+    assert renewed.state == "offer_created"
+    assert pairing.status(created.pairing_id).expires_at == renewed.expires_at
+
+
+def test_renew_keeps_the_collected_device_binding_and_polling(tmp_path) -> None:
+    clock = Clock()
+    _store, _tokens, pairing = setup(tmp_path, clock)
+    created = offer(pairing)
+    pending = pairing.collect(
+        pairing_id=created.pairing_id,
+        nonce=created.nonce,
+        collector_secret=created.collector_secret,
+        installation_id="install-0001",
+        label="phone",
+    )
+    clock.advance(301)
+    renewed = pairing.renew(created.pairing_id)
+    assert renewed.state == "pending_approval"
+    assert renewed.installation_id == pending.installation_id
+    assert isinstance(
+        pairing.poll(
+            pairing_id=created.pairing_id,
+            nonce=created.nonce,
+            collector_secret=created.collector_secret,
+        ),
+        type(pending),
+    )
+
+
+def test_renew_is_refused_after_terminal_or_overall_limit(tmp_path) -> None:
+    clock = Clock()
+    _store, _tokens, pairing = setup(tmp_path, clock)
+    created = offer(pairing)
+    pairing.collect(
+        pairing_id=created.pairing_id,
+        nonce=created.nonce,
+        collector_secret=created.collector_secret,
+        installation_id="install-0001",
+        label="phone",
+    )
+    pairing.approve(pairing_id=created.pairing_id, comparison_code=created.comparison_code)
+    with pytest.raises(PairingConsumedError):
+        pairing.renew(created.pairing_id)
+
+    late = offer(pairing)
+    clock.advance(1801)
+    with pytest.raises(PairingExpiredError):
+        pairing.renew(late.pairing_id)

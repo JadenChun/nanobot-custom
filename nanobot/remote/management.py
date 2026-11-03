@@ -74,6 +74,9 @@ class RemoteAccessManager:
     def deny_pairing(self, pairing_id: str) -> dict[str, Any]:
         return self.client.deny_pairing(pairing_id)
 
+    def renew_pairing(self, pairing_id: str) -> dict[str, Any]:
+        return self.client.renew_pairing(pairing_id)
+
     def cancel_pairing(self, pairing_id: str) -> bool:
         return self.client.cancel_pairing(pairing_id)
 

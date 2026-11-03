@@ -17,6 +17,7 @@ import {
   fetchRemotePairingPending,
   fetchRemotePairingPendingList,
   fetchRemoteTailscaleStatus,
+  renewRemotePairing,
   revokeRemoteDevice,
   setRemoteAccessEnabled,
   startRemotePairing,
@@ -86,40 +87,51 @@ export function RemoteAccessSettings({
     if (!initialStatus) void refresh();
   }, [initialStatus, refresh]);
 
+  const restorePending = useCallback(async () => {
+    try {
+      const items = await fetchRemotePairingPendingList(token);
+      const nowMs = Date.now();
+      const active = items.find(
+        (item) =>
+          (item.state === "pending_approval" || item.state === "expired") &&
+          (item.expires_at * 1000 > nowMs || item.renewable === true),
+      );
+      if (!active) return;
+      setOffer({
+        pairing_id: active.pairing_id,
+        pairing_code: active.pairing_code,
+        comparison_code: active.pairing_code ?? "",
+        nonce: "",
+        collector_secret: "",
+        expires_at: active.expires_at,
+        origin: active.origin,
+        transport: "tailscale",
+        scopes: active.scopes,
+      });
+      setPending(active);
+      setNow(Date.now());
+      setStep("pending");
+      if (active.expires_at * 1000 <= Date.now()) {
+        setError(
+          active.renewable
+            ? "The pairing code expired. Renew setup on this desktop."
+            : "The pairing code expired. Generate a new one.",
+        );
+      }
+    } catch {
+      /* The pending route is optional for older servers. */
+    }
+  }, [token]);
+
   useEffect(() => {
     if (!localSetupAvailable) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const items = await fetchRemotePairingPendingList(token);
-        const active = items.find(
-          (item) =>
-            item.state === "pending_approval" &&
-            item.expires_at * 1000 > Date.now(),
-        );
-        if (!active || cancelled) return;
-        setOffer({
-          pairing_id: active.pairing_id,
-          pairing_code: active.pairing_code,
-          comparison_code: active.pairing_code ?? "",
-          nonce: "",
-          collector_secret: "",
-          expires_at: active.expires_at,
-          origin: active.origin,
-          transport: "tailscale",
-          scopes: active.scopes,
-        });
-        setPending(active);
-        setNow(Date.now());
-        setStep("pending");
-      } catch {
-        /* The pending route is optional for older servers. */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [localSetupAvailable, token]);
+    void restorePending();
+  }, [localSetupAvailable, restorePending]);
+
+  useEffect(() => {
+    if (!setupOpen || offer || !localSetupAvailable) return;
+    void restorePending();
+  }, [setupOpen, offer, localSetupAvailable, restorePending]);
 
   useEffect(() => {
     if (!offer) return;
@@ -141,7 +153,9 @@ export function RemoteAccessSettings({
           setError(
             next.state === "denied"
               ? "The phone request was denied."
-              : "The pairing code expired. Generate a new one.",
+              : next.renewable
+                ? "The pairing code expired. Renew setup on this desktop."
+                : "The pairing code expired. Generate a new one.",
           );
         }
       } catch {
@@ -205,7 +219,7 @@ export function RemoteAccessSettings({
   };
 
   const openSetup = async () => {
-    if (offer && step === "pending") {
+    if (offer && (step === "pending" || step === "waiting")) {
       setSetupOpen(true);
       return;
     }
@@ -239,6 +253,22 @@ export function RemoteAccessSettings({
     setPending(null);
     setCopied(null);
     setError(null);
+  };
+
+  const renew = async () => {
+    if (!offer) return;
+    await run(async () => {
+      const renewed = await renewRemotePairing(mutate, offer.pairing_id);
+      setPending(renewed);
+      setOffer((current) => (
+        current && current.pairing_id === renewed.pairing_id
+          ? { ...current, expires_at: renewed.expires_at }
+          : current
+      ));
+      setNow(Date.now());
+      setError(null);
+      setStep("pending");
+    });
   };
 
   const begin = async (targetOrigin = origin) => {
@@ -431,7 +461,6 @@ export function RemoteAccessSettings({
 
       <Dialog open={setupOpen} onOpenChange={(open) => {
         setSetupOpen(open);
-        if (!open) resetSetup();
       }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -555,13 +584,35 @@ export function RemoteAccessSettings({
                       >
                         New code
                       </button>
+                      {expired && pending?.renewable ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void renew()}
+                          className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
+                        >
+                          Renew setup
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 </div>
               ) : (
-                <p className="text-center text-xs text-muted-foreground">
-                  This request was created earlier.
-                </p>
+                <div className="space-y-2 text-center">
+                  <p className="text-xs text-muted-foreground">
+                    This request was created earlier.
+                  </p>
+                  {expired && pending?.renewable ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void renew()}
+                      className="rounded-md border border-foreground bg-foreground px-3 py-1.5 text-sm text-background"
+                    >
+                      Renew setup
+                    </button>
+                  ) : null}
+                </div>
               )}
 
               {step === "pending" && pending?.device ? (

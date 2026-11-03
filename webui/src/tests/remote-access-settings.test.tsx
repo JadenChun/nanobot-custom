@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -55,6 +55,13 @@ function mutationTransport(onStart?: () => void) {
         return { pairing_id: "pair-1", installation_id: "phone-1", scopes: ["owner"] };
       }
       if (action === "settings.remote_access.pairing.deny") return {};
+      if (action === "settings.remote_access.pairing.renew") {
+        return {
+          ...pending,
+          expires_at: Math.floor(Date.now() / 1000) + 300,
+          renewable: true,
+        };
+      }
       return {};
     }),
   };
@@ -143,6 +150,72 @@ describe("RemoteAccessSettings", () => {
     await userEvent.click(screen.getByRole("button", { name: "Deny" }));
     await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
       "settings.remote_access.pairing.deny",
+      { pairingId: "pair-1" },
+    ));
+  });
+
+  it("keeps the pending setup across closing and reopening the dialog", async () => {
+    const collection = { collected: false };
+    const mutate = mutationTransport(() => {
+      collection.collected = true;
+    });
+    vi.stubGlobal("fetch", pendingFetch(collection));
+    render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
+    await userEvent.click(screen.getByRole("button", { name: "Pair owner phone" }));
+    await waitFor(() => expect(screen.getByText("1234 5678")).toBeInTheDocument());
+    const dialog = screen.getByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: /close/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "Pair owner phone" }));
+    await waitFor(() => expect(screen.getByText("1234 5678")).toBeInTheDocument());
+    expect(
+      mutate.requestMutation.mock.calls.filter(
+        ([action]) => action === "settings.remote_access.pairing.start",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("renews an expired offering without rescanning", async () => {
+    const mutate = mutationTransport();
+    const renewPending = {
+      ...pending,
+      state: "expired" as const,
+      expires_at: Math.floor(Date.now() / 1000) - 30,
+      renewable: true,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/tailscale")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              available: true,
+              connected: true,
+              serve_mapped: true,
+              origin: "https://fixture.example",
+              error: "",
+            }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () =>
+            url.includes("/pairing/pending")
+              ? { pending: [renewPending] }
+              : status,
+        };
+      }),
+    );
+    render(<RemoteAccessSettings token="token" mutate={mutate} initialStatus={status} />);
+    await userEvent.click(screen.getByRole("button", { name: "Pair owner phone" }));
+    const renewButton = await screen.findByRole("button", { name: "Renew setup" });
+    await userEvent.click(renewButton);
+    await waitFor(() => expect(mutate.requestMutation).toHaveBeenCalledWith(
+      "settings.remote_access.pairing.renew",
       { pairingId: "pair-1" },
     ));
   });
