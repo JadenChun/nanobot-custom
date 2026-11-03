@@ -1,5 +1,18 @@
 # Nanobot remaining work
 
+**Future direction, 2026-11-03:** [SuperAgent research and agent-managed
+sessions](superagent-research-and-session-direction.md) records a possible
+upgrade to automatic task-session organisation with direct user access. The
+current priority is stability of the existing agent, desktop/channel alignment,
+and constrained local inference. This is deferred direction, not another
+implementation or release-completion requirement for the work recorded below.
+
+**Current cleanup preparation, 2026-11-03:** the
+[H1/concurrency cleanup plan](telegram-h1-concurrency-cleanup-plan.md) scopes the
+retirement of Telegram-specific H1 coordination and the optional global turn
+cap. A6 below describes the inspected implementation, not its future direction;
+the retirement is planned and has not been implemented by these documents.
+
 Implementation update: **2026-10-23**, branch `codex/complete-remaining-work`.
 The accepted prototype features are implemented behind their explicit gateway
 settings. Production remains unchanged. See
