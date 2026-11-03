@@ -532,3 +532,23 @@ func TestWebSocketIDsAreUniqueAcrossConnections(t *testing.T) {
 	}
 	waitEvent(t, core, "ws_closed")
 }
+
+func TestWebSocketPingTracksTheLiveSocket(t *testing.T) {
+	server := testServer(t)
+	core := testCore(t, server, nil)
+	wsID, err := core.WSOpen(WSRequest{Operation: "fixture_ws", Path: "/fixture/v1/ws"})
+	if err != nil {
+		t.Fatalf("WSOpen: %v", err)
+	}
+	waitEvent(t, core, "ws_open")
+	if err := core.WSPing(wsID); err != nil {
+		t.Fatalf("WSPing live socket: %v", err)
+	}
+	if err := core.WSClose(wsID); err != nil {
+		t.Fatalf("WSClose: %v", err)
+	}
+	waitEvent(t, core, "ws_closed")
+	if err := core.WSPing(wsID); err != ErrNotFound {
+		t.Fatalf("WSPing retired socket: %v", err)
+	}
+}

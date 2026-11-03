@@ -19,6 +19,7 @@ object NativeNetwork {
     external fun wsOpen(handle: Long, requestJson: String): Long
     external fun wsSend(handle: Long, wsId: Long, kind: Int, data: ByteArray): Int
     external fun wsClose(handle: Long, wsId: Long): Int
+    external fun wsPing(handle: Long, wsId: Long): Int
     external fun pollEvent(handle: Long): ByteArray?
     external fun stop(handle: Long): Int
     external fun lastError(): String

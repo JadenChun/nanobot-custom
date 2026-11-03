@@ -216,6 +216,46 @@ class CustodyStore(context: Context) {
     }
 
     /**
+     * Persist a rotation only while the same live custody binding still exists.
+     * A logout/revoke that cleared or fenced custody must win over an older
+     * in-flight refresh completion.
+     */
+    @Synchronized
+    fun saveRefreshedTokens(
+        origin: String,
+        installationId: String,
+        accessToken: String,
+        refreshToken: String,
+        accessExpiresIn: Int = 600,
+        refreshExpiresIn: Int = 30 * 24 * 60 * 60,
+    ): CustodyRecord {
+        if (accessToken.isBlank() || refreshToken.isBlank()) {
+            throw CustodyException("refreshed credentials are empty")
+        }
+        if (accessToken.length > 512 || refreshToken.length > 512) {
+            throw CustodyException("refreshed credentials exceed the bound")
+        }
+        val current = load() ?: throw CustodyMismatchException("custody was cleared during refresh")
+        if (
+            current.installationId != installationId ||
+            current.origin != origin ||
+            current.revocationPending
+        ) {
+            throw CustodyMismatchException("custody binding changed during refresh")
+        }
+        val now = System.currentTimeMillis()
+        val updated = current.copy(
+            accessToken = accessToken,
+            refreshToken = refreshToken,
+            accessExpiresAt = now + accessExpiresIn * 1000L,
+            refreshExpiresAt = if (refreshExpiresIn <= 0) 0L else now + refreshExpiresIn * 1000L,
+            updatedAt = now,
+        )
+        save(updated)
+        return updated
+    }
+
+    /**
      * Return the installation identity used for pairing. Before the first
      * successful pairing this is a persistent app-private UUID; afterwards it
      * is the installation bound inside the encrypted custody record.

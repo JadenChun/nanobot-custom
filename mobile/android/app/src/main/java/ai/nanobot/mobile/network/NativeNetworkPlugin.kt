@@ -57,6 +57,8 @@ class NativeNetworkPlugin : Plugin() {
     private data class PendingWsFrame(val kind: Int, val data: ByteArrayOutputStream)
     private val pendingWsFrames = ConcurrentHashMap<Long, PendingWsFrame>()
     @Volatile private var activePairing: PairingChallenge? = null
+    private val refreshLock = Any()
+    private var refreshInFlight: CompletableFuture<CustodyRecord>? = null
     private var pollTask: ScheduledFuture<*>? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private val custody by lazy { CustodyStore(context) }
@@ -81,50 +83,77 @@ class NativeNetworkPlugin : Plugin() {
             call.reject("no refresh credential")
             return
         }
-        operationExecutor.execute {
-            try {
-                var active = record
-                val refreshed = try {
-                    requestRefresh(active)
-                } catch (first: Exception) {
-                    if (!isUnauthorized(first)) throw first
-                    // A concurrent refresh may have rotated the token between our
-                    // custody read and request. Retry once with the latest record
-                    // before treating the installation as revoked.
-                    val latest = custody.load()
-                    if (latest == null || latest.refreshToken == active.refreshToken) throw first
-                    active = latest
-                    requestRefresh(active)
-                }
-                custody.saveTokens(
-                    active.origin,
-                    active.installationId,
-                    refreshed.getString("access_token"),
-                    refreshed.getString("refresh_token"),
-                    refreshed.optInt("expires_in", 600),
-                    refreshed.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
-                )
-                mainHandler.post { call.resolve(JSObject().put("refreshed", true)) }
-            } catch (exception: Exception) {
-                val message = exception.message ?: "token refresh failed"
-                if (isUnauthorized(exception) && message.contains("device_revoked")) {
-                    // Only a confirmed owner revocation erases local custody. A
-                    // transient/raced invalid_refresh must not orphan the tsnet state.
+        val shared: CompletableFuture<CustodyRecord>
+        synchronized(refreshLock) {
+            val existing = refreshInFlight
+            if (existing != null) {
+                shared = existing
+            } else {
+                shared = CompletableFuture()
+                refreshInFlight = shared
+                operationExecutor.execute {
                     try {
-                        custody.logout(serverReachable = true)
-                        custody.purgeMedia()
-                    } catch (_: Exception) {
-                        // Custody may already be gone; the reload still resets UI.
+                        shared.complete(performRefresh())
+                    } catch (exception: Exception) {
+                        shared.completeExceptionally(exception)
+                    } finally {
+                        synchronized(refreshLock) {
+                            if (refreshInFlight === shared) refreshInFlight = null
+                        }
                     }
-                    mainHandler.post {
-                        call.reject("pairing was revoked")
-                        (activity as? BridgeActivity)?.getBridge()?.getWebView()?.reload()
-                    }
-                } else {
-                    mainHandler.post { call.reject(message) }
                 }
             }
         }
+        shared.whenComplete { _updated, error ->
+            if (error == null) {
+                mainHandler.post { call.resolve(JSObject().put("refreshed", true)) }
+                return@whenComplete
+            }
+            val failure = error as? Exception ?: Exception(error)
+            val message = failure.message ?: "token refresh failed"
+            if (isUnauthorized(failure) && message.contains("device_revoked")) {
+                // Only a confirmed owner revocation erases local custody. A
+                // transient/raced invalid_refresh must not orphan the tsnet state.
+                try {
+                    custody.logout(serverReachable = true)
+                    custody.purgeMedia()
+                } catch (_: Exception) {
+                    // Custody may already be gone; the reload still resets UI.
+                }
+                mainHandler.post {
+                    call.reject("pairing was revoked")
+                    (activity as? BridgeActivity)?.getBridge()?.getWebView()?.reload()
+                }
+            } else {
+                mainHandler.post { call.reject(message) }
+            }
+        }
+    }
+
+    private fun performRefresh(): CustodyRecord {
+        var active = custody.load() ?: throw CustodyException("no refresh credential")
+        if (active.refreshToken.isBlank() || active.revocationPending) {
+            throw CustodyException("no refresh credential")
+        }
+        val refreshed = try {
+            requestRefresh(active)
+        } catch (first: Exception) {
+            if (!isUnauthorized(first)) throw first
+            // Another device may have rotated the token. Retry once with the
+            // latest live record before treating the installation as revoked.
+            val latest = custody.load()
+            if (latest == null || latest.refreshToken == active.refreshToken) throw first
+            active = latest
+            requestRefresh(active)
+        }
+        return custody.saveRefreshedTokens(
+            active.origin,
+            active.installationId,
+            refreshed.getString("access_token"),
+            refreshed.getString("refresh_token"),
+            refreshed.optInt("expires_in", 600),
+            refreshed.optInt("refresh_expires_in", 30 * 24 * 60 * 60),
+        )
     }
 
     @PluginMethod
@@ -376,7 +405,7 @@ class NativeNetworkPlugin : Plugin() {
                 }
                 val record = custody.load()
                     ?: throw IllegalStateException("custody target is missing")
-                custody.saveTokens(
+                custody.saveRefreshedTokens(
                     record.origin,
                     record.installationId,
                     polled.getString("access_token"),
@@ -674,6 +703,22 @@ class NativeNetworkPlugin : Plugin() {
             return
         }
         call.resolve()
+    }
+
+    @PluginMethod
+    fun wsPing(call: PluginCall) {
+        val current = transportHandle
+        val wsId = callLong(call, "wsId")
+        if (current == 0L || wsId == null) {
+            call.reject("transport and wsId are required")
+            return
+        }
+        val status = NativeNetwork.wsPing(current, wsId)
+        if (status != 0) {
+            call.reject(NativeNetwork.lastError())
+            return
+        }
+        call.resolve(JSObject().put("ok", true))
     }
 
     @PluginMethod

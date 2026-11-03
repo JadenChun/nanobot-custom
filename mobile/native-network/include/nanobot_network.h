@@ -62,6 +62,9 @@ int32_t nanobot_network_ws_send(int64_t handle, uint64_t ws_id, int32_t kind,
 
 int32_t nanobot_network_ws_close(int64_t handle, uint64_t ws_id);
 
+/* Sends one protocol ping and waits for its pong for at most five seconds. */
+int32_t nanobot_network_ws_ping(int64_t handle, uint64_t ws_id);
+
 /*
  * Copies one JSON event into out. Returns 0 when empty, the event length when
  * copied, -7 when the buffer is too small (the event is retained), or another

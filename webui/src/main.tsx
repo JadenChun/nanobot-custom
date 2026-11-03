@@ -58,6 +58,7 @@ if (isMobileRuntimeActive()) {
   document.addEventListener("visibilitychange", recover);
   window.addEventListener("pageshow", recover);
   window.addEventListener("online", recover);
+  window.addEventListener("nanobot-native-resume", recover);
 }
 
 async function renderWebui(container: HTMLElement) {

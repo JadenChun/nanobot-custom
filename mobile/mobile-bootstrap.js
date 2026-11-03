@@ -56,6 +56,10 @@
       }
     },
     wsClose: async function (wsId) { await plugin.wsClose({ wsId: wsId }); },
+    wsPing: async function (wsId) {
+      var result = await plugin.wsPing({ wsId: wsId });
+      return Boolean(result && result.ok);
+    },
     stop: async function () { await plugin.stop(); }
   };
   window.nanobotMobileTransport = transport;

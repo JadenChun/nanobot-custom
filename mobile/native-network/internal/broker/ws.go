@@ -152,6 +152,22 @@ func (c *Core) WSClose(wsID uint64) error {
 	return nil
 }
 
+// WSPing sends one protocol ping and waits for its pong within five seconds.
+func (c *Core) WSPing(wsID uint64) error {
+	c.mu.Lock()
+	session := c.ws
+	c.mu.Unlock()
+	if session == nil || session.id != wsID {
+		return ErrNotFound
+	}
+	ctx, cancel := context.WithTimeout(session.ctx, 5*time.Second)
+	defer cancel()
+	if err := session.conn.Ping(ctx); err != nil {
+		return fmt.Errorf("%w: WebSocket ping failed", ErrUnavailable)
+	}
+	return nil
+}
+
 func (s *wsSession) readLoop() {
 	for {
 		messageType, data, err := s.conn.Read(s.ctx)
