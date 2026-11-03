@@ -26,10 +26,10 @@ remaining blockers. Private logs and runtime data stay outside the repository.
 | Mobile A socket correctness | focused complete | identity, terminal lifecycle, UTF-8, unique broker ids |
 | Mobile B delivery authorization | focused complete; helper cleanup deferred | uncached revalidation before private delivery |
 | Mobile C owner wiring / foreground recovery | complete (focused + emulator M01) | native Ping/refresh/resume bridge, owner routes, foreground recovery; physical Doze/radio pending |
-| Mobile D pairing continuity | desktop/WebUI/JS complete; native custody pending | renewal + dialog restore; Kotlin process-death custody not implemented |
-| Mobile E request authority/backend | focused complete (version/defaults/Full consent) | temporary ephemeral Full, request proofs and steering transport remain |
+| Mobile D pairing continuity | complete (focused + native custody) | renewal, restore, Kotlin pending-setup custody; physical device evidence pending |
+| Mobile E request authority/backend | focused complete | versioned settings, defaults, device/source Full consent, ephemeral Temporary Full, request-bound proofs, same-context steering |
 | Mobile F composer settings/presentation | focused complete | queued snapshot + next-message hint; physical visual/touch evidence pending |
-| Mobile G standard feature dispatcher | reads complete | standard owner read dispatch + wrappers; mutation/WS parity still wrapper-based |
+| Mobile G standard feature dispatcher | focused complete | standard owner read dispatch, standard mobile WS actions, typed replay mutation adapter retained |
 | Integrated qualification / M38 | local gates green; release gates pending | full Python/WebUI/type/build/M01 pass; signed phone and M38 pending |
 
 ## Acceptance evidence
