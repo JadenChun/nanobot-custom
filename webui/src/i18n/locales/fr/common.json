@@ -1517,7 +1517,9 @@
     "open": "Voir l’image",
     "prev": "Image précédente",
     "next": "Image suivante",
-    "close": "Fermer l’aperçu"
+    "close": "Fermer l’aperçu",
+    "thumbnails": "Toutes les images",
+    "goToImage": "Aller à l’image {{index}}"
   },
   "filePreview": {
     "aria": "Aperçu du fichier",

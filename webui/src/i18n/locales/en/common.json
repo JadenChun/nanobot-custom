@@ -1517,7 +1517,9 @@
     "open": "View image",
     "prev": "Previous image",
     "next": "Next image",
-    "close": "Close image preview"
+    "close": "Close image preview",
+    "thumbnails": "All images",
+    "goToImage": "Go to image {{index}}"
   },
   "filePreview": {
     "aria": "File preview",

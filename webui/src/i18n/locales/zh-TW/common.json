@@ -1517,7 +1517,9 @@
     "open": "檢視圖片",
     "prev": "上一張",
     "next": "下一張",
-    "close": "關閉預覽"
+    "close": "關閉預覽",
+    "thumbnails": "所有圖片",
+    "goToImage": "前往第 {{index}} 張圖片"
   },
   "filePreview": {
     "aria": "檔案預覽",

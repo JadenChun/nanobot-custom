@@ -1517,7 +1517,9 @@
     "open": "Lihat gambar",
     "prev": "Gambar sebelumnya",
     "next": "Gambar berikutnya",
-    "close": "Tutup pratinjau"
+    "close": "Tutup pratinjau",
+    "thumbnails": "Semua gambar",
+    "goToImage": "Buka gambar {{index}}"
   },
   "filePreview": {
     "aria": "Pratinjau file",

@@ -1517,7 +1517,9 @@
     "open": "이미지 보기",
     "prev": "이전 이미지",
     "next": "다음 이미지",
-    "close": "미리보기 닫기"
+    "close": "미리보기 닫기",
+    "thumbnails": "모든 이미지",
+    "goToImage": "{{index}}번째 이미지로 이동"
   },
   "filePreview": {
     "aria": "파일 미리보기",

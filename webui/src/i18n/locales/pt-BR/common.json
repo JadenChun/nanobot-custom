@@ -1517,7 +1517,9 @@
     "open": "Ver imagem",
     "prev": "Imagem anterior",
     "next": "Próxima imagem",
-    "close": "Fechar pré-visualização"
+    "close": "Fechar pré-visualização",
+    "thumbnails": "Todas as imagens",
+    "goToImage": "Ir para a imagem {{index}}"
   },
   "filePreview": {
     "aria": "Pré-visualização de arquivo",
