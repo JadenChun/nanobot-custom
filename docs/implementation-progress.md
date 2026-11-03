@@ -310,3 +310,6 @@ Not implemented:
   because it asserted the superseded saved-image placeholder wording. The case was
   updated to the accepted P3 contract (no image bytes; authorized `read_file`
   reread) and passes in isolation. A clean full rerun is in progress.
+- Full Python suite clean rerun: **17539 passed, 22 skipped, 6 subtests passed**,
+  exit 0 in 718.42s (`/tmp/opencode/full-suite-r2.log`). The 22 skips are the
+  repository's existing platform/native skips, not waived or claimed as execution.
