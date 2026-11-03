@@ -1116,6 +1116,7 @@ class ContextGovernor:
                 group_start = boundary
                 check_deadline()
 
+            truncated_boundaries: set[int] = set()
             for fold_index in range(4):
                 chosen = None
                 evidence = None
@@ -1146,7 +1147,7 @@ class ContextGovernor:
                 chunk_rejection_reason: str | None = None
                 if prepared is None:
                     for boundary in reversed(candidate.boundaries):
-                        if boundary <= cursor:
+                        if boundary <= cursor or boundary in truncated_boundaries:
                             continue
                         selected = candidate.summary_evidence(boundary, after=cursor)
                         if not selected.nodes:
@@ -1230,6 +1231,15 @@ class ContextGovernor:
                     metrics.usage = result.usage if metrics.usage is None else metrics.usage + result.usage
                 if result.summary is None or result.status != 'complete':
                     failure_reason = result.failure_reason or 'summary_provider_error'
+                    if (
+                        failure_reason == 'summary_truncated'
+                        and fold_index < 3
+                    ):
+                        # Discard the truncated candidate and retry the same
+                        # evidence cursor with the next smaller closed chunk.
+                        truncated_boundaries.add(chosen)
+                        check_deadline()
+                        continue
                     raise SourceCompactionUnavailableError(
                         'Bounded source summary failed: ' + result.status,
                         reason=failure_reason,
@@ -1767,6 +1777,29 @@ class ContextGovernor:
                 return None
         return preview
 
+    def _attach_route_selection(
+        self,
+        config: ContextGovernanceConfig,
+        messages: list[dict[str, Any]],
+        *,
+        tool_definitions: list[dict[str, Any]] | None,
+        stream: bool,
+        tool_choice: str | dict[str, Any] | None,
+        provider_context: ProviderCallContext,
+    ) -> ProviderCallContext:
+        """Bind the exact prepared request to the leaf dispatch will use."""
+        preview = self._prepared_budget_preview(
+            config,
+            messages,
+            tool_definitions=tool_definitions,
+            stream=stream,
+            tool_choice=tool_choice,
+            provider_context=provider_context,
+        )
+        if preview is None or preview.route is None:
+            return provider_context
+        return replace(provider_context, selected_route=preview.route)
+
     @classmethod
     def _prepared_budget_preview(
         cls,
@@ -2219,11 +2252,20 @@ class ContextGovernor:
                 resume_state=False,
                 binding=None,
             )
-            return prepared, replace(
+            final_context = replace(
                 provider_context or ProviderCallContext(),
                 events=state.events,
                 local_usage_anchor=state.local_usage_anchor,
             )
+            final_context = self._attach_route_selection(
+                state.config,
+                prepared,
+                tool_definitions=tool_definitions,
+                stream=stream,
+                tool_choice=tool_choice,
+                provider_context=final_context,
+            )
+            return prepared, final_context
         prepared = self.prepare_messages_for_model(state.config, messages)
         image_view_changed = recent_image_messages(messages) != messages
         if image_view_changed:
@@ -2328,6 +2370,14 @@ class ContextGovernor:
             provider_context or ProviderCallContext(),
             events=state.events,
             local_usage_anchor=state.local_usage_anchor,
+        )
+        provider_context = self._attach_route_selection(
+            state.config,
+            prepared,
+            tool_definitions=tool_definitions,
+            stream=stream,
+            tool_choice=tool_choice,
+            provider_context=provider_context,
         )
         state.messages = deepcopy(prepared)
         state.tool_definitions = deepcopy(tool_definitions)

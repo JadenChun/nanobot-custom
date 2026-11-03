@@ -888,9 +888,11 @@ async def test_unusable_summary_is_terminal_without_checkpoint_publication(store
         else:
             expected_reason = "summary_empty"
         assert recovered.unavailable_reason == expected_reason
-        assert len(state.config.provider.calls) == 1
+        assert 1 <= len(state.config.provider.calls) <= 4
         assert state.source_compaction.attempts[-1].status == "failed"
-        assert state.source_compaction.attempts[-1].calls == 1
+        assert state.source_compaction.attempts[-1].calls == len(
+            state.config.provider.calls,
+        )
         assert owner.read_snapshot() == before
         assert state.source.transcript == active
         assert state.source.projection_epoch == 0

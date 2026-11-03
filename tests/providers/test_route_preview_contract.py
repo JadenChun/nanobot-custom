@@ -424,3 +424,40 @@ def test_r5_pooled_wrapper_supports_source_summary_only_if_every_leaf_does() -> 
     assert build_pooled_wrapper(
         [leaf(0), leaf(1)], summary_support=[False, False],
     ).supports_source_summary is False
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reports_a_route_change_instead_of_using_a_stale_quote() -> None:
+    from dataclasses import replace
+
+    from nanobot.providers.base import ProviderRouteChanged
+
+    primary = _leaf(PRIMARY)
+    fallback_provider = _leaf(FALLBACK)
+    preset = SimpleNamespace(
+        model=str(FALLBACK["model"]),
+        max_tokens=int(FALLBACK["completion_reserve_tokens"]),
+        temperature=0.2,
+        reasoning_effort=None,
+        context_window_tokens=int(FALLBACK["context_window_tokens"]),
+    )
+    wrapper = FallbackProvider(primary, [preset], lambda _preset: fallback_provider)
+    prepared_route = preview(wrapper)
+    assert prepared_route is not None and prepared_route.route is not None
+    stale = replace(prepared_route.route, fallback_index=1)
+    context = ProviderCallContext(
+        request_limits=ProviderRequestLimits(
+            total_tokens=int(PRIMARY["context_window_tokens"]),
+            completion_reserve_tokens=int(PRIMARY["completion_reserve_tokens"]),
+            safety_buffer_tokens=0,
+        ),
+        context_window_tokens=int(PRIMARY["context_window_tokens"]),
+        selected_route=stale,
+    )
+    with pytest.raises(ProviderRouteChanged):
+        await wrapper.chat_with_retry(
+            messages=MESSAGES,
+            model=str(PRIMARY["model"]),
+            max_tokens=int(PRIMARY["completion_reserve_tokens"]),
+            provider_context=context,
+        )

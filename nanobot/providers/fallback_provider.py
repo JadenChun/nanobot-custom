@@ -22,6 +22,7 @@ from nanobot.providers.base import (
     ProviderCallContext,
     ProviderConversationState,
     ProviderRequestRejected,
+    ProviderRouteChanged,
     RetryEventCallback,
     RetryStatusCallback,
     track_stream_delivery,
@@ -320,10 +321,39 @@ class FallbackProvider(LLMProvider):
             )
         return None
 
+    @staticmethod
+    def _verify_route(
+        provider: LLMProvider,
+        provider_context: object,
+        model: str | None,
+        fallback_index: int,
+    ) -> None:
+        if not isinstance(provider_context, ProviderCallContext):
+            return
+        selected = provider_context.selected_route
+        if selected is None:
+            return
+        actual_model = model or provider.get_default_model()
+        if (
+            selected.fallback_index != fallback_index
+            or selected.provider != provider.provider_name
+            or selected.model != actual_model
+        ):
+            raise ProviderRouteChanged(
+                expected=selected.route_token,
+                actual=f"{provider.provider_name}:{actual_model}:{fallback_index}",
+            )
+
     async def chat_once(self, **kwargs: Any) -> LLMResponse:
         """Keep bounded auxiliary work on its captured primary model."""
         provider_context = kwargs.get("provider_context")
         if isinstance(provider_context, ProviderCallContext):
+            self._verify_route(
+                self._primary,
+                provider_context,
+                kwargs.get("model"),
+                0,
+            )
             kwargs["provider_context"] = self._primary_call_context(
                 provider_context,
                 kwargs.get("model"),
@@ -334,6 +364,12 @@ class FallbackProvider(LLMProvider):
         """Stream one auxiliary request through the captured primary only."""
         provider_context = kwargs.get("provider_context")
         if isinstance(provider_context, ProviderCallContext):
+            self._verify_route(
+                self._primary,
+                provider_context,
+                kwargs.get("model"),
+                0,
+            )
             kwargs["provider_context"] = self._primary_call_context(
                 provider_context,
                 kwargs.get("model"),
@@ -636,6 +672,12 @@ class FallbackProvider(LLMProvider):
 
         if self._primary_available():
             primary_was_attempted = True
+            self._verify_route(
+                self._primary,
+                kwargs.get("provider_context"),
+                kwargs.get("model"),
+                0,
+            )
             response, primary_exception = await self._call_provider(
                 call, self._primary, kwargs
             )
@@ -729,6 +771,12 @@ class FallbackProvider(LLMProvider):
                     provider_context,
                     fallback_model,
                 )
+            self._verify_route(
+                fallback_provider,
+                fallback_kwargs.get("provider_context"),
+                fallback_model,
+                idx + 1,
+            )
             if fallback.reasoning_effort is None:
                 fallback_kwargs.pop("reasoning_effort", None)
             else:

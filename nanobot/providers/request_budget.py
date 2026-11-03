@@ -319,6 +319,15 @@ class FinalizedRequestBudgetExceeded(ProviderRequestRejected):  # noqa: N818
         self.args = (self.DEFAULT_MESSAGE,)
 
 
+class ProviderRouteChanged(ProviderRequestRejected):
+    """Dispatch selected a different leaf than the captured preparation route."""
+
+    def __init__(self, *, expected: str, actual: str) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(reason="route_changed")
+
+
 class RequestPayloadBytesExceeded(ProviderRequestRejected):
     """The complete JSON request exceeds its independent byte ceiling."""
 
