@@ -1666,3 +1666,81 @@ def test_reset_and_delete_wait_for_full_native_tree_and_preserve_delete_observer
 
     assert manager.delete_session(key)
     assert deleted == [key]
+
+
+def test_remote_full_reference_is_bound_to_the_confirming_installation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from nanobot.agent.tools import native_process
+
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    monkeypatch.setattr(native_process, "native_supervisor_available", lambda: True)
+    manager = SessionManager(home, sessions_root=tmp_path / "sessions")
+    key = "websocket:remote-full"
+    scope = default_workspace_scope(project, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    manager._jsonl_store.save(session)
+    manager._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    grants = FolderGrantStore(
+        agent_home=home,
+        instance_root=instance,
+        path=instance / "webui" / "folder-grants.json",
+    )
+    controller = WebUIWorkspaceController(
+        session_manager=manager,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=grants,
+        native_supervisor_available=True,
+    )
+    owner = manager.desktop_permissions
+    source = controller._source_binding(key)
+    assert source is not None
+    current = controller._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+
+    enabled = controller.set_permission_mode({
+        "chat_id": "remote-full",
+        "mode": "full",
+        "expected_runtime_id": owner.runtime_id,
+        "expected_permission_revision": current["revision"],
+    }, local_ui=False, owner_authorized=True, owner_installation_id="install-phone")
+
+    assert "error" not in enabled
+    reference = controller.ingress_full_reference(
+        "remote-full", local_ui=False, installation_id="install-phone",
+    )
+    assert reference is not None
+    assert controller.ingress_full_reference(
+        "remote-full", local_ui=False, installation_id="install-other",
+    ) is None
+    assert controller.ingress_full_reference(
+        "remote-full", local_ui=False,
+    ) is None
+    assert controller.ingress_full_reference("remote-full", local_ui=True) is not None
+
+    projection = owner.projection(session_key=key, source_binding=source)
+    disabled = controller.set_permission_mode({
+        "chat_id": "remote-full",
+        "mode": "restricted",
+        "expected_runtime_id": owner.runtime_id,
+        "expected_permission_revision": projection["revision"],
+    }, local_ui=True)
+    assert "error" not in disabled
+    assert controller.ingress_full_reference(
+        "remote-full", local_ui=False, installation_id="install-phone",
+    ) is None

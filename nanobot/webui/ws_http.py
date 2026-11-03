@@ -2142,7 +2142,11 @@ class GatewayHTTPHandler:
             connection,
             request.headers,
         )
-        owner_authorized = _typed_owner_identity(connection) is not None
+        owner_identity = _typed_owner_identity(connection)
+        owner_authorized = owner_identity is not None
+        owner_installation_id = (
+            owner_identity.installation_id if owner_identity is not None else None
+        )
         if not local_ui and not owner_authorized:
             return _http_error(403, "local_ui_required")
         if owner_authorized:
@@ -2170,6 +2174,7 @@ class GatewayHTTPHandler:
                     payload,
                     local_ui=local_ui,
                     owner_authorized=owner_authorized,
+                    owner_installation_id=owner_installation_id,
                 )
         except WorkspacePermissionActionError as exc:
             return _http_error(exc.status, exc.message)

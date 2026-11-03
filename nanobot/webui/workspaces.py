@@ -635,11 +635,19 @@ class WebUIWorkspaceController:
             raise WorkspaceScopeError("workspace controls are localhost-only", status=403)
         return scope
 
-    def ingress_full_reference(self, chat_id: str, *, local_ui: bool) -> object | None:
-        """Return private chat authority only after local WebUI authentication."""
+    def ingress_full_reference(
+        self,
+        chat_id: str,
+        *,
+        local_ui: bool,
+        installation_id: str | None = None,
+    ) -> object | None:
+        """Return private chat authority only after local or owner authentication."""
         from nanobot.webui.session_identity import is_valid_webui_chat_id
 
-        if not local_ui or not is_valid_webui_chat_id(chat_id):
+        if not is_valid_webui_chat_id(chat_id):
+            return None
+        if not local_ui and not installation_id:
             return None
         owner = self.permission_owner
         sessions = self._sessions
@@ -657,6 +665,12 @@ class WebUIWorkspaceController:
             return None
         source = self._source_binding(key)
         if source is None:
+            return None
+        if not local_ui and not owner.authorizes_remote_full(
+            installation_id=installation_id or "",
+            session_key=key,
+            source_binding=source,
+        ):
             return None
         reference = owner.full_reference(session_key=key, source_binding=source)
         if reference is None or not owner.authorizes_full(
@@ -797,6 +811,7 @@ class WebUIWorkspaceController:
         *,
         local_ui: bool,
         owner_authorized: bool = False,
+        owner_installation_id: str | None = None,
     ) -> WorkspaceModeActionResult | WorkspaceModeConflict:
         """Apply explicit chat-scoped Full/Restricted authority for a local UI or owner."""
         if not local_ui and not owner_authorized:
@@ -904,6 +919,12 @@ class WebUIWorkspaceController:
                     ),
                     process_counts=process_counts,
                 )
+                if owner_installation_id is not None:
+                    self.permission_owner.record_remote_full_consent(
+                        installation_id=owner_installation_id,
+                        session_key=key,
+                        source_binding=source,
+                    )
             except WorkspacePermissionUnavailableError as exc:
                 if exc.reason == "permission_retiring":
                     raise WorkspacePermissionActionError(409, "permission_retiring") from None

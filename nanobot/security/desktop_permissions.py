@@ -222,6 +222,7 @@ class DesktopPermissionOwner:
         self._task_retirements: dict[_TaskIdentity, _Retirement] = {}
         self._full: dict[_SourceIdentity, WorkspaceFullAccessReference] = {}
         self._full_retirements: dict[_SourceIdentity, _Retirement] = {}
+        self._remote_full_consents: dict[tuple[str, _SourceIdentity], bool] = {}
         self._native_stdin_closers: dict[object, dict[object, Callable[[], bool]]] = {}
         self._native_process_counts: dict[object, Callable[[], tuple[int, int]]] = {}
         self._full_residual_counts: dict[_SourceIdentity, tuple[int, int]] = {}
@@ -534,6 +535,56 @@ class DesktopPermissionOwner:
         with self._lock:
             return self._full.get(source)
 
+    def record_remote_full_consent(
+        self,
+        *,
+        installation_id: str,
+        session_key: str,
+        source_binding: PermissionSourceBinding,
+    ) -> None:
+        """Bind an explicit remote confirmation to its device and source lifetime."""
+        if not isinstance(installation_id, str) or not installation_id:
+            raise WorkspacePermissionUnavailableError("session_required")
+        source = _source_identity(session_key, source_binding)
+        with self._lock:
+            if source not in self._full:
+                raise WorkspacePermissionUnavailableError("session_required")
+            self._remote_full_consents[(installation_id, source)] = True
+
+    def authorizes_remote_full(
+        self,
+        *,
+        installation_id: str,
+        session_key: str,
+        source_binding: PermissionSourceBinding,
+    ) -> bool:
+        if not isinstance(installation_id, str) or not installation_id:
+            return False
+        try:
+            source = _source_identity(session_key, source_binding)
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            return (
+                source in self._full
+                and self._remote_full_consents.get((installation_id, source)) is True
+            )
+
+    def clear_remote_full_consents(
+        self,
+        *,
+        installation_id: str | None = None,
+        session_key: str | None = None,
+    ) -> None:
+        with self._lock:
+            for key in tuple(self._remote_full_consents):
+                consent_installation, source = key
+                if installation_id is not None and consent_installation != installation_id:
+                    continue
+                if session_key is not None and source.session_key != session_key:
+                    continue
+                self._remote_full_consents.pop(key, None)
+
     def authorizes_full(
         self,
         reference: object,
@@ -638,6 +689,11 @@ class DesktopPermissionOwner:
             close_failures = 0
             if retirement is None:
                 reference = self._full.pop(source, None)
+                self._remote_full_consents = {
+                    key: value
+                    for key, value in self._remote_full_consents.items()
+                    if key[1] != source
+                }
                 retirement = _Retirement(reason, private_reference=reference)
                 self._full_retirements[source] = retirement
                 if reference is not None:

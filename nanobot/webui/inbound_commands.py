@@ -704,9 +704,16 @@ class WebUICommandRouter:
 
         permission_reference = None
         if scope.access_mode == "full":
+            mobile_identity = getattr(connection, "mobile_identity", None)
+            mobile_installation = getattr(mobile_identity, "installation_id", None)
             permission_reference = self._workspaces.ingress_full_reference(
                 chat_id,
                 local_ui=self.workspace_controls_available(connection),
+                installation_id=(
+                    mobile_installation
+                    if isinstance(mobile_installation, str) and mobile_installation
+                    else None
+                ),
             )
             if permission_reference is None:
                 await self._transport.webui_send_event(
