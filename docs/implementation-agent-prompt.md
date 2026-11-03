@@ -1,5 +1,11 @@
 # Coding-agent handoff: mobile remote and session context lifecycle
 
+**Resume notice, 2026-11-04:** the implementation at `1689a4a0` received a CORRECT merge
+review. Use [merge-correction-agent-prompt.md](merge-correction-agent-prompt.md) and
+[merge-correction-tasks.md](merge-correction-tasks.md) for the next work; do not repeat completed
+Steps 1–8 or treat old passing totals as acceptance of the reviewed gaps. The original sequence
+below remains historical scope and safety guidance. Inspect existing environments before setup.
+
 Implement the accepted plans step by step. This authorizes implementation and local commits;
 the preparation commit contains documentation only. Continue between packages without routine
 approval questions. Complete independent work before reporting an external qualification blocker.

@@ -7,6 +7,17 @@ Base: `a90191a41b025884e76ce029b98a5d5349171f2e`
 This log records package status, acceptance evidence, commands and exits, and
 remaining blockers. Private logs and runtime data stay outside the repository.
 
+## Current merge review — 2026-11-04
+
+Verdict **CORRECT** at code `1689a4a06020c778a6e969b12bb19b27a1ac90f1`; hold merge.
+[MC01–MC08 correction tasks](merge-correction-tasks.md) are pending; use the
+[correction prompt](merge-correction-agent-prompt.md) to continue. This entry supersedes any
+implication below that focused completion establishes the full next-request/recovery contract.
+Historical checks and physical observations remain recorded, not erased or reclassified as new
+evidence. The task-preparation update changes documentation only; no correction or new product
+test has run. A merge-tree preview with staging `aacca07c` found no conflicts; the corrected
+combined candidate and its qualification still require validation. No staging merge occurred.
+
 ## Environment
 
 | Item | Value |
