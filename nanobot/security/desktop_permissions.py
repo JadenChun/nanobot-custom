@@ -543,7 +543,7 @@ class DesktopPermissionOwner:
         source_binding: PermissionSourceBinding,
     ) -> None:
         """Bind an explicit remote confirmation to its device and source lifetime."""
-        if not isinstance(installation_id, str) or not installation_id:
+        if not installation_id:
             raise WorkspacePermissionUnavailableError("session_required")
         source = _source_identity(session_key, source_binding)
         with self._lock:
@@ -558,7 +558,7 @@ class DesktopPermissionOwner:
         session_key: str,
         source_binding: PermissionSourceBinding,
     ) -> bool:
-        if not isinstance(installation_id, str) or not installation_id:
+        if not installation_id:
             return False
         try:
             source = _source_identity(session_key, source_binding)
