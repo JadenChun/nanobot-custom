@@ -28,7 +28,7 @@ remaining blockers. Private logs and runtime data stay outside the repository.
 | Mobile C owner wiring / foreground recovery | complete (focused + emulator M01 + physical Doze) | native Ping/refresh/resume bridge, owner routes, foreground recovery; physical radio/tailnet pending |
 | Mobile D pairing continuity | complete (focused + native custody) | renewal, restore, Kotlin pending-setup custody; physical device evidence pending |
 | Mobile E request authority/backend | focused complete | versioned settings, defaults, device/source Full consent, ephemeral Temporary Full, request-bound proofs, same-context steering |
-| Mobile F composer settings/presentation | focused complete; access mode while streaming remains | queued snapshot, next-message hint, 44px floor, project-first truncation, accessible access state; physical touch/name evidence recorded |
+| Mobile F composer settings/presentation | complete (focused + physical controls) | queued snapshot, next-message mode/project selection, 44px floor, project-first truncation, accessible access state |
 | Mobile G standard feature dispatcher | focused complete | standard owner read dispatch; mobile WS actions and mutations use the standard dispatcher with replay/auth; wrapper tests retained for old builds |
 | Integrated qualification / M38 | local gates green; release gates pending | full Python/WebUI/type/build/M01 pass; signed phone and M38 pending |
 
@@ -511,3 +511,25 @@ WebUI after the visible-label change: 1415 tests passed, build/lint exit 0.
   overrides was declined by the user and the overrides were restored
   (`wm size` / `wm density` reset). The 44 px floor is enforced in CSS but only
   the normal-width physical bounds are recorded.
+
+### Next-request mode while a turn is running
+
+- Project and access-mode controls stay usable while streaming. The running turn
+  keeps the workspace scope captured at its admission; the selection becomes
+  the mode/project carried by the next submitted message.
+- Selecting Full during a running restricted turn enables Full for the next
+  request without expiring the active turn's task references or escalating its
+  captured scope. The mode is persisted for refresh/recovery, and the active
+  restricted work continues under its original scope.
+- The deferred Full grant can be rolled back while the turn is still running
+  and no Full request has been admitted. Once a Full request is admitted, the
+  rollback follows the normal `chat_running`/retirement rules.
+- Message envelopes are treated as submitted per-request snapshots: a queued
+  next message may carry a different project/mode while the current turn runs.
+  `set_workspace_scope` remains the idle-only chat mutation.
+- Focused coverage: `test_full_selected_during_a_running_turn_applies_to_the_next_request`,
+  `test_deferred_full_can_be_rolled_back_before_the_next_request`,
+  `test_deferred_full_preserves_an_active_task_reference`, the updated
+  `test_webui_message_scope_change_while_running_uses_submitted_snapshot`, and
+  the composer test `keeps access and project controls usable while streaming`.
+- Focused selector: 488 passed. WebUI: 1419 passed, build/lint exit 0.
