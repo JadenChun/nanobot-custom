@@ -618,7 +618,7 @@ function PresetProviderIcon({
     <span
       data-testid={testId}
       className={cn(
-        "grid shrink-0 place-items-center",
+        "composer-model-provider-icon grid shrink-0 place-items-center",
         isHero ? "h-4 w-4" : "h-[18px] w-[18px]",
       )}
       aria-hidden

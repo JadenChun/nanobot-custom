@@ -55,9 +55,11 @@ function normalizeRounds(
 export function ComposerUsagePopover({
   context,
   rounds,
+  isHero = false,
 }: {
   context: ComposerContextUsage | null;
   rounds: readonly ComposerRoundUsage[];
+  isHero?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -121,13 +123,14 @@ export function ComposerUsagePopover({
                 data-testid="composer-context-usage"
                 aria-label={triggerLabel}
                 className={cn(
-                  "touch-target inline-flex size-5 shrink-0 items-center justify-center rounded-full",
-                  "text-muted-foreground/75 transition-colors hover:text-foreground/85",
+                  "thread-composer-context-usage touch-target relative inline-flex shrink-0 items-center justify-center rounded-full",
+                  isHero ? "h-8 w-8" : "h-9 w-9",
+                  "text-muted-foreground/75 transition-colors hover:bg-muted/65 hover:text-foreground/85 dark:text-foreground/70",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 )}
               >
                 {contextPercentage === null ? (
-                  <svg viewBox="0 0 16 16" aria-hidden="true" className="size-[15px]">
+                  <svg viewBox="0 0 16 16" aria-hidden="true" className="size-[20px]">
                     <path
                       d="M3 12V9m5 3V5m5 7V2"
                       fill="none"
@@ -141,10 +144,10 @@ export function ComposerUsagePopover({
                     viewBox="0 0 16 16"
                     aria-hidden="true"
                     className={cn(
-                      "size-[15px] shrink-0 -rotate-90",
+                      "size-[20px] shrink-0 -rotate-90",
                       status === "critical" && "text-destructive",
                       status === "caution" && "text-amber-600 dark:text-amber-400",
-                      status === "normal" && "text-muted-foreground/75",
+                      status === "normal" && "text-muted-foreground/75 dark:text-foreground/70",
                     )}
                   >
                     <circle

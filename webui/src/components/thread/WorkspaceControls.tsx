@@ -88,6 +88,9 @@ function effectiveAccessLabel(
 
 export function WorkspaceProjectPicker({
   compact = false,
+  line = false,
+  inline = false,
+  isHero = false,
   connected = false,
   disabled,
   scope,
@@ -100,6 +103,11 @@ export function WorkspaceProjectPicker({
   onChange,
 }: {
   compact?: boolean;
+  /** Render as a quiet line above the composer instead of a footer chip. */
+  line?: boolean;
+  /** Render in the desktop action row with the same styling as the access control. */
+  inline?: boolean;
+  isHero?: boolean;
   connected?: boolean;
   disabled?: boolean;
   scope: WorkspaceScopePayload | null;
@@ -226,7 +234,11 @@ export function WorkspaceProjectPicker({
   return (
     <>
       <div className={cn(
-        compact ? "inline-flex" : "flex min-w-0 items-center gap-2 rounded-b-[28px] bg-muted/45 px-3 py-1.5 dark:bg-white/[0.045] sm:px-4",
+        line
+          ? "flex min-w-0 items-center"
+          : inline || compact
+            ? "inline-flex"
+            : "flex min-w-0 items-center gap-2 rounded-b-[28px] bg-muted/45 px-3 py-1.5 dark:bg-white/[0.045] sm:px-4",
       )}>
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
@@ -237,31 +249,73 @@ export function WorkspaceProjectPicker({
               aria-label={pathAccessibleLabel}
               title={isAgentHome ? pathAccessibleLabel : currentPath}
               className={cn(
-                compact
+                "transition-colors disabled:pointer-events-none disabled:opacity-55",
+                line
                   ? cn(
-                      "thread-composer-action touch-target inline-flex h-9 items-center justify-center rounded-full border border-transparent",
-                      folderName
-                        ? "max-w-[9rem] justify-start gap-1.5 border-border/55 bg-card/70 px-2.5"
-                        : "w-8",
+                      "thread-composer-workspace-trigger relative inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md border border-transparent bg-transparent text-[11px] font-medium text-muted-foreground/80 dark:text-foreground/65",
+                      folderName ? "justify-start" : "w-7 justify-center",
+                      "hover:bg-transparent hover:text-foreground active:opacity-70",
                     )
-                  : "inline-flex h-8 min-w-0 max-w-full items-center gap-2 rounded-full px-2.5 sm:max-w-[28rem]",
-                "text-[12px] font-medium text-muted-foreground/90 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-55",
-                compact ? "hover:bg-muted/65" : "hover:bg-background/70",
-                (connected || !isAgentHome) && "text-primary",
+                  : inline
+                    ? cn(
+                        "inline-flex min-w-0 items-center gap-1.5 rounded-control border border-transparent font-semibold text-muted-foreground shadow-none dark:text-foreground/70",
+                        isHero ? "h-8 text-[12px]" : "h-9 text-[12.5px]",
+                        "hover:bg-foreground/[0.045] hover:text-foreground dark:hover:bg-white/[0.06]",
+                        folderName
+                          ? "max-w-[min(15rem,45vw)] justify-start px-1.5"
+                          : cn("justify-center px-0", isHero ? "w-8" : "w-9"),
+                      )
+                    : cn(
+                        "inline-flex rounded-full text-[12px] font-medium text-muted-foreground/90 hover:text-foreground",
+                        compact
+                          ? cn(
+                              "thread-composer-action touch-target h-9 items-center justify-center border border-transparent",
+                              folderName
+                                ? "max-w-[9rem] justify-start gap-1.5 border-border/55 bg-card/70 px-2.5"
+                                : "w-8",
+                            )
+                          : "h-8 min-w-0 max-w-full items-center gap-2 px-2.5 sm:max-w-[28rem]",
+                        compact ? "hover:bg-muted/65" : "hover:bg-background/70",
+                        (connected || !isAgentHome) && "text-primary",
+                      ),
               )}
             >
               {pickingFolder
                 ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
-                : <Folder className={cn("shrink-0", compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
-              <span className={cn("thread-composer-project-label min-w-0 truncate", compact && !folderName && "sr-only")}>
-                {compact && folderName ? folderName : pathAccessibleLabel}
-              </span>
-              {!compact ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden /> : null}
+                : <Folder className={cn("shrink-0", !line && compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
+              {line ? (
+                folderName ? (
+                  <span className="thread-composer-project-label min-w-0 truncate">
+                    {folderName}
+                  </span>
+                ) : null
+              ) : inline ? (
+                folderName ? (
+                  <span className="thread-composer-project-label min-w-0 truncate">
+                    {folderName}
+                  </span>
+                ) : null
+              ) : (
+                <span className={cn("thread-composer-project-label min-w-0 truncate", compact && !folderName && "sr-only")}>
+                  {compact && folderName ? folderName : pathAccessibleLabel}
+                </span>
+              )}
+              {line ? (
+                folderName
+                  ? <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/45" aria-hidden />
+                  : null
+              ) : inline ? (
+                folderName
+                  ? <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />
+                  : null
+              ) : !compact ? (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+              ) : null}
             </button>
           </PopoverTrigger>
           <PopoverContent
             align="start"
-            side="bottom"
+            side={line ? "top" : "bottom"}
             sideOffset={8}
             aria-label={t("workspace.picker.chooseProject", { defaultValue: "Choose project folder" })}
             onOpenAutoFocus={(event) => event.preventDefault()}
@@ -415,15 +469,17 @@ export function WorkspaceProjectPicker({
             ) : null}
           </PopoverContent>
         </Popover>
-        <span className={cn("min-w-0 truncate text-[10.5px] text-muted-foreground", compact && "sr-only")} title={currentAccess}>
-          {currentAccess}
-        </span>
-        {disabled ? (
+        {!line && !inline ? (
+          <span className={cn("min-w-0 truncate text-[10.5px] text-muted-foreground", compact && "sr-only")} title={currentAccess}>
+            {currentAccess}
+          </span>
+        ) : null}
+        {!line && !inline && disabled ? (
           <span className={cn("text-[10.5px] text-muted-foreground", compact && "sr-only")}>
             {t("workspace.picker.busy", { defaultValue: "A response is running. Folder changes are available when it finishes." })}
           </span>
         ) : null}
-        {!canChangeFocus && !disabled ? (
+        {!line && !inline && !canChangeFocus && !disabled ? (
           <span className={cn("text-[10.5px] text-muted-foreground", compact && "sr-only")}>
             {t("workspace.picker.focusUnavailable", { defaultValue: "Folder focus cannot be changed from this connection." })}
           </span>
@@ -730,15 +786,13 @@ export function WorkspacePermissionV2Control({
             className={cn(
               "thread-composer-access touch-target whitespace-nowrap rounded-control border border-transparent font-semibold shadow-none",
               mobile
-                ? "thread-composer-access-mobile h-9 w-auto max-w-[8.5rem] justify-center gap-1 rounded-full px-2"
+                ? "h-9 w-9 shrink-0 justify-center rounded-full px-0"
                 : "min-w-0 max-w-[min(15rem,45vw)]",
-              isHero ? "h-8 px-2.5 text-[12px]" : "h-9 px-3 text-[12.5px]",
+              isHero ? "h-8 px-1.5 text-[12px]" : "h-9 px-1.5 text-[12.5px]",
               mobile && "px-0",
               isFull || isRestrictedRetiring
                 ? "bg-transparent text-orange-600 hover:bg-orange-500/8 dark:text-orange-300 dark:hover:bg-orange-400/10"
-                : "bg-transparent text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground dark:hover:bg-white/[0.06]",
-              mobile && !isFull && !isRestrictedRetiring
-                && "border-border/55 bg-card/70 hover:bg-card",
+                : "bg-transparent text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground dark:text-foreground/70 dark:hover:bg-white/[0.06]",
             )}
           >
             {mobile && loading ? (
@@ -748,18 +802,13 @@ export function WorkspacePermissionV2Control({
             ) : (
               <ShieldCheck className={cn("shrink-0", mobile ? "h-4 w-4" : "mr-1.5 h-3.5 w-3.5")} aria-hidden />
             )}
-            <span className="sr-only">{label}</span>
-            {mobile ? (
-              <span aria-hidden className="min-w-0 truncate text-[11.5px] font-semibold">
-                {compactLabel}
-              </span>
-            ) : (
+            {!mobile ? (
               <>
                 <span aria-hidden className="thread-composer-access-label-full min-w-0 truncate">{label}</span>
                 <span aria-hidden className="thread-composer-access-label-short hidden min-w-0 truncate">{compactLabel}</span>
                 {loading ? <Loader2 className="ml-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />}
               </>
-            )}
+            ) : null}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[min(22rem,calc(100vw-1rem))]">

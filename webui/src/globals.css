@@ -523,41 +523,6 @@
     opacity: 1;
     transform: translateY(0);
   }
-  .composer-workspace-drawer {
-    --composer-workspace-drawer-duration: 220ms;
-
-    display: grid;
-    grid-template-rows: 0fr;
-    opacity: 0;
-    pointer-events: none;
-  }
-  .composer-workspace-drawer[data-state="open"] {
-    --composer-workspace-drawer-duration: 240ms;
-
-    grid-template-rows: 1fr;
-    opacity: 1;
-    pointer-events: auto;
-  }
-  .composer-workspace-drawer-clip {
-    min-height: 0;
-    overflow: hidden;
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .composer-workspace-drawer {
-      transition:
-        grid-template-rows var(--composer-workspace-drawer-duration)
-          cubic-bezier(0.4, 0, 0.2, 1),
-        opacity var(--composer-workspace-drawer-duration) ease-in-out;
-    }
-    .composer-workspace-drawer-content {
-      transform: translateY(-6px);
-      transition: transform var(--composer-workspace-drawer-duration)
-        cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .composer-workspace-drawer[data-state="open"] .composer-workspace-drawer-content {
-      transform: translateY(0);
-    }
-  }
   @keyframes queued-prompt-row-enter {
     0% {
       opacity: 0;
@@ -780,6 +745,18 @@
   max-width: 58%;
 }
 
+/*
+ * The access control's pill has its own inline padding. Pull it slightly closer
+ * to the workspace control so both visual gaps match the attach/workspace gap.
+ */
+.thread-composer-access-slot-after-workspace {
+  margin-left: -0.375rem;
+}
+
+.thread-composer-footer-actions .thread-composer-context-usage {
+  margin-right: -0.5rem;
+}
+
 .thread-composer-model-badge {
   flex-shrink: 1;
 }
@@ -951,7 +928,7 @@
   }
 }
 
-@container thread-composer (max-width: 19rem) {
+@container thread-composer (max-width: 17rem) {
   .thread-composer-model-badge {
     width: 2rem;
     flex: none;
@@ -983,10 +960,6 @@
   .thread-composer-access-label-short,
   .thread-composer-access-chevron {
     display: inline;
-  }
-
-  .thread-composer-mobile-project-picker .thread-composer-project-label {
-    display: none;
   }
 }
 
