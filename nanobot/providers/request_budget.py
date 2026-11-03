@@ -202,21 +202,16 @@ class PreparedRequestRoute:
                 raise ValueError(f"{name} must be a non-empty string")
         if self.purpose not in {"main", "source_summary"}:
             raise ValueError("unsupported request purpose")
+        window = self.context_window_tokens
         if (
-            isinstance(self.context_window_tokens, bool)
-            or (
-                self.context_window_tokens is not None
-                and (
-                    not isinstance(self.context_window_tokens, int)
-                    or self.context_window_tokens <= 0
-                )
+            (
+                window is not None
+                and (type(window) is not int or window <= 0)
             )
-            or isinstance(self.completion_reserve_tokens, bool)
-            or not isinstance(self.completion_reserve_tokens, int)
+            or type(self.completion_reserve_tokens) is not int
             or self.completion_reserve_tokens < 0
             or type(self.native_compaction) is not bool
-            or isinstance(self.fallback_index, bool)
-            or not isinstance(self.fallback_index, int)
+            or type(self.fallback_index) is not int
             or self.fallback_index < 0
         ):
             raise ValueError("invalid request route facts")
