@@ -436,6 +436,24 @@ def _filter_mobile_commands(payload: dict[str, Any]) -> dict[str, Any]:
     return {**payload, "commands": filtered}
 
 
+def _compact_mobile_thread_payload(body: dict[str, Any]) -> dict[str, Any]:
+    """Keep persisted mobile threads below the edge response budget.
+
+    Persisted tool-event arrays are desktop diagnostics and can be several
+    megabytes per message. Mobile history only needs the bounded trace rows;
+    dropping the raw arrays keeps an otherwise unloadable thread within the
+    edge limit. Live events still carry their normal tool metadata.
+    """
+
+    raw_messages = body.get("messages")
+    if not isinstance(raw_messages, list):
+        return body
+    for raw_message in cast(list[Any], raw_messages):
+        if isinstance(raw_message, dict):
+            cast(dict[str, Any], raw_message).pop("toolEvents", None)
+    return body
+
+
 class GatewayHTTPHandler:
     """Handles all HTTP routes served alongside the WebSocket endpoint.
 
@@ -723,7 +741,9 @@ class GatewayHTTPHandler:
             return 502, {"error": "invalid_thread_payload"}
         if not isinstance(body, dict):
             return 502, {"error": "invalid_thread_payload"}
-        return response.status_code, cast(dict[str, Any], body)
+        return response.status_code, _compact_mobile_thread_payload(
+            cast(dict[str, Any], body)
+        )
 
     def workspace_controls_available(self, connection: Any) -> bool:
         return (
