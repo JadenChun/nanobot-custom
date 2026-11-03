@@ -107,6 +107,9 @@ export function ThreadMessages({
   const unitKeys = useMemo(() => unitKeysForDisplay(units), [units]);
   let nextUserIndex = hiddenUserMessageCount;
 
+  // Render historical units eagerly. `content-visibility: auto` skipped their
+  // layout until they entered the viewport, and the browser's estimated height
+  // changed the scroll extent mid-scroll, which made the transcript bounce.
   return (
     <div ref={messageListRef} className="flex w-full flex-col">
       <AssistantSelectionAction
@@ -119,18 +122,10 @@ export function ThreadMessages({
           index > 0
             ? marginAfterPrevUnit(prev)
             : "";
-        const next = units[index + 1];
-        const hasBodyBelow =
+        const next = units[index + 1];        const hasBodyBelow =
           unit.type === "activity"
           && next?.type === "message"
           && next.message.role === "assistant";
-        const deferOffscreenRender =
-          index < units.length - 1
-          && (
-            unit.type === "activity"
-              ? !liveActivityClusterIndices.has(index)
-              : unit.message.role === "assistant" && !unit.message.isStreaming
-          );
         const userPromptId =
           unit.type === "message" && unit.message.role === "user"
             ? unit.message.id
@@ -153,7 +148,6 @@ export function ThreadMessages({
             marginTop={marginTop}
             userPromptId={userPromptId}
             hasBodyBelow={hasBodyBelow}
-            deferOffscreenRender={deferOffscreenRender}
             isTurnStreaming={
               unit.type === "activity"
                 ? liveActivityClusterIndices.has(index)
@@ -248,7 +242,6 @@ interface ThreadDisplayUnitProps {
   marginTop: string;
   userPromptId?: string;
   hasBodyBelow: boolean;
-  deferOffscreenRender: boolean;
   isTurnStreaming: boolean;
   retryStatus: RetryStatus | null;
   forkIndex?: number;
@@ -268,7 +261,6 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   marginTop,
   userPromptId,
   hasBodyBelow,
-  deferOffscreenRender,
   isTurnStreaming,
   retryStatus,
   forkIndex,
@@ -281,20 +273,13 @@ const ThreadDisplayUnit = memo(function ThreadDisplayUnit({
   onOpenFilePreview,
   onForkFromMessage,
 }: ThreadDisplayUnitProps) {
-  // Introducing content-visibility after a unit has painted can move the
-  // browser's scroll anchor. Only units deferred on their first render may
-  // remain deferred.
-  const hasRenderedEagerlyRef = useRef(!deferOffscreenRender);
-  if (!deferOffscreenRender) hasRenderedEagerlyRef.current = true;
-  const stableDeferOffscreenRender =
-    deferOffscreenRender && !hasRenderedEagerlyRef.current;
   const onForkFromHere = useCallback(() => {
     if (forkIndex !== undefined) onForkFromMessage?.(forkIndex);
   }, [forkIndex, onForkFromMessage]);
   return (
     <>
       <div
-        className={`${marginTop}${stableDeferOffscreenRender ? " thread-render-unit" : ""}`}
+        className={marginTop}
         data-thread-display-unit={unitKey}
         data-user-prompt-id={userPromptId}
       >
@@ -337,7 +322,6 @@ function threadDisplayUnitPropsEqual(
     && previous.marginTop === next.marginTop
     && previous.userPromptId === next.userPromptId
     && previous.hasBodyBelow === next.hasBodyBelow
-    && previous.deferOffscreenRender === next.deferOffscreenRender
     && previous.isTurnStreaming === next.isTurnStreaming
     && previous.retryStatus === next.retryStatus
     && previous.forkIndex === next.forkIndex

@@ -109,6 +109,7 @@
       "interface": "界面",
       "ai": "AI",
       "system": "系统",
+      "notifications": "通知",
       "about": "关于",
       "status": "状态",
       "localPreferences": "本地偏好",
@@ -258,7 +259,7 @@
       "fileEditDisplay": "选择文件编辑活动默认显示行数还是差异。",
       "codeWrap": "让长代码行在小屏幕上也易读。",
       "brandLogos": "在设置中显示第三方提供商和 CLI 图标。",
-      "browserNotifications": "仅在页面位于后台时通知，默认关闭。",
+      "browserNotifications": "当应用未获得焦点且请求完成时通知。默认关闭。",
       "maxResults": "每次 web_search 调用返回的结果数。",
       "timeout": "搜索提供商请求超时前等待的秒数。",
       "jinaReader": "可用时为 web_fetch 使用 Jina Reader。",
@@ -1517,7 +1518,9 @@
     "open": "查看图片",
     "prev": "上一张",
     "next": "下一张",
-    "close": "关闭预览"
+    "close": "关闭预览",
+    "thumbnails": "所有图片",
+    "goToImage": "转到第 {{index}} 张图片"
   },
   "filePreview": {
     "aria": "文件预览",

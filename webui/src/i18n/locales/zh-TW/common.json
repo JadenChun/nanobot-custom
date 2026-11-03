@@ -109,6 +109,7 @@
       "interface": "介面",
       "ai": "AI",
       "system": "系統",
+      "notifications": "通知",
       "about": "關於",
       "status": "狀態",
       "localPreferences": "本機偏好",
@@ -227,7 +228,7 @@
       "selectedModelProvider": "由選取的模型決定。",
       "selectedModelValue": "由選取的模型決定。",
       "brandLogos": "在設定中顯示第三方供應商與 CLI 圖示。",
-      "browserNotifications": "僅在頁面位於背景時通知，預設關閉。",
+      "browserNotifications": "當應用程式未取得焦點且請求完成時通知。預設關閉。",
       "cliAppsCatalog": "只安裝 nanobot 可在本機執行的應用程式專用 CLI 轉接器；不會改動原生應用程式。",
       "cliAppsFilter": "依應用程式、類別或功能搜尋。",
       "logs": "開啟原生引擎日誌資料夾。",
@@ -1517,7 +1518,9 @@
     "open": "檢視圖片",
     "prev": "上一張",
     "next": "下一張",
-    "close": "關閉預覽"
+    "close": "關閉預覽",
+    "thumbnails": "所有圖片",
+    "goToImage": "前往第 {{index}} 張圖片"
   },
   "filePreview": {
     "aria": "檔案預覽",

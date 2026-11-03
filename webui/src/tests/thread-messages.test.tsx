@@ -101,7 +101,7 @@ describe("ThreadMessages", () => {
     expect(screen.getByRole("status", { name: "Working for 30s" })).toBeInTheDocument();
   });
 
-  it("does not move a mounted tail answer into offscreen rendering on the next turn", () => {
+  it("keeps a mounted tail answer eagerly rendered on the next turn", () => {
     const completed: UIMessage[] = [
       { id: "u1", role: "user", content: "question", createdAt: 1 },
       { id: "a1", role: "assistant", content: "latest answer", createdAt: 2 },
@@ -125,7 +125,7 @@ describe("ThreadMessages", () => {
     expect(screen.getByText("latest answer").closest(".thread-render-unit")).toBeNull();
   });
 
-  it("still defers historical non-tail answers on their initial render", () => {
+  it("renders historical answers eagerly so estimated heights cannot shift the scroll position", () => {
     render(
       <ThreadMessages
         messages={[
@@ -137,7 +137,7 @@ describe("ThreadMessages", () => {
       />,
     );
 
-    expect(screen.getByText("historical answer").closest(".thread-render-unit")).not.toBeNull();
+    expect(screen.getByText("historical answer").closest(".thread-render-unit")).toBeNull();
   });
 
   it("preserves an answer's markdown tree across completion and the next prompt", async () => {

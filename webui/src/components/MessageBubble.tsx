@@ -751,21 +751,30 @@ function UserImages({
   }
 
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const library = images.length > 1;
+  const columns = library ? imageLibraryColumns(images.length) : 1;
 
   return (
     <>
       <div
         className={cn(
-          "flex flex-wrap items-end gap-2",
+          library
+            ? "grid w-full gap-2"
+            : "flex flex-wrap items-end gap-2",
           size === "large" && "gap-3",
+          library && (size === "large" ? "max-w-[34rem]" : "max-w-[21rem]"),
           align === "right" ? "ml-auto justify-end" : "mr-auto justify-start",
         )}
+        style={library
+          ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }
+          : undefined}
       >
         {images.map((img, i) => (
           <UserImageCell
             key={`${img.url ?? "placeholder"}-${i}`}
             image={img}
             size={size}
+            layout={library ? "tile" : "natural"}
             placeholderLabel={t("message.imageAttachment")}
             openLabel={t("lightbox.open")}
             onOpen={
@@ -788,15 +797,28 @@ function UserImages({
   );
 }
 
+/**
+ * Keep multi-image turns compact. The media viewer is the place to inspect a
+ * photo at full size, so the inline copy only needs a readable thumbnail grid.
+ */
+function imageLibraryColumns(count: number): number {
+  if (count <= 3) return count;
+  if (count <= 4) return 2;
+  if (count <= 9) return 3;
+  return 4;
+}
+
 function UserImageCell({
   image,
   size,
+  layout = "natural",
   placeholderLabel,
   openLabel,
   onOpen,
 }: {
   image: UIImage;
   size: "compact" | "large";
+  layout?: "natural" | "tile";
   placeholderLabel: string;
   openLabel: string;
   onOpen?: () => void;
@@ -806,9 +828,11 @@ function UserImageCell({
   const displayUrl = resolvedUrl ?? (hasUrl ? image.url : undefined);
   const tileClasses = cn(
     "relative overflow-hidden border border-border/60 bg-muted/40",
-    size === "large"
-      ? "w-[min(100%,34rem)] rounded-panel bg-transparent"
-      : "h-24 w-24 rounded-control",
+    layout === "tile"
+      ? "aspect-square w-full rounded-control"
+      : size === "large"
+        ? "w-[min(100%,34rem)] rounded-panel bg-transparent"
+        : "h-24 w-24 rounded-control",
     "shadow-[0_6px_18px_-14px_rgba(0,0,0,0.45)]",
   );
 
@@ -832,9 +856,11 @@ function UserImageCell({
           draggable={false}
           className={cn(
             "block",
-            size === "large"
-              ? "h-auto max-h-[36rem] w-full rounded-[inherit] object-contain"
-              : "h-full w-full object-cover",
+            layout === "tile"
+              ? "h-full w-full object-cover"
+              : size === "large"
+                ? "h-auto max-h-[36rem] w-full rounded-[inherit] object-contain"
+                : "h-full w-full object-cover",
           )}
         />
       </button>

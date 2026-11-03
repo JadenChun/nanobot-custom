@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -24,6 +24,8 @@ interface ImageLightboxProps {
  *   compositing layer so open/swap stays at 60 FPS on long threads.
  * - Adjacent images are rendered in hidden `<img>` tags so the browser
  *   decodes them eagerly; pressing left/right feels instant.
+ * - The thumbnail filmstrip keeps every image one click away and scrolls the
+ *   active thumbnail into view without moving the document.
  * - Radix handles `Escape` + focus trapping; we only wire up ←/→ + Home/End.
  * - Respects `prefers-reduced-motion` by dropping the fade + zoom-in
  *   keyframes via `motion-reduce:*` variants.
@@ -39,6 +41,8 @@ export function ImageLightbox({
   const total = images.length;
   const current = index !== null ? images[index] : null;
   const resolvedCurrent = useMobileMediaUrl(current?.url);
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const thumbnailRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   const go = useCallback(
     (delta: number) => {
@@ -70,6 +74,25 @@ export function ImageLightbox({
     return () => window.removeEventListener("keydown", onKey);
   }, [go, onIndexChange, open, total]);
 
+  useEffect(() => {
+    if (!open || index === null) return;
+    const strip = stripRef.current;
+    const thumbnail = thumbnailRefs.current[index];
+    if (!strip || !thumbnail) return;
+    const stripBounds = strip.getBoundingClientRect();
+    const thumbnailBounds = thumbnail.getBoundingClientRect();
+    const left = strip.scrollLeft
+      + thumbnailBounds.left
+      - stripBounds.left
+      - (strip.clientWidth - thumbnailBounds.width) / 2;
+    const reduceMotion = typeof window.matchMedia === "function"
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    strip.scrollTo({
+      left: Math.max(0, left),
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+  }, [index, open]);
+
   // Neighbours we want the browser to decode eagerly.
   const preload = useMemo(() => {
     if (index === null || total <= 1) return [] as UIImage[];
@@ -97,7 +120,7 @@ export function ImageLightbox({
         <DialogPrimitive.Content
           aria-label={current.name ?? t("lightbox.title")}
           className={cn(
-            "fixed inset-0 z-50 flex items-center justify-center",
+            "fixed inset-0 z-50 flex flex-col",
             "focus:outline-none",
             "data-[state=open]:animate-in data-[state=closed]:animate-out",
             "data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
@@ -109,45 +132,89 @@ export function ImageLightbox({
             {current.name ?? t("lightbox.title")}
           </DialogPrimitive.Title>
 
-          <div
-            className="relative flex max-h-[92vh] max-w-[94vw] items-center justify-center"
-            style={{
-              transform: "translate3d(0,0,0)",
-              willChange: "transform",
-            }}
-          >
-            <img
-              key={resolvedCurrent}
-              src={resolvedCurrent}
-              alt={current.name ?? ""}
-              decoding="async"
-              draggable={false}
-              className="max-h-[92vh] max-w-[94vw] select-none rounded-compact object-contain shadow-2xl"
-            />
+          <div className="relative flex min-h-0 flex-1 items-center justify-center px-4 pb-2 pt-16 sm:px-16">
+            <div
+              className="flex h-full w-full items-center justify-center"
+              style={{
+                transform: "translate3d(0,0,0)",
+                willChange: "transform",
+              }}
+            >
+              <img
+                key={resolvedCurrent}
+                src={resolvedCurrent}
+                alt={current.name ?? ""}
+                decoding="async"
+                draggable={false}
+                className="max-h-full max-w-full select-none rounded-compact object-contain shadow-2xl"
+              />
+            </div>
+
+            {hasMany ? (
+              <>
+                <NavButton
+                  side="left"
+                  label={t("lightbox.prev")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    go(-1);
+                  }}
+                />
+                <NavButton
+                  side="right"
+                  label={t("lightbox.next")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    go(1);
+                  }}
+                />
+              </>
+            ) : null}
           </div>
 
           {hasMany ? (
-            <>
-              <NavButton
-                side="left"
-                label={t("lightbox.prev")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  go(-1);
-                }}
-              />
-              <NavButton
-                side="right"
-                label={t("lightbox.next")}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  go(1);
-                }}
-              />
-              <div className="pointer-events-none absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1 text-xs font-medium text-white/90 tabular-nums">
+            <div
+              className={cn(
+                "relative z-10 shrink-0 border-t border-white/10 bg-black/70",
+                "px-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] pt-2",
+                "backdrop-blur-md",
+              )}
+            >
+              <div className="mb-1.5 text-center text-[11px] font-medium tabular-nums text-white/70">
                 {counter}
               </div>
-            </>
+              <div
+                ref={stripRef}
+                role="group"
+                aria-label={t("lightbox.thumbnails")}
+                className="mx-auto flex w-max max-w-[min(100%,48rem)] snap-x gap-2 overflow-x-auto pb-1 [scrollbar-width:thin]"
+              >
+                {images.map((image, i) => (
+                  <button
+                    key={`${image.url}-${i}`}
+                    ref={(element) => {
+                      thumbnailRefs.current[i] = element;
+                    }}
+                    type="button"
+                    onClick={() => onIndexChange(i)}
+                    aria-label={image.name
+                      ? `${t("lightbox.goToImage", { index: i + 1 })}: ${image.name}`
+                      : t("lightbox.goToImage", { index: i + 1 })}
+                    aria-current={i === index ? "true" : undefined}
+                    className={cn(
+                      "relative h-14 w-14 shrink-0 snap-center overflow-hidden rounded-lg border",
+                      "bg-black/30 transition-opacity motion-reduce:transition-none",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80",
+                      i === index
+                        ? "border-white/90 opacity-100 ring-1 ring-white/80"
+                        : "border-white/15 opacity-60 hover:opacity-90",
+                    )}
+                  >
+                    <LightboxThumbnail image={image} />
+                  </button>
+                ))}
+              </div>
+            </div>
           ) : null}
 
           <DialogPrimitive.Close
@@ -183,6 +250,21 @@ interface NavButtonProps {
 function PreloadImage({ image }: { image: UIImage }) {
   const src = useMobileMediaUrl(image.url);
   return src ? <img src={src} alt="" /> : null;
+}
+
+function LightboxThumbnail({ image }: { image: UIImage }) {
+  const src = useMobileMediaUrl(image.url);
+  if (!src) return null;
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      decoding="async"
+      draggable={false}
+      className="h-full w-full object-cover"
+    />
+  );
 }
 
 function NavButton({ side, label, onClick }: NavButtonProps) {

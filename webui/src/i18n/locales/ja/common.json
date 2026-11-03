@@ -109,6 +109,7 @@
       "interface": "インターフェース",
       "ai": "AI",
       "system": "システム",
+      "notifications": "通知",
       "about": "情報",
       "status": "状態",
       "localPreferences": "ローカル設定",
@@ -227,7 +228,7 @@
       "selectedModelProvider": "選択したモデルによって設定されます。",
       "selectedModelValue": "選択したモデルによって設定されます。",
       "brandLogos": "設定で第三者プロバイダーと CLI のロゴを表示します。",
-      "browserNotifications": "このページがバックグラウンドにある場合のみ通知します。既定ではオフです。",
+      "browserNotifications": "アプリがフォーカスされていないときにリクエスト完了を通知します。既定ではオフです。",
       "cliAppsCatalog": "nanobot がローカルで実行できるアプリ CLI アダプターだけをインストールします。ネイティブアプリは変更しません。",
       "cliAppsFilter": "アプリ、カテゴリ、機能で検索します。",
       "logs": "ネイティブエンジンのログフォルダーを開きます。",
@@ -1517,7 +1518,9 @@
     "open": "画像を表示",
     "prev": "前の画像",
     "next": "次の画像",
-    "close": "プレビューを閉じる"
+    "close": "プレビューを閉じる",
+    "thumbnails": "すべての画像",
+    "goToImage": "{{index}} 枚目の画像を表示"
   },
   "filePreview": {
     "aria": "ファイルプレビュー",

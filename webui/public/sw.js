@@ -117,6 +117,23 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const windows = await clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (const client of windows) {
+      if ("focus" in client) {
+        await client.focus();
+        return;
+      }
+    }
+    if (clients.openWindow) {
+      const target = event.notification.data && event.notification.data.url;
+      await clients.openWindow(typeof target === "string" ? target : "/");
+    }
+  })());
+});
+
 self.addEventListener("fetch", (event) => {
   const { request } = event;
 

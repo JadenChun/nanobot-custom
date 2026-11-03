@@ -109,6 +109,7 @@
       "interface": "인터페이스",
       "ai": "AI",
       "system": "시스템",
+      "notifications": "알림",
       "about": "정보",
       "status": "상태",
       "localPreferences": "로컬 환경설정",
@@ -227,7 +228,7 @@
       "selectedModelProvider": "선택한 모델에 의해 설정됩니다.",
       "selectedModelValue": "선택한 모델에 의해 설정됩니다.",
       "brandLogos": "설정에서 타사 제공자와 CLI 로고를 표시합니다.",
-      "browserNotifications": "이 페이지가 백그라운드에 있을 때만 알립니다. 기본값은 꺼짐입니다.",
+      "browserNotifications": "앱이 포커스되지 않은 상태에서 요청이 완료되면 알립니다. 기본값은 꺼짐입니다.",
       "cliAppsCatalog": "nanobot이 로컬에서 실행할 수 있는 앱 CLI 어댑터만 설치합니다. 네이티브 앱은 변경하지 않습니다.",
       "cliAppsFilter": "앱, 카테고리 또는 기능으로 검색합니다.",
       "logs": "네이티브 엔진 로그 폴더를 엽니다.",
@@ -1517,7 +1518,9 @@
     "open": "이미지 보기",
     "prev": "이전 이미지",
     "next": "다음 이미지",
-    "close": "미리보기 닫기"
+    "close": "미리보기 닫기",
+    "thumbnails": "모든 이미지",
+    "goToImage": "{{index}}번째 이미지로 이동"
   },
   "filePreview": {
     "aria": "파일 미리보기",

@@ -109,6 +109,7 @@
       "interface": "Interface do usuário",
       "ai": "IA",
       "system": "Sistema",
+      "notifications": "Notificações",
       "about": "Sobre",
       "status": "Status",
       "localPreferences": "Preferências locais",
@@ -258,7 +259,7 @@
       "fileEditDisplay": "Escolha se a atividade de edição de arquivo é exibida como contagem de linhas ou como diferenças.",
       "codeWrap": "Mantém linhas longas de código legíveis em telas menores.",
       "brandLogos": "Mostra logotipos de provedores terceiros e de CLIs em Configurações.",
-      "browserNotifications": "Notifica somente quando esta página está em segundo plano. Desativado por padrão.",
+      "browserNotifications": "Notifica quando uma solicitação termina enquanto o aplicativo não está em foco. Desativado por padrão.",
       "maxResults": "Resultados retornados por cada chamada de web_search.",
       "timeout": "Segundos antes de uma requisição de busca expirar.",
       "jinaReader": "Usa o Jina Reader para web_fetch quando disponível.",
@@ -1517,7 +1518,9 @@
     "open": "Ver imagem",
     "prev": "Imagem anterior",
     "next": "Próxima imagem",
-    "close": "Fechar pré-visualização"
+    "close": "Fechar pré-visualização",
+    "thumbnails": "Todas as imagens",
+    "goToImage": "Ir para a imagem {{index}}"
   },
   "filePreview": {
     "aria": "Pré-visualização de arquivo",

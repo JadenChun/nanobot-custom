@@ -733,13 +733,6 @@
     container-type: inline-size;
   }
 
-  @supports (content-visibility: auto) {
-    .thread-render-unit {
-      content-visibility: auto;
-      contain-intrinsic-size: auto 12rem;
-    }
-  }
-
   .thread-prompt-rail {
     display: none;
     left: 1.75rem;
