@@ -419,3 +419,20 @@ Focused checks:
 - Emulator M01 -> PASS, 37 instrumentation tests.
 - Full Python suite, WebUI suite/build/lint and strict comparator run after these
   changes; totals recorded below.
+
+### Final local verification after Temporary Full and custody
+
+- Full Python suite: **17549 passed, 22 skipped, 6 subtests passed**, exit 0
+  in 664.19s (`/tmp/opencode/full-suite-r8.log`).
+- WebUI: **1415 tests passed**, build exit 0, lint exit 0.
+- Strict basedpyright: 0 errors / 528 files; comparator introduced 0.
+- Go broker tests: PASS.
+- Android debug build: BUILD SUCCESSFUL.
+- Emulator M01 (updated APK): PASS, 37 instrumentation tests, native probe
+  executed on `emulator-5590`.
+- Parity contract check: PASS, 127 rows / 9 categories.
+
+Remaining are external or non-code qualification items: physical-phone
+Doze/radio/Tailscale/signed-update journey, signed candidate evidence, and the
+M38 independent integrated release review. No installation, merge or push was
+performed.
