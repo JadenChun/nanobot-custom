@@ -3,6 +3,39 @@
   var plugin = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.NativeNetwork;
   if (!plugin) return;
 
+  var capacitor = window.Capacitor;
+  if (capacitor) {
+    var localNotifications = capacitor.Plugins && capacitor.Plugins.LocalNotifications;
+    if (!localNotifications && capacitor.registerPlugin) {
+      localNotifications = capacitor.registerPlugin("LocalNotifications");
+    }
+    if (localNotifications) {
+      window.nanobotMobileNotifications = {
+        requestPermission: async function () {
+          try {
+            var result = await localNotifications.requestPermissions();
+            return !!result && result.display === "granted";
+          } catch (_) {
+            return false;
+          }
+        },
+        notify: async function (options) {
+          try {
+            await localNotifications.schedule({
+              notifications: [{
+                id: Math.floor(Date.now() % 2147483647),
+                title: options.title || "nanobot",
+                body: options.body || ""
+              }]
+            });
+          } catch (_) {
+            // Notifications are optional; keep chat usable if the OS blocks them.
+          }
+        }
+      };
+    }
+  }
+
   var transport = {
     start: async function (origin, installationId, hostname) {
       await plugin.start({ origin: origin, installationId: installationId, hostname: hostname });
