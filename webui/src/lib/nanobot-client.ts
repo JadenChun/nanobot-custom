@@ -1005,6 +1005,7 @@ export class NanobotClient {
       ...(options?.quotedContext?.trim() ? { quoted_context: options.quotedContext.trim() } : {}),
       ...(options?.workspaceScope ? { workspace_scope: options.workspaceScope } : {}),
       ...(options?.turnId ? { turn_id: options.turnId } : {}),
+      request_settings_version: 1,
       webui: true,
     };
     if (!this.frameFitsTransport(frame)) {

@@ -1744,3 +1744,45 @@ def test_remote_full_reference_is_bound_to_the_confirming_installation(
     assert controller.ingress_full_reference(
         "remote-full", local_ui=False, installation_id="install-phone",
     ) is None
+
+
+def test_source_token_and_chat_request_defaults_are_versioned(tmp_path: Path) -> None:
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    manager = SessionManager(home, sessions_root=tmp_path / "sessions")
+    key = "websocket:defaults-chat"
+    scope = default_workspace_scope(project, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    manager._jsonl_store.save(session)
+    manager._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    controller = WebUIWorkspaceController(
+        session_manager=manager,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=FolderGrantStore(
+            agent_home=home,
+            instance_root=instance,
+            path=instance / "webui" / "folder-grants.json",
+        ),
+    )
+
+    token = controller.source_token("defaults-chat")
+    assert isinstance(token, str) and len(token) == 32
+    assert controller.remember_request_defaults("defaults-chat", scope) == 1
+    assert controller.remember_request_defaults("defaults-chat", scope) == 2
+
+    payload = manager.read_session_metadata(key)
+    assert payload is not None
+    defaults = payload["metadata"]["webui_request_defaults"]
+    assert defaults["project_path"] == str(scope.project_path)
+    assert defaults["access_mode"] == "restricted"
+    assert defaults["revision"] == 2
+    assert controller.source_token("defaults-chat") == token

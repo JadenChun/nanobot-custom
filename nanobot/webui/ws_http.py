@@ -662,6 +662,47 @@ class GatewayHTTPHandler:
             return 502, {"error": "invalid_response"}
         return response.status_code, cast(dict[str, Any], body)
 
+    async def mobile_standard_payload(
+        self,
+        identity: Any,
+        method: str,
+        raw_path: str,
+    ) -> tuple[int, dict[str, Any]]:
+        """Dispatch one authenticated standard read through the desktop handlers."""
+        if method != "GET":
+            return 405, {"error": "method_not_allowed"}
+        if not getattr(identity, "is_owner", False):
+            return 403, {"error": "owner_required"}
+        from nanobot.remote.operations import load_registry
+
+        try:
+            spec = load_registry().match_read(raw_path)
+        except Exception:
+            spec = None
+        if spec is None or not spec.enabled:
+            return 400, {"error": "path_not_allowed"}
+        request = WsRequest(raw_path, Headers())
+        setattr(request, "_nanobot_trusted_proxy_authenticated", True)
+        installation = getattr(identity, "installation_id", None)
+        if isinstance(installation, str) and installation:
+            setattr(request, "_nanobot_owner_installation", installation)
+        response = await self.dispatch(None, request, internal=True)
+        if response is None:
+            return 404, {"error": "not_found"}
+        try:
+            body: Any = json.loads(response.body) if response.body else {}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return 502, {"error": "invalid_response"}
+        if not isinstance(body, dict):
+            return 502, {"error": "invalid_response"}
+        if (
+            spec.max_response_bytes is not None
+            and len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
+            > spec.max_response_bytes
+        ):
+            return 413, {"error": "response_too_large"}
+        return response.status_code, cast(dict[str, Any], body)
+
     async def mobile_mutation_payload(
         self,
         identity: Any,
@@ -1164,6 +1205,7 @@ class GatewayHTTPHandler:
                 ),
                 "runtime_surface": self._runtime_surface,
                 "runtime_capabilities": self._capabilities,
+                "request_settings_version": 1,
             }
             return _http_json_response(payload, extra_headers=_NO_STORE_HEADERS)
 
@@ -1199,6 +1241,7 @@ class GatewayHTTPHandler:
             ),
             "runtime_surface": self._runtime_surface,
             "runtime_capabilities": self._capabilities,
+            "request_settings_version": 1,
         }
         if api_token is not None:
             payload["api_token"] = api_token

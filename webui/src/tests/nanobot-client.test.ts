@@ -300,7 +300,8 @@ describe("NanobotClient", () => {
         chat_id: chatId,
         content: "hello",
         turn_id: "turn-1",
-        webui: true,
+        request_settings_version: 1,
+      webui: true,
       },
     ]);
 
@@ -1807,7 +1808,8 @@ describe("NanobotClient", () => {
         chat_id: "fresh-id",
         content: "hello",
         workspace_scope: workspaceScope,
-        webui: true,
+        request_settings_version: 1,
+      webui: true,
       }),
     );
   });
@@ -1880,7 +1882,7 @@ describe("NanobotClient", () => {
     // Attach is sent first because sendMessage adds to knownChats, which
     // handleOpen re-attaches; then the queued message follows.
     expect(lastSocket().sent).toContain(
-      JSON.stringify({ type: "message", chat_id: "chat-x", content: "hello", webui: true }),
+      JSON.stringify({ type: "message", chat_id: "chat-x", content: "hello", request_settings_version: 1, webui: true }),
     );
   });
 
@@ -1898,6 +1900,7 @@ describe("NanobotClient", () => {
       chat_id: "chat-x",
       content: "hello",
       turn_id: "turn-1",
+      request_settings_version: 1,
       webui: true,
     });
   });
@@ -1919,6 +1922,7 @@ describe("NanobotClient", () => {
       type: "message",
       chat_id: "chat-x",
       content: "/model fast",
+      request_settings_version: 1,
       webui: true,
     });
     expect(frame.turn_id).toMatch(/^webui-system:/);
@@ -1965,6 +1969,7 @@ describe("NanobotClient", () => {
       chat_id: "chat-x",
       content: "What does this mean?",
       quoted_context: "selected answer excerpt",
+      request_settings_version: 1,
       webui: true,
     });
   });
@@ -2007,7 +2012,8 @@ describe("NanobotClient", () => {
           logo_url: null,
           brand_color: "#F08705",
         }],
-        webui: true,
+        request_settings_version: 1,
+      webui: true,
       }),
     );
   });
@@ -2054,7 +2060,8 @@ describe("NanobotClient", () => {
           logo_url: "https://example.invalid/browserbase.svg",
           brand_color: "#111827",
         }],
-        webui: true,
+        request_settings_version: 1,
+      webui: true,
       }),
     );
   });
@@ -2085,6 +2092,7 @@ describe("NanobotClient", () => {
         session_key: "websocket:pricing",
         title: "Pricing",
       }],
+      request_settings_version: 1,
       webui: true,
     }));
   });
@@ -2165,6 +2173,7 @@ describe("NanobotClient", () => {
       chat_id: "chat-x",
       content: "look",
       media: [{ data_url: "data:image/png;base64,AAAA", name: "shot.png" }],
+      request_settings_version: 1,
       webui: true,
     });
   });
@@ -2184,6 +2193,7 @@ describe("NanobotClient", () => {
       type: "message",
       chat_id: "chat-x",
       content: "hello",
+      request_settings_version: 1,
       webui: true,
     });
   });

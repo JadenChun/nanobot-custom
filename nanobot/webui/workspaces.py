@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -743,6 +744,7 @@ class WebUIWorkspaceController:
         return {
             "workspace_scope": self.scope_payload(self.scope_for_session_key(key)),
             "workspace_permissions": projection,
+            "source_token": self.source_token(chat_id),
         }
 
     def validate_prepare_full_delivery(
@@ -1031,6 +1033,54 @@ class WebUIWorkspaceController:
             "incarnation": snapshot.state.incarnation,
             "generation": snapshot.state.generation,
         }
+
+    _REQUEST_DEFAULTS_KEY = "webui_request_defaults"
+
+    def source_token(self, chat_id: str) -> str | None:
+        """Return a content-free token bound to the current canonical source."""
+        source = self._source_binding(webui_session_key(chat_id))
+        if source is None:
+            return None
+        raw = (
+            f"{source['store_identity']}:{source['incarnation']}:"
+            f"{source['generation']}"
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+    def remember_request_defaults(
+        self,
+        chat_id: str,
+        scope: WorkspaceScope,
+    ) -> int:
+        """Record accepted chat defaults once, in server acceptance order."""
+        sessions = self._sessions
+        if sessions is None:
+            return 0
+        key = webui_session_key(chat_id)
+        payload = sessions.read_session_metadata(key)
+        if payload is None:
+            return 0
+        metadata = payload.get("metadata")
+        current: dict[str, Any] = {}
+        if type(metadata) is dict:
+            candidate = cast(dict[str, Any], metadata).get(self._REQUEST_DEFAULTS_KEY)
+            if type(candidate) is dict:
+                current = cast(dict[str, Any], candidate)
+        revision = current.get("revision")
+        next_revision = (revision if type(revision) is int and revision >= 0 else 0) + 1
+        sessions.upsert_session_metadata(
+            key,
+            {
+                self._REQUEST_DEFAULTS_KEY: {
+                    "project_path": str(scope.project_path),
+                    "access_mode": scope.access_mode,
+                    "revision": next_revision,
+                    "updated_at": int(time.time()),
+                }
+            },
+            create_if_absent=False,
+        )
+        return next_revision
 
     def _observe_full_retirement_activity(
         self,

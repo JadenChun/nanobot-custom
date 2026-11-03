@@ -75,7 +75,50 @@ _SOURCE_BOUND_PERMISSION_ACTIONS = frozenset({
 })
 
 
+REQUEST_SETTINGS_VERSION = 1
+
+
+def request_settings_error(
+    envelope: dict[str, Any],
+    *,
+    current_source_token: str | None,
+    active_turn_id: str | None,
+) -> tuple[str, str] | None:
+    """Validate the versioned request-settings envelope without side effects."""
+    version = envelope.get("request_settings_version")
+    if version is not None and (
+        type(version) is not int or version != REQUEST_SETTINGS_VERSION
+    ):
+        return "update_required", "request_settings_version"
+    intent = envelope.get("request_intent")
+    if intent is not None:
+        if intent not in {"new", "steer"}:
+            return "invalid_request_settings", "request_intent"
+        if intent == "steer":
+            target = envelope.get("target_turn_id")
+            if (
+                not isinstance(target, str)
+                or not active_turn_id
+                or target != active_turn_id
+            ):
+                return "not_admitted", "steering_target_changed"
+            # The WebUI queue has no admitted steering transport; never
+            # reinterpret guidance as a second new run.
+            return "not_admitted", "steering_unavailable"
+    source_token = envelope.get("source_token")
+    if source_token is not None:
+        if not isinstance(source_token, str):
+            return "invalid_request_settings", "source_token"
+        if current_source_token is None or source_token != current_source_token:
+            return "source_changed", "source_token"
+    confirmation = envelope.get("full_confirmation_id")
+    if confirmation is not None and not isinstance(confirmation, str):
+        return "invalid_request_settings", "full_confirmation_id"
+    return None
+
+
 @dataclass(frozen=True)
+
 class WebUIRequestResult:
     result: Any = None
     status: int | None = None
@@ -606,6 +649,21 @@ class WebUICommandRouter:
                 **rejection_fields,
             )
             return
+        settings_error = request_settings_error(
+            envelope,
+            current_source_token=self._workspaces.source_token(chat_id),
+            active_turn_id=websocket_turn_id(chat_id),
+        )
+        if settings_error is not None:
+            detail, reason = settings_error
+            await self._transport.webui_send_event(
+                connection,
+                "error",
+                detail=detail,
+                reason=reason,
+                **rejection_fields,
+            )
+            return
         if not isinstance(content, str):
             await self._transport.webui_send_event(
                 connection,
@@ -823,6 +881,7 @@ class WebUICommandRouter:
             )
             if temporary_policy is None:
                 self._workspaces.persist_scope(chat_id, scope)
+                self._workspaces.remember_request_defaults(chat_id, scope)
             accepted = True
         finally:
             if not accepted and queued_owner is not None:
