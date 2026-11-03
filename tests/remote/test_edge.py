@@ -753,3 +753,80 @@ async def test_edge_mutation_effect_timeout(edge_setup, monkeypatch) -> None:
     )
     assert response["ok"] is False
     assert response["error"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_revocation_before_private_delivery_denies_warm_cached_request(edge_setup) -> None:
+    owner, _edge, pair = edge_setup
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    blocking = False
+    marker = "PRIVATE-MARKER-DO-NOT-DELIVER"
+
+    async def private_read(identity: AccessIdentity, query: dict[str, list[str]]) -> dict[str, Any]:
+        if blocking:
+            entered.set()
+            await release.wait()
+        return {"secret": marker, "viewer": identity.installation_id}
+
+    validator = OwnerAccessValidator(
+        RemoteAccessClient(owner.socket_path, timeout=2.0),
+        cache_ttl=30.0,
+    )
+    edge = MobileGatewayEdge(
+        validator,
+        generation_provider=lambda: 1,
+        read_handler=private_read,
+    )
+    warm = await edge.handle(None, request("/mobile/v1/read", pair.access_token))
+    assert warm.status_code == 200
+    assert marker.encode() in warm.body
+
+    blocking = True
+    pending = asyncio.create_task(
+        edge.handle(None, request("/mobile/v1/read", pair.access_token)),
+    )
+    await entered.wait()
+    owner.tokens.revoke("install-0001")
+    release.set()
+    response = await pending
+    assert response.status_code == 401
+    assert marker.encode() not in response.body
+
+
+@pytest.mark.asyncio
+async def test_owner_loss_before_private_delivery_fails_closed(edge_setup) -> None:
+    owner, _edge, pair = edge_setup
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    blocking = False
+    marker = "PRIVATE-MARKER-DO-NOT-DELIVER"
+
+    async def private_read(identity: AccessIdentity, query: dict[str, list[str]]) -> dict[str, Any]:
+        if blocking:
+            entered.set()
+            await release.wait()
+        return {"secret": marker, "viewer": identity.installation_id}
+
+    validator = OwnerAccessValidator(
+        RemoteAccessClient(owner.socket_path, timeout=2.0),
+        cache_ttl=30.0,
+    )
+    edge = MobileGatewayEdge(
+        validator,
+        generation_provider=lambda: 1,
+        read_handler=private_read,
+    )
+    warm = await edge.handle(None, request("/mobile/v1/read", pair.access_token))
+    assert warm.status_code == 200
+
+    blocking = True
+    pending = asyncio.create_task(
+        edge.handle(None, request("/mobile/v1/read", pair.access_token)),
+    )
+    await entered.wait()
+    owner.stop()
+    release.set()
+    response = await pending
+    assert response.status_code == 503
+    assert marker.encode() not in response.body

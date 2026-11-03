@@ -131,12 +131,25 @@ class OwnerAccessValidator:
         self._cache: dict[str, tuple[float, AccessIdentity]] = {}
 
     async def validate(self, access_token: str) -> AccessIdentity:
+        return await self._validate(access_token, use_cache=True)
+
+    async def validate_uncached(self, access_token: str) -> AccessIdentity:
+        """Recheck current owner state without a warm admission-cache answer."""
+        return await self._validate(access_token, use_cache=False)
+
+    async def _validate(
+        self,
+        access_token: str,
+        *,
+        use_cache: bool,
+    ) -> AccessIdentity:
         key = hashlib.sha256(access_token.encode("utf-8")).hexdigest()
         now = self.clock()
-        async with self._lock:
-            cached = self._cache.get(key)
-            if cached is not None and cached[0] > now:
-                return cached[1]
+        if use_cache:
+            async with self._lock:
+                cached = self._cache.get(key)
+                if cached is not None and cached[0] > now:
+                    return cached[1]
         try:
             result = await asyncio.to_thread(self.client.validate_access, access_token)
         except OwnerUnavailableError as exc:
@@ -257,6 +270,25 @@ class MobileGatewayEdge:
             raise EdgeAuthError(403, "installation_mismatch")
         return fresh
 
+    async def _authorized_delivery(
+        self,
+        token: str,
+        identity: AccessIdentity,
+        response: Response,
+        *,
+        scope: str | None = None,
+    ) -> Response:
+        """Recheck current owner authorization before releasing private bytes."""
+        try:
+            fresh = await self.validator.validate_uncached(token)
+        except EdgeAuthError as exc:
+            return http_json_response({"error": exc.code}, status=exc.status)
+        if fresh.installation_id != identity.installation_id:
+            return http_json_response({"error": "installation_mismatch"}, status=403)
+        if scope is not None and not fresh.allows(scope):
+            return http_json_response({"error": "scope_denied"}, status=403)
+        return response
+
     async def handle(self, _connection: Any, request: WsRequest) -> Response | None:
         path, query = parse_request_path(request.path)
         if path != "/mobile/v1" and not path.startswith("/mobile/v1/"):
@@ -301,15 +333,27 @@ class MobileGatewayEdge:
                     return http_json_response({"error": "read_timeout"}, status=504)
                 if not self._fits(payload, "sessions.list"):
                     return http_json_response({"error": "response_too_large"}, status=413)
-                return http_json_response(payload)
+                return await self._authorized_delivery(
+                    token, identity, http_json_response(payload), scope=scope,
+                )
             if path == "/mobile/v1/model-settings":
                 if self.model_settings_handler is None:
                     return http_json_response({"error": "model_settings_unavailable"}, status=503)
-                return http_json_response(await self.model_settings_handler(identity))
+                return await self._authorized_delivery(
+                    token,
+                    identity,
+                    http_json_response(await self.model_settings_handler(identity)),
+                    scope=scope,
+                )
             if path == "/mobile/v1/workspaces":
                 if self.workspaces_handler is None:
                     return http_json_response({"error": "workspaces_unavailable"}, status=503)
-                return http_json_response(await self.workspaces_handler(identity))
+                return await self._authorized_delivery(
+                    token,
+                    identity,
+                    http_json_response(await self.workspaces_handler(identity)),
+                    scope=scope,
+                )
 
         if path == "/mobile/v1/feature":
             if not identity.is_owner:
@@ -334,7 +378,10 @@ class MobileGatewayEdge:
                 encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
                 if len(encoded) > spec.max_response_bytes:
                     return http_json_response({"error": "response_too_large"}, status=413)
-            return http_json_response(payload, status=status)
+            return await self._authorized_delivery(
+                token, identity, http_json_response(payload, status=status),
+                scope=OWNER_SCOPE,
+            )
 
         if path == "/mobile/v1/api":
             if not identity.allows("chat.read"):
@@ -355,7 +402,10 @@ class MobileGatewayEdge:
             encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             if len(encoded) > MOBILE_API_MAX_RESPONSE_BYTES:
                 return http_json_response({"error": "response_too_large"}, status=413)
-            return http_json_response(payload, status=status)
+            return await self._authorized_delivery(
+                token, identity, http_json_response(payload, status=status),
+                scope="chat.read",
+            )
 
         thread_match = _THREAD_RE.match(path)
         if thread_match is not None:
@@ -373,7 +423,10 @@ class MobileGatewayEdge:
                 return http_json_response({"error": "thread_timeout"}, status=504)
             if not self._fits(payload, "sessions.thread"):
                 return http_json_response({"error": "response_too_large"}, status=413)
-            return http_json_response(payload, status=status)
+            return await self._authorized_delivery(
+                token, identity, http_json_response(payload, status=status),
+                scope="chat.read",
+            )
 
         media_match = _MEDIA_RE.match(path)
         if media_match is not None:
@@ -397,7 +450,12 @@ class MobileGatewayEdge:
                 *result.headers.items(),
             ]
             reason = HTTPStatus(result.status).phrase
-            return Response(result.status, reason, _headers(headers), result.body)
+            return await self._authorized_delivery(
+                token,
+                identity,
+                Response(result.status, reason, _headers(headers), result.body),
+                scope="media.read",
+            )
         return http_json_response({"error": "not_found"}, status=404)
 
     async def _handle_refresh(self, request: WsRequest) -> Response:
