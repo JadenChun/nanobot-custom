@@ -781,6 +781,7 @@ class WebUIWorkspaceController:
         *,
         local_ui: bool,
         owner_authorized: bool = False,
+        owner_installation_id: str | None = None,
     ) -> WorkspaceModeActionResult:
         """Persist an explicitly requested empty chat so Full can be enabled before its first turn."""
         if not local_ui and not owner_authorized:
@@ -803,7 +804,11 @@ class WebUIWorkspaceController:
         self._validate_control_request_settings(payload, chat_id)
         temporary_source = self._temporary_source(chat_id)
         if temporary_source is not None:
-            return self._prepare_temporary_full(chat_id, temporary_source)
+            return self._prepare_temporary_full(
+                chat_id,
+                temporary_source,
+                owner_installation_id=owner_installation_id,
+            )
         if self._sessions is None or self.permission_owner is None:
             raise WorkspacePermissionActionError(503, "permission_state_unavailable")
 
@@ -840,10 +845,17 @@ class WebUIWorkspaceController:
             can_enable_full=unavailable_reason is None,
             unavailable_reason=unavailable_reason,
         )
+        identity = owner_installation_id or "local"
+        confirmation_id = self.permission_owner.issue_full_confirmation(
+            identity=identity,
+            session_key=key,
+            source_binding=source,
+        )
         return {
             "workspace_scope": self.scope_payload(self.scope_for_session_key(key)),
             "workspace_permissions": projection,
             "source_token": self.source_token(chat_id),
+            "full_confirmation_id": confirmation_id,
         }
 
     def validate_prepare_full_delivery(
@@ -910,6 +922,8 @@ class WebUIWorkspaceController:
         self,
         chat_id: str,
         source: PermissionSourceBinding,
+        *,
+        owner_installation_id: str | None = None,
     ) -> WorkspaceModeActionResult:
         owner = self.permission_owner
         if owner is None:
@@ -926,6 +940,11 @@ class WebUIWorkspaceController:
             can_enable_full=unavailable_reason is None,
             unavailable_reason=unavailable_reason,
         )
+        confirmation_id = owner.issue_full_confirmation(
+            identity=owner_installation_id or "local",
+            session_key=key,
+            source_binding=source,
+        )
         return {
             "workspace_scope": self.scope_payload(
                 self.ephemeral_scope(
@@ -934,6 +953,7 @@ class WebUIWorkspaceController:
             ),
             "workspace_permissions": projection,
             "source_token": self._temporary_source_token(source),
+            "full_confirmation_id": confirmation_id,
         }
 
     def _temporary_source_token(
@@ -1071,6 +1091,26 @@ class WebUIWorkspaceController:
             raise WorkspacePermissionActionError(400, "invalid_permission_request")
         self._validate_control_request_settings(payload, chat_id)
         temporary_source = self._temporary_source(chat_id)
+        permission_owner = self.permission_owner
+        if permission_owner is None:
+            raise WorkspacePermissionActionError(503, "permission_state_unavailable")
+        if (
+            payload.get("request_settings_version") == 1
+            and mode == "full"
+        ):
+            confirmation_id = payload.get("full_confirmation_id")
+            source = temporary_source or self._source_binding(webui_session_key(chat_id))
+            if (
+                not isinstance(confirmation_id, str)
+                or source is None
+                or not permission_owner.consume_full_confirmation(
+                    identity=owner_installation_id or "local",
+                    session_key=webui_session_key(chat_id),
+                    source_binding=source,
+                    confirmation_id=confirmation_id,
+                )
+            ):
+                raise WorkspacePermissionActionError(409, "confirmation_required")
         if temporary_source is not None:
             if mode not in {"restricted", "full"}:
                 raise WorkspacePermissionActionError(400, "invalid_permission_request")

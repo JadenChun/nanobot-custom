@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import re
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -238,6 +239,7 @@ class DesktopPermissionOwner:
         self._full: dict[_SourceIdentity, WorkspaceFullAccessReference] = {}
         self._full_retirements: dict[_SourceIdentity, _Retirement] = {}
         self._remote_full_consents: dict[tuple[str, _SourceIdentity], bool] = {}
+        self._full_confirmations: dict[tuple[str, _SourceIdentity], tuple[str, float]] = {}
         self._native_stdin_closers: dict[object, dict[object, Callable[[], bool]]] = {}
         self._native_process_counts: dict[object, Callable[[], tuple[int, int]]] = {}
         self._full_residual_counts: dict[_SourceIdentity, tuple[int, int]] = {}
@@ -1098,6 +1100,52 @@ class DesktopPermissionOwner:
                 self._changed()
             return True
 
+    def issue_full_confirmation(
+        self,
+        *,
+        identity: str,
+        session_key: str,
+        source_binding: PermissionSourceBinding,
+    ) -> str:
+        """Mint a bounded, non-authorizing confirmation for one identity/source."""
+        if not identity:
+            raise WorkspacePermissionUnavailableError("session_required")
+        source = _source_identity(session_key, source_binding)
+        with self._lock:
+            confirmation_id = uuid.uuid4().hex
+            self._full_confirmations[(identity, source)] = (
+                confirmation_id,
+                time.time() + 300.0,
+            )
+            return confirmation_id
+
+    def consume_full_confirmation(
+        self,
+        *,
+        identity: str,
+        session_key: str,
+        source_binding: PermissionSourceBinding,
+        confirmation_id: str,
+    ) -> bool:
+        """Consume one identity/source-bound confirmation exactly once."""
+        if not identity or not confirmation_id:
+            return False
+        try:
+            source = _source_identity(session_key, source_binding)
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            stored = self._full_confirmations.get((identity, source))
+            if stored is None:
+                return False
+            expected, expires_at = stored
+            if expected != confirmation_id or time.time() > expires_at:
+                if time.time() > expires_at:
+                    self._full_confirmations.pop((identity, source), None)
+                return False
+            self._full_confirmations.pop((identity, source), None)
+            return True
+
     def projection(
         self,
         *,
@@ -1235,6 +1283,7 @@ class DesktopPermissionOwner:
                 self._close_native_stdin_unlocked(reference)
             self._tasks.clear()
             self._task_retirements.clear()
+            self._full_confirmations.clear()
             self._full.clear()
             self._full_retirements.clear()
             self._full_residual_counts.clear()

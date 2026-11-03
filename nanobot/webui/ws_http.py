@@ -499,6 +499,12 @@ class GatewayHTTPHandler:
                 bus,
             )
         self.settings = settings
+        if session_manager is not None:
+            settings.config.on_remote_device_revoked = (
+                lambda installation_id: session_manager.desktop_permissions.clear_remote_full_consents(
+                    installation_id=installation_id,
+                )
+            )
         from nanobot.webui.workspace_directories import WorkspaceDirectoryBrowser
 
         self.directory_browser = WorkspaceDirectoryBrowser(
@@ -2199,6 +2205,8 @@ class GatewayHTTPHandler:
         )
         if not local_ui and not owner_authorized:
             return _http_error(403, "local_ui_required")
+        if owner_authorized and payload.get("request_settings_version") != 1:
+            return _http_error(409, "update_required")
         if owner_authorized:
             action_name = (
                 "workspace.access.prepare_full"
@@ -2218,6 +2226,7 @@ class GatewayHTTPHandler:
                     payload,
                     local_ui=local_ui,
                     owner_authorized=owner_authorized,
+                    owner_installation_id=owner_installation_id,
                 )
             else:
                 result = self.workspaces.set_permission_mode(

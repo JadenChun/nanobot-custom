@@ -34,6 +34,7 @@ import {
   fetchSettings,
   isCanonicalAbsolutePath,
   listSlashCommands,
+  prepareWorkspaceFullAccess,
   setWorkspaceAccessMode,
   WorkspaceModeConflictError,
 } from "@/lib/api";
@@ -2148,7 +2149,7 @@ export function ThreadShell({
       updateWorkspacePermissions(current);
       return;
     }
-    if (mode === "full" && (
+    if (mode === "full" && current.mode !== "full" && (
       current.mode !== "restricted"
       || current.state !== "active"
       || !current.can_enable_full
@@ -2157,11 +2158,19 @@ export function ThreadShell({
       throw new Error(current.full_access_unavailable_reason ?? "permission_state_changed");
     }
     try {
+      const prepared = mode === "full"
+        ? await prepareWorkspaceFullAccess(client, ownerChatId, current.source_token)
+        : null;
+      if (prepared && permissionOwnerChatIdRef.current !== ownerChatId) return;
       const result = await setWorkspaceAccessMode(client, {
         chat_id: ownerChatId,
         mode,
         expected_runtime_id: current.runtime_id,
         expected_permission_revision: current.revision,
+        source_token: current.source_token,
+        ...(prepared?.full_confirmation_id
+          ? { full_confirmation_id: prepared.full_confirmation_id }
+          : {}),
       });
       if (permissionOwnerChatIdRef.current !== ownerChatId || temporary) return;
       updateWorkspacePermissions(result.workspace_permissions);

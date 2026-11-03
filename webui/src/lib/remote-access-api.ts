@@ -115,6 +115,20 @@ function mobileOwnerTransport() {
   return runtime.transport;
 }
 
+async function ownerWithRefresh<T>(
+  operation: () => Promise<T>,
+  refresh: () => Promise<boolean>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("HTTP 401")) throw error;
+    const refreshed = await refresh().catch(() => false);
+    if (!refreshed) throw error;
+    return operation();
+  }
+}
+
 function ownerDeviceRows(value: unknown): RemoteAccessDevice[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
@@ -141,8 +155,14 @@ export async function fetchRemoteAccessStatus(token: string): Promise<RemoteAcce
   const transport = mobileOwnerTransport();
   if (transport?.remoteStatus && transport.remoteDevices) {
     const [status, devices] = await Promise.all([
-      transport.remoteStatus(),
-      transport.remoteDevices(),
+      ownerWithRefresh(
+        () => transport.remoteStatus!(),
+        () => transport.refresh(),
+      ),
+      ownerWithRefresh(
+        () => transport.remoteDevices!(),
+        () => transport.refresh(),
+      ),
     ]);
     return {
       enabled: status.enabled === true,
@@ -211,7 +231,10 @@ export async function revokeRemoteDevice(
 ): Promise<void> {
   const owner = mobileOwnerTransport();
   if (owner?.remoteRevoke) {
-    await owner.remoteRevoke(installationId);
+    await ownerWithRefresh(
+      () => owner.remoteRevoke!(installationId),
+      () => owner.refresh(),
+    );
     return;
   }
   await transport.requestMutation("settings.remote_access.revoke", {

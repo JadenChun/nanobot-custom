@@ -93,12 +93,14 @@ def handle_remote_access(
             if not isinstance(installation_id, str):
                 return http_error(400, "installation_id is required")
             actor = getattr(request, "_nanobot_owner_installation", None)
-            return http_json_response(
-                manager.revoke(
-                    installation_id,
-                    actor_installation_id=actor if isinstance(actor, str) else "local",
-                )
+            result = manager.revoke(
+                installation_id,
+                actor_installation_id=actor if isinstance(actor, str) else "local",
             )
+            callback = getattr(config, "on_remote_device_revoked", None)
+            if callback is not None:
+                callback(installation_id)
+            return http_json_response(result)
         if path == f"{_PREFIX}/pairing/start":
             origin = body.get("origin")
             label = body.get("label", "mobile")

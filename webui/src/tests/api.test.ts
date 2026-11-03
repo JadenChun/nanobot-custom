@@ -363,7 +363,11 @@ describe("webui API helpers", () => {
         workspace_permissions: projection,
       },
     });
-    expect(requestMutation).toHaveBeenCalledWith("workspace.access.mode.set", input, 20_000);
+    expect(requestMutation).toHaveBeenCalledWith(
+      "workspace.access.mode.set",
+      { ...input, request_settings_version: 1 },
+      20_000,
+    );
   });
 
   it("parses the exact Once response emitted by the backend serializer", async () => {

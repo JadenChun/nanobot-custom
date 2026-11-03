@@ -112,8 +112,6 @@ class NativeNetworkRefreshInstrumentedTest {
             NativeNetwork.stop(handle)
         }
     }
-}
-
 
     @Test
     fun refreshesAccessThroughIndependentOwnerRoute() {
@@ -172,3 +170,4 @@ class NativeNetworkRefreshInstrumentedTest {
             NativeNetwork.stop(handle)
         }
     }
+}

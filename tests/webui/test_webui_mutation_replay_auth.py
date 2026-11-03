@@ -435,10 +435,21 @@ async def test_staged_prepare_replay_stays_cached_and_full_can_be_enabled_before
     prepare_calls = 0
     prepare = controller.prepare_full
 
-    def counted_prepare(payload: object, *, local_ui: bool, owner_authorized: bool = False):
+    def counted_prepare(
+        payload: object,
+        *,
+        local_ui: bool,
+        owner_authorized: bool = False,
+        owner_installation_id: str | None = None,
+    ):
         nonlocal prepare_calls
         prepare_calls += 1
-        return prepare(payload, local_ui=local_ui, owner_authorized=owner_authorized)
+        return prepare(
+            payload,
+            local_ui=local_ui,
+            owner_authorized=owner_authorized,
+            owner_installation_id=owner_installation_id,
+        )
 
     controller.prepare_full = counted_prepare
     prepare_envelope = {
@@ -520,10 +531,21 @@ async def test_prepare_original_join_and_cached_replay_fail_after_reset(
     prepare_calls = 0
     prepare = controller.prepare_full
 
-    def counted_prepare(payload: object, *, local_ui: bool, owner_authorized: bool = False):
+    def counted_prepare(
+        payload: object,
+        *,
+        local_ui: bool,
+        owner_authorized: bool = False,
+        owner_installation_id: str | None = None,
+    ):
         nonlocal prepare_calls
         prepare_calls += 1
-        return prepare(payload, local_ui=local_ui, owner_authorized=owner_authorized)
+        return prepare(
+            payload,
+            local_ui=local_ui,
+            owner_authorized=owner_authorized,
+            owner_installation_id=owner_installation_id,
+        )
 
     controller.prepare_full = counted_prepare
     envelope = {
@@ -636,10 +658,21 @@ async def test_prepare_admission_binding_is_checked_before_controller_execution(
     prepare_calls = 0
     prepare = controller.prepare_full
 
-    def counted_prepare(payload: object, *, local_ui: bool, owner_authorized: bool = False):
+    def counted_prepare(
+        payload: object,
+        *,
+        local_ui: bool,
+        owner_authorized: bool = False,
+        owner_installation_id: str | None = None,
+    ):
         nonlocal prepare_calls
         prepare_calls += 1
-        return prepare(payload, local_ui=local_ui, owner_authorized=owner_authorized)
+        return prepare(
+            payload,
+            local_ui=local_ui,
+            owner_authorized=owner_authorized,
+            owner_installation_id=owner_installation_id,
+        )
 
     controller.prepare_full = counted_prepare
     lock = router.request_locks.setdefault(connection, asyncio.Lock())

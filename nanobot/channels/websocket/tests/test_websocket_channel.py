@@ -6900,3 +6900,58 @@ async def test_remote_owner_full_message_requires_own_device_consent(
     from nanobot.security.desktop_permissions import full_permission_from_message
 
     assert full_permission_from_message(bus.publish_inbound.await_args.args[0]) is not None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_new_webui_submissions_reserve_only_one_turn(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:concurrent-new"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("concurrent-new")
+    assert token is not None
+
+    def envelope(turn_id: str) -> dict[str, object]:
+        return {
+            "type": "message",
+            "chat_id": "concurrent-new",
+            "content": "work",
+            "webui": True,
+            "turn_id": turn_id,
+            "request_settings_version": 1,
+            "request_intent": "new",
+            "source_token": token,
+        }
+
+    await asyncio.gather(
+        channel._dispatch_envelope(conn, "webui-client", envelope("turn-one")),
+        channel._dispatch_envelope(conn, "webui-client", envelope("turn-two")),
+    )
+    assert bus.publish_inbound.await_count == 1
+    payloads = [json.loads(call.args[0]) for call in conn.send.await_args_list]
+    assert any(
+        payload.get("detail") == "not_admitted"
+        and payload.get("reason") == "busy_new_request"
+        for payload in payloads
+    )

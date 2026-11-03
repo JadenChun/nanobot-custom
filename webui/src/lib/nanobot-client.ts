@@ -1513,6 +1513,10 @@ export class NanobotClient {
 
   private scheduleReconnect(): void {
     this.clearRunStatusesForReconnect();
+    if (this.reconnectAttempts >= 8) {
+      this.setStatus("error");
+      return;
+    }
     this.setStatus("reconnecting");
     const attempt = this.reconnectAttempts++;
     // Exponential backoff: 0.5s, 1s, 2s, 4s, capped.

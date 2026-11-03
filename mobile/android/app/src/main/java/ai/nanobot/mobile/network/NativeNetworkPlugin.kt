@@ -570,7 +570,14 @@ class NativeNetworkPlugin : Plugin() {
     ) {
         operationExecutor.execute {
             try {
-                val result = jsonRequest(operation, path, body = body)
+                val record = custody.load()
+                val accessToken = record?.accessToken.orEmpty()
+                val headers = if (accessToken.isNotBlank()) {
+                    mapOf("Authorization" to "Bearer $accessToken")
+                } else {
+                    emptyMap()
+                }
+                val result = jsonRequest(operation, path, body = body, headers = headers)
                 mainHandler.post { call.resolve(JSObject(result.toString())) }
             } catch (exception: Exception) {
                 mainHandler.post {

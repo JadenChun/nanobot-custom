@@ -30,11 +30,13 @@ function ownerRuntime() {
     }],
   });
   const remoteRevoke = vi.fn().mockResolvedValue({ ok: true });
+  const refresh = vi.fn().mockResolvedValue(true);
   const runtime: MobileRuntime = {
     transport: {
       remoteStatus,
       remoteDevices,
       remoteRevoke,
+      refresh,
     } as unknown as MobileRuntime["transport"],
     request: vi.fn(),
     handshake: vi.fn(),
@@ -43,7 +45,7 @@ function ownerRuntime() {
     createWebSocket: vi.fn(),
     recover: vi.fn(),
   };
-  return { runtime, remoteStatus, remoteDevices, remoteRevoke };
+  return { runtime, remoteStatus, remoteDevices, remoteRevoke, refresh };
 }
 
 afterEach(() => resetMobileRuntime());
@@ -68,6 +70,27 @@ describe("mobile owner remote access", () => {
       owner_available: true,
     });
     expect(remoteStatus).toHaveBeenCalledOnce();
+    expect(remoteDevices).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes once and retries an owner read after 401", async () => {
+    const { runtime, remoteStatus, remoteDevices, refresh } = ownerRuntime();
+    remoteStatus
+      .mockRejectedValueOnce(new Error("HTTP 401 token expired"))
+      .mockResolvedValue({
+        ok: true,
+        enabled: true,
+        installation_id: "install-owner",
+        scopes: ["chat.read", "owner"],
+      });
+    installMobileRuntime(runtime);
+    setMobileOwnerCapability(true);
+
+    await expect(fetchRemoteAccessStatus("token")).resolves.toMatchObject({
+      enabled: true,
+      installation_id: "install-owner",
+    });
+    expect(refresh).toHaveBeenCalledOnce();
     expect(remoteDevices).toHaveBeenCalledOnce();
   });
 

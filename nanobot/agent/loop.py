@@ -3565,11 +3565,29 @@ class AgentLoop:
                     "incarnation": state.incarnation,
                     "generation": state.generation,
                 }
-                if not self.sessions.desktop_permissions.authorizes_full(
-                    workspace_full_reference,
-                    session_key=key,
-                    source_binding=source_binding,
-                    request_turn_id=current_turn_id,
+                from nanobot.webui.metadata import WEBUI_INSTALLATION_METADATA_KEY
+
+                installation_id = (
+                    context.request.metadata.get(WEBUI_INSTALLATION_METADATA_KEY)
+                    if context.request is not None
+                    else None
+                )
+                if (
+                    not self.sessions.desktop_permissions.authorizes_full(
+                        workspace_full_reference,
+                        session_key=key,
+                        source_binding=source_binding,
+                        request_turn_id=current_turn_id,
+                    )
+                    or (
+                        isinstance(installation_id, str)
+                        and installation_id
+                        and not self.sessions.desktop_permissions.authorizes_remote_full(
+                            installation_id=installation_id,
+                            session_key=key,
+                            source_binding=source_binding,
+                        )
+                    )
                 ):
                     raise WorkspaceScopeError("full_access_unavailable", status=409)
                 context.workspace_full_reference = workspace_full_reference

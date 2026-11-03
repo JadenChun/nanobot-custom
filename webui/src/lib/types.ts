@@ -694,11 +694,16 @@ export interface WorkspaceModeActionInput {
   mode: WorkspaceAccessMode;
   expected_runtime_id: string;
   expected_permission_revision: number;
+  request_settings_version?: 1;
+  source_token?: string;
+  full_confirmation_id?: string;
 }
 
 export interface WorkspaceModeActionResult {
   workspace_scope: WorkspaceScopePayload;
   workspace_permissions: WorkspacePermissionProjection;
+  source_token?: string;
+  full_confirmation_id?: string;
 }
 
 export interface WorkspaceModeConflict {

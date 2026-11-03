@@ -798,6 +798,11 @@ export function WorkspacePermissionV2Control({
               <p className="text-[12px] font-semibold text-foreground">{t("workspace.permissionV2.fullIndicator", { defaultValue: "Full access" })}</p>
               <p className="text-[11.5px] leading-relaxed text-muted-foreground">{t("workspace.permissionV2.fullReach", { defaultValue: "Files and commands across this device under your OS account permissions." })}</p>
               {actionFailed ? <p role="alert" className="text-[11px] text-destructive">{t("workspace.permissionV2.actionFailed", { defaultValue: "Access could not be updated. Refresh this chat before retrying." })}</p> : null}
+              {mobile ? (
+                <Button type="button" variant="outline" disabled={busy} onClick={() => void changeMode("full")} className="h-9 w-full rounded-control">
+                  {t("workspace.permissionV2.confirmThisDevice", { defaultValue: "Confirm Full on this device" })}
+                </Button>
+              ) : null}
               <Button type="button" variant="outline" disabled={busy} onClick={() => void changeMode("restricted")} className="h-9 w-full rounded-control">
                 {t("workspace.permissionV2.returnRestricted", { defaultValue: "Return to Sandbox" })}
               </Button>

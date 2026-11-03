@@ -2142,7 +2142,7 @@ def test_two_remote_installations_each_confirm_full_consent(tmp_path: Path) -> N
     )
     assert full_scope.access_mode == "full"
 
-    owner.clear_remote_full_consents(session_key=key)
+    owner.clear_remote_full_consents(installation_id="install-a")
     assert controller.ingress_full_reference(
         "two-owner",
         local_ui=False,
@@ -2152,4 +2152,85 @@ def test_two_remote_installations_each_confirm_full_consent(tmp_path: Path) -> N
         "two-owner",
         local_ui=False,
         installation_id="install-b",
+        request_turn_id="turn-b",
+    ) is not None
+
+    owner.clear_remote_full_consents(session_key=key)
+    assert controller.ingress_full_reference(
+        "two-owner",
+        local_ui=False,
+        installation_id="install-b",
     ) is None
+
+
+def test_v1_full_control_requires_a_bound_confirmation_id(tmp_path: Path) -> None:
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    manager = SessionManager(home, sessions_root=tmp_path / "sessions")
+    key = "websocket:confirmation"
+    scope = default_workspace_scope(project, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    manager._jsonl_store.save(session)
+    manager._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    controller = WebUIWorkspaceController(
+        session_manager=manager,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=FolderGrantStore(
+            agent_home=home,
+            instance_root=instance,
+            path=instance / "webui" / "folder-grants.json",
+        ),
+        native_supervisor_available=True,
+    )
+    owner = manager.desktop_permissions
+    source = controller._source_binding(key)
+    assert source is not None
+    token = controller.source_token("confirmation")
+    assert token is not None
+    current = controller._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    prepared = controller.prepare_full(
+        {
+            "chat_id": "confirmation",
+            "request_settings_version": 1,
+            "source_token": token,
+        },
+        local_ui=True,
+    )
+    confirmation_id = prepared.get("full_confirmation_id")
+    assert isinstance(confirmation_id, str) and confirmation_id
+    payload = {
+        "chat_id": "confirmation",
+        "mode": "full",
+        "expected_runtime_id": owner.runtime_id,
+        "expected_permission_revision": current["revision"],
+        "request_settings_version": 1,
+        "source_token": token,
+    }
+    for invalid in (None, "wrong-id"):
+        with pytest.raises(WorkspacePermissionActionError) as rejected:
+            controller.set_permission_mode(
+                {**payload, **({"full_confirmation_id": invalid} if invalid else {})},
+                local_ui=True,
+            )
+        assert rejected.value.message == "confirmation_required"
+
+    accepted = controller.set_permission_mode(
+        {**payload, "full_confirmation_id": confirmation_id},
+        local_ui=True,
+    )
+    assert "error" not in accepted
+    assert accepted["workspace_permissions"]["mode"] == "full"

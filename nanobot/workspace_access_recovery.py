@@ -269,6 +269,7 @@ class WorkspaceModeActionResult(TypedDict):
     workspace_scope: WorkspaceScopePayload
     workspace_permissions: WorkspacePermissionProjection
     source_token: NotRequired[str | None]
+    full_confirmation_id: NotRequired[str]
 
 
 class WorkspaceModeConflictErrorPayload(TypedDict):

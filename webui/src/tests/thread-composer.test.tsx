@@ -4042,3 +4042,44 @@ describe("settings during a running turn", () => {
     );
   });
 });
+
+describe("mobile Full device confirmation", () => {
+  it("offers an explicit confirm action when Full is already active", async () => {
+    const user = userEvent.setup();
+    const runtime: MobileRuntime = {
+      transport: {} as MobileRuntime["transport"],
+      request: async () => ({ requestId: 1, status: 200, headers: {}, bodyBase64: "" }),
+      handshake: async () => ({}),
+      read: async () => ({}),
+      onEvent: async () => () => undefined,
+      createWebSocket: () => ({}) as WebSocket,
+      recover: async () => undefined,
+    };
+    installMobileRuntime(runtime);
+    const scope = {
+      project_path: "/tmp/project",
+      project_name: "project",
+      access_mode: "full" as const,
+      restrict_to_workspace: false,
+    };
+    const onWorkspaceAccessModeChange = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ThreadComposer
+        onSend={vi.fn()}
+        placeholder="Type your message..."
+        workspaceScope={scope}
+        workspaceDefaultScope={scope}
+        workspaceControls={{ can_change_project: true, can_use_full_access: true, permission_v2: true }}
+        workspaces={permissionV2Workspaces(scope)}
+        workspacePermissions={permissionProjection({ mode: "full", can_enable_full: false })}
+        persistentWorkspaceChat
+        onWorkspaceAccessModeChange={onWorkspaceAccessModeChange}
+        onWorkspaceScopeChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Workspace access mode: Full access" }));
+    await user.click(screen.getByRole("button", { name: "Confirm Full on this device" }));
+    await waitFor(() => expect(onWorkspaceAccessModeChange).toHaveBeenCalledWith("full"));
+  });
+});

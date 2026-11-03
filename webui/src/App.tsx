@@ -1559,6 +1559,8 @@ function Shell({
           mode: "full",
           expected_runtime_id: prepared.workspace_permissions.runtime_id,
           expected_permission_revision: prepared.workspace_permissions.revision,
+          source_token: prepared.workspace_permissions.source_token,
+          full_confirmation_id: prepared.full_confirmation_id,
         });
         acknowledgeWorkspaceScope(chatId, activated.workspace_scope);
       }

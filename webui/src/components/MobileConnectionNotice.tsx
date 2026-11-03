@@ -13,7 +13,7 @@ export function MobileConnectionNotice({
   const { t } = useTranslation();
   if (!isMobileRuntimeActive()) return null;
   if (status === "open" || status === "idle") return null;
-  const actionable = status === "error" || status === "closed";
+  const actionable = status === "error" || status === "closed" || status === "reconnecting";
   const message = status === "error"
     ? t("connection.error")
     : status === "reconnecting"
