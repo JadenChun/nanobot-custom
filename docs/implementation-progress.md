@@ -468,3 +468,21 @@ performed.
   6 subtests passed**, exit 0 in 721.77s (`/tmp/opencode/full-suite-r10.log`).
 - Final strict: 0 errors / 528 files; comparator introduced 0
   (`/tmp/opencode/p6-after-r10.json`).
+
+### Physical phone qualification (in progress)
+
+Device: Nothing A142, Android 16 / API 36, arm64-v8a, Wi-Fi.
+Installed candidate: same release signer `CN=jaden`, `adb install -r` preserved
+`firstInstallTime`; rollback APK captured at
+`/tmp/opencode/phone-readonly/installed-base.apk`.
+
+Observed:
+- Cold launch after update reached the reconnect screen; Retry restored the
+  existing pairing and chat without rescanning or re-pairing.
+- Composer access mode is now visibly labeled (Sandbox/Full) on mobile; the
+  screenshot is `/tmp/opencode/phone-evidence/chat-visible-access-3.png`.
+- A typed draft survived Home/background and an airplane-mode offline/online
+  cycle; airplane mode was restored off.
+- A 10+ minute Doze/background draft-retention run is in progress.
+
+WebUI after the visible-label change: 1415 tests passed, build/lint exit 0.
