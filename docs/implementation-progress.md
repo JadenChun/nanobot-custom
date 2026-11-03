@@ -25,12 +25,12 @@ remaining blockers. Private logs and runtime data stay outside the repository.
 | P3 authorized media inputs | focused complete | exact read-only input snapshots; foreground only |
 | Mobile A socket correctness | focused complete | identity, terminal lifecycle, UTF-8, unique broker ids |
 | Mobile B delivery authorization | focused complete; helper cleanup deferred | uncached revalidation before private delivery |
-| Mobile C owner wiring / foreground recovery | partial | broker owner routes + WebUI foreground recovery added; native Ping/Kotlin/reconnect unbuilt |
-| Mobile D pairing continuity | focused complete (desktop/WebUI/phone JS) | renewal + restore; native custody pending |
-| Mobile E request authority/backend | partial | explicit restricted requests no longer promoted; four-state/consent contract not implemented |
-| Mobile F composer settings/presentation | pending | depends on E semantics |
+| Mobile C owner wiring / foreground recovery | complete (focused + emulator M01) | native Ping/refresh/resume bridge, owner routes, foreground recovery; physical Doze/radio pending |
+| Mobile D pairing continuity | desktop/WebUI/JS complete; native custody pending | renewal + dialog restore; Kotlin process-death custody not implemented |
+| Mobile E request authority/backend | partial | device-bound remote Full consent and restricted non-promotion; versioned settings/proofs not implemented |
+| Mobile F composer settings/presentation | partial | queued workspace/mode snapshot done; full presentation/accessibility pending |
 | Mobile G standard feature dispatcher | pending | separate later change |
-| Integrated qualification / M38 | pending | external resources may remain blocked |
+| Integrated qualification / M38 | local gates green; release gates pending | full Python/WebUI/type/build/M01 pass; signed phone and M38 pending |
 
 ## Acceptance evidence
 
