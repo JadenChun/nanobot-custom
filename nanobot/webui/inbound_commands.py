@@ -41,7 +41,10 @@ from nanobot.webui.cli_apps_api import normalize_cli_app_mentions
 from nanobot.webui.forking import handle_webui_fork_chat
 from nanobot.webui.gateway_services import GatewayServices
 from nanobot.webui.mcp_presets_api import normalize_mcp_preset_mentions
-from nanobot.webui.metadata import WEBSOCKET_TURN_OWNER_METADATA_KEY
+from nanobot.webui.metadata import (
+    WEBSOCKET_TURN_OWNER_METADATA_KEY,
+    WEBUI_SOURCE_TOKEN_METADATA_KEY,
+)
 from nanobot.webui.replay_store import DurableWebUIReplay
 from nanobot.webui.session_access import (
     SessionMention,
@@ -78,6 +81,15 @@ _SOURCE_BOUND_PERMISSION_ACTIONS = frozenset({
 REQUEST_SETTINGS_VERSION = 1
 
 
+_REQUEST_SETTINGS_FIELDS = frozenset({
+    "request_settings_version",
+    "source_token",
+    "request_intent",
+    "target_turn_id",
+    "full_confirmation_id",
+})
+
+
 def request_settings_error(
     envelope: dict[str, Any],
     *,
@@ -86,29 +98,37 @@ def request_settings_error(
 ) -> tuple[str, str] | None:
     """Validate the versioned request-settings envelope without side effects."""
     version = envelope.get("request_settings_version")
-    if version is not None and (
-        type(version) is not int or version != REQUEST_SETTINGS_VERSION
-    ):
+    negotiated = any(field in envelope for field in _REQUEST_SETTINGS_FIELDS)
+    if version is None:
+        # A bare legacy WebUI envelope remains compatible. Any client that
+        # submits a v1 field must also negotiate the version explicitly.
+        return ("update_required", "request_settings_version") if negotiated else None
+    if type(version) is not int or version != REQUEST_SETTINGS_VERSION:
         return "update_required", "request_settings_version"
     intent = envelope.get("request_intent")
-    if intent is not None:
-        if intent not in {"new", "steer"}:
-            return "invalid_request_settings", "request_intent"
-        if intent == "steer":
-            target = envelope.get("target_turn_id")
-            if (
-                not isinstance(target, str)
-                or not active_turn_id
-                or target != active_turn_id
-            ):
-                return "not_admitted", "steering_target_changed"
-            return None
+    if intent not in {"new", "steer"}:
+        return "invalid_request_settings", "request_intent"
+    target = envelope.get("target_turn_id")
+    if intent == "new":
+        if target is not None:
+            return "invalid_request_settings", "target_turn_id"
+    else:
+        if (
+            not isinstance(target, str)
+            or not active_turn_id
+            or target != active_turn_id
+        ):
+            return "not_admitted", "steering_target_changed"
     source_token = envelope.get("source_token")
-    if source_token is not None:
+    if current_source_token is not None:
         if not isinstance(source_token, str):
             return "invalid_request_settings", "source_token"
-        if current_source_token is None or source_token != current_source_token:
+        if source_token != current_source_token:
             return "source_changed", "source_token"
+    elif source_token is not None:
+        if not isinstance(source_token, str):
+            return "invalid_request_settings", "source_token"
+        return "source_changed", "source_token"
     confirmation = envelope.get("full_confirmation_id")
     if confirmation is not None and not isinstance(confirmation, str):
         return "invalid_request_settings", "full_confirmation_id"
@@ -648,9 +668,10 @@ class WebUICommandRouter:
             )
             return
         request_intent = envelope.get("request_intent")
+        current_source_token = self._workspaces.source_token(chat_id)
         settings_error = request_settings_error(
             envelope,
-            current_source_token=self._workspaces.source_token(chat_id),
+            current_source_token=current_source_token,
             active_turn_id=websocket_turn_id(chat_id),
         )
         if settings_error is not None:
@@ -819,6 +840,8 @@ class WebUICommandRouter:
         metadata: dict[str, Any] = {
             "remote": getattr(connection, "remote_address", None)
         }
+        if temporary_policy is None and current_source_token is not None:
+            metadata[WEBUI_SOURCE_TOKEN_METADATA_KEY] = current_source_token
         if envelope.get("webui") is True:
             metadata["webui"] = True
             metadata.update(self._transcripts.client_turn_metadata(envelope.get("turn_id")))

@@ -1947,3 +1947,99 @@ def test_deferred_full_can_be_rolled_back_before_the_next_request(
         assert owner.full_reference(session_key=key, source_binding=source) is None
     finally:
         clear_websocket_turn_if_current("mode-next-rollback", turn_owner)
+
+
+def test_permission_control_v1_source_and_version_are_validated_before_effect(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "agent"
+    project = tmp_path / "project"
+    instance = tmp_path / "instance"
+    home.mkdir()
+    project.mkdir()
+    manager = SessionManager(home, sessions_root=tmp_path / "sessions")
+    key = "websocket:control-v1"
+    scope = default_workspace_scope(project, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    manager._jsonl_store.save(session)
+    manager._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    controller = WebUIWorkspaceController(
+        session_manager=manager,
+        default_workspace=home,
+        default_restrict_to_workspace=True,
+        grant_store=FolderGrantStore(
+            agent_home=home,
+            instance_root=instance,
+            path=instance / "webui" / "folder-grants.json",
+        ),
+        native_supervisor_available=True,
+    )
+    owner = manager.desktop_permissions
+    source = controller._source_binding(key)
+    assert source is not None
+    token = controller.source_token("control-v1")
+    assert token is not None
+    current = controller._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    base = {
+        "chat_id": "control-v1",
+        "mode": "restricted",
+        "expected_runtime_id": owner.runtime_id,
+        "expected_permission_revision": current["revision"],
+    }
+
+    for payload in (
+        {**base, "request_settings_version": 1, "source_token": "tok-stale"},
+        {**base, "request_settings_version": 1},
+        {**base, "request_settings_version": 2, "source_token": token},
+    ):
+        with pytest.raises(WorkspacePermissionActionError) as rejected:
+            controller.set_permission_mode(payload, local_ui=True)
+        expected = (
+            "update_required"
+            if payload["request_settings_version"] == 2
+            else "source_changed"
+        )
+        assert rejected.value.message == expected
+    after = controller._permission_projection(
+        key,
+        source,
+        can_enable_full=True,
+        unavailable_reason=None,
+    )
+    assert after == current
+
+    accepted = controller.set_permission_mode(
+        {**base, "request_settings_version": 1, "source_token": token},
+        local_ui=True,
+    )
+    assert "error" not in accepted
+
+    prepared = controller.prepare_full(
+        {
+            "chat_id": "control-v1",
+            "request_settings_version": 1,
+            "source_token": token,
+        },
+        local_ui=True,
+    )
+    assert prepared["workspace_permissions"]["mode"] == "restricted"
+    with pytest.raises(WorkspacePermissionActionError) as stale_prepare:
+        controller.prepare_full(
+            {
+                "chat_id": "control-v1",
+                "request_settings_version": 1,
+                "source_token": "tok-stale",
+            },
+            local_ui=True,
+        )
+    assert stale_prepare.value.message == "source_changed"

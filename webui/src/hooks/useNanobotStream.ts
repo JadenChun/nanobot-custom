@@ -214,6 +214,7 @@ export interface SendOptions {
   sessionMentions?: SessionMention[];
   quotedContext?: string;
   workspaceScope?: WorkspaceScopePayload | null;
+  sourceToken?: string;
   sideChannel?: boolean;
   finalizeActiveTurn?: boolean;
   /** Append guidance to the running turn without detaching its active answer segment. */
@@ -1388,9 +1389,12 @@ export function useNanobotStream(
       });
       if (!sideChannel) setIsStreaming(true);
       const wireMedia = hasAttachments ? images!.map((i) => i.media) : undefined;
+      const targetTurnId = continueActiveTurn ? client.getRunTurnId(chatId) : null;
       const clientOptions = {
         ...options,
         turnId,
+        requestIntent: continueActiveTurn ? "steer" as const : "new" as const,
+        ...(targetTurnId ? { targetTurnId } : {}),
         ...((sideChannel || continueActiveTurn) ? { startsNewRun: false } : {}),
       };
       delete clientOptions.quotedContext;

@@ -1450,13 +1450,15 @@ export function ThreadShell({
   const withWorkspaceScope = useCallback(
     (options?: SendOptions): SendOptions | undefined => {
       const effective = options?.workspaceScope ?? workspaceScope;
-      if (!effective) return options;
+      const sourceToken = options?.sourceToken ?? workspacePermissions?.source_token;
+      if (!effective && !sourceToken) return options;
       return {
         ...(options ?? {}),
-        workspaceScope: effective,
+        ...(effective ? { workspaceScope: effective } : {}),
+        ...(sourceToken ? { sourceToken } : {}),
       };
     },
-    [workspaceScope],
+    [workspacePermissions?.source_token, workspaceScope],
   );
 
   const refreshModelSettings = useCallback(async () => {

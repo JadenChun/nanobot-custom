@@ -3542,6 +3542,22 @@ class AgentLoop:
                      and context.request.content.strip().lower() == "/new")
             if owner.recovery_required and not reset:
                 raise RuntimeError("Source session requires recovery before execution")
+            if context.request is not None:
+                from nanobot.security.desktop_permissions import permission_source_token
+                from nanobot.webui.metadata import WEBUI_SOURCE_TOKEN_METADATA_KEY
+
+                expected_source_token = context.request.metadata.get(
+                    WEBUI_SOURCE_TOKEN_METADATA_KEY,
+                )
+                if isinstance(expected_source_token, str) and expected_source_token:
+                    state = owner.read_snapshot().state
+                    current_source_token = permission_source_token({
+                        "store_identity": state.store_identity,
+                        "incarnation": state.incarnation,
+                        "generation": state.generation,
+                    })
+                    if current_source_token != expected_source_token:
+                        raise WorkspaceScopeError("source_changed", status=409)
             if workspace_full_reference is not None:
                 state = owner.read_snapshot().state
                 source_binding: PermissionSourceBinding = {

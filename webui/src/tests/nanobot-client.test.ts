@@ -301,6 +301,7 @@ describe("NanobotClient", () => {
         content: "hello",
         turn_id: "turn-1",
         request_settings_version: 1,
+      request_intent: "new",
       webui: true,
       },
     ]);
@@ -1809,6 +1810,7 @@ describe("NanobotClient", () => {
         content: "hello",
         workspace_scope: workspaceScope,
         request_settings_version: 1,
+      request_intent: "new",
       webui: true,
       }),
     );
@@ -1882,7 +1884,7 @@ describe("NanobotClient", () => {
     // Attach is sent first because sendMessage adds to knownChats, which
     // handleOpen re-attaches; then the queued message follows.
     expect(lastSocket().sent).toContain(
-      JSON.stringify({ type: "message", chat_id: "chat-x", content: "hello", request_settings_version: 1, webui: true }),
+      JSON.stringify({ type: "message", chat_id: "chat-x", content: "hello", request_settings_version: 1, request_intent: "new", webui: true }),
     );
   });
 
@@ -1901,6 +1903,7 @@ describe("NanobotClient", () => {
       content: "hello",
       turn_id: "turn-1",
       request_settings_version: 1,
+      request_intent: "new",
       webui: true,
     });
   });
@@ -1922,9 +1925,10 @@ describe("NanobotClient", () => {
       type: "message",
       chat_id: "chat-x",
       content: "/model fast",
-      request_settings_version: 1,
       webui: true,
     });
+    expect(frame).not.toHaveProperty("request_settings_version");
+    expect(frame).not.toHaveProperty("request_intent");
     expect(frame.turn_id).toMatch(/^webui-system:/);
 
     lastSocket().fakeMessage({
@@ -1970,6 +1974,7 @@ describe("NanobotClient", () => {
       content: "What does this mean?",
       quoted_context: "selected answer excerpt",
       request_settings_version: 1,
+      request_intent: "new",
       webui: true,
     });
   });
@@ -2013,6 +2018,7 @@ describe("NanobotClient", () => {
           brand_color: "#F08705",
         }],
         request_settings_version: 1,
+      request_intent: "new",
       webui: true,
       }),
     );
@@ -2061,6 +2067,7 @@ describe("NanobotClient", () => {
           brand_color: "#111827",
         }],
         request_settings_version: 1,
+      request_intent: "new",
       webui: true,
       }),
     );
@@ -2093,6 +2100,7 @@ describe("NanobotClient", () => {
         title: "Pricing",
       }],
       request_settings_version: 1,
+      request_intent: "new",
       webui: true,
     }));
   });
@@ -2174,6 +2182,7 @@ describe("NanobotClient", () => {
       content: "look",
       media: [{ data_url: "data:image/png;base64,AAAA", name: "shot.png" }],
       request_settings_version: 1,
+      request_intent: "new",
       webui: true,
     });
   });
@@ -2194,6 +2203,7 @@ describe("NanobotClient", () => {
       chat_id: "chat-x",
       content: "hello",
       request_settings_version: 1,
+      request_intent: "new",
       webui: true,
     });
   });
@@ -2311,5 +2321,53 @@ describe("NanobotClient", () => {
     await vi.advanceTimersByTimeAsync(50);
     expect(seen).toContain("reconnecting");
     expect(FakeSocket.instances.length).toBeGreaterThan(1);
+  });
+});
+
+describe("versioned request settings", () => {
+  it("sends source, new intent and no steer target for a normal message", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+    client.sendMessage("chat-x", "hello", undefined, {
+      turnId: "turn-new",
+      sourceToken: "tok-live",
+    });
+    expect(JSON.parse(lastSocket().sent.at(-1) as string)).toEqual({
+      type: "message",
+      chat_id: "chat-x",
+      content: "hello",
+      turn_id: "turn-new",
+      source_token: "tok-live",
+      request_settings_version: 1,
+      request_intent: "new",
+      webui: true,
+    });
+  });
+
+  it("sends exact steer target identity for guidance", () => {
+    const client = new NanobotClient({
+      url: "ws://test",
+      reconnect: false,
+      socketFactory: (url) => new FakeSocket(url) as unknown as WebSocket,
+    });
+    client.connect();
+    lastSocket().fakeOpen();
+    client.sendMessage("chat-x", "guide", undefined, {
+      turnId: "turn-steer",
+      sourceToken: "tok-live",
+      requestIntent: "steer",
+      targetTurnId: "turn-active",
+    });
+    expect(JSON.parse(lastSocket().sent.at(-1) as string)).toMatchObject({
+      request_settings_version: 1,
+      request_intent: "steer",
+      target_turn_id: "turn-active",
+      source_token: "tok-live",
+    });
   });
 });

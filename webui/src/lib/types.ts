@@ -450,6 +450,7 @@ export interface WorkspacePermissionProjection {
   state: "active" | "retiring";
   can_enable_full: boolean;
   full_access_unavailable_reason: PermissionFullUnavailableReason | null;
+  source_token?: string;
   task_access: {
     task_turn_id: string;
     state: TaskAccessState;

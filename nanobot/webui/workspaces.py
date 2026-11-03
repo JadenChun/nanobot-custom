@@ -27,6 +27,7 @@ from nanobot.security.desktop_permissions import (
     WorkspacePermissionReference,
     WorkspacePermissionUnavailableError,
     is_temporary_source_binding,
+    permission_source_token,
 )
 from nanobot.security.folder_grants import (
     FolderFileAccess,
@@ -752,6 +753,28 @@ class WebUIWorkspaceController:
             return None
         return reference
 
+    def _validate_control_request_settings(
+        self,
+        payload: dict[str, object],
+        chat_id: str,
+    ) -> None:
+        """Validate optional v1 control fields before any permission effect."""
+        version = payload.get("request_settings_version")
+        if version is None:
+            return
+        if type(version) is not int or version != 1:
+            raise WorkspacePermissionActionError(409, "update_required")
+        current = self.source_token(chat_id)
+        source_token = payload.get("source_token")
+        if current is not None:
+            if not isinstance(source_token, str) or source_token != current:
+                raise WorkspacePermissionActionError(409, "source_changed")
+        elif source_token is not None and not isinstance(source_token, str):
+            raise WorkspacePermissionActionError(400, "invalid_permission_request")
+        confirmation = payload.get("full_confirmation_id")
+        if confirmation is not None and not isinstance(confirmation, str):
+            raise WorkspacePermissionActionError(400, "invalid_permission_request")
+
     def prepare_full(
         self,
         raw_payload: object,
@@ -765,7 +788,9 @@ class WebUIWorkspaceController:
         if type(raw_payload) is not dict:
             raise WorkspacePermissionActionError(400, "invalid_permission_request")
         payload = cast(dict[str, object], raw_payload)
-        if set(payload) != {"chat_id"}:
+        if not {"chat_id"} <= set(payload) <= {
+            "chat_id", "request_settings_version", "source_token", "full_confirmation_id",
+        }:
             raise WorkspacePermissionActionError(400, "invalid_permission_request")
         chat_id = payload.get("chat_id")
         from nanobot.webui.session_identity import (
@@ -775,6 +800,7 @@ class WebUIWorkspaceController:
 
         if not isinstance(chat_id, str) or not is_valid_webui_chat_id(chat_id):
             raise WorkspacePermissionActionError(400, "invalid_permission_request")
+        self._validate_control_request_settings(payload, chat_id)
         temporary_source = self._temporary_source(chat_id)
         if temporary_source is not None:
             return self._prepare_temporary_full(chat_id, temporary_source)
@@ -1019,8 +1045,11 @@ class WebUIWorkspaceController:
         if type(raw_payload) is not dict:
             raise WorkspacePermissionActionError(400, "invalid_permission_request")
         payload = cast(dict[str, object], raw_payload)
-        if set(payload) != {
+        if not {
             "chat_id", "mode", "expected_runtime_id", "expected_permission_revision",
+        } <= set(payload) <= {
+            "chat_id", "mode", "expected_runtime_id", "expected_permission_revision",
+            "request_settings_version", "source_token", "full_confirmation_id",
         }:
             raise WorkspacePermissionActionError(400, "invalid_permission_request")
         chat_id = payload.get("chat_id")
@@ -1040,6 +1069,7 @@ class WebUIWorkspaceController:
             or expected_revision < 0
         ):
             raise WorkspacePermissionActionError(400, "invalid_permission_request")
+        self._validate_control_request_settings(payload, chat_id)
         temporary_source = self._temporary_source(chat_id)
         if temporary_source is not None:
             if mode not in {"restricted", "full"}:
@@ -1283,11 +1313,11 @@ class WebUIWorkspaceController:
         source = self._source_binding(webui_session_key(chat_id))
         if source is None:
             return None
-        raw = (
-            f"{source['store_identity']}:{source['incarnation']}:"
-            f"{source['generation']}"
-        )
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+        return self._source_token_for(source)
+
+    @staticmethod
+    def _source_token_for(source: PermissionSourceBinding) -> str:
+        return permission_source_token(source)
 
     def remember_request_defaults(
         self,
@@ -1409,12 +1439,14 @@ class WebUIWorkspaceController:
                 active_processes=active,
                 unknown_processes=unknown,
             )
-        return owner.projection(
+        projection = owner.projection(
             session_key=session_key,
             source_binding=source,
             can_enable_full=can_enable_full,
             full_access_unavailable_reason=unavailable_reason,
         )
+        projection["source_token"] = self._source_token_for(source)
+        return projection
 
     def scope_for_new_chat(
         self,

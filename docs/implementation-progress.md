@@ -588,3 +588,27 @@ WebUI after the visible-label change: 1415 tests passed, build/lint exit 0.
   - WebUI: 1419 passed, build/lint exit 0.
   - Installed app: candidate `r6` hash/signature verified; staging gateway now
     runs from this worktree.
+
+### Merge corrections (isolated repair branch `fix/mobile-remote-merge-blockers`)
+
+Baseline: `7be433232d28a88106e15a486af3ade2250347f4` (feature handoff plus task docs).
+Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedpyright.json`).
+
+#### MC01 — PASS (focused)
+
+- Embedded WebUI/versioned messages now require `request_settings_version: 1`
+  once any v1 field is present; missing/unknown version returns
+  `update_required/request_settings_version` before media, transcript or default
+  effects.
+- v1 intent/target/source/confirmation fields are validated; steering no longer
+  skips source validation. Bare legacy WebUI envelopes and non-WebUI messages
+  remain compatible; system-command turns remain internal legacy controls.
+- Permission-control payloads accept v1 fields and reject stale/unknown
+  version/source before any permission effect.
+- A content-free source token is exposed in the permission projection, sent by
+  the WebUI client, frozen in inbound metadata, and rechecked at source
+  execution admission.
+- Requirements-only author: `ses_e5d84f1bdffeYPaeqSMb7tTW1p`
+  (`/tmp/opencode/mc01-requirements-author/request-admission-cases.md`).
+- Focused: 259 Python tests, 444 WebUI tests, WebUI build/lint; strict 0/528,
+  comparator introduced 0.

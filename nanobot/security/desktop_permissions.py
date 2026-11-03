@@ -7,12 +7,13 @@ bound to their Python object identity and cannot be serialized.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import threading
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal, NoReturn, TypedDict, cast
+from typing import TYPE_CHECKING, Callable, Literal, NoReturn, NotRequired, TypedDict, cast
 
 from nanobot.security.folder_grants import FolderFileAccess
 
@@ -78,6 +79,7 @@ class WorkspacePermissionProjection(TypedDict):
     full_access_unavailable_reason: PermissionFullUnavailableReason | None
     task_access: TaskAccessProjection | None
     retirement: PermissionRetirementProjection | None
+    source_token: NotRequired[str]
 
 
 class WorkspacePermissionUnavailableError(RuntimeError):
@@ -1338,6 +1340,12 @@ class DesktopPermissionOwner:
 
     def _changed(self) -> None:
         self._revision += 1
+
+
+def permission_source_token(binding: PermissionSourceBinding) -> str:
+    """Return the content-free token for a validated permission source."""
+    raw = f"{binding['store_identity']}:{binding['incarnation']}:{binding['generation']}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
 
 
 def validate_source_binding(value: object) -> PermissionSourceBinding:

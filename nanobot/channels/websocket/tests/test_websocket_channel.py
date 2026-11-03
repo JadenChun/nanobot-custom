@@ -6516,3 +6516,151 @@ async def test_raw_mobile_frames_revalidate_before_plain_text() -> None:
     assert await channel._revalidate_raw_mobile_frame(
         SimpleNamespace(mobile_identity=object())
     ) is True
+
+
+@pytest.mark.asyncio
+async def test_webui_message_rejects_missing_version_before_effects(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:version-required"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("version-required")
+    assert token is not None
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {
+            "type": "message",
+            "chat_id": "version-required",
+            "content": "hello",
+            "webui": True,
+            "request_intent": "new",
+            "source_token": token,
+        },
+    )
+
+    payload = json.loads(conn.send.await_args.args[0])
+    assert payload["event"] == "error"
+    assert payload["detail"] == "update_required"
+    assert payload["reason"] == "request_settings_version"
+    bus.publish_inbound.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_webui_message_rejects_stale_source_and_accepts_current_source(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:source-token"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+    token = channel.gateway.workspaces.source_token("source-token")
+    assert token is not None
+    envelope = {
+        "type": "message",
+        "chat_id": "source-token",
+        "content": "hello",
+        "webui": True,
+        "request_settings_version": 1,
+        "request_intent": "new",
+    }
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {**envelope, "source_token": "tok-stale"},
+    )
+    payload = json.loads(conn.send.await_args.args[0])
+    assert payload["detail"] == "source_changed"
+    assert payload["reason"] == "source_token"
+    bus.publish_inbound.assert_not_awaited()
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {**envelope, "source_token": token},
+    )
+    bus.publish_inbound.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_legacy_webui_message_without_v1_fields_still_admits(
+    bus: MagicMock,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_workspace = tmp_path / "default"
+    default_workspace.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    _relocate_instance_root(monkeypatch, tmp_path)
+    channel = WebSocketChannel(
+        {"enabled": True, "allowFrom": ["*"], "host": "127.0.0.1"},
+        bus,
+        gateway=_basic_handler(bus, session_manager=sessions, workspace_path=default_workspace),
+    )
+    conn = AsyncMock()
+    _authenticate_local_webui_connection(channel, conn)
+    key = "websocket:legacy-envelope"
+    scope = default_workspace_scope(default_workspace, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    sessions._jsonl_store.save(session)
+    sessions._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+
+    await channel._dispatch_envelope(
+        conn,
+        "webui-client",
+        {
+            "type": "message",
+            "chat_id": "legacy-envelope",
+            "content": "hello",
+            "webui": True,
+        },
+    )
+
+    bus.publish_inbound.assert_awaited_once()

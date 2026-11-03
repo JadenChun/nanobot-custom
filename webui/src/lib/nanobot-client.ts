@@ -985,6 +985,10 @@ export class NanobotClient {
       sessionMentions?: SessionMention[];
       quotedContext?: string;
       workspaceScope?: WorkspaceScopePayload | null;
+      sourceToken?: string;
+      requestIntent?: "new" | "steer";
+      targetTurnId?: string;
+      fullConfirmationId?: string;
       turnId?: string;
       /** False for side-channel or injected messages that do not own a lifecycle. */
       startsNewRun?: boolean;
@@ -992,6 +996,9 @@ export class NanobotClient {
   ): void {
     const temporary = this.temporaryChatIds.has(chatId);
     if (!temporary) this.knownChats.add(chatId);
+    const systemCommand = options?.turnId
+      ? isSystemCommandTurnId(options.turnId)
+      : false;
     const frame: Outbound = {
       type: "message",
       chat_id: chatId,
@@ -1004,8 +1011,19 @@ export class NanobotClient {
         : {}),
       ...(options?.quotedContext?.trim() ? { quoted_context: options.quotedContext.trim() } : {}),
       ...(options?.workspaceScope ? { workspace_scope: options.workspaceScope } : {}),
+      ...(options?.sourceToken ? { source_token: options.sourceToken } : {}),
       ...(options?.turnId ? { turn_id: options.turnId } : {}),
-      request_settings_version: 1,
+      // System commands are internal chat controls, not workspace requests.
+      ...(systemCommand
+        ? {}
+        : {
+            request_settings_version: 1,
+            request_intent: options?.requestIntent ?? "new",
+            ...(options?.targetTurnId ? { target_turn_id: options.targetTurnId } : {}),
+            ...(options?.fullConfirmationId
+              ? { full_confirmation_id: options.fullConfirmationId }
+              : {}),
+          }),
       webui: true,
     };
     if (!this.frameFitsTransport(frame)) {
