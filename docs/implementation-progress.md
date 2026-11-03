@@ -703,10 +703,10 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   with merge `221101b9a5181839802ea250dd977dd39fab0ffe` without rewriting
   shared history. Staging notifications, image lightbox/scroll and settings
   changes remain present.
-- Final gates: **17,569 passed** Python, strict **0/528**, WebUI **1,430
+- Final gates: **17,569 passed** Python, strict **0/528**, WebUI **1,431
   passed** plus build/lint, parity PASS, Go broker PASS, Android release PASS.
 - Candidate: `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`,
-  SHA-256 `c84d1127c7a09432158fc7f3b449afc8ea89857216fe487c8437baf75107a383`,
+  SHA-256 `4d62c84b308db6f09d5106a2317a275b1c1f83d6696dccd679f6c5bfea3811e6`,
   same `CN=jaden` signer, zipalign verified, local-notifications plugin present.
 - Bounded review found and the branch corrected: the busy reservation race,
   missing owner auth on status/devices/revoke, source-token parser loss, v1

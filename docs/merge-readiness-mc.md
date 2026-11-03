@@ -12,9 +12,9 @@ Status: **LOCAL CANDIDATE READY FOR STAGING REVIEW — NOT MERGED, PUSHED OR DEP
 | Repair branch base (handoff + task docs) | `7be433232d28a88106e15a486af3ade2250347f4` |
 | Fetched staging integrated | `aacca07cfadaf51fa1d83913f93ba2d797c0aa58` (`origin/staging`) |
 | Staging integration merge | `221101b9a5181839802ea250dd977dd39fab0ffe` |
-| Corrected source commit | `7696b85a` (final code/test commit; later commits are docs-only) |
+| Corrected source commit | `0fcbcb53` (final code/test commit; later commits are docs-only) |
 | Candidate APK | `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk` |
-| Candidate SHA-256 | `c84d1127c7a09432158fc7f3b449afc8ea89857216fe487c8437baf75107a383` |
+| Candidate SHA-256 | `4d62c84b308db6f09d5106a2317a275b1c1f83d6696dccd679f6c5bfea3811e6` |
 | Signer | `CN=jaden`, SHA-256 `8c30d04957e9724d1668e585890913b0581676c9460789f658c4ed9f84ba0c81` |
 
 The candidate includes Capacitor local notifications from staging (`assets/capacitor.plugins.json`); zipalign and apksigner verification pass. No APK was installed.
@@ -53,3 +53,12 @@ The candidate includes Capacitor local notifications from staging (`assets/capac
 - M38 independent release review, signed-release sign-off, radio/Tailscale qualification.
 
 No push, merge into staging, PR, phone installation, credential/Tailscale change or live-service mutation was performed.
+
+
+## Post-review delta
+
+The bounded review identified and the branch corrected the source-token parser
+loss, remote-consent admission recheck, v1 confirmation correlation, and
+second-device UI confirmation. The final revoke path prefers the live gateway
+mutation so its in-process Full consents are cleared, then falls back to the
+independent owner when the gateway is unavailable.
