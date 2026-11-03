@@ -713,3 +713,33 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   control confirmation correlation, second-device UI consent, and unbounded
   reconnect. Remaining items are physical/instrumented qualification only.
 - Merge-readiness details: `docs/merge-readiness-mc.md`. No push/merge/deploy.
+
+### MC08 physical candidate evidence (2026-11-04)
+
+- Installed `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`
+  over `ai.nanobot.mobile` with `adb install -r`; `firstInstallTime`
+  `2026-11-02 22:04:34` preserved. Pulled installed APK SHA-256
+  `4d62c84b308db6f09d5106a2317a275b1c1f83d6696dccd679f6c5bfea3811e6`,
+  matching the candidate; signer `CN=jaden` unchanged. Rollback APK:
+  `/tmp/opencode/mc-phone-evidence/rollback-installed.apk`
+  (`dfc7ee90…`).
+- Staging gateway and owner now run from the repair source. The independent
+  owner listener is on `127.0.0.1:8900`; Tailscale serve has
+  `/remote/v1 → 127.0.0.1:8900` in addition to `/mobile/v1 → 8767`.
+- MC06 physical: with the gateway stopped, the phone's Remote access settings
+  still rendered owner status and the device list through the owner route,
+  with the connection-error notice visible. Revoke buttons were present; an
+  actual phone revoke was not executed (would remove a live device).
+- MC07 physical: after a gateway restart, the app showed **Connection error**
+  with **Retry** instead of staying at Sending; the draft
+  `restart draft check` remained. Manual Retry reconnected, the draft remained,
+  and sending it produced exactly one gateway turn
+  (`Processing message … restart draft check`). The app returned to a clean
+  connected composer after the final gateway restart.
+- Evidence: `/tmp/opencode/mc-phone-evidence/` (`install.log`,
+  `package-before/after.txt`, `after-restart.xml`, `after-manual-retry2.xml`,
+  `remote-offline.xml`, `installed-final.apk`, gateway/owner logs).
+
+Remaining physical/instrumented qualification: MC04 two-installation owner
+confirmation, MC06 actual revoke and the plugin-level owner-route instrumented
+test, MC05 real native command closure, and M38/signed-release review.
