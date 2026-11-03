@@ -564,3 +564,72 @@ def test_deferred_full_preserves_an_active_task_reference(tmp_path) -> None:
         source_binding=source,
     )
     assert full is not None
+
+
+def test_full_retirement_closes_native_handles_for_request_derived_proofs() -> None:
+    owner = DesktopPermissionOwner()
+    source = _source()
+    kwargs = {
+        "session_key": "websocket:chat-a",
+        "source_binding": source,
+    }
+    owner.enable_full(
+        **kwargs,
+        persistent=True,
+        existing=True,
+        local=True,
+        idle=True,
+        configured_sandbox=False,
+        supervisor_available=True,
+        stores_healthy=True,
+    )
+    base = owner.full_reference(**kwargs)
+    first = owner.full_reference(**kwargs, request_turn_id="turn-1")
+    second = owner.full_reference(**kwargs, request_turn_id="turn-2")
+    assert base is not None and first is not None and second is not None
+
+    closed: set[str] = set()
+    counts: dict[str, int] = {"turn-1": 0, "turn-2": 0}
+    for reference, turn_id in ((first, "turn-1"), (second, "turn-2")):
+        assert owner.register_native_stdin(
+            reference,
+            f"handle-{turn_id}",
+            lambda turn_id=turn_id: closed.add(turn_id) or True,
+            lambda turn_id=turn_id: (counts[turn_id], 0),
+        )
+    assert owner.register_native_stdin(
+        first,
+        "handle-turn-1-second",
+        lambda: closed.add("turn-1-second") or True,
+        lambda: (0, 0),
+    )
+
+    other_source = _source(generation=1)
+    other = owner.enable_full(
+        session_key="websocket:chat-b",
+        source_binding=other_source,
+        persistent=True,
+        existing=True,
+        local=True,
+        idle=True,
+        configured_sandbox=False,
+        supervisor_available=True,
+        stores_healthy=True,
+    )
+    other_closed: list[str] = []
+    assert owner.register_native_stdin(
+        other,
+        "other-handle",
+        lambda: other_closed.append("other") or True,
+        lambda: (1, 0),
+    )
+
+    assert owner.disable_full(
+        **kwargs,
+        active_turn=False,
+        active_processes=0,
+        unknown_processes=0,
+    )
+    assert closed == {"turn-1", "turn-1-second", "turn-2"}
+    assert other_closed == []
+    assert owner.authorizes_full(other, session_key="websocket:chat-b", source_binding=other_source)

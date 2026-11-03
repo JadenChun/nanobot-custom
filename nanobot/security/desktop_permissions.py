@@ -751,7 +751,7 @@ class DesktopPermissionOwner:
                 retirement = _Retirement(reason, private_reference=reference)
                 self._full_retirements[source] = retirement
                 if reference is not None:
-                    close_failures = self._close_native_stdin_unlocked(reference)
+                    close_failures = self._close_related_full_stdin_unlocked(reference)
                 self._changed()
             else:
                 reference = retirement.private_reference
@@ -782,8 +782,8 @@ class DesktopPermissionOwner:
                 raise WorkspacePermissionConflictError("chat_running")
             self._full_retirements.pop(source, None)
             self._full_residual_counts.pop(source, None)
-            if reference is not None:
-                self._native_process_counts.pop(reference, None)
+            if type(reference) is WorkspaceFullAccessReference:
+                self._discard_related_full_native_unlocked(reference)
             self._changed()
             return True
 
@@ -1286,6 +1286,46 @@ class DesktopPermissionOwner:
                 if _source_for_task(identity) == source
             )
 
+    def _related_full_references_unlocked(
+        self,
+        reference: WorkspaceFullAccessReference,
+    ) -> tuple[WorkspaceFullAccessReference, ...]:
+        related: list[WorkspaceFullAccessReference] = []
+        candidates = set(self._native_stdin_closers) | set(self._native_process_counts)
+        for candidate in candidates:
+            if type(candidate) is not WorkspaceFullAccessReference:
+                continue
+            if not candidate.is_owner_issued():
+                continue
+            if (
+                candidate.session_key == reference.session_key
+                and candidate.source_binding == reference.source_binding
+                and candidate.epoch == reference.epoch
+            ):
+                related.append(candidate)
+        return tuple(related)
+
+    def _close_related_full_stdin_unlocked(
+        self,
+        reference: WorkspaceFullAccessReference,
+    ) -> int:
+        failures = 0
+        seen: set[int] = set()
+        for candidate in (reference, *self._related_full_references_unlocked(reference)):
+            marker = id(candidate)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            failures += self._close_native_stdin_unlocked(candidate)
+        return failures
+
+    def _discard_related_full_native_unlocked(
+        self,
+        reference: WorkspaceFullAccessReference,
+    ) -> None:
+        for candidate in (reference, *self._related_full_references_unlocked(reference)):
+            self._native_process_counts.pop(candidate, None)
+
     def _close_native_stdin_unlocked(self, reference: object) -> int:
         registered = self._native_stdin_closers.pop(reference, {})
         pending: dict[object, Callable[[], bool]] = {}
@@ -1303,14 +1343,34 @@ class DesktopPermissionOwner:
         return failures
 
     def _counts_for_reference_unlocked(self, reference: object) -> tuple[int, int]:
-        process_counts = self._native_process_counts.get(reference)
-        if process_counts is None:
-            return 0, 0
-        try:
-            active_processes, unknown_processes = process_counts()
-            return _count(active_processes), _count(unknown_processes)
-        except Exception:
-            return 0, 1
+        references: tuple[object, ...]
+        if type(reference) is WorkspaceFullAccessReference:
+            references = (
+                reference,
+                *self._related_full_references_unlocked(reference),
+            )
+        else:
+            references = (reference,)
+        active_total = 0
+        unknown_total = 0
+        seen: set[int] = set()
+        for candidate in references:
+            marker = id(candidate)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            process_counts = self._native_process_counts.get(candidate)
+            if process_counts is None:
+                continue
+            try:
+                active_processes, unknown_processes = process_counts()
+            except Exception:
+                active_total += 0
+                unknown_total += 1
+            else:
+                active_total += _count(active_processes)
+                unknown_total += _count(unknown_processes)
+        return _count(active_total), _count(unknown_total)
 
     def _refresh_retirement_counts_unlocked(self, retirement: _Retirement) -> bool:
         if retirement.private_reference is None:

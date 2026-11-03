@@ -655,3 +655,15 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   journey: A executes Full, B is denied, B confirms, B then submits a Full
   message carrying a real request proof.
 - Focused: 242 Python tests; strict 0/528, comparator no new diagnostics.
+
+#### MC05 — PASS (focused)
+
+- Full retirement now aggregates every request-derived proof for the same
+  session/source/epoch. Native stdin handles and process-count callbacks
+  registered against request-bound references are closed and discarded with
+  the base authority; unrelated sources remain untouched.
+- Request-specific authorization and epoch fences are unchanged. Conflicting
+  active/unknown counts still block retirement visibly after closure attempts.
+- Added a two-request/multiple-handle proof plus an unrelated-source negative;
+  native-handle close callbacks are observed, not just reference invalidation.
+- Focused: 72 Python tests; strict 0/528, comparator no new diagnostics.
