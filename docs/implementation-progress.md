@@ -451,3 +451,16 @@ performed.
   standard dispatcher with operation allowlisting and replay/auth semantics.
 - Focused: 132 passed across route/context/mutation selectors.
 - Strict: 0/528; comparator introduced 0.
+
+### Code-gap closure verification
+
+- P1 typed dispatch: stale selected-route regression passes; runner clears a
+  stale selection once and relies on the selected leaf's final guard.
+- P2 bounded retry: truncated summary retries smaller closed chunks; when no
+  smaller chunk fits, the original `summary_truncated` reason is preserved.
+- B: production `mobile_mutation_payload` removed; authenticated WS-boundary
+  owner-denial and standard-dispatcher success cases pass.
+- G: standard dispatcher cutover verified at the mobile WS entry with replay/auth.
+- Focused selectors: 132 passed, then the affected context/memory selectors
+  61 passed after the truncation-reason correction.
+- Strict basedpyright: 0/528, comparator introduced 0.
