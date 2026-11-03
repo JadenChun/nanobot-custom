@@ -238,7 +238,12 @@ export function WorkspaceProjectPicker({
               title={isAgentHome ? pathAccessibleLabel : currentPath}
               className={cn(
                 compact
-                  ? "thread-composer-action touch-target inline-flex h-8 w-8 items-center justify-center rounded-full border border-transparent"
+                  ? cn(
+                      "thread-composer-action touch-target inline-flex h-8 items-center justify-center rounded-full border border-transparent",
+                      folderName
+                        ? "max-w-[9rem] justify-start gap-1.5 border-border/55 bg-card/70 px-2.5"
+                        : "w-8",
+                    )
                   : "inline-flex h-8 min-w-0 max-w-full items-center gap-2 rounded-full px-2.5 sm:max-w-[28rem]",
                 "text-[12px] font-medium text-muted-foreground/90 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-55",
                 compact ? "hover:bg-muted/65" : "hover:bg-background/70",
@@ -248,8 +253,8 @@ export function WorkspaceProjectPicker({
               {pickingFolder
                 ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
                 : <Folder className={cn("shrink-0", compact ? "h-4 w-4" : "h-3.5 w-3.5")} aria-hidden />}
-              <span className={cn("min-w-0 truncate", compact && "sr-only")}>
-                {pathAccessibleLabel}
+              <span className={cn("min-w-0 truncate", compact && !folderName && "sr-only")}>
+                {compact && folderName ? folderName : pathAccessibleLabel}
               </span>
               {!compact ? <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden /> : null}
             </button>
@@ -711,8 +716,12 @@ export function WorkspacePermissionV2Control({
             title={label}
             disabled={busy || unavailable}
             className={cn(
-              "thread-composer-access touch-target min-w-0 max-w-[min(15rem,45vw)] whitespace-nowrap rounded-control border border-transparent font-semibold shadow-none",
+              "thread-composer-access touch-target whitespace-nowrap rounded-control border border-transparent font-semibold shadow-none",
+              mobile
+                ? "h-9 w-9 justify-center px-0"
+                : "min-w-0 max-w-[min(15rem,45vw)]",
               isHero ? "h-8 px-2.5 text-[12px]" : "h-9 px-3 text-[12.5px]",
+              mobile && "px-0",
               isFull || isRestrictedRetiring
                 ? "bg-transparent text-orange-600 hover:bg-orange-500/8 dark:text-orange-300 dark:hover:bg-orange-400/10"
                 : "bg-transparent text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground dark:hover:bg-white/[0.06]",
@@ -720,12 +729,20 @@ export function WorkspacePermissionV2Control({
                 && "border-border/55 bg-card/70 hover:bg-card",
             )}
           >
-            {isFull
-              ? <Monitor className="mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-              : <ShieldCheck className="mr-1.5 h-3.5 w-3.5 shrink-0" aria-hidden />}
-            <span aria-hidden className="thread-composer-access-label-full min-w-0 truncate">{label}</span>
-            <span aria-hidden className="thread-composer-access-label-short hidden min-w-0 truncate">{compactLabel}</span>
-            {loading ? <Loader2 className="ml-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />}
+            {mobile && loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : isFull ? (
+              <Monitor className={cn("shrink-0", mobile ? "h-4 w-4" : "mr-1.5 h-3.5 w-3.5")} aria-hidden />
+            ) : (
+              <ShieldCheck className={cn("shrink-0", mobile ? "h-4 w-4" : "mr-1.5 h-3.5 w-3.5")} aria-hidden />
+            )}
+            {!mobile ? (
+              <>
+                <span aria-hidden className="thread-composer-access-label-full min-w-0 truncate">{label}</span>
+                <span aria-hidden className="thread-composer-access-label-short hidden min-w-0 truncate">{compactLabel}</span>
+                {loading ? <Loader2 className="ml-1 h-3.5 w-3.5 animate-spin" aria-hidden /> : <ChevronDown className="ml-1.5 h-3 w-3 shrink-0" aria-hidden />}
+              </>
+            ) : null}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-[min(22rem,calc(100vw-1rem))]">

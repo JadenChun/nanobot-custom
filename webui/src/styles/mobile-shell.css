@@ -296,8 +296,9 @@ html.mobile-runtime body {
 .thread-composer-mobile-model-row {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.5rem;
-  padding: 0.3rem 0.75rem 0.1rem;
+  padding: 0.35rem 0.75rem 0.15rem;
 }
 
 .thread-composer-mobile-model-label {
@@ -311,19 +312,19 @@ html.mobile-runtime body {
 
 .thread-composer-mobile-model-control {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
 }
 
 .thread-composer-mobile-model-control .composer-model-badge {
-  width: 100%;
   max-width: 100%;
-  justify-content: flex-start;
+  justify-content: flex-end;
 }
 
 .thread-composer-mobile-model-control .thread-composer-model-label {
-  flex: 1 1 auto;
-  text-align: left;
+  max-width: 12rem;
+  text-align: right;
 }
 
 .thread-composer-mobile-project {

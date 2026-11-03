@@ -20,7 +20,6 @@ import {
   findActiveAssistantPlaceholderIndex,
   findFileEditTraceIndex,
   findStreamingAssistantIndex,
-  isReasoningOnlyPlaceholder,
   matchesTurn,
   mergeFileEdits,
   replaceMessageAt,
@@ -141,25 +140,53 @@ function absorbCompleteAssistantMessage(
   prev: UIMessage[],
   message: Omit<UIMessage, "id" | "role" | "createdAt">,
 ): UIMessage[] {
-  const last = prev[prev.length - 1];
-  if (!last || !isReasoningOnlyPlaceholder(last) || !matchesTurn(last, message)) {
-    return [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        createdAt: Date.now(),
-        ...message,
-      },
-    ];
-  }
-  return [
-    ...prev.slice(0, -1),
-    {
-      ...last,
+  const supersedes = (candidate: UIMessage): boolean => {
+    const current = candidate.content.trim();
+    const completed = message.content.trim();
+    return current.length === 0
+      || completed.startsWith(current)
+      || current === completed;
+  };
+  for (let index = prev.length - 1; index >= 0; index -= 1) {
+    const candidate = prev[index];
+    if (candidate.role === "user") break;
+    if (candidate.kind === "trace") continue;
+    if (
+      candidate.role !== "assistant"
+      || !candidate.isStreaming
+      || !matchesTurn(candidate, message)
+      || !supersedes(candidate)
+    ) continue;
+    const merged: UIMessage = {
+      ...candidate,
       ...message,
+      id: candidate.id,
       isStreaming: false,
       reasoningStreaming: false,
+      ...(candidate.activitySegmentId
+        ? { activitySegmentId: candidate.activitySegmentId }
+        : {}),
+    };
+    return prev.flatMap((item, itemIndex) => {
+      if (itemIndex === index) return [merged];
+      if (
+        item.role === "assistant"
+        && item.kind !== "trace"
+        && item.isStreaming
+        && item.content.trim().length > 0
+        && matchesTurn(item, message)
+        && supersedes(item)
+      ) return [];
+      return [item];
+    });
+  }
+  return [
+    ...prev,
+    {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      createdAt: Date.now(),
+      ...message,
     },
   ];
 }
@@ -1200,6 +1227,7 @@ export function useNanobotStream(
         // current text segment so a following tool/reasoning segment remains
         // part of the same live activity surface.
         clearActivitySegment();
+        const completedTurn = turnFieldsFromEvent(ev, "answer");
         setMessages((prev) => {
           const activeId = buffer.current?.messageId;
           buffer.current = null;
@@ -1215,7 +1243,7 @@ export function useNanobotStream(
             ...(hasMedia ? { media } : {}),
             ...(lat !== undefined ? { latencyMs: lat } : {}),
             ...(ev.source ? { source: ev.source } : {}),
-            ...turnFieldsFromEvent(ev, "answer"),
+            ...completedTurn,
           });
         });
         if (hasMedia) {

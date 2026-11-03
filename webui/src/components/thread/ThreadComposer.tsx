@@ -30,7 +30,6 @@ import {
   CircleHelp,
   CornerDownRight,
   FileText,
-  Folder,
   GripVertical,
   History,
   ImageIcon,
@@ -2293,9 +2292,10 @@ export function ThreadComposer({
     />
   ) : null;
 
+  const mobileModelLabel = (modelLabel ?? "").replace(/\s*\([^)]*\)\s*$/, "").trim();
   const modelControl = modelLabel && !voiceRecorder.isRecording ? (
     <ModelPresetBadge
-      label={mobileComposer ? modelDetail || modelLabel : modelLabel}
+      label={mobileComposer ? mobileModelLabel || modelLabel : modelLabel}
       modelDetail={modelDetail}
       modelPreset={modelPreset}
       modelPresets={modelPresets}
@@ -2507,9 +2507,6 @@ export function ThreadComposer({
         ) : null}
         {mobileComposer && !voiceRecorder.isRecording && modelControl ? (
           <div className="thread-composer-mobile-model-row">
-            <span className="thread-composer-mobile-model-label">
-              {t("thread.composer.modelLabel", { defaultValue: "Model" })}
-            </span>
             <div className="thread-composer-mobile-model-control">{modelControl}</div>
           </div>
         ) : null}
@@ -2589,15 +2586,6 @@ export function ThreadComposer({
               <div className="thread-composer-mobile-project-picker">{projectPicker}</div>
             ) : null}
             {mobileComposer && !voiceRecorder.isRecording ? accessControl : null}
-            {mobileComposer && !voiceRecorder.isRecording && hasProjectFolder && workspaceScope ? (
-              <span
-                className="thread-composer-mobile-project"
-                title={workspaceScope.project_path}
-              >
-                <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                <span className="truncate">{workspaceScope.project_name}</span>
-              </span>
-            ) : null}
             {voiceRecorder.isRecording ? (
               <VoiceRecordingMeter
                 ariaLabel={voiceRecordingStatusLabel}
