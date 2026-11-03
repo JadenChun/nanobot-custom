@@ -614,10 +614,9 @@ class WebUIWorkspaceController:
                 default_restrict_to_workspace=self._default_restrict_to_workspace,
                 source_channel=_WEBUI_SCOPE_CHANNEL,
             )
-            if current.access_mode == "full" and scope.access_mode == "restricted":
-                # Folder focus is presentation within an already proven Full chat;
-                # only the explicit mode action can fence that proof.
-                scope = self._scope_for_mode(scope.project_path, "full")
+            # An explicit restricted request is Sandbox even when the chat has a
+            # current Full grant. Only the explicit mode action may raise a request
+            # to Full; a chat label or remembered preference never promotes it.
             if scope.access_mode == "full":
                 if not controls_available or session_key is None or self.permission_owner is None:
                     raise WorkspaceScopeError("full_access_unavailable", status=409)

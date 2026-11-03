@@ -516,3 +516,32 @@ def test_remote_new_chat_only_allows_non_escalating_scope_change(
             resolve()
         assert rejected.value.message == "workspace controls are localhost-only"
         assert rejected.value.status == 403
+
+
+def test_explicit_restricted_request_is_not_promoted_by_a_full_chat(tmp_path, monkeypatch) -> None:
+    from nanobot.security.workspace_access import build_workspace_scope
+
+    default = tmp_path / "default"
+    project = tmp_path / "project"
+    default.mkdir()
+    project.mkdir()
+    sessions = SessionManager(tmp_path / "sessions")
+    controller = WebUIWorkspaceController(
+        session_manager=sessions,
+        default_workspace=default,
+        default_restrict_to_workspace=True,
+    )
+    full_scope = build_workspace_scope(project, "full", source_channel="websocket")
+    monkeypatch.setattr(
+        controller, "scope_for_session_key", lambda _key: full_scope,
+    )
+
+    requested = default_workspace_scope(project, restrict_to_workspace=True)
+    scope = controller.scope_from_envelope(
+        {WORKSPACE_SCOPE_METADATA_KEY: requested.metadata()},
+        session_key="websocket:full-chat",
+        controls_available=True,
+    )
+
+    assert scope.access_mode == "restricted"
+    assert scope.project_path == project.resolve()
