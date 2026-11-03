@@ -229,17 +229,23 @@ export async function revokeRemoteDevice(
   transport: RemoteAccessMutationTransport,
   installationId: string,
 ): Promise<void> {
-  const owner = mobileOwnerTransport();
-  if (owner?.remoteRevoke) {
+  try {
+    // A live gateway owns in-process Full consents, so prefer its revoke path
+    // when the socket is available. It clears those consents through the
+    // existing callback.
+    await transport.requestMutation("settings.remote_access.revoke", {
+      installation_id: installationId,
+    });
+    return;
+  } catch (error) {
+    const owner = mobileOwnerTransport();
+    if (!owner?.remoteRevoke) throw error;
+    // Gateway stopped/unreachable: the independent owner remains authoritative.
     await ownerWithRefresh(
       () => owner.remoteRevoke!(installationId),
       () => owner.refresh(),
     );
-    return;
   }
-  await transport.requestMutation("settings.remote_access.revoke", {
-    installation_id: installationId,
-  });
 }
 
 export async function startRemotePairing(

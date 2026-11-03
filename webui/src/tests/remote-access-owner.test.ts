@@ -94,15 +94,29 @@ describe("mobile owner remote access", () => {
     expect(remoteDevices).toHaveBeenCalledOnce();
   });
 
-  it("revokes through the owner transport instead of a gateway mutation", async () => {
+  it("falls back to the owner transport when the gateway is unavailable", async () => {
     const { runtime, remoteRevoke } = ownerRuntime();
     installMobileRuntime(runtime);
     setMobileOwnerCapability(true);
-    const transport = { requestMutation: vi.fn() };
+    const transport = {
+      requestMutation: vi.fn().mockRejectedValue(new Error("socket is not open")),
+    };
 
     await revokeRemoteDevice(transport, "install-victim");
 
+    expect(transport.requestMutation).toHaveBeenCalledOnce();
     expect(remoteRevoke).toHaveBeenCalledWith("install-victim");
-    expect(transport.requestMutation).not.toHaveBeenCalled();
+  });
+
+  it("uses the gateway revoke first while it is reachable", async () => {
+    const { runtime, remoteRevoke } = ownerRuntime();
+    installMobileRuntime(runtime);
+    setMobileOwnerCapability(true);
+    const transport = { requestMutation: vi.fn().mockResolvedValue({ devices: [] }) };
+
+    await revokeRemoteDevice(transport, "install-victim");
+
+    expect(transport.requestMutation).toHaveBeenCalledOnce();
+    expect(remoteRevoke).not.toHaveBeenCalled();
   });
 });
