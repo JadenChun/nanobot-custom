@@ -7,7 +7,8 @@ import pytest
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.websocket.runtime import WebSocketConfig
 from nanobot.remote.edge import AccessIdentity
-from nanobot.session.manager import SessionManager
+from nanobot.security.workspace_access import default_workspace_scope
+from nanobot.session.manager import Session, SessionManager
 from nanobot.webui.gateway_services import build_gateway_services
 from tests.webui.mobile_mutation_helper import mobile_mutation_payload
 
@@ -92,3 +93,40 @@ async def test_owner_mutation_payload_denies_local_only_and_unregistered(gateway
     )
     assert status == 403
     assert payload["error"] == "owner_required"
+
+
+def test_owner_mobile_thread_projection_can_enable_full(gateway) -> None:
+    manager = gateway.http.session_manager
+    workspaces = gateway.http.workspaces
+    home = workspaces._default_workspace
+    workspaces._native_supervisor_available = True
+    key = "websocket:owner-thread"
+    scope = default_workspace_scope(home, True)
+    session = Session(key, metadata={"webui": True, "workspace_scope": scope.metadata()})
+    manager._jsonl_store.save(session)
+    manager._jsonl_store.source.upgrade_source_session(
+        key,
+        expected_revision=session.revision,
+        expected_generation=session.generation,
+        expected_incarnation=session.incarnation,
+    )
+
+    owner_status, owner_payload = gateway.http.mobile_thread_payload(
+        key,
+        {},
+        owner=True,
+    )
+    assert owner_status == 200
+    owner_permissions = owner_payload["workspace_permissions"]
+    assert owner_permissions["can_enable_full"] is True
+    assert owner_permissions["full_access_unavailable_reason"] is None
+
+    legacy_status, legacy_payload = gateway.http.mobile_thread_payload(
+        key,
+        {},
+        owner=False,
+    )
+    assert legacy_status == 200
+    legacy_permissions = legacy_payload["workspace_permissions"]
+    assert legacy_permissions["can_enable_full"] is False
+    assert legacy_permissions["full_access_unavailable_reason"] == "controls_unavailable"

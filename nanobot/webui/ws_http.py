@@ -706,6 +706,8 @@ class GatewayHTTPHandler:
         self,
         key: str,
         query: dict[str, list[str]],
+        *,
+        owner: bool = False,
     ) -> tuple[int, dict[str, Any]]:
         """Return one persisted thread, including restricted permission state.
 
@@ -721,6 +723,7 @@ class GatewayHTTPHandler:
             request,
             key,
             allow_remote_permissions=True,
+            remote_owner=owner,
         )
         try:
             body = json.loads(response.body)
@@ -1358,6 +1361,7 @@ class GatewayHTTPHandler:
         *,
         connection: Any | None = None,
         allow_remote_permissions: bool = False,
+        remote_owner: bool = False,
     ) -> Response:
         if not self.check_api_token(request):
             return _http_error(401, "Unauthorized")
@@ -1492,7 +1496,7 @@ class GatewayHTTPHandler:
                             controls_available=(
                                 self.workspace_controls_available(connection)
                                 if local_permission_projection
-                                else False
+                                else allow_remote_permissions and remote_owner
                             ),
                         )
                     )
