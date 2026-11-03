@@ -3851,9 +3851,11 @@ describe("ThreadComposer — mobile controls", () => {
       />,
     );
 
+    const modelRow = container.querySelector(".thread-composer-mobile-model-row");
     const footer = container.querySelector(".thread-composer-footer");
+    expect(modelRow).not.toBeNull();
     expect(footer).not.toBeNull();
-    expect(within(footer as HTMLElement).getByText("Default")).toBeInTheDocument();
+    expect(within(modelRow as HTMLElement).getByText("Default")).toBeInTheDocument();
     expect(within(footer as HTMLElement).getByText("project")).toBeInTheDocument();
     expect(container.querySelector(".thread-composer-mobile-project")).toBeNull();
     expect(

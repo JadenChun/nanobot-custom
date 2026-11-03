@@ -2504,6 +2504,11 @@ export function ThreadComposer({
             {inlineError}
           </div>
         ) : null}
+        {mobileComposer && !voiceRecorder.isRecording && modelControl ? (
+          <div className="thread-composer-mobile-model-row">
+            <div className="thread-composer-mobile-model-control">{modelControl}</div>
+          </div>
+        ) : null}
         <div
           className={cn(
             "thread-composer-footer flex flex-nowrap items-center motion-safe:transition-[padding-bottom] motion-safe:[transition-duration:220ms] motion-safe:ease-in-out",
@@ -2596,7 +2601,7 @@ export function ThreadComposer({
               isHero ? "gap-1.5" : "gap-2",
             )}
           >
-            {modelControl}
+            {!mobileComposer ? modelControl : null}
             {!voiceRecorder.isRecording && !mobileComposer ? (
               <ComposerUsagePopover
                 context={contextUsage}
