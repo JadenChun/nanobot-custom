@@ -696,3 +696,20 @@ Checker baseline: 0 errors / 528 files (`/tmp/opencode/mc-repair/baseline-basedp
   native refresh path's distinct logout signal.
 - Added client tests for bounded failure and manual retry, plus the notice's
   actionable button. Focused: 185 WebUI tests, build/lint.
+
+#### MC08 — PASS (local candidate)
+
+- Fetched staging `aacca07cfadaf51fa1d83913f93ba2d797c0aa58` and integrated it
+  with merge `221101b9a5181839802ea250dd977dd39fab0ffe` without rewriting
+  shared history. Staging notifications, image lightbox/scroll and settings
+  changes remain present.
+- Final gates: **17,569 passed** Python, strict **0/528**, WebUI **1,430
+  passed** plus build/lint, parity PASS, Go broker PASS, Android release PASS.
+- Candidate: `/tmp/opencode/mc-repair-candidate/nanobot-mobile-release.apk`,
+  SHA-256 `c84d1127c7a09432158fc7f3b449afc8ea89857216fe487c8437baf75107a383`,
+  same `CN=jaden` signer, zipalign verified, local-notifications plugin present.
+- Bounded review found and the branch corrected: the busy reservation race,
+  missing owner auth on status/devices/revoke, source-token parser loss, v1
+  control confirmation correlation, second-device UI consent, and unbounded
+  reconnect. Remaining items are physical/instrumented qualification only.
+- Merge-readiness details: `docs/merge-readiness-mc.md`. No push/merge/deploy.
