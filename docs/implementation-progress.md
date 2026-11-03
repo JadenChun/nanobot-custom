@@ -464,3 +464,7 @@ performed.
 - Focused selectors: 132 passed, then the affected context/memory selectors
   61 passed after the truncation-reason correction.
 - Strict basedpyright: 0/528, comparator introduced 0.
+- Final full Python suite after P1/P2/B/G closure: **17552 passed, 22 skipped,
+  6 subtests passed**, exit 0 in 721.77s (`/tmp/opencode/full-suite-r10.log`).
+- Final strict: 0 errors / 528 files; comparator introduced 0
+  (`/tmp/opencode/p6-after-r10.json`).
