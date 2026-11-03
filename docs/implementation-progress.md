@@ -25,11 +25,11 @@ remaining blockers. Private logs and runtime data stay outside the repository.
 | P3 authorized media inputs | focused complete | exact read-only input snapshots; foreground only |
 | Mobile A socket correctness | focused complete | identity, terminal lifecycle, UTF-8, unique broker ids |
 | Mobile B delivery authorization | focused complete; helper cleanup deferred | uncached revalidation before private delivery |
-| Mobile C owner wiring / foreground recovery | partial | broker/native recovery not implemented; blocked on Android toolchain |
+| Mobile C owner wiring / foreground recovery | partial | broker owner routes + WebUI foreground recovery added; native Ping/Kotlin/reconnect unbuilt |
 | Mobile D pairing continuity | focused complete (desktop/WebUI/phone JS) | renewal + restore; native custody pending |
-| Mobile E request authority/backend | pending | after D |
-| Mobile F composer settings/presentation | pending | after E/C |
-| Mobile G standard feature dispatcher | pending | separate change |
+| Mobile E request authority/backend | partial | explicit restricted requests no longer promoted; four-state/consent contract not implemented |
+| Mobile F composer settings/presentation | pending | depends on E semantics |
+| Mobile G standard feature dispatcher | pending | separate later change |
 | Integrated qualification / M38 | pending | external resources may remain blocked |
 
 ## Acceptance evidence
@@ -235,3 +235,62 @@ Known limitations:
 | Commit | Scope |
 | --- | --- |
 | e76086b1 | handoff documentation (pre-existing) |
+
+### Mobile C (partial)
+
+Implemented:
+- Broker policy now admits named owner-control routes only:
+  `GET /remote/v1/status`, `POST /remote/v1/refresh`, `GET /remote/v1/devices`
+  and `POST /remote/v1/devices/<id>/revoke`; an escape path is rejected.
+- Shared mobile runtime exposes `recover()` with a single in-flight foreground
+  path. It probes an apparently open socket through an optional native
+  `wsPing(id)`, keeps a healthy connection, and otherwise renews credentials,
+  retires the stale socket once and opens one replacement on the same object so
+  `NanobotClient` reattaches known chats and preserves screen/draft/scroll.
+- `main.tsx` routes visibility/pageshow/online through that one recovery path.
+
+Focused checks:
+- `source mobile/scripts/mobile-env.sh && cd mobile/native-network && go test ./internal/broker` -> PASS, including the owner-route allowlist case.
+- `cd webui && bun run test -- src/tests/mobile-runtime.test.ts` -> 13 passed, including healthy-probe and stale-replacement cases.
+
+Not implemented / blocked:
+- Native `wsPing` C ABI/JNI/Kotlin declarations and the Go `websocket.Conn.Ping`
+  five-second probe.
+- Kotlin single-flight refresh/custody synchronization, native foreground event
+  bridging and Android build/instrumentation evidence. The Android SDK/NDK
+  toolchain is absent from this worktree; no emulator/device evidence exists.
+
+### Mobile E (partial)
+
+Implemented:
+- An explicit `access_mode: "restricted"` request remains Sandbox even when the
+  chat currently has Full; only the explicit mode action may raise it to Full.
+  A chat label or remembered preference cannot promote it.
+- Added a focused public-boundary case for that behavior.
+
+Not implemented:
+- Four-state request settings, `request_settings_version`, per-request source
+  token, `request_intent`/steering target, Full confirmation IDs, device/source
+  bound consent, ephemeral temporary bindings, request-scoped execution proofs,
+  queue snapshot transport and defaults-revision semantics.
+- Because these are security-sensitive admission boundaries, they were not
+  partially stubbed. Mobile F's snapshot/consent UI depends on this contract and
+  remains pending with G.
+
+### Type and environment evidence
+
+- Frozen before: `/tmp/opencode/nanobot-p6-baseline-e76086b1` at
+  `e76086b18f73077374a9efc53ea8159e8f1cbc43`, full unchanged
+  `basedpyright --outputjson` -> 0 errors / 528 files, warnings 0
+  (`/tmp/opencode/p6-before-e76086b1.json`, sha256
+  `154aea7096f5394175751e4375d0ed76b8f2db06443337a000ef145259ecf99a`).
+- After: current worktree full `basedpyright --outputjson` -> 0 errors / 528
+  files, warnings 0 (`/tmp/opencode/p6-after.json`, sha256
+  `5178be051d4c203a42c00305db55e2940f5acfec80eda81aaeedee93a565ecc6`).
+- `scripts/check_type_regressions.py` -> `PASS_NO_NEW_DIAGNOSTICS`,
+  `introduced=0`, `resolved=0`, `strict_clean=true`.
+- Environment: Python 3.14.8, basedpyright 1.40.2, `uv.lock` sha256
+  `d14bdb9b08ee646ce0be265c87ee309871e0bfa950408f2ddaa04fe01b44f331`.
+  Baseline/current Python source inventory hashes:
+  `59bbbed829653b941dd53f0f9bf5fdab771dfd736cae6b121d369bd76d46bfc9`
+  and `1630e1ae8b755305c0fbeaf08d3e05f20eda6fa50fbd0980966555c8589d4585`.
