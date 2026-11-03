@@ -153,6 +153,9 @@ class WorkspaceFullAccessReference:
     def is_owner_issued(self) -> bool:
         return self._token is _TOKEN
 
+    def is_request_derived(self) -> bool:
+        return self._request_token is _DERIVED_FULL_REQUEST
+
 
 WorkspacePermissionReference = WorkspaceTaskAccessReference | WorkspaceFullAccessReference
 
@@ -629,7 +632,7 @@ class DesktopPermissionOwner:
             if base is None or typed.epoch <= 0:
                 return False
             if typed is not base:
-                if typed._request_token is not _DERIVED_FULL_REQUEST:
+                if not typed.is_request_derived():
                     return False
                 if (
                     typed.epoch != base.epoch
