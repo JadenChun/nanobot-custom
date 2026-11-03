@@ -305,3 +305,8 @@ Not implemented:
   `no-useless-assignment` correction (`/tmp/opencode/webui-lint.log`).
 - Repository Python lint: `.venv/bin/ruff check nanobot/` -> PASS.
 - Full Python suite: running; result appended when complete.
+- Full Python suite first run: 17538 passed, 22 skipped, 1 failed
+  (`tests/providers/test_provider_retry_fork.py::test_prune_old_images_keeps_only_most_recent`)
+  because it asserted the superseded saved-image placeholder wording. The case was
+  updated to the accepted P3 contract (no image bytes; authorized `read_file`
+  reread) and passes in isolation. A clean full rerun is in progress.
