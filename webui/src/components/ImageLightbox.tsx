@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { ChevronLeft, ChevronRight, Play, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, FileText, Link2, Play, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useMobileBack } from "@/hooks/useMobileBack";
+import { copyTextToClipboard } from "@/lib/clipboard";
+import { mediaLink } from "@/lib/media-links";
 import { useMobileMediaUrl } from "@/lib/mobile-media";
 import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import { cn } from "@/lib/utils";
@@ -58,6 +61,21 @@ export function ImageLightbox({
   const [dragPx, setDragPx] = useState(0);
   const [slide, setSlide] = useState<-1 | 0 | 1>(0);
   const [snapBack, setSnapBack] = useState(false);
+  const [copied, setCopied] = useState<"link" | "path" | null>(null);
+
+  useEffect(() => {
+    setCopied(null);
+  }, [index]);
+
+  const copy = (kind: "link" | "path") => {
+    const value = kind === "link" ? mediaLink(current?.url) : (current?.path ?? "");
+    if (!value) return;
+    void copyTextToClipboard(value).then((ok) => {
+      if (!ok) return;
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1200);
+    });
+  };
 
   const slideActionRef = useRef<(delta: 1 | -1) => void>(() => {});
   const go = useCallback((delta: number) => {
@@ -277,6 +295,33 @@ export function ImageLightbox({
             {current.name ?? t("lightbox.title")}
           </DialogPrimitive.Title>
 
+          <div className="absolute left-4 top-4 z-20 flex items-center gap-2">
+            <LightboxAction
+              label={t("thread.generatedAssets.copyLink")}
+              active={copied === "link"}
+              onClick={() => copy("link")}
+            >
+              {copied === "link" ? (
+                <Check className="h-4 w-4" aria-hidden />
+              ) : (
+                <Link2 className="h-4 w-4" aria-hidden />
+              )}
+            </LightboxAction>
+            {current.path ? (
+              <LightboxAction
+                label={t("thread.generatedAssets.copyPath")}
+                active={copied === "path"}
+                onClick={() => copy("path")}
+              >
+                {copied === "path" ? (
+                  <Check className="h-4 w-4" aria-hidden />
+                ) : (
+                  <FileText className="h-4 w-4" aria-hidden />
+                )}
+              </LightboxAction>
+            ) : null}
+          </div>
+
           <div className="relative flex min-h-0 flex-1 items-center justify-center px-4 pb-2 pt-16 sm:px-16">
             <div
               className="h-full w-full touch-pan-y overflow-hidden"
@@ -457,6 +502,37 @@ function LightboxThumbnail({ image }: { image: UIImage }) {
       draggable={false}
       className="h-full w-full object-cover"
     />
+  );
+}
+
+function LightboxAction({
+  label,
+  active,
+  onClick,
+  children,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={cn(
+        "grid h-9 w-9 place-items-center rounded-full",
+        active
+          ? "bg-white/90 text-black"
+          : "bg-black/55 text-white/90 hover:bg-black/70 hover:text-white",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70",
+        "transition-colors motion-reduce:transition-none",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

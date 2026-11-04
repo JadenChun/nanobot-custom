@@ -37,6 +37,7 @@ export interface UIImage {
   url?: string;
   name?: string;
   kind?: "image" | "video" | "file" | string;
+  path?: string;
 }
 
 export type UIMediaKind = "image" | "video" | "file";
