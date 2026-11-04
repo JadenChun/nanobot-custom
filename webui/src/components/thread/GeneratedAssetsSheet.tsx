@@ -1,9 +1,25 @@
 import { useMemo, useState } from "react";
-import { CircleAlert, Images, Loader2, Play, RefreshCcw } from "lucide-react";
+import {
+  Check,
+  CircleAlert,
+  FileText,
+  Images,
+  Link2,
+  Loader2,
+  MoreHorizontal,
+  Play,
+  RefreshCcw,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { ImageLightbox } from "@/components/ImageLightbox";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Sheet,
@@ -12,8 +28,10 @@ import {
 } from "@/components/ui/sheet";
 import { useGeneratedAssetLibrary } from "@/hooks/useGeneratedAssetLibrary";
 import { useSessionGeneratedAssets } from "@/hooks/useSessionGeneratedAssets";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { fmtDateTime } from "@/lib/format";
 import { useMobileMediaUrl } from "@/lib/mobile-media";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import type { GeneratedAsset, GeneratedAssetGroup, UIImage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -47,7 +65,7 @@ export function GeneratedAssetsSheet({
 }: GeneratedAssetsSheetProps) {
   const { i18n, t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<ViewMode>("call");
+  const [view, setView] = useState<ViewMode>("flat");
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
   const {
     groups,
@@ -183,8 +201,8 @@ export function GeneratedAssetsSheet({
               onChange={setView}
               ariaLabel={t("thread.generatedAssets.view")}
               options={[
-                { value: "call", label: t("thread.generatedAssets.byCall") },
                 { value: "flat", label: t("thread.generatedAssets.all") },
+                { value: "call", label: t("thread.generatedAssets.byCall") },
                 { value: "library", label: t("thread.generatedAssets.allSessions") },
               ]}
             />
@@ -365,56 +383,117 @@ function AssetThumbnail({
 }) {
   const { t } = useTranslation();
   const [failed, setFailed] = useState(false);
+  const [copied, setCopied] = useState<"link" | "path" | null>(null);
   const url = useMobileMediaUrl(asset.url);
+
+  const copy = (kind: "link" | "path") => {
+    const value = kind === "link" ? assetLink(asset) : (asset.path ?? "");
+    if (!value) return;
+    void copyTextToClipboard(value).then((ok) => {
+      if (!ok) return;
+      setCopied(kind);
+      window.setTimeout(() => setCopied(null), 1200);
+    });
+  };
+
   return (
-    <button
-      type="button"
+    <div
       data-testid="generated-asset-thumbnail"
       className={cn(
         "group relative aspect-square overflow-hidden rounded-xl border border-border/50 bg-muted/25",
-        "transition hover:border-border hover:bg-muted/45 focus-visible:outline-none",
-        "focus-visible:ring-2 focus-visible:ring-ring/40",
+        "transition hover:border-border hover:bg-muted/45",
       )}
-      aria-label={t("thread.generatedAssets.openAsset", { name: asset.name })}
-      onClick={onClick}
     >
-      {url && !failed ? (
-        asset.kind === "video" ? (
-          <>
-            <video
+      <button
+        type="button"
+        className="absolute inset-0 h-full w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40"
+        aria-label={t("thread.generatedAssets.openAsset", { name: asset.name })}
+        onClick={onClick}
+      >
+        {url && !failed ? (
+          asset.kind === "video" ? (
+            <>
+              <video
+                src={url}
+                muted
+                playsInline
+                preload="metadata"
+                aria-label={asset.name}
+                onError={() => setFailed(true)}
+                className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+              />
+              <span className="absolute inset-0 grid place-items-center bg-black/20">
+                <Play className="h-6 w-6 fill-white text-white/90" aria-hidden />
+              </span>
+            </>
+          ) : (
+            <img
               src={url}
-              muted
-              playsInline
-              preload="metadata"
-              aria-label={asset.name}
+              alt={asset.name}
+              loading="lazy"
+              decoding="async"
+              draggable={false}
               onError={() => setFailed(true)}
               className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
             />
-            <span className="absolute inset-0 grid place-items-center bg-black/20">
-              <Play className="h-6 w-6 fill-white text-white/90" aria-hidden />
-            </span>
-          </>
+          )
         ) : (
-          <img
-            src={url}
-            alt={asset.name}
-            loading="lazy"
-            decoding="async"
-            draggable={false}
-            onError={() => setFailed(true)}
-            className="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
-          />
-        )
-      ) : (
-        <span className="grid h-full place-items-center px-2 text-center text-[10px] text-muted-foreground">
-          {asset.name}
-        </span>
-      )}
-      <span className="absolute left-1.5 top-1.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white">
+          <span className="grid h-full place-items-center px-2 text-center text-[10px] text-muted-foreground">
+            {asset.name}
+          </span>
+        )}
+      </button>
+      <span className="pointer-events-none absolute left-1.5 top-1.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[10px] font-medium text-white">
         {badge}
       </span>
-    </button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={t("thread.generatedAssets.actions", { name: asset.name })}
+            className={cn(
+              "absolute right-1 top-1 z-10 grid h-6 w-6 place-items-center rounded-full",
+              "bg-black/60 text-white/90 opacity-90 transition hover:bg-black/80 hover:text-white",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80",
+            )}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <MoreHorizontal className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onSelect={() => copy("link")}>
+            <Link2 className="mr-2 h-3.5 w-3.5" aria-hidden />
+            {t("thread.generatedAssets.copyLink")}
+          </DropdownMenuItem>
+          {asset.path ? (
+            <DropdownMenuItem onSelect={() => copy("path")}>
+              <FileText className="mr-2 h-3.5 w-3.5" aria-hidden />
+              {t("thread.generatedAssets.copyPath")}
+            </DropdownMenuItem>
+          ) : null}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {copied ? (
+        <span className="pointer-events-none absolute bottom-1.5 left-1.5 z-10 flex items-center gap-1 rounded-full bg-black/75 px-2 py-0.5 text-[10px] font-medium text-white">
+          <Check className="h-3 w-3" aria-hidden />
+          {copied === "link"
+            ? t("thread.generatedAssets.linkCopied")
+            : t("thread.generatedAssets.pathCopied")}
+        </span>
+      ) : null}
+    </div>
   );
+}
+
+function assetLink(asset: GeneratedAsset): string {
+  if (!asset.url) return "";
+  if (isMobileRuntimeActive()) return asset.url;
+  try {
+    return new URL(asset.url, window.location.origin).href;
+  } catch {
+    return asset.url;
+  }
 }
 
 function shortSessionLabel(sessionKey: string): string {

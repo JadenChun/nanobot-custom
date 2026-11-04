@@ -261,6 +261,7 @@ def test_payload_signs_media_enriches_sidecar_and_skips_unsafe_paths(
     artifact = group["artifacts"][0]
     assert artifact["id"] == "img-valid"
     assert artifact["url"] == "/api/media/signed/img-1.png"
+    assert artifact["path"] == str(valid.resolve())
     assert artifact["bytes"] == len(b"png-bytes")
     assert artifact["prompt"] == "sidecar prompt"
     assert artifact["model"] == "qwen"

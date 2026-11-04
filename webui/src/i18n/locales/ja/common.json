@@ -1426,7 +1426,7 @@
       "refresh": "生成されたアセットを更新",
       "view": "アセット表示",
       "byCall": "ツール呼び出しごと",
-      "all": "すべてのアセット",
+      "all": "セッションのアセット",
       "total": "画像: {{count}}",
       "candidates": "候補: {{count}}",
       "loading": "生成されたアセットを読み込み中…",
@@ -1437,7 +1437,12 @@
       "loadMore": "さらに読み込む",
       "loadingMore": "読み込み中…",
       "allSessions": "すべてのセッション",
-      "emptyLibrary": "セッション全体にまだ生成されたアセットがありません。"
+      "emptyLibrary": "セッション全体にまだ生成されたアセットがありません。",
+      "actions": "アセット操作: {{name}}",
+      "copyLink": "メディアリンクをコピー",
+      "copyPath": "エージェント用パスをコピー",
+      "linkCopied": "リンクをコピーしました",
+      "pathCopied": "パスをコピーしました"
     },
     "promptNavigator": {
       "open": "プロンプトナビゲーターを開く",

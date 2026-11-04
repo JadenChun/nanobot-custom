@@ -1426,7 +1426,7 @@
       "refresh": "생성된 에셋 새로고침",
       "view": "에셋 보기",
       "byCall": "도구 호출별",
-      "all": "모든 에셋",
+      "all": "세션 에셋",
       "total": "이미지: {{count}}",
       "candidates": "후보: {{count}}",
       "loading": "생성된 에셋을 불러오는 중…",
@@ -1437,7 +1437,12 @@
       "loadMore": "더 보기",
       "loadingMore": "더 불러오는 중…",
       "allSessions": "모든 세션",
-      "emptyLibrary": "모든 세션에 아직 생성된 에셋이 없습니다."
+      "emptyLibrary": "모든 세션에 아직 생성된 에셋이 없습니다.",
+      "actions": "에셋 작업: {{name}}",
+      "copyLink": "미디어 링크 복사",
+      "copyPath": "에이전트용 경로 복사",
+      "linkCopied": "링크 복사됨",
+      "pathCopied": "경로 복사됨"
     },
     "promptNavigator": {
       "open": "프롬프트 탐색기 열기",

@@ -1426,7 +1426,7 @@
       "refresh": "Refresh generated assets",
       "view": "Asset view",
       "byCall": "By tool call",
-      "all": "All assets",
+      "all": "Session assets",
       "total": "Images: {{count}}",
       "candidates": "Candidates: {{count}}",
       "loading": "Loading generated assets…",
@@ -1437,7 +1437,12 @@
       "loadMore": "Load more",
       "loadingMore": "Loading more…",
       "allSessions": "All sessions",
-      "emptyLibrary": "No generated assets across sessions yet."
+      "emptyLibrary": "No generated assets across sessions yet.",
+      "actions": "Asset actions: {{name}}",
+      "copyLink": "Copy media link",
+      "copyPath": "Copy file path for agent",
+      "linkCopied": "Link copied",
+      "pathCopied": "Path copied"
     },
     "promptNavigator": {
       "open": "Open prompt navigator",

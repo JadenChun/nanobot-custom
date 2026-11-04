@@ -1426,7 +1426,7 @@
       "refresh": "Actualiser les ressources générées",
       "view": "Vue des ressources",
       "byCall": "Par appel d’outil",
-      "all": "Toutes",
+      "all": "Ressources de la session",
       "total": "Images : {{count}}",
       "candidates": "Candidats : {{count}}",
       "loading": "Chargement des ressources générées…",
@@ -1437,7 +1437,12 @@
       "loadMore": "Charger plus",
       "loadingMore": "Chargement…",
       "allSessions": "Toutes les sessions",
-      "emptyLibrary": "Aucune ressource générée dans les sessions pour l’instant."
+      "emptyLibrary": "Aucune ressource générée dans les sessions pour l’instant.",
+      "actions": "Actions de la ressource : {{name}}",
+      "copyLink": "Copier le lien du média",
+      "copyPath": "Copier le chemin pour l’agent",
+      "linkCopied": "Lien copié",
+      "pathCopied": "Chemin copié"
     },
     "promptNavigator": {
       "open": "Ouvrir le navigateur d’instructions",
