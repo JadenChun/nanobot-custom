@@ -1,5 +1,6 @@
 package ai.nanobot.mobile.network
 
+import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import org.json.JSONObject
@@ -56,6 +57,10 @@ object NativeMediaInterceptor {
                 if (value.isNotEmpty()) headers[key] = value
             }
         }
+        Log.i(
+            "NanobotMedia",
+            "open ${request.url} status=$status cached=${info.optBoolean("cached")}",
+        )
         val mime = headers["Content-Type"] ?: "application/octet-stream"
         return WebResourceResponse(
             mime,

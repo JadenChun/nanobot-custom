@@ -44,6 +44,7 @@ type mediaStream struct {
 	status  int
 	headers http.Header
 	closer  func()
+	cached  bool
 	once    sync.Once
 }
 
@@ -117,7 +118,11 @@ func (c *Core) MediaStreamInfo(id uint64) map[string]any {
 	if stream == nil {
 		return nil
 	}
-	info := map[string]any{"status": stream.status, "headers": map[string]string{}}
+	info := map[string]any{
+		"status":  stream.status,
+		"cached":  stream.cached,
+		"headers": map[string]string{},
+	}
 	headers := info["headers"].(map[string]string)
 	for _, key := range []string{
 		"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges",
@@ -268,6 +273,7 @@ func (c *Core) openCachedMedia(sig, payload, rangeHeader string) (*mediaStream, 
 		status:  status,
 		headers: headers,
 		closer:  func() { _ = file.Close() },
+		cached:  true,
 	}, nil
 }
 
