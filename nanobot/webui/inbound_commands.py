@@ -1626,6 +1626,24 @@ class WebUICommandRouter:
                             "sidebar_state_updated",
                             state=result,
                         )
+                    if (
+                        action == "session.delete"
+                        and isinstance(result, dict)
+                        and result.get("deleted")
+                    ):
+                        # Each connected client keeps its own session list, so a
+                        # delete must invalidate the others as well.
+                        from nanobot.webui.session_identity import webui_chat_id
+
+                        raw_key = payload.get("key")
+                        deleted_chat_id = (
+                            webui_chat_id(raw_key) if isinstance(raw_key, str) else None
+                        )
+                        await self.broadcast_webui_event(
+                            "session_updated",
+                            chat_id=deleted_chat_id or "",
+                            scope="metadata",
+                        )
                     return WebUIRequestResult(result=result)
                 if action == "workspace.access.mode.set":
                     try:
