@@ -180,7 +180,8 @@ def _transcript_absolute_paths(session_key: str) -> tuple[str, ...]:
         cached = _preview_path_cache.get(session_key)
         if cached is not None and now - cached[0] < _PREVIEW_PATH_CACHE_TTL_S:
             return cached[1]
-    found: set[str] = set()
+    seen: dict[str, int] = {}
+    sequence = 0
     try:
         from nanobot.webui.transcript import read_transcript_lines
 
@@ -189,12 +190,15 @@ def _transcript_absolute_paths(session_key: str) -> tuple[str, ...]:
             for match in _PREVIEW_ABSOLUTE_PATH_RE.findall(blob):
                 candidate = match.rstrip(".,;:)]}")
                 if 3 < len(candidate) <= 4096:
-                    found.add(candidate)
-                if len(found) >= _PREVIEW_PATH_LIMIT:
+                    sequence += 1
+                    seen[candidate] = sequence
+                if len(seen) >= _PREVIEW_PATH_LIMIT:
                     break
     except Exception:
-        found = set()
-    paths = tuple(found)
+        seen = {}
+    paths = tuple(
+        sorted(seen, key=lambda candidate: seen[candidate], reverse=True)
+    )
     with _preview_path_lock:
         _preview_path_cache[session_key] = (now, paths)
         if len(_preview_path_cache) > _PREVIEW_PATH_CACHE_MAX:
@@ -212,14 +216,20 @@ def _resolve_relative_preview_path(session_key: str, raw_path: str) -> str | Non
     if not parts or ".." in parts or len(relative) > 512:
         return None
     normalized = "/".join(parts)
-    matches = {
+    matches = [
         candidate
         for candidate in _transcript_absolute_paths(session_key)
         if candidate.endswith("/" + normalized)
-    }
-    if len(matches) != 1:
-        return None
-    return matches.pop()
+    ]
+    # Several paths can share a basename (a stale /tmp copy and the real file).
+    # Prefer the most recently referenced path that still exists on disk.
+    for candidate in matches:
+        try:
+            if Path(candidate).is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
 
 _NO_STORE_HEADERS = [("Cache-Control", "no-store")]
 
@@ -1658,6 +1668,8 @@ class GatewayHTTPHandler:
             return _http_error(404, "session not found")
         query = _parse_query(request.path)
         path = _query_first(query, "path")
+        if isinstance(path, str) and path.startswith("~/"):
+            path = str(Path.home() / path[2:])
         if isinstance(path, str):
             resolved_relative = _resolve_relative_preview_path(decoded_key, path)
             if resolved_relative is not None:
@@ -1706,6 +1718,10 @@ class GatewayHTTPHandler:
                     permission_owner=permission_owner,
                     permission_reference=permission_reference,
                     restrict_to_root=None if full_preview_access else scope.project_path,
+                    image_url=lambda target: self.media.sign_or_stage_media_path(
+                        target,
+                        allow_folder_grants=full_preview_access,
+                    ),
                 )
         except WebUIFilePreviewError as e:
             if is_probe and e.status in {400, 403, 404, 415}:

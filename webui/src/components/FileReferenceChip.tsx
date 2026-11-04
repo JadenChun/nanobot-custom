@@ -75,12 +75,14 @@ export function FileReferenceChip({
               onKeyDown={interactive ? onKeyDown : undefined}
               className={cn(
                 "inline-flex max-w-full items-baseline gap-[0.28em] font-medium leading-[inherit]",
-                "text-sky-600 transition-colors hover:text-sky-700",
-                "dark:text-sky-300 dark:hover:text-sky-200",
-                interactive && [
-                  "cursor-pointer rounded-compact",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45",
-                ],
+                interactive
+                  ? [
+                      "text-sky-600 transition-colors hover:text-sky-700",
+                      "dark:text-sky-300 dark:hover:text-sky-200",
+                      "cursor-pointer rounded-compact",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/45",
+                    ]
+                  : "text-foreground/75",
               )}
             >
               <FileReferenceIcon kind={kind} />
@@ -122,12 +124,23 @@ export function FileReferenceChip({
   );
 }
 
+/** Bare names are only references for media/document types, never code spans. */
+const BARE_FILE_REFERENCE_RE = new RegExp(
+  "^[\\w][\\w .()-]*\\.(" +
+    "png|jpe?g|gif|webp|bmp|svg|avif|heic|" +
+    "mp4|mov|webm|mkv|mp3|wav|ogg|m4a|flac|" +
+    "pdf|md|markdown|csv|tsv|jsonl|zip|tar|gz" +
+  ")$",
+  "i",
+);
+
 export function isLikelyFilePath(value: string): boolean {
   const raw = value.trim();
   if (!raw || raw.includes("\n")) return false;
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return false;
   if (isFilePatternReference(raw)) return false;
-  if (!/[\\/]/.test(raw) && !/^(dockerfile|makefile|readme|package-lock\.json)$/i.test(raw)) {
+  const bareFile = BARE_FILE_REFERENCE_RE.test(raw);
+  if (!/[\\/]/.test(raw) && !/^(dockerfile|makefile|readme|package-lock\.json)$/i.test(raw) && !bareFile) {
     return false;
   }
   const normalized = raw.replace(/\\/g, "/");

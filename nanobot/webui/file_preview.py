@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import mimetypes
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote, urlparse
@@ -41,8 +43,9 @@ def file_preview_payload(
     permission_owner: DesktopPermissionOwner | None = None,
     permission_reference: WorkspacePermissionReference | None = None,
     restrict_to_root: Path | None = None,
+    image_url: Callable[[Path], dict[str, str] | None] | None = None,
 ) -> dict[str, Any]:
-    """Return a text preview for a file allowed by the session workspace scope."""
+    """Return a text, image or directory preview for an allowed path."""
 
     resolved = _resolve_preview_path(
         raw_path,
@@ -53,7 +56,26 @@ def file_preview_payload(
         permission_owner=permission_owner,
         permission_reference=permission_reference,
         restrict_to_root=restrict_to_root,
+        allow_directory=True,
     )
+    if resolved.is_dir():
+        return _directory_preview_payload(resolved, scope)
+    mime, _ = mimetypes.guess_type(resolved.name)
+    if (mime or "").startswith("image/"):
+        media = image_url(resolved) if image_url is not None else None
+        if media is not None:
+            return {
+                "kind": "image",
+                "path": str(resolved),
+                "display_path": _display_path(resolved, scope.project_path),
+                "project_path": str(scope.project_path),
+                "language": "",
+                "content": "",
+                "size": resolved.stat().st_size,
+                "truncated": False,
+                "mime": mime,
+                "media_url": media.get("url", ""),
+            }
 
     try:
         with open(resolved, "rb") as f:
@@ -73,6 +95,7 @@ def file_preview_payload(
 
     display_path = _display_path(resolved, scope.project_path)
     return {
+        "kind": "text",
         "path": str(resolved),
         "display_path": display_path,
         "project_path": str(scope.project_path),
@@ -105,7 +128,13 @@ def file_preview_availability_payload(
         permission_owner=permission_owner,
         permission_reference=permission_reference,
         restrict_to_root=restrict_to_root,
+        allow_directory=True,
     )
+    if resolved.is_dir():
+        return {"available": True}
+    mime, _ = mimetypes.guess_type(resolved.name)
+    if (mime or "").startswith("image/"):
+        return {"available": True}
     try:
         with open(resolved, "rb") as f:
             prefix = f.read(4096)
@@ -126,6 +155,7 @@ def _resolve_preview_path(
     permission_owner: DesktopPermissionOwner | None,
     permission_reference: WorkspacePermissionReference | None,
     restrict_to_root: Path | None = None,
+    allow_directory: bool = False,
 ) -> Path:
     path = _clean_preview_path(raw_path)
     if not path:
@@ -163,7 +193,7 @@ def _resolve_preview_path(
     except OSError as e:
         raise WebUIFilePreviewError(400, "invalid path") from e
 
-    if not resolved.is_file():
+    if not resolved.is_file() and not (allow_directory and resolved.is_dir()):
         raise WebUIFilePreviewError(404, "file not found")
     if resource_policy is not None:
         extra_roots = [get_media_dir()] if scope.restrict_to_workspace else []
@@ -202,6 +232,45 @@ def _clean_preview_path(raw_path: str | None) -> str:
     if not re.match(r"^[A-Za-z]:[\\/]", value):
         value = re.sub(r":\d+(?::\d+)?$", "", value)
     return value
+
+
+MAX_DIRECTORY_PREVIEW_ENTRIES = 500
+
+
+def _directory_preview_payload(path: Path, scope: WorkspaceScope) -> dict[str, Any]:
+    entries: list[dict[str, Any]] = []
+    try:
+        children = sorted(
+            path.iterdir(),
+            key=lambda child: (not child.is_dir(), child.name.lower()),
+        )
+    except OSError as e:
+        raise WebUIFilePreviewError(500, "failed to read directory") from e
+    for child in children[:MAX_DIRECTORY_PREVIEW_ENTRIES]:
+        try:
+            is_dir = child.is_dir()
+            size = 0 if is_dir else child.stat().st_size
+        except OSError:
+            continue
+        entries.append(
+            {
+                "name": child.name,
+                "path": str(child),
+                "kind": "directory" if is_dir else "file",
+                "size": size,
+            }
+        )
+    return {
+        "kind": "directory",
+        "path": str(path),
+        "display_path": _display_path(path, scope.project_path),
+        "project_path": str(scope.project_path),
+        "language": "",
+        "content": "",
+        "size": 0,
+        "truncated": len(children) > len(entries),
+        "entries": entries,
+    }
 
 
 def _display_path(path: Path, root: Path) -> str:

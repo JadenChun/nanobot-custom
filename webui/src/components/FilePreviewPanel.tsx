@@ -24,6 +24,18 @@ type PreviewState =
   | { status: "error"; error: unknown }
   | { status: "ready"; payload: FilePreviewPayload };
 
+function formatEntrySize(size: number): string {
+  if (!Number.isFinite(size) || size <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = size;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value >= 10 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
+}
+
 export function FilePreviewPanel({
   sessionKey,
   path,
@@ -36,8 +48,13 @@ export function FilePreviewPanel({
   const { t } = useTranslation();
   const [state, setState] = useState<PreviewState>({ status: "loading" });
   const [entered, setEntered] = useState(false);
+  const [activePath, setActivePath] = useState(path);
   const tokenRef = useRef(token);
   tokenRef.current = token;
+
+  useEffect(() => {
+    setActivePath(path);
+  }, [path]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => setEntered(true));
@@ -47,7 +64,7 @@ export function FilePreviewPanel({
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
-    fetchFilePreview(tokenRef.current, sessionKey, path)
+    fetchFilePreview(tokenRef.current, sessionKey, activePath)
       .then((payload) => {
         if (!cancelled) setState({ status: "ready", payload });
       })
@@ -57,9 +74,9 @@ export function FilePreviewPanel({
     return () => {
       cancelled = true;
     };
-  }, [path, sessionKey]);
+  }, [activePath, sessionKey]);
 
-  const displayPath = state.status === "ready" ? state.payload.display_path : path;
+  const displayPath = state.status === "ready" ? state.payload.display_path : activePath;
   const previewPath = state.status === "ready" ? state.payload.path : displayPath;
   const normalizedPreviewPath = previewPath.replace(/\\/g, "/");
   const hasRootPrefix = normalizedPreviewPath.startsWith("/");
@@ -231,6 +248,49 @@ export function FilePreviewPanel({
                   <p>{errorMessage}</p>
                 </div>
               </div>
+            ) : state.payload.kind === "image" && state.payload.media_url ? (
+              <div className="flex h-full items-center justify-center bg-muted/20 p-3">
+                <img
+                  src={state.payload.media_url}
+                  alt={fileName}
+                  className="max-h-full max-w-full rounded-control object-contain"
+                  loading="eager"
+                  decoding="async"
+                  draggable={false}
+                />
+              </div>
+            ) : state.payload.kind === "directory" ? (
+              <ul className="min-h-full py-1" aria-label={t("filePreview.directory", { defaultValue: "Folder contents" })}>
+                {(state.payload.entries ?? []).map((entry) => (
+                  <li key={entry.path}>
+                    <button
+                      type="button"
+                      onClick={() => setActivePath(entry.path)}
+                      className={cn(
+                        "flex w-full items-center gap-2 px-4 py-2 text-left text-[13px]",
+                        "transition-colors hover:bg-muted/55 focus-visible:bg-muted/55 focus-visible:outline-none",
+                      )}
+                    >
+                      <span className={cn("shrink-0", entry.kind === "directory" ? "text-sky-500" : "text-muted-foreground")}>
+                        {entry.kind === "directory" ? "▸" : "·"}
+                      </span>
+                      <span className={cn("min-w-0 flex-1 truncate", entry.kind === "directory" && "font-medium")}>
+                        {entry.name}
+                      </span>
+                      {entry.kind === "file" ? (
+                        <span className="shrink-0 text-[11px] text-muted-foreground/70">
+                          {formatEntrySize(entry.size)}
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+                {(state.payload.entries ?? []).length === 0 ? (
+                  <li className="px-4 py-6 text-center text-sm text-muted-foreground">
+                    {t("filePreview.emptyFolder", { defaultValue: "This folder is empty." })}
+                  </li>
+                ) : null}
+              </ul>
             ) : (
               <div className="min-h-full">
                 {state.payload.truncated ? (
