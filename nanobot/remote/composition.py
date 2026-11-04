@@ -113,6 +113,7 @@ def build_mobile_edge(
         return await http.mobile_api_payload(
             path,
             owner=bool(getattr(identity, "is_owner", False)),
+            installation_id=str(getattr(identity, "installation_id", "") or ""),
         )
 
     async def feature_handler(identity: Any, path: str) -> tuple[int, dict[str, Any]]:

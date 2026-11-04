@@ -622,6 +622,7 @@ class GatewayHTTPHandler:
         path: str,
         *,
         owner: bool = False,
+        installation_id: str = "",
     ) -> tuple[int, dict[str, Any]]:
         """Dispatch one allowlisted mobile chat read through the local handler.
 
@@ -629,6 +630,8 @@ class GatewayHTTPHandler:
         """
         request = WsRequest(path, Headers())
         setattr(request, "_nanobot_trusted_proxy_authenticated", True)
+        if owner and installation_id:
+            setattr(request, "_nanobot_owner_installation", installation_id)
         response = await self.dispatch(None, request, internal=True)
         if response is None:
             return 404, {"error": "not_found"}
@@ -1602,9 +1605,14 @@ class GatewayHTTPHandler:
                 _is_loopback_host(self.config.host)
                 and _is_local_browser_request(connection, request.headers)
             )
+            # A paired owner device is the same principal as the local browser,
+            # so it previews the files the conversation uses instead of being
+            # limited to the project root.
+            owner_device = bool(getattr(request, "_nanobot_owner_installation", None))
+            full_preview_access = local_access or owner_device
             permission_owner = None
             permission_reference = None
-            if local_access and self.workspace_access_recovery is not None:
+            if full_preview_access and self.workspace_access_recovery is not None:
                 permission_owner, permission_reference = (
                     self.workspace_access_recovery.preview_permission_context(
                         decoded_key.split(":", 1)[1],
@@ -1616,10 +1624,10 @@ class GatewayHTTPHandler:
                     scope=scope,
                     resource_policy=policy,
                     managed_access=managed_access or permission_reference is not None,
-                    allow_folder_grants=local_access,
+                    allow_folder_grants=full_preview_access,
                     permission_owner=permission_owner,
                     permission_reference=permission_reference,
-                    restrict_to_root=None if local_access else scope.project_path,
+                    restrict_to_root=None if full_preview_access else scope.project_path,
                 )
             else:
                 payload = file_preview_payload(
@@ -1627,10 +1635,10 @@ class GatewayHTTPHandler:
                     scope=scope,
                     resource_policy=policy,
                     managed_access=managed_access or permission_reference is not None,
-                    allow_folder_grants=local_access,
+                    allow_folder_grants=full_preview_access,
                     permission_owner=permission_owner,
                     permission_reference=permission_reference,
-                    restrict_to_root=None if local_access else scope.project_path,
+                    restrict_to_root=None if full_preview_access else scope.project_path,
                 )
         except WebUIFilePreviewError as e:
             if is_probe and e.status in {400, 403, 404, 415}:
