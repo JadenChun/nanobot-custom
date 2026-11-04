@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"tailscale.com/client/local"
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 )
 
@@ -41,6 +43,10 @@ type Core struct {
 	events  chan []byte
 	pending []byte
 	eventMu sync.Mutex
+
+	peerMu  sync.Mutex
+	peerIPs map[string]string
+	peerAt  time.Time
 }
 
 func NewCore(cfg Config) (*Core, error) {
@@ -116,7 +122,7 @@ func (c *Core) Start() error {
 	c.mu.Lock()
 	c.node = node
 	c.dial = node.Dial
-	c.httpClient = newHTTPClient(node.Dial)
+	c.httpClient = newHTTPClient(c.tailnetDial(node))
 	c.mu.Unlock()
 	go c.runNode(node)
 	return nil
@@ -152,6 +158,7 @@ func (c *Core) runNode(node *tsnet.Server) {
 			if ip6.IsValid() {
 				ips = append(ips, ip6.String())
 			}
+			c.waitForPeers(node)
 			c.setStateWithExtra("ready", "", map[string]any{"tailscale_ips": ips})
 			return
 		case <-ticker.C:
@@ -275,6 +282,114 @@ func (c *Core) nextID() uint64 {
 	defer c.mu.Unlock()
 	c.nextRequest++
 	return c.nextRequest
+}
+
+// tailnetDial resolves tailnet names from the node's peer list before dialing.
+// tsnet hands names it does not know to the host resolver, which cannot see
+// MagicDNS names on Android, so a name-based origin fails with "no such host"
+// even while the node itself is running. Dialing the peer address directly
+// keeps the original host name for TLS SNI and certificate verification.
+func (c *Core) tailnetDial(node *tsnet.Server) DialFunc {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err == nil && net.ParseIP(host) == nil {
+			if ip, ok := c.peerIP(ctx, node, host); ok {
+				address = net.JoinHostPort(ip, port)
+			}
+		}
+		return node.Dial(ctx, network, address)
+	}
+}
+
+const peerCacheTTL = 30 * time.Second
+
+// waitForPeers waits briefly until the netmap lists other nodes, because the
+// peer addresses can arrive after the node reports itself running and the
+// first request would otherwise fail name resolution.
+func (c *Core) waitForPeers(node *tsnet.Server) {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		client, err := node.LocalClient()
+		if err == nil {
+			if status, statusErr := client.Status(c.ctx); statusErr == nil {
+				if peers := peerAddresses(status); len(peers) > 0 {
+					c.storePeers(peers)
+					return
+				}
+			}
+		}
+		if time.Now().After(deadline) || c.ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+// peerIP maps a tailnet host name to the node's Tailscale address. Results are
+// cached briefly so a stalled lookup does not hammer the local client.
+func (c *Core) peerIP(ctx context.Context, node *tsnet.Server, host string) (string, bool) {
+	name := strings.ToLower(strings.TrimSuffix(host, "."))
+	c.peerMu.Lock()
+	peers, cached := c.peerIPs, time.Since(c.peerAt) < peerCacheTTL
+	c.peerMu.Unlock()
+	if cached {
+		ip, ok := peers[name]
+		return ip, ok
+	}
+	client, err := node.LocalClient()
+	if err != nil {
+		return "", false
+	}
+	status, err := client.Status(ctx)
+	if err != nil {
+		return "", false
+	}
+	peers = peerAddresses(status)
+	if len(peers) > 0 {
+		c.storePeers(peers)
+	}
+	ip, ok := peers[name]
+	return ip, ok
+}
+
+func (c *Core) storePeers(peers map[string]string) {
+	c.peerMu.Lock()
+	c.peerIPs = peers
+	c.peerAt = time.Now()
+	c.peerMu.Unlock()
+}
+
+// peerAddresses indexes the netmap by full name, short name and hostname.
+func peerAddresses(status *ipnstate.Status) map[string]string {
+	peers := make(map[string]string, len(status.Peer))
+	for _, peer := range status.Peer {
+		if peer == nil || len(peer.TailscaleIPs) == 0 {
+			continue
+		}
+		ip := peer.TailscaleIPs[0]
+		for _, candidate := range peer.TailscaleIPs {
+			if candidate.Is4() {
+				ip = candidate
+				break
+			}
+		}
+		address := ip.String()
+		if peer.DNSName != "" {
+			fqdn := strings.ToLower(strings.TrimSuffix(peer.DNSName, "."))
+			peers[fqdn] = address
+			if label, _, found := strings.Cut(fqdn, "."); found {
+				peers[label] = address
+			}
+		}
+		if peer.HostName != "" {
+			peers[strings.ToLower(peer.HostName)] = address
+		}
+	}
+	return peers
 }
 
 func newHTTPClient(dial DialFunc) *http.Client {
