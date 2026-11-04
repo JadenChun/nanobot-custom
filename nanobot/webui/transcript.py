@@ -1504,6 +1504,60 @@ def tool_trace_lines_from_events(events: Any) -> list[str]:
 
 _PHASE_RANK = {"start": 1, "end": 2, "error": 3}
 
+# A single tool call can return megabytes: a file read or command output, and
+# provider-shaped results embed base64 image data URLs. The thread projection is
+# replayed to every client on open, so ship a bounded preview instead of the
+# whole payload; the transcript and the tool result itself keep the full data.
+_MAX_TOOL_EVENT_TEXT_CHARS = 4000
+_MAX_TOOL_EVENT_FIELD_BYTES = 16 * 1024
+_TOOL_EVENT_BOUNDED_FIELDS = ("result", "arguments", "error")
+
+
+def _bounded_tool_value(value: Any) -> Any:
+    """Redact inline payloads and long text while preserving the value's shape."""
+    if isinstance(value, str):
+        if value.startswith("data:") and ";base64," in value:
+            head, _, payload = value.partition(";base64,")
+            return f"{head};base64,<omitted {len(payload)} chars>"
+        if len(value) > _MAX_TOOL_EVENT_TEXT_CHARS:
+            return value[:_MAX_TOOL_EVENT_TEXT_CHARS]
+        return value
+    if isinstance(value, list):
+        items = [_bounded_tool_value(item) for item in value]
+        return value if all(new is old for new, old in zip(items, value)) else items
+    if isinstance(value, dict):
+        items = {key: _bounded_tool_value(item) for key, item in value.items()}
+        return value if all(items[key] is value[key] for key in value) else items
+    return value
+
+
+def _bounded_tool_event(event: dict[str, Any]) -> dict[str, Any]:
+    bounded: dict[str, Any] | None = None
+    for field in _TOOL_EVENT_BOUNDED_FIELDS:
+        value = event.get(field)
+        if value is None:
+            continue
+        replacement = _bounded_tool_value(value)
+        if replacement is value:
+            continue
+        if bounded is None:
+            bounded = dict(event)
+        bounded[field] = replacement
+        bounded[f"{field}_truncated"] = True
+        bounded[f"{field}_chars"] = len(json.dumps(value, ensure_ascii=False))
+    if bounded is None:
+        return event
+    # A single over-large field that survived shape-preserving redaction (for
+    # example a long list of short entries) falls back to a text preview.
+    if len(json.dumps(bounded, ensure_ascii=False).encode("utf-8")) > _MAX_TOOL_EVENT_FIELD_BYTES:
+        for field in _TOOL_EVENT_BOUNDED_FIELDS:
+            if field in bounded and field in event:
+                bounded[field] = json.dumps(event[field], ensure_ascii=False)[
+                    :_MAX_TOOL_EVENT_TEXT_CHARS
+                ]
+                bounded[f"{field}_truncated"] = True
+    return bounded
+
 
 def _normalize_tool_events(events: Any) -> list[dict[str, Any]]:
     if not isinstance(events, list):
@@ -1520,7 +1574,7 @@ def _normalize_tool_events(events: Any) -> list[dict[str, Any]]:
             function = cast(dict[str, Any], fn) if isinstance(fn, dict) else None
             if function is None or not isinstance(function.get("name"), str):
                 continue
-        out.append(tool_event)
+        out.append(_bounded_tool_event(tool_event))
     return out
 
 
