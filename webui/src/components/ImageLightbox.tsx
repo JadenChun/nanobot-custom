@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { useMobileMediaUrl } from "@/lib/mobile-media";
+import { isMobileRuntimeActive } from "@/lib/mobile-runtime";
 import { cn } from "@/lib/utils";
 import type { UIImage } from "@/lib/types";
 
@@ -27,6 +28,8 @@ interface ImageLightboxProps {
  * - The thumbnail filmstrip keeps every image one click away and scrolls the
  *   active thumbnail into view without moving the document.
  * - Radix handles `Escape` + focus trapping; we only wire up ←/→ + Home/End.
+ * - Touch uses horizontal swipes; the arrow buttons are desktop-only so they
+ *   do not sit on top of the photo on phones (the filmstrip remains tappable).
  * - Respects `prefers-reduced-motion` by dropping the fade + zoom-in
  *   keyframes via `motion-reduce:*` variants.
  */
@@ -109,6 +112,7 @@ export function ImageLightbox({
   }, [images, index, total]);
 
   const hasMany = total > 1;
+  const touchFirst = isMobileRuntimeActive();
   const counter = hasMany && index !== null ? `${index + 1} / ${total}` : null;
   const slideImages = hasMany && index !== null
     ? [images[(index - 1 + total) % total], current, images[(index + 1) % total]]
@@ -286,7 +290,7 @@ export function ImageLightbox({
               </div>
             </div>
 
-            {hasMany ? (
+            {hasMany && !touchFirst ? (
               <>
                 <NavButton
                   side="left"
